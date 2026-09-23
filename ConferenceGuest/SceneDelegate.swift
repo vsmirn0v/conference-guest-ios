@@ -26,6 +26,13 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             model.displayName = ProcessInfo.processInfo.environment["CONFERENCE_TEST_NAME"] ?? "Conference Guest QA"
             model.receive(url: url)
             model.join()
+            if let rawDelay = ProcessInfo.processInfo.environment["CONFERENCE_TEST_LEAVE_AFTER_SECONDS"],
+               let delay = UInt64(rawDelay), (1...600).contains(delay) {
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                    model.leave()
+                }
+            }
             return
         }
         #endif
@@ -45,5 +52,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
         guard let url = userActivity.webpageURL else { return }
         conference?.receive(url: url)
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        conference?.resumeSystemCallIfPossible()
     }
 }

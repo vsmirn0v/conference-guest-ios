@@ -23,7 +23,10 @@ final class ConferenceModel: ObservableObject {
     func configure(container: UIViewController) {
         self.container = container
         engine.onEvent = { [weak self] event in self?.handle(event: event) }
-        engine.onMediaStatus = { [weak self] message in self?.mediaStatus = message }
+        engine.onMediaStatus = { [weak self] message in
+            guard let self else { return }
+            self.mediaStatus = self.isJoining || self.isInConference ? message : nil
+        }
 
     }
 
@@ -86,6 +89,10 @@ final class ConferenceModel: ObservableObject {
         isInConference = false
         mediaStatus = nil
         status = didStartConference ? "Leaving the meeting…" : "Joining canceled."
+    }
+
+    func resumeSystemCallIfPossible() {
+        engine.resumeSystemCallIfPossible()
     }
 
     func replaceWithPending() {

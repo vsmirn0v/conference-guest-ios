@@ -8,7 +8,9 @@ final class CallControls: UIView {
     private let camera = UIButton(type: .system)
     private let route = UIView()
 
-    init(state: JazzActiveConferenceState, coordinator: JazzActiveConferenceCoordinator) {
+    init(state: JazzActiveConferenceState, coordinator: JazzActiveConferenceCoordinator,
+         onLeave: @escaping () -> Void, onMicrophoneState: @escaping (Bool) -> Void,
+         onCameraState: @escaping (Bool) -> Void) {
         super.init(frame: .zero)
         backgroundColor = .clear
 
@@ -25,7 +27,7 @@ final class CallControls: UIView {
             coordinator.toggleCamera(isOn: state.cameraState != .on)
         }, for: .touchUpInside)
         flip.addAction(UIAction { _ in coordinator.switchCamera() }, for: .touchUpInside)
-        leave.addAction(UIAction { _ in coordinator.endConference() }, for: .touchUpInside)
+        leave.addAction(UIAction { _ in onLeave() }, for: .touchUpInside)
 
         route.translatesAutoresizingMaskIntoConstraints = false
         route.accessibilityLabel = "Audio route"
@@ -78,6 +80,7 @@ final class CallControls: UIView {
             self.microphone.configuration?.image = UIImage(systemName: media == .on ? "mic.fill" : "mic.slash.fill")
             self.microphone.isEnabled = media != .disabled
             self.microphone.accessibilityLabel = media == .on ? "Mute microphone" : "Unmute microphone"
+            if media != .disabled { onMicrophoneState(media == .on) }
         }.store(in: &subscriptions)
         state.$cameraState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
@@ -87,6 +90,7 @@ final class CallControls: UIView {
             self.camera.configuration?.image = UIImage(systemName: media == .on ? "video.fill" : "video.slash.fill")
             self.camera.isEnabled = media != .disabled
             self.camera.accessibilityLabel = media == .on ? "Stop video" : "Start video"
+            if media != .disabled { onCameraState(media == .on) }
         }.store(in: &subscriptions)
     }
 

@@ -13,6 +13,7 @@
 		48A0C75EAC56A62940821E5D /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = ED7A8F610C5520E72CB44FBB /* JazzSDK */; };
 		71240512C5B1F80F609E956E /* ConferenceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 74C01C2D1C7C3AD3B35F6B19 /* ConferenceCore */; };
 		7CEA60F16DAAF70B420A7C3C /* CallControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AFD8775C37B596141588029 /* CallControls.swift */; };
+		81E2C2EE9007FFEC0911F394 /* SystemCallCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1989320A6B7EC05AA2064FD0 /* SystemCallCoordinator.swift */; };
 		949CF72C56151AC803283055 /* JoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE80D56BEB6A06ED78ED6ABD /* JoinView.swift */; };
 		A2CB02723C3CE158E5C351B3 /* NativeConferenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE69C2566E9C49E767D87B75 /* NativeConferenceEngine.swift */; };
 		B61E5615752169C3675B1D86 /* ConferenceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28F4AFFFFACA69F34BEC46CF /* ConferenceModel.swift */; };
@@ -22,6 +23,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		1989320A6B7EC05AA2064FD0 /* SystemCallCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemCallCoordinator.swift; sourceTree = "<group>"; };
 		25D92C9F46D338C0F1F1619E /* AnonymousTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnonymousTokenProvider.swift; sourceTree = "<group>"; };
 		28F4AFFFFACA69F34BEC46CF /* ConferenceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceModel.swift; sourceTree = "<group>"; };
 		498E598E293EB104E32C0A24 /* EventRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventRelay.swift; sourceTree = "<group>"; };
@@ -67,6 +69,7 @@
 				739C9820EA0F1484055323DF /* Info.plist */,
 				AE80D56BEB6A06ED78ED6ABD /* JoinView.swift */,
 				90C3FDA4C4F5BC92DFAC9853 /* SceneDelegate.swift */,
+				1989320A6B7EC05AA2064FD0 /* SystemCallCoordinator.swift */,
 				BB4670B794D4F8599F0DB079 /* VendorIntegration */,
 			);
 			path = ConferenceGuest;
@@ -199,6 +202,7 @@
 				949CF72C56151AC803283055 /* JoinView.swift in Sources */,
 				A2CB02723C3CE158E5C351B3 /* NativeConferenceEngine.swift in Sources */,
 				0C787456AE5E4373086A6BEF /* SceneDelegate.swift in Sources */,
+				81E2C2EE9007FFEC0911F394 /* SystemCallCoordinator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

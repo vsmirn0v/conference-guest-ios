@@ -35,7 +35,7 @@ final class AudioCoordinator {
             mode: .videoChat,
             options: [.mixWithOthers, .allowBluetoothHFP]
         )
-        try session.setActive(true)
+        // CallKit activates the session before the SDK starts media.
         audioWarning = nil
         cameraWarning = nil
         publishStatus()
