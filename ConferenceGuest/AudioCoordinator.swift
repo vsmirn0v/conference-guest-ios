@@ -1,7 +1,7 @@
 import AVFoundation
 import Foundation
 
-/// Observes iOS media changes without competing with Jazz for transport ownership.
+/// Observes iOS media changes without competing with the provider for transport ownership.
 final class AudioCoordinator {
     var onStatus: ((String?) -> Void)?
     private var observers: [NSObjectProtocol] = []
@@ -26,7 +26,7 @@ final class AudioCoordinator {
         observers.forEach(NotificationCenter.default.removeObserver)
     }
 
-    /// Jazz may reconfigure the shared session later; real-device validation is required.
+    /// The provider may reconfigure the shared session later; real-device validation is required.
     func prepareForJoin() throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(
@@ -62,7 +62,7 @@ final class AudioCoordinator {
         case AVCaptureSession.interruptionEndedNotification:
             cameraWarning = nil
         case AVAudioSession.routeChangeNotification:
-            // Jazz's route picker and the current system route remain authoritative.
+            // The provider's route picker and the current system route remain authoritative.
             break
         default:
             break

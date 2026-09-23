@@ -2,7 +2,7 @@ import Combine
 import JazzSDK
 import UIKit
 
-final class MinimalCallControls: UIView {
+final class CallControls: UIView {
     private var subscriptions = Set<AnyCancellable>()
     private let microphone = UIButton(type: .system)
     private let camera = UIButton(type: .system)

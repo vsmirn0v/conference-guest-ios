@@ -2,12 +2,12 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Open a Jazz meeting</title>
+<title>Open a conference</title>
 <main>
-  <h1>Open a Jazz meeting</h1>
+  <h1>Open a conference</h1>
   <label for="invite">Meeting invitation</label>
-  <input id="invite" type="url" autocomplete="off" size="50" placeholder="https://salutejazz.ru/…">
-  <button id="open" type="button">Open in Jazz Guest</button>
+  <input id="invite" type="url" autocomplete="off" size="50" placeholder="Meeting invitation URL">
+  <button id="open" type="button">Open in Conference Guest</button>
   <p id="status" role="status"></p>
 </main>
 <script>
@@ -19,9 +19,9 @@
       if (invite.protocol !== 'https:' ||
           !['salutejazz.ru', 'jazz.sber.ru'].includes(invite.hostname) ||
           invite.username || invite.password || invite.port) {
-        throw new Error('Enter a SaluteJazz HTTPS invitation.');
+        throw new Error('Enter a supported HTTPS meeting invitation.');
       }
-      const appLink = new URL('jazzguest://join');
+      const appLink = new URL('conferenceguest://join');
       appLink.searchParams.set('url', invite.href);
       window.location.assign(appLink.href);
       status.textContent = 'If the app did not open, install it or paste this link in the app.';

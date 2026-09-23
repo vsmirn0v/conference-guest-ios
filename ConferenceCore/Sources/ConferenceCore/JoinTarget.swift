@@ -18,27 +18,7 @@ public struct MeetingRoom: Equatable, Sendable {
 
 public enum JoinTarget: Equatable, Sendable {
     case room(MeetingRoom)
-    case jazzInvite(URL)
-
-    public func webGuestURL() throws -> URL {
-        switch self {
-        case .jazzInvite(let url):
-            return url
-        case .room(let room):
-            guard room.code.unicodeScalars.allSatisfy({
-                CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-").contains($0)
-            }) else {
-                throw JoinTargetError.invalidRoom
-            }
-            var components = URLComponents()
-            components.scheme = "https"
-            components.host = "salutejazz.ru"
-            components.path = "/calls/\(room.code)"
-            components.queryItems = [URLQueryItem(name: "psw", value: room.password)]
-            guard let url = components.url else { throw JoinTargetError.invalidRoom }
-            return url
-        }
-    }
+    case invite(URL)
 
     public static func parse(_ text: String, joinLinkHost: String? = nil) throws -> JoinTarget {
         let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -48,14 +28,14 @@ public enum JoinTarget: Equatable, Sendable {
             throw JoinTargetError.invalidLink
         }
 
-        if scheme == "jazzguest" {
+        if scheme == "conferenceguest" {
             guard components.host?.lowercased() == "join",
                   components.user == nil, components.password == nil,
                   components.queryItems?.filter({ $0.name == "url" }).count == 1,
                   let nested = components.queryItems?.first(where: { $0.name == "url" })?.value else {
                 throw JoinTargetError.invalidLink
             }
-            return try parseJazzURL(nested)
+            return try parseProviderURL(nested)
         }
 
         if let joinLinkHost,
@@ -66,13 +46,13 @@ public enum JoinTarget: Equatable, Sendable {
                   let nested = components.queryItems?.first(where: { $0.name == "url" })?.value else {
                 throw JoinTargetError.invalidLink
             }
-            return try parseJazzURL(nested)
+            return try parseProviderURL(nested)
         }
 
-        return try parseJazzURL(candidate)
+        return try parseProviderURL(candidate)
     }
 
-    private static func parseJazzURL(_ text: String) throws -> JoinTarget {
+    private static func parseProviderURL(_ text: String) throws -> JoinTarget {
         guard text.utf8.count <= 4096,
               let components = URLComponents(string: text),
               components.scheme?.lowercased() == "https",
@@ -83,7 +63,7 @@ public enum JoinTarget: Equatable, Sendable {
               let url = components.url else {
             throw JoinTargetError.invalidLink
         }
-        return .jazzInvite(url)
+        return .invite(url)
     }
 }
 
@@ -94,7 +74,7 @@ public enum JoinTargetError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .invalidRoom: return "Enter a meeting code and password."
-        case .invalidLink: return "Enter a valid SaluteJazz meeting link."
+        case .invalidLink: return "Enter a valid meeting invitation link."
         }
     }
 }

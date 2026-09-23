@@ -1,19 +1,10 @@
 import Foundation
 import JazzSDK
 
-enum JazzEvent {
-    case joining
-    case joined
-    case failed
-    case canceled
-    case left
-    case evicted
-}
+final class EventRelay: JazzEventsListener {
+    var onEvent: ((CallEvent) -> Void)?
 
-final class JazzEventsRelay: JazzEventsListener {
-    var onEvent: ((JazzEvent) -> Void)?
-
-    private func deliver(_ event: JazzEvent) {
+    private func deliver(_ event: CallEvent) {
         DispatchQueue.main.async { [weak self] in self?.onEvent?(event) }
     }
 

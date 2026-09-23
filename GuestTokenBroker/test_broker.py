@@ -66,7 +66,7 @@ class BrokerTests(TestCase):
 
     def test_limits_anonymous_token_requests(self):
         sdk_key, _ = self.make_key()
-        broker = TokenBroker(sdk_key)
+        broker = TokenBroker(sdk_key, "https://provider.example")
         with patch("broker.time.monotonic", return_value=100):
             self.assertTrue(all(broker.allow("192.0.2.1") for _ in range(12)))
             self.assertFalse(broker.allow("192.0.2.1"))
@@ -81,7 +81,7 @@ class BrokerTests(TestCase):
 
             def get_access_token(self, guest_id, display_name):
                 self.last_guest = (guest_id, display_name)
-                return "example-jazz-access-token"
+                return "example-provider-access-token"
 
         fake = FakeBroker()
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(fake))
@@ -94,7 +94,7 @@ class BrokerTests(TestCase):
                 base + "/v1/guest-token", valid,
                 {"Content-Type": "application/json"}, method="POST"
             ))
-            self.assertEqual(json.load(response), {"token": "example-jazz-access-token"})
+            self.assertEqual(json.load(response), {"token": "example-provider-access-token"})
             self.assertEqual(fake.last_guest[1], "Guest")
             invalid = json.dumps({"guestId": str(uuid4()), "displayName": 42}).encode()
             with self.assertRaises(error.HTTPError) as caught:

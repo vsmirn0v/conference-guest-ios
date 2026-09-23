@@ -1,4 +1,4 @@
-name: JazzGuest
+name: ConferenceGuest
 options:
   bundleIdPrefix: dev.vsmirn0v
   deploymentTarget:
@@ -8,21 +8,21 @@ packages:
   JazzSDK:
     url: https://github.com/salute-developers/jazz-ios-sdk.git
     revision: 6d5f92869690fa22bb489a9089aa554d733c6936
-  JazzGuestCore:
-    path: JazzGuestCore
+  ConferenceCore:
+    path: ConferenceCore
 targets:
-  JazzGuest:
+  ConferenceGuest:
     type: application
     platform: iOS
     sources:
-      - path: JazzGuest
+      - path: ConferenceGuest
     dependencies:
       - package: JazzSDK
-      - package: JazzGuestCore
+      - package: ConferenceCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.jazzguest
-        INFOPLIST_FILE: JazzGuest/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest
+        INFOPLIST_FILE: ConferenceGuest/Info.plist
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
@@ -31,20 +31,6 @@ targets:
         GUEST_TOKEN_URL: ""
         JOIN_LINK_HOST: ""
     postBuildScripts:
-      - name: Copy Jazz SDK resources
+      - name: Copy provider SDK resources
         script: bash "$PROJECT_DIR/scripts/copy-sdk-resources.sh"
         basedOnDependencyAnalysis: false
-  JazzGuestUITests:
-    type: bundle.ui-testing
-    platform: iOS
-    sources:
-      - path: JazzGuestUITests
-    dependencies:
-      - target: JazzGuest
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.jazzguest.uitests
-        SWIFT_VERSION: "5.0"
-        GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: JazzGuestUITests/Info.plist
-        JAZZ_TEST_INVITE: ""

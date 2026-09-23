@@ -1,26 +1,19 @@
-**Validation recorded 23 September 2026**
+# Validation recorded 23 September 2026
 
-Local source: `vsmirn0v/jazz-ios-client`, generated with XcodeGen 2.46.0. Vendor dependency pinned to `salute-developers/jazz-ios-sdk@6d5f92869690fa22bb489a9089aa554d733c6936`.
+The current app is **Conference Guest**, a native SDK client. The earlier embedded-web experiment has been removed. The public vendor SDK is pinned to `salute-developers/jazz-ios-sdk@6d5f92869690fa22bb489a9089aa554d733c6936`; current-cloud interoperability is still unknown.
 
-**Passed**
-
-| Check | Evidence |
+| Check | Result |
 | --- | --- |
-| Guest link parser | `swift test --package-path JazzGuestCore`: 5 tests, 0 failures; manual room fields, scheme/owned-domain links, rejected unsupported hosts and non-HTTPS links, and website URL construction. |
-| Token broker | `python3 -m unittest discover -s GuestTokenBroker -p 'test_*.py'`: 4 tests, 0 failures; JOSE signature verification, JWK coordinate validation, rate limit and HTTP request/response behavior. |
-| iOS Simulator build | Xcode 27.0, `xcodebuild -project JazzGuest.xcodeproj -scheme JazzGuest -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet build`: success. |
-| iOS device build | Same project with `-destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO`: success after the event-handler changes. This is an unsigned build, not a physical-device run. |
-| Simulator launch | Installed and launched the app on iPhone 17 / iOS 26.5. The keyless guest view loaded Jazz's mobile handoff page. |
-| Keyless guest prejoin | XCUITest loaded the user-supplied invite in `WKWebView`, chose “Continue in browser”, and found Jazz's guest name field. Screenshot also showed microphone and camera disabled on prejoin; WebKit prompted for microphone permission. This proves the website path reaches prejoin without an SDK key, not that it has joined a live conference. The live invite was passed as a temporary build setting and is absent from source. |
-| SDK packaging | First simulator launch failed with a missing `Spench.framework` reported by dyld. The vendor package contains the framework but omits it from its SPM product. The build script now embeds the matching framework; subsequent simulator launch succeeded. |
-| URL registration | Opening a `jazzguest://join?url=...` URL in the simulator displayed iOS's “Open in Jazz Guest?” confirmation. Pure link parsing is covered by tests; a full browser-to-join handoff still needs a configured broker and live meeting. |
+| Invite parser | `swift test --package-path ConferenceCore`: 4 passed; manual room validation, custom scheme, owned-domain link and invalid-host rejection. |
+| Token broker | `python3 -m unittest discover -s GuestTokenBroker -p 'test_*.py'`: 4 passed; JWT signature, key validation, rate limit, request handling. No live vendor authorization was attempted. |
+| iOS Simulator build | Xcode 27.0, `xcodebuild -project ConferenceGuest.xcodeproj -scheme ConferenceGuest -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet build`: passed. |
+| iOS device build | Same project with `-destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO`: passed. This is an unsigned build, not an iPhone run. |
+| Simulator launch | Installed and launched on iPhone 17 / iOS 26.5. Neutral app title and native join form rendered. With no token endpoint, Join was disabled and access-unavailable status was shown. |
+| Background/foreground smoke | Opening Safari backgrounded the app; foregrounding it returned the same simulator process ID. No meeting was active, so this is a lifecycle smoke test only. |
+| SDK packaging | The pinned package omits `Spench.framework` from its Swift product although the SDK binary loads it. The build script embeds the matching framework; simulator launch succeeds. |
 
-**Not yet demonstrated**
+**Not yet demonstrated:** native joining of a live meeting, guest admission across organizers, participant rendering, microphone/camera transmission and mute behavior observed by a second participant, or working Leave semantics. No SDK project key or deployed guest-token service was available for this run.
 
-- Joining a live Jazz meeting, guest admission across organizers, password/lobby behavior and participant rendering. The guest prejoin page loaded with the supplied meeting link, but the Join action was not tested. The native SDK mode still lacks a key.
-- Audio/video send state observed by a second participant. Source passes `.allOff`; runtime behavior remains unverified.
-- Physical-device background audio, other-app playback, Bluetooth routing, interruption recovery, long-call stability, PiP or camera continuity. An iOS Simulator cannot establish these acceptance results.
-- HTTPS Universal Links from an owned domain. No domain or Apple App Site Association file has been selected/configured.
-- Signed installation on an iPhone or App Store/TestFlight distribution. The device build was unsigned.
+**Device acceptance remains open:** a real incoming cellular/FaceTime call, X or Instagram playback during a conference, background audio while switching apps or locking the phone, Bluetooth/wired route changes, camera continuity, and interruption recovery. The app requests `.playAndRecord` / `.videoChat` with `.mixWithOthers` once before joining, but the binary SDK may replace that configuration. The SDK's current `JazzSettings` initializer defaults feature flags to `.allDisabled`, including CallKit/PiP support; the app does not yet enable or validate those features. No claim of audio reliability should be made from the current builds.
 
-The next meaningful test is a physical iPhone joined to a representative guest-enabled meeting through the keyless web path. Use a second participant to verify incoming and outgoing media, initial mute, Leave semantics, and the interruption matrix in [implementation-plan.md](implementation-plan.md). The native SDK path needs an SDK key kept solely in the broker's environment and should be tested separately.
+The next test is a signed iPhone build with a real SDK project key kept solely in the broker, a representative existing meeting, and a second participant. Record whether membership remains intact and mute intent survives every interruption and audio-route scenario in [the implementation plan](implementation-plan.md). The simulator can provide preliminary lifecycle and SDK-state observations after credentials are available, but it cannot replace device acceptance for system audio behavior.

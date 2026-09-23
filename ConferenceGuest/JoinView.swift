@@ -6,15 +6,13 @@ struct JoinView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if model.usesNativeSDK {
-                    Section("Guest") {
-                        TextField("Your name", text: $model.displayName)
-                            .textContentType(.nickname)
-                            .autocorrectionDisabled()
-                    }
+                Section("Guest") {
+                    TextField("Your name", text: $model.displayName)
+                        .textContentType(.nickname)
+                        .autocorrectionDisabled()
                 }
                 Section("Meeting") {
-                    TextField("Paste Jazz invitation link", text: $model.invite)
+                    TextField("Paste meeting invitation link", text: $model.invite)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -27,15 +25,13 @@ struct JoinView: View {
                     SecureField("Meeting password", text: $model.meetingPassword)
                 }
                 Section {
-                    Button(model.usesNativeSDK ? "Join with mic and camera off" : "Open Jazz guest page") { model.join() }
-                        .disabled(model.isJoining || model.isInConference || model.isLeaving || model.webMeeting != nil)
-                    if model.isJoining || model.isInConference || model.webMeeting != nil {
+                    Button("Join with mic and camera off") { model.join() }
+                        .disabled(!model.isConfigured || model.isJoining || model.isInConference || model.isLeaving)
+                    if model.isJoining || model.isInConference {
                         Button("Leave meeting", role: .destructive) { model.leave() }
                     }
                 } footer: {
-                    Text(model.usesNativeSDK
-                         ? "You can turn on the microphone and camera during the meeting."
-                         : "Jazz asks for your name and media choices on its guest page. Keep your microphone and camera off before joining.")
+                    Text("You can turn on the microphone and camera during the meeting.")
                 }
                 Section("Status") {
                     Text(model.status)
@@ -44,13 +40,7 @@ struct JoinView: View {
                     }
                 }
             }
-            .navigationTitle("Jazz Guest")
-            .fullScreenCover(item: Binding(
-                get: { model.webMeeting },
-                set: { if $0 == nil { model.leave() } }
-            )) { meeting in
-                WebMeetingView(meeting: meeting, model: model)
-            }
+            .navigationTitle("Conference Guest")
             .confirmationDialog(
                 "Leave the current meeting and open the new invitation?",
                 isPresented: $model.showSwitchConfirmation

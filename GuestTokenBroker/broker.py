@@ -1,4 +1,4 @@
-"""Minimal local Jazz guest-token broker. Run behind TLS and abuse controls if exposed."""
+"""Minimal local guest-token broker. Run behind TLS and abuse controls if exposed."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ class SDKKey:
             jwk = document["key"]
             curve_type, digest_type, algorithm, width = CURVES[jwk["crv"]]
             if jwk["kty"] != "EC":
-                raise ValueError("The Jazz SDK key must be an EC key")
+                raise ValueError("The provider SDK key must be an EC key")
             project_id = str(UUID(document["projectId"]))
             kid = jwk["kid"]
             private_key = ec.derive_private_key(
@@ -60,12 +60,12 @@ class SDKKey:
             public = private_key.public_key().public_numbers()
             if public.x != int.from_bytes(decode_b64url(jwk["x"]), "big") or \
                public.y != int.from_bytes(decode_b64url(jwk["y"]), "big"):
-                raise ValueError("Jazz SDK key coordinates do not match")
+                raise ValueError("SDK key coordinates do not match")
             if not isinstance(kid, str) or not kid or len(kid) > 200:
-                raise ValueError("Invalid Jazz SDK key ID")
+                raise ValueError("Invalid SDK key ID")
             return cls(project_id, kid, algorithm, width, private_key, digest_type())
         except (KeyError, TypeError, json.JSONDecodeError, UnicodeError, ValueError, binascii.Error) as exc:
-            raise ValueError("Invalid Jazz SDK key") from exc
+            raise ValueError("Invalid SDK key") from exc
 
     def transport_token(self, guest_id: UUID, display_name: str) -> str:
         now = int(time.time())
@@ -76,7 +76,7 @@ class SDKKey:
             "jti": str(uuid4()),
             "sub": str(guest_id),
             "sdkProjectId": self.project_id,
-            "iss": "jazz-guest-client",
+            "iss": "conference-guest-client",
             "userName": display_name,
         }
         compact = lambda obj: json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode()
@@ -88,12 +88,12 @@ class SDKKey:
 
 
 class TokenBroker:
-    def __init__(self, sdk_key: SDKKey, jazz_api_base: str = "https://api.salutejazz.ru"):
-        parsed = urlparse(jazz_api_base)
+    def __init__(self, sdk_key: SDKKey, provider_api_base: str):
+        parsed = urlparse(provider_api_base)
         if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
-            raise ValueError("Jazz API base must be an HTTPS origin")
+            raise ValueError("Provider API base must be an HTTPS origin")
         self.sdk_key = sdk_key
-        self.jazz_api_base = jazz_api_base.rstrip("/")
+        self.provider_api_base = provider_api_base.rstrip("/")
         self.attempts: dict[str, deque[float]] = defaultdict(deque)
         self.lock = Lock()
 
@@ -111,7 +111,7 @@ class TokenBroker:
     def get_access_token(self, guest_id: UUID, display_name: str) -> str:
         transport = self.sdk_key.transport_token(guest_id, display_name)
         req = request.Request(
-            f"{self.jazz_api_base}/v1/auth/login",
+            f"{self.provider_api_base}/v1/auth/login",
             method="POST",
             headers={"Accept": "application/json", "Authorization": f"Bearer {transport}"},
         )
@@ -119,7 +119,7 @@ class TokenBroker:
             data = response.read(8192)
         token = json.loads(data)["token"]
         if not isinstance(token, str) or not token or len(token) > 8192:
-            raise ValueError("Jazz returned an invalid access token")
+            raise ValueError("Provider returned an invalid access token")
         return token
 
 
@@ -157,7 +157,7 @@ def handler_for(broker: TokenBroker):
             try:
                 token = broker.get_access_token(guest_id, name)
             except (error.URLError, TimeoutError, ValueError, KeyError, json.JSONDecodeError):
-                self.respond(502, {"error": "Jazz authorization unavailable"})
+                self.respond(502, {"error": "provider authorization unavailable"})
                 return
             self.respond(200, {"token": token})
 
@@ -178,12 +178,15 @@ def handler_for(broker: TokenBroker):
 
 
 def main() -> None:
-    encoded_key = os.environ.get("JAZZ_SDK_KEY_B64")
+    encoded_key = os.environ.get("PROVIDER_SDK_KEY_B64")
     if not encoded_key:
-        raise SystemExit("Set JAZZ_SDK_KEY_B64 outside the repository")
+        raise SystemExit("Set PROVIDER_SDK_KEY_B64 outside the repository")
+    provider_api_base = os.environ.get("PROVIDER_API_BASE_URL")
+    if not provider_api_base:
+        raise SystemExit("Set PROVIDER_API_BASE_URL outside the repository")
     broker = TokenBroker(
         SDKKey.from_base64(encoded_key),
-        os.environ.get("JAZZ_API_BASE_URL", "https://api.salutejazz.ru"),
+        provider_api_base,
     )
     host = os.environ.get("BIND_HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8765"))
