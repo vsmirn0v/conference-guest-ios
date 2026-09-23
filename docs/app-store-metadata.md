@@ -34,7 +34,7 @@ Rock’n’Roll supports more than one jam engine. The public test jam exercises
 
 Contact: devcore@gmail.com. Privacy: https://rock.glowsoft.ru/privacy.
 
-## Claims to verify before external submission
+## Follow-ups before public App Store release
 
 - Public test room is reachable from the reviewer’s region and remains available during review.
 - All requested media, background and interruption behavior is retested for the new engine on the distribution build.

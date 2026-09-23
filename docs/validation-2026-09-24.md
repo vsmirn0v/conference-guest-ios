@@ -19,3 +19,15 @@ The app archive was signed for team `5V64BP2H3P` and uploaded to App Store Conne
 - The website's Open iPhone app button reached the iOS open-app prompt on a phone, but the automated Safari handoff test was intermittent. The in-app handoff route and native guest-link route were exercised separately.
 - Xcode reported missing third-party framework dSYMs during symbol upload. The app upload succeeded, but crashes inside those frameworks may have less complete symbolication.
 - The browser's new Share screen button uses the LiveKit API, but the system screen-picker flow was not exercised; doing so would transmit the tester's actual display into the public demo room.
+
+## Build 0.2.0 (5) external-beta candidate
+
+The new signed archive was uploaded to App Store Connect on 24 September 2026 and Xcode reported `EXPORT SUCCEEDED`. Its embedded version is `0.2.0 (5)`, team is `5V64BP2H3P`, and the Bluetooth purpose string and export-compliance setting remain present. Apple processing completed, and build 5 is **Waiting for Review** in the `Rock’n’Roll Public Beta` external TestFlight group. The [public link](https://testflight.apple.com/join/Hd13C9U3) is open to anyone with a 100-tester limit; installation awaits Apple's first external-build approval.
+
+- iVitalii: repeated landscape/portrait cycles kept all Rock call controls reachable while a browser shared a live test card. A simulator layout fixture also passed both landscape orientations and a return to portrait.
+- iVitalii: the Rock room made a live screen share the primary view, exposed the browser participant's mic/video/share status, pinned and unpinned that stream, changed zoom with a pinch, and passed All video, Screen shares and Audio only modes. A browser-generated microphone tone made the participant's Speaking indicator appear.
+- iVitalii: the guest SDK's participant list opened, showed media icons, and exposed a working Pin the participant action. Repeated landscape/portrait cycles returned its controls to the visible portrait window.
+- `go test ./...` and the final simulator app build passed. The website's synthetic demo card and short tone were tested through the live room. After the isolated `rock-web` restart, its health check passed, its restart policy remained `always`, and unrelated `kachat.app` still returned HTTP 200.
+- App Store metadata, website copy, and the existing distribution screenshots were checked for provider branding; none was found in those public-facing surfaces.
+
+The iPhone beta still requires external review before the public link can install build 5. Xcode reported missing third-party framework dSYMs, as it did for build 4. Safari denied a real window-share request on this Mac, so the browser's OS screen-picker route remains unverified; the synthetic card published through the same screen-share track type.
