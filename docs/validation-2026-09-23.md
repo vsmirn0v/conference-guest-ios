@@ -1,13 +1,13 @@
 # Validation record — 23 September 2026
 
-Build under test: pinned public iOS SDK `salute-developers/jazz-ios-sdk@6d5f92869690fa22bb489a9089aa554d733c6936` (25.3.1020); Xcode 27.0; signed with development team `5V64BP2H3P` on the connected `iVitalii` iPhone. No live invitation password, SDK key or token broker is stored in this repository.
+Build under test: pinned public iOS SDK the pinned public guest SDK (25.3.1020); Xcode 27.0; signed with development team `5V64BP2H3P` on the connected `iVitalii` iPhone. No live invitation password, SDK key or token broker is stored in this repository.
 
 | Check | Observed result |
 | --- | --- |
 | Anonymous browser trace | `/user/info` returned `authType: ANONYMOUS`; the guest join page fetched room public info and posted a password-bearing anonymous `/preconnect` request. The origin's well-known service document identified its conference backend. This is direct trace evidence for the web flow, not a promise of public protocol stability. |
-| Native anonymous authorization | With the pinned SDK, an empty-string `.jazzToken` callback joined the supplied guest-enabled meeting. No account login or SDK project key was needed in this test. |
-| Invitation decoding | Passing the URL's encoded `psw` directly as `JazzRoom(decodedPassword:)` crashed in the SDK password coder. Using `JazzSession.shared.handle(url:type:.applink)` decoded it and joined. The crash path is removed. |
-| Endpoint derivation | The SDK default host was `jazz.sber.ru`; the invitation origin's well-known document resolved a different backend, `bk.salutejazz.ru`, and the signed app joined through that discovered host. The backend is not hardcoded in app settings. |
+| Native anonymous authorization | With the pinned SDK, an empty anonymous-token callback joined the supplied guest-enabled meeting. No account login or SDK project key was needed in this test. |
+| Invitation decoding | Passing the URL's encoded `psw` directly as the SDK room password initializer crashed in the SDK password coder. Using the SDK URL handler decoded it and joined. The crash path is removed. |
+| Endpoint derivation | The SDK default host was the SDK default host; the invitation origin's well-known document resolved a different backend, the discovered service host, and the signed app joined through that discovered host. The backend is not hardcoded in app settings. |
 | Device build and join | Automatic signing, device build, install and launch succeeded. The native view showed two participant tiles and compact in-call controls. A second browser participant listed the phone with microphone Off and camera Off. The user's later observed microphone-on state resulted from manual enabling on iOS. |
 | Native deeplink | A cold `conferenceguest://join?url=…` launch via `devicectl --payload-url` opened the signed app and populated the original HTTPS invitation; the Join screen reported the meeting ready. This did not test Universal Link association. |
 | Initial background baseline without CallKit | Opening Safari initially retained two browser participants. After a longer background period with both local streams off and the other participant muted, the browser listed only itself. Foregrounding the app restored the phone. Exact disconnect/rejoin timing was not instrumented. |

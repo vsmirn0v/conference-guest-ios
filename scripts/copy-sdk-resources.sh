@@ -1,12 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
-packages_root="${BUILD_DIR}/../../SourcePackages/checkouts/jazz-ios-sdk/Sources"
+search_dir="${BUILD_DIR}"
+packages_root=""
+while [[ "$search_dir" != / ]]; do
+  candidate="$search_dir/SourcePackages/checkouts/jazz-ios-sdk/Sources"
+  if [[ -d "$candidate" ]]; then
+    packages_root="$candidate"
+    break
+  fi
+  search_dir="$(dirname "$search_dir")"
+done
 app_resources="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
 app_frameworks="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}"
 
-if [[ ! -d "$packages_root" ]]; then
-  echo "Jazz SDK package checkout is missing at $packages_root" >&2
+if [[ -z "$packages_root" ]]; then
+  echo "SDK package checkout is missing above $BUILD_DIR" >&2
   exit 1
 fi
 

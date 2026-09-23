@@ -1,0 +1,18 @@
+# Dual-engine pilot validation — 23 September 2026
+
+The signed iPhone test device was `iVitalii` (iPhone 17 Pro Max, iOS 27.0). The new Rock room service runs at `rock.glowsoft.ru`; compatible guest invitations continue through the existing integration. Test names were synthetic. No invitation password or room token is stored in this repository.
+
+| Check | Result |
+| --- | --- |
+| Core routing and discovery | 10 package tests pass, including a discovery document with an unrelated service entry. This caught and fixed an initial regression in the existing invitation path. |
+| Room service | Go tests pass for room-scoped token grants, rejection of unknown rooms/client privileges, and cache separation between static JavaScript and credentials. |
+| Public Rock jam | Browser and physical iPhone joined the same room. The browser showed the iPhone with mic and camera off. The iPhone test opened and closed Catch up and left cleanly. |
+| Rock two-way media | A browser published synthetic mic/camera. The phone displayed that participant and both published states. The phone then enabled mic/camera and flipped camera; a second browser saw both streams on, decoded a 360×640 video track, and had an active subscribed audio track. The test muted both before leaving. |
+| Rock hold marker | A real CallKit hold/unhold transaction was requested by the debug test. The jam stayed open and Catch up marked a possibly missed interval, correctly reporting that the public room supplied no transcript. |
+| Existing guest integration | A fresh anonymous room was created in a browser. After narrowing discovery parsing and delaying construction of the Rock CallKit provider, the signed iPhone joined it with mic/camera off; the browser saw it as a second participant. The Catch up panel UI test passed. |
+| Direct network path | The user changed `rock.glowsoft.ru` from proxied to DNS-only. From this Mac, the browser bundle then downloaded in under one second, and browser and iPhone joins completed through the public HTTPS/WSS URL. A remote probe still briefly saw cached proxy DNS during propagation. |
+| Shared host | Both new Podman containers report `restart=always`; `podman-restart.service` is enabled. Nginx passes its configuration test. Existing vhosts returned their baseline HTTP statuses after deployment. Idle observed memory was about 41 MB for the room server and 1 MB for the web service. |
+
+The user explicitly chose **not** to repeat the long lock, competing-audio, and cellular interruption matrix for the Rock test engine. The earlier [device record](validation-2026-09-23.md) remains the evidence for those refined behaviors on the existing guest engine. This record does not transfer that evidence to the Rock engine. Neither this pilot nor the Catch up panel records or reconstructs speech missed during a real phone call or network outage.
+
+The iPhone-only 0.2.0 build archives and exports with team `5V64BP2H3P` and cloud-managed Apple Distribution signing. The internal-only TestFlight export is kept outside Git; upload and installation are separate checks. A reboot of the shared server was not performed, so container restart after reboot is configured but not directly observed.

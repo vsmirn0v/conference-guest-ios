@@ -2,21 +2,17 @@
 
 <img src="RockNRoll/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="128" height="128" alt="Rock’n’Roll app icon">
 
-The icon and its generation prompts are described in [the design record](docs/icon-design.md).
+Rock’n’Roll helps small music groups in Yerevan meet between rehearsals. Musicians open a shared jam link, join with microphone and camera off, then choose when to share sound or video. The native iPhone app keeps a real system call for background audio and uses CallKit to hold and resume around another phone call. It can also open compatible guest meeting invitations through a separate integration. There is no account or in-app room creation.
 
-A native iOS prototype for joining an existing guest-enabled conference. It has no account sign-in, meeting creation, embedded website, bundled SDK key, or token broker. The app uses the provider's binary iOS SDK for signaling and media; provider names are confined to the vendor-integration code, package/resource wiring, and invitation URLs.
+The public test jam is [rock.glowsoft.ru/jams/test](https://rock.glowsoft.ru/jams/test). The same page explains the group and lets a second participant join in a browser. The app also supports `conferenceguest://join?url=<percent-encoded HTTPS invitation>` from a web handoff. Only Rock links use the self-hosted room service; compatible guest invitations keep their existing endpoint-discovery flow.
 
-Paste a complete `https://…/calls/<room>?psw=<value>` invitation, enter a display name, and tap Join. The app discovers the conference API from the invitation origin's `/.well-known/s2b-services.json` (`jazz.serverUrl`), then lets the SDK decode the invitation and join with microphone and camera off. The SDK's guest-token callback returns an empty string. This **was tested in one live guest-enabled meeting** on a signed iPhone; it is not a promise that every host policy or future backend/SDK version accepts anonymous guests.
+The native jam engine uses LiveKit Swift, and the small Go service issues short-lived, room-scoped guest tokens for a single configured test room. The browser is an optional participant, not an embedded app view. Keys remain on the server. The server is isolated in two Podman containers behind a dedicated nginx virtual host; deployment inputs live in [RockServer](RockServer/).
 
-The active call uses SDK participant video/audio transport with native microphone, camera, camera-switch, route and Leave controls. On a second browser endpoint, the phone appeared as a participant with both streams off. Microphone activation observed later in testing was a manual action on the phone, as the user clarified.
+The **Catch up** panel marks intervals that may have been missed during a held call, audio interruption or network loss. It can display only transcript lines actually supplied by a room provider. The test jam currently supplies none, so the panel does not claim to reconstruct missed speech. The local index is protected on the device, deleted on Leave, and expires after 24 hours. See [feature boundaries](docs/catch-up.md) and [privacy policy](https://rock.glowsoft.ru/privacy).
 
-The in-call **Catch up** panel now marks suspected missed time during a held call, audio interruption, or connection loss and displays any provider transcription the guest actually receives. It labels missing or uncertain coverage explicitly. The current-room index survives an app restart in protected local storage and is deleted on Leave; it depends on the host making transcription available. The user chose not to run a separate capture companion. The anonymous test room did not expose a transcript to this guest, so this build cannot recover its missing speech or offer audio replay. See [the feature boundary and acceptance checks](docs/catch-up.md).
+## Build and test
 
-An outgoing CallKit call represents the actual conference and gives its audio session a system-managed lifecycle. With both local streams off and no inbound publisher, the phone stayed in the remote participant list through a 30-minute physical lock; the user heard a browser-published test tone while it was still locked. An answered cellular call held and resumed the conference without losing remote membership. The user reported conference audio continuing while playing X and Instagram videos, and successful switching among speaker, AirPods and earpiece. A physical-device UI test intentionally published microphone and camera streams, flipped the camera, then turned both off; a browser independently observed their On/Off states. See [the device record](docs/validation-2026-09-23.md) for the remaining acceptance gaps.
-
-## Build
-
-Requirements: Xcode with iOS 18+ SDK, XcodeGen, and Git LFS. The public SDK is pinned to `salute-developers/jazz-ios-sdk@6d5f92869690fa22bb489a9089aa554d733c6936` (25.3.1020).
+Requires Xcode with an iOS 18+ SDK, XcodeGen and Git LFS. The project pins both Swift SDKs. Required vendor symbols are confined to `RockNRoll/VendorIntegration` and package/resource references.
 
 ```sh
 brew install xcodegen git-lfs
@@ -26,27 +22,10 @@ swift test --package-path ConferenceCore
 open RockNRoll.xcodeproj
 ```
 
-For the connected `iVitalii` device, signing was verified with team `5V64BP2H3P`:
+The app is signed with developer team `5V64BP2H3P`. `project.yml` generates the checked-in Xcode project. A build script copies resources required by the binary guest-integration SDK. SDK binaries are fetched through Swift Package Manager and are not committed.
 
-```sh
-xcodebuild -project RockNRoll.xcodeproj -scheme RockNRoll \
-  -destination 'platform=iOS,id=00008150-001238941AF0401C' \
-  DEVELOPMENT_TEAM=5V64BP2H3P CODE_SIGN_STYLE=Automatic \
-  -allowProvisioningUpdates build
-```
+`RockNRollUITests.testCommunityJamConnectsMuted` exercises the public test room on an attached iPhone. Other opt-in UI tests use live guest invitations supplied in `TEST_RUNNER_ROCKNROLL_TEST_INVITE`, never stored in the repository. For prior physical-device coverage and remaining release checks, see [validation](docs/validation-2026-09-23.md) and [App Store preparation](docs/app-store-preparation-plan.md).
 
-`project.yml` is the source for the checked-in Xcode project. The build script embeds vendor resources and the matching `Spench.framework`, which the binary SDK loads but omits from its Swift-package product. SDK binaries are downloaded through Swift Package Manager and are not committed here.
+## Media behavior
 
-## Invitation handoff
-
-The app accepts pasted invitations and `conferenceguest://join?url=<percent-encoded HTTPS invitation>`. The sample [web handoff page](web/open.html) creates that scheme URL from a pasted invitation or prefills it from its own `?url=<percent-encoded HTTPS invitation>` parameter. The user chose this custom-scheme handoff; direct Universal Links remain optional because they require a domain controlled by the app operator. The app cannot claim arbitrary provider HTTPS links without that domain owner's cooperation. The conference service address itself is resolved from each invitation, not hardcoded in the app.
-
-The `#if DEBUG` environment variables `CONFERENCE_TEST_INVITE`, `CONFERENCE_TEST_NAME`, `CONFERENCE_TEST_LEAVE_AFTER_SECONDS` and `CONFERENCE_TEST_HOLD_SECONDS` can automate a QA join, timed Leave or CallKit hold for physical-device testing. They are not included in release builds or source-controlled with a live invitation.
-
-`RockNRollUITests` contains an opt-in live device check for default mute, intentional microphone/video activation, camera flip and Leave. It skips unless the test runner receives `ROCKNROLL_TEST_INVITE` (pass it to `xcodebuild` as `TEST_RUNNER_ROCKNROLL_TEST_INVITE`). A second endpoint is needed to verify that media was actually published; the UI test keeps both streams on for 20 seconds for observation. A second opt-in test takes `TEST_RUNNER_ROCKNROLL_TEST_FIRST_INVITE` and `TEST_RUNNER_ROCKNROLL_TEST_SECOND_INVITE`; after it joins the first room, deliver the second custom-scheme link externally to the running app while the test waits. It verifies confirmation, completed Leave, ready state and a second Join. Use disposable invitations and keep them out of source control.
-
-The catch-up UI tests use a real CallKit hold/unhold transaction and an app restart on the connected device. They verify missed-time marking and local persistence. A cellular-call interruption and provider transcript history require separate live checks.
-
-## Media policy
-
-`Info.plist` declares background audio and VoIP. The app starts a real outgoing CallKit call for a user-requested meeting and waits for CallKit audio activation before starting SDK media. `AudioCoordinator` requests `.playAndRecord` / `.videoChat` with `.mixWithOthers` and restores mixing if the SDK later drops that option while retaining its selected mode/route settings. CallKit handles system hold, mute and end actions; the app keeps local microphone intent off while held and restores it on unhold. The SDK retains signaling and media transport ownership. The background-mode declaration alone is not evidence of persistent media; the observed physical-device results are recorded separately.
+The app requests a genuine outgoing CallKit call for a user-requested jam and starts the selected media engine after the system activates audio. The microphone and camera start off. Routes can be selected through the in-call controls and iOS route picker. Another call holds the jam and restores the user’s media intent on return. iOS may interrupt sound while another telephone call owns audio; the app does not record it or claim to recover unheard speech. Background camera capture is not promised.

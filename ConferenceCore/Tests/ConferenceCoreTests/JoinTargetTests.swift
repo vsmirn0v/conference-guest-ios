@@ -45,18 +45,18 @@ final class JoinTargetTests: XCTestCase {
         configuration.protocolClasses = [DiscoveryStub.self]
         let session = URLSession(configuration: configuration)
         defer { session.invalidateAndCancel() }
-        let resolver = ConferenceEndpointResolver(session: session)
+        let resolver = ConferenceEndpointResolver(serviceName: "service", session: session)
 
-        DiscoveryStub.response = #"{"jazz":{"serverUrl":"https://api.example.test"}}"#.data(using: .utf8)!
+        DiscoveryStub.response = #"{"service":{"serverUrl":"https://api.example.test"},"unrelated":{"other":true}}"#.data(using: .utf8)!
         let endpoint = try await resolver.resolve(for: target)
         XCTAssertEqual(endpoint.absoluteString, "https://api.example.test")
         XCTAssertEqual(DiscoveryStub.requestedURL?.absoluteString,
                        "https://meeting.example.test/.well-known/s2b-services.json")
 
-        DiscoveryStub.response = #"{"jazz":{"serverUrl":"http://api.example.test"}}"#.data(using: .utf8)!
+        DiscoveryStub.response = #"{"service":{"serverUrl":"http://api.example.test"}}"#.data(using: .utf8)!
         await XCTAssertThrowsErrorAsync(try await resolver.resolve(for: target))
 
-        DiscoveryStub.response = #"{"jazz":{"serverUrl":"https://api.example.test"}}"#.data(using: .utf8)!
+        DiscoveryStub.response = #"{"service":{"serverUrl":"https://api.example.test"}}"#.data(using: .utf8)!
         DiscoveryStub.responseURL = URL(string: "https://redirect.example.test/.well-known/s2b-services.json")
         await XCTAssertThrowsErrorAsync(try await resolver.resolve(for: target))
         DiscoveryStub.responseURL = nil

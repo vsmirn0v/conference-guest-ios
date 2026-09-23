@@ -55,7 +55,7 @@ final class AudioCoordinator {
             print("Restored audio mixing: options=\(session.categoryOptions.rawValue)")
             #endif
         } catch {
-            audioWarning = "Cannot mix conference audio with other apps"
+            audioWarning = "Cannot mix jam audio with other apps"
             publishStatus()
         }
     }

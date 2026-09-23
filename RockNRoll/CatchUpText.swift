@@ -7,11 +7,11 @@ enum CatchUpText {
         var lines = [String]()
         if let warning { lines.append(warning) }
         if canView == nil {
-            lines.append("Checking meeting transcript availability.")
+            lines.append("Checking jam transcript availability.")
         } else if canView == false {
-            lines.append("A transcript is not available to this guest in this meeting.")
+            lines.append("A transcript is not available to this guest in this jam.")
         } else if !enabled {
-            lines.append("Meeting transcription is off. The host may be able to enable it.")
+            lines.append("Jam transcription is off. The host may be able to enable it.")
         } else {
             lines.append("Showing transcript lines received by this phone. Coverage is not guaranteed.")
         }

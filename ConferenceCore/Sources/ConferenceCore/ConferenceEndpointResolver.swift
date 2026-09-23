@@ -4,8 +4,10 @@ import Foundation
 /// The origin's TLS identity is the trust anchor for its published service URL.
 public struct ConferenceEndpointResolver {
     private let session: URLSession
+    private let serviceName: String
 
-    public init(session: URLSession = .shared) {
+    public init(serviceName: String, session: URLSession = .shared) {
+        self.serviceName = serviceName
         self.session = session
     }
 
@@ -24,8 +26,10 @@ public struct ConferenceEndpointResolver {
               http.url?.scheme?.lowercased() == "https",
               http.url?.host?.lowercased() == target.originURL.host?.lowercased(),
               data.count <= 65_536,
-              let services = try? JSONDecoder().decode(ServiceDiscovery.self, from: data),
-              let endpoint = URLComponents(string: services.jazz.serverUrl),
+              let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let service = document[serviceName] as? [String: Any],
+              let serverURL = service["serverUrl"] as? String,
+              let endpoint = URLComponents(string: serverURL),
               endpoint.scheme?.lowercased() == "https",
               endpoint.host != nil,
               endpoint.user == nil, endpoint.password == nil,
@@ -37,18 +41,10 @@ public struct ConferenceEndpointResolver {
     }
 }
 
-private struct ServiceDiscovery: Decodable {
-    let jazz: Service
-
-    struct Service: Decodable {
-        let serverUrl: String
-    }
-}
-
 public enum EndpointDiscoveryError: LocalizedError {
     case invalidDiscovery
 
     public var errorDescription: String? {
-        "This meeting link did not provide a valid conference endpoint."
+        "This jam link did not provide a valid connection endpoint."
     }
 }

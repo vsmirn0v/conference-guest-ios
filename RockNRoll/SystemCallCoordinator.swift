@@ -47,7 +47,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         heldForAnotherCall = false
         holdStartedAt = nil
         resumeRequested = false
-        let handle = CXHandle(type: .generic, value: "Meeting")
+        let handle = CXHandle(type: .generic, value: "Jam")
         let action = CXStartCallAction(call: id, handle: handle)
         action.isVideo = true
         controller.request(CXTransaction(action: action)) { [weak self] error in

@@ -7,7 +7,7 @@ import UIKit
 final class ConferenceModel: ObservableObject {
     @Published var displayName = ""
     @Published var invite = ""
-    @Published private(set) var status = "Enter a complete meeting invitation link."
+    @Published private(set) var status = "Enter a jam link to begin."
     @Published private(set) var mediaStatus: String?
     @Published private(set) var isJoining = false
     @Published private(set) var isInConference = false
@@ -15,10 +15,13 @@ final class ConferenceModel: ObservableObject {
     @Published var showSwitchConfirmation = false
 
     private let engine = NativeConferenceEngine()
-    private let resolver = ConferenceEndpointResolver()
+    private var jamEngine: RockRoomEngine?
+    private let resolver = VendorEndpointResolver.make()
+    private let jamService = JamService()
     private weak var container: UIViewController?
-    private var pendingTarget: JoinTarget?
-    private var replacementAfterLeave: JoinTarget?
+    private var pendingTarget: JoinDestination?
+    private var replacementAfterLeave: JoinDestination?
+    private var activeRoute: JoinDestination?
     private var joinTask: Task<Void, Never>?
     private var terminalEventHandled = false
 
@@ -31,12 +34,23 @@ final class ConferenceModel: ObservableObject {
             guard let self else { return }
             self.mediaStatus = self.isJoining || self.isInConference ? message : nil
         }
+    }
 
+    private func configuredJamEngine() -> RockRoomEngine {
+        if let jamEngine { return jamEngine }
+        let selected = RockRoomEngine(catchUp: engine.catchUp)
+        selected.onEvent = { [weak self] event in self?.handle(event: event) }
+        selected.onMediaStatus = { [weak self] message in
+            guard let self else { return }
+            self.mediaStatus = self.isJoining || self.isInConference ? message : nil
+        }
+        jamEngine = selected
+        return selected
     }
 
     func receive(url: URL) {
         do {
-            let target = try JoinTarget.parse(url.absoluteString, joinLinkHost: joinLinkHost)
+            let target = try JoinDestination.parse(url.absoluteString, joinLinkHost: joinLinkHost)
             if isLeaving {
                 replacementAfterLeave = target
             } else if isJoining || isInConference {
@@ -59,25 +73,36 @@ final class ConferenceModel: ObservableObject {
             return
         }
         do {
-            let target = try JoinTarget.parse(invite, joinLinkHost: joinLinkHost)
+            let target = try JoinDestination.parse(invite, joinLinkHost: joinLinkHost)
             guard let container else {
-                status = "Conference view is unavailable."
+                status = "Jam view is unavailable."
                 return
             }
             terminalEventHandled = false
             isJoining = true
-            status = "Finding this meeting's conference service…"
+            activeRoute = target
+            status = "Finding this jam…"
             joinTask = Task {
                 do {
-                    let networkURL = try await resolver.resolve(for: target)
-                    try Task.checkCancellation()
-                    try engine.configure(container: container, networkURL: networkURL,
-                                         displayName: name)
-                    try engine.join(target: target, displayName: name)
+                    switch target {
+                    case .guest(let guest):
+                        let networkURL = try await resolver.resolve(for: guest)
+                        try Task.checkCancellation()
+                        try engine.configure(container: container, networkURL: networkURL,
+                                             displayName: name)
+                        try engine.join(target: guest, displayName: name)
+                    case .jam(let jam):
+                        let credentials = try await jamService.join(jam, name: name)
+                        try Task.checkCancellation()
+                        try configuredJamEngine().join(target: jam, credentials: credentials,
+                                                       container: container)
+                    }
                     status = "Connecting with microphone and camera off…"
                 } catch {
                     guard !Task.isCancelled else { return }
                     isJoining = false
+                    if case .jam = activeRoute { jamEngine = nil }
+                    activeRoute = nil
                     status = error.localizedDescription
                 }
             }
@@ -88,19 +113,32 @@ final class ConferenceModel: ObservableObject {
 
     func leave() {
         guard !isLeaving, isJoining || isInConference else { return }
-        let didStartConference = engine.hasJoinStarted
+        let didStartConference: Bool
+        switch activeRoute {
+        case .guest: didStartConference = engine.hasJoinStarted
+        case .jam: didStartConference = jamEngine?.hasJoinStarted == true
+        case nil: didStartConference = false
+        }
         isLeaving = didStartConference
         joinTask?.cancel()
         joinTask = nil
-        engine.leave()
+        switch activeRoute {
+        case .guest: engine.leave()
+        case .jam: jamEngine?.leave()
+        case nil: break
+        }
         isJoining = false
         isInConference = false
         mediaStatus = nil
-        status = didStartConference ? "Leaving the meeting…" : "Joining canceled."
+        status = didStartConference ? "Leaving the jam…" : "Joining canceled."
     }
 
     func resumeSystemCallIfPossible() {
-        engine.resumeSystemCallIfPossible()
+        switch activeRoute {
+        case .guest: engine.resumeSystemCallIfPossible()
+        case .jam: jamEngine?.resumeSystemCallIfPossible()
+        case nil: break
+        }
     }
 
     func replaceWithPending() {
@@ -121,9 +159,9 @@ final class ConferenceModel: ObservableObject {
         set(target: target)
     }
 
-    private func set(target: JoinTarget) {
+    private func set(target: JoinDestination) {
         invite = target.invitationURL.absoluteString
-        status = "Meeting ready. Join with your microphone and camera off."
+        status = "Jam ready. Join with your microphone and camera off."
     }
 
     private func handle(event: CallEvent) {
@@ -132,11 +170,12 @@ final class ConferenceModel: ObservableObject {
         case .inactive:
             guard !isLeaving else { return }
             terminalEventHandled = true
-            if isJoining { status = "Could not connect to the meeting." }
-            else if isInConference { status = "Disconnected from the meeting." }
+            if isJoining { status = "Could not connect to the jam." }
+            else if isInConference { status = "Disconnected from the jam." }
             isJoining = false
             isInConference = false
             isLeaving = false
+            releaseJamEngineIfSelected()
         case .connecting:
             guard !isLeaving else { return }
             if isJoining { status = "Connecting…" }
@@ -148,15 +187,16 @@ final class ConferenceModel: ObservableObject {
             guard isJoining || isInConference, !isLeaving else { return }
             isJoining = false
             isInConference = true
-            status = "In meeting"
+            status = "In jam"
         case .joining:
             break
         case .failed:
-            guard isJoining, !isLeaving else { return }
+            guard isJoining || isInConference, !isLeaving else { return }
             terminalEventHandled = true
             isJoining = false
             isInConference = false
-            status = "Could not join this meeting."
+            status = "Disconnected from the jam."
+            releaseJamEngineIfSelected()
         case .canceled:
             guard isJoining || isLeaving else { return }
             terminalEventHandled = true
@@ -170,19 +210,24 @@ final class ConferenceModel: ObservableObject {
             isInConference = false
             isLeaving = false
             mediaStatus = nil
-            status = "Left the meeting."
+            status = "Left the jam."
+            releaseJamEngineIfSelected()
             completeReplacement()
         case .evicted:
             terminalEventHandled = true
             isJoining = false
             isInConference = false
-            status = "Removed from the meeting."
+            status = "Removed from the jam."
         }
     }
 
     private var joinLinkHost: String? {
         let value = Bundle.main.object(forInfoDictionaryKey: "JoinLinkHost") as? String
         return value?.isEmpty == false ? value : nil
+    }
+
+    private func releaseJamEngineIfSelected() {
+        if case .jam = activeRoute { jamEngine = nil }
     }
 }
 

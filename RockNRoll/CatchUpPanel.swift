@@ -40,7 +40,7 @@ final class CatchUpPanel: UIView {
         details.backgroundColor = .clear
         details.font = .preferredFont(forTextStyle: .body)
         details.adjustsFontForContentSizeCategory = true
-        details.accessibilityLabel = "Missed meeting transcript"
+        details.accessibilityLabel = "Missed jam transcript"
 
         reviewed.configuration = .tinted()
         reviewed.configuration?.title = "Mark reviewed"

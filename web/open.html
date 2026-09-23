@@ -3,11 +3,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Open a conference</title>
+<title>Open a jam</title>
 <main>
-  <h1>Open a conference</h1>
-  <label for="invite">Meeting invitation</label>
-  <input id="invite" type="url" autocomplete="off" size="50" placeholder="Meeting invitation URL">
+  <h1>Open a jam</h1>
+  <label for="invite">Jam invitation</label>
+  <input id="invite" type="url" autocomplete="off" size="50" placeholder="Jam invitation URL">
   <button id="open" type="button">Open in Rock’n’Roll</button>
   <p id="status" role="status"></p>
 </main>
@@ -20,12 +20,15 @@
     try {
       const invite = new URL(input.value);
       const segments = invite.pathname.split('/').filter(Boolean);
+      const isRockJam = invite.hostname === 'rock.glowsoft.ru' &&
+          segments.length === 2 && segments[0] === 'jams' && segments[1] === 'test' &&
+          !invite.search && !invite.hash;
       const passwords = invite.searchParams.getAll('psw');
+      const isGuestInvitation = segments.length === 2 && segments[0] === 'calls' &&
+          segments[1] && passwords.length === 1 && passwords[0];
       if (invite.protocol !== 'https:' || !invite.hostname ||
-          invite.username || invite.password ||
-          segments.length !== 2 || segments[0] !== 'calls' ||
-          !segments[1] || passwords.length !== 1 || !passwords[0]) {
-        throw new Error('Enter a complete HTTPS meeting invitation.');
+          invite.username || invite.password || !(isRockJam || isGuestInvitation)) {
+        throw new Error('Enter a supported HTTPS jam invitation.');
       }
       const appLink = new URL('conferenceguest://join');
       appLink.searchParams.set('url', invite.href);

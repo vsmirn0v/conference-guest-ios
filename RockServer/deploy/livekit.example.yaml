@@ -1,0 +1,14 @@
+# Replace the placeholders with values from a root-owned secret file before use.
+port: 7880
+log_level: warn
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+  node_ip: PUBLIC_IPV4
+room:
+  max_participants: 12
+  empty_timeout: 120
+  departure_timeout: 15
+keys:
+  ROOM_API_KEY: ROOM_API_SECRET
