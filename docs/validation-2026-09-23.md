@@ -10,7 +10,7 @@ Local source: `vsmirn0v/jazz-ios-client`, generated with XcodeGen 2.46.0. Vendor
 | Token broker | `python3 -m unittest discover -s GuestTokenBroker -p 'test_*.py'`: 4 tests, 0 failures; JOSE signature verification, JWK coordinate validation, rate limit and HTTP request/response behavior. |
 | iOS Simulator build | Xcode 27.0, `xcodebuild -project JazzGuest.xcodeproj -scheme JazzGuest -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet build`: success. |
 | iOS device build | Same project with `-destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO`: success after the event-handler changes. This is an unsigned build, not a physical-device run. |
-| Simulator launch | Installed and launched on iPhone 17 / iOS 26.5. Join form and clear token-configuration status rendered. Process remained running. |
+| Simulator launch | Installed and launched the final compiled app on iPhone 17 / iOS 26.5. The join form and guest-access configuration message rendered; the process remained running. |
 | SDK packaging | First simulator launch failed with a missing `Spench.framework` reported by dyld. The vendor package contains the framework but omits it from its SPM product. The build script now embeds the matching framework; subsequent simulator launch succeeded. |
 | URL registration | Opening a `jazzguest://join?url=...` URL in the simulator displayed iOS's “Open in Jazz Guest?” confirmation. Pure link parsing is covered by tests; a full browser-to-join handoff still needs a configured broker and live meeting. |
 
