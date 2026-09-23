@@ -214,7 +214,7 @@ func (s *server) makeToken(identity, name string, now time.Time) (string, error)
 			"canPublish":        true,
 			"canSubscribe":      true,
 			"canPublishData":    true,
-			"canPublishSources": []string{"microphone", "camera"},
+			"canPublishSources": []string{"microphone", "camera", "screen_share"},
 		},
 	}
 	h, err := json.Marshal(header)

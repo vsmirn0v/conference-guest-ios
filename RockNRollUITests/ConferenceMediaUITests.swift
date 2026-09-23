@@ -195,6 +195,30 @@ final class ConferenceMediaUITests: XCTestCase {
         attachScreenshot(of: app, named: "Guest video restored")
     }
 
+    func testRockScreenShareDisplayModes() throws {
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_ROCK_SHARE"] == "1" else {
+            throw XCTSkip("Publish a synthetic screen share and camera in the public test jam first.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone Share QA"
+        app.launch()
+        defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
+        let display = app.buttons["Display: All video"]
+        XCTAssertTrue(display.waitForExistence(timeout: 45))
+        Thread.sleep(forTimeInterval: 5)
+        attachScreenshot(of: app, named: "Rock all video and share")
+        display.tap()
+        app.buttons["Screen shares"].tap()
+        Thread.sleep(forTimeInterval: 3)
+        XCTAssertTrue(app.buttons["Display: Screen shares"].exists)
+        attachScreenshot(of: app, named: "Rock screen share only")
+        app.buttons["Display: Screen shares"].tap()
+        app.buttons["Audio only"].tap()
+        Thread.sleep(forTimeInterval: 2)
+        attachScreenshot(of: app, named: "Rock audio only")
+    }
+
     private func attachScreenshot(of app: XCUIApplication, named name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name

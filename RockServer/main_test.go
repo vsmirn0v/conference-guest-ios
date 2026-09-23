@@ -50,6 +50,10 @@ func TestGuestJoinIssuesOnlyRoomScopedGrant(t *testing.T) {
 	if claims.Iss != s.config.key || len(claims.Sub) != 32 || claims.Name != "Maya" || claims.Video["room"] != "test" || claims.Video["roomJoin"] != true || claims.Video["canPublishData"] != true || claims.Video["roomAdmin"] != nil || claims.Video["roomCreate"] != nil || claims.Video["roomRecord"] != nil {
 		t.Fatalf("unexpected join claims: %+v", claims)
 	}
+	sources, ok := claims.Video["canPublishSources"].([]any)
+	if !ok || len(sources) != 3 || sources[0] != "microphone" || sources[1] != "camera" || sources[2] != "screen_share" {
+		t.Fatalf("unexpected publish sources: %v", sources)
+	}
 	if claims.Exp < time.Now().Add(14*time.Minute).Unix() || claims.Exp > time.Now().Add(16*time.Minute).Unix() {
 		t.Fatalf("unexpected expiry: %d", claims.Exp)
 	}

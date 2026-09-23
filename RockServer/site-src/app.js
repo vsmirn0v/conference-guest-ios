@@ -10,6 +10,7 @@ const name = document.getElementById('name');
 const chat = document.getElementById('chat');
 const chatMessages = document.getElementById('chat-messages');
 const chatInput = document.getElementById('chat-input');
+const shareButton = document.getElementById('screen-share');
 const chatTopic = 'rock.chat.v1';
 let room;
 
@@ -67,11 +68,13 @@ function updatePeople() {
     const audioOn = [...participant.audioTrackPublications.values()]
       .some((publication) => !publication.isMuted);
     const videoOn = [...participant.videoTrackPublications.values()]
-      .some((publication) => !publication.isMuted);
+      .some((publication) => !publication.isMuted && publication.source === Track.Source.Camera);
+    const screenOn = [...participant.videoTrackPublications.values()]
+      .some((publication) => !publication.isMuted && publication.source === Track.Source.ScreenShare);
     tile.dataset.audio = audioOn ? 'on' : 'off';
-    tile.dataset.video = videoOn ? 'on' : 'off';
+    tile.dataset.video = videoOn || screenOn ? 'on' : 'off';
     const media = document.createElement('small');
-    media.textContent = `${audioOn ? 'Mic on' : 'Mic off'} · ${videoOn ? 'Camera on' : 'Camera off'}`;
+    media.textContent = `${audioOn ? 'Mic on' : 'Mic off'} · ${videoOn ? 'Camera on' : 'Camera off'}${screenOn ? ' · Screen sharing' : ''}`;
     tile.append(media);
     for (const publication of participant.videoTrackPublications.values()) {
       if (publication.track && !publication.isMuted) {
@@ -90,7 +93,9 @@ function updateOwnMediaStatus() {
   if (!room) return;
   const microphone = room.localParticipant.isMicrophoneEnabled ? 'on' : 'off';
   const camera = room.localParticipant.isCameraEnabled ? 'on' : 'off';
-  status.textContent = `You are in the jam. Microphone ${microphone}; camera ${camera}.`;
+  const sharing = room.localParticipant.isScreenShareEnabled;
+  shareButton.textContent = sharing ? 'Stop screen share' : 'Share screen';
+  status.textContent = `You are in the jam. Microphone ${microphone}; camera ${camera}${sharing ? '; sharing screen' : ''}.`;
   updatePeople();
 }
 
@@ -128,6 +133,8 @@ document.getElementById('join-browser').addEventListener('click', async () => {
     room.on(RoomEvent.TrackUnpublished, updatePeople);
     room.on(RoomEvent.TrackMuted, updatePeople);
     room.on(RoomEvent.TrackUnmuted, updatePeople);
+    room.on(RoomEvent.LocalTrackPublished, updateOwnMediaStatus);
+    room.on(RoomEvent.LocalTrackUnpublished, updateOwnMediaStatus);
     room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
       if (topic !== chatTopic || payload.byteLength > 4096) return;
       try {
@@ -141,6 +148,7 @@ document.getElementById('join-browser').addEventListener('click', async () => {
     await room.connect(credentials.server_url, credentials.participant_token);
     await room.startAudio();
     controls.hidden = false;
+    shareButton.hidden = !navigator.mediaDevices?.getDisplayMedia;
     chat.hidden = false;
     updateOwnMediaStatus();
   } catch (error) {
@@ -166,5 +174,12 @@ document.getElementById('camera').addEventListener('click', async (event) => {
     event.target.textContent = enabled ? 'Turn camera off' : 'Turn camera on';
     updateOwnMediaStatus();
   } catch (error) { status.textContent = 'Camera unavailable: ' + error.message; }
+});
+shareButton.addEventListener('click', async () => {
+  if (!room) return;
+  try {
+    await room.localParticipant.setScreenShareEnabled(!room.localParticipant.isScreenShareEnabled);
+    updateOwnMediaStatus();
+  } catch (error) { status.textContent = 'Screen share unavailable: ' + error.message; }
 });
 document.getElementById('leave').addEventListener('click', () => room?.disconnect());

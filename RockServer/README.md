@@ -1,6 +1,6 @@
 # Rock room service
 
-This directory contains the Rock’n’Roll public test jam: a small standard-library Go website and token endpoint, a browser participant client, and configuration for a single LiveKit room server. It is used only for `https://rock.glowsoft.ru/jams/test`. The iPhone app uses the native LiveKit SDK for this link.
+This directory contains the Rock’n’Roll public test jam: a small standard-library Go website and token endpoint, a browser participant client, and configuration for a single LiveKit room server. It is used only for `https://rock.glowsoft.ru/jams/test`. The iPhone app uses the native LiveKit SDK for this link. Supported desktop browsers can explicitly publish a screen share; the app can display only that share while keeping jam audio live.
 
 The test room is public, capped at 12 participants, and intentionally has no organizer login, room creation, recording, transcription, or durable member database. The API issues random participant identities and 15-minute room-scoped join tokens. There is a 30-join-per-minute global limit. Do not use this guessable demo link for private sessions.
 
