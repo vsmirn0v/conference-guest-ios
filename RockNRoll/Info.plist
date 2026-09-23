@@ -30,13 +30,15 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>3</string>
 	<key>JoinLinkHost</key>
 	<string>$(JOIN_LINK_HOST)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Share video when you choose to turn on your camera in a jam.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Use Bluetooth headphones and other audio devices for jam audio, including when the jam continues in the background.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Let others hear you when you turn on your microphone in a jam.</string>
 	<key>UIApplicationSceneManifest</key>
