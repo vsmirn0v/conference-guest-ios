@@ -20,6 +20,15 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         self.conference = model
         model.configure(container: controller)
 
+        #if DEBUG && targetEnvironment(simulator)
+        if let testURL = ProcessInfo.processInfo.environment["JAZZ_GUEST_TEST_URL"],
+           let url = URL(string: testURL) {
+            model.receive(url: url)
+            model.join()
+            return
+        }
+        #endif
+
         if let url = connectionOptions.urlContexts.first?.url {
             model.receive(url: url)
         } else if let url = connectionOptions.userActivities.first?.webpageURL {

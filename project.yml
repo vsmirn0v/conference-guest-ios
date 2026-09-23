@@ -34,3 +34,17 @@ targets:
       - name: Copy Jazz SDK resources
         script: bash "$PROJECT_DIR/scripts/copy-sdk-resources.sh"
         basedOnDependencyAnalysis: false
+  JazzGuestUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: JazzGuestUITests
+    dependencies:
+      - target: JazzGuest
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.jazzguest.uitests
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: JazzGuestUITests/Info.plist
+        JAZZ_TEST_INVITE: ""

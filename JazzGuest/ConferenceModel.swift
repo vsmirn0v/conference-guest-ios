@@ -16,6 +16,7 @@ final class ConferenceModel: ObservableObject {
     @Published private(set) var isJoining = false
     @Published private(set) var isInConference = false
     @Published private(set) var isLeaving = false
+    @Published private(set) var webMeeting: WebMeeting?
     @Published var showSwitchConfirmation = false
 
     private let identity = GuestIdentity()
@@ -25,6 +26,7 @@ final class ConferenceModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var initialized = false
     private var pendingTarget: JoinTarget?
+    @Published private(set) var usesNativeSDK = false
 
     func configure(container: UIViewController) {
         let configuredURL = Bundle.main.object(forInfoDictionaryKey: "GuestTokenURL") as? String ?? ""
@@ -36,7 +38,7 @@ final class ConferenceModel: ObservableObject {
         guard let endpoint,
               endpoint.scheme == "https" ||
               (endpoint.scheme == "http" && ["127.0.0.1", "localhost"].contains(endpoint.host ?? "")) else {
-            status = "Guest access is not configured yet. Contact the app administrator."
+            status = "Open an existing meeting through Jazz's guest page."
             return
         }
         do {
@@ -56,6 +58,7 @@ final class ConferenceModel: ObservableObject {
                 shouldRateConference: false
             )
             initialized = true
+            usesNativeSDK = true
             JazzSession.shared.$jazzConferencePhase
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] phase in self?.update(phase: phase) }
@@ -68,7 +71,7 @@ final class ConferenceModel: ObservableObject {
     func receive(url: URL) {
         do {
             let target = try JoinTarget.parse(url.absoluteString, joinLinkHost: joinLinkHost)
-            if isJoining || isInConference {
+            if isJoining || isInConference || webMeeting != nil {
                 pendingTarget = target
                 showSwitchConfirmation = true
             } else {
@@ -80,17 +83,7 @@ final class ConferenceModel: ObservableObject {
     }
 
     func join() {
-        guard initialized else {
-            status = "Guest token service is not configured."
-            return
-        }
-        guard !isJoining && !isInConference && !isLeaving else { return }
-        let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name.count <= 80 else {
-            status = "Enter a display name (up to 80 characters)."
-            return
-        }
-        identity.setName(name)
+        guard !isJoining && !isInConference && !isLeaving && webMeeting == nil else { return }
         do {
             let target: JoinTarget
             if !invite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -98,6 +91,18 @@ final class ConferenceModel: ObservableObject {
             } else {
                 target = .room(try MeetingRoom(code: meetingCode, password: meetingPassword))
             }
+            if !usesNativeSDK {
+                webMeeting = WebMeeting(url: try target.webGuestURL())
+                status = "Jazz guest page opened. Join there with microphone and camera off."
+                return
+            }
+            guard initialized else { return }
+            let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name.count <= 80 else {
+                status = "Enter a display name (up to 80 characters)."
+                return
+            }
+            identity.setName(name)
             let room = try resolve(target)
             try audio.prepareForJoin()
             isJoining = true
@@ -116,6 +121,12 @@ final class ConferenceModel: ObservableObject {
     }
 
     func leave() {
+        if webMeeting != nil {
+            webMeeting = nil
+            mediaStatus = nil
+            status = "Closed the Jazz guest page."
+            return
+        }
         guard initialized, !isLeaving, isJoining || isInConference else { return }
         isLeaving = true
         JazzSession.shared.terminateActiveConference()

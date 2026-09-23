@@ -20,6 +20,26 @@ public enum JoinTarget: Equatable, Sendable {
     case room(MeetingRoom)
     case jazzInvite(URL)
 
+    public func webGuestURL() throws -> URL {
+        switch self {
+        case .jazzInvite(let url):
+            return url
+        case .room(let room):
+            guard room.code.unicodeScalars.allSatisfy({
+                CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-").contains($0)
+            }) else {
+                throw JoinTargetError.invalidRoom
+            }
+            var components = URLComponents()
+            components.scheme = "https"
+            components.host = "salutejazz.ru"
+            components.path = "/calls/\(room.code)"
+            components.queryItems = [URLQueryItem(name: "psw", value: room.password)]
+            guard let url = components.url else { throw JoinTargetError.invalidRoom }
+            return url
+        }
+    }
+
     public static func parse(_ text: String, joinLinkHost: String? = nil) throws -> JoinTarget {
         let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !candidate.isEmpty, candidate.utf8.count <= 4096,

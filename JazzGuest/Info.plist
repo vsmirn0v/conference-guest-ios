@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleDisplayName</key>
-	<string>Jazz Guest</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Jazz Guest</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -18,19 +18,34 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.vsmirn0v.jazzguest</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>jazzguest</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>GuestTokenURL</key>
+	<string>$(GUEST_TOKEN_URL)</string>
+	<key>JoinLinkHost</key>
+	<string>$(JOIN_LINK_HOST)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>UILaunchScreen</key>
-	<dict/>
-	<key>UISupportedInterfaceOrientations</key>
-	<array>
-		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Allow camera access when you choose to share video in a meeting.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Allow microphone access when you choose to speak in a meeting.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -52,29 +67,14 @@
 	<array>
 		<string>audio</string>
 	</array>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Allow microphone access when you choose to speak in a meeting.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Allow camera access when you choose to share video in a meeting.</string>
-	<key>GuestTokenURL</key>
-	<string>$(GUEST_TOKEN_URL)</string>
-	<key>JoinLinkHost</key>
-	<string>$(JOIN_LINK_HOST)</string>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
-	<key>CFBundleURLTypes</key>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
 	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>dev.vsmirn0v.jazzguest</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>jazzguest</string>
-			</array>
-		</dict>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 </dict>
 </plist>

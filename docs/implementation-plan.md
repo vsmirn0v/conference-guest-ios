@@ -2,7 +2,9 @@
 
 Prepared 23 September 2026. This is an implementation proposal supported by a live web inspection, the public iOS SDK interface, and Apple/Zoom documentation. It is not a claim that an iOS prototype has already passed these tests.
 
-Build a Swift app around the official Jazz iOS SDK, initially retaining its video rendering and replacing only the surrounding UI and controls. Use a small backend to obtain SDK tokens without exposing an SDK secret or requiring the user to log in. Prove current-meeting interoperability and audio-session control before committing to the full implementation.
+Build a Swift app that can open Jazz's first-party anonymous guest page for existing meetings without an SDK key. In parallel, retain an optional native SDK path for the media behavior that a WebKit wrapper may not satisfy. Prove current-meeting interoperability and audio-session control on a physical device before committing to the final architecture.
+
+**Anonymous website correction (23 September 2026).** The public `salutejazz.ru/calls/create` and guest meeting pages allow account-free creation and joining. This establishes an anonymous first-party web flow; it does not establish a no-key authorization mode in the public iOS SDK. The prototype now opens a validated Jazz invitation in `WKWebView` when no token broker is configured. Jazz's page supplies the name and prejoin media controls. The app does not embed an SDK key. This is a keyless functional path to test, but it does not yet prove background calling, other-app audio coexistence, or route/camera transitions. A physical iPhone test must compare those behaviors against the SDK mode. If WebKit fails a required behavior, request a vendor-supported anonymous native authorization flow or use a secured server-side SDK credential path.
 
 The minimum product should keep conference audio and membership alive while backgrounded, start every new join with the microphone and camera off, and recover from system media interruptions. Picture in Picture (PiP) is the preferred enhancement for visible background video. Continuous camera capture while hidden or locked and uninterrupted audio alongside every other app cannot be unconditional requirements on iOS.
 
@@ -276,7 +278,7 @@ Estimate assumes one experienced iOS engineer, part-time backend support and acc
 
 Total: approximately **22–33 iOS engineering days**, plus **2–4 backend days** that can overlap, normally **5–7 calendar weeks** with prompt vendor access. These are planning estimates. A narrow demonstration can be ready after the spike; reliable audio/system behavior accounts for much of the remaining effort.
 
-If Jazz supplies a newer working SDK with the needed audio hooks, retain this schedule. If the SDK cannot join externally created guest conferences, or it forcibly overrides mixing without a supported extension point, stop after the spike and resolve that dependency. Building a new Jazz-compatible media/signaling stack would be a separate project with a different estimate. A WKWebView wrapper is not the acceptance path for the requested background and system-media reliability.
+If Jazz supplies a newer working SDK with the needed audio hooks, retain this schedule. If the SDK cannot join externally created guest conferences, or it forcibly overrides mixing without a supported extension point, stop after the spike and resolve that dependency. Building a new Jazz-compatible media/signaling stack would be a separate project with a different estimate. The `WKWebView` path is an early keyless implementation; treat it as an acceptance path for background and system-media behavior only after those tests pass on iPhone.
 
 **11. Decisions to record before implementation**
 

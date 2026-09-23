@@ -7,12 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		17D1E6B5FD840085C6A7465B /* GuestWebsiteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5716B383C394C837D4B4DE16 /* GuestWebsiteTests.swift */; };
 		280C615CD2F800FC4052E600 /* JazzEventsRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2497588DE6AF28E30E850E01 /* JazzEventsRelay.swift */; };
 		37407353DB423EF5F4AFD6C9 /* ConferenceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF77BC0463FD6958D542B18A /* ConferenceModel.swift */; };
 		4B45656ACAB3D210333246FA /* GuestTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE3B3C8998DC35FA1499870E /* GuestTokenProvider.swift */; };
 		656E90529B0FD63A4607833C /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA6F7F97DEAC3C9B60595673 /* AppDelegate.swift */; };
 		66E959F2AC5D11DA353C6987 /* GuestIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AC8709F69C41BD8C951C554 /* GuestIdentity.swift */; };
 		6BB480D3FC25F9116F23B24A /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2ACB6A7DC6A0D7B0B2109D3 /* SceneDelegate.swift */; };
+		8DB18770A5815CBD9CC980B3 /* WebMeetingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28979A1FA86E9CCCAB987AC1 /* WebMeetingView.swift */; };
 		8E66FC77BBFBFA8F94DCDE0E /* AudioCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A74D76E78A5020BB0F6B26B /* AudioCoordinator.swift */; };
 		C7DDF39199AE4BB6678A7B3B /* JoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAC0B0A62F7F2CF518CEABD5 /* JoinView.swift */; };
 		D49A6BB9F159071E26C9E69A /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = F5D556392EAD78B69CA5E818 /* JazzSDK */; };
@@ -20,15 +22,29 @@
 		FF5BD0A6A0D83C6B9F9BD434 /* MinimalCallControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AFDB3C9056214DBCA04243D /* MinimalCallControls.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		2669CFE4310BEBEF1B1BD118 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 9522CA84E95DAC8EFC74B43B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2525F165D0AA20454A1DE0C5;
+			remoteInfo = JazzGuest;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
-		0BEBE33A3597EDCE9E6E681D /* JazzGuest.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = JazzGuest.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0BEBE33A3597EDCE9E6E681D /* JazzGuest.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = JazzGuest.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2497588DE6AF28E30E850E01 /* JazzEventsRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JazzEventsRelay.swift; sourceTree = "<group>"; };
+		28979A1FA86E9CCCAB987AC1 /* WebMeetingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebMeetingView.swift; sourceTree = "<group>"; };
+		2A2A59F1D828549B5D272383 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		2A74D76E78A5020BB0F6B26B /* AudioCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCoordinator.swift; sourceTree = "<group>"; };
 		2AFDB3C9056214DBCA04243D /* MinimalCallControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinimalCallControls.swift; sourceTree = "<group>"; };
-		48F27BCAF2E826B8B1EB33B5 /* JazzGuestCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = JazzGuestCore; path = JazzGuestCore; sourceTree = SOURCE_ROOT; };
+		48F27BCAF2E826B8B1EB33B5 /* JazzGuestCore */ = {isa = PBXFileReference; lastKnownFileType = folder; path = JazzGuestCore; sourceTree = SOURCE_ROOT; };
 		4AC8709F69C41BD8C951C554 /* GuestIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestIdentity.swift; sourceTree = "<group>"; };
+		5716B383C394C837D4B4DE16 /* GuestWebsiteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestWebsiteTests.swift; sourceTree = "<group>"; };
 		979F0EB6BBBD7D64B551A8AB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		BA6F7F97DEAC3C9B60595673 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		C8E78FF8D0F255795C7CF80B /* JazzGuestUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = JazzGuestUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		DAC0B0A62F7F2CF518CEABD5 /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
 		EF77BC0463FD6958D542B18A /* ConferenceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceModel.swift; sourceTree = "<group>"; };
 		F2ACB6A7DC6A0D7B0B2109D3 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
@@ -60,15 +76,26 @@
 			isa = PBXGroup;
 			children = (
 				6F156D12E75BF82DC589F5F3 /* JazzGuest */,
+				33B432000C15A61E453B4B02 /* JazzGuestUITests */,
 				0240962BB2CE9D3E4E779FB6 /* Packages */,
 				529F4DD6EA9F5A85F3664ABF /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		33B432000C15A61E453B4B02 /* JazzGuestUITests */ = {
+			isa = PBXGroup;
+			children = (
+				5716B383C394C837D4B4DE16 /* GuestWebsiteTests.swift */,
+				2A2A59F1D828549B5D272383 /* Info.plist */,
+			);
+			path = JazzGuestUITests;
 			sourceTree = "<group>";
 		};
 		529F4DD6EA9F5A85F3664ABF /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				0BEBE33A3597EDCE9E6E681D /* JazzGuest.app */,
+				C8E78FF8D0F255795C7CF80B /* JazzGuestUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -86,6 +113,7 @@
 				DAC0B0A62F7F2CF518CEABD5 /* JoinView.swift */,
 				2AFDB3C9056214DBCA04243D /* MinimalCallControls.swift */,
 				F2ACB6A7DC6A0D7B0B2109D3 /* SceneDelegate.swift */,
+				28979A1FA86E9CCCAB987AC1 /* WebMeetingView.swift */,
 			);
 			path = JazzGuest;
 			sourceTree = "<group>";
@@ -114,6 +142,24 @@
 			productReference = 0BEBE33A3597EDCE9E6E681D /* JazzGuest.app */;
 			productType = "com.apple.product-type.application";
 		};
+		6B6221B5F765B2FFB441A26B /* JazzGuestUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 38B4988E5401D1DF7849EAAC /* Build configuration list for PBXNativeTarget "JazzGuestUITests" */;
+			buildPhases = (
+				52EB9BE1AFA6CD45DE3D1816 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4E750C4FE981C629174C2D81 /* PBXTargetDependency */,
+			);
+			name = JazzGuestUITests;
+			packageProductDependencies = (
+			);
+			productName = JazzGuestUITests;
+			productReference = C8E78FF8D0F255795C7CF80B /* JazzGuestUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -125,6 +171,9 @@
 				TargetAttributes = {
 					2525F165D0AA20454A1DE0C5 = {
 						ProvisioningStyle = Automatic;
+					};
+					6B6221B5F765B2FFB441A26B = {
+						TestTargetID = 2525F165D0AA20454A1DE0C5;
 					};
 				};
 			};
@@ -147,6 +196,7 @@
 			projectRoot = "";
 			targets = (
 				2525F165D0AA20454A1DE0C5 /* JazzGuest */,
+				6B6221B5F765B2FFB441A26B /* JazzGuestUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -174,6 +224,14 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		52EB9BE1AFA6CD45DE3D1816 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				17D1E6B5FD840085C6A7465B /* GuestWebsiteTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		6FCF489E22228851E3CBE50F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -187,18 +245,49 @@
 				C7DDF39199AE4BB6678A7B3B /* JoinView.swift in Sources */,
 				FF5BD0A6A0D83C6B9F9BD434 /* MinimalCallControls.swift in Sources */,
 				6BB480D3FC25F9116F23B24A /* SceneDelegate.swift in Sources */,
+				8DB18770A5815CBD9CC980B3 /* WebMeetingView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		4E750C4FE981C629174C2D81 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2525F165D0AA20454A1DE0C5 /* JazzGuest */;
+			targetProxy = 2669CFE4310BEBEF1B1BD118 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		1C5AE9E1E2ED046592C13EFA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEVELOPMENT_TEAM = 5V64BP2H3P;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = JazzGuestUITests/Info.plist;
+				JAZZ_TEST_INVITE = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.jazzguest.uitests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = JazzGuest;
+			};
+			name = Debug;
+		};
 		5E5C7B22D1FFB2FCFD850602 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 5V64BP2H3P;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				GUEST_TOKEN_URL = "";
@@ -340,6 +429,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 5V64BP2H3P;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				GUEST_TOKEN_URL = "";
@@ -356,6 +446,27 @@
 			};
 			name = Debug;
 		};
+		CFAD8C212B927AF2FD4AE621 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				DEVELOPMENT_TEAM = 5V64BP2H3P;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = JazzGuestUITests/Info.plist;
+				JAZZ_TEST_INVITE = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.jazzguest.uitests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = JazzGuest;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -364,6 +475,15 @@
 			buildConfigurations = (
 				96F6A4F91068453D81C3F205 /* Debug */,
 				8F255C936E088851A6EDE14F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		38B4988E5401D1DF7849EAAC /* Build configuration list for PBXNativeTarget "JazzGuestUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1C5AE9E1E2ED046592C13EFA /* Debug */,
+				CFAD8C212B927AF2FD4AE621 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

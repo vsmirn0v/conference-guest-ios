@@ -38,4 +38,13 @@ final class JoinTargetTests: XCTestCase {
             XCTAssertThrowsError(try JoinTarget.parse(text), text)
         }
     }
+
+    func testWebGuestURLUsesAnonymousMeetingLinkShape() throws {
+        let room = try MeetingRoom(code: "svcavt", password: "a+b&c")
+        let url = try JoinTarget.room(room).webGuestURL()
+        XCTAssertEqual(url.host, "salutejazz.ru")
+        XCTAssertEqual(url.path, "/calls/svcavt")
+        XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.value, "a+b&c")
+        XCTAssertThrowsError(try JoinTarget.room(MeetingRoom(code: "other/path", password: "pw")).webGuestURL())
+    }
 }
