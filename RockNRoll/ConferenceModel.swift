@@ -22,6 +22,8 @@ final class ConferenceModel: ObservableObject {
     private var joinTask: Task<Void, Never>?
     private var terminalEventHandled = false
 
+    var catchUpStore: CatchUpStore { engine.catchUp }
+
     func configure(container: UIViewController) {
         self.container = container
         engine.onEvent = { [weak self] event in self?.handle(event: event) }
@@ -136,8 +138,9 @@ final class ConferenceModel: ObservableObject {
             isInConference = false
             isLeaving = false
         case .connecting:
-            guard isJoining, !isLeaving else { return }
-            status = "Connecting…"
+            guard !isLeaving else { return }
+            if isJoining { status = "Connecting…" }
+            else if isInConference { status = "Reconnecting…" }
         case .lobby:
             guard isJoining, !isLeaving else { return }
             status = "Waiting for the host to admit you…"

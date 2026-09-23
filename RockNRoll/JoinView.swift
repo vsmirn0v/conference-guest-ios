@@ -2,6 +2,8 @@ import SwiftUI
 
 struct JoinView: View {
     @ObservedObject var model: ConferenceModel
+    @ObservedObject var catchUp: CatchUpStore
+    @State private var showingSavedHistory = false
 
     var body: some View {
         NavigationStack {
@@ -20,6 +22,14 @@ struct JoinView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
+                if !catchUp.timeline.intervals.isEmpty && !model.isInConference {
+                    Section("Missed meeting") {
+                        Button("Review missed section") { showingSavedHistory = true }
+                        if let host = catchUp.roomHost {
+                            Text(host).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 Section {
                     Button("Join with mic and camera off") { model.join() }
                         .disabled(model.invite.isEmpty || model.isJoining || model.isInConference || model.isLeaving)
@@ -37,12 +47,53 @@ struct JoinView: View {
                 }
             }
             .navigationTitle("Rock’n’Roll")
+            .sheet(isPresented: $showingSavedHistory) {
+                SavedCatchUpView(store: catchUp)
+            }
             .confirmationDialog(
                 "Leave the current meeting and open the new invitation?",
                 isPresented: $model.showSwitchConfirmation
             ) {
                 Button("Leave current meeting") { model.replaceWithPending() }
                 Button("Stay here", role: .cancel) { model.dismissPending() }
+            }
+        }
+    }
+}
+
+private struct SavedCatchUpView: View {
+    @ObservedObject var store: CatchUpStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(CatchUpText.make(timeline: store.timeline,
+                                      canView: store.canViewTranscript,
+                                      enabled: store.transcriptionEnabled,
+                                      warning: store.persistenceWarning)
+                     + "\n\nRejoin the meeting to check for additional transcript lines.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding()
+            }
+            .navigationTitle("Catch up")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    Button("Mark reviewed") { store.markReviewed() }
+                    Spacer()
+                    Button("Delete local history", role: .destructive) {
+                        store.finishMeeting()
+                        dismiss()
+                    }
+                }
+                .padding()
+                .background(.regularMaterial)
             }
         }
     }

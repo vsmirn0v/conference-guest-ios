@@ -5,7 +5,8 @@ import Foundation
 /// Reports only a real, user-requested conference to the system call UI.
 final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverDelegate {
     var onActivated: (() -> Void)?
-    var onEnded: (() -> Void)?
+    /// True when the user or app deliberately ended the system call.
+    var onEnded: ((Bool) -> Void)?
     var onMuteChanged: ((Bool) -> Void)?
     var onHoldChanged: ((Bool) -> Void)?
     var onFailure: ((Error) -> Void)?
@@ -95,7 +96,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
                 print("System call: end failed: \(error.localizedDescription)")
                 #endif
                 self?.markEnded(reason: .failed)
-                self?.onEnded?()
+                self?.onEnded?(true)
             }
         }
     }
@@ -121,7 +122,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         heldForAnotherCall = false
         holdStartedAt = nil
         resumeRequested = false
-        onEnded?()
+        onEnded?(false)
     }
 
     func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
@@ -155,7 +156,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         callID = nil
         isConnected = false
         action.fulfill()
-        onEnded?()
+        onEnded?(true)
     }
 
     func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
@@ -227,6 +228,15 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             }
         }
     }
+
+    #if DEBUG
+    func requestHoldForTesting(_ held: Bool) {
+        guard let callID else { return }
+        controller.request(CXTransaction(action: CXSetHeldCallAction(call: callID, onHold: held))) { error in
+            if let error { print("Test hold request failed: \(error.localizedDescription)") }
+        }
+    }
+    #endif
 
     private var hasAnotherActiveCall: Bool {
         guard let callID else { return false }

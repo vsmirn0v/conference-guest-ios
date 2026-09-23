@@ -10,8 +10,10 @@
 		08245B21B07D8A02CAB118A4 /* CallControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0DDC3D21920474CDC247639 /* CallControls.swift */; };
 		1D215FCF2BF4D33961AB1F25 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40ADF9352DB719D2F965B798 /* AppDelegate.swift */; };
 		1D9636718D82A88CBF3B1B20 /* ConferenceMediaUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54AEAC9A8CBF663384D79667 /* ConferenceMediaUITests.swift */; };
+		26D4C5E70210A53A96BBE08A /* CatchUpPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77B11264DAA054F2ACC14007 /* CatchUpPanel.swift */; };
 		2E7ACBEBBF9B770C63EBAFB5 /* AnonymousTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DB9260C3E8754FB5368FF99 /* AnonymousTokenProvider.swift */; };
 		39A122CD5DC9D10C3DCC29DA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BD6CCF5106C0A518803CCA07 /* Assets.xcassets */; };
+		3B8C312FD7D35EF6922D7539 /* CatchUpText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BF0C685736838C7E66914CF /* CatchUpText.swift */; };
 		4348F04B521CB67613009F69 /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3F91314298394121DA8F1D /* JazzSDK */; };
 		4510D964728C36F5FE264FAE /* GuestIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC54A79FFF8952C055E7A7F7 /* GuestIdentity.swift */; };
 		459BD79F3E24CA87ADA9F089 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF64302A8DFA2B622264D317 /* SceneDelegate.swift */; };
@@ -22,6 +24,7 @@
 		915DAB4B920E1EB0274822DE /* EventRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5DD3C92B147421C014181FA /* EventRelay.swift */; };
 		964484C8436C0EA4F90E16BD /* AudioCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C049BADA8D8CC43635B8F59 /* AudioCoordinator.swift */; };
 		96E45477868AE00B30673F3A /* ConferenceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 023105828817798EB4DA9C73 /* ConferenceCore */; };
+		DCB9C347482577A35E60FBF7 /* CatchUpStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88EF3E7A0EEE19E9A9B3E857 /* CatchUpStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,6 +38,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		1BF0C685736838C7E66914CF /* CatchUpText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpText.swift; sourceTree = "<group>"; };
 		40ADF9352DB719D2F965B798 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		4C049BADA8D8CC43635B8F59 /* AudioCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCoordinator.swift; sourceTree = "<group>"; };
 		54AB06E7B00CA5AC1FCCC395 /* RockNRollUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RockNRollUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -43,6 +47,8 @@
 		5DB9260C3E8754FB5368FF99 /* AnonymousTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnonymousTokenProvider.swift; sourceTree = "<group>"; };
 		65570B6D840AF2D71932D313 /* ConferenceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceModel.swift; sourceTree = "<group>"; };
 		6D74813F24B6D41F4DE4FD6C /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
+		77B11264DAA054F2ACC14007 /* CatchUpPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpPanel.swift; sourceTree = "<group>"; };
+		88EF3E7A0EEE19E9A9B3E857 /* CatchUpStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpStore.swift; sourceTree = "<group>"; };
 		A5F280C9F27221EB0AEAE300 /* SystemCallCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemCallCoordinator.swift; sourceTree = "<group>"; };
 		BD6CCF5106C0A518803CCA07 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C31A479481AE9C597DD3B4A1 /* NativeConferenceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeConferenceEngine.swift; sourceTree = "<group>"; };
@@ -92,6 +98,9 @@
 				40ADF9352DB719D2F965B798 /* AppDelegate.swift */,
 				BD6CCF5106C0A518803CCA07 /* Assets.xcassets */,
 				4C049BADA8D8CC43635B8F59 /* AudioCoordinator.swift */,
+				77B11264DAA054F2ACC14007 /* CatchUpPanel.swift */,
+				88EF3E7A0EEE19E9A9B3E857 /* CatchUpStore.swift */,
+				1BF0C685736838C7E66914CF /* CatchUpText.swift */,
 				65570B6D840AF2D71932D313 /* ConferenceModel.swift */,
 				5CFE89ACD94BAAE54053186F /* Info.plist */,
 				6D74813F24B6D41F4DE4FD6C /* JoinView.swift */,
@@ -256,6 +265,9 @@
 				1D215FCF2BF4D33961AB1F25 /* AppDelegate.swift in Sources */,
 				964484C8436C0EA4F90E16BD /* AudioCoordinator.swift in Sources */,
 				08245B21B07D8A02CAB118A4 /* CallControls.swift in Sources */,
+				26D4C5E70210A53A96BBE08A /* CatchUpPanel.swift in Sources */,
+				DCB9C347482577A35E60FBF7 /* CatchUpStore.swift in Sources */,
+				3B8C312FD7D35EF6922D7539 /* CatchUpText.swift in Sources */,
 				7715492FDE15C262A39D2B74 /* ConferenceModel.swift in Sources */,
 				915DAB4B920E1EB0274822DE /* EventRelay.swift in Sources */,
 				4510D964728C36F5FE264FAE /* GuestIdentity.swift in Sources */,

@@ -1,6 +1,95 @@
 import XCTest
 
 final class ConferenceMediaUITests: XCTestCase {
+    func testCatchUpHistorySurvivesAppRestart() throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_INVITE"],
+              !invitation.isEmpty else {
+            throw XCTSkip("Set TEST_RUNNER_ROCKNROLL_TEST_INVITE to a live guest invitation.")
+        }
+
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Rock’n’Roll Restart QA"
+        app.launchEnvironment["CONFERENCE_TEST_HOLD_SECONDS"] = "4"
+        app.launch()
+        defer {
+            let leave = app.buttons["Leave"]
+            if leave.exists { leave.tap() }
+        }
+
+        XCTAssertTrue(app.buttons["Catch up, 1 missed section"].waitForExistence(timeout: 60))
+        app.terminate()
+        app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_HOLD_SECONDS")
+        app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_INVITE")
+        app.launch()
+
+        let review = app.buttons["Review missed section"]
+        XCTAssertTrue(review.waitForExistence(timeout: 30))
+        review.tap()
+        let missing = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "Possibly missed:")
+        ).firstMatch
+        XCTAssertTrue(missing.waitForExistence(timeout: 10))
+        app.buttons["Delete local history"].tap()
+        XCTAssertFalse(review.exists)
+    }
+
+    func testCatchUpMarksCallKitHold() throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_INVITE"],
+              !invitation.isEmpty else {
+            throw XCTSkip("Set TEST_RUNNER_ROCKNROLL_TEST_INVITE to a live guest invitation.")
+        }
+
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Rock’n’Roll Hold QA"
+        app.launchEnvironment["CONFERENCE_TEST_HOLD_SECONDS"] = "4"
+        app.launch()
+        defer {
+            let leave = app.buttons["Leave"]
+            if leave.exists { leave.tap() }
+        }
+
+        XCTAssertTrue(app.buttons["Catch up"].waitForExistence(timeout: 60))
+        let missed = app.buttons["Catch up, 1 missed section"]
+        XCTAssertTrue(missed.waitForExistence(timeout: 20))
+        Thread.sleep(forTimeInterval: 5)
+        missed.tap()
+        let transcript = app.textViews["Missed meeting transcript"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 10))
+        let content = try XCTUnwrap(transcript.value as? String)
+        XCTAssertTrue(content.contains("Possibly missed:"))
+        XCTAssertTrue(content.contains("No timestamped transcript recovered"))
+        app.buttons["Close catch up"].tap()
+    }
+
+    func testCatchUpPanelOpensDuringMeeting() throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_INVITE"],
+              !invitation.isEmpty else {
+            throw XCTSkip("Set TEST_RUNNER_ROCKNROLL_TEST_INVITE to a live guest invitation.")
+        }
+
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Rock’n’Roll Catch Up QA"
+        app.launch()
+        defer {
+            let leave = app.buttons["Leave"]
+            if leave.exists { leave.tap() }
+        }
+
+        let catchUp = app.buttons["Catch up"]
+        XCTAssertTrue(catchUp.waitForExistence(timeout: 60))
+        catchUp.tap()
+        let close = app.buttons["Close catch up"]
+        XCTAssertTrue(close.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textViews["Missed meeting transcript"].exists)
+        let image = XCTAttachment(screenshot: app.screenshot())
+        image.lifetime = .keepAlways
+        add(image)
+        close.tap()
+    }
+
     func testWarmLinkReplacesMeetingAfterLeave() throws {
         guard let first = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_FIRST_INVITE"],
               let second = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SECOND_INVITE"],

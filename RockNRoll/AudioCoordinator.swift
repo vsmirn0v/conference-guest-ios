@@ -5,6 +5,7 @@ import UIKit
 /// Observes iOS media changes without competing with the provider for transport ownership.
 final class AudioCoordinator {
     var onStatus: ((String?) -> Void)?
+    var onInterruptionChanged: ((Bool) -> Void)?
     private var observers: [NSObjectProtocol] = []
     private var audioWarning: String?
     private var cameraWarning: String?
@@ -78,11 +79,13 @@ final class AudioCoordinator {
             let type = raw.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
             if type == .began {
                 audioWarning = "Audio interrupted by iOS"
+                onInterruptionChanged?(true)
             } else if type == .ended {
                 let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
                 let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
                 audioWarning = options.contains(.shouldResume)
                     ? nil : "Audio is paused by iOS; check the call audio"
+                onInterruptionChanged?(false)
             }
         case AVAudioSession.mediaServicesWereLostNotification:
             audioWarning = "Audio service unavailable"

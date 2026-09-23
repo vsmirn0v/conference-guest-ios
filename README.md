@@ -10,6 +10,8 @@ Paste a complete `https://…/calls/<room>?psw=<value>` invitation, enter a disp
 
 The active call uses SDK participant video/audio transport with native microphone, camera, camera-switch, route and Leave controls. On a second browser endpoint, the phone appeared as a participant with both streams off. Microphone activation observed later in testing was a manual action on the phone, as the user clarified.
 
+The in-call **Catch up** panel now marks suspected missed time during a held call, audio interruption, or connection loss and displays any provider transcription the guest actually receives. It labels missing or uncertain coverage explicitly. The current-room index survives an app restart in protected local storage and is deleted on Leave; it depends on the host making transcription available. The user chose not to run a separate capture companion. The anonymous test room did not expose a transcript to this guest, so this build cannot recover its missing speech or offer audio replay. See [the feature boundary and acceptance checks](docs/catch-up.md).
+
 An outgoing CallKit call represents the actual conference and gives its audio session a system-managed lifecycle. With both local streams off and no inbound publisher, the phone stayed in the remote participant list through a 30-minute physical lock; the user heard a browser-published test tone while it was still locked. An answered cellular call held and resumed the conference without losing remote membership. The user reported conference audio continuing while playing X and Instagram videos, and successful switching among speaker, AirPods and earpiece. A physical-device UI test intentionally published microphone and camera streams, flipped the camera, then turned both off; a browser independently observed their On/Off states. See [the device record](docs/validation-2026-09-23.md) for the remaining acceptance gaps.
 
 ## Build
@@ -39,9 +41,11 @@ xcodebuild -project RockNRoll.xcodeproj -scheme RockNRoll \
 
 The app accepts pasted invitations and `conferenceguest://join?url=<percent-encoded HTTPS invitation>`. The sample [web handoff page](web/open.html) creates that scheme URL from a pasted invitation or prefills it from its own `?url=<percent-encoded HTTPS invitation>` parameter. The user chose this custom-scheme handoff; direct Universal Links remain optional because they require a domain controlled by the app operator. The app cannot claim arbitrary provider HTTPS links without that domain owner's cooperation. The conference service address itself is resolved from each invitation, not hardcoded in the app.
 
-The `#if DEBUG` environment variables `CONFERENCE_TEST_INVITE`, `CONFERENCE_TEST_NAME` and `CONFERENCE_TEST_LEAVE_AFTER_SECONDS` can automate a QA join and timed Leave for physical-device testing. They are not included in release builds or source-controlled with a live invitation.
+The `#if DEBUG` environment variables `CONFERENCE_TEST_INVITE`, `CONFERENCE_TEST_NAME`, `CONFERENCE_TEST_LEAVE_AFTER_SECONDS` and `CONFERENCE_TEST_HOLD_SECONDS` can automate a QA join, timed Leave or CallKit hold for physical-device testing. They are not included in release builds or source-controlled with a live invitation.
 
 `RockNRollUITests` contains an opt-in live device check for default mute, intentional microphone/video activation, camera flip and Leave. It skips unless the test runner receives `ROCKNROLL_TEST_INVITE` (pass it to `xcodebuild` as `TEST_RUNNER_ROCKNROLL_TEST_INVITE`). A second endpoint is needed to verify that media was actually published; the UI test keeps both streams on for 20 seconds for observation. A second opt-in test takes `TEST_RUNNER_ROCKNROLL_TEST_FIRST_INVITE` and `TEST_RUNNER_ROCKNROLL_TEST_SECOND_INVITE`; after it joins the first room, deliver the second custom-scheme link externally to the running app while the test waits. It verifies confirmation, completed Leave, ready state and a second Join. Use disposable invitations and keep them out of source control.
+
+The catch-up UI tests use a real CallKit hold/unhold transaction and an app restart on the connected device. They verify missed-time marking and local persistence. A cellular-call interruption and provider transcript history require separate live checks.
 
 ## Media policy
 

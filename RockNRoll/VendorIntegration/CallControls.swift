@@ -7,8 +7,10 @@ final class CallControls: UIView {
     private let microphone = UIButton(type: .system)
     private let camera = UIButton(type: .system)
     private let route = UIView()
+    private let catchUpButton = UIButton(type: .system)
 
     init(state: JazzActiveConferenceState, coordinator: JazzActiveConferenceCoordinator,
+         catchUp: CatchUpStore,
          onLeave: @escaping () -> Void, onMicrophoneState: @escaping (Bool) -> Void,
          onCameraState: @escaping (Bool) -> Void) {
         super.init(frame: .zero)
@@ -16,6 +18,9 @@ final class CallControls: UIView {
 
         let flip = Self.button("Flip camera", symbol: "arrow.triangle.2.circlepath.camera")
         let leave = Self.button("Leave", symbol: "phone.down.fill")
+        let catchUpPanel = CatchUpPanel(store: catchUp)
+        catchUpButton.configuration = Self.iconConfiguration("text.bubble")
+        catchUpButton.accessibilityLabel = "Catch up"
         microphone.configuration = Self.iconConfiguration("mic.slash.fill")
         camera.configuration = Self.iconConfiguration("video.slash.fill")
         leave.tintColor = .systemRed
@@ -28,6 +33,10 @@ final class CallControls: UIView {
         }, for: .touchUpInside)
         flip.addAction(UIAction { _ in coordinator.switchCamera() }, for: .touchUpInside)
         leave.addAction(UIAction { _ in onLeave() }, for: .touchUpInside)
+        catchUpButton.addAction(UIAction { [weak catchUpPanel] _ in
+            catchUpPanel?.isHidden.toggle()
+        }, for: .touchUpInside)
+        catchUpPanel.onClose = { [weak catchUpPanel] in catchUpPanel?.isHidden = true }
 
         route.translatesAutoresizingMaskIntoConstraints = false
         route.accessibilityLabel = "Audio route"
@@ -52,7 +61,8 @@ final class CallControls: UIView {
             route.heightAnchor.constraint(equalToConstant: 48),
         ])
 
-        let bar = UIStackView(arrangedSubviews: [microphone, camera, flip, route, leave])
+        let bar = UIStackView(arrangedSubviews: [microphone, camera, flip, route,
+                                                catchUpButton, leave])
         bar.axis = .horizontal
         bar.distribution = .fillEqually
         bar.alignment = .center
@@ -63,14 +73,36 @@ final class CallControls: UIView {
         bar.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
         bar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bar)
+        catchUpPanel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(catchUpPanel)
         NSLayoutConstraint.activate([
             bar.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
             bar.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -12),
             bar.centerXAnchor.constraint(equalTo: centerXAnchor),
             bar.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -16),
-            bar.widthAnchor.constraint(equalToConstant: 300),
+            bar.widthAnchor.constraint(equalToConstant: 340),
             bar.heightAnchor.constraint(equalToConstant: 72),
+            catchUpPanel.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            catchUpPanel.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            catchUpPanel.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -10),
+            catchUpPanel.heightAnchor.constraint(lessThanOrEqualToConstant: 300),
+            catchUpPanel.heightAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.heightAnchor,
+                                                 multiplier: 0.62),
+            catchUpPanel.topAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.topAnchor,
+                                              constant: 8)
         ])
+        let preferredPanelHeight = catchUpPanel.heightAnchor.constraint(equalToConstant: 290)
+        preferredPanelHeight.priority = .defaultHigh
+        preferredPanelHeight.isActive = true
+
+        catchUp.$timeline.receive(on: DispatchQueue.main).sink { [weak self] timeline in
+            guard let self else { return }
+            let count = timeline.unreadCount
+            self.catchUpButton.tintColor = count > 0 ? .systemOrange : .systemBlue
+            self.catchUpButton.accessibilityLabel = count > 0
+                ? "Catch up, \(count) missed section\(count == 1 ? "" : "s")"
+                : "Catch up"
+        }.store(in: &subscriptions)
 
         state.$microphoneState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
