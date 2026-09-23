@@ -14,8 +14,8 @@ final class CallControls: UIView {
 
         let flip = Self.button("Flip camera", symbol: "arrow.triangle.2.circlepath.camera")
         let leave = Self.button("Leave", symbol: "phone.down.fill")
-        microphone.configuration = .tinted()
-        camera.configuration = .tinted()
+        microphone.configuration = Self.iconConfiguration("mic.slash.fill")
+        camera.configuration = Self.iconConfiguration("video.slash.fill")
         leave.tintColor = .systemRed
 
         microphone.addAction(UIAction { _ in
@@ -32,20 +32,29 @@ final class CallControls: UIView {
         let picker = coordinator.audioRoutePickerButton
         picker.translatesAutoresizingMaskIntoConstraints = false
         route.addSubview(picker)
+        let routeIcon = UIImageView(image: UIImage(systemName: "speaker.wave.2.fill"))
+        routeIcon.tintColor = .systemBlue
+        routeIcon.isUserInteractionEnabled = false
+        routeIcon.translatesAutoresizingMaskIntoConstraints = false
+        route.addSubview(routeIcon)
         NSLayoutConstraint.activate([
             picker.leadingAnchor.constraint(equalTo: route.leadingAnchor),
             picker.trailingAnchor.constraint(equalTo: route.trailingAnchor),
             picker.topAnchor.constraint(equalTo: route.topAnchor),
             picker.bottomAnchor.constraint(equalTo: route.bottomAnchor),
+            routeIcon.centerXAnchor.constraint(equalTo: route.centerXAnchor),
+            routeIcon.centerYAnchor.constraint(equalTo: route.centerYAnchor),
+            routeIcon.widthAnchor.constraint(equalToConstant: 25),
+            routeIcon.heightAnchor.constraint(equalToConstant: 25),
             route.widthAnchor.constraint(equalToConstant: 52),
             route.heightAnchor.constraint(equalToConstant: 48),
         ])
 
         let bar = UIStackView(arrangedSubviews: [microphone, camera, flip, route, leave])
         bar.axis = .horizontal
-        bar.alignment = .center
-        bar.spacing = 8
         bar.distribution = .fillEqually
+        bar.alignment = .center
+        bar.spacing = 6
         bar.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.94)
         bar.layer.cornerRadius = 16
         bar.isLayoutMarginsRelativeArrangement = true
@@ -57,19 +66,27 @@ final class CallControls: UIView {
             bar.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -12),
             bar.centerXAnchor.constraint(equalTo: centerXAnchor),
             bar.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            bar.widthAnchor.constraint(equalToConstant: 300),
+            bar.heightAnchor.constraint(equalToConstant: 72),
         ])
 
         state.$microphoneState.receive(on: DispatchQueue.main).sink { [weak self] media in
-            self?.microphone.configuration?.title = media == .on ? "Mute" : "Unmute"
-            self?.microphone.configuration?.image = UIImage(systemName: media == .on ? "mic.fill" : "mic.slash.fill")
-            self?.microphone.isEnabled = media != .disabled
-            self?.microphone.accessibilityLabel = media == .on ? "Mute microphone" : "Unmute microphone"
+            guard let self else { return }
+            #if DEBUG
+            print("Microphone state changed: \(media)")
+            #endif
+            self.microphone.configuration?.image = UIImage(systemName: media == .on ? "mic.fill" : "mic.slash.fill")
+            self.microphone.isEnabled = media != .disabled
+            self.microphone.accessibilityLabel = media == .on ? "Mute microphone" : "Unmute microphone"
         }.store(in: &subscriptions)
         state.$cameraState.receive(on: DispatchQueue.main).sink { [weak self] media in
-            self?.camera.configuration?.title = media == .on ? "Stop video" : "Start video"
-            self?.camera.configuration?.image = UIImage(systemName: media == .on ? "video.fill" : "video.slash.fill")
-            self?.camera.isEnabled = media != .disabled
-            self?.camera.accessibilityLabel = media == .on ? "Stop video" : "Start video"
+            guard let self else { return }
+            #if DEBUG
+            print("Camera state changed: \(media)")
+            #endif
+            self.camera.configuration?.image = UIImage(systemName: media == .on ? "video.fill" : "video.slash.fill")
+            self.camera.isEnabled = media != .disabled
+            self.camera.accessibilityLabel = media == .on ? "Stop video" : "Start video"
         }.store(in: &subscriptions)
     }
 
@@ -77,12 +94,15 @@ final class CallControls: UIView {
 
     private static func button(_ title: String, symbol: String) -> UIButton {
         let button = UIButton(type: .system)
-        var configuration = UIButton.Configuration.tinted()
-        configuration.title = title
-        configuration.image = UIImage(systemName: symbol)
-        configuration.imagePlacement = .top
-        button.configuration = configuration
+        button.configuration = iconConfiguration(symbol)
         button.accessibilityLabel = title
         return button
+    }
+
+    private static func iconConfiguration(_ symbol: String) -> UIButton.Configuration {
+        var configuration = UIButton.Configuration.tinted()
+        configuration.image = UIImage(systemName: symbol)
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22)
+        return configuration
     }
 }

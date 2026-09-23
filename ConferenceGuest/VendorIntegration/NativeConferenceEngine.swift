@@ -11,32 +11,49 @@ final class NativeConferenceEngine {
     private let identity = GuestIdentity()
     private let audio = AudioCoordinator()
     private let events = EventRelay()
-    private var tokenProvider: GuestTokenProvider?
+    private let tokenProvider = AnonymousTokenProvider()
     private var subscriptions = Set<AnyCancellable>()
+    private var configuredNetworkURL: URL?
+    private(set) var hasJoinStarted = false
 
-    func configure(container: UIViewController, tokenEndpoint: URL) throws {
-        let provider = GuestTokenProvider(endpoint: tokenEndpoint, identity: identity)
-        tokenProvider = provider
+    func configure(container: UIViewController, networkURL: URL, displayName: String) throws {
+        if let configuredNetworkURL {
+            guard configuredNetworkURL == networkURL else {
+                throw ProviderError.differentConferenceEndpoint
+            }
+            return
+        }
+        identity.setName(displayName)
         audio.onStatus = { [weak self] message in self?.onMediaStatus?(message) }
         events.onEvent = { [weak self] event in self?.onEvent?(event) }
         let settings = JazzSettings(
-            network: .default,
+            network: JazzNetwork(hostUrl: networkURL),
             buttonsVisibility: .allVisible,
             inviteButton: nil,
             screenShareExtensionIdentifier: nil,
             userNameService: identity
         )
         try Jazz.initialize(
-            conferenceAuthorizationType: .jazzToken(tokenProvider: provider),
+            conferenceAuthorizationType: .jazzToken(tokenProvider: tokenProvider),
             container: container,
             navigationType: .default,
             settings: settings,
             eventsListener: events,
             shouldRateConference: false
         )
+        configuredNetworkURL = networkURL
+        #if DEBUG
+        print("Conference service URL: \(networkURL.host ?? "unknown")")
+        print("SDK default service URL: \(JazzNetwork.default.hostUrl.host ?? "unknown")")
+        #endif
         JazzSession.shared.$jazzConferencePhase
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] phase in self?.onEvent?(Self.map(phase)) }
+            .sink { [weak self] phase in
+                guard let self, self.hasJoinStarted else { return }
+                if case .activeConference = phase { self.audio.ensureMixing() }
+                self.onEvent?(Self.map(phase))
+                if case .inactive = phase { self.hasJoinStarted = false }
+            }
             .store(in: &subscriptions)
     }
 
@@ -44,6 +61,7 @@ final class NativeConferenceEngine {
         identity.setName(displayName)
         let room = try resolve(target)
         try audio.prepareForJoin()
+        hasJoinStarted = true
         JazzSession.shared.joinConference(
             joinConferenceType: .skipIntermidiateScreen(room: room),
             mediaSettings: .allOff,
@@ -54,20 +72,16 @@ final class NativeConferenceEngine {
     }
 
     func leave() {
+        guard hasJoinStarted else { return }
         JazzSession.shared.terminateActiveConference()
     }
 
     private func resolve(_ target: JoinTarget) throws -> JazzRoom {
-        switch target {
-        case .room(let room):
-            return JazzRoom(id: room.code, decodedPassword: room.password, host: nil)
-        case .invite(let url):
-            switch JazzSession.shared.handle(url: url, type: .applink) {
-            case .success(.joinConferenceRoom(let room)):
-                return room
-            case .success, .failure:
-                throw ProviderError.unsupportedInvitation
-            }
+        switch JazzSession.shared.handle(url: target.invitationURL, type: .applink) {
+        case .success(.joinConferenceRoom(let room)):
+            return room
+        case .success, .failure:
+            throw ProviderError.unsupportedInvitation
         }
     }
 
@@ -95,6 +109,14 @@ final class NativeConferenceEngine {
 }
 
 private enum ProviderError: LocalizedError {
+    case differentConferenceEndpoint
     case unsupportedInvitation
-    var errorDescription: String? { "This link does not point to a supported meeting." }
+    var errorDescription: String? {
+        switch self {
+        case .differentConferenceEndpoint:
+            return "This app session is connected to another conference service. Reopen the app to use this link."
+        case .unsupportedInvitation:
+            return "The installed provider SDK cannot read this meeting invitation."
+        }
+    }
 }

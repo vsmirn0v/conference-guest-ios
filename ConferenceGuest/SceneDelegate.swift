@@ -20,6 +20,16 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         self.conference = model
         model.configure(container: controller)
 
+        #if DEBUG
+        if let raw = ProcessInfo.processInfo.environment["CONFERENCE_TEST_INVITE"],
+           let url = URL(string: raw) {
+            model.displayName = ProcessInfo.processInfo.environment["CONFERENCE_TEST_NAME"] ?? "Conference Guest QA"
+            model.receive(url: url)
+            model.join()
+            return
+        }
+        #endif
+
         if let url = connectionOptions.urlContexts.first?.url {
             model.receive(url: url)
         } else if let url = connectionOptions.userActivities.first?.webpageURL {

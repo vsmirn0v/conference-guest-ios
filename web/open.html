@@ -16,10 +16,12 @@
   document.getElementById('open').addEventListener('click', () => {
     try {
       const invite = new URL(input.value);
-      if (invite.protocol !== 'https:' ||
-          !['salutejazz.ru', 'jazz.sber.ru'].includes(invite.hostname) ||
-          invite.username || invite.password || invite.port) {
-        throw new Error('Enter a supported HTTPS meeting invitation.');
+      const segments = invite.pathname.split('/').filter(Boolean);
+      if (invite.protocol !== 'https:' || !invite.hostname ||
+          invite.username || invite.password ||
+          segments.length !== 2 || segments[0] !== 'calls' ||
+          !segments[1] || !invite.searchParams.get('psw')) {
+        throw new Error('Enter a complete HTTPS meeting invitation.');
       }
       const appLink = new URL('conferenceguest://join');
       appLink.searchParams.set('url', invite.href);

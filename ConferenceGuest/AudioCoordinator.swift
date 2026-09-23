@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import UIKit
 
 /// Observes iOS media changes without competing with the provider for transport ownership.
 final class AudioCoordinator {
@@ -40,7 +41,29 @@ final class AudioCoordinator {
         publishStatus()
     }
 
+    /// The SDK changes the shared session after join; restore coexistence without
+    /// replacing its selected voice-chat mode or route options.
+    func ensureMixing() {
+        let session = AVAudioSession.sharedInstance()
+        guard session.category == .playAndRecord,
+              !session.categoryOptions.contains(.mixWithOthers) else { return }
+        do {
+            try session.setCategory(session.category, mode: session.mode,
+                                    options: session.categoryOptions.union(.mixWithOthers))
+            #if DEBUG
+            print("Restored audio mixing: options=\(session.categoryOptions.rawValue)")
+            #endif
+        } catch {
+            audioWarning = "Cannot mix conference audio with other apps"
+            publishStatus()
+        }
+    }
+
     private func handle(_ notification: Notification) {
+        #if DEBUG
+        let session = AVAudioSession.sharedInstance()
+        print("Audio event: \(notification.name.rawValue), category=\(session.category.rawValue), mode=\(session.mode.rawValue), options=\(session.categoryOptions.rawValue), appState=\(UIApplication.shared.applicationState.rawValue)")
+        #endif
         switch notification.name {
         case AVAudioSession.interruptionNotification:
             let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
@@ -63,7 +86,7 @@ final class AudioCoordinator {
             cameraWarning = nil
         case AVAudioSession.routeChangeNotification:
             // The provider's route picker and the current system route remain authoritative.
-            break
+            ensureMixing()
         default:
             break
         }

@@ -17,12 +17,12 @@
 		A2CB02723C3CE158E5C351B3 /* NativeConferenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE69C2566E9C49E767D87B75 /* NativeConferenceEngine.swift */; };
 		B61E5615752169C3675B1D86 /* ConferenceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28F4AFFFFACA69F34BEC46CF /* ConferenceModel.swift */; };
 		D1D8B19C3B2DF86831C05D00 /* GuestIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B613EF5EA7FD9928F1F4A746 /* GuestIdentity.swift */; };
+		D464D8BB47CC1C44422A80AC /* AnonymousTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25D92C9F46D338C0F1F1619E /* AnonymousTokenProvider.swift */; };
 		DE7B7065A3301738178F0ECD /* EventRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 498E598E293EB104E32C0A24 /* EventRelay.swift */; };
-		E7EDA61EFFD8056944D6D84D /* GuestTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24E8D5137D3A4218D313C619 /* GuestTokenProvider.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		24E8D5137D3A4218D313C619 /* GuestTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestTokenProvider.swift; sourceTree = "<group>"; };
+		25D92C9F46D338C0F1F1619E /* AnonymousTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnonymousTokenProvider.swift; sourceTree = "<group>"; };
 		28F4AFFFFACA69F34BEC46CF /* ConferenceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceModel.swift; sourceTree = "<group>"; };
 		498E598E293EB104E32C0A24 /* EventRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventRelay.swift; sourceTree = "<group>"; };
 		4E9340FBEBB1BF48D518957C /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -75,10 +75,10 @@
 		BB4670B794D4F8599F0DB079 /* VendorIntegration */ = {
 			isa = PBXGroup;
 			children = (
+				25D92C9F46D338C0F1F1619E /* AnonymousTokenProvider.swift */,
 				5AFD8775C37B596141588029 /* CallControls.swift */,
 				498E598E293EB104E32C0A24 /* EventRelay.swift */,
 				B613EF5EA7FD9928F1F4A746 /* GuestIdentity.swift */,
-				24E8D5137D3A4218D313C619 /* GuestTokenProvider.swift */,
 				EE69C2566E9C49E767D87B75 /* NativeConferenceEngine.swift */,
 			);
 			path = VendorIntegration;
@@ -189,13 +189,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D464D8BB47CC1C44422A80AC /* AnonymousTokenProvider.swift in Sources */,
 				2B62E40D0B73F7AFD76CEC49 /* AppDelegate.swift in Sources */,
 				3D66E6D587B785A142F3F605 /* AudioCoordinator.swift in Sources */,
 				7CEA60F16DAAF70B420A7C3C /* CallControls.swift in Sources */,
 				B61E5615752169C3675B1D86 /* ConferenceModel.swift in Sources */,
 				DE7B7065A3301738178F0ECD /* EventRelay.swift in Sources */,
 				D1D8B19C3B2DF86831C05D00 /* GuestIdentity.swift in Sources */,
-				E7EDA61EFFD8056944D6D84D /* GuestTokenProvider.swift in Sources */,
 				949CF72C56151AC803283055 /* JoinView.swift in Sources */,
 				A2CB02723C3CE158E5C351B3 /* NativeConferenceEngine.swift in Sources */,
 				0C787456AE5E4373086A6BEF /* SceneDelegate.swift in Sources */,
@@ -269,7 +269,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
-				GUEST_TOKEN_URL = "";
 				INFOPLIST_FILE = ConferenceGuest/Info.plist;
 				JOIN_LINK_HOST = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -354,7 +353,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
-				GUEST_TOKEN_URL = "";
 				INFOPLIST_FILE = ConferenceGuest/Info.plist;
 				JOIN_LINK_HOST = "";
 				LD_RUNPATH_SEARCH_PATHS = (

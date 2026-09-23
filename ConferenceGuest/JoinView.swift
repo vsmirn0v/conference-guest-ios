@@ -16,17 +16,13 @@ struct JoinView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                    Text("Or enter a meeting code and password")
+                    Text("The full link identifies the meeting and its conference service.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    TextField("Meeting code", text: $model.meetingCode)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    SecureField("Meeting password", text: $model.meetingPassword)
                 }
                 Section {
                     Button("Join with mic and camera off") { model.join() }
-                        .disabled(!model.isConfigured || model.isJoining || model.isInConference || model.isLeaving)
+                        .disabled(model.invite.isEmpty || model.isJoining || model.isInConference || model.isLeaving)
                     if model.isJoining || model.isInConference {
                         Button("Leave meeting", role: .destructive) { model.leave() }
                     }

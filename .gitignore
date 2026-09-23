@@ -3,6 +3,7 @@
 DerivedData/
 *.xcuserstate
 xcuserdata/
+.playwright-cli/
 *.env
 *.local.xcconfig
 GuestTokenBroker/.venv/

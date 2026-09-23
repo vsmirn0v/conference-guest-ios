@@ -1,44 +1,42 @@
 # Conference Guest for iOS
 
-A native iOS prototype for joining an existing meeting without account sign-in or meeting creation. It uses the provider's iOS media SDK, joins with microphone and camera off, renders participants through the SDK, and offers microphone, camera, camera switch, audio route, and Leave controls. No website is embedded in the app.
+A native iOS prototype for joining an existing guest-enabled conference. It has no account sign-in, meeting creation, embedded website, bundled SDK key, or token broker. The app uses the provider's binary iOS SDK for signaling and media; provider names are confined to the vendor-integration code, package/resource wiring, and invitation URLs.
 
-The app-facing target, bundle ID, URL scheme, UI, and core module use neutral names. The required `JazzSDK` import and binary/resource names are confined to `ConferenceGuest/VendorIntegration`, the package declaration, and its resource-copy script. Invitation hostnames remain in the link parser and sample handoff page. These names are part of the vendor's binary API and URL format, not app branding.
+Paste a complete `https://…/calls/<room>?psw=<value>` invitation, enter a display name, and tap Join. The app discovers the conference API from the invitation origin's `/.well-known/s2b-services.json` (`jazz.serverUrl`), then lets the SDK decode the invitation and join with microphone and camera off. The SDK's guest-token callback returns an empty string. This **was tested in one live guest-enabled meeting** on a signed iPhone; it is not a promise that every host policy or future backend/SDK version accepts anonymous guests.
 
-The [implementation plan](docs/implementation-plan.md) and [validation record](docs/validation-2026-09-23.md) distinguish implemented behavior from device acceptance. A real meeting cannot be joined until an SDK project credential and a token service are configured. No SDK key is bundled in the app.
+The active call uses SDK participant video/audio transport with native microphone, camera, camera-switch, route and Leave controls. On a second browser endpoint, the phone appeared as a participant with both streams off. Microphone activation observed later in testing was a manual action on the phone, as the user clarified.
 
-## Build and checks
+**Known gap:** on the tested iPhone, the muted conference disconnected from the remote participant list after a longer background period and during a competing nonmixable audio app. Foregrounding restored membership. The app did not crash, but this does **not** meet the background/audio-coexistence acceptance criteria yet. Incoming cellular calls, actual remote audio audibility, camera uplink, route switching, lock-screen behavior and extended soak remain unverified. See [the device record](docs/validation-2026-09-23.md) and [implementation plan](docs/implementation-plan.md).
 
-Requirements: Xcode with an iOS 18+ SDK, XcodeGen, and Git LFS. The public SDK is pinned at commit `6d5f92869690fa22bb489a9089aa554d733c6936` (25.3.1020). Run:
+## Build
+
+Requirements: Xcode with iOS 18+ SDK, XcodeGen, and Git LFS. The public SDK is pinned to `salute-developers/jazz-ios-sdk@6d5f92869690fa22bb489a9089aa554d733c6936` (25.3.1020).
 
 ```sh
 brew install xcodegen git-lfs
 git lfs install
 xcodegen generate
-open ConferenceGuest.xcodeproj
 swift test --package-path ConferenceCore
-python3 -m unittest discover -s GuestTokenBroker -p 'test_*.py'
+open ConferenceGuest.xcodeproj
 ```
 
-The generated Xcode project is checked in; `project.yml` is its source of truth. The build script embeds vendor resource bundles and `Spench.framework`, which the pinned SDK binary loads but its Swift package does not include in the product. SDK binaries are fetched from the vendor package and are not stored in this repository.
-
-## Native guest authorization
-
-The public SDK needs technical authorization even when the participant does not sign in. The sample token broker signs a short-lived transport JWT from an SDK project key, exchanges it for an access token at the provider API, and returns the access token to the app. Configure the broker on a controlled host:
+For the connected `iVitalii` device, signing was verified with team `5V64BP2H3P`:
 
 ```sh
-export PROVIDER_SDK_KEY_B64='your SDK project key'
-export PROVIDER_API_BASE_URL='https://api.salutejazz.ru'
-python3 -m venv GuestTokenBroker/.venv
-GuestTokenBroker/.venv/bin/pip install -r GuestTokenBroker/requirements.txt
-GuestTokenBroker/.venv/bin/python GuestTokenBroker/broker.py
+xcodebuild -project ConferenceGuest.xcodeproj -scheme ConferenceGuest \
+  -destination 'platform=iOS,id=00008150-001238941AF0401C' \
+  DEVELOPMENT_TEAM=5V64BP2H3P CODE_SIGN_STYLE=Automatic \
+  -allowProvisioningUpdates build
 ```
 
-The broker listens on `127.0.0.1:8765` and accepts `POST /v1/guest-token` with `guestId` (UUIDv4) and `displayName`. Set the app target build setting `GUEST_TOKEN_URL` to `http://127.0.0.1:8765/v1/guest-token` for a local simulator run. A physical device needs a reachable HTTPS broker. Protect that endpoint with network controls and abuse monitoring before exposing it beyond a controlled test. With no endpoint configured, the Join button is disabled and the app reports that conference access is unavailable.
+`project.yml` is the source for the checked-in Xcode project. The build script embeds vendor resources and the matching `Spench.framework`, which the binary SDK loads but omits from its Swift-package product. SDK binaries are downloaded through Swift Package Manager and are not committed here.
 
-The broker's protocol implementation and the pinned SDK have not been tested against a live project key or current meeting. Guest permissions may also prevent joining conferences from another organization.
+## Invitation handoff
 
-## Links and media
+The app accepts pasted invitations and `conferenceguest://join?url=<percent-encoded HTTPS invitation>`. The sample [web handoff page](web/open.html) creates that scheme URL from a user-supplied invitation. A Universal Link on a domain you control needs `JOIN_LINK_HOST`, an associated-domains entitlement, and an Apple App Site Association file. The app cannot claim arbitrary provider HTTPS links without that domain owner's cooperation. The conference service address itself is resolved from each invitation, not hardcoded in the app.
 
-The app registers `conferenceguest://join?url=<encoded HTTPS invitation>`. The sample [handoff page](web/open.html) creates that URL from a user-supplied invitation. To use Universal Links, set `JOIN_LINK_HOST`, add an associated-domains entitlement, and host the Apple App Site Association file on a domain you control. Directly claiming the provider's invitation domain requires its owner's cooperation.
+The `#if DEBUG` environment variables `CONFERENCE_TEST_INVITE` and `CONFERENCE_TEST_NAME` can auto-join a QA meeting for physical-device testing. They are not included in release builds or source-controlled with a live invitation.
 
-The app passes `JazzConferenceMediaSettings.allOff` to the SDK before joining. `Info.plist` declares background audio; `AudioCoordinator` requests `.playAndRecord` / `.videoChat` with `.mixWithOthers` and observes interruptions and route changes. This is an initial policy, not proof that the binary SDK preserves it after joining or that an incoming call or another app's audio cannot interrupt the conference. Those cases need a signed iPhone build, a real meeting, a second participant, and the test matrix in the plan.
+## Media policy
+
+`Info.plist` declares background audio. `AudioCoordinator` requests `.playAndRecord` / `.videoChat` with `.mixWithOthers` before join and restores mixing if the SDK later drops that option while retaining its selected mode/route settings. On the tested SDK, the SDK changed the session to `.voiceChat` without mixing after join; the app restored the option, but the background disconnect still occurred. The SDK retains transport ownership; fixing background continuity may require a supported SDK lifecycle/audio contract or a newer SDK. Do not interpret the background-mode declaration or audio-category setting as proof of a persistent call.

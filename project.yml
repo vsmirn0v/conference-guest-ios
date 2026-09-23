@@ -28,7 +28,6 @@ targets:
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_USER_SCRIPT_SANDBOXING: NO
-        GUEST_TOKEN_URL: ""
         JOIN_LINK_HOST: ""
     postBuildScripts:
       - name: Copy provider SDK resources
