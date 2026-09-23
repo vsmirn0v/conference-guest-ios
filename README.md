@@ -26,7 +26,7 @@ open RockNRoll.xcodeproj
 
 The app is signed with developer team `5V64BP2H3P`. `project.yml` generates the checked-in Xcode project. A build script copies resources required by the binary guest-integration SDK. SDK binaries are fetched through Swift Package Manager and are not committed.
 
-`RockNRollUITests.testCommunityJamConnectsMuted` exercises the public test room on an attached iPhone. The test file also covers layout in both orientations, a saved display name, chat, and native link handoff. Live media and CallKit behavior need a device; the simulator is useful for the home screen and core logic. App Store screenshots are in [AppStore/Screenshots](AppStore/Screenshots/). For prior physical-device coverage and remaining release checks, see [validation](docs/validation-2026-09-23.md) and [App Store preparation](docs/app-store-preparation-plan.md).
+`RockNRollUITests.testCommunityJamConnectsMuted` exercises the public test room on an attached iPhone. The test file also covers layout in both orientations, a saved display name, chat, and native link handoff. Live media and CallKit behavior need a device; the simulator is useful for the home screen and core logic. App Store screenshots are in [AppStore/Screenshots](AppStore/Screenshots/). See the [current validation](docs/validation-2026-09-24.md), [earlier device coverage](docs/validation-2026-09-23.md), and [App Store preparation](docs/app-store-preparation-plan.md).
 
 ## Media behavior
 
