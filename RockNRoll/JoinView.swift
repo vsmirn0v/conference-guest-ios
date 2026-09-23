@@ -36,7 +36,7 @@ struct JoinView: View {
                     }
                 }
             }
-            .navigationTitle("Conference Guest")
+            .navigationTitle("Rock’n’Roll")
             .confirmationDialog(
                 "Leave the current meeting and open the new invitation?",
                 isPresented: $model.showSwitchConfirmation

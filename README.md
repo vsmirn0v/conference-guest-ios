@@ -1,4 +1,8 @@
-# Conference Guest for iOS
+# Rock’n’Roll for iOS
+
+<img src="RockNRoll/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="128" height="128" alt="Rock’n’Roll app icon">
+
+The icon and its generation prompts are described in [the design record](docs/icon-design.md).
 
 A native iOS prototype for joining an existing guest-enabled conference. It has no account sign-in, meeting creation, embedded website, bundled SDK key, or token broker. The app uses the provider's binary iOS SDK for signaling and media; provider names are confined to the vendor-integration code, package/resource wiring, and invitation URLs.
 
@@ -17,13 +21,13 @@ brew install xcodegen git-lfs
 git lfs install
 xcodegen generate
 swift test --package-path ConferenceCore
-open ConferenceGuest.xcodeproj
+open RockNRoll.xcodeproj
 ```
 
 For the connected `iVitalii` device, signing was verified with team `5V64BP2H3P`:
 
 ```sh
-xcodebuild -project ConferenceGuest.xcodeproj -scheme ConferenceGuest \
+xcodebuild -project RockNRoll.xcodeproj -scheme RockNRoll \
   -destination 'platform=iOS,id=00008150-001238941AF0401C' \
   DEVELOPMENT_TEAM=5V64BP2H3P CODE_SIGN_STYLE=Automatic \
   -allowProvisioningUpdates build

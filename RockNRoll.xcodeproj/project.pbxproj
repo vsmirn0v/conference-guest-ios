@@ -1,0 +1,442 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		08245B21B07D8A02CAB118A4 /* CallControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0DDC3D21920474CDC247639 /* CallControls.swift */; };
+		1D215FCF2BF4D33961AB1F25 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40ADF9352DB719D2F965B798 /* AppDelegate.swift */; };
+		2E7ACBEBBF9B770C63EBAFB5 /* AnonymousTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DB9260C3E8754FB5368FF99 /* AnonymousTokenProvider.swift */; };
+		39A122CD5DC9D10C3DCC29DA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BD6CCF5106C0A518803CCA07 /* Assets.xcassets */; };
+		4348F04B521CB67613009F69 /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3F91314298394121DA8F1D /* JazzSDK */; };
+		4510D964728C36F5FE264FAE /* GuestIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC54A79FFF8952C055E7A7F7 /* GuestIdentity.swift */; };
+		459BD79F3E24CA87ADA9F089 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF64302A8DFA2B622264D317 /* SceneDelegate.swift */; };
+		51BCF010D44BD48C794D74EA /* NativeConferenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C31A479481AE9C597DD3B4A1 /* NativeConferenceEngine.swift */; };
+		5F64DAC22A14144A6758CE7F /* SystemCallCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5F280C9F27221EB0AEAE300 /* SystemCallCoordinator.swift */; };
+		7715492FDE15C262A39D2B74 /* ConferenceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65570B6D840AF2D71932D313 /* ConferenceModel.swift */; };
+		874E54A0C9EDF053C688FC85 /* JoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D74813F24B6D41F4DE4FD6C /* JoinView.swift */; };
+		915DAB4B920E1EB0274822DE /* EventRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5DD3C92B147421C014181FA /* EventRelay.swift */; };
+		964484C8436C0EA4F90E16BD /* AudioCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C049BADA8D8CC43635B8F59 /* AudioCoordinator.swift */; };
+		96E45477868AE00B30673F3A /* ConferenceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 023105828817798EB4DA9C73 /* ConferenceCore */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		40ADF9352DB719D2F965B798 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		4C049BADA8D8CC43635B8F59 /* AudioCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCoordinator.swift; sourceTree = "<group>"; };
+		5CFE89ACD94BAAE54053186F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		5DB9260C3E8754FB5368FF99 /* AnonymousTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnonymousTokenProvider.swift; sourceTree = "<group>"; };
+		65570B6D840AF2D71932D313 /* ConferenceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceModel.swift; sourceTree = "<group>"; };
+		6D74813F24B6D41F4DE4FD6C /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
+		A5F280C9F27221EB0AEAE300 /* SystemCallCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemCallCoordinator.swift; sourceTree = "<group>"; };
+		BD6CCF5106C0A518803CCA07 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C31A479481AE9C597DD3B4A1 /* NativeConferenceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeConferenceEngine.swift; sourceTree = "<group>"; };
+		CC42FB720B95DDCB4C47E645 /* RockNRoll.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = RockNRoll.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D3398AA0F6FDB72AD43F46CB /* ConferenceCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ConferenceCore; path = ConferenceCore; sourceTree = SOURCE_ROOT; };
+		DF64302A8DFA2B622264D317 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		E0DDC3D21920474CDC247639 /* CallControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallControls.swift; sourceTree = "<group>"; };
+		E5DD3C92B147421C014181FA /* EventRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventRelay.swift; sourceTree = "<group>"; };
+		FC54A79FFF8952C055E7A7F7 /* GuestIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestIdentity.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		816E988E25770A2DE7E7D93B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4348F04B521CB67613009F69 /* JazzSDK in Frameworks */,
+				96E45477868AE00B30673F3A /* ConferenceCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		2835BD9AF29D4B9549DF8290 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				CC42FB720B95DDCB4C47E645 /* RockNRoll.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		338D4E44E4BA43D7DA8F21F9 = {
+			isa = PBXGroup;
+			children = (
+				F0180F344B2A34E54724DD80 /* Packages */,
+				D236B2060583426D0D293D20 /* RockNRoll */,
+				2835BD9AF29D4B9549DF8290 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D236B2060583426D0D293D20 /* RockNRoll */ = {
+			isa = PBXGroup;
+			children = (
+				40ADF9352DB719D2F965B798 /* AppDelegate.swift */,
+				BD6CCF5106C0A518803CCA07 /* Assets.xcassets */,
+				4C049BADA8D8CC43635B8F59 /* AudioCoordinator.swift */,
+				65570B6D840AF2D71932D313 /* ConferenceModel.swift */,
+				5CFE89ACD94BAAE54053186F /* Info.plist */,
+				6D74813F24B6D41F4DE4FD6C /* JoinView.swift */,
+				DF64302A8DFA2B622264D317 /* SceneDelegate.swift */,
+				A5F280C9F27221EB0AEAE300 /* SystemCallCoordinator.swift */,
+				D5F9600D215EDCBE2254334D /* VendorIntegration */,
+			);
+			path = RockNRoll;
+			sourceTree = "<group>";
+		};
+		D5F9600D215EDCBE2254334D /* VendorIntegration */ = {
+			isa = PBXGroup;
+			children = (
+				5DB9260C3E8754FB5368FF99 /* AnonymousTokenProvider.swift */,
+				E0DDC3D21920474CDC247639 /* CallControls.swift */,
+				E5DD3C92B147421C014181FA /* EventRelay.swift */,
+				FC54A79FFF8952C055E7A7F7 /* GuestIdentity.swift */,
+				C31A479481AE9C597DD3B4A1 /* NativeConferenceEngine.swift */,
+			);
+			path = VendorIntegration;
+			sourceTree = "<group>";
+		};
+		F0180F344B2A34E54724DD80 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				D3398AA0F6FDB72AD43F46CB /* ConferenceCore */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B1633D4870119A1C822C5483 /* RockNRoll */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 23E1298FAA7D05492E63688A /* Build configuration list for PBXNativeTarget "RockNRoll" */;
+			buildPhases = (
+				34B27D91C49F01F3662BD6DE /* Sources */,
+				13EF01324AF89539A718867A /* Resources */,
+				816E988E25770A2DE7E7D93B /* Frameworks */,
+				A08BE104E6CD5E9297651BC9 /* Copy provider SDK resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = RockNRoll;
+			packageProductDependencies = (
+				0B3F91314298394121DA8F1D /* JazzSDK */,
+				023105828817798EB4DA9C73 /* ConferenceCore */,
+			);
+			productName = RockNRoll;
+			productReference = CC42FB720B95DDCB4C47E645 /* RockNRoll.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B0B80D54AB9B634D320FE51D /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					B1633D4870119A1C822C5483 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 17DE781B5780877A8C183610 /* Build configuration list for PBXProject "RockNRoll" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 338D4E44E4BA43D7DA8F21F9;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				F9F8D192EC109A45CD86AF9F /* XCRemoteSwiftPackageReference "jazz-ios-sdk" */,
+				A1978F2AD8396DBE4B0BF1C1 /* XCLocalSwiftPackageReference "ConferenceCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2835BD9AF29D4B9549DF8290 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B1633D4870119A1C822C5483 /* RockNRoll */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		13EF01324AF89539A718867A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				39A122CD5DC9D10C3DCC29DA /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A08BE104E6CD5E9297651BC9 /* Copy provider SDK resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy provider SDK resources";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bash \"$PROJECT_DIR/scripts/copy-sdk-resources.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		34B27D91C49F01F3662BD6DE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2E7ACBEBBF9B770C63EBAFB5 /* AnonymousTokenProvider.swift in Sources */,
+				1D215FCF2BF4D33961AB1F25 /* AppDelegate.swift in Sources */,
+				964484C8436C0EA4F90E16BD /* AudioCoordinator.swift in Sources */,
+				08245B21B07D8A02CAB118A4 /* CallControls.swift in Sources */,
+				7715492FDE15C262A39D2B74 /* ConferenceModel.swift in Sources */,
+				915DAB4B920E1EB0274822DE /* EventRelay.swift in Sources */,
+				4510D964728C36F5FE264FAE /* GuestIdentity.swift in Sources */,
+				874E54A0C9EDF053C688FC85 /* JoinView.swift in Sources */,
+				51BCF010D44BD48C794D74EA /* NativeConferenceEngine.swift in Sources */,
+				459BD79F3E24CA87ADA9F089 /* SceneDelegate.swift in Sources */,
+				5F64DAC22A14144A6758CE7F /* SystemCallCoordinator.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		5CA0A3E6510ED87529FDE1C0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		C9EF7BE7F46BBE2A72A0A32B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		DDC1EF8D8BA9023F02A8B72F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RockNRoll/Info.plist;
+				JOIN_LINK_HOST = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.conferenceguest;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E28C2AF7C9D9AC73351ADD88 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = RockNRoll/Info.plist;
+				JOIN_LINK_HOST = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.conferenceguest;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		17DE781B5780877A8C183610 /* Build configuration list for PBXProject "RockNRoll" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C9EF7BE7F46BBE2A72A0A32B /* Debug */,
+				5CA0A3E6510ED87529FDE1C0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		23E1298FAA7D05492E63688A /* Build configuration list for PBXNativeTarget "RockNRoll" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E28C2AF7C9D9AC73351ADD88 /* Debug */,
+				DDC1EF8D8BA9023F02A8B72F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A1978F2AD8396DBE4B0BF1C1 /* XCLocalSwiftPackageReference "ConferenceCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ConferenceCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		F9F8D192EC109A45CD86AF9F /* XCRemoteSwiftPackageReference "jazz-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/salute-developers/jazz-ios-sdk.git";
+			requirement = {
+				kind = revision;
+				revision = 6d5f92869690fa22bb489a9089aa554d733c6936;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		023105828817798EB4DA9C73 /* ConferenceCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ConferenceCore;
+		};
+		0B3F91314298394121DA8F1D /* JazzSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F9F8D192EC109A45CD86AF9F /* XCRemoteSwiftPackageReference "jazz-ios-sdk" */;
+			productName = JazzSDK;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = B0B80D54AB9B634D320FE51D /* Project object */;
+}

@@ -23,7 +23,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         #if DEBUG
         if let raw = ProcessInfo.processInfo.environment["CONFERENCE_TEST_INVITE"],
            let url = URL(string: raw) {
-            model.displayName = ProcessInfo.processInfo.environment["CONFERENCE_TEST_NAME"] ?? "Conference Guest QA"
+            model.displayName = ProcessInfo.processInfo.environment["CONFERENCE_TEST_NAME"] ?? "Rock’n’Roll QA"
             model.receive(url: url)
             model.join()
             if let rawDelay = ProcessInfo.processInfo.environment["CONFERENCE_TEST_LEAVE_AFTER_SECONDS"],

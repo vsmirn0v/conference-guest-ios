@@ -1,4 +1,4 @@
-name: ConferenceGuest
+name: RockNRoll
 options:
   bundleIdPrefix: dev.vsmirn0v
   deploymentTarget:
@@ -11,22 +11,23 @@ packages:
   ConferenceCore:
     path: ConferenceCore
 targets:
-  ConferenceGuest:
+  RockNRoll:
     type: application
     platform: iOS
     sources:
-      - path: ConferenceGuest
+      - path: RockNRoll
     dependencies:
       - package: JazzSDK
       - package: ConferenceCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest
-        INFOPLIST_FILE: ConferenceGuest/Info.plist
+        INFOPLIST_FILE: RockNRoll/Info.plist
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         JOIN_LINK_HOST: ""
     postBuildScripts:
