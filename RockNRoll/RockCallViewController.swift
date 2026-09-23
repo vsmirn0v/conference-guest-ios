@@ -9,6 +9,7 @@ final class RockCallViewController: UIViewController {
     var onCamera: ((Bool) -> Void)?
     var onFlipCamera: (() -> Void)?
     var onSpeaker: ((Bool) -> Void)?
+    var onDisplayMode: ((ConferenceDisplayMode) -> Void)?
 
     private let titleLabel = UILabel()
     private let countLabel = UILabel()
@@ -18,17 +19,19 @@ final class RockCallViewController: UIViewController {
     private let camera = UIButton(type: .system)
     private let flipCamera = UIButton(type: .system)
     private let speaker = UIButton(type: .system)
-    private let catchUpButton = UIButton(type: .system)
-    private let catchUpPanel: CatchUpPanel
-    private var catchUpHeight: NSLayoutConstraint?
+    private let displayModeButton = UIButton(type: .system)
+    private let conversationButton = UIButton(type: .system)
     private let store: CatchUpStore
+    private let chat: ChatStore
+    private weak var displayedRoom: Room?
+    private var displayMode: ConferenceDisplayMode = .all
     private var isMicrophoneOn = false
     private var isCameraOn = false
     private var isSpeakerOn = true
 
-    init(title: String, catchUp: CatchUpStore) {
-        self.store = catchUp
-        self.catchUpPanel = CatchUpPanel(store: catchUp)
+    init(title: String, catchUp: CatchUpStore, chat: ChatStore) {
+        store = catchUp
+        self.chat = chat
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
         titleLabel.text = title
@@ -41,15 +44,16 @@ final class RockCallViewController: UIViewController {
         view.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.085, alpha: 1)
         let header = UIStackView(arrangedSubviews: [titleLabel, countLabel])
         header.axis = .vertical
-        header.spacing = 4
-        titleLabel.font = .systemFont(ofSize: 29, weight: .bold)
+        header.spacing = 2
+        titleLabel.font = .systemFont(ofSize: 25, weight: .bold)
         titleLabel.textColor = .white
+        titleLabel.lineBreakMode = .byTruncatingTail
         countLabel.font = .preferredFont(forTextStyle: .subheadline)
         countLabel.textColor = .lightGray
         countLabel.text = "Connecting…"
 
         tiles.axis = .vertical
-        tiles.spacing = 12
+        tiles.spacing = 10
         let scroll = UIScrollView()
         scroll.addSubview(tiles)
         tiles.translatesAutoresizingMaskIntoConstraints = false
@@ -66,7 +70,10 @@ final class RockCallViewController: UIViewController {
         configure(flipCamera, symbol: "arrow.triangle.2.circlepath.camera", label: "Flip camera")
         flipCamera.isEnabled = false
         configure(speaker, symbol: "speaker.wave.2.fill", label: "Use iPhone speaker")
-        configure(catchUpButton, symbol: "text.bubble", label: "Catch up")
+        configure(displayModeButton, symbol: displayMode.symbol, label: "Display: All video")
+        displayModeButton.showsMenuAsPrimaryAction = true
+        configureModeMenu()
+        configure(conversationButton, symbol: "text.bubble", label: "Catch up")
         let routePicker = AVRoutePickerView()
         routePicker.tintColor = .systemPurple
         routePicker.activeTintColor = .systemPurple
@@ -90,101 +97,156 @@ final class RockCallViewController: UIViewController {
             self.onSpeaker?(self.isSpeakerOn)
             self.speaker.accessibilityLabel = self.isSpeakerOn ? "Use iPhone receiver" : "Use iPhone speaker"
         }, for: .touchUpInside)
-        catchUpButton.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            self.showCatchUp(self.catchUpPanel.isHidden)
+        conversationButton.addAction(UIAction { [weak self] _ in
+            guard let self, self.presentedViewController == nil else { return }
+            self.present(ConversationPanelViewController(catchUp: self.store, chat: self.chat),
+                         animated: true)
         }, for: .touchUpInside)
         leave.addAction(UIAction { [weak self] _ in self?.onLeave?() }, for: .touchUpInside)
-        catchUpPanel.onClose = { [weak self] in self?.showCatchUp(false) }
 
-        let bar = UIStackView(arrangedSubviews: [microphone, camera, flipCamera, speaker, routePicker, catchUpButton, leave])
+        let bar = UIStackView(arrangedSubviews: [microphone, camera, flipCamera, speaker,
+                                                 routePicker, displayModeButton,
+                                                 conversationButton, leave])
         bar.axis = .horizontal
         bar.distribution = .fillEqually
-        bar.spacing = 6
+        bar.spacing = 2
         bar.backgroundColor = .secondarySystemBackground
-        bar.layer.cornerRadius = 18
+        bar.layer.cornerRadius = 16
         bar.isLayoutMarginsRelativeArrangement = true
-        bar.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 9, leading: 9, bottom: 9, trailing: 9)
+        bar.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 5, leading: 5, bottom: 5, trailing: 5)
 
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.textColor = .lightGray
         statusLabel.text = "Microphone and camera are off"
         statusLabel.textAlignment = .center
-
-        for item in [header, scroll, bar, statusLabel, catchUpPanel] {
+        for item in [header, scroll, bar, statusLabel] {
             item.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(item)
         }
-        catchUpPanel.isHidden = true
-        catchUpHeight = catchUpPanel.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
-            header.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 20),
-            header.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -20),
-            header.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            scroll.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            scroll.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 20),
-            scroll.bottomAnchor.constraint(equalTo: catchUpPanel.topAnchor, constant: -12),
-            catchUpPanel.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
-            catchUpPanel.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
-            catchUpPanel.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -12),
-            catchUpHeight!,
-            statusLabel.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
-            statusLabel.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
-            statusLabel.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -10),
-            bar.leadingAnchor.constraint(equalTo: scroll.leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
-            bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            bar.heightAnchor.constraint(equalToConstant: 68)
+            header.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            header.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            header.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
+            scroll.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
+            scroll.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -5),
+            statusLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            statusLabel.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            statusLabel.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -5),
+            bar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 6),
+            bar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -6),
+            bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -4),
+            bar.heightAnchor.constraint(equalToConstant: 54)
         ])
     }
 
     func render(room: Room) {
-        let participants = [room.localParticipant] + Array(room.remoteParticipants.values)
+        displayedRoom = room
+        let participants: [Participant] = [room.localParticipant] + room.remoteParticipants.values.sorted {
+            ($0.identity?.stringValue ?? "") < ($1.identity?.stringValue ?? "")
+        }
         countLabel.text = "\(participants.count) musician\(participants.count == 1 ? "" : "s") in this jam"
         tiles.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        var visibleVideoCount = 0
         for participant in participants {
-            let tile = UIView()
-            tile.backgroundColor = UIColor(red: 0.12, green: 0.12, blue: 0.16, alpha: 1)
-            tile.layer.cornerRadius = 16
-            tile.clipsToBounds = true
-            let video = VideoView()
-            video.layoutMode = .fill
-            video.track = participant.videoTracks
-                .compactMap { $0.track as? VideoTrack }.first
-            video.translatesAutoresizingMaskIntoConstraints = false
-            tile.addSubview(video)
-            let name = UILabel()
-            name.text = participant.name ?? "Musician"
-            name.textColor = .white
-            name.font = .systemFont(ofSize: 15, weight: .semibold)
-            name.backgroundColor = UIColor.black.withAlphaComponent(0.55)
-            name.layer.cornerRadius = 7
-            name.clipsToBounds = true
-            name.translatesAutoresizingMaskIntoConstraints = false
-            tile.addSubview(name)
-            let media = UILabel()
-            let audioOn = participant.audioTracks.contains { !$0.isMuted }
-            let videoOn = participant.videoTracks.contains { !$0.isMuted }
-            media.text = "\(audioOn ? "Mic on" : "Mic off") · \(videoOn ? "Camera on" : "Camera off")"
-            media.textColor = .lightGray
-            media.font = .systemFont(ofSize: 12, weight: .medium)
-            media.backgroundColor = UIColor.black.withAlphaComponent(0.55)
-            media.translatesAutoresizingMaskIntoConstraints = false
-            tile.addSubview(media)
-            NSLayoutConstraint.activate([
-                tile.heightAnchor.constraint(equalToConstant: 185),
-                video.leadingAnchor.constraint(equalTo: tile.leadingAnchor),
-                video.trailingAnchor.constraint(equalTo: tile.trailingAnchor),
-                video.topAnchor.constraint(equalTo: tile.topAnchor),
-                video.bottomAnchor.constraint(equalTo: tile.bottomAnchor),
-                name.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 12),
-                name.bottomAnchor.constraint(equalTo: media.topAnchor, constant: -5),
-                media.leadingAnchor.constraint(equalTo: name.leadingAnchor),
-                media.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -12)
-            ])
-            tiles.addArrangedSubview(tile)
+            let publications = participant.videoTracks.filter { !$0.isMuted && $0.track is VideoTrack }
+                .filter { displayMode == .all ||
+                    (displayMode == .screenShares && $0.source == .screenShareVideo) }
+            if displayMode == .audioOnly || (displayMode == .all && publications.isEmpty) {
+                tiles.addArrangedSubview(audioTile(for: participant))
+            }
+            for publication in publications where displayMode != .audioOnly {
+                guard let track = publication.track as? VideoTrack else { continue }
+                visibleVideoCount += 1
+                tiles.addArrangedSubview(videoTile(for: participant, track: track,
+                    isShare: publication.source == .screenShareVideo))
+            }
         }
+        if displayMode == .screenShares && visibleVideoCount == 0 {
+            let empty = UILabel()
+            empty.text = "No screen share is live. Audio continues."
+            empty.textColor = .lightGray
+            empty.textAlignment = .center
+            empty.numberOfLines = 0
+            tiles.addArrangedSubview(empty)
+            empty.heightAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
+        }
+    }
+
+    private func audioTile(for participant: Participant) -> UIView {
+        let tile = baseTile()
+        let name = UILabel()
+        name.text = participant.name ?? "Musician"
+        name.textColor = .white
+        name.font = .systemFont(ofSize: 16, weight: .semibold)
+        let state = UILabel()
+        state.text = participant.audioTracks.contains { !$0.isMuted } ? "Microphone on" : "Microphone off"
+        state.textColor = .lightGray
+        state.font = .preferredFont(forTextStyle: .caption1)
+        let column = UIStackView(arrangedSubviews: [name, state])
+        column.axis = .vertical
+        column.spacing = 3
+        column.translatesAutoresizingMaskIntoConstraints = false
+        tile.addSubview(column)
+        NSLayoutConstraint.activate([
+            tile.heightAnchor.constraint(equalToConstant: 72),
+            column.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 14),
+            column.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -14),
+            column.centerYAnchor.constraint(equalTo: tile.centerYAnchor)
+        ])
+        return tile
+    }
+
+    private func videoTile(for participant: Participant, track: VideoTrack, isShare: Bool) -> UIView {
+        let tile = baseTile()
+        let video = VideoView()
+        video.layoutMode = isShare ? .fit : .fill
+        video.track = track
+        video.translatesAutoresizingMaskIntoConstraints = false
+        tile.addSubview(video)
+        let name = UILabel()
+        name.text = "  \(participant.name ?? "Musician")\(isShare ? " · Screen share" : "")  "
+        name.textColor = .white
+        name.font = .systemFont(ofSize: 14, weight: .semibold)
+        name.backgroundColor = UIColor.black.withAlphaComponent(0.65)
+        name.layer.cornerRadius = 7
+        name.clipsToBounds = true
+        name.translatesAutoresizingMaskIntoConstraints = false
+        tile.addSubview(name)
+        NSLayoutConstraint.activate([
+            tile.heightAnchor.constraint(equalToConstant: isShare ? 240 : 185),
+            video.leadingAnchor.constraint(equalTo: tile.leadingAnchor),
+            video.trailingAnchor.constraint(equalTo: tile.trailingAnchor),
+            video.topAnchor.constraint(equalTo: tile.topAnchor),
+            video.bottomAnchor.constraint(equalTo: tile.bottomAnchor),
+            name.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 10),
+            name.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -10)
+        ])
+        return tile
+    }
+
+    private func baseTile() -> UIView {
+        let tile = UIView()
+        tile.backgroundColor = UIColor(red: 0.12, green: 0.12, blue: 0.16, alpha: 1)
+        tile.layer.cornerRadius = 14
+        tile.clipsToBounds = true
+        return tile
+    }
+
+    private func configureModeMenu() {
+        displayModeButton.menu = UIMenu(children: ConferenceDisplayMode.allCases.map { option in
+            UIAction(title: option.title, image: UIImage(systemName: option.symbol),
+                     state: option == displayMode ? .on : .off) { [weak self] _ in
+                guard let self else { return }
+                self.displayMode = option
+                self.displayModeButton.configuration?.image = UIImage(systemName: option.symbol)
+                self.displayModeButton.accessibilityLabel = "Display: \(option.title)"
+                self.configureModeMenu()
+                if let room = self.displayedRoom { self.render(room: room) }
+                self.onDisplayMode?(option)
+            }
+        })
     }
 
     func setMicrophone(_ enabled: Bool) {
@@ -204,15 +266,10 @@ final class RockCallViewController: UIViewController {
         statusLabel.text = held ? "Jam on hold for another call" : "Jam active"
     }
 
-    private func showCatchUp(_ visible: Bool) {
-        catchUpPanel.isHidden = !visible
-        catchUpHeight?.constant = visible ? 220 : 0
-    }
-
     private func configure(_ button: UIButton, symbol: String, label: String) {
         var style = UIButton.Configuration.tinted()
         style.image = UIImage(systemName: symbol)
-        style.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 21)
+        style.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 19)
         button.configuration = style
         button.accessibilityLabel = label
     }

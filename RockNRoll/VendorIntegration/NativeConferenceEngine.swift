@@ -9,6 +9,8 @@ import UIKit
 final class NativeConferenceEngine {
     var onEvent: ((CallEvent) -> Void)?
     var onMediaStatus: ((String?) -> Void)?
+    var onRoomTitle: ((String) -> Void)?
+    var chat: ChatStore?
 
     private let identity = GuestIdentity()
     private let audio = AudioCoordinator()
@@ -25,6 +27,7 @@ final class NativeConferenceEngine {
     private let tokenProvider = AnonymousTokenProvider()
     private var subscriptions = Set<AnyCancellable>()
     private var transcriptSubscription: AnyCancellable?
+    private var roomTitleSubscription: AnyCancellable?
     private var configuredNetworkURL: URL?
     private var leaveRequested = false
     private var hasBecomeActive = false
@@ -170,6 +173,7 @@ final class NativeConferenceEngine {
     }
 
     func join(target: JoinTarget, displayName: String) throws {
+        chat?.clear()
         identity.setName(displayName)
         pendingRoom = try resolve(target)
         catchUp.enter(roomKey: target.originURL.absoluteString + "/" + target.roomID)
@@ -268,9 +272,20 @@ final class NativeConferenceEngine {
         let overlay = JazzActiveConferenceOverlayRepresentation { [weak self] state, coordinator, _, _ in
             guard let self else { return UIView() }
             self.activeCoordinator = coordinator
+            coordinator.toggleIncomingStreamsDisabled(isEnabled: true)
             self.observeTranscript(state: state)
+            self.chat?.onSend = { [weak self] message in
+                self?.activeCoordinator?.sendMessage(message: message)
+            }
+            self.roomTitleSubscription?.cancel()
+            self.roomTitleSubscription = state.$conferenceTitle.receive(on: DispatchQueue.main)
+                .sink { [weak self] in self?.onRoomTitle?($0) }
             return CallControls(state: state, coordinator: coordinator,
                                 catchUp: self.catchUp,
+                                chat: self.chat ?? ChatStore(),
+                                onDisplayMode: { mode in
+                                    coordinator.toggleIncomingStreamsDisabled(isEnabled: mode != .audioOnly)
+                                },
                                 onLeave: { [weak self] in self?.leave() },
                                 onMicrophoneState: { [weak self] isOn in
                                     guard let self, !self.isSystemHeld else { return }
@@ -291,11 +306,12 @@ final class NativeConferenceEngine {
 
     private func observeTranscript(state: JazzActiveConferenceState) {
         transcriptSubscription?.cancel()
-        transcriptSubscription = Publishers.CombineLatest3(
-            state.$messages, state.$canViewAsr, state.$activeConferenceMenuState
+        transcriptSubscription = Publishers.CombineLatest4(
+            state.$messages, state.$canViewAsr, state.$activeConferenceMenuState,
+            state.$canViewChat
         )
         .receive(on: DispatchQueue.main)
-        .sink { [weak self] messages, canView, menu in
+        .sink { [weak self] messages, canView, menu, canViewChat in
             guard let self else { return }
             let segments = messages.filter(\.isAsr).map { message in
                 TranscriptSegment(
@@ -307,6 +323,15 @@ final class NativeConferenceEngine {
             }
             self.catchUp.observe(messages: segments, canView: canView,
                                  enabled: menu.asrState.isOn)
+            self.chat?.canSend = canViewChat
+            self.chat?.replace(messages.filter { !$0.isAsr }.map { message in
+                ChatEntry(id: message.id,
+                          sender: message.messageType == .local ? "You" :
+                              (message.userNameWhenMessageSent ?? message.currentName ?? "Musician"),
+                          text: String(message.message.prefix(4_096)),
+                          sentAt: CatchUpTimeline.providerDate(message.timestamp) ?? Date(),
+                          isOwn: message.messageType == .local)
+            })
         }
     }
 

@@ -11,6 +11,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
     private let systemCall = SystemCallCoordinator()
     private let audio = AudioCoordinator()
     private let catchUp: CatchUpStore
+    private let chat: ChatStore
     private var room: Room?
     private weak var container: UIViewController?
     private var callView: RockCallViewController?
@@ -21,13 +22,15 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
     private var isHeld = false
     private var leaveRequested = false
     private var hasConnected = false
+    private var displayMode: ConferenceDisplayMode = .all
     #if DEBUG
     private var testHoldScheduled = false
     #endif
     private(set) var hasJoinStarted = false
 
-    init(catchUp: CatchUpStore) {
+    init(catchUp: CatchUpStore, chat: ChatStore) {
         self.catchUp = catchUp
+        self.chat = chat
         super.init()
         audio.onStatus = { [weak self] in self?.onMediaStatus?($0) }
         audio.onInterruptionChanged = { [weak self] interrupted in
@@ -50,17 +53,22 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         self.isHeld = false
         self.microphoneIntentOn = false
         self.cameraIntentOn = false
+        self.displayMode = .all
         catchUp.enter(roomKey: target.originURL.absoluteString + "/" + target.jamID)
+        chat.clear()
+        chat.onSend = { [weak self] in self?.sendChat($0) }
         catchUp.observe(messages: [], canView: false, enabled: false)
         AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = false
         try AudioManager.shared.setEngineAvailability(.none)
         try audio.prepareForJoin()
-        let view = RockCallViewController(title: credentials.jam.title, catchUp: catchUp)
+        let view = RockCallViewController(title: credentials.jam.title,
+                                          catchUp: catchUp, chat: chat)
         view.onLeave = { [weak self] in self?.leave() }
         view.onMicrophone = { [weak self] in self?.setMicrophone($0) }
         view.onCamera = { [weak self] in self?.setCamera($0) }
         view.onFlipCamera = { [weak self] in self?.flipCamera() }
         view.onSpeaker = { preferred in AudioManager.shared.isSpeakerOutputPreferred = preferred }
+        view.onDisplayMode = { [weak self] mode in self?.setDisplayMode(mode) }
         self.callView = view
         container.present(view, animated: false)
         installCallHandlers()
@@ -137,6 +145,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
                 guard self.room === room, !self.leaveRequested else { return }
                 self.joinTask = nil
                 self.hasConnected = true
+                self.chat.canSend = true
                 #if DEBUG
                 print("Jam engine: connected")
                 #endif
@@ -230,6 +239,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         hasJoinStarted = false
         leaveRequested = true
         hasConnected = false
+        chat.clear()
         joinTask?.cancel()
         joinTask = nil
         if !wasLeaving { systemCall.markEnded(reason: .failed) }
@@ -305,9 +315,59 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         }
     }
 
+    nonisolated func room(_ room: Room, participant: RemoteParticipant?,
+                          didReceiveData data: Data, forTopic topic: String,
+                          encryptionType: EncryptionType) {
+        guard topic == RockChatPacket.topic, data.count <= 4_096,
+              let packet = try? JSONDecoder().decode(RockChatPacket.self, from: data),
+              !packet.text.isEmpty, packet.text.count <= 2_000 else { return }
+        Task { @MainActor [weak self] in
+            guard let self, self.room === room else { return }
+            self.chat.append(ChatEntry(id: packet.id,
+                                       sender: participant?.name ?? "Musician",
+                                       text: packet.text, sentAt: Date(), isOwn: false))
+        }
+    }
+
+    private func sendChat(_ text: String) {
+        guard hasConnected, let room else { return }
+        let packet = RockChatPacket(id: UUID().uuidString, text: text)
+        chat.append(ChatEntry(id: packet.id, sender: "You", text: text,
+                              sentAt: Date(), isOwn: true))
+        Task { @MainActor [weak self] in
+            do {
+                try await room.localParticipant.publish(
+                    data: JSONEncoder().encode(packet),
+                    options: DataPublishOptions(topic: RockChatPacket.topic, reliable: true))
+            } catch {
+                self?.onMediaStatus?("Chat could not send: \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func refresh(_ room: Room) {
         guard self.room === room, hasJoinStarted else { return }
+        updateVideoSubscriptions(in: room)
         callView?.render(room: room)
+    }
+
+    private func setDisplayMode(_ mode: ConferenceDisplayMode) {
+        displayMode = mode
+        if let room { updateVideoSubscriptions(in: room) }
+    }
+
+    private func updateVideoSubscriptions(in room: Room) {
+        for participant in room.remoteParticipants.values {
+            for item in participant.videoTracks {
+                guard let publication = item as? RemoteTrackPublication else { continue }
+                let wanted = displayMode == .all ||
+                    (displayMode == .screenShares && publication.source == .screenShareVideo)
+                Task { [weak self] in
+                    do { try await publication.set(subscribed: wanted) }
+                    catch { self?.onMediaStatus?("Video preference could not update: \(error.localizedDescription)") }
+                }
+            }
+        }
     }
 
     #if DEBUG
@@ -326,4 +386,10 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         }
     }
     #endif
+}
+
+private struct RockChatPacket: Codable {
+    static let topic = "rock.chat.v1"
+    let id: String
+    let text: String
 }

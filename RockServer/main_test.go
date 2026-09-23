@@ -47,7 +47,7 @@ func TestGuestJoinIssuesOnlyRoomScopedGrant(t *testing.T) {
 	if err := json.Unmarshal(data, &claims); err != nil {
 		t.Fatal(err)
 	}
-	if claims.Iss != s.config.key || len(claims.Sub) != 32 || claims.Name != "Maya" || claims.Video["room"] != "test" || claims.Video["roomJoin"] != true || claims.Video["roomAdmin"] != nil || claims.Video["roomCreate"] != nil || claims.Video["roomRecord"] != nil {
+	if claims.Iss != s.config.key || len(claims.Sub) != 32 || claims.Name != "Maya" || claims.Video["room"] != "test" || claims.Video["roomJoin"] != true || claims.Video["canPublishData"] != true || claims.Video["roomAdmin"] != nil || claims.Video["roomCreate"] != nil || claims.Video["roomRecord"] != nil {
 		t.Fatalf("unexpected join claims: %+v", claims)
 	}
 	if claims.Exp < time.Now().Add(14*time.Minute).Unix() || claims.Exp > time.Now().Add(16*time.Minute).Unix() {

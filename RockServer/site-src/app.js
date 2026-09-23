@@ -7,7 +7,42 @@ const people = document.getElementById('participants');
 const count = document.getElementById('participant-count');
 const controls = document.getElementById('media-controls');
 const name = document.getElementById('name');
+const chat = document.getElementById('chat');
+const chatMessages = document.getElementById('chat-messages');
+const chatInput = document.getElementById('chat-input');
+const chatTopic = 'rock.chat.v1';
 let room;
+
+function addChat(sender, text) {
+  if (chatMessages.textContent === 'No messages yet.') chatMessages.replaceChildren();
+  const line = document.createElement('p');
+  const heading = document.createElement('strong');
+  heading.textContent = sender + ' · ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+  const body = document.createElement('span');
+  body.textContent = text;
+  line.append(heading, body);
+  chatMessages.append(line);
+  while (chatMessages.childElementCount > 200) chatMessages.firstElementChild.remove();
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+async function sendChat() {
+  if (!room) return;
+  const text = chatInput.value.trim();
+  if (!text || [...text].length > 2000) return;
+  const packet = {id: crypto.randomUUID(), text};
+  try {
+    await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(packet)),
+      {reliable:true, topic:chatTopic});
+    addChat(room.localParticipant.name || 'You', text);
+    chatInput.value = '';
+  } catch (error) { status.textContent = 'Chat could not send: ' + error.message; }
+}
+
+document.getElementById('chat-send').addEventListener('click', sendChat);
+chatInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') { event.preventDefault(); sendChat(); }
+});
 
 document.getElementById('join-app').addEventListener('click', () => {
   const link = new URL('conferenceguest://join');
@@ -93,10 +128,20 @@ document.getElementById('join-browser').addEventListener('click', async () => {
     room.on(RoomEvent.TrackUnpublished, updatePeople);
     room.on(RoomEvent.TrackMuted, updatePeople);
     room.on(RoomEvent.TrackUnmuted, updatePeople);
-    room.on(RoomEvent.Disconnected, () => { room = undefined; controls.hidden = true; status.textContent = 'Left the jam.'; people.replaceChildren(); count.textContent = '0 participants'; });
+    room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+      if (topic !== chatTopic || payload.byteLength > 4096) return;
+      try {
+        const packet = JSON.parse(new TextDecoder().decode(payload));
+        if (typeof packet.id !== 'string' || typeof packet.text !== 'string' ||
+            !packet.text || [...packet.text].length > 2000) return;
+        addChat(participant?.name || 'Musician', packet.text);
+      } catch { /* Ignore malformed room data. */ }
+    });
+    room.on(RoomEvent.Disconnected, () => { room = undefined; controls.hidden = true; chat.hidden = true; chatMessages.textContent = 'No messages yet.'; status.textContent = 'Left the jam.'; people.replaceChildren(); count.textContent = '0 participants'; });
     await room.connect(credentials.server_url, credentials.participant_token);
     await room.startAudio();
     controls.hidden = false;
+    chat.hidden = false;
     updateOwnMediaStatus();
   } catch (error) {
     room?.disconnect(); room = undefined;

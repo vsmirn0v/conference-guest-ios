@@ -13,7 +13,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
         let model = ConferenceModel()
         let hosting = UIHostingController(rootView: JoinView(model: model,
-                                                            catchUp: model.catchUpStore))
+                                                            catchUp: model.catchUpStore,
+                                                            history: model.history))
         let controller = UIViewController()
         controller.addChild(hosting)
         controller.view.addSubview(hosting.view)

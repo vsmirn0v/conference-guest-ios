@@ -6,6 +6,8 @@ Rock’n’Roll helps small music groups in Yerevan meet between rehearsals. Mus
 
 The public test jam is [rock.glowsoft.ru/jams/test](https://rock.glowsoft.ru/jams/test). The same page explains the group and lets a second participant join in a browser. The app also supports `conferenceguest://join?url=<percent-encoded HTTPS invitation>` from a web handoff. Only Rock links use the self-hosted room service; compatible guest invitations keep their existing endpoint-discovery flow.
 
+The app saves the chosen display name and a device-only list of ten recent jams plus any starred jams. New installs show “Musician” and can fill the name from a contact selected by the user. The in-call conversation panel switches between chat and available transcript lines. The Rock room engine can show all video, screen shares only, or audio-only; the guest integration offers all video and audio-only because its public SDK does not expose a reliable screen-share filter. Compatible guest websites can hand off a `jcp` invitation; its HTTPS website origin is editable in the app.
+
 The native jam engine uses LiveKit Swift, and the small Go service issues short-lived, room-scoped guest tokens for a single configured test room. The browser is an optional participant, not an embedded app view. Keys remain on the server. The server is isolated in two Podman containers behind a dedicated nginx virtual host; deployment inputs live in [RockServer](RockServer/).
 
 The **Catch up** panel marks intervals that may have been missed during a held call, audio interruption or network loss. It can display only transcript lines actually supplied by a room provider. The test jam currently supplies none, so the panel does not claim to reconstruct missed speech. The local index is protected on the device, deleted on Leave, and expires after 24 hours. See [feature boundaries](docs/catch-up.md) and [privacy policy](https://rock.glowsoft.ru/privacy).
@@ -24,7 +26,7 @@ open RockNRoll.xcodeproj
 
 The app is signed with developer team `5V64BP2H3P`. `project.yml` generates the checked-in Xcode project. A build script copies resources required by the binary guest-integration SDK. SDK binaries are fetched through Swift Package Manager and are not committed.
 
-`RockNRollUITests.testCommunityJamConnectsMuted` exercises the public test room on an attached iPhone. Other opt-in UI tests use live guest invitations supplied in `TEST_RUNNER_ROCKNROLL_TEST_INVITE`, never stored in the repository. For prior physical-device coverage and remaining release checks, see [validation](docs/validation-2026-09-23.md) and [App Store preparation](docs/app-store-preparation-plan.md).
+`RockNRollUITests.testCommunityJamConnectsMuted` exercises the public test room on an attached iPhone. The test file also covers layout in both orientations, a saved display name, chat, and native link handoff. Live media and CallKit behavior need a device; the simulator is useful for the home screen and core logic. App Store screenshots are in [AppStore/Screenshots](AppStore/Screenshots/). For prior physical-device coverage and remaining release checks, see [validation](docs/validation-2026-09-23.md) and [App Store preparation](docs/app-store-preparation-plan.md).
 
 ## Media behavior
 

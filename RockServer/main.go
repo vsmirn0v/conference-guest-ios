@@ -213,7 +213,7 @@ func (s *server) makeToken(identity, name string, now time.Time) (string, error)
 			"roomJoin":          true,
 			"canPublish":        true,
 			"canSubscribe":      true,
-			"canPublishData":    false,
+			"canPublishData":    true,
 			"canPublishSources": []string{"microphone", "camera"},
 		},
 	}
