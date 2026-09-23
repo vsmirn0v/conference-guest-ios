@@ -1,0 +1,413 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		280C615CD2F800FC4052E600 /* JazzEventsRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2497588DE6AF28E30E850E01 /* JazzEventsRelay.swift */; };
+		37407353DB423EF5F4AFD6C9 /* ConferenceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF77BC0463FD6958D542B18A /* ConferenceModel.swift */; };
+		4B45656ACAB3D210333246FA /* GuestTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE3B3C8998DC35FA1499870E /* GuestTokenProvider.swift */; };
+		656E90529B0FD63A4607833C /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA6F7F97DEAC3C9B60595673 /* AppDelegate.swift */; };
+		66E959F2AC5D11DA353C6987 /* GuestIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AC8709F69C41BD8C951C554 /* GuestIdentity.swift */; };
+		6BB480D3FC25F9116F23B24A /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2ACB6A7DC6A0D7B0B2109D3 /* SceneDelegate.swift */; };
+		8E66FC77BBFBFA8F94DCDE0E /* AudioCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A74D76E78A5020BB0F6B26B /* AudioCoordinator.swift */; };
+		C7DDF39199AE4BB6678A7B3B /* JoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAC0B0A62F7F2CF518CEABD5 /* JoinView.swift */; };
+		D49A6BB9F159071E26C9E69A /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = F5D556392EAD78B69CA5E818 /* JazzSDK */; };
+		F4BDCE20D54274DABC917AC5 /* JazzGuestCore in Frameworks */ = {isa = PBXBuildFile; productRef = 6A1B8193DDED03AB16FC2425 /* JazzGuestCore */; };
+		FF5BD0A6A0D83C6B9F9BD434 /* MinimalCallControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AFDB3C9056214DBCA04243D /* MinimalCallControls.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0BEBE33A3597EDCE9E6E681D /* JazzGuest.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = JazzGuest.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2497588DE6AF28E30E850E01 /* JazzEventsRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JazzEventsRelay.swift; sourceTree = "<group>"; };
+		2A74D76E78A5020BB0F6B26B /* AudioCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCoordinator.swift; sourceTree = "<group>"; };
+		2AFDB3C9056214DBCA04243D /* MinimalCallControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinimalCallControls.swift; sourceTree = "<group>"; };
+		48F27BCAF2E826B8B1EB33B5 /* JazzGuestCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = JazzGuestCore; path = JazzGuestCore; sourceTree = SOURCE_ROOT; };
+		4AC8709F69C41BD8C951C554 /* GuestIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestIdentity.swift; sourceTree = "<group>"; };
+		979F0EB6BBBD7D64B551A8AB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		BA6F7F97DEAC3C9B60595673 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		DAC0B0A62F7F2CF518CEABD5 /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
+		EF77BC0463FD6958D542B18A /* ConferenceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceModel.swift; sourceTree = "<group>"; };
+		F2ACB6A7DC6A0D7B0B2109D3 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		FE3B3C8998DC35FA1499870E /* GuestTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestTokenProvider.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		8656B884AE428C1D45580777 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D49A6BB9F159071E26C9E69A /* JazzSDK in Frameworks */,
+				F4BDCE20D54274DABC917AC5 /* JazzGuestCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0240962BB2CE9D3E4E779FB6 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				48F27BCAF2E826B8B1EB33B5 /* JazzGuestCore */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		071C7A6395207DB2572C614B = {
+			isa = PBXGroup;
+			children = (
+				6F156D12E75BF82DC589F5F3 /* JazzGuest */,
+				0240962BB2CE9D3E4E779FB6 /* Packages */,
+				529F4DD6EA9F5A85F3664ABF /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		529F4DD6EA9F5A85F3664ABF /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0BEBE33A3597EDCE9E6E681D /* JazzGuest.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		6F156D12E75BF82DC589F5F3 /* JazzGuest */ = {
+			isa = PBXGroup;
+			children = (
+				BA6F7F97DEAC3C9B60595673 /* AppDelegate.swift */,
+				2A74D76E78A5020BB0F6B26B /* AudioCoordinator.swift */,
+				EF77BC0463FD6958D542B18A /* ConferenceModel.swift */,
+				4AC8709F69C41BD8C951C554 /* GuestIdentity.swift */,
+				FE3B3C8998DC35FA1499870E /* GuestTokenProvider.swift */,
+				979F0EB6BBBD7D64B551A8AB /* Info.plist */,
+				2497588DE6AF28E30E850E01 /* JazzEventsRelay.swift */,
+				DAC0B0A62F7F2CF518CEABD5 /* JoinView.swift */,
+				2AFDB3C9056214DBCA04243D /* MinimalCallControls.swift */,
+				F2ACB6A7DC6A0D7B0B2109D3 /* SceneDelegate.swift */,
+			);
+			path = JazzGuest;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		2525F165D0AA20454A1DE0C5 /* JazzGuest */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F9FC81BBF4A6106EB6B5CC3F /* Build configuration list for PBXNativeTarget "JazzGuest" */;
+			buildPhases = (
+				6FCF489E22228851E3CBE50F /* Sources */,
+				8656B884AE428C1D45580777 /* Frameworks */,
+				3E5671BB970A19A928F5262F /* Copy Jazz SDK resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = JazzGuest;
+			packageProductDependencies = (
+				F5D556392EAD78B69CA5E818 /* JazzSDK */,
+				6A1B8193DDED03AB16FC2425 /* JazzGuestCore */,
+			);
+			productName = JazzGuest;
+			productReference = 0BEBE33A3597EDCE9E6E681D /* JazzGuest.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		9522CA84E95DAC8EFC74B43B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					2525F165D0AA20454A1DE0C5 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 3261F2C9D9E70FB409BB5428 /* Build configuration list for PBXProject "JazzGuest" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 071C7A6395207DB2572C614B;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				16549BCB94771E6F6E916EEC /* XCRemoteSwiftPackageReference "jazz-ios-sdk" */,
+				A32CC2F0B20ED12864ECED92 /* XCLocalSwiftPackageReference "JazzGuestCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 529F4DD6EA9F5A85F3664ABF /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				2525F165D0AA20454A1DE0C5 /* JazzGuest */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		3E5671BB970A19A928F5262F /* Copy Jazz SDK resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Jazz SDK resources";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "bash \"$PROJECT_DIR/scripts/copy-sdk-resources.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		6FCF489E22228851E3CBE50F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				656E90529B0FD63A4607833C /* AppDelegate.swift in Sources */,
+				8E66FC77BBFBFA8F94DCDE0E /* AudioCoordinator.swift in Sources */,
+				37407353DB423EF5F4AFD6C9 /* ConferenceModel.swift in Sources */,
+				66E959F2AC5D11DA353C6987 /* GuestIdentity.swift in Sources */,
+				4B45656ACAB3D210333246FA /* GuestTokenProvider.swift in Sources */,
+				280C615CD2F800FC4052E600 /* JazzEventsRelay.swift in Sources */,
+				C7DDF39199AE4BB6678A7B3B /* JoinView.swift in Sources */,
+				FF5BD0A6A0D83C6B9F9BD434 /* MinimalCallControls.swift in Sources */,
+				6BB480D3FC25F9116F23B24A /* SceneDelegate.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		5E5C7B22D1FFB2FCFD850602 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				GUEST_TOKEN_URL = "";
+				INFOPLIST_FILE = JazzGuest/Info.plist;
+				JOIN_LINK_HOST = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.jazzguest;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		8F255C936E088851A6EDE14F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		96F6A4F91068453D81C3F205 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		B034538F35BEAB896E682058 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				GUEST_TOKEN_URL = "";
+				INFOPLIST_FILE = JazzGuest/Info.plist;
+				JOIN_LINK_HOST = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.jazzguest;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3261F2C9D9E70FB409BB5428 /* Build configuration list for PBXProject "JazzGuest" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				96F6A4F91068453D81C3F205 /* Debug */,
+				8F255C936E088851A6EDE14F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F9FC81BBF4A6106EB6B5CC3F /* Build configuration list for PBXNativeTarget "JazzGuest" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B034538F35BEAB896E682058 /* Debug */,
+				5E5C7B22D1FFB2FCFD850602 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A32CC2F0B20ED12864ECED92 /* XCLocalSwiftPackageReference "JazzGuestCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = JazzGuestCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		16549BCB94771E6F6E916EEC /* XCRemoteSwiftPackageReference "jazz-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/salute-developers/jazz-ios-sdk.git";
+			requirement = {
+				kind = revision;
+				revision = 6d5f92869690fa22bb489a9089aa554d733c6936;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		6A1B8193DDED03AB16FC2425 /* JazzGuestCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = JazzGuestCore;
+		};
+		F5D556392EAD78B69CA5E818 /* JazzSDK */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 16549BCB94771E6F6E916EEC /* XCRemoteSwiftPackageReference "jazz-ios-sdk" */;
+			productName = JazzSDK;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 9522CA84E95DAC8EFC74B43B /* Project object */;
+}

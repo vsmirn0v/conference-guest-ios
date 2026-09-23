@@ -1,0 +1,13 @@
+{
+  "pins" : [
+    {
+      "identity" : "jazz-ios-sdk",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/salute-developers/jazz-ios-sdk.git",
+      "state" : {
+        "revision" : "6d5f92869690fa22bb489a9089aa554d733c6936"
+      }
+    }
+  ],
+  "version" : 2
+}

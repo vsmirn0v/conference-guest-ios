@@ -1,0 +1,9 @@
+.DS_Store
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.env
+*.local.xcconfig
+GuestTokenBroker/.venv/
+GuestTokenBroker/__pycache__/

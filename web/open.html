@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open a Jazz meeting</title>
+<main>
+  <h1>Open a Jazz meeting</h1>
+  <label for="invite">Meeting invitation</label>
+  <input id="invite" type="url" autocomplete="off" size="50" placeholder="https://salutejazz.ru/…">
+  <button id="open" type="button">Open in Jazz Guest</button>
+  <p id="status" role="status"></p>
+</main>
+<script>
+  const input = document.getElementById('invite');
+  const status = document.getElementById('status');
+  document.getElementById('open').addEventListener('click', () => {
+    try {
+      const invite = new URL(input.value);
+      if (invite.protocol !== 'https:' ||
+          !['salutejazz.ru', 'jazz.sber.ru'].includes(invite.hostname) ||
+          invite.username || invite.password || invite.port) {
+        throw new Error('Enter a SaluteJazz HTTPS invitation.');
+      }
+      const appLink = new URL('jazzguest://join');
+      appLink.searchParams.set('url', invite.href);
+      window.location.assign(appLink.href);
+      status.textContent = 'If the app did not open, install it or paste this link in the app.';
+    } catch (error) {
+      status.textContent = error.message;
+    }
+  });
+</script>
+</html>

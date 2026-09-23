@@ -1,0 +1,36 @@
+name: JazzGuest
+options:
+  bundleIdPrefix: dev.vsmirn0v
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+packages:
+  JazzSDK:
+    url: https://github.com/salute-developers/jazz-ios-sdk.git
+    revision: 6d5f92869690fa22bb489a9089aa554d733c6936
+  JazzGuestCore:
+    path: JazzGuestCore
+targets:
+  JazzGuest:
+    type: application
+    platform: iOS
+    sources:
+      - path: JazzGuest
+    dependencies:
+      - package: JazzSDK
+      - package: JazzGuestCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.jazzguest
+        INFOPLIST_FILE: JazzGuest/Info.plist
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        GUEST_TOKEN_URL: ""
+        JOIN_LINK_HOST: ""
+    postBuildScripts:
+      - name: Copy Jazz SDK resources
+        script: bash "$PROJECT_DIR/scripts/copy-sdk-resources.sh"
+        basedOnDependencyAnalysis: false
