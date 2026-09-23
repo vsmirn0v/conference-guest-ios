@@ -69,6 +69,9 @@ final class ConferenceMediaUITests: XCTestCase {
     }
 
     func testWebsiteOpensJamInApp() throws {
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_WEB_HANDOFF"] == "1" else {
+            throw XCTSkip("Run the Safari handoff test explicitly on an iPhone.")
+        }
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
         safari.open(try XCTUnwrap(URL(string: "https://rock.glowsoft.ru/jams/test")))
         let open = safari.buttons["Open iPhone app"]
@@ -82,6 +85,20 @@ final class ConferenceMediaUITests: XCTestCase {
         let address = app.textFields["Paste jam invitation link"]
         XCTAssertTrue(address.waitForExistence(timeout: 20))
         XCTAssertEqual(address.value as? String, "https://rock.glowsoft.ru/jams/test")
+    }
+
+    func testWebsiteLinkPrefillsInvitation() throws {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        let invitation = "https://rock.glowsoft.ru/jams/test"
+        var handoff = URLComponents()
+        handoff.scheme = "conferenceguest"
+        handoff.host = "join"
+        handoff.queryItems = [URLQueryItem(name: "url", value: invitation)]
+        app.open(try XCTUnwrap(handoff.url))
+        let address = app.textFields["Paste jam invitation link"]
+        XCTAssertTrue(address.waitForExistence(timeout: 15))
+        XCTAssertEqual(address.value as? String, invitation)
+        XCTAssertTrue(app.buttons["Join with mic and camera off"].isEnabled)
     }
 
     func testNativeGuestLinkJoinsImmediately() throws {
