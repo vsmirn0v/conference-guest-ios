@@ -9,12 +9,17 @@ final class CallControls: UIView {
     private let route = UIView()
     private let catchUpButton = UIButton(type: .system)
     private let displayButton = UIButton(type: .system)
+    private let participantsButton = UIButton(type: .system)
+    private let speakerLabel = UILabel()
     private let audioOnlyBackdrop = UIView()
     private var barBottomConstraint: NSLayoutConstraint?
+    private var barLeadingConstraint: NSLayoutConstraint?
+    private var barTrailingConstraint: NSLayoutConstraint?
     private var orientationObserver: NSObjectProtocol?
     private var displayMode: ConferenceDisplayMode = .all
 
     init(state: JazzActiveConferenceState, coordinator: JazzActiveConferenceCoordinator,
+         router: JazzActiveConferenceRouter,
          catchUp: CatchUpStore, chat: ChatStore,
          onDisplayMode: @escaping (ConferenceDisplayMode) -> Void,
          onLeave: @escaping () -> Void, onMicrophoneState: @escaping (Bool) -> Void,
@@ -51,6 +56,8 @@ final class CallControls: UIView {
         displayButton.configuration = Self.iconConfiguration(displayMode.symbol)
         displayButton.accessibilityLabel = "Display: All video"
         displayButton.showsMenuAsPrimaryAction = true
+        participantsButton.configuration = Self.iconConfiguration("person.2.fill")
+        participantsButton.accessibilityLabel = "Musicians"
         configureDisplayMenu(onChange: onDisplayMode)
         microphone.configuration = Self.iconConfiguration("mic.slash.fill")
         camera.configuration = Self.iconConfiguration("video.slash.fill")
@@ -71,6 +78,7 @@ final class CallControls: UIView {
             guard let presenter = responder as? UIViewController else { return }
             presenter.present(ConversationPanelViewController(catchUp: catchUp, chat: chat), animated: true)
         }, for: .touchUpInside)
+        participantsButton.addAction(UIAction { _ in router.openParticipants() }, for: .touchUpInside)
 
         route.translatesAutoresizingMaskIntoConstraints = false
         route.accessibilityLabel = "Audio route"
@@ -94,7 +102,7 @@ final class CallControls: UIView {
         ])
 
         let bar = UIStackView(arrangedSubviews: [microphone, camera, flip, route,
-                                                displayButton, catchUpButton, leave])
+                                                participantsButton, displayButton, catchUpButton, leave])
         bar.axis = .horizontal
         bar.distribution = .fillEqually
         bar.alignment = .center
@@ -105,13 +113,27 @@ final class CallControls: UIView {
         bar.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 5, leading: 5, bottom: 5, trailing: 5)
         bar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bar)
+        speakerLabel.font = .preferredFont(forTextStyle: .subheadline)
+        speakerLabel.textColor = .systemGreen
+        speakerLabel.backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        speakerLabel.layer.cornerRadius = 8
+        speakerLabel.clipsToBounds = true
+        speakerLabel.isHidden = true
+        speakerLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(speakerLabel)
         let bottom = bar.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -4)
+        let leading = bar.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 6)
+        let trailing = bar.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -6)
         barBottomConstraint = bottom
+        barLeadingConstraint = leading
+        barTrailingConstraint = trailing
         NSLayoutConstraint.activate([
-            bar.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 6),
-            bar.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -6),
+            leading, trailing,
             bottom,
             bar.heightAnchor.constraint(equalToConstant: 54),
+            speakerLabel.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 8),
+            speakerLabel.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -7),
+            speakerLabel.trailingAnchor.constraint(lessThanOrEqualTo: bar.trailingAnchor, constant: -8),
         ])
         orientationObserver = NotificationCenter.default.addObserver(
             forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main
@@ -148,6 +170,19 @@ final class CallControls: UIView {
             self.camera.accessibilityLabel = media == .on ? "Stop video" : "Start video"
             if media != .disabled { onCameraState(media == .on) }
         }.store(in: &subscriptions)
+        Publishers.CombineLatest3(state.$localParticipant, state.$remoteParticipants,
+                                  state.$dominantSpeaker)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _, remote, speaker in
+                guard let self else { return }
+                self.participantsButton.accessibilityLabel = "Musicians, \(remote.count + 1)"
+                if let speaker, speaker.microphone.isOn {
+                    self.speakerLabel.text = "  Speaking: \(speaker.isLocal ? "You" : (speaker.userName ?? "Musician"))  "
+                    self.speakerLabel.isHidden = false
+                } else {
+                    self.speakerLabel.isHidden = true
+                }
+            }.store(in: &subscriptions)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -172,7 +207,16 @@ final class CallControls: UIView {
     }
 
     private func alignBarWithVisibleWindow() {
-        guard let window, let barBottomConstraint else { return }
+        guard let window, let barBottomConstraint,
+              let barLeadingConstraint, let barTrailingConstraint else { return }
+        let visibleLeft = convert(CGPoint(x: window.safeAreaInsets.left, y: 0), from: window).x
+        let visibleRight = convert(CGPoint(x: window.bounds.maxX - window.safeAreaInsets.right, y: 0), from: window).x
+        let ownSafeLeft = safeAreaInsets.left
+        let ownSafeRight = bounds.maxX - safeAreaInsets.right
+        let leading = max(6, visibleLeft - ownSafeLeft + 6)
+        let trailing = min(-6, visibleRight - ownSafeRight - 6)
+        if abs(barLeadingConstraint.constant - leading) > 0.5 { barLeadingConstraint.constant = leading }
+        if abs(barTrailingConstraint.constant - trailing) > 0.5 { barTrailingConstraint.constant = trailing }
         let visibleBottom = convert(
             CGPoint(x: 0, y: window.bounds.maxY - window.safeAreaInsets.bottom), from: window
         ).y

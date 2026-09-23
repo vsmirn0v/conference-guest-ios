@@ -34,6 +34,11 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         model.configure(container: controller)
 
         #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_LAYOUT_FIXTURE"] == "rock" {
+            controller.present(RockCallViewController(title: "Open rehearsal",
+                catchUp: model.catchUpStore, chat: model.chat), animated: false)
+            return
+        }
         if let raw = ProcessInfo.processInfo.environment["CONFERENCE_TEST_INVITE"],
            let url = URL(string: raw) {
             model.displayName = ProcessInfo.processInfo.environment["CONFERENCE_TEST_NAME"] ?? "Rock’n’Roll QA"

@@ -14,21 +14,21 @@ Use this copy only with a build that passes the final device and service checks.
 
 Rock’n’Roll is a place for small music groups in Yerevan to meet between rehearsals. Open a shared jam link, choose a display name once and join live audio and video with your microphone and camera off. Keep favorite jams at the top of your recent list, chat with the group, talk through arrangements, share an idea or plan the next in-person session.
 
-Choose your audio output, turn on your microphone or camera when you want to contribute, and leave at any time. In Rock jam rooms, choose all video, screen shares only or audio only. The app can keep your jam connected while the screen is locked and resumes after a telephone call. It also opens compatible guest meeting invitations shared by your group. No account is required.
+Choose your audio output, turn on your microphone or camera when you want to contribute, and leave at any time. See who is speaking and which musicians have audio, video or screen sharing on. Pin a camera or screen share, and pinch to zoom a shared screen. In Rock jam rooms, choose all video, screen shares only or audio only. The app can keep your jam connected while the screen is locked and resumes after a telephone call. It also opens compatible guest meeting invitations shared by your group. No account is required.
 
 The Catch up panel marks times when a call or network interruption may have caused you to miss audio. It displays transcript lines only when the room service actually supplies them; it does not record the call or create a recap of speech it could not receive.
 
-## Internal beta description
+## TestFlight beta description
 
-Join a public test jam or a compatible invitation with native audio, video and chat. Microphone and camera start off. Please test routes, background audio, call interruptions and recovery with another participant.
+Rock’n’Roll is a jam room for small music groups in Yerevan. Join by link without an account, chat, see who is speaking, and pin or zoom a shared screen. Microphone and camera start off. Please test audio routes, background playback and call recovery with another participant.
 
 ## App Review notes
 
 Rock’n’Roll supports more than one jam engine. The public test jam exercises our self-hosted engine and is available in the same production build as every other supported link. No reviewer account, payment, or private access is needed.
 
 1. Launch the app, keep the suggested name or choose another, and tap **Try the test jam**, or paste `https://rock.glowsoft.ru/jams/test`.
-2. Tap **Join with mic and camera off**. The room is a public demo. To inspect two-way media, open the same URL in a second browser/device, enter a different name, and join there.
-3. Turn on the microphone and camera explicitly, select an audio output, switch display modes, and use chat with the browser participant; then turn media off and leave. The joined jam appears in Recent jams and can be starred. On a physical iPhone, lock the screen to check background audio. During an ordinary incoming phone call, the jam is held and resumes after the call.
+2. Tap **Join with mic and camera off**. The room is a public demo. Open the same URL in a second browser/device, enter a different name, and join there. Its **Share demo card** button publishes a sample screen without capturing private content; **Send test tone** briefly exercises the speaking indicator.
+3. In the app, open **Musicians** to inspect audio/video status and speaking activity. A screen share automatically becomes the main view. Pin its stream, pinch to zoom it, switch between all video, screen shares and audio only, and send chat. Turn on microphone and camera explicitly, select an audio output, then turn media off and leave. The joined jam appears in Recent jams and can be starred. On a physical iPhone, lock the screen to check background audio. During an ordinary incoming phone call, the jam is held and resumes after the call.
 4. Other compatible guest invitations can be pasted or passed with `conferenceguest://join?url=<encoded HTTPS invitation>`. A current guest invitation should be supplied privately in review notes when that engine is tested; do not put a private invitation in screenshots or public pages.
 5. The Catch up panel identifies possibly missed sections. The public test jam does not supply a transcript, so it accurately reports that no speech was recovered.
 

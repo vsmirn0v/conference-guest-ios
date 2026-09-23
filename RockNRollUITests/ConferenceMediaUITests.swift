@@ -1,6 +1,25 @@
+import UIKit
 import XCTest
 
 final class ConferenceMediaUITests: XCTestCase {
+    func testCallLayoutFixtureRotatesInSimulator() throws {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for orientation: UIDeviceOrientation in [.portrait, .landscapeLeft, .portrait,
+                                                  .landscapeRight, .portrait] {
+            XCUIDevice.shared.orientation = orientation
+            assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
+                                                    "Musicians", "Display: All video", "Catch up"])
+            let frame = app.windows.firstMatch.frame
+            let leave = app.buttons["Leave"].frame
+            XCTAssertGreaterThanOrEqual(leave.minX, frame.minX - 1)
+            XCTAssertLessThanOrEqual(leave.maxX, frame.maxX + 1)
+            attachScreenshot(of: app, named: "Fixture orientation \(orientation.rawValue)")
+        }
+    }
+
     func testControlsAndConversationFitBothOrientations() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
@@ -13,11 +32,18 @@ final class ConferenceMediaUITests: XCTestCase {
         }
         let leave = app.buttons["Leave"]
         XCTAssertTrue(leave.waitForExistence(timeout: 45))
-        XCUIDevice.shared.orientation = .landscapeLeft
-        XCTAssertTrue(leave.isHittable)
-        XCTAssertTrue(app.buttons["Unmute microphone"].isHittable)
-        XCTAssertTrue(app.buttons["Display: All video"].isHittable)
-        XCUIDevice.shared.orientation = .portrait
+        for orientation: UIDeviceOrientation in [.landscapeLeft, .portrait, .landscapeRight, .portrait] {
+            XCUIDevice.shared.orientation = orientation
+            assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
+                                                    "Musicians", "Display: All video", "Catch up"])
+            Thread.sleep(forTimeInterval: 2)
+            attachScreenshot(of: app, named: "Rock settled orientation \(orientation.rawValue)")
+        }
+        let musicians = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Musicians")).firstMatch
+        musicians.tap()
+        XCTAssertTrue(app.staticTexts["Rock QA (you)"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Mic off · Video off"].exists)
+        app.buttons["Done"].tap()
         app.buttons["Catch up"].tap()
         let transcript = app.textViews["Missed jam transcript"]
         XCTAssertTrue(transcript.waitForExistence(timeout: 10))
@@ -150,6 +176,17 @@ final class ConferenceMediaUITests: XCTestCase {
         app.buttons["Display: Audio only"].tap()
         app.buttons["All video"].tap()
         XCUIDevice.shared.orientation = .portrait
+        assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
+                                                "Musicians", "Display: All video", "Catch up"])
+        XCUIDevice.shared.orientation = .landscapeRight
+        assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
+                                                "Musicians", "Display: All video", "Catch up"])
+        XCUIDevice.shared.orientation = .portrait
+        let musicians = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Musicians")).firstMatch
+        musicians.tap()
+        XCTAssertTrue(app.staticTexts["Phone Guest QA (you)"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["More participant controls"].exists)
+        app.buttons["Done"].tap()
         let catchUp = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Catch up")).firstMatch
         catchUp.tap()
         let transcript = app.textViews["Missed jam transcript"]
@@ -166,6 +203,61 @@ final class ConferenceMediaUITests: XCTestCase {
         expectation(for: NSPredicate(format: "value CONTAINS %@", "guest-browser-to-phone"),
                     evaluatedWith: chat)
         waitForExpectations(timeout: 45)
+    }
+
+    func testGuestParticipantsList() throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
+            throw XCTSkip("Provide a live guest invitation in the test environment.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone Guest QA"
+        app.launch()
+        defer {
+            XCUIDevice.shared.orientation = .portrait
+            if app.buttons["Leave"].exists { app.buttons["Leave"].tap() }
+        }
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
+        let musicians = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Musicians")).firstMatch
+        musicians.tap()
+        XCTAssertTrue(app.buttons["Phone Guest QA (you)"].waitForExistence(timeout: 10))
+        let list = app.collectionViews["ParticipantsListView.listContainer"]
+        let remote = list.buttons.element(boundBy: 1)
+        if remote.exists {
+            remote.tap()
+            let pin = app.buttons["JazzMenu.pin"]
+            XCTAssertTrue(pin.waitForExistence(timeout: 5))
+            pin.tap()
+        }
+    }
+
+    func testGuestControlsSurviveRotationCycles() throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
+            throw XCTSkip("Provide a live guest invitation in the test environment.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone Guest QA"
+        app.launch()
+        defer {
+            XCUIDevice.shared.orientation = .portrait
+            if app.buttons["Leave"].exists { app.buttons["Leave"].tap() }
+        }
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
+        for orientation: UIDeviceOrientation in [.landscapeLeft, .portrait, .landscapeRight, .portrait] {
+            XCUIDevice.shared.orientation = orientation
+            let leave = app.buttons["Leave"]
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"),
+                                                  object: leave)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
+            assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
+                                                    "Musicians", "Display: All video", "Catch up"])
+            if orientation == .portrait {
+                let window = app.windows.firstMatch.frame
+                XCTAssertGreaterThan(window.width, 300)
+                XCTAssertLessThanOrEqual(leave.frame.maxX, window.maxX + 1)
+            }
+        }
     }
 
     func testGuestVideoModeScreenshots() throws {
@@ -206,7 +298,21 @@ final class ConferenceMediaUITests: XCTestCase {
         defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
         let display = app.buttons["Display: All video"]
         XCTAssertTrue(display.waitForExistence(timeout: 45))
-        Thread.sleep(forTimeInterval: 5)
+        let zoom = app.scrollViews["Pinch to zoom screen share"]
+        XCTAssertTrue(zoom.waitForExistence(timeout: 20))
+        let pin = app.buttons["Pin Share QA screen"]
+        XCTAssertTrue(pin.exists)
+        pin.tap()
+        XCTAssertTrue(app.buttons["Unpin Share QA screen"].exists)
+        zoom.pinch(withScale: 2, velocity: 1)
+        XCTAssertNotEqual(zoom.value as? String, "100%")
+        let musicians = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Musicians")).firstMatch
+        musicians.tap()
+        XCTAssertTrue(app.staticTexts["Share QA"].exists)
+        XCTAssertTrue(app.staticTexts["Mic off · Video off · Sharing screen"].exists)
+        XCTAssertTrue(app.buttons["Return to automatic view"].exists)
+        app.buttons["Return to automatic view"].tap()
+        app.buttons["Done"].tap()
         attachScreenshot(of: app, named: "Rock all video and share")
         display.tap()
         app.buttons["Screen shares"].tap()
@@ -219,11 +325,37 @@ final class ConferenceMediaUITests: XCTestCase {
         attachScreenshot(of: app, named: "Rock audio only")
     }
 
+    func testRockSpeakingIndicatorWithBrowserTone() throws {
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SPEAKING"] == "1" else {
+            throw XCTSkip("Join the test jam as Tone QA in a browser first.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone Speaking QA"
+        app.launch()
+        defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 45))
+        XCTAssertTrue(app.staticTexts["2 musicians in this jam"].waitForExistence(timeout: 30))
+        let musicians = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Musicians")).firstMatch
+        musicians.tap()
+        XCTAssertTrue(app.staticTexts["Tone QA"].waitForExistence(timeout: 15))
+        print("WAITING FOR SPEAKING TONE")
+        XCTAssertTrue(app.staticTexts["Tone QA · Speaking"].waitForExistence(timeout: 45))
+    }
+
     private func attachScreenshot(of app: XCUIApplication, named name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func assertCallControlsVisible(_ app: XCUIApplication, labels: [String]) {
+        for label in labels {
+            let control = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", label)).firstMatch
+            XCTAssertTrue(control.waitForExistence(timeout: 10), "Missing \(label)")
+            XCTAssertTrue(control.isHittable, "Hidden \(label)")
+        }
     }
 
     func testStoreHomeScreenshot() throws {

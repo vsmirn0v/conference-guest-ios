@@ -269,7 +269,7 @@ final class NativeConferenceEngine {
     }
 
     private func minimalRepresentation() -> JazzConferenceRepresentation {
-        let overlay = JazzActiveConferenceOverlayRepresentation { [weak self] state, coordinator, _, _ in
+        let overlay = JazzActiveConferenceOverlayRepresentation { [weak self] state, coordinator, router, _ in
             guard let self else { return UIView() }
             self.activeCoordinator = coordinator
             coordinator.toggleIncomingStreamsDisabled(isEnabled: true)
@@ -280,7 +280,7 @@ final class NativeConferenceEngine {
             self.roomTitleSubscription?.cancel()
             self.roomTitleSubscription = state.$conferenceTitle.receive(on: DispatchQueue.main)
                 .sink { [weak self] in self?.onRoomTitle?($0) }
-            return CallControls(state: state, coordinator: coordinator,
+            return CallControls(state: state, coordinator: coordinator, router: router,
                                 catchUp: self.catchUp,
                                 chat: self.chat ?? ChatStore(),
                                 onDisplayMode: { mode in

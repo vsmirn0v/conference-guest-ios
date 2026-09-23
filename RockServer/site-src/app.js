@@ -11,6 +11,14 @@ const chat = document.getElementById('chat');
 const chatMessages = document.getElementById('chat-messages');
 const chatInput = document.getElementById('chat-input');
 const shareButton = document.getElementById('screen-share');
+const demoButton = document.getElementById('demo-share');
+const toneButton = document.getElementById('demo-tone');
+let demoTrack;
+let demoTimer;
+let toneTrack;
+let toneContext;
+let toneOscillator;
+let toneTimer;
 const chatTopic = 'rock.chat.v1';
 let room;
 
@@ -95,6 +103,8 @@ function updateOwnMediaStatus() {
   const camera = room.localParticipant.isCameraEnabled ? 'on' : 'off';
   const sharing = room.localParticipant.isScreenShareEnabled;
   shareButton.textContent = sharing ? 'Stop screen share' : 'Share screen';
+  demoButton.textContent = demoTrack ? 'Stop demo card' : 'Share demo card';
+  toneButton.textContent = toneTrack ? 'Stop test tone' : 'Send test tone';
   status.textContent = `You are in the jam. Microphone ${microphone}; camera ${camera}${sharing ? '; sharing screen' : ''}.`;
   updatePeople();
 }
@@ -144,11 +154,13 @@ document.getElementById('join-browser').addEventListener('click', async () => {
         addChat(participant?.name || 'Musician', packet.text);
       } catch { /* Ignore malformed room data. */ }
     });
-    room.on(RoomEvent.Disconnected, () => { room = undefined; controls.hidden = true; chat.hidden = true; chatMessages.textContent = 'No messages yet.'; status.textContent = 'Left the jam.'; people.replaceChildren(); count.textContent = '0 participants'; });
+    room.on(RoomEvent.Disconnected, () => { room = undefined; void stopDemoCard(); void stopTone(); controls.hidden = true; chat.hidden = true; chatMessages.textContent = 'No messages yet.'; status.textContent = 'Left the jam.'; people.replaceChildren(); count.textContent = '0 participants'; });
     await room.connect(credentials.server_url, credentials.participant_token);
     await room.startAudio();
     controls.hidden = false;
     shareButton.hidden = !navigator.mediaDevices?.getDisplayMedia;
+    demoButton.hidden = typeof HTMLCanvasElement.prototype.captureStream !== 'function';
+    toneButton.hidden = typeof (window.AudioContext || window.webkitAudioContext) !== 'function';
     chat.hidden = false;
     updateOwnMediaStatus();
   } catch (error) {
@@ -175,11 +187,111 @@ document.getElementById('camera').addEventListener('click', async (event) => {
     updateOwnMediaStatus();
   } catch (error) { status.textContent = 'Camera unavailable: ' + error.message; }
 });
+async function stopTone() {
+  if (toneTimer) clearTimeout(toneTimer);
+  toneTimer = undefined;
+  const track = toneTrack;
+  toneTrack = undefined;
+  try {
+    if (track && room) await room.localParticipant.unpublishTrack(track);
+  } finally {
+    track?.stop();
+    try { toneOscillator?.stop(); } catch { /* Already stopped. */ }
+    toneOscillator = undefined;
+    if (toneContext) await toneContext.close();
+    toneContext = undefined;
+    if (room) updateOwnMediaStatus();
+  }
+}
+toneButton.addEventListener('click', async () => {
+  if (!room) return;
+  try {
+    if (toneTrack) { await stopTone(); return; }
+    if (room.localParticipant.isMicrophoneEnabled) {
+      status.textContent = 'Turn off your microphone before sending the test tone.';
+      return;
+    }
+    const AudioContextType = window.AudioContext || window.webkitAudioContext;
+    toneContext = new AudioContextType();
+    const destination = toneContext.createMediaStreamDestination();
+    const volume = toneContext.createGain();
+    volume.gain.value = 0.08;
+    toneOscillator = toneContext.createOscillator();
+    toneOscillator.frequency.value = 440;
+    toneOscillator.connect(volume);
+    volume.connect(destination);
+    toneOscillator.start();
+    const track = destination.stream.getAudioTracks()[0];
+    await room.localParticipant.publishTrack(track,
+      {source: Track.Source.Microphone, name: 'Test tone'});
+    toneTrack = track;
+    toneTimer = setTimeout(() => { void stopTone(); }, 12000);
+    updateOwnMediaStatus();
+  } catch (error) {
+    await stopTone();
+    status.textContent = 'Test tone unavailable: ' + error.message;
+  }
+});
 shareButton.addEventListener('click', async () => {
   if (!room) return;
   try {
+    if (demoTrack) { await stopDemoCard(); updateOwnMediaStatus(); return; }
     await room.localParticipant.setScreenShareEnabled(!room.localParticipant.isScreenShareEnabled);
     updateOwnMediaStatus();
   } catch (error) { status.textContent = 'Screen share unavailable: ' + error.message; }
+});
+async function stopDemoCard() {
+  if (demoTimer) clearInterval(demoTimer);
+  demoTimer = undefined;
+  if (!demoTrack) return;
+  const track = demoTrack;
+  demoTrack = undefined;
+  if (room) await room.localParticipant.unpublishTrack(track);
+  track.stop();
+  if (room) updateOwnMediaStatus();
+}
+
+demoButton.addEventListener('click', async () => {
+  if (!room) return;
+  try {
+    if (demoTrack) { await stopDemoCard(); return; }
+    if (room.localParticipant.isScreenShareEnabled) {
+      await room.localParticipant.setScreenShareEnabled(false);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = 1280;
+    canvas.height = 720;
+    const context = canvas.getContext('2d');
+    const draw = () => {
+      const time = Date.now() / 1000;
+      context.fillStyle = '#171726';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = '#d6fc62';
+      context.font = 'bold 66px system-ui';
+      context.fillText('Rock’n’Roll', 90, 132);
+      context.fillStyle = '#e9e9f2';
+      context.font = '34px system-ui';
+      context.fillText('Screen-share demo · zoom in on the score', 90, 208);
+      context.strokeStyle = '#8d8da8';
+      context.lineWidth = 3;
+      for (let line = 0; line < 5; line++) {
+        const y = 320 + line * 50;
+        context.beginPath(); context.moveTo(90, y); context.lineTo(1190, y); context.stroke();
+      }
+      const step = Math.floor(time * 2) % 8;
+      for (let note = 0; note < 8; note++) {
+        context.fillStyle = note === step ? '#d6fc62' : '#e9e9f2';
+        context.beginPath(); context.ellipse(160 + note * 140, 420 - (note % 4) * 50,
+          23, 17, -0.35, 0, Math.PI * 2); context.fill();
+      }
+    };
+    draw();
+    const track = canvas.captureStream(10).getVideoTracks()[0];
+    await room.localParticipant.publishTrack(track,
+      {source: Track.Source.ScreenShare, name: 'Demo score', simulcast: false});
+    demoTrack = track;
+    demoTimer = setInterval(draw, 100);
+    updateOwnMediaStatus();
+  } catch (error) { status.textContent = 'Demo card unavailable: ' + error.message; }
 });
 document.getElementById('leave').addEventListener('click', () => room?.disconnect());

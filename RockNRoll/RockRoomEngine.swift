@@ -266,6 +266,13 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         Task { @MainActor [weak self] in self?.refresh(room) }
     }
 
+    nonisolated func room(_ room: Room, didUpdateSpeakingParticipants participants: [Participant]) {
+        Task { @MainActor [weak self] in
+            guard let self, self.room === room, self.hasJoinStarted else { return }
+            self.callView?.refreshSpeaking(room: room)
+        }
+    }
+
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
         Task { @MainActor [weak self] in self?.refresh(room) }
     }

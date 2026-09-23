@@ -1,0 +1,132 @@
+import UIKit
+
+struct ParticipantStatus: Equatable {
+    let id: String
+    let name: String
+    let isLocal: Bool
+    let microphoneOn: Bool
+    let cameraOn: Bool
+    let screenShareOn: Bool
+    let isSpeaking: Bool
+    let videoKey: String?
+    let shareKey: String?
+}
+
+final class ParticipantPanelViewController: UIViewController {
+    var onPin: ((String?) -> Void)?
+    var onMoreControls: (() -> Void)?
+    private let list = UIStackView()
+    private var statuses: [ParticipantStatus] = []
+    private var pinnedKey: String?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Musicians"
+        view.backgroundColor = .systemBackground
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            barButtonSystemItem: .done, target: self, action: #selector(close))
+        list.axis = .vertical
+        list.spacing = 8
+        list.layoutMargins = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        list.isLayoutMarginsRelativeArrangement = true
+        let scroll = UIScrollView()
+        scroll.addSubview(list)
+        list.translatesAutoresizingMaskIntoConstraints = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            list.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            list.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            list.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            list.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            list.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor)
+        ])
+        redraw()
+    }
+
+    func update(_ statuses: [ParticipantStatus], pinnedKey: String?) {
+        guard self.statuses != statuses || self.pinnedKey != pinnedKey else { return }
+        self.statuses = statuses
+        self.pinnedKey = pinnedKey
+        if isViewLoaded { redraw() }
+    }
+
+    private func redraw() {
+        list.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        if statuses.isEmpty {
+            let empty = UILabel()
+            empty.text = "No musicians are connected yet."
+            empty.textColor = .secondaryLabel
+            list.addArrangedSubview(empty)
+        }
+        for status in statuses {
+            let card = UIStackView()
+            card.axis = .vertical
+            card.spacing = 6
+            card.backgroundColor = .secondarySystemBackground
+            card.layer.cornerRadius = 14
+            card.layoutMargins = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+            card.isLayoutMarginsRelativeArrangement = true
+            let name = UILabel()
+            name.font = .preferredFont(forTextStyle: .headline)
+            name.text = status.name + (status.isLocal ? " (you)" : "") +
+                (status.isSpeaking ? " · Speaking" : "")
+            name.textColor = status.isSpeaking ? .systemGreen : .label
+            name.accessibilityLabel = name.text
+            card.addArrangedSubview(name)
+            let media = UILabel()
+            media.font = .preferredFont(forTextStyle: .subheadline)
+            media.textColor = .secondaryLabel
+            media.text = "Mic \(status.microphoneOn ? "on" : "off") · Video \(status.cameraOn ? "on" : "off")" +
+                (status.screenShareOn ? " · Sharing screen" : "")
+            card.addArrangedSubview(media)
+            if let onPin {
+                let actions = UIStackView()
+                actions.axis = .horizontal
+                actions.spacing = 12
+                if let key = status.videoKey {
+                    actions.addArrangedSubview(pinButton("Video", key: key, action: onPin))
+                }
+                if let key = status.shareKey {
+                    actions.addArrangedSubview(pinButton("Screen", key: key, action: onPin))
+                }
+                if !actions.arrangedSubviews.isEmpty { card.addArrangedSubview(actions) }
+            }
+            list.addArrangedSubview(card)
+        }
+        if pinnedKey != nil, let onPin {
+            let reset = UIButton(type: .system)
+            reset.setTitle("Return to automatic view", for: .normal)
+            reset.accessibilityLabel = "Return to automatic view"
+            reset.addAction(UIAction { _ in onPin(nil) }, for: .touchUpInside)
+            list.addArrangedSubview(reset)
+        }
+        if let onMoreControls {
+            let button = UIButton(type: .system)
+            button.setTitle("More participant controls", for: .normal)
+            button.accessibilityLabel = "More participant controls"
+            button.addAction(UIAction { [weak self] _ in
+                self?.dismiss(animated: true, completion: onMoreControls)
+            }, for: .touchUpInside)
+            list.addArrangedSubview(button)
+        }
+    }
+
+    private func pinButton(_ title: String, key: String, action: @escaping (String?) -> Void) -> UIButton {
+        let button = UIButton(type: .system)
+        var configuration = UIButton.Configuration.tinted()
+        configuration.title = key == pinnedKey ? "Unpin \(title.lowercased())" : "Pin \(title.lowercased())"
+        configuration.image = UIImage(systemName: key == pinnedKey ? "pin.slash" : "pin")
+        button.configuration = configuration
+        button.accessibilityLabel = configuration.title
+        button.addAction(UIAction { [weak self] _ in action(self?.pinnedKey == key ? nil : key) },
+                         for: .touchUpInside)
+        return button
+    }
+
+    @objc private func close() { dismiss(animated: true) }
+}

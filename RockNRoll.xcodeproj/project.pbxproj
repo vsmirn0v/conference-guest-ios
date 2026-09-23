@@ -30,6 +30,7 @@
 		9554DB9BCCF4400903CCA0BB /* ConferenceDisplayMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 463E69085989E90DC1C70351 /* ConferenceDisplayMode.swift */; };
 		964484C8436C0EA4F90E16BD /* AudioCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C049BADA8D8CC43635B8F59 /* AudioCoordinator.swift */; };
 		96E45477868AE00B30673F3A /* ConferenceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 023105828817798EB4DA9C73 /* ConferenceCore */; };
+		98CD9CB2AEB2F788DC8CB4AE /* ParticipantPanelViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F426462734DBEBAED52073DA /* ParticipantPanelViewController.swift */; };
 		CDDEE70553C1B8CF7AABD492 /* ConversationPanelViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DD12DC1E0D2B670F8DE1382 /* ConversationPanelViewController.swift */; };
 		D44F3CA4202ADBEDB878DC84 /* RockCallViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C09FCE59F22D1FD6B3AD3F2A /* RockCallViewController.swift */; };
 		D9E827D41E62EC8E63511272 /* ChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B653B040BAC24FB00F892D0 /* ChatStore.swift */; };
@@ -76,6 +77,7 @@
 		E0DDC3D21920474CDC247639 /* CallControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallControls.swift; sourceTree = "<group>"; };
 		E5DD3C92B147421C014181FA /* EventRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventRelay.swift; sourceTree = "<group>"; };
 		EAB474DA91D3DC74B6A0A6CE /* GuestSiteLinkAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestSiteLinkAdapter.swift; sourceTree = "<group>"; };
+		F426462734DBEBAED52073DA /* ParticipantPanelViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParticipantPanelViewController.swift; sourceTree = "<group>"; };
 		FC54A79FFF8952C055E7A7F7 /* GuestIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestIdentity.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -128,6 +130,7 @@
 				5CFE89ACD94BAAE54053186F /* Info.plist */,
 				959DF82F4124328521C1E81E /* JamService.swift */,
 				6D74813F24B6D41F4DE4FD6C /* JoinView.swift */,
+				F426462734DBEBAED52073DA /* ParticipantPanelViewController.swift */,
 				C09FCE59F22D1FD6B3AD3F2A /* RockCallViewController.swift */,
 				7A05CC817B412E4FA9E2EE3A /* RockRoomEngine.swift */,
 				0749D2146BB11184D76828DA /* RoomHistoryStore.swift */,
@@ -312,6 +315,7 @@
 				4AC8928ADB0FDC4C1F6565AB /* JamService.swift in Sources */,
 				874E54A0C9EDF053C688FC85 /* JoinView.swift in Sources */,
 				51BCF010D44BD48C794D74EA /* NativeConferenceEngine.swift in Sources */,
+				98CD9CB2AEB2F788DC8CB4AE /* ParticipantPanelViewController.swift in Sources */,
 				D44F3CA4202ADBEDB878DC84 /* RockCallViewController.swift in Sources */,
 				0F1E328D1D17EB3FBC4BBB80 /* RockRoomEngine.swift in Sources */,
 				8EB0755F8EF29A4FEA8F9AE9 /* RoomHistoryStore.swift in Sources */,
