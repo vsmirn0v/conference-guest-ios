@@ -35,6 +35,9 @@ if [[ ! -d "$spench_source" ]]; then
 fi
 mkdir -p "$app_frameworks"
 ditto "$spench_source" "$spench_destination"
+# The vendor archive marks its signature and binary read-only. Re-signing the
+# copied framework needs write access in the build product (not the checkout).
+chmod -R u+w "$spench_destination"
 if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" && -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]]; then
   codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp=none "$spench_destination"
 fi

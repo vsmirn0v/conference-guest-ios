@@ -59,6 +59,14 @@ final class AudioCoordinator {
         }
     }
 
+    /// A new CallKit activation supersedes an earlier interruption warning.
+    func callAudioDidActivate() {
+        audioWarning = nil
+        ensureMixing()
+        logRoute()
+        publishStatus()
+    }
+
     private func handle(_ notification: Notification) {
         #if DEBUG
         let session = AVAudioSession.sharedInstance()
@@ -86,6 +94,7 @@ final class AudioCoordinator {
             cameraWarning = nil
         case AVAudioSession.routeChangeNotification:
             // The provider's route picker and the current system route remain authoritative.
+            logRoute()
             ensureMixing()
         default:
             break
@@ -95,5 +104,14 @@ final class AudioCoordinator {
 
     private func publishStatus() {
         onStatus?(audioWarning ?? cameraWarning)
+    }
+
+    private func logRoute() {
+        #if DEBUG
+        let route = AVAudioSession.sharedInstance().currentRoute
+        let inputs = route.inputs.map { $0.portType.rawValue }.joined(separator: ",")
+        let outputs = route.outputs.map { $0.portType.rawValue }.joined(separator: ",")
+        print("Audio route types: input=[\(inputs)] output=[\(outputs)]")
+        #endif
     }
 }

@@ -12,7 +12,18 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     ) {
         guard let windowScene = scene as? UIWindowScene else { return }
         let model = ConferenceModel()
-        let controller = UIHostingController(rootView: JoinView(model: model))
+        let hosting = UIHostingController(rootView: JoinView(model: model))
+        let controller = UIViewController()
+        controller.addChild(hosting)
+        controller.view.addSubview(hosting.view)
+        hosting.view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            hosting.view.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
+            hosting.view.trailingAnchor.constraint(equalTo: controller.view.trailingAnchor),
+            hosting.view.topAnchor.constraint(equalTo: controller.view.topAnchor),
+            hosting.view.bottomAnchor.constraint(equalTo: controller.view.bottomAnchor)
+        ])
+        hosting.didMove(toParent: controller)
         let window = UIWindow(windowScene: windowScene)
         window.rootViewController = controller
         window.makeKeyAndVisible()

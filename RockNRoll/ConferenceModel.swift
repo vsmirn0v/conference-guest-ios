@@ -18,7 +18,9 @@ final class ConferenceModel: ObservableObject {
     private let resolver = ConferenceEndpointResolver()
     private weak var container: UIViewController?
     private var pendingTarget: JoinTarget?
+    private var replacementAfterLeave: JoinTarget?
     private var joinTask: Task<Void, Never>?
+    private var terminalEventHandled = false
 
     func configure(container: UIViewController) {
         self.container = container
@@ -33,7 +35,10 @@ final class ConferenceModel: ObservableObject {
     func receive(url: URL) {
         do {
             let target = try JoinTarget.parse(url.absoluteString, joinLinkHost: joinLinkHost)
-            if isJoining || isInConference {
+            if isLeaving {
+                replacementAfterLeave = target
+            } else if isJoining || isInConference {
+                guard target.invitationURL.absoluteString != invite else { return }
                 pendingTarget = target
                 showSwitchConfirmation = true
             } else {
@@ -57,6 +62,7 @@ final class ConferenceModel: ObservableObject {
                 status = "Conference view is unavailable."
                 return
             }
+            terminalEventHandled = false
             isJoining = true
             status = "Finding this meeting's conference service…"
             joinTask = Task {
@@ -97,8 +103,19 @@ final class ConferenceModel: ObservableObject {
 
     func replaceWithPending() {
         guard let target = pendingTarget else { return }
-        leave()
+        replacementAfterLeave = target
         pendingTarget = nil
+        leave()
+        if !isLeaving { completeReplacement() }
+    }
+
+    func dismissPending() {
+        pendingTarget = nil
+    }
+
+    private func completeReplacement() {
+        guard let target = replacementAfterLeave else { return }
+        replacementAfterLeave = nil
         set(target: target)
     }
 
@@ -108,9 +125,13 @@ final class ConferenceModel: ObservableObject {
     }
 
     private func handle(event: CallEvent) {
+        guard !terminalEventHandled else { return }
         switch event {
         case .inactive:
-            if isJoining && !isLeaving { status = "Could not connect to the meeting." }
+            guard !isLeaving else { return }
+            terminalEventHandled = true
+            if isJoining { status = "Could not connect to the meeting." }
+            else if isInConference { status = "Disconnected from the meeting." }
             isJoining = false
             isInConference = false
             isLeaving = false
@@ -129,21 +150,27 @@ final class ConferenceModel: ObservableObject {
             break
         case .failed:
             guard isJoining, !isLeaving else { return }
+            terminalEventHandled = true
             isJoining = false
             isInConference = false
             status = "Could not join this meeting."
         case .canceled:
             guard isJoining || isLeaving else { return }
+            terminalEventHandled = true
             isJoining = false
             isLeaving = false
             status = "Joining canceled."
+            completeReplacement()
         case .left:
+            terminalEventHandled = true
             isJoining = false
             isInConference = false
             isLeaving = false
             mediaStatus = nil
             status = "Left the meeting."
+            completeReplacement()
         case .evicted:
+            terminalEventHandled = true
             isJoining = false
             isInConference = false
             status = "Removed from the meeting."

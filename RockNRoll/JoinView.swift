@@ -42,7 +42,7 @@ struct JoinView: View {
                 isPresented: $model.showSwitchConfirmation
             ) {
                 Button("Leave current meeting") { model.replaceWithPending() }
-                Button("Stay here", role: .cancel) {}
+                Button("Stay here", role: .cancel) { model.dismissPending() }
             }
         }
     }

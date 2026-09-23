@@ -2,6 +2,7 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
 <title>Open a conference</title>
 <main>
   <h1>Open a conference</h1>
@@ -13,14 +14,17 @@
 <script>
   const input = document.getElementById('invite');
   const status = document.getElementById('status');
+  const supplied = new URL(location.href).searchParams.getAll('url');
+  if (supplied.length === 1) input.value = supplied[0];
   document.getElementById('open').addEventListener('click', () => {
     try {
       const invite = new URL(input.value);
       const segments = invite.pathname.split('/').filter(Boolean);
+      const passwords = invite.searchParams.getAll('psw');
       if (invite.protocol !== 'https:' || !invite.hostname ||
           invite.username || invite.password ||
           segments.length !== 2 || segments[0] !== 'calls' ||
-          !segments[1] || !invite.searchParams.get('psw')) {
+          !segments[1] || passwords.length !== 1 || !passwords[0]) {
         throw new Error('Enter a complete HTTPS meeting invitation.');
       }
       const appLink = new URL('conferenceguest://join');

@@ -51,7 +51,7 @@ final class NativeConferenceEngine {
         configuredNetworkURL = networkURL
         systemCall.onActivated = { [weak self] in
             Task { @MainActor [weak self] in
-                self?.audio.ensureMixing()
+                self?.audio.callAudioDidActivate()
                 self?.systemCall.resumeIfPossible()
                 self?.startMediaAfterActivation()
             }

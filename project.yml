@@ -14,6 +14,9 @@ targets:
   RockNRoll:
     type: application
     platform: iOS
+    scheme:
+      testTargets:
+        - RockNRollUITests
     sources:
       - path: RockNRoll
     dependencies:
@@ -34,3 +37,15 @@ targets:
       - name: Copy provider SDK resources
         script: bash "$PROJECT_DIR/scripts/copy-sdk-resources.sh"
         basedOnDependencyAnalysis: false
+  RockNRollUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: RockNRollUITests
+    dependencies:
+      - target: RockNRoll
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"

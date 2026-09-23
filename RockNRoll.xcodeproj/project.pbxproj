@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		08245B21B07D8A02CAB118A4 /* CallControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0DDC3D21920474CDC247639 /* CallControls.swift */; };
 		1D215FCF2BF4D33961AB1F25 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40ADF9352DB719D2F965B798 /* AppDelegate.swift */; };
+		1D9636718D82A88CBF3B1B20 /* ConferenceMediaUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54AEAC9A8CBF663384D79667 /* ConferenceMediaUITests.swift */; };
 		2E7ACBEBBF9B770C63EBAFB5 /* AnonymousTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DB9260C3E8754FB5368FF99 /* AnonymousTokenProvider.swift */; };
 		39A122CD5DC9D10C3DCC29DA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BD6CCF5106C0A518803CCA07 /* Assets.xcassets */; };
 		4348F04B521CB67613009F69 /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3F91314298394121DA8F1D /* JazzSDK */; };
@@ -23,9 +24,21 @@
 		96E45477868AE00B30673F3A /* ConferenceCore in Frameworks */ = {isa = PBXBuildFile; productRef = 023105828817798EB4DA9C73 /* ConferenceCore */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		FAF93D45D9A607FEA70FD71E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B0B80D54AB9B634D320FE51D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B1633D4870119A1C822C5483;
+			remoteInfo = RockNRoll;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		40ADF9352DB719D2F965B798 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		4C049BADA8D8CC43635B8F59 /* AudioCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCoordinator.swift; sourceTree = "<group>"; };
+		54AB06E7B00CA5AC1FCCC395 /* RockNRollUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RockNRollUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		54AEAC9A8CBF663384D79667 /* ConferenceMediaUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceMediaUITests.swift; sourceTree = "<group>"; };
 		5CFE89ACD94BAAE54053186F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		5DB9260C3E8754FB5368FF99 /* AnonymousTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnonymousTokenProvider.swift; sourceTree = "<group>"; };
 		65570B6D840AF2D71932D313 /* ConferenceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceModel.swift; sourceTree = "<group>"; };
@@ -58,6 +71,7 @@
 			isa = PBXGroup;
 			children = (
 				CC42FB720B95DDCB4C47E645 /* RockNRoll.app */,
+				54AB06E7B00CA5AC1FCCC395 /* RockNRollUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -67,6 +81,7 @@
 			children = (
 				F0180F344B2A34E54724DD80 /* Packages */,
 				D236B2060583426D0D293D20 /* RockNRoll */,
+				E680D93E3830A213621DCA70 /* RockNRollUITests */,
 				2835BD9AF29D4B9549DF8290 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -99,6 +114,14 @@
 			path = VendorIntegration;
 			sourceTree = "<group>";
 		};
+		E680D93E3830A213621DCA70 /* RockNRollUITests */ = {
+			isa = PBXGroup;
+			children = (
+				54AEAC9A8CBF663384D79667 /* ConferenceMediaUITests.swift */,
+			);
+			path = RockNRollUITests;
+			sourceTree = "<group>";
+		};
 		F0180F344B2A34E54724DD80 /* Packages */ = {
 			isa = PBXGroup;
 			children = (
@@ -110,6 +133,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		00A6492A8B53C5CD9E8CEB83 /* RockNRollUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 898A4910B5D8AB22AF73887F /* Build configuration list for PBXNativeTarget "RockNRollUITests" */;
+			buildPhases = (
+				8CBD1AEE90F809A4447D3219 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5E4C17FCFF389EB89E518579 /* PBXTargetDependency */,
+			);
+			name = RockNRollUITests;
+			packageProductDependencies = (
+			);
+			productName = RockNRollUITests;
+			productReference = 54AB06E7B00CA5AC1FCCC395 /* RockNRollUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		B1633D4870119A1C822C5483 /* RockNRoll */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 23E1298FAA7D05492E63688A /* Build configuration list for PBXNativeTarget "RockNRoll" */;
@@ -141,6 +182,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					00A6492A8B53C5CD9E8CEB83 = {
+						TestTargetID = B1633D4870119A1C822C5483;
+					};
 					B1633D4870119A1C822C5483 = {
 						ProvisioningStyle = Automatic;
 					};
@@ -165,6 +209,7 @@
 			projectRoot = "";
 			targets = (
 				B1633D4870119A1C822C5483 /* RockNRoll */,
+				00A6492A8B53C5CD9E8CEB83 /* RockNRollUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -221,9 +266,43 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		8CBD1AEE90F809A4447D3219 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1D9636718D82A88CBF3B1B20 /* ConferenceMediaUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		5E4C17FCFF389EB89E518579 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B1633D4870119A1C822C5483 /* RockNRoll */;
+			targetProxy = FAF93D45D9A607FEA70FD71E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		2D96FA96EC1F1FC1646EBABE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.conferenceguest.uitests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = RockNRoll;
+			};
+			name = Debug;
+		};
 		5CA0A3E6510ED87529FDE1C0 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -277,6 +356,24 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		9B245D10B08D366E4560B034 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.conferenceguest.uitests;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = RockNRoll;
 			};
 			name = Release;
 		};
@@ -402,6 +499,15 @@
 			buildConfigurations = (
 				E28C2AF7C9D9AC73351ADD88 /* Debug */,
 				DDC1EF8D8BA9023F02A8B72F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		898A4910B5D8AB22AF73887F /* Build configuration list for PBXNativeTarget "RockNRollUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2D96FA96EC1F1FC1646EBABE /* Debug */,
+				9B245D10B08D366E4560B034 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
