@@ -2,7 +2,7 @@ name: RockNRoll
 options:
   bundleIdPrefix: dev.vsmirn0v
   deploymentTarget:
-    iOS: "18.0"
+    iOS: "17.0"
   createIntermediateGroups: true
 packages:
   JazzSDK:

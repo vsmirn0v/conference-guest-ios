@@ -12,11 +12,11 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertTrue(room.waitForExistence(timeout: 15))
         room.press(forDuration: 0.9)
         app.buttons["Rename"].tap()
-        let name = app.alerts["Name this jam"].textFields["New jam name"]
+        let name = app.textFields["New jam name"]
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.tap()
         name.typeText("Friday quartet \(marker)")
-        app.alerts.buttons["Save"].tap()
+        app.buttons["Save"].tap()
         XCTAssertTrue(app.buttons["Rejoin Friday quartet \(marker)"].waitForExistence(timeout: 5))
         app.terminate()
         app.launch()
@@ -229,13 +229,16 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Mic off · Video off"].exists)
         app.buttons["Done"].tap()
         app.buttons["Chat"].tap()
-        app.segmentedControls["Conversation mode"].buttons["Catch up"].tap()
+        let mode = app.segmentedControls["Conversation mode"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 10))
+        Thread.sleep(forTimeInterval: 1)
+        mode.buttons["Catch up"].tap()
+        XCTAssertTrue(mode.buttons["Catch up"].isSelected)
         let transcript = app.scrollViews["Catch up sections"]
         XCTAssertTrue(transcript.waitForExistence(timeout: 10))
         let window = app.windows.firstMatch.frame
         XCTAssertGreaterThan(transcript.frame.height, window.height * 0.3)
         XCTAssertLessThanOrEqual(transcript.frame.maxY, window.maxY - 30)
-        let mode = app.segmentedControls["Conversation mode"]
         mode.buttons["Chat"].tap()
         XCTAssertTrue(app.scrollViews["Jam chat messages"].isHittable)
         XCTAssertTrue(app.textViews["Chat message"].isHittable)
@@ -553,6 +556,8 @@ final class ConferenceMediaUITests: XCTestCase {
         }
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Chat")).firstMatch.tap()
         let mode = app.segmentedControls["Conversation mode"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 10))
+        Thread.sleep(forTimeInterval: 1)
         mode.buttons["Chat"].tap()
         XCTAssertTrue(app.scrollViews["Jam chat messages"].isHittable)
         mode.buttons["Live text"].tap()

@@ -136,19 +136,32 @@ struct JoinView: View {
             }
             .sheet(isPresented: $showingSettings) { settingsSheet }
             .sheet(isPresented: $showingNameEditor) { nameSheet }
-            .alert("Name this jam", isPresented: Binding(
-                get: { editingRoom != nil },
-                set: { if !$0 { editingRoom = nil } }
-            )) {
-                TextField("New jam name", text: $roomAlias)
-                Button("Save") {
-                    if let editingRoom { model.setAlias(roomAlias, for: editingRoom) }
-                    editingRoom = nil
+            .sheet(item: $editingRoom) { room in
+                NavigationStack {
+                    Form {
+                        Section {
+                            TextField("New jam name", text: $roomAlias)
+                                .textInputAutocapitalization(.words)
+                        } footer: {
+                            Text("Current: \(room.displayTitle). Only you see this name.")
+                        }
+                    }
+                    .navigationTitle("Name this jam")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Cancel") { editingRoom = nil }
+                        }
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Save") {
+                                model.setAlias(roomAlias, for: room)
+                                editingRoom = nil
+                            }
+                            .disabled(roomAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                    }
                 }
-                .disabled(roomAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("Cancel", role: .cancel) { editingRoom = nil }
-            } message: {
-                Text("Current: \(editingRoom?.displayTitle ?? "Jam"). Only you see this name.")
+                .presentationDetents([.medium])
             }
             .confirmationDialog(
                 "Leave the current jam and open the new invitation?",
@@ -250,7 +263,7 @@ struct JoinView: View {
     }
 
     private func startRename(_ room: RecentRoom) {
-        roomAlias = ""
+        roomAlias = room.alias ?? ""
         editingRoom = room
     }
 
