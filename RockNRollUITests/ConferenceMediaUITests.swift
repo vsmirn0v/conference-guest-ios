@@ -327,6 +327,26 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Join jam"].isEnabled)
     }
 
+    func testNativeGuestSchemesResolveIntoInvitations() throws {
+        let links = [
+            ("jcp://jazz?code=schemeprobejcp&psw=fixturepass", "schemeprobejcp"),
+            ("jazz://join?id=schemeprobejazz&password=fixturepass", "schemeprobejazz"),
+            ("jazz://jazz?code=schemeprobealias&psw=fixturepass", "schemeprobealias")
+        ]
+        for (raw, roomID) in links {
+            let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+            app.open(try XCTUnwrap(URL(string: raw)))
+            let address = app.textFields["Invitation link"]
+            XCTAssertTrue(address.waitForExistence(timeout: 15))
+            let converted = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value CONTAINS %@", "/calls/\(roomID)?psw=fixturepass"),
+                object: address)
+            XCTAssertEqual(XCTWaiter.wait(for: [converted], timeout: 15), .completed)
+            if app.buttons["Leave"].exists { app.buttons["Leave"].tap() }
+            app.terminate()
+        }
+    }
+
     func testNativeGuestLinkJoinsImmediately() throws {
         guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_APP_LINK"],
               let url = URL(string: invitation) else {

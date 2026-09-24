@@ -67,7 +67,7 @@ final class ConferenceModel: ObservableObject {
     func receive(url: URL) {
         do {
             let target = try destination(for: url.absoluteString)
-            let autoJoin = url.scheme?.lowercased() == GuestSiteLinkAdapter.scheme
+            let autoJoin = GuestSiteLinkAdapter.handles(url)
             if isLeaving {
                 replacementAfterLeave = target
                 replacementAutoJoin = autoJoin
@@ -384,7 +384,7 @@ final class ConferenceModel: ObservableObject {
 
     private func destination(for text: String) throws -> JoinDestination {
         let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let url = URL(string: candidate), url.scheme?.lowercased() == GuestSiteLinkAdapter.scheme {
+        if let url = URL(string: candidate), GuestSiteLinkAdapter.handles(url) {
             let invitation = try GuestSiteLinkAdapter.invitation(from: url,
                                                                  websiteOrigin: guestWebsiteOrigin)
             return try JoinDestination.parse(invitation.absoluteString, joinLinkHost: joinLinkHost)

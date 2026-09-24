@@ -27,11 +27,12 @@
 			<array>
 				<string>conferenceguest</string>
 				<string>jcp</string>
+				<string>jazz</string>
 			</array>
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>8</string>
+	<string>9</string>
 	<key>JoinLinkHost</key>
 	<string>$(JOIN_LINK_HOST)</string>
 	<key>GuestWebsiteOrigin</key>
