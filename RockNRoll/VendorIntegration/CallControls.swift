@@ -36,13 +36,15 @@ final class CallControls: UIView {
     init(state: JazzActiveConferenceState, coordinator: JazzActiveConferenceCoordinator,
          router: JazzActiveConferenceRouter,
          catchUp: CatchUpStore, chat: ChatStore,
+         initialDisplayMode: ConferenceDisplayMode,
          onDisplayMode: @escaping (ConferenceDisplayMode) -> Void,
          onLeave: @escaping () -> Void, onMicrophoneState: @escaping (Bool) -> Void,
          onCameraState: @escaping (Bool) -> Void) {
         super.init(frame: .zero)
+        displayMode = initialDisplayMode
         backgroundColor = .clear
         audioOnlyBackdrop.backgroundColor = .black
-        audioOnlyBackdrop.isHidden = true
+        audioOnlyBackdrop.isHidden = initialDisplayMode != .audioOnly
         audioOnlyBackdrop.isUserInteractionEnabled = false
         audioOnlyBackdrop.translatesAutoresizingMaskIntoConstraints = false
         addSubview(audioOnlyBackdrop)
@@ -93,7 +95,7 @@ final class CallControls: UIView {
         catchUpButton.configuration = Self.iconConfiguration("text.bubble")
         catchUpButton.accessibilityLabel = "Chat"
         displayButton.configuration = Self.iconConfiguration(displayMode.symbol)
-        displayButton.accessibilityLabel = "Display: All video"
+        displayButton.accessibilityLabel = "Display: \(displayMode.title)"
         moreButton.configuration = Self.iconConfiguration("ellipsis.circle.fill", title: "More")
         moreButton.accessibilityLabel = "More call options"
         moreButton.showsMenuAsPrimaryAction = true
@@ -105,10 +107,14 @@ final class CallControls: UIView {
         leave.configuration?.baseForegroundColor = .systemRed
 
         microphone.addAction(UIAction { _ in
-            coordinator.toggleMicrohone(isOn: state.microphoneState != .on)
+            let turnOn = state.microphoneState != .on
+            onMicrophoneState(turnOn)
+            coordinator.toggleMicrohone(isOn: turnOn)
         }, for: .touchUpInside)
         camera.addAction(UIAction { _ in
-            coordinator.toggleCamera(isOn: state.cameraState != .on)
+            let turnOn = state.cameraState != .on
+            onCameraState(turnOn)
+            coordinator.toggleCamera(isOn: turnOn)
         }, for: .touchUpInside)
         leave.addAction(UIAction { _ in onLeave() }, for: .touchUpInside)
         catchUpButton.addAction(UIAction { [weak self] _ in
@@ -267,7 +273,6 @@ final class CallControls: UIView {
             self.microphone.configuration?.image = UIImage(systemName: media == .on ? "mic.fill" : "mic.slash.fill")
             self.microphone.isEnabled = media != .disabled
             self.microphone.accessibilityLabel = media == .on ? "Mute microphone" : "Unmute microphone"
-            if media != .disabled { onMicrophoneState(media == .on) }
         }.store(in: &subscriptions)
         state.$cameraState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
@@ -279,7 +284,6 @@ final class CallControls: UIView {
             self.cameraOn = media == .on
             self.configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
             self.camera.accessibilityLabel = media == .on ? "Stop video" : "Start video"
-            if media != .disabled { onCameraState(media == .on) }
         }.store(in: &subscriptions)
         Publishers.CombineLatest3(state.$localParticipant, state.$remoteParticipants,
                                   state.$dominantSpeaker)

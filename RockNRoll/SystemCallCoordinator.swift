@@ -21,6 +21,11 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private var heldForAnotherCall = false
     private var holdStartedAt: Date?
     private var resumeRequested = false
+    private var isAudioSessionActive = false
+
+    var canRestoreAudio: Bool {
+        callID != nil && isAudioSessionActive && !isHeld && !hasAnotherActiveCall
+    }
 
     override init() {
         let configuration = CXProviderConfiguration()
@@ -48,6 +53,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         heldForAnotherCall = false
         holdStartedAt = nil
         resumeRequested = false
+        isAudioSessionActive = false
         let handle = CXHandle(type: .generic, value: "Jam")
         let action = CXStartCallAction(call: id, handle: handle)
         action.isVideo = true
@@ -110,6 +116,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         heldForAnotherCall = false
         holdStartedAt = nil
         resumeRequested = false
+        isAudioSessionActive = false
         provider.reportCall(with: callID, endedAt: nil, reason: reason)
     }
 
@@ -123,6 +130,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         heldForAnotherCall = false
         holdStartedAt = nil
         resumeRequested = false
+        isAudioSessionActive = false
         onEnded?(false)
     }
 
@@ -143,6 +151,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         print("System call: audio activated")
         #endif
         guard callID != nil else { return }
+        isAudioSessionActive = true
         onActivated?()
     }
 
@@ -156,6 +165,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         }
         callID = nil
         isConnected = false
+        isAudioSessionActive = false
         action.fulfill()
         onEnded?(true)
     }
@@ -197,6 +207,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         print("System call: audio deactivated")
         #endif
         guard callID != nil else { return }
+        isAudioSessionActive = false
         onDeactivated?()
     }
 

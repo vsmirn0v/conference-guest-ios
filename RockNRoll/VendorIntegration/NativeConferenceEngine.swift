@@ -38,6 +38,12 @@ final class NativeConferenceEngine {
     private var hasBecomeActive = false
     private var isSDKActive = false
     private var isNetworkAvailable = true
+    private var needsMediaReconnect = false
+    private var isMediaReconnecting = false
+    private var hasScheduledMediaRestart = false
+    private var mediaReconnectTimedOut = false
+    private var mediaReconnectGeneration: UInt64 = 0
+    private var activeRoom: JazzRoom?
     #if DEBUG
     private var testHoldScheduled = false
     #endif
@@ -68,10 +74,24 @@ final class NativeConferenceEngine {
             self.isAudioInterrupted = interrupted
             if interrupted { self.audioGate.markInterrupted() }
             guard self.hasBecomeActive else { return }
-            if interrupted { self.catchUp.begin(.audioInterruption) }
-            else { self.recoverAudioIfReady() }
+            if interrupted {
+                self.needsMediaReconnect = true
+                self.catchUp.begin(.audioInterruption)
+                self.scheduleUnpairedInterruptionRecovery()
+            } else {
+                self.recoverAudioIfReady()
+            }
         }
-        events.onEvent = { [weak self] event in self?.onEvent?(event) }
+        events.onEvent = { [weak self] event in
+            guard let self else { return }
+            if self.isMediaReconnecting {
+                switch event {
+                case .left, .inactive, .canceled, .failed: return
+                default: break
+                }
+            }
+            self.onEvent?(event)
+        }
         let settings = JazzSettings(
             network: JazzNetwork(hostUrl: networkURL),
             buttonsVisibility: .allVisible,
@@ -103,6 +123,14 @@ final class NativeConferenceEngine {
                 if case .activeConference = phase {
                     self.isSDKActive = true
                     self.hasBecomeActive = true
+                    if self.isMediaReconnecting {
+                        self.isMediaReconnecting = false
+                        self.hasScheduledMediaRestart = false
+                        self.isAudioInterrupted = false
+                        self.restoreMediaIntent()
+                        self.catchUp.end(.audioInterruption)
+                        self.onMediaStatus?(nil)
+                    }
                     self.updateConnectionGap()
                     if self.isSystemHeld { self.catchUp.begin(.anotherCall) }
                     if self.isAudioInterrupted { self.catchUp.begin(.audioInterruption) }
@@ -116,13 +144,28 @@ final class NativeConferenceEngine {
                     self.isSDKActive = false
                     self.updateConnectionGap()
                 }
-                self.onEvent?(Self.map(phase))
                 if case .inactive = phase {
+                    if self.isMediaReconnecting && !self.leaveRequested {
+                        guard !self.hasScheduledMediaRestart else { return }
+                        self.hasScheduledMediaRestart = true
+                        self.activeCoordinator = nil
+                        self.activeControls = nil
+                        self.hasMediaJoinStarted = false
+                        self.pendingRoom = self.activeRoom
+                        Task { @MainActor [weak self] in
+                            try? await Task.sleep(for: .milliseconds(350))
+                            guard let self, self.isMediaReconnecting,
+                                  !self.leaveRequested else { return }
+                            self.startMediaAfterActivation()
+                        }
+                        return
+                    }
                     self.isSDKActive = false
                     self.updateConnectionGap()
                     self.hasJoinStarted = false
                     self.hasMediaJoinStarted = false
                     self.activeCoordinator = nil
+                    self.activeRoom = nil
                     self.toastSubscription?.cancel()
                     self.toastSubscription = nil
                     self.currentNotices = []
@@ -130,6 +173,7 @@ final class NativeConferenceEngine {
                     self.activeControls = nil
                     self.systemCall.markEnded(reason: .failed)
                 }
+                self.onEvent?(Self.map(phase))
             }
             .store(in: &subscriptions)
     }
@@ -151,7 +195,10 @@ final class NativeConferenceEngine {
                 guard let self, self.hasJoinStarted else { return }
                 self.audioGate.deactivate()
                 self.isAudioInterrupted = true
-                if self.hasBecomeActive { self.catchUp.begin(.audioInterruption) }
+                if self.hasBecomeActive {
+                    self.needsMediaReconnect = true
+                    self.catchUp.begin(.audioInterruption)
+                }
                 self.onMediaStatus?("Jam audio paused by iOS")
             }
         }
@@ -165,6 +212,10 @@ final class NativeConferenceEngine {
                 }
                 self.hasBecomeActive = false
                 self.isSDKActive = false
+                self.isMediaReconnecting = false
+                self.hasScheduledMediaRestart = false
+                self.needsMediaReconnect = false
+                self.activeRoom = nil
                 self.networkMonitor?.cancel()
                 self.networkMonitor = nil
                 self.leaveRequested = false
@@ -177,7 +228,9 @@ final class NativeConferenceEngine {
                 self.activeCoordinator = nil
                 self.hasJoinStarted = false
                 self.hasMediaJoinStarted = false
-                self.onEvent?(.left)
+                let terminalEvent: CallEvent = self.mediaReconnectTimedOut ? .failed : .left
+                self.mediaReconnectTimedOut = false
+                self.onEvent?(terminalEvent)
             }
         }
         systemCall.onMuteChanged = { [weak self] muted in
@@ -222,22 +275,67 @@ final class NativeConferenceEngine {
     private func recoverAudioIfReady() {
         guard hasMediaJoinStarted, hasBecomeActive, let coordinator = activeCoordinator,
               audioGate.takeRecovery() else { return }
+        if needsMediaReconnect {
+            needsMediaReconnect = false
+            isMediaReconnecting = true
+            hasScheduledMediaRestart = false
+            mediaReconnectGeneration &+= 1
+            onMediaStatus?("Restoring jam audio…")
+            JazzSession.shared.terminateActiveConference()
+            scheduleMediaReconnectTimeout(for: mediaReconnectGeneration)
+            return
+        }
         audio.ensureMixing()
         // Reapply reception after the system returns the audio session. The
         // provider controls its own media engine; we only restore its setting.
-        coordinator.toggleIncomingStreamsDisabled(isEnabled: displayMode != .audioOnly)
-        coordinator.toggleMicrohone(isOn: microphoneIntentOn)
-        coordinator.toggleCamera(isOn: cameraIntentOn)
+        restoreMediaIntent(using: coordinator)
         isAudioInterrupted = false
         catchUp.end(.audioInterruption)
         onMediaStatus?(nil)
+    }
+
+    private func scheduleUnpairedInterruptionRecovery() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let self, self.hasMediaJoinStarted, self.hasBecomeActive,
+                  self.isAudioInterrupted, !self.leaveRequested,
+                  self.systemCall.canRestoreAudio else { return }
+            do {
+                try self.audio.reactivateAfterInterruption()
+                self.recoverAudioIfReady()
+            } catch {
+                self.onMediaStatus?("Jam audio is paused; waiting for iOS")
+                #if DEBUG
+                print("Guest audio reactivation failed: \(error.localizedDescription)")
+                #endif
+            }
+        }
+    }
+
+    private func restoreMediaIntent(using selectedCoordinator: JazzActiveConferenceCoordinator? = nil) {
+        guard let coordinator = selectedCoordinator ?? activeCoordinator else { return }
+        coordinator.toggleIncomingStreamsDisabled(isEnabled: displayMode != .audioOnly)
+        coordinator.toggleMicrohone(isOn: microphoneIntentOn)
+        coordinator.toggleCamera(isOn: cameraIntentOn)
+    }
+
+    private func scheduleMediaReconnectTimeout(for generation: UInt64) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(12))
+            guard let self, self.isMediaReconnecting, !self.leaveRequested,
+                  self.mediaReconnectGeneration == generation else { return }
+            self.mediaReconnectTimedOut = true
+            self.systemCall.end()
+        }
     }
 
     func join(target: JoinTarget, displayName: String) throws {
         chat?.clear()
         currentNotices = []
         identity.setName(displayName)
-        pendingRoom = try resolve(target)
+        let room = try resolve(target)
+        pendingRoom = room
+        activeRoom = room
         catchUp.enter(roomKey: target.originURL.absoluteString + "/" + target.roomID)
         leaveRequested = false
         hasBecomeActive = false
@@ -251,6 +349,10 @@ final class NativeConferenceEngine {
         audioGate = CallAudioRecoveryGate()
         displayMode = .all
         isAudioInterrupted = false
+        needsMediaReconnect = false
+        isMediaReconnecting = false
+        hasScheduledMediaRestart = false
+        mediaReconnectTimedOut = false
         try audio.prepareForJoin()
         startNetworkMonitor()
         hasJoinStarted = true
@@ -350,7 +452,7 @@ final class NativeConferenceEngine {
         let overlay = JazzActiveConferenceOverlayRepresentation { [weak self] state, coordinator, router, _ in
             guard let self else { return UIView() }
             self.activeCoordinator = coordinator
-            coordinator.toggleIncomingStreamsDisabled(isEnabled: true)
+            coordinator.toggleIncomingStreamsDisabled(isEnabled: self.displayMode != .audioOnly)
             self.observeTranscript(state: state)
             self.chat?.onSend = { [weak self] message in
                 self?.activeCoordinator?.sendMessage(message: message)
@@ -361,6 +463,7 @@ final class NativeConferenceEngine {
             let controls = CallControls(state: state, coordinator: coordinator, router: router,
                                         catchUp: self.catchUp,
                                         chat: self.chat ?? ChatStore(),
+                                        initialDisplayMode: self.displayMode,
                                         onDisplayMode: { mode in
                                             self.displayMode = mode
                                             coordinator.toggleIncomingStreamsDisabled(isEnabled: mode != .audioOnly)

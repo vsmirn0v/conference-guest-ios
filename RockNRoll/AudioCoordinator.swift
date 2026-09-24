@@ -73,6 +73,17 @@ final class AudioCoordinator {
         publishStatus()
     }
 
+    /// iOS can deliver an interruption-began notification after CallKit has
+    /// returned an active call session, without a matching ended notification.
+    /// Reactivate only once the call owner confirms there is no competing call.
+    func reactivateAfterInterruption() throws {
+        try AVAudioSession.sharedInstance().setActive(true)
+        audioWarning = nil
+        ensureMixing()
+        logRoute()
+        publishStatus()
+    }
+
     private func handle(_ notification: Notification) {
         #if DEBUG
         let session = AVAudioSession.sharedInstance()
