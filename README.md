@@ -8,6 +8,10 @@ The public test jam is [rock.glowsoft.ru/jams/test](https://rock.glowsoft.ru/jam
 
 The app saves the chosen display name and a device-only list of ten recent jams plus any starred jams. New installs show “Musician” and can fill the name from a contact selected by the user. The in-call conversation panel switches between chat and available transcript lines. The Rock room engine can show all video, screen shares only, or audio-only; the guest integration offers all video and audio-only because its public SDK does not expose a reliable screen-share filter. Compatible guest websites can hand off a `jcp` invitation; its HTTPS website origin is editable in the app.
 
+Meeting notices appear at the top of the call view, clear of the bottom controls.
+
+A native app link opens its jam directly. If another jam is active or connecting, the latest native link replaces it after the current system call ends. A single CallKit provider coordinates both media engines, and service discovery is reused for later rooms on the same website during that app session.
+
 The native jam engine uses LiveKit Swift, and the small Go service issues short-lived, room-scoped guest tokens for a single configured test room. The browser is an optional participant, not an embedded app view. Keys remain on the server. The server is isolated in two Podman containers behind a dedicated nginx virtual host; deployment inputs live in [RockServer](RockServer/).
 
 The **Catch up** panel marks intervals that may have been missed during a held call, audio interruption or network loss. It can display only transcript lines actually supplied by a room provider. The test jam currently supplies none, so the panel does not claim to reconstruct missed speech. The local index is protected on the device, deleted on Leave, and expires after 24 hours. See [feature boundaries](docs/catch-up.md) and [privacy policy](https://rock.glowsoft.ru/privacy).

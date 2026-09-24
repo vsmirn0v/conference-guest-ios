@@ -8,7 +8,7 @@ import UIKit
 final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
     var onEvent: ((CallEvent) -> Void)?
     var onMediaStatus: ((String?) -> Void)?
-    private let systemCall = SystemCallCoordinator()
+    private let systemCall: SystemCallCoordinator
     private let audio = AudioCoordinator()
     private let catchUp: CatchUpStore
     private let chat: ChatStore
@@ -28,9 +28,10 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
     #endif
     private(set) var hasJoinStarted = false
 
-    init(catchUp: CatchUpStore, chat: ChatStore) {
+    init(catchUp: CatchUpStore, chat: ChatStore, systemCall: SystemCallCoordinator) {
         self.catchUp = catchUp
         self.chat = chat
+        self.systemCall = systemCall
         super.init()
         audio.onStatus = { [weak self] in self?.onMediaStatus?($0) }
         audio.onInterruptionChanged = { [weak self] interrupted in

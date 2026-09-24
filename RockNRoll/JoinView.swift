@@ -68,6 +68,9 @@ struct JoinView: View {
                 Section {
                     Button("Join with mic and camera off") { model.join() }
                         .disabled(model.invite.isEmpty || model.isJoining || model.isInConference || model.isLeaving)
+                        #if DEBUG
+                        .accessibilityValue(model.testSwitchSequenceCompleted ? "Switch sequence connected" : "")
+                        #endif
                     if model.isJoining || model.isInConference {
                         Button("Leave jam", role: .destructive) { model.leave() }
                     }

@@ -12,9 +12,11 @@ final class CallControls: UIView {
     private let participantsButton = UIButton(type: .system)
     private let speakerLabel = UILabel()
     private let audioOnlyBackdrop = UIView()
+    private let notices = TopNoticeView()
     private var barBottomConstraint: NSLayoutConstraint?
     private var barLeadingConstraint: NSLayoutConstraint?
     private var barTrailingConstraint: NSLayoutConstraint?
+    private var noticeTopConstraint: NSLayoutConstraint?
     private var orientationObserver: NSObjectProtocol?
     private var displayMode: ConferenceDisplayMode = .all
 
@@ -113,6 +115,8 @@ final class CallControls: UIView {
         bar.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 5, leading: 5, bottom: 5, trailing: 5)
         bar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bar)
+        notices.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(notices)
         speakerLabel.font = .preferredFont(forTextStyle: .subheadline)
         speakerLabel.textColor = .systemGreen
         speakerLabel.backgroundColor = UIColor.black.withAlphaComponent(0.7)
@@ -127,10 +131,17 @@ final class CallControls: UIView {
         barBottomConstraint = bottom
         barLeadingConstraint = leading
         barTrailingConstraint = trailing
+        let noticeTop = notices.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 8)
+        noticeTopConstraint = noticeTop
         NSLayoutConstraint.activate([
             leading, trailing,
             bottom,
             bar.heightAnchor.constraint(equalToConstant: 54),
+            noticeTop,
+            notices.centerXAnchor.constraint(equalTo: safeAreaLayoutGuide.centerXAnchor),
+            notices.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            notices.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            notices.widthAnchor.constraint(lessThanOrEqualToConstant: 440),
             speakerLabel.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 8),
             speakerLabel.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -7),
             speakerLabel.trailingAnchor.constraint(lessThanOrEqualTo: bar.trailingAnchor, constant: -8),
@@ -187,6 +198,10 @@ final class CallControls: UIView {
 
     required init?(coder: NSCoder) { nil }
 
+    func showNotices(_ items: [InCallNotice]) {
+        notices.show(items)
+    }
+
     deinit {
         if let orientationObserver { NotificationCenter.default.removeObserver(orientationObserver) }
     }
@@ -225,6 +240,13 @@ final class CallControls: UIView {
         if abs(barBottomConstraint.constant - constant) > 0.5 {
             barBottomConstraint.constant = constant
         }
+        if let noticeTopConstraint {
+            let visibleTop = convert(CGPoint(x: 0, y: window.safeAreaInsets.top), from: window).y
+            let constant = max(8, visibleTop - safeAreaInsets.top + 8)
+            if abs(noticeTopConstraint.constant - constant) > 0.5 {
+                noticeTopConstraint.constant = constant
+            }
+        }
     }
 
     private func configureDisplayMenu(onChange: @escaping (ConferenceDisplayMode) -> Void) {
@@ -258,3 +280,85 @@ final class CallControls: UIView {
         return configuration
     }
 }
+
+struct InCallNotice {
+    let title: String
+    let actionTitle: String?
+    let action: (() -> Void)?
+}
+
+final class TopNoticeView: UIStackView {
+    init() {
+        super.init(frame: .zero)
+        axis = .vertical
+        spacing = 8
+        isHidden = true
+        accessibilityIdentifier = "Top meeting notices"
+    }
+
+    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func show(_ items: [InCallNotice]) {
+        arrangedSubviews.forEach { view in
+            removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        for item in items.suffix(2) {
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.alignment = .center
+            row.spacing = 10
+            row.isLayoutMarginsRelativeArrangement = true
+            row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 10, leading: 14,
+                                                                   bottom: 10, trailing: 14)
+            row.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.97)
+            row.layer.cornerRadius = 14
+            row.layer.masksToBounds = true
+            let label = UILabel()
+            label.text = item.title
+            label.font = .preferredFont(forTextStyle: .subheadline)
+            label.textColor = .label
+            label.numberOfLines = 3
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            row.addArrangedSubview(label)
+            if let title = item.actionTitle, let action = item.action {
+                let button = UIButton(type: .system)
+                button.setTitle(title, for: .normal)
+                button.titleLabel?.font = .preferredFont(forTextStyle: .subheadline)
+                button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+                row.addArrangedSubview(button)
+            }
+            addArrangedSubview(row)
+        }
+        isHidden = arrangedSubviews.isEmpty
+    }
+}
+
+#if DEBUG
+final class NoticeLayoutFixtureViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        let notice = TopNoticeView()
+        notice.show([InCallNotice(title: "Meeting transcript is on", actionTitle: nil, action: nil)])
+        notice.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(notice)
+        let controls = UIButton(type: .system)
+        controls.setTitle("Fixture controls", for: .normal)
+        controls.backgroundColor = .secondarySystemBackground
+        controls.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(controls)
+        NSLayoutConstraint.activate([
+            notice.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            notice.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
+            notice.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            notice.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            notice.widthAnchor.constraint(lessThanOrEqualToConstant: 440),
+            controls.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 6),
+            controls.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -6),
+            controls.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -4),
+            controls.heightAnchor.constraint(equalToConstant: 54),
+        ])
+    }
+}
+#endif

@@ -15,7 +15,7 @@ final class NativeConferenceEngine {
     private let identity = GuestIdentity()
     private let audio = AudioCoordinator()
     let catchUp = CatchUpStore()
-    private let systemCall = SystemCallCoordinator()
+    private let systemCall: SystemCallCoordinator
     private var networkMonitor: NWPathMonitor?
     private let networkQueue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.network")
     private var activeCoordinator: JazzActiveConferenceCoordinator?
@@ -28,6 +28,9 @@ final class NativeConferenceEngine {
     private var subscriptions = Set<AnyCancellable>()
     private var transcriptSubscription: AnyCancellable?
     private var roomTitleSubscription: AnyCancellable?
+    private var toastSubscription: AnyCancellable?
+    private weak var activeControls: CallControls?
+    private var currentNotices: [InCallNotice] = []
     private var configuredNetworkURL: URL?
     private var leaveRequested = false
     private var hasBecomeActive = false
@@ -38,6 +41,10 @@ final class NativeConferenceEngine {
     #endif
     private(set) var hasJoinStarted = false
     private var hasMediaJoinStarted = false
+
+    init(systemCall: SystemCallCoordinator) {
+        self.systemCall = systemCall
+    }
 
     func configure(container: UIViewController, networkURL: URL, displayName: String) throws {
         if let configuredNetworkURL {
@@ -72,13 +79,58 @@ final class NativeConferenceEngine {
             shouldRateConference: false
         )
         configuredNetworkURL = networkURL
+        #if DEBUG
+        print("Conference service URL: \(networkURL.host ?? "unknown")")
+        print("SDK default service URL: \(JazzNetwork.default.hostUrl.host ?? "unknown")")
+        #endif
+        JazzSession.shared.$jazzConferencePhase
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] phase in
+                guard let self, self.hasMediaJoinStarted else { return }
+                #if DEBUG
+                print("Conference phase event: \(Self.map(phase))")
+                #endif
+                if case .activeConference = phase {
+                    self.isSDKActive = true
+                    self.hasBecomeActive = true
+                    self.updateConnectionGap()
+                    if self.isSystemHeld { self.catchUp.begin(.anotherCall) }
+                    if self.isAudioInterrupted { self.catchUp.begin(.audioInterruption) }
+                    self.audio.ensureMixing()
+                    self.systemCall.markConnected()
+                    #if DEBUG
+                    self.scheduleTestHoldIfRequested()
+                    #endif
+                } else if case .connecting = phase {
+                    self.isSDKActive = false
+                    self.updateConnectionGap()
+                }
+                self.onEvent?(Self.map(phase))
+                if case .inactive = phase {
+                    self.isSDKActive = false
+                    self.updateConnectionGap()
+                    self.hasJoinStarted = false
+                    self.hasMediaJoinStarted = false
+                    self.activeCoordinator = nil
+                    self.toastSubscription?.cancel()
+                    self.toastSubscription = nil
+                    self.currentNotices = []
+                    self.activeControls = nil
+                    self.systemCall.markEnded(reason: .failed)
+                }
+            }
+            .store(in: &subscriptions)
+    }
+
+    private func installCallHandlers() {
         systemCall.onActivated = { [weak self] in
             Task { @MainActor [weak self] in
-                self?.audio.callAudioDidActivate()
-                self?.isAudioInterrupted = false
-                self?.catchUp.end(.audioInterruption)
-                self?.systemCall.resumeIfPossible()
-                self?.startMediaAfterActivation()
+                guard let self, self.hasJoinStarted, !self.leaveRequested else { return }
+                self.audio.callAudioDidActivate()
+                self.isAudioInterrupted = false
+                self.catchUp.end(.audioInterruption)
+                self.systemCall.resumeIfPossible()
+                self.startMediaAfterActivation()
             }
         }
         systemCall.onEnded = { [weak self] userEnded in
@@ -94,6 +146,10 @@ final class NativeConferenceEngine {
                 self.networkMonitor?.cancel()
                 self.networkMonitor = nil
                 self.leaveRequested = false
+                self.toastSubscription?.cancel()
+                self.toastSubscription = nil
+                self.currentNotices = []
+                self.activeControls = nil
                 JazzSession.shared.terminateActiveConference()
                 self.activeCoordinator = nil
                 self.hasJoinStarted = false
@@ -133,47 +189,11 @@ final class NativeConferenceEngine {
                 #endif
             }
         }
-        #if DEBUG
-        print("Conference service URL: \(networkURL.host ?? "unknown")")
-        print("SDK default service URL: \(JazzNetwork.default.hostUrl.host ?? "unknown")")
-        #endif
-        JazzSession.shared.$jazzConferencePhase
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] phase in
-                guard let self, self.hasMediaJoinStarted else { return }
-                #if DEBUG
-                print("Conference phase event: \(Self.map(phase))")
-                #endif
-                if case .activeConference = phase {
-                    self.isSDKActive = true
-                    self.hasBecomeActive = true
-                    self.updateConnectionGap()
-                    if self.isSystemHeld { self.catchUp.begin(.anotherCall) }
-                    if self.isAudioInterrupted { self.catchUp.begin(.audioInterruption) }
-                    self.audio.ensureMixing()
-                    self.systemCall.markConnected()
-                    #if DEBUG
-                    self.scheduleTestHoldIfRequested()
-                    #endif
-                } else if case .connecting = phase {
-                    self.isSDKActive = false
-                    self.updateConnectionGap()
-                }
-                self.onEvent?(Self.map(phase))
-                if case .inactive = phase {
-                    self.isSDKActive = false
-                    self.updateConnectionGap()
-                    self.hasJoinStarted = false
-                    self.hasMediaJoinStarted = false
-                    self.activeCoordinator = nil
-                    self.systemCall.markEnded(reason: .failed)
-                }
-            }
-            .store(in: &subscriptions)
     }
 
     func join(target: JoinTarget, displayName: String) throws {
         chat?.clear()
+        currentNotices = []
         identity.setName(displayName)
         pendingRoom = try resolve(target)
         catchUp.enter(roomKey: target.originURL.absoluteString + "/" + target.roomID)
@@ -190,6 +210,7 @@ final class NativeConferenceEngine {
         try audio.prepareForJoin()
         startNetworkMonitor()
         hasJoinStarted = true
+        installCallHandlers()
         systemCall.start()
     }
 
@@ -280,28 +301,49 @@ final class NativeConferenceEngine {
             self.roomTitleSubscription?.cancel()
             self.roomTitleSubscription = state.$conferenceTitle.receive(on: DispatchQueue.main)
                 .sink { [weak self] in self?.onRoomTitle?($0) }
-            return CallControls(state: state, coordinator: coordinator, router: router,
-                                catchUp: self.catchUp,
-                                chat: self.chat ?? ChatStore(),
-                                onDisplayMode: { mode in
-                                    coordinator.toggleIncomingStreamsDisabled(isEnabled: mode != .audioOnly)
-                                },
-                                onLeave: { [weak self] in self?.leave() },
-                                onMicrophoneState: { [weak self] isOn in
-                                    guard let self, !self.isSystemHeld else { return }
-                                    self.microphoneIntentOn = isOn
-                                    self.systemCall.setMuted(!isOn)
-                                }, onCameraState: { [weak self] isOn in
-                                    guard let self, !self.isSystemHeld else { return }
-                                    self.cameraIntentOn = isOn
-                                })
+            let controls = CallControls(state: state, coordinator: coordinator, router: router,
+                                        catchUp: self.catchUp,
+                                        chat: self.chat ?? ChatStore(),
+                                        onDisplayMode: { mode in
+                                            coordinator.toggleIncomingStreamsDisabled(isEnabled: mode != .audioOnly)
+                                        },
+                                        onLeave: { [weak self] in self?.leave() },
+                                        onMicrophoneState: { [weak self] isOn in
+                                            guard let self, !self.isSystemHeld else { return }
+                                            self.microphoneIntentOn = isOn
+                                            self.systemCall.setMuted(!isOn)
+                                        }, onCameraState: { [weak self] isOn in
+                                            guard let self, !self.isSystemHeld else { return }
+                                            self.cameraIntentOn = isOn
+                                        })
+            self.activeControls = controls
+            controls.showNotices(self.currentNotices)
+            return controls
         }
         return JazzConferenceRepresentation(
             connectionRepresentation: nil,
             overlayRepresentation: overlay,
-            toastsRepresentation: .default,
+            toastsRepresentation: .custom { [weak self] publisher in
+                self?.toastSubscription?.cancel()
+                self?.toastSubscription = publisher.receive(on: DispatchQueue.main)
+                    .sink { [weak self] toasts in self?.showToasts(toasts) }
+                let placeholder = UIView()
+                placeholder.isUserInteractionEnabled = false
+                return placeholder
+            },
             videoStreamsRepresentation: nil
         )
+    }
+
+    private func showToasts(_ toasts: [JazzToast]) {
+        currentNotices = toasts.map { toast in
+            InCallNotice(title: toast.title,
+                         actionTitle: toast.button?.title,
+                         action: toast.button.map { button in
+                             { button.action(UUID()) }
+                         })
+        }
+        activeControls?.showNotices(currentNotices)
     }
 
     private func observeTranscript(state: JazzActiveConferenceState) {

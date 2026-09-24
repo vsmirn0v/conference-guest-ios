@@ -20,9 +20,11 @@ final class ConferenceModel: ObservableObject {
     @Published private(set) var isJoining = false
     @Published private(set) var isInConference = false
     @Published private(set) var isLeaving = false
+    private(set) var connectedURL: URL?
     @Published var showSwitchConfirmation = false
 
-    private let engine = NativeConferenceEngine()
+    private let systemCall = SystemCallCoordinator()
+    private lazy var engine = NativeConferenceEngine(systemCall: systemCall)
     let chat = ChatStore()
     let history = RoomHistoryStore()
     private var jamEngine: RockRoomEngine?
@@ -37,28 +39,24 @@ final class ConferenceModel: ObservableObject {
     private var activeRoomTitle: String?
     private var joinTask: Task<Void, Never>?
     private var terminalEventHandled = false
+    private var sessionGeneration: UInt64 = 0
+    private var endpointCache: [URL: URL] = [:]
+    #if DEBUG
+    private var joinStartedAt: TimeInterval?
+    @Published var testSwitchSequenceCompleted = false
+    #endif
 
     var catchUpStore: CatchUpStore { engine.catchUp }
 
     func configure(container: UIViewController) {
         self.container = container
         engine.chat = chat
-        engine.onEvent = { [weak self] event in self?.handle(event: event) }
-        engine.onMediaStatus = { [weak self] message in
-            guard let self else { return }
-            self.mediaStatus = self.isJoining || self.isInConference ? message : nil
-        }
-        engine.onRoomTitle = { [weak self] title in self?.setActiveRoomTitle(title) }
     }
 
     private func configuredJamEngine() -> RockRoomEngine {
         if let jamEngine { return jamEngine }
-        let selected = RockRoomEngine(catchUp: engine.catchUp, chat: chat)
-        selected.onEvent = { [weak self] event in self?.handle(event: event) }
-        selected.onMediaStatus = { [weak self] message in
-            guard let self else { return }
-            self.mediaStatus = self.isJoining || self.isInConference ? message : nil
-        }
+        let selected = RockRoomEngine(catchUp: engine.catchUp, chat: chat,
+                                      systemCall: systemCall)
         jamEngine = selected
         return selected
     }
@@ -71,13 +69,22 @@ final class ConferenceModel: ObservableObject {
                 replacementAfterLeave = target
                 replacementAutoJoin = autoJoin
             } else if isJoining || isInConference {
-                guard target.invitationURL.absoluteString != invite else { return }
-                pendingTarget = target
-                pendingAutoJoin = autoJoin
-                showSwitchConfirmation = true
+                guard target != activeRoute else { return }
+                if autoJoin {
+                    replacementAfterLeave = target
+                    replacementAutoJoin = true
+                    pendingTarget = nil
+                    pendingAutoJoin = false
+                    showSwitchConfirmation = false
+                    leave()
+                } else {
+                    pendingTarget = target
+                    pendingAutoJoin = false
+                    showSwitchConfirmation = true
+                }
             } else {
                 set(target: target)
-                if autoJoin { join() }
+                if autoJoin { startJoin(target) }
             }
         } catch {
             status = error.localizedDescription
@@ -86,49 +93,97 @@ final class ConferenceModel: ObservableObject {
 
     func join() {
         guard !isJoining && !isInConference && !isLeaving else { return }
+        do {
+            let target = try destination(for: invite)
+            startJoin(target)
+        } catch {
+            status = error.localizedDescription
+        }
+    }
+
+    private func startJoin(_ target: JoinDestination) {
+        guard !isJoining && !isInConference && !isLeaving else { return }
         let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 80 else {
             status = "Enter a display name (up to 80 characters)."
             return
         }
-        do {
-            let target = try destination(for: invite)
-            guard let container else {
-                status = "Jam view is unavailable."
-                return
-            }
-            terminalEventHandled = false
-            isJoining = true
-            activeRoute = target
-            activeRoomTitle = nil
-            status = "Finding this jam…"
-            joinTask = Task {
-                do {
-                    switch target {
-                    case .guest(let guest):
-                        let networkURL = try await resolver.resolve(for: guest)
-                        try Task.checkCancellation()
-                        try engine.configure(container: container, networkURL: networkURL,
-                                             displayName: name)
-                        try engine.join(target: guest, displayName: name)
-                    case .jam(let jam):
-                        let credentials = try await jamService.join(jam, name: name)
-                        try Task.checkCancellation()
-                        activeRoomTitle = credentials.jam.title
-                        try configuredJamEngine().join(target: jam, credentials: credentials,
-                                                       container: container)
+        guard let container else {
+            status = "Jam view is unavailable."
+            return
+        }
+        sessionGeneration &+= 1
+        let generation = sessionGeneration
+        terminalEventHandled = false
+        isJoining = true
+        activeRoute = target
+        connectedURL = nil
+        activeRoomTitle = nil
+        status = "Finding this jam…"
+        #if DEBUG
+        joinStartedAt = ProcessInfo.processInfo.systemUptime
+        print("Jam join: starting \(target.invitationURL.path)")
+        #endif
+        joinTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                switch target {
+                case .guest(let guest):
+                    let networkURL: URL
+                    if let cached = endpointCache[guest.originURL] {
+                        networkURL = cached
+                    } else {
+                        networkURL = try await resolver.resolve(for: guest)
                     }
-                    status = "Connecting with microphone and camera off…"
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    isJoining = false
-                    if case .jam = activeRoute { jamEngine = nil }
-                    activeRoute = nil
-                    status = error.localizedDescription
+                    try Task.checkCancellation()
+                    endpointCache[guest.originURL] = networkURL
+                    #if DEBUG
+                    print("Jam join: endpoint ready after \(self.joinElapsed)s")
+                    #endif
+                    engine.onEvent = { [weak self] event in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        self.handle(event: event)
+                    }
+                    engine.onMediaStatus = { [weak self] message in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        self.mediaStatus = self.isJoining || self.isInConference ? message : nil
+                    }
+                    engine.onRoomTitle = { [weak self] title in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        self.setActiveRoomTitle(title)
+                    }
+                    try engine.configure(container: container, networkURL: networkURL,
+                                         displayName: name)
+                    try engine.join(target: guest, displayName: name)
+                case .jam(let jam):
+                    let credentials = try await jamService.join(jam, name: name)
+                    try Task.checkCancellation()
+                    #if DEBUG
+                    print("Jam join: credentials ready after \(self.joinElapsed)s")
+                    #endif
+                    activeRoomTitle = credentials.jam.title
+                    let selected = configuredJamEngine()
+                    selected.onEvent = { [weak self] event in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        self.handle(event: event)
+                    }
+                    selected.onMediaStatus = { [weak self] message in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        self.mediaStatus = self.isJoining || self.isInConference ? message : nil
+                    }
+                    try selected.join(target: jam, credentials: credentials, container: container)
                 }
+                guard sessionGeneration == generation, !Task.isCancelled else { return }
+                joinTask = nil
+                status = "Connecting with microphone and camera off…"
+            } catch {
+                guard sessionGeneration == generation, !Task.isCancelled else { return }
+                joinTask = nil
+                isJoining = false
+                releaseJamEngineIfSelected()
+                activeRoute = nil
+                status = error.localizedDescription
             }
-        } catch {
-            status = error.localizedDescription
         }
     }
 
@@ -150,8 +205,19 @@ final class ConferenceModel: ObservableObject {
         }
         isJoining = false
         isInConference = false
+        connectedURL = nil
         mediaStatus = nil
         status = didStartConference ? "Leaving the jam…" : "Joining canceled."
+        if !didStartConference {
+            sessionGeneration &+= 1
+            terminalEventHandled = true
+            releaseJamEngineIfSelected()
+            activeRoute = nil
+            #if DEBUG
+            joinStartedAt = nil
+            #endif
+            completeReplacement()
+        }
     }
 
     func resumeSystemCallIfPossible() {
@@ -169,7 +235,6 @@ final class ConferenceModel: ObservableObject {
         pendingTarget = nil
         pendingAutoJoin = false
         leave()
-        if !isLeaving { completeReplacement() }
     }
 
     func dismissPending() {
@@ -192,7 +257,7 @@ final class ConferenceModel: ObservableObject {
         replacementAfterLeave = nil
         replacementAutoJoin = false
         set(target: target)
-        if autoJoin { join() }
+        if autoJoin { startJoin(target) }
     }
 
     private func set(target: JoinDestination) {
@@ -210,8 +275,10 @@ final class ConferenceModel: ObservableObject {
             else if isInConference { status = "Disconnected from the jam." }
             isJoining = false
             isInConference = false
+            connectedURL = nil
             isLeaving = false
             releaseJamEngineIfSelected()
+            activeRoute = nil
         case .connecting:
             guard !isLeaving else { return }
             if isJoining { status = "Connecting…" }
@@ -221,8 +288,12 @@ final class ConferenceModel: ObservableObject {
             status = "Waiting for the host to admit you…"
         case .active, .joined:
             guard isJoining || isInConference, !isLeaving else { return }
+            #if DEBUG
+            if isJoining { print("Jam join: active after \(joinElapsed)s") }
+            #endif
             isJoining = false
             isInConference = true
+            connectedURL = activeRoute?.invitationURL
             status = "In jam"
             if let activeRoute {
                 let identifier: String
@@ -240,29 +311,39 @@ final class ConferenceModel: ObservableObject {
             terminalEventHandled = true
             isJoining = false
             isInConference = false
+            connectedURL = nil
             status = "Disconnected from the jam."
             releaseJamEngineIfSelected()
+            activeRoute = nil
         case .canceled:
             guard isJoining || isLeaving else { return }
             terminalEventHandled = true
             isJoining = false
             isLeaving = false
+            connectedURL = nil
             status = "Joining canceled."
+            releaseJamEngineIfSelected()
+            activeRoute = nil
             completeReplacement()
         case .left:
             terminalEventHandled = true
             isJoining = false
             isInConference = false
             isLeaving = false
+            connectedURL = nil
             mediaStatus = nil
             status = "Left the jam."
             releaseJamEngineIfSelected()
+            activeRoute = nil
             completeReplacement()
         case .evicted:
             terminalEventHandled = true
             isJoining = false
             isInConference = false
+            connectedURL = nil
             status = "Removed from the jam."
+            releaseJamEngineIfSelected()
+            activeRoute = nil
         }
     }
 
@@ -292,6 +373,13 @@ final class ConferenceModel: ObservableObject {
             history.updateTitle(for: url, title: title)
         }
     }
+
+    #if DEBUG
+    private var joinElapsed: String {
+        guard let joinStartedAt else { return "unknown" }
+        return String(format: "%.2f", ProcessInfo.processInfo.systemUptime - joinStartedAt)
+    }
+    #endif
 }
 
 enum CallEvent {

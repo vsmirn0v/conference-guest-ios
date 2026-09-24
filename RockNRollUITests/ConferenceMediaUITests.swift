@@ -2,6 +2,23 @@ import UIKit
 import XCTest
 
 final class ConferenceMediaUITests: XCTestCase {
+    func testMeetingNoticesStayAboveControlsInBothOrientations() throws {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "notice"
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let notice = app.staticTexts["Meeting transcript is on"]
+        let controls = app.buttons["Fixture controls"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 15))
+        XCTAssertTrue(controls.exists)
+        for orientation: UIDeviceOrientation in [.portrait, .landscapeLeft, .landscapeRight, .portrait] {
+            XCUIDevice.shared.orientation = orientation
+            Thread.sleep(forTimeInterval: 2)
+            XCTAssertLessThan(notice.frame.maxY + 10, controls.frame.minY)
+            attachScreenshot(of: app, named: "Notice layout \(orientation.rawValue)")
+        }
+    }
+
     func testCallLayoutFixtureRotatesInSimulator() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
@@ -593,6 +610,61 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertEqual(app.textFields["Paste jam invitation link"].value as? String, second)
         app.buttons["Join with mic and camera off"].tap()
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
+    }
+
+    func testThreeRoomNativeLinkSequence() throws {
+        guard let first = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_FIRST_APP_LINK"],
+              let second = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SECOND_APP_LINK"],
+              let firstURL = URL(string: first), let secondURL = URL(string: second),
+              firstURL.scheme == "jcp", secondURL.scheme == "jcp",
+              let firstID = URLComponents(url: firstURL, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "code" })?.value,
+              let secondID = URLComponents(url: secondURL, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "code" })?.value else {
+            throw XCTSkip("Provide two live native app links in TEST_RUNNER_ROCKNROLL_TEST_*_APP_LINK.")
+        }
+
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Switch QA"
+        let encoded = try JSONEncoder().encode([firstURL, secondURL])
+        app.launchEnvironment["CONFERENCE_TEST_SWITCH_URLS"] = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        app.launch()
+
+        let join = app.buttons["Join with mic and camera off"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@ AND enabled == true",
+                                                                   "Switch sequence connected"),
+                                              object: join)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 120), .completed)
+        XCTAssertTrue(app.staticTexts[firstID].exists)
+        XCTAssertTrue(app.staticTexts[secondID].exists)
+        XCTAssertTrue(app.staticTexts["test"].exists)
+    }
+
+    func testRapidLinksDuringJoinUseLatestInvitation() throws {
+        guard let first = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_FIRST_APP_LINK"],
+              let second = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SECOND_APP_LINK"],
+              let firstURL = URL(string: first), let secondURL = URL(string: second),
+              let secondID = URLComponents(url: secondURL, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "code" })?.value else {
+            throw XCTSkip("Provide two live native app links in TEST_RUNNER_ROCKNROLL_TEST_*_APP_LINK.")
+        }
+
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Rapid Switch QA"
+        app.launchEnvironment["CONFERENCE_TEST_SWITCH_MODE"] = "rapid"
+        let encoded = try JSONEncoder().encode([firstURL, secondURL])
+        app.launchEnvironment["CONFERENCE_TEST_SWITCH_URLS"] = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        app.launch()
+
+        let join = app.buttons["Join with mic and camera off"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@ AND enabled == true",
+                                                                   "Switch sequence connected"),
+                                              object: join)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 120), .completed)
+        let value = app.textFields["Paste jam invitation link"].value as? String
+        XCTAssertTrue(value?.contains("/calls/\(secondID)") == true)
     }
 
     func testExplicitMicrophoneAndCameraPublishing() throws {
