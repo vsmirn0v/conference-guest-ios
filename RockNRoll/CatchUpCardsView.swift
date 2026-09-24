@@ -18,9 +18,19 @@ struct CatchUpCardsView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if store.timeline.intervals.isEmpty {
-                    ContentUnavailableView("No interruptions recorded",
-                                           systemImage: "checkmark.circle",
-                                           description: Text("This phone has not detected a missed section in this jam."))
+                    VStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.largeTitle)
+                            .foregroundStyle(.secondary)
+                        Text("No interruptions recorded")
+                            .font(.headline)
+                        Text("This phone has not detected a missed section in this jam.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .multilineTextAlignment(.center)
+                    .padding(.vertical, 24)
                 } else {
                     ForEach(Array(store.timeline.intervals.reversed())) { interval in
                         intervalCard(interval)

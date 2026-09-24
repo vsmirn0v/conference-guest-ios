@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "ConferenceCore",
-    platforms: [.iOS("17.0"), .macOS(.v13)],
+    platforms: [.iOS("16.0"), .macOS(.v13)],
     products: [
         .library(name: "ConferenceCore", targets: ["ConferenceCore"])
     ],

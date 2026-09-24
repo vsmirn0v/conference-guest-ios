@@ -2,7 +2,7 @@ name: RockNRoll
 options:
   bundleIdPrefix: dev.vsmirn0v
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "16.0"
   createIntermediateGroups: true
 packages:
   JazzSDK:
@@ -51,6 +51,8 @@ targets:
       - target: RockNRoll
     settings:
       base:
+        # XCUIApplication.open(_:) requires iOS 16.4; the app still targets 16.0.
+        IPHONEOS_DEPLOYMENT_TARGET: "16.4"
         PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.uitests
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_VERSION: "5.0"
