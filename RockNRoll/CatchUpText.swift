@@ -2,6 +2,18 @@ import ConferenceCore
 import Foundation
 
 enum CatchUpText {
+    static func live(timeline: CatchUpTimeline, canView: Bool?, enabled: Bool) -> String {
+        if canView == false { return "Transcripts aren’t available in this room." }
+        if canView == nil { return "Checking transcript availability…" }
+        if !enabled { return "Transcription is off in this room." }
+        guard !timeline.segments.isEmpty else { return "Waiting for spoken words…" }
+        let lines = timeline.segments.sorted {
+            ($0.spokenAt ?? .distantFuture) < ($1.spokenAt ?? .distantFuture)
+        }.map(describe)
+        return lines.joined(separator: "\n\n") +
+            (timeline.isTruncated ? "\n\nOlder lines have left this phone’s memory." : "")
+    }
+
     static func make(timeline: CatchUpTimeline, canView: Bool?, enabled: Bool,
                      warning: String?) -> String {
         var lines = [String]()
@@ -9,7 +21,7 @@ enum CatchUpText {
         if canView == nil {
             lines.append("Checking jam transcript availability.")
         } else if canView == false {
-            lines.append("A transcript is not available to this guest in this jam.")
+            lines.append("Transcripts aren’t available in this room.")
         } else if !enabled {
             lines.append("Jam transcription is off. The host may be able to enable it.")
         } else {
@@ -17,7 +29,7 @@ enum CatchUpText {
         }
 
         if timeline.intervals.isEmpty {
-            lines.append("No suspected missed sections yet.")
+            lines.append("You’re up to date.")
             if !timeline.segments.isEmpty {
                 lines.append("Recent transcript:")
                 lines.append(contentsOf: timeline.segments.suffix(8).map(describe))

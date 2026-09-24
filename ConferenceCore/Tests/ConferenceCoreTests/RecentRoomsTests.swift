@@ -37,4 +37,20 @@ final class RecentRoomsTests: XCTestCase {
         XCTAssertEqual(try? JSONDecoder().decode(RecentRooms.self,
                        from: JSONEncoder().encode(history)), history)
     }
+
+    func testAliasSurvivesRoomTitleUpdatesAndCanBeUndoneAfterRemoval() throws {
+        let url = URL(string: "https://example.org/room/a")!
+        var history = RecentRooms()
+        history.record(url: url, title: "Original", identifier: "a")
+        history.setAlias("  Thursday band  ", for: url)
+        history.updateTitle(for: url, title: "Provider rename")
+        XCTAssertEqual(history.items[0].displayTitle, "Thursday band")
+        let removed = history.items[0]
+        history.remove(url)
+        XCTAssertTrue(history.items.isEmpty)
+        history.restore(removed)
+        XCTAssertEqual(history.items[0].displayTitle, "Thursday band")
+        XCTAssertEqual(try JSONDecoder().decode(RecentRooms.self,
+                       from: JSONEncoder().encode(history)), history)
+    }
 }

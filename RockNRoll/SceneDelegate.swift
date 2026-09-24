@@ -45,7 +45,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         if let raw = ProcessInfo.processInfo.environment["CONFERENCE_TEST_INVITE"],
            let url = URL(string: raw) {
-            model.displayName = ProcessInfo.processInfo.environment["CONFERENCE_TEST_NAME"] ?? "Rock’n’Roll QA"
+            model.testDisplayNameOverride = ProcessInfo.processInfo.environment["CONFERENCE_TEST_NAME"]
             model.receive(url: url)
             model.join()
             if let rawLinks = ProcessInfo.processInfo.environment["CONFERENCE_TEST_SWITCH_URLS"],

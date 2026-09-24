@@ -1,4 +1,5 @@
 import AVKit
+import Combine
 import LiveKit
 import UIKit
 
@@ -15,6 +16,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
 
     private let titleLabel = UILabel()
     private let countLabel = UILabel()
+    private let routeLabel = UILabel()
     private let statusLabel = UILabel()
     private let tiles = UIStackView()
     private let streamScroll = UIScrollView()
@@ -25,6 +27,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
     private let displayModeButton = UIButton(type: .system)
     private let conversationButton = UIButton(type: .system)
     private let participantsButton = UIButton(type: .system)
+    private let moreButton = UIButton(type: .system)
+    private let fitButton = UIButton(type: .system)
+    private var currentPrimaryKey: String?
+    private var zoomStates: [String: (CGFloat, CGPoint)] = [:]
+    private weak var primaryZoom: UIScrollView?
     private weak var participantsPanel: ParticipantPanelViewController?
     private var pinnedStreamKey: String?
     private var speakingLabels: [String: UILabel] = [:]
@@ -37,6 +44,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
     private var isCameraOn = false
     private var isSpeakerOn = true
     private var isHeld = false
+    private var mediaStatus: String?
+    private var subscriptions = Set<AnyCancellable>()
+    private let accent = UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
 
     init(title: String, catchUp: CatchUpStore, chat: ChatStore) {
         store = catchUp
@@ -51,15 +61,23 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.085, alpha: 1)
-        let header = UIStackView(arrangedSubviews: [titleLabel, countLabel])
-        header.axis = .vertical
-        header.spacing = 2
-        titleLabel.font = .systemFont(ofSize: 25, weight: .bold)
+        let identity = UIStackView(arrangedSubviews: [titleLabel, countLabel, routeLabel])
+        identity.axis = .vertical
+        identity.spacing = 2
+        let header = UIStackView(arrangedSubviews: [identity, participantsButton, conversationButton])
+        header.axis = .horizontal
+        header.alignment = .center
+        header.spacing = 4
+        titleLabel.font = .preferredFont(forTextStyle: .headline)
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = .white
         titleLabel.lineBreakMode = .byTruncatingTail
         countLabel.font = .preferredFont(forTextStyle: .subheadline)
         countLabel.textColor = .lightGray
         countLabel.text = "Connecting…"
+        routeLabel.font = .preferredFont(forTextStyle: .caption1)
+        routeLabel.textColor = .lightGray
+        routeLabel.text = "Audio output"
 
         tiles.axis = .vertical
         tiles.spacing = 10
@@ -73,24 +91,32 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             tiles.widthAnchor.constraint(equalTo: streamScroll.frameLayoutGuide.widthAnchor)
         ])
 
-        configure(microphone, symbol: "mic.slash.fill", label: "Unmute microphone")
-        configure(camera, symbol: "video.slash.fill", label: "Start video")
+        configure(microphone, symbol: "mic.slash.fill", label: "Unmute microphone", title: "Mic")
+        configure(camera, symbol: "video.slash.fill", label: "Start video", title: "Video")
         configure(flipCamera, symbol: "arrow.triangle.2.circlepath.camera", label: "Flip camera")
         flipCamera.isEnabled = false
         configure(speaker, symbol: "speaker.wave.2.fill", label: "Use iPhone speaker")
         configure(displayModeButton, symbol: displayMode.symbol, label: "Display: All video")
         displayModeButton.showsMenuAsPrimaryAction = true
         configureModeMenu()
-        configure(conversationButton, symbol: "text.bubble", label: "Catch up")
+        configure(conversationButton, symbol: "text.bubble", label: "Chat")
         configure(participantsButton, symbol: "person.2.fill", label: "Musicians")
+        configure(moreButton, symbol: "ellipsis.circle.fill", label: "More call options", title: "More")
+        moreButton.showsMenuAsPrimaryAction = true
+        configureMoreMenu()
+        configure(fitButton, symbol: "arrow.down.right.and.arrow.up.left", label: "Fit screen to view")
+        fitButton.isHidden = true
+        fitButton.addAction(UIAction { [weak self] _ in
+            self?.primaryZoom?.setZoomScale(1, animated: true)
+        }, for: .touchUpInside)
         participantsButton.isEnabled = false
         let routePicker = AVRoutePickerView()
-        routePicker.tintColor = .systemPurple
-        routePicker.activeTintColor = .systemPurple
+        routePicker.tintColor = accent
+        routePicker.activeTintColor = accent
         routePicker.accessibilityLabel = "Choose audio output"
         let leave = UIButton(type: .system)
-        configure(leave, symbol: "phone.down.fill", label: "Leave")
-        leave.tintColor = .systemRed
+        configure(leave, symbol: "phone.down.fill", label: "Leave", title: "Leave")
+        leave.configuration?.baseForegroundColor = .systemRed
 
         microphone.addAction(UIAction { [weak self] _ in
             guard let self else { return }
@@ -109,7 +135,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         }, for: .touchUpInside)
         conversationButton.addAction(UIAction { [weak self] _ in
             guard let self, self.presentedViewController == nil else { return }
-            self.present(ConversationPanelViewController(catchUp: self.store, chat: self.chat),
+            self.present(ConversationPanelViewController(catchUp: self.store, chat: self.chat,
+                                                         showTranscript: self.store.timeline.unreadCount > 0),
                          animated: true)
         }, for: .touchUpInside)
         participantsButton.addAction(UIAction { [weak self] _ in
@@ -128,13 +155,29 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         }, for: .touchUpInside)
         leave.addAction(UIAction { [weak self] _ in self?.onLeave?() }, for: .touchUpInside)
 
-        let bar = UIStackView(arrangedSubviews: [microphone, camera, flipCamera, speaker,
-                                                 routePicker, participantsButton, displayModeButton,
-                                                 conversationButton, leave])
+        let audioControl = UIView()
+        routePicker.translatesAutoresizingMaskIntoConstraints = false
+        audioControl.addSubview(routePicker)
+        let audioTitle = UILabel()
+        audioTitle.text = "Audio"
+        audioTitle.font = .preferredFont(forTextStyle: .caption2)
+        audioTitle.textColor = .white
+        audioTitle.translatesAutoresizingMaskIntoConstraints = false
+        audioControl.addSubview(audioTitle)
+        NSLayoutConstraint.activate([
+            routePicker.centerXAnchor.constraint(equalTo: audioControl.centerXAnchor),
+            routePicker.centerYAnchor.constraint(equalTo: audioControl.centerYAnchor, constant: -7),
+            routePicker.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            routePicker.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            audioTitle.centerXAnchor.constraint(equalTo: audioControl.centerXAnchor),
+            audioTitle.bottomAnchor.constraint(equalTo: audioControl.bottomAnchor, constant: -4)
+        ])
+        audioControl.accessibilityLabel = "Audio output"
+        let bar = UIStackView(arrangedSubviews: [microphone, camera, audioControl, moreButton, leave])
         bar.axis = .horizontal
         bar.distribution = .fillEqually
-        bar.spacing = 2
-        bar.backgroundColor = .secondarySystemBackground
+        bar.spacing = 4
+        bar.backgroundColor = UIColor(red: 0.12, green: 0.14, blue: 0.21, alpha: 0.96)
         bar.layer.cornerRadius = 16
         bar.isLayoutMarginsRelativeArrangement = true
         bar.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 5, leading: 5, bottom: 5, trailing: 5)
@@ -143,7 +186,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         statusLabel.textColor = .lightGray
         statusLabel.text = "Microphone and camera are off"
         statusLabel.textAlignment = .center
-        for item in [header, streamScroll, bar, statusLabel] {
+        for item in [header, streamScroll, bar, statusLabel, fitButton] {
             item.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(item)
         }
@@ -151,6 +194,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             header.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
             header.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
             header.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
+            participantsButton.widthAnchor.constraint(equalToConstant: 48),
+            participantsButton.heightAnchor.constraint(equalToConstant: 48),
+            conversationButton.widthAnchor.constraint(equalToConstant: 48),
+            conversationButton.heightAnchor.constraint(equalToConstant: 48),
             streamScroll.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             streamScroll.trailingAnchor.constraint(equalTo: header.trailingAnchor),
             streamScroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 8),
@@ -158,11 +205,29 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             statusLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             statusLabel.trailingAnchor.constraint(equalTo: header.trailingAnchor),
             statusLabel.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -5),
-            bar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 6),
-            bar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -6),
+            bar.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
+            bar.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8),
+            bar.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8),
+            bar.widthAnchor.constraint(equalTo: view.safeAreaLayoutGuide.widthAnchor, constant: -16).withPriority(.defaultHigh),
+            bar.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
             bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -4),
-            bar.heightAnchor.constraint(equalToConstant: 54)
+            bar.heightAnchor.constraint(equalToConstant: 62),
+            fitButton.topAnchor.constraint(equalTo: streamScroll.topAnchor, constant: 12),
+            fitButton.trailingAnchor.constraint(equalTo: streamScroll.trailingAnchor, constant: -12),
+            fitButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            fitButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         ])
+        Publishers.CombineLatest(chat.$unreadCount, store.$timeline)
+            .receive(on: DispatchQueue.main).sink { [weak self] count, timeline in
+            guard let self else { return }
+            self.conversationButton.configuration?.title = count > 0 ? "\(count)" : nil
+            self.conversationButton.configuration?.baseForegroundColor = timeline.unreadCount > 0 ?
+                .systemOrange : self.accent
+            let missed = timeline.unreadCount > 0 ?
+                ", \(timeline.unreadCount) missed section\(timeline.unreadCount == 1 ? "" : "s")" : ""
+            self.conversationButton.accessibilityLabel = count > 0 ?
+                "Chat, \(count) unread\(missed)" : "Chat\(missed)"
+        }.store(in: &subscriptions)
     }
 
     func render(room: Room) {
@@ -170,7 +235,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         let participants: [Participant] = [room.localParticipant] + room.remoteParticipants.values.sorted {
             ($0.identity?.stringValue ?? "") < ($1.identity?.stringValue ?? "")
         }
-        countLabel.text = "\(participants.count) musician\(participants.count == 1 ? "" : "s") in this jam"
+        countLabel.text = room.remoteParticipants.isEmpty ? "Only you here" :
+            "\(participants.count) musicians in this jam"
         participantsButton.isEnabled = true
         participantsButton.accessibilityLabel = "Musicians, \(participants.count)"
         participantsPanel?.update(statuses(in: room), pinnedKey: pinnedStreamKey)
@@ -182,7 +248,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             let publications = participant.videoTracks.filter { !$0.isMuted && $0.track is VideoTrack }
                 .filter { displayMode == .all ||
                     (displayMode == .screenShares && $0.source == .screenShareVideo) }
-            if displayMode == .audioOnly || (displayMode == .all && publications.isEmpty) {
+            if displayMode == .audioOnly ||
+                (displayMode == .all && publications.isEmpty && !room.remoteParticipants.isEmpty) {
                 tiles.addArrangedSubview(audioTile(for: participant))
             }
             for publication in publications where displayMode != .audioOnly {
@@ -196,6 +263,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         let primary = streams.first { $0.1.sid.stringValue == pinnedStreamKey } ??
             streams.first { $0.1.source == .screenShareVideo } ?? streams.first
         if let primary {
+            let primaryKey = primary.1.sid.stringValue
             // The selected stream fills the available viewing area. Other streams remain below it.
             let primaryTile = videoTile(for: primary.0, publication: primary.1,
                                         track: primary.2, primary: true)
@@ -205,7 +273,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
                 tiles.addArrangedSubview(videoTile(for: stream.0, publication: stream.1,
                                                     track: stream.2, primary: false))
             }
-            streamScroll.setContentOffset(.zero, animated: false)
+            if currentPrimaryKey != primaryKey { streamScroll.setContentOffset(.zero, animated: false) }
+            currentPrimaryKey = primaryKey
+        } else {
+            currentPrimaryKey = nil
+            primaryZoom = nil
+            fitButton.isHidden = true
         }
         if displayMode == .screenShares && streams.isEmpty {
             let empty = UILabel()
@@ -215,6 +288,16 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             empty.numberOfLines = 0
             tiles.addArrangedSubview(empty)
             empty.heightAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
+        }
+        if room.remoteParticipants.isEmpty && streams.isEmpty && displayMode == .all {
+            let waiting = UILabel()
+            waiting.text = "Waiting for others to join\nShare this jam link with your group."
+            waiting.textColor = .lightGray
+            waiting.font = .preferredFont(forTextStyle: .title3)
+            waiting.textAlignment = .center
+            waiting.numberOfLines = 0
+            tiles.addArrangedSubview(waiting)
+            waiting.heightAnchor.constraint(equalTo: streamScroll.frameLayoutGuide.heightAnchor).isActive = true
         }
         refreshSpeaking(room: room)
     }
@@ -255,6 +338,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         zoom.maximumZoomScale = isShare ? 5 : 2
         zoom.bouncesZoom = true
         zoom.delegate = self
+        let key = publication.sid.stringValue
+        zoom.accessibilityIdentifier = key
         zoom.accessibilityLabel = isShare ? "Pinch to zoom screen share" : "Video stream"
         zoom.accessibilityValue = "100%"
         zoom.translatesAutoresizingMaskIntoConstraints = false
@@ -265,7 +350,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         zoom.addSubview(video)
         tile.addSubview(zoom)
         let name = UILabel()
-        name.text = "  \(participant.name ?? "Musician")\(isShare ? " · Screen share" : "")  "
+        name.text = "  \(participant.name ?? "Musician") · \(isShare ? "Screen" : "Video") · \(pinnedStreamKey == key ? "Pinned" : "Auto")  "
         name.textColor = .white
         name.font = .systemFont(ofSize: 14, weight: .semibold)
         name.backgroundColor = UIColor.black.withAlphaComponent(0.65)
@@ -274,7 +359,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         name.translatesAutoresizingMaskIntoConstraints = false
         tile.addSubview(name)
         let pin = UIButton(type: .system)
-        let key = publication.sid.stringValue
         pin.configuration = .tinted()
         pin.configuration?.image = UIImage(systemName: pinnedStreamKey == key ? "pin.slash.fill" : "pin.fill")
         pin.accessibilityLabel = pinnedStreamKey == key ? "Unpin \(participant.name ?? "Musician") \(isShare ? "screen" : "video")" :
@@ -286,6 +370,17 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         }, for: .touchUpInside)
         pin.translatesAutoresizingMaskIntoConstraints = false
         tile.addSubview(pin)
+        if participant === displayedRoom?.localParticipant && !isShare {
+            flipCamera.isHidden = !isCameraOn
+            flipCamera.translatesAutoresizingMaskIntoConstraints = false
+            tile.addSubview(flipCamera)
+            NSLayoutConstraint.activate([
+                flipCamera.topAnchor.constraint(equalTo: tile.topAnchor, constant: 8),
+                flipCamera.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -8),
+                flipCamera.widthAnchor.constraint(equalToConstant: 44),
+                flipCamera.heightAnchor.constraint(equalToConstant: 44)
+            ])
+        }
         speakingTiles[participantID(participant), default: []].append(tile)
         if !primary {
             tile.heightAnchor.constraint(equalToConstant: isShare ? 240 : 185).isActive = true
@@ -308,6 +403,14 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             pin.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
             pin.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         ])
+        if primary { primaryZoom = zoom }
+        if let state = zoomStates[key] {
+            DispatchQueue.main.async { [weak zoom] in
+                guard let zoom, zoom.window != nil else { return }
+                zoom.setZoomScale(state.0, animated: false)
+                zoom.setContentOffset(state.1, animated: false)
+            }
+        }
         return tile
     }
 
@@ -371,6 +474,32 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         })
     }
 
+    private func configureMoreMenu() {
+        moreButton.menu = UIMenu(children: [
+            UIMenu(title: "View", children: ConferenceDisplayMode.allCases.map { option in
+                UIAction(title: option.title, image: UIImage(systemName: option.symbol),
+                         state: option == displayMode ? .on : .off) { [weak self] _ in
+                    guard let self else { return }
+                    self.displayMode = option
+                    self.configureMoreMenu()
+                    if let room = self.displayedRoom { self.render(room: room) }
+                    self.onDisplayMode?(option)
+                }
+            }),
+            UIAction(title: isSpeakerOn ? "Use iPhone receiver" : "Use iPhone speaker",
+                     image: UIImage(systemName: "speaker.wave.2")) { [weak self] _ in
+                guard let self else { return }
+                self.isSpeakerOn.toggle()
+                self.onSpeaker?(self.isSpeakerOn)
+                self.configureMoreMenu()
+            },
+            UIAction(title: "Flip camera", image: UIImage(systemName: "camera.rotate"),
+                     attributes: isCameraOn ? [] : [.disabled]) { [weak self] _ in
+                self?.onFlipCamera?()
+            }
+        ])
+    }
+
     func setMicrophone(_ enabled: Bool) {
         isMicrophoneOn = enabled
         microphone.configuration?.image = UIImage(systemName: enabled ? "mic.fill" : "mic.slash.fill")
@@ -381,6 +510,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
     func setCamera(_ enabled: Bool) {
         isCameraOn = enabled
         flipCamera.isEnabled = enabled
+        configureMoreMenu()
         camera.configuration?.image = UIImage(systemName: enabled ? "video.fill" : "video.slash.fill")
         camera.accessibilityLabel = enabled ? "Stop video" : "Start video"
         updateStatus()
@@ -391,15 +521,34 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         updateStatus()
     }
 
-    private func updateStatus() {
-        statusLabel.text = isHeld ? "Jam on hold for another call" :
-            "Microphone \(isMicrophoneOn ? "on" : "off") · Camera \(isCameraOn ? "on" : "off")"
+    func showMediaStatus(_ message: String?) {
+        mediaStatus = message
+        updateStatus()
     }
 
-    private func configure(_ button: UIButton, symbol: String, label: String) {
-        var style = UIButton.Configuration.tinted()
+    func setAudioRouteName(_ name: String) {
+        routeLabel.text = "Audio · \(name)"
+    }
+
+    private func updateStatus() {
+        statusLabel.text = isHeld ? "Jam on hold for another call" :
+            (mediaStatus ?? "Microphone \(isMicrophoneOn ? "on" : "off") · Camera \(isCameraOn ? "on" : "off")")
+        statusLabel.textColor = mediaStatus == nil ? .lightGray : .systemOrange
+    }
+
+    private func configure(_ button: UIButton, symbol: String, label: String, title: String? = nil) {
+        var style = UIButton.Configuration.plain()
         style.image = UIImage(systemName: symbol)
         style.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 19)
+        style.title = title
+        style.imagePlacement = .top
+        style.imagePadding = 2
+        style.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = .systemFont(ofSize: 12, weight: .medium)
+            return attributes
+        }
+        style.baseForegroundColor = accent
         button.configuration = style
         button.accessibilityLabel = label
     }
@@ -411,6 +560,22 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         if scrollView !== streamScroll {
             scrollView.accessibilityValue = "\(Int((scrollView.zoomScale * 100).rounded()))%"
+            if let key = scrollView.accessibilityIdentifier {
+                zoomStates[key] = (scrollView.zoomScale, scrollView.contentOffset)
+            }
+            if scrollView === primaryZoom { fitButton.isHidden = scrollView.zoomScale <= 1.01 }
         }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView !== streamScroll, let key = scrollView.accessibilityIdentifier else { return }
+        zoomStates[key] = (scrollView.zoomScale, scrollView.contentOffset)
+    }
+}
+
+private extension NSLayoutConstraint {
+    func withPriority(_ priority: UILayoutPriority) -> NSLayoutConstraint {
+        self.priority = priority
+        return self
     }
 }

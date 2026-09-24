@@ -3,16 +3,19 @@ import Foundation
 public struct RecentRoom: Codable, Equatable, Identifiable, Sendable {
     public let invitationURL: URL
     public var title: String
+    public var alias: String?
     public let identifier: String
     public var isStarred: Bool
     public var lastJoined: Date
 
     public var id: String { invitationURL.absoluteString }
+    public var displayTitle: String { alias ?? title }
 
     public init(invitationURL: URL, title: String, identifier: String,
                 isStarred: Bool = false, lastJoined: Date) {
         self.invitationURL = invitationURL
         self.title = title
+        self.alias = nil
         self.identifier = identifier
         self.isStarred = isStarred
         self.lastJoined = lastJoined
@@ -56,6 +59,18 @@ public struct RecentRooms: Codable, Equatable, Sendable {
 
     public mutating func remove(_ url: URL) {
         items.removeAll { $0.invitationURL == url }
+    }
+
+    public mutating func setAlias(_ alias: String?, for url: URL) {
+        guard let index = items.firstIndex(where: { $0.invitationURL == url }) else { return }
+        let clean = alias?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        items[index].alias = clean.isEmpty ? nil : String(clean.prefix(80))
+    }
+
+    public mutating func restore(_ room: RecentRoom) {
+        items.removeAll { $0.invitationURL == room.invitationURL }
+        items.append(room)
+        normalize()
     }
 
     private mutating func normalize() {

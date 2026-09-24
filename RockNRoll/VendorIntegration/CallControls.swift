@@ -10,15 +10,28 @@ final class CallControls: UIView {
     private let catchUpButton = UIButton(type: .system)
     private let displayButton = UIButton(type: .system)
     private let participantsButton = UIButton(type: .system)
+    private let moreButton = UIButton(type: .system)
+    private let titleLabel = UILabel()
+    private let countLabel = UILabel()
+    private let routeLabel = UILabel()
+    private let callStateLabel = UILabel()
     private let speakerLabel = UILabel()
     private let audioOnlyBackdrop = UIView()
+    private let waitingBackdrop = UIView()
     private let notices = TopNoticeView()
     private var barBottomConstraint: NSLayoutConstraint?
     private var barLeadingConstraint: NSLayoutConstraint?
     private var barTrailingConstraint: NSLayoutConstraint?
     private var noticeTopConstraint: NSLayoutConstraint?
+    private var headerTopConstraint: NSLayoutConstraint?
+    private var headerCenterConstraint: NSLayoutConstraint?
     private var orientationObserver: NSObjectProtocol?
     private var displayMode: ConferenceDisplayMode = .all
+    private var cameraOn = false
+    private var isHeld = false
+    private var mediaStatus: String?
+    private var missedCount = 0
+    private var unreadChatCount = 0
 
     init(state: JazzActiveConferenceState, coordinator: JazzActiveConferenceCoordinator,
          router: JazzActiveConferenceRouter,
@@ -51,20 +64,45 @@ final class CallControls: UIView {
             audioOnlyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: audioOnlyBackdrop.leadingAnchor, constant: 20),
             audioOnlyLabel.trailingAnchor.constraint(lessThanOrEqualTo: audioOnlyBackdrop.trailingAnchor, constant: -20),
         ])
+        waitingBackdrop.backgroundColor = UIColor.black.withAlphaComponent(0.64)
+        waitingBackdrop.isUserInteractionEnabled = false
+        waitingBackdrop.isHidden = true
+        waitingBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(waitingBackdrop)
+        let waitingLabel = UILabel()
+        waitingLabel.text = "Waiting for others to join\nShare this jam link with your group."
+        waitingLabel.textColor = .white
+        waitingLabel.font = .preferredFont(forTextStyle: .title3)
+        waitingLabel.adjustsFontForContentSizeCategory = true
+        waitingLabel.textAlignment = .center
+        waitingLabel.numberOfLines = 0
+        waitingLabel.translatesAutoresizingMaskIntoConstraints = false
+        waitingBackdrop.addSubview(waitingLabel)
+        NSLayoutConstraint.activate([
+            waitingBackdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
+            waitingBackdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
+            waitingBackdrop.topAnchor.constraint(equalTo: topAnchor),
+            waitingBackdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
+            waitingLabel.centerXAnchor.constraint(equalTo: waitingBackdrop.centerXAnchor),
+            waitingLabel.centerYAnchor.constraint(equalTo: waitingBackdrop.centerYAnchor),
+            waitingLabel.leadingAnchor.constraint(greaterThanOrEqualTo: waitingBackdrop.leadingAnchor, constant: 20),
+            waitingLabel.trailingAnchor.constraint(lessThanOrEqualTo: waitingBackdrop.trailingAnchor, constant: -20),
+        ])
 
-        let flip = Self.button("Flip camera", symbol: "arrow.triangle.2.circlepath.camera")
         let leave = Self.button("Leave", symbol: "phone.down.fill")
         catchUpButton.configuration = Self.iconConfiguration("text.bubble")
-        catchUpButton.accessibilityLabel = "Catch up"
+        catchUpButton.accessibilityLabel = "Chat"
         displayButton.configuration = Self.iconConfiguration(displayMode.symbol)
         displayButton.accessibilityLabel = "Display: All video"
-        displayButton.showsMenuAsPrimaryAction = true
+        moreButton.configuration = Self.iconConfiguration("ellipsis.circle.fill", title: "More")
+        moreButton.accessibilityLabel = "More call options"
+        moreButton.showsMenuAsPrimaryAction = true
         participantsButton.configuration = Self.iconConfiguration("person.2.fill")
         participantsButton.accessibilityLabel = "Musicians"
-        configureDisplayMenu(onChange: onDisplayMode)
-        microphone.configuration = Self.iconConfiguration("mic.slash.fill")
-        camera.configuration = Self.iconConfiguration("video.slash.fill")
-        leave.tintColor = .systemRed
+        configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
+        microphone.configuration = Self.iconConfiguration("mic.slash.fill", title: "Mic")
+        camera.configuration = Self.iconConfiguration("video.slash.fill", title: "Video")
+        leave.configuration?.baseForegroundColor = .systemRed
 
         microphone.addAction(UIAction { _ in
             coordinator.toggleMicrohone(isOn: state.microphoneState != .on)
@@ -72,14 +110,15 @@ final class CallControls: UIView {
         camera.addAction(UIAction { _ in
             coordinator.toggleCamera(isOn: state.cameraState != .on)
         }, for: .touchUpInside)
-        flip.addAction(UIAction { _ in coordinator.switchCamera() }, for: .touchUpInside)
         leave.addAction(UIAction { _ in onLeave() }, for: .touchUpInside)
         catchUpButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             var responder: UIResponder? = self
             while let current = responder, !(current is UIViewController) { responder = current.next }
             guard let presenter = responder as? UIViewController else { return }
-            presenter.present(ConversationPanelViewController(catchUp: catchUp, chat: chat), animated: true)
+            presenter.present(ConversationPanelViewController(catchUp: catchUp, chat: chat,
+                                                              showTranscript: catchUp.timeline.unreadCount > 0),
+                              animated: true)
         }, for: .touchUpInside)
         participantsButton.addAction(UIAction { _ in router.openParticipants() }, for: .touchUpInside)
 
@@ -89,33 +128,68 @@ final class CallControls: UIView {
         picker.translatesAutoresizingMaskIntoConstraints = false
         route.addSubview(picker)
         let routeIcon = UIImageView(image: UIImage(systemName: "speaker.wave.2.fill"))
-        routeIcon.tintColor = .systemBlue
+        routeIcon.tintColor = UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
         routeIcon.isUserInteractionEnabled = false
         routeIcon.translatesAutoresizingMaskIntoConstraints = false
         route.addSubview(routeIcon)
+        let routeTitle = UILabel()
+        routeTitle.text = "Audio"
+        routeTitle.textColor = .white
+        routeTitle.font = .preferredFont(forTextStyle: .caption2)
+        routeTitle.isUserInteractionEnabled = false
+        routeTitle.translatesAutoresizingMaskIntoConstraints = false
+        route.addSubview(routeTitle)
         NSLayoutConstraint.activate([
             picker.leadingAnchor.constraint(equalTo: route.leadingAnchor),
             picker.trailingAnchor.constraint(equalTo: route.trailingAnchor),
             picker.topAnchor.constraint(equalTo: route.topAnchor),
             picker.bottomAnchor.constraint(equalTo: route.bottomAnchor),
             routeIcon.centerXAnchor.constraint(equalTo: route.centerXAnchor),
-            routeIcon.centerYAnchor.constraint(equalTo: route.centerYAnchor),
+            routeIcon.centerYAnchor.constraint(equalTo: route.centerYAnchor, constant: -7),
             routeIcon.widthAnchor.constraint(equalToConstant: 25),
             routeIcon.heightAnchor.constraint(equalToConstant: 25),
+            routeTitle.centerXAnchor.constraint(equalTo: route.centerXAnchor),
+            routeTitle.bottomAnchor.constraint(equalTo: route.bottomAnchor, constant: -4),
         ])
 
-        let bar = UIStackView(arrangedSubviews: [microphone, camera, flip, route,
-                                                participantsButton, displayButton, catchUpButton, leave])
+        let bar = UIStackView(arrangedSubviews: [microphone, camera, route, moreButton, leave])
         bar.axis = .horizontal
         bar.distribution = .fillEqually
-        bar.alignment = .center
-        bar.spacing = 2
-        bar.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.94)
+        bar.alignment = .fill
+        bar.spacing = 4
+        bar.backgroundColor = UIColor(red: 0.12, green: 0.14, blue: 0.21, alpha: 0.96)
         bar.layer.cornerRadius = 16
         bar.isLayoutMarginsRelativeArrangement = true
         bar.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 5, leading: 5, bottom: 5, trailing: 5)
         bar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bar)
+        titleLabel.font = .preferredFont(forTextStyle: .headline)
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = .white
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.text = "Jam"
+        countLabel.font = .preferredFont(forTextStyle: .caption1)
+        countLabel.textColor = .lightGray
+        countLabel.text = "Connecting…"
+        routeLabel.font = .preferredFont(forTextStyle: .caption2)
+        routeLabel.textColor = .lightGray
+        routeLabel.text = "Audio output"
+        callStateLabel.font = .preferredFont(forTextStyle: .caption2)
+        callStateLabel.textColor = .systemOrange
+        callStateLabel.isHidden = true
+        let identity = UIStackView(arrangedSubviews: [titleLabel, countLabel, routeLabel, callStateLabel])
+        identity.axis = .vertical
+        identity.spacing = 1
+        let header = UIStackView(arrangedSubviews: [identity, participantsButton, catchUpButton])
+        header.axis = .horizontal
+        header.alignment = .center
+        header.spacing = 4
+        header.isLayoutMarginsRelativeArrangement = true
+        header.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 3, leading: 8, bottom: 3, trailing: 8)
+        header.backgroundColor = UIColor.black.withAlphaComponent(0.64)
+        header.layer.cornerRadius = 12
+        header.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(header)
         notices.translatesAutoresizingMaskIntoConstraints = false
         addSubview(notices)
         speakerLabel.font = .preferredFont(forTextStyle: .subheadline)
@@ -128,17 +202,37 @@ final class CallControls: UIView {
         speakerLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(speakerLabel)
         let bottom = bar.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -4)
-        let leading = bar.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 6)
-        let trailing = bar.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -6)
+        let leading = bar.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 6)
+        let trailing = bar.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -6)
         barBottomConstraint = bottom
         barLeadingConstraint = leading
         barTrailingConstraint = trailing
-        let noticeTop = notices.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 8)
+        let noticeTop = notices.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6)
         noticeTopConstraint = noticeTop
+        let headerTop = header.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 4)
+        let headerCenter = header.centerXAnchor.constraint(equalTo: safeAreaLayoutGuide.centerXAnchor)
+        headerTopConstraint = headerTop
+        headerCenterConstraint = headerCenter
         NSLayoutConstraint.activate([
             leading, trailing,
             bottom,
-            bar.heightAnchor.constraint(equalToConstant: 54),
+            bar.heightAnchor.constraint(equalToConstant: 62),
+            bar.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
+            bar.centerXAnchor.constraint(equalTo: safeAreaLayoutGuide.centerXAnchor),
+            microphone.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            camera.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            route.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            moreButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            leave.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            headerTop,
+            header.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 8),
+            header.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -8),
+            headerCenter,
+            header.widthAnchor.constraint(lessThanOrEqualToConstant: 440),
+            participantsButton.widthAnchor.constraint(equalToConstant: 48),
+            participantsButton.heightAnchor.constraint(equalToConstant: 48),
+            catchUpButton.widthAnchor.constraint(equalToConstant: 48),
+            catchUpButton.heightAnchor.constraint(equalToConstant: 48),
             noticeTop,
             notices.centerXAnchor.constraint(equalTo: safeAreaLayoutGuide.centerXAnchor),
             notices.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
@@ -156,11 +250,13 @@ final class CallControls: UIView {
 
         catchUp.$timeline.receive(on: DispatchQueue.main).sink { [weak self] timeline in
             guard let self else { return }
-            let count = timeline.unreadCount
-            self.catchUpButton.tintColor = count > 0 ? .systemOrange : .systemBlue
-            self.catchUpButton.accessibilityLabel = count > 0
-                ? "Catch up, \(count) missed section\(count == 1 ? "" : "s")"
-                : "Catch up"
+            self.missedCount = timeline.unreadCount
+            self.updateChatBadge()
+        }.store(in: &subscriptions)
+        chat.$unreadCount.receive(on: DispatchQueue.main).sink { [weak self] count in
+            guard let self else { return }
+            self.unreadChatCount = count
+            self.updateChatBadge()
         }.store(in: &subscriptions)
 
         state.$microphoneState.receive(on: DispatchQueue.main).sink { [weak self] media in
@@ -180,15 +276,21 @@ final class CallControls: UIView {
             #endif
             self.camera.configuration?.image = UIImage(systemName: media == .on ? "video.fill" : "video.slash.fill")
             self.camera.isEnabled = media != .disabled
+            self.cameraOn = media == .on
+            self.configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
             self.camera.accessibilityLabel = media == .on ? "Stop video" : "Start video"
             if media != .disabled { onCameraState(media == .on) }
         }.store(in: &subscriptions)
         Publishers.CombineLatest3(state.$localParticipant, state.$remoteParticipants,
                                   state.$dominantSpeaker)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] _, remote, speaker in
+            .sink { [weak self] local, remote, speaker in
                 guard let self else { return }
+                self.waitingBackdrop.isHidden = !remote.isEmpty || local.camera.isOn ||
+                    self.displayMode == .audioOnly
                 self.participantsButton.accessibilityLabel = "Musicians, \(remote.count + 1)"
+                self.countLabel.text = remote.isEmpty ? "Waiting for others" :
+                    "\(remote.count + 1) participants"
                 self.participantsButton.accessibilityValue = remote.values.contains { $0.screenSharing.isOn }
                     ? "A screen is being shared" : nil
                 if let speaker, speaker.microphone.isOn {
@@ -198,6 +300,9 @@ final class CallControls: UIView {
                     self.speakerLabel.isHidden = true
                 }
             }.store(in: &subscriptions)
+        state.$conferenceTitle.receive(on: DispatchQueue.main)
+            .sink { [weak self] title in self?.titleLabel.text = title.isEmpty ? "Jam" : title }
+            .store(in: &subscriptions)
     }
 
     required init?(coder: NSCoder) { nil }
@@ -213,6 +318,36 @@ final class CallControls: UIView {
 
     func showNotices(_ items: [InCallNotice]) {
         notices.show(items)
+    }
+
+    func setHeld(_ held: Bool) {
+        isHeld = held
+        renderCallStatus()
+    }
+
+    func showMediaStatus(_ message: String?) {
+        mediaStatus = message
+        renderCallStatus()
+    }
+
+    func setAudioRouteName(_ name: String) {
+        routeLabel.text = "Audio · \(name)"
+        route.accessibilityValue = name
+    }
+
+    private func renderCallStatus() {
+        callStateLabel.text = isHeld ? "On hold · audio resumes after your call" : mediaStatus
+        callStateLabel.isHidden = callStateLabel.text == nil
+    }
+
+    private func updateChatBadge() {
+        catchUpButton.configuration?.title = unreadChatCount > 0 ? "\(unreadChatCount)" : nil
+        catchUpButton.configuration?.baseForegroundColor = missedCount > 0 ? .systemOrange :
+            UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
+        let unread = unreadChatCount > 0 ? ", \(unreadChatCount) unread" : ""
+        let missed = missedCount > 0 ?
+            ", \(missedCount) missed section\(missedCount == 1 ? "" : "s")" : ""
+        catchUpButton.accessibilityLabel = "Chat\(unread)\(missed)"
     }
 
     deinit {
@@ -255,15 +390,28 @@ final class CallControls: UIView {
         }
         if let noticeTopConstraint {
             let visibleTop = convert(CGPoint(x: 0, y: window.safeAreaInsets.top), from: window).y
-            let constant = max(8, visibleTop - safeAreaInsets.top + 8)
-            if abs(noticeTopConstraint.constant - constant) > 0.5 {
-                noticeTopConstraint.constant = constant
+            if let headerTopConstraint {
+                let constant = max(4, visibleTop - safeAreaInsets.top + 4)
+                if abs(headerTopConstraint.constant - constant) > 0.5 {
+                    headerTopConstraint.constant = constant
+                }
             }
+            if let headerCenterConstraint {
+                let windowMidX = (window.bounds.minX + window.bounds.maxX) / 2
+                let visibleMidX = convert(CGPoint(x: windowMidX, y: 0), from: window).x
+                let ownMidX = (safeAreaLayoutGuide.layoutFrame.minX + safeAreaLayoutGuide.layoutFrame.maxX) / 2
+                let constant = visibleMidX - ownMidX
+                if abs(headerCenterConstraint.constant - constant) > 0.5 {
+                    headerCenterConstraint.constant = constant
+                }
+            }
+            if noticeTopConstraint.constant != 6 { noticeTopConstraint.constant = 6 }
         }
     }
 
-    private func configureDisplayMenu(onChange: @escaping (ConferenceDisplayMode) -> Void) {
-        displayButton.menu = UIMenu(children: ConferenceDisplayMode.allCases.map { option in
+    private func configureMoreMenu(coordinator: JazzActiveConferenceCoordinator,
+                                   onChange: @escaping (ConferenceDisplayMode) -> Void) {
+        let viewMenu = UIMenu(title: "View", children: ConferenceDisplayMode.allCases.map { option in
             UIAction(title: option == .screenShares ? "Screen shares unavailable" : option.title,
                      image: UIImage(systemName: option.symbol),
                      attributes: option == .screenShares ? .disabled : [],
@@ -271,25 +419,55 @@ final class CallControls: UIView {
                 guard let self else { return }
                 self.displayMode = option
                 self.audioOnlyBackdrop.isHidden = option != .audioOnly
-                self.displayButton.configuration?.image = UIImage(systemName: option.symbol)
-                self.displayButton.accessibilityLabel = "Display: \(option.title)"
-                self.configureDisplayMenu(onChange: onChange)
+                if option == .audioOnly { self.waitingBackdrop.isHidden = true }
+                self.configureMoreMenu(coordinator: coordinator, onChange: onChange)
                 onChange(option)
             }
         })
+        let flip = UIAction(title: "Flip camera", image: UIImage(systemName: "camera.rotate"),
+                            attributes: cameraOn ? [] : [.disabled]) { _ in coordinator.switchCamera() }
+        let fit = UIAction(title: "Fit shared screen",
+                           image: UIImage(systemName: "arrow.down.right.and.arrow.up.left")) { [weak self] _ in
+            self?.fitZoomedContent()
+        }
+        moreButton.menu = UIMenu(children: [viewMenu, fit, flip])
+    }
+
+    private func fitZoomedContent() {
+        guard let root = window?.rootViewController?.view else { return }
+        var zoomed: [UIScrollView] = []
+        func visit(_ view: UIView) {
+            guard !view.isHidden, view.alpha > 0.01 else { return }
+            if let scroll = view as? UIScrollView,
+               scroll.maximumZoomScale > 1, scroll.zoomScale > 1.01 {
+                zoomed.append(scroll)
+            }
+            view.subviews.forEach(visit)
+        }
+        visit(root)
+        zoomed.max { $0.zoomScale < $1.zoomScale }?.setZoomScale(1, animated: true)
     }
 
     private static func button(_ title: String, symbol: String) -> UIButton {
         let button = UIButton(type: .system)
-        button.configuration = iconConfiguration(symbol)
+        button.configuration = iconConfiguration(symbol, title: title)
         button.accessibilityLabel = title
         return button
     }
 
-    private static func iconConfiguration(_ symbol: String) -> UIButton.Configuration {
-        var configuration = UIButton.Configuration.tinted()
+    private static func iconConfiguration(_ symbol: String, title: String? = nil) -> UIButton.Configuration {
+        var configuration = UIButton.Configuration.plain()
         configuration.image = UIImage(systemName: symbol)
-        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22)
+        configuration.title = title
+        configuration.imagePlacement = .top
+        configuration.imagePadding = 2
+        configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = .systemFont(ofSize: 12, weight: .medium)
+            return attributes
+        }
+        configuration.baseForegroundColor = UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
+        configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 19)
         return configuration
     }
 }

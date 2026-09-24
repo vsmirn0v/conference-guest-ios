@@ -6,9 +6,14 @@ import UIKit
 final class AudioCoordinator {
     var onStatus: ((String?) -> Void)?
     var onInterruptionChanged: ((Bool) -> Void)?
+    var onRouteChanged: (() -> Void)?
     private var observers: [NSObjectProtocol] = []
     private var audioWarning: String?
     private var cameraWarning: String?
+
+    var outputName: String {
+        AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? "Audio output"
+    }
 
     init() {
         let center = NotificationCenter.default
@@ -99,6 +104,7 @@ final class AudioCoordinator {
             // The provider's route picker and the current system route remain authoritative.
             logRoute()
             ensureMixing()
+            onRouteChanged?()
         default:
             break
         }

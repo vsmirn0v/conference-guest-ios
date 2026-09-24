@@ -53,7 +53,7 @@ final class ConferenceMediaUITests: XCTestCase {
                                                   .landscapeRight, .portrait] {
             XCUIDevice.shared.orientation = orientation
             assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
-                                                    "Musicians", "Display: All video", "Catch up"])
+                                                    "Musicians", "More call options", "Chat"])
             let frame = app.windows.firstMatch.frame
             let leave = app.buttons["Leave"].frame
             XCTAssertGreaterThanOrEqual(leave.minX, frame.minX - 1)
@@ -66,6 +66,9 @@ final class ConferenceMediaUITests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Rock QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
         app.launch()
         defer {
             XCUIDevice.shared.orientation = .portrait
@@ -77,7 +80,7 @@ final class ConferenceMediaUITests: XCTestCase {
         for orientation: UIDeviceOrientation in [.landscapeLeft, .portrait, .landscapeRight, .portrait] {
             XCUIDevice.shared.orientation = orientation
             assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
-                                                    "Musicians", "Display: All video", "Catch up"])
+                                                    "Musicians", "More call options", "Chat"])
             Thread.sleep(forTimeInterval: 2)
             attachScreenshot(of: app, named: "Rock settled orientation \(orientation.rawValue)")
         }
@@ -86,8 +89,9 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Rock QA (you)"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Mic off · Video off"].exists)
         app.buttons["Done"].tap()
-        app.buttons["Catch up"].tap()
-        let transcript = app.textViews["Missed jam transcript"]
+        app.buttons["Chat"].tap()
+        app.segmentedControls["Conversation mode"].buttons["Catch up"].tap()
+        let transcript = app.textViews["Jam transcript"]
         XCTAssertTrue(transcript.waitForExistence(timeout: 10))
         let window = app.windows.firstMatch.frame
         XCTAssertGreaterThan(transcript.frame.height, window.height * 0.4)
@@ -95,8 +99,8 @@ final class ConferenceMediaUITests: XCTestCase {
         let mode = app.segmentedControls["Conversation mode"]
         mode.buttons["Chat"].tap()
         XCTAssertTrue(app.textViews["Jam chat messages"].isHittable)
-        XCTAssertTrue(app.textFields["Chat message"].isHittable)
-        app.buttons["Close catch up"].tap()
+        XCTAssertTrue(app.textViews["Chat message"].isHittable)
+        app.buttons["Close conversation"].tap()
     }
 
     func testJamChatWithBrowserParticipant() throws {
@@ -110,17 +114,17 @@ final class ConferenceMediaUITests: XCTestCase {
         defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 45))
         let connected = app.staticTexts.matching(
-            NSPredicate(format: "label MATCHES %@", "[0-9]+ musicians? in this jam")
+            NSPredicate(format: "label MATCHES %@", "[0-9]+ participants")
         ).firstMatch
         XCTAssertTrue(connected.waitForExistence(timeout: 30))
         let meeting = XCTAttachment(screenshot: app.screenshot())
         meeting.name = "Jam with browser participant"
         meeting.lifetime = .keepAlways
         add(meeting)
-        app.buttons["Catch up"].tap()
+        app.buttons["Chat"].tap()
         app.segmentedControls["Conversation mode"].buttons["Chat"].tap()
         let chat = app.textViews["Jam chat messages"]
-        let field = app.textFields["Chat message"]
+        let field = app.textViews["Chat message"]
         field.tap()
         field.typeText("phone-to-browser")
         app.buttons["Send chat message"].tap()
@@ -150,7 +154,7 @@ final class ConferenceMediaUITests: XCTestCase {
         if confirm.waitForExistence(timeout: 5) { confirm.tap() }
         else if system.alerts.buttons["Open"].exists { system.alerts.buttons["Open"].tap() }
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
-        let address = app.textFields["Paste jam invitation link"]
+        let address = app.textFields["Invitation link"]
         XCTAssertTrue(address.waitForExistence(timeout: 20))
         XCTAssertEqual(address.value as? String, "https://rock.glowsoft.ru/jams/test")
     }
@@ -163,10 +167,10 @@ final class ConferenceMediaUITests: XCTestCase {
         handoff.host = "join"
         handoff.queryItems = [URLQueryItem(name: "url", value: invitation)]
         app.open(try XCTUnwrap(handoff.url))
-        let address = app.textFields["Paste jam invitation link"]
+        let address = app.textFields["Invitation link"]
         XCTAssertTrue(address.waitForExistence(timeout: 15))
         XCTAssertEqual(address.value as? String, invitation)
-        XCTAssertTrue(app.buttons["Join with mic and camera off"].isEnabled)
+        XCTAssertTrue(app.buttons["Join jam"].isEnabled)
     }
 
     func testNativeGuestLinkJoinsImmediately() throws {
@@ -205,37 +209,40 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertGreaterThan(window.width, window.height)
         XCTAssertLessThanOrEqual(leave.frame.maxX, window.maxX)
         XCTAssertTrue(app.buttons["Unmute microphone"].isHittable)
-        let display = app.buttons["Display: All video"]
+        let display = app.buttons["More call options"]
         XCTAssertTrue(display.isHittable)
         let landscape = XCTAttachment(screenshot: app.screenshot())
         landscape.name = "Guest landscape"
         landscape.lifetime = .keepAlways
         add(landscape)
         display.tap()
+        if app.buttons["View"].exists { app.buttons["View"].tap() }
         XCTAssertFalse(app.buttons["Screen shares unavailable"].isEnabled)
         app.buttons["Audio only"].tap()
-        XCTAssertTrue(app.buttons["Display: Audio only"].exists)
-        app.buttons["Display: Audio only"].tap()
+        XCTAssertTrue(app.buttons["More call options"].exists)
+        app.buttons["More call options"].tap()
+        if app.buttons["View"].exists { app.buttons["View"].tap() }
         app.buttons["All video"].tap()
         XCUIDevice.shared.orientation = .portrait
         assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
-                                                "Musicians", "Display: All video", "Catch up"])
+                                                "Musicians", "More call options", "Chat"])
         XCUIDevice.shared.orientation = .landscapeRight
         assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
-                                                "Musicians", "Display: All video", "Catch up"])
+                                                "Musicians", "More call options", "Chat"])
         XCUIDevice.shared.orientation = .portrait
         let musicians = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Musicians")).firstMatch
         musicians.tap()
         XCTAssertTrue(app.staticTexts["Phone Guest QA (you)"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["More participant controls"].exists)
         app.buttons["Done"].tap()
-        let catchUp = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Catch up")).firstMatch
+        let catchUp = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Chat")).firstMatch
         catchUp.tap()
-        let transcript = app.textViews["Missed jam transcript"]
+        app.segmentedControls["Conversation mode"].buttons["Catch up"].tap()
+        let transcript = app.textViews["Jam transcript"]
         XCTAssertTrue(transcript.waitForExistence(timeout: 10))
         XCTAssertGreaterThan(transcript.frame.height, app.windows.firstMatch.frame.height * 0.4)
         app.segmentedControls["Conversation mode"].buttons["Chat"].tap()
-        let field = app.textFields["Chat message"]
+        let field = app.textViews["Chat message"]
         XCTAssertTrue(field.isHittable)
         field.tap()
         field.typeText("guest-phone-to-browser")
@@ -296,13 +303,22 @@ final class ConferenceMediaUITests: XCTestCase {
                                                   object: leave)
             XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
             assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
-                                                    "Musicians", "Display: All video", "Catch up"])
+                                                    "Musicians", "More call options", "Chat"])
             if orientation == .portrait {
                 let window = app.windows.firstMatch.frame
                 XCTAssertGreaterThan(window.width, 300)
                 XCTAssertLessThanOrEqual(leave.frame.maxX, window.maxX + 1)
             }
         }
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Chat")).firstMatch.tap()
+        let mode = app.segmentedControls["Conversation mode"]
+        mode.buttons["Chat"].tap()
+        XCTAssertTrue(app.textViews["Jam chat messages"].isHittable)
+        mode.buttons["Live text"].tap()
+        XCTAssertTrue(app.textViews["Jam transcript"].isHittable)
+        mode.buttons["Catch up"].tap()
+        XCTAssertTrue(app.textViews["Jam transcript"].isHittable)
+        app.buttons["Close conversation"].tap()
     }
 
     func testGuestVideoModeScreenshots() throws {
@@ -317,15 +333,17 @@ final class ConferenceMediaUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone Guest QA"
         app.launch()
         defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
-        let display = app.buttons["Display: All video"]
+        let display = app.buttons["More call options"]
         XCTAssertTrue(display.waitForExistence(timeout: 60))
         Thread.sleep(forTimeInterval: 8)
         attachScreenshot(of: app, named: "Guest all video")
         display.tap()
+        if app.buttons["View"].exists { app.buttons["View"].tap() }
         app.buttons["Audio only"].tap()
         Thread.sleep(forTimeInterval: 4)
         attachScreenshot(of: app, named: "Guest audio only")
-        app.buttons["Display: Audio only"].tap()
+        app.buttons["More call options"].tap()
+        if app.buttons["View"].exists { app.buttons["View"].tap() }
         XCTAssertFalse(app.buttons["Screen shares unavailable"].isEnabled)
         app.buttons["All video"].tap()
         Thread.sleep(forTimeInterval: 4)
@@ -341,7 +359,7 @@ final class ConferenceMediaUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone Share QA"
         app.launch()
         defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
-        let display = app.buttons["Display: All video"]
+        let display = app.buttons["More call options"]
         XCTAssertTrue(display.waitForExistence(timeout: 45))
         let zoom = app.scrollViews["Pinch to zoom screen share"]
         XCTAssertTrue(zoom.waitForExistence(timeout: 20))
@@ -360,11 +378,13 @@ final class ConferenceMediaUITests: XCTestCase {
         app.buttons["Done"].tap()
         attachScreenshot(of: app, named: "Rock all video and share")
         display.tap()
+        if app.buttons["View"].exists { app.buttons["View"].tap() }
         app.buttons["Screen shares"].tap()
         Thread.sleep(forTimeInterval: 3)
-        XCTAssertTrue(app.buttons["Display: Screen shares"].exists)
+        XCTAssertTrue(app.buttons["More call options"].exists)
         attachScreenshot(of: app, named: "Rock screen share only")
-        app.buttons["Display: Screen shares"].tap()
+        app.buttons["More call options"].tap()
+        if app.buttons["View"].exists { app.buttons["View"].tap() }
         app.buttons["Audio only"].tap()
         Thread.sleep(forTimeInterval: 2)
         attachScreenshot(of: app, named: "Rock audio only")
@@ -400,12 +420,15 @@ final class ConferenceMediaUITests: XCTestCase {
             let control = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", label)).firstMatch
             XCTAssertTrue(control.waitForExistence(timeout: 10), "Missing \(label)")
             XCTAssertTrue(control.isHittable, "Hidden \(label)")
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44, "Narrow \(label)")
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44, "Short \(label)")
         }
     }
 
     func testStoreHomeScreenshot() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launch()
+        app.buttons["Profile and settings"].tap()
         let name = app.textFields["Your name"]
         XCTAssertTrue(name.waitForExistence(timeout: 15))
         name.tap()
@@ -415,34 +438,68 @@ final class ConferenceMediaUITests: XCTestCase {
         name.typeText("Musician")
         app.terminate()
         app.launch()
+        app.buttons["Profile and settings"].tap()
         XCTAssertEqual(app.textFields["Your name"].value as? String, "Musician")
+        app.buttons["Done"].tap()
         let star = app.buttons["Star Open rehearsal"]
         if star.exists { star.tap() }
         attachScreenshot(of: app, named: "Rock’n’Roll home")
+    }
+
+    func testFixtureNameDoesNotReplaceSavedProfile() throws {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launch()
+        app.buttons["Profile and settings"].tap()
+        let name = app.textFields["Your name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 15))
+        name.tap()
+        if let current = name.value as? String, !current.isEmpty {
+            name.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+        }
+        name.typeText("Configured Musician")
+        app.terminate()
+
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Rapid Switch QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
+        app.launch()
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 45))
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Musicians")).firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Rapid Switch QA (you)"].waitForExistence(timeout: 10))
+        app.terminate()
+
+        app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_INVITE")
+        app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_NAME")
+        app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_DIRECT_MEDIA")
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Joining as Configured Musician"].waitForExistence(timeout: 15))
     }
 
     func testCommunityJamConnectsMuted() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "iPhone Jam QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
         app.launch()
         defer {
             let leave = app.buttons["Leave"]
             if leave.exists { leave.tap() }
         }
 
-        let connected = app.staticTexts.matching(
-            NSPredicate(format: "label MATCHES %@", "[0-9]+ musicians? in this jam")
-        ).firstMatch
+        let connected = app.staticTexts["Only you here"]
         guard connected.waitForExistence(timeout: 25) else {
             XCTFail("Jam did not connect. UI: \(app.debugDescription)")
             return
         }
         XCTAssertTrue(app.buttons["Unmute microphone"].exists)
         XCTAssertTrue(app.buttons["Start video"].exists)
-        app.buttons["Catch up"].tap()
-        XCTAssertTrue(app.buttons["Close catch up"].waitForExistence(timeout: 10))
-        app.buttons["Close catch up"].tap()
+        app.buttons["Chat"].tap()
+        XCTAssertTrue(app.buttons["Close conversation"].waitForExistence(timeout: 10))
+        app.buttons["Close conversation"].tap()
         Thread.sleep(forTimeInterval: 15)
     }
 
@@ -453,6 +510,9 @@ final class ConferenceMediaUITests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "iPhone Media QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
         app.launch()
         defer {
             let leave = app.buttons["Leave"]
@@ -491,19 +551,20 @@ final class ConferenceMediaUITests: XCTestCase {
             if leave.exists { leave.tap() }
         }
 
-        XCTAssertTrue(app.buttons["Catch up"].waitForExistence(timeout: 35))
+        XCTAssertTrue(app.buttons["Chat"].waitForExistence(timeout: 35))
         Thread.sleep(forTimeInterval: 11)
-        guard app.buttons["Catch up"].exists else {
+        guard app.buttons["Chat"].exists else {
             XCTFail("Jam ended during hold. UI: \(app.debugDescription)")
             return
         }
-        app.buttons["Catch up"].tap()
-        let transcript = app.textViews["Missed jam transcript"]
+        app.buttons["Chat"].tap()
+        app.segmentedControls["Conversation mode"].buttons["Catch up"].tap()
+        let transcript = app.textViews["Jam transcript"]
         XCTAssertTrue(transcript.waitForExistence(timeout: 10))
         let content = try XCTUnwrap(transcript.value as? String)
         XCTAssertTrue(content.contains("Possibly missed:"), content)
         XCTAssertTrue(content.contains("No timestamped transcript recovered"), content)
-        app.buttons["Close catch up"].tap()
+        app.buttons["Close conversation"].tap()
     }
 
     func testCatchUpHistorySurvivesAppRestart() throws {
@@ -522,7 +583,7 @@ final class ConferenceMediaUITests: XCTestCase {
             if leave.exists { leave.tap() }
         }
 
-        XCTAssertTrue(app.buttons["Catch up, 1 missed section"].waitForExistence(timeout: 60))
+        XCTAssertTrue(app.buttons["Chat, 1 missed section"].waitForExistence(timeout: 60))
         app.terminate()
         app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_HOLD_SECONDS")
         app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_INVITE")
@@ -556,19 +617,20 @@ final class ConferenceMediaUITests: XCTestCase {
         }
 
         let catchUp = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Catch up")
+            NSPredicate(format: "label BEGINSWITH %@", "Chat")
         ).firstMatch
         XCTAssertTrue(catchUp.waitForExistence(timeout: 60))
-        let missed = app.buttons["Catch up, 1 missed section"]
+        let missed = app.buttons["Chat, 1 missed section"]
         XCTAssertTrue(missed.waitForExistence(timeout: 20))
         Thread.sleep(forTimeInterval: 5)
         missed.tap()
-        let transcript = app.textViews["Missed jam transcript"]
+        app.segmentedControls["Conversation mode"].buttons["Catch up"].tap()
+        let transcript = app.textViews["Jam transcript"]
         XCTAssertTrue(transcript.waitForExistence(timeout: 10))
         let content = try XCTUnwrap(transcript.value as? String)
         XCTAssertTrue(content.contains("Possibly missed:"))
         XCTAssertTrue(content.contains("No timestamped transcript recovered"))
-        app.buttons["Close catch up"].tap()
+        app.buttons["Close conversation"].tap()
     }
 
     func testCatchUpPanelOpensDuringMeeting() throws {
@@ -587,16 +649,17 @@ final class ConferenceMediaUITests: XCTestCase {
         }
 
         let catchUp = app.buttons.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "Catch up")
+            NSPredicate(format: "label BEGINSWITH %@", "Chat")
         ).firstMatch
         guard catchUp.waitForExistence(timeout: 60) else {
             XCTFail("Guest invitation did not join. UI: \(app.debugDescription)")
             return
         }
         catchUp.tap()
-        let close = app.buttons["Close catch up"]
+        let close = app.buttons["Close conversation"]
         XCTAssertTrue(close.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.textViews["Missed jam transcript"].exists)
+        app.segmentedControls["Conversation mode"].buttons["Catch up"].tap()
+        XCTAssertTrue(app.textViews["Jam transcript"].exists)
         let image = XCTAttachment(screenshot: app.screenshot())
         image.lifetime = .keepAlways
         add(image)
@@ -617,11 +680,13 @@ final class ConferenceMediaUITests: XCTestCase {
             if leave.exists { leave.tap() }
         }
 
+        app.buttons["Profile and settings"].tap()
         let name = app.textFields["Your name"]
         XCTAssertTrue(name.waitForExistence(timeout: 15))
         name.tap()
         name.typeText("Link QA")
-        app.buttons["Join with mic and camera off"].tap()
+        app.buttons["Done"].tap()
+        app.buttons["Join jam"].tap()
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
 
         // Deliver the second link from outside XCTest with devicectl while this
@@ -635,8 +700,8 @@ final class ConferenceMediaUITests: XCTestCase {
 
         let ready = app.staticTexts["Jam ready. Join with your microphone and camera off."]
         XCTAssertTrue(ready.waitForExistence(timeout: 30))
-        XCTAssertEqual(app.textFields["Paste jam invitation link"].value as? String, second)
-        app.buttons["Join with mic and camera off"].tap()
+        XCTAssertEqual(app.textFields["Invitation link"].value as? String, second)
+        app.buttons["Join jam"].tap()
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
     }
 
@@ -659,7 +724,7 @@ final class ConferenceMediaUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_SWITCH_URLS"] = try XCTUnwrap(String(data: encoded, encoding: .utf8))
         app.launch()
 
-        let join = app.buttons["Join with mic and camera off"]
+        let join = app.buttons["Join jam"]
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@ AND enabled == true",
                                                                    "Switch sequence connected"),
                                               object: join)
@@ -686,12 +751,12 @@ final class ConferenceMediaUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_SWITCH_URLS"] = try XCTUnwrap(String(data: encoded, encoding: .utf8))
         app.launch()
 
-        let join = app.buttons["Join with mic and camera off"]
+        let join = app.buttons["Join jam"]
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@ AND enabled == true",
                                                                    "Switch sequence connected"),
                                               object: join)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 120), .completed)
-        let value = app.textFields["Paste jam invitation link"].value as? String
+        let value = app.textFields["Invitation link"].value as? String
         XCTAssertTrue(value?.contains("/calls/\(secondID)") == true)
     }
 
@@ -731,6 +796,7 @@ final class ConferenceMediaUITests: XCTestCase {
             return
         }
 
+        app.buttons["More call options"].tap()
         let flipCamera = app.buttons["Flip camera"]
         XCTAssertTrue(flipCamera.exists)
         flipCamera.tap()

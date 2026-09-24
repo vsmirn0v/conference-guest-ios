@@ -20,11 +20,13 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
     private var microphoneIntentOn = false
     private var cameraIntentOn = false
     private var isHeld = false
+    private var audioGate = CallAudioRecoveryGate()
     private var leaveRequested = false
     private var hasConnected = false
     private var displayMode: ConferenceDisplayMode = .all
     #if DEBUG
     private var testHoldScheduled = false
+    private var directMediaForTesting = false
     #endif
     private(set) var hasJoinStarted = false
 
@@ -34,10 +36,18 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         self.systemCall = systemCall
         super.init()
         audio.onStatus = { [weak self] in self?.onMediaStatus?($0) }
+        audio.onRouteChanged = { [weak self] in
+            guard let self else { return }
+            self.callView?.setAudioRouteName(self.audio.outputName)
+        }
         audio.onInterruptionChanged = { [weak self] interrupted in
             guard let self, self.hasConnected else { return }
-            if interrupted { self.catchUp.begin(.audioInterruption) }
-            else { self.catchUp.end(.audioInterruption) }
+            if interrupted {
+                self.audioGate.markInterrupted()
+                self.catchUp.begin(.audioInterruption)
+            } else {
+                self.recoverAudioIfReady()
+            }
         }
     }
 
@@ -50,14 +60,17 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         self.hasConnected = false
         #if DEBUG
         self.testHoldScheduled = false
+        self.directMediaForTesting = false
         #endif
         self.isHeld = false
+        self.audioGate = CallAudioRecoveryGate()
         self.microphoneIntentOn = false
         self.cameraIntentOn = false
         self.displayMode = .all
         catchUp.enter(roomKey: target.originURL.absoluteString + "/" + target.jamID)
         chat.clear()
         chat.onSend = { [weak self] in self?.sendChat($0) }
+        chat.onRetry = { [weak self] in self?.publishChat(id: $0.id, text: $0.text) }
         catchUp.observe(messages: [], canView: false, enabled: false)
         AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = false
         try AudioManager.shared.setEngineAvailability(.none)
@@ -71,9 +84,21 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         view.onSpeaker = { preferred in AudioManager.shared.isSpeakerOutputPreferred = preferred }
         view.onDisplayMode = { [weak self] mode in self?.setDisplayMode(mode) }
         self.callView = view
+        view.setAudioRouteName(audio.outputName)
         container.present(view, animated: false)
         installCallHandlers()
         hasJoinStarted = true
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
+            directMediaForTesting = true
+            try AVAudioSession.sharedInstance().setActive(true)
+            audioGate.activate()
+            audio.callAudioDidActivate()
+            recoverAudioIfReady()
+            connect()
+            return
+        }
+        #endif
         systemCall.start()
     }
 
@@ -81,6 +106,9 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         guard hasJoinStarted, !leaveRequested else { return }
         leaveRequested = true
         joinTask?.cancel()
+        #if DEBUG
+        if directMediaForTesting { finish(failed: false); return }
+        #endif
         systemCall.end()
     }
 
@@ -88,19 +116,27 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         systemCall.resumeIfPossible()
     }
 
+    func showMediaStatus(_ message: String?) { callView?.showMediaStatus(message) }
+
     private func installCallHandlers() {
         systemCall.onActivated = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.hasJoinStarted else { return }
-                do {
-                    self.audio.callAudioDidActivate()
-                    try AudioManager.shared.setEngineAvailability(.default)
-                    self.systemCall.resumeIfPossible()
-                    if !self.hasConnected && self.joinTask == nil { self.connect() }
-                } catch {
-                    self.onMediaStatus?("Jam audio could not start: \(error.localizedDescription)")
-                    self.finish(failed: true)
-                }
+                self.audioGate.activate()
+                self.audio.callAudioDidActivate()
+                self.callView?.setAudioRouteName(self.audio.outputName)
+                self.recoverAudioIfReady()
+                self.systemCall.resumeIfPossible()
+                if !self.hasConnected && self.joinTask == nil { self.connect() }
+            }
+        }
+        systemCall.onDeactivated = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.hasJoinStarted else { return }
+                self.audioGate.deactivate()
+                if self.hasConnected { self.catchUp.begin(.audioInterruption) }
+                self.onMediaStatus?("Jam audio paused by iOS")
+                try? AudioManager.shared.setEngineAvailability(.none)
             }
         }
         systemCall.onEnded = { [weak self] _ in
@@ -116,6 +152,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
             Task { @MainActor [weak self] in
                 guard let self, self.hasJoinStarted else { return }
                 self.isHeld = held
+                self.audioGate.setHeld(held)
                 if self.hasConnected {
                     if held { self.catchUp.begin(.anotherCall) }
                     else { self.catchUp.end(.anotherCall) }
@@ -127,11 +164,26 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
                         _ = try? await self.room?.localParticipant.setCamera(enabled: false)
                     }
                 } else {
-                    try? AudioManager.shared.setEngineAvailability(.default)
-                    self.applyMediaIntent()
+                    self.recoverAudioIfReady()
                 }
                 self.callView?.setHeld(held)
             }
+        }
+    }
+
+    private func recoverAudioIfReady() {
+        guard hasJoinStarted, !leaveRequested, audioGate.takeRecovery() else { return }
+        do {
+            // The outgoing cellular call can release hold before CallKit gives
+            // this call its audio session back. Restart the engine only after both.
+            try AudioManager.shared.setEngineAvailability(.none)
+            try AudioManager.shared.setEngineAvailability(.default)
+            audio.ensureMixing()
+            applyMediaIntent()
+            catchUp.end(.audioInterruption)
+        } catch {
+            audioGate.markInterrupted()
+            onMediaStatus?("Audio could not resume: \(error.localizedDescription)")
         }
     }
 
@@ -238,6 +290,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         let wasLeaving = leaveRequested
         let wasConnected = hasConnected
         hasJoinStarted = false
+        audioGate = CallAudioRecoveryGate()
         leaveRequested = true
         hasConnected = false
         chat.clear()
@@ -245,6 +298,12 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         joinTask = nil
         if !wasLeaving { systemCall.markEnded(reason: .failed) }
         try? AudioManager.shared.setEngineAvailability(.none)
+        #if DEBUG
+        if directMediaForTesting {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            directMediaForTesting = false
+        }
+        #endif
         if let room { Task { await room.disconnect() } }
         room = nil
         credentials = nil
@@ -338,16 +397,24 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
     }
 
     private func sendChat(_ text: String) {
-        guard hasConnected, let room else { return }
+        guard hasConnected else { return }
         let packet = RockChatPacket(id: UUID().uuidString, text: text)
         chat.append(ChatEntry(id: packet.id, sender: "You", text: text,
-                              sentAt: Date(), isOwn: true))
+                              sentAt: Date(), isOwn: true, delivery: .pending))
+        publishChat(id: packet.id, text: text)
+    }
+
+    private func publishChat(id: String, text: String) {
+        guard hasConnected, let room else { return }
+        let packet = RockChatPacket(id: id, text: text)
         Task { @MainActor [weak self] in
             do {
                 try await room.localParticipant.publish(
                     data: JSONEncoder().encode(packet),
                     options: DataPublishOptions(topic: RockChatPacket.topic, reliable: true))
+                self?.chat.setDelivery(.sent, for: packet.id)
             } catch {
+                self?.chat.setDelivery(.failed, for: packet.id)
                 self?.onMediaStatus?("Chat could not send: \(error.localizedDescription)")
             }
         }

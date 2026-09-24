@@ -5,6 +5,7 @@ import Foundation
 /// Reports only a real, user-requested conference to the system call UI.
 final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverDelegate {
     var onActivated: (() -> Void)?
+    var onDeactivated: (() -> Void)?
     /// True when the user or app deliberately ended the system call.
     var onEnded: ((Bool) -> Void)?
     var onMuteChanged: ((Bool) -> Void)?
@@ -195,6 +196,8 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         #if DEBUG
         print("System call: audio deactivated")
         #endif
+        guard callID != nil else { return }
+        onDeactivated?()
     }
 
     func callObserver(_ callObserver: CXCallObserver, callChanged call: CXCall) {

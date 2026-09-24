@@ -7,6 +7,7 @@ import Security
 final class RoomHistoryStore: ObservableObject {
     @Published private(set) var rooms: [RecentRoom] = []
     private var history: RecentRooms
+    private(set) var removedRoom: RecentRoom?
 
     init() {
         if let data = Self.read(), let restored = try? JSONDecoder().decode(RecentRooms.self, from: data) {
@@ -33,7 +34,20 @@ final class RoomHistoryStore: ObservableObject {
     }
 
     func remove(_ url: URL) {
+        removedRoom = history.items.first { $0.invitationURL == url }
         history.remove(url)
+        save()
+    }
+
+    func undoRemoval() {
+        guard let removedRoom else { return }
+        history.restore(removedRoom)
+        self.removedRoom = nil
+        save()
+    }
+
+    func setAlias(_ alias: String?, for url: URL) {
+        history.setAlias(alias, for: url)
         save()
     }
 
