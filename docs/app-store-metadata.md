@@ -22,6 +22,10 @@ The Catch up panel marks times when a call or network interruption may have caus
 
 Rock’n’Roll is a jam room for small music groups in Yerevan. Join by link without an account, chat, see who is speaking, and pin or zoom a shared screen. Microphone and camera start off. Please test audio routes, background playback and call recovery with another participant.
 
+## Build 0.2.0 (7): What to Test
+
+Join the public test jam with microphone and camera off, then open a second browser participant at https://rock.glowsoft.ru/jams/test. Share the demo card and check All video, Screen shares, and Audio only. Open consecutive invitations and confirm the latest room connects with your saved name. Rotate the phone, use chat and Catch up, rename a starred recent jam, and verify that meeting audio returns after a call. For a compatible guest invitation, check that Screen shares follows an active share, hides camera video, and shows a clear empty state when sharing stops. Pinch to zoom a shared screen.
+
 ## App Review notes
 
 Rock’n’Roll supports more than one jam engine. The public test jam exercises our self-hosted engine and is available in the same production build as every other supported link. No reviewer account, payment, or private access is needed.
