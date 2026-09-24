@@ -10,12 +10,17 @@ struct JoinView: View {
     @State private var showingSavedHistory = false
     @State private var showingContactPicker = false
     @State private var showingSettings = false
+    @State private var showingNameEditor = false
     @State private var showingAllRooms = false
     @State private var editingRoom: RecentRoom?
     @State private var roomAlias = ""
     @State private var showingUndo = false
     @State private var undoToken = UUID()
     private let accent = Color(red: 1, green: 0.60, blue: 0.33)
+    private let linkAccent = Color(uiColor: .init { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) :
+            UIColor(red: 0.49, green: 0.21, blue: 0.06, alpha: 1)
+    })
 
     private var favorites: [RecentRoom] { history.rooms.filter(\.isStarred) }
     private var recent: [RecentRoom] { history.rooms.filter { !$0.isStarred } }
@@ -35,27 +40,36 @@ struct JoinView: View {
                         }
                         .font(.subheadline.weight(.semibold))
                     }
-                    HStack {
-                        Image(systemName: "person.crop.circle")
-                        Text("Joining as \(model.displayName)")
-                            .lineLimit(1)
+                    Button { showingNameEditor = true } label: {
+                        HStack {
+                            Image(systemName: "person.crop.circle")
+                            Text("Joining as \(model.displayName.isEmpty ? "Add a name" : model.displayName)")
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .font(.subheadline)
                     }
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Edit your name, currently \(model.displayName)")
+                    if !validDisplayName {
+                        Text("Enter a name of up to 80 characters before joining.")
+                            .font(.footnote).foregroundStyle(.red)
+                    }
                     Button { model.join() } label: {
                         HStack {
                             Spacer()
-                            if model.isJoining { ProgressView().tint(.white) }
+                            if model.isJoining { ProgressView().tint(canJoin ? .black : .primary) }
                             Text(model.isJoining ? "Joining…" : "Join jam")
                                 .font(.headline)
+                                .foregroundStyle(canJoin ? Color.black : Color.primary)
                             Spacer()
                         }
                         .frame(minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(accent)
-                    .disabled(model.invite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                              model.isJoining || model.isInConference || model.isLeaving)
+                    .disabled(!canJoin)
                     #if DEBUG
                     .accessibilityValue(model.testSwitchSequenceCompleted ? "Switch sequence connected" : "")
                     #endif
@@ -88,12 +102,12 @@ struct JoinView: View {
                     }
                 }
                 Section {
-                    Button("Try the test jam") {
+                    Button("Join a practice room") {
                         model.receive(url: URL(string: "https://rock.glowsoft.ru/jams/test")!)
                         model.join()
                     }
                 } footer: {
-                    Text("Join a small music group with a shared invitation. No account needed.")
+                    Text("Practice with a shared music group. Other visitors can join; your microphone and camera start off.")
                 }
             }
             .scrollContentBackground(.hidden)
@@ -121,18 +135,20 @@ struct JoinView: View {
                 SavedCatchUpView(store: catchUp)
             }
             .sheet(isPresented: $showingSettings) { settingsSheet }
+            .sheet(isPresented: $showingNameEditor) { nameSheet }
             .alert("Name this jam", isPresented: Binding(
                 get: { editingRoom != nil },
                 set: { if !$0 { editingRoom = nil } }
             )) {
-                TextField("Personal name", text: $roomAlias)
+                TextField("New jam name", text: $roomAlias)
                 Button("Save") {
                     if let editingRoom { model.setAlias(roomAlias, for: editingRoom) }
                     editingRoom = nil
                 }
+                .disabled(roomAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Cancel", role: .cancel) { editingRoom = nil }
             } message: {
-                Text("Only you see this name.")
+                Text("Current: \(editingRoom?.displayTitle ?? "Jam"). Only you see this name.")
             }
             .confirmationDialog(
                 "Leave the current jam and open the new invitation?",
@@ -142,7 +158,39 @@ struct JoinView: View {
                 Button("Stay here", role: .cancel) { model.dismissPending() }
             }
         }
-        .tint(accent)
+        .tint(linkAccent)
+    }
+
+    private var validDisplayName: Bool {
+        let count = model.displayName.trimmingCharacters(in: .whitespacesAndNewlines).count
+        return (1...80).contains(count)
+    }
+
+    private var canJoin: Bool {
+        !model.invite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && validDisplayName &&
+            !model.isJoining && !model.isInConference && !model.isLeaving
+    }
+
+    private var nameSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Name shown to musicians", text: $model.displayName)
+                        .textContentType(.nickname)
+                        .autocorrectionDisabled()
+                    Button("Choose my contact") { showingContactPicker = true }
+                } header: {
+                    Text("Your name")
+                } footer: {
+                    Text("This name is saved on your phone for future jams.")
+                }
+            }
+            .navigationTitle("Your name")
+            .toolbar { Button("Done") { showingNameEditor = false } }
+            .sheet(isPresented: $showingContactPicker) {
+                ContactNamePicker(isPresented: $showingContactPicker) { model.displayName = $0 }
+            }
+        }
     }
 
     private func roomSection(_ title: String, rooms: [RecentRoom]) -> some View {
@@ -162,16 +210,27 @@ struct JoinView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Rejoin \(room.displayTitle)")
+                    .contextMenu {
+                        Button { startRename(room) } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+                        Button {
+                            UIPasteboard.general.url = room.invitationURL
+                        } label: {
+                            Label("Copy invitation", systemImage: "doc.on.doc")
+                        }
+                        if room.alias != nil {
+                            Button { model.setAlias(nil, for: room) } label: {
+                                Label("Use original name", systemImage: "arrow.uturn.backward")
+                            }
+                        }
+                    }
                     Button { model.toggleStar(room) } label: {
                         Image(systemName: room.isStarred ? "star.fill" : "star")
                             .frame(width: 44, height: 44)
-                            .foregroundStyle(room.isStarred ? accent : .secondary)
+                            .foregroundStyle(room.isStarred ? linkAccent : .secondary)
                     }
                     .accessibilityLabel(room.isStarred ? "Unstar \(room.displayTitle)" : "Star \(room.displayTitle)")
-                }
-                .contextMenu {
-                    Button("Rename") { roomAlias = room.alias ?? ""; editingRoom = room }
-                    Button("Copy invitation") { UIPasteboard.general.url = room.invitationURL }
                 }
                 .swipeActions {
                     Button("Remove", role: .destructive) {
@@ -184,10 +243,15 @@ struct JoinView: View {
                             if undoToken == token { showingUndo = false }
                         }
                     }
-                    Button("Rename") { roomAlias = room.alias ?? ""; editingRoom = room }
+                    Button("Rename") { startRename(room) }
                 }
             }
         }
+    }
+
+    private func startRename(_ room: RecentRoom) {
+        roomAlias = ""
+        editingRoom = room
     }
 
     private func roomSubtitle(_ room: RecentRoom) -> String {
@@ -270,16 +334,7 @@ private struct SavedCatchUpView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                Text(CatchUpText.make(timeline: store.timeline,
-                                      canView: store.canViewTranscript,
-                                      enabled: store.transcriptionEnabled,
-                                      warning: store.persistenceWarning)
-                     + "\n\nRejoin the jam to check for additional transcript lines.")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .padding()
-            }
+            CatchUpCardsView(store: store)
             .navigationTitle("Catch up")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -288,9 +343,6 @@ private struct SavedCatchUpView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 HStack {
-                    if store.timeline.unreadCount > 0 {
-                        Button("Mark reviewed") { store.markReviewed() }
-                    }
                     Spacer()
                     Button("Delete local history", role: .destructive) {
                         store.finishMeeting()

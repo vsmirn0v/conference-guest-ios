@@ -29,13 +29,14 @@ enum CatchUpText {
         }
 
         if timeline.intervals.isEmpty {
-            lines.append("You’re up to date.")
+            lines.append("No interruptions recorded.")
             if !timeline.segments.isEmpty {
                 lines.append("Recent transcript:")
                 lines.append(contentsOf: timeline.segments.suffix(8).map(describe))
             }
         } else {
-            lines.append("\(timeline.unreadCount) unreviewed missed section(s).")
+            let count = timeline.unreadCount
+            lines.append("\(count) unreviewed missed \(count == 1 ? "section" : "sections").")
             for interval in timeline.intervals.reversed() {
                 let start = clock(interval.start)
                 let end = interval.end.map(clock) ?? "now"

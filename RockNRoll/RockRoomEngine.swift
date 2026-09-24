@@ -76,7 +76,9 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         try AudioManager.shared.setEngineAvailability(.none)
         try audio.prepareForJoin()
         let view = RockCallViewController(title: credentials.jam.title,
-                                          catchUp: catchUp, chat: chat)
+                                          catchUp: catchUp, chat: chat,
+                                          invitationURL: target.invitationURL,
+                                          roomIdentifier: target.jamID)
         view.onLeave = { [weak self] in self?.leave() }
         view.onMicrophone = { [weak self] in self?.setMicrophone($0) }
         view.onCamera = { [weak self] in self?.setCamera($0) }

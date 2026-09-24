@@ -8,6 +8,7 @@ final class CallControls: UIView {
     private let camera = UIButton(type: .system)
     private let route = UIView()
     private let catchUpButton = UIButton(type: .system)
+    private let missedButton = UIButton(type: .system)
     private let displayButton = UIButton(type: .system)
     private let participantsButton = UIButton(type: .system)
     private let moreButton = UIButton(type: .system)
@@ -32,15 +33,19 @@ final class CallControls: UIView {
     private var mediaStatus: String?
     private var missedCount = 0
     private var unreadChatCount = 0
+    private let workspace = CallWorkspaceControls()
 
     init(state: JazzActiveConferenceState, coordinator: JazzActiveConferenceCoordinator,
          router: JazzActiveConferenceRouter,
          catchUp: CatchUpStore, chat: ChatStore,
          initialDisplayMode: ConferenceDisplayMode,
+         invitationURL: URL?, roomIdentifier: String?,
          onDisplayMode: @escaping (ConferenceDisplayMode) -> Void,
          onLeave: @escaping () -> Void, onMicrophoneState: @escaping (Bool) -> Void,
          onCameraState: @escaping (Bool) -> Void) {
         super.init(frame: .zero)
+        workspace.invitationURL = invitationURL
+        workspace.roomIdentifier = roomIdentifier
         displayMode = initialDisplayMode
         backgroundColor = .clear
         audioOnlyBackdrop.backgroundColor = .black
@@ -56,6 +61,10 @@ final class CallControls: UIView {
         audioOnlyLabel.textAlignment = .center
         audioOnlyLabel.translatesAutoresizingMaskIntoConstraints = false
         audioOnlyBackdrop.addSubview(audioOnlyLabel)
+        let missedWidth = missedButton.widthAnchor.constraint(equalToConstant: 48)
+        missedWidth.priority = .defaultHigh
+        let missedHeight = missedButton.heightAnchor.constraint(equalToConstant: 48)
+        missedHeight.priority = .defaultHigh
         NSLayoutConstraint.activate([
             audioOnlyBackdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
             audioOnlyBackdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -66,34 +75,59 @@ final class CallControls: UIView {
             audioOnlyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: audioOnlyBackdrop.leadingAnchor, constant: 20),
             audioOnlyLabel.trailingAnchor.constraint(lessThanOrEqualTo: audioOnlyBackdrop.trailingAnchor, constant: -20),
         ])
-        waitingBackdrop.backgroundColor = UIColor.black.withAlphaComponent(0.64)
+        waitingBackdrop.backgroundColor = .black
         waitingBackdrop.isUserInteractionEnabled = false
         waitingBackdrop.isHidden = true
         waitingBackdrop.translatesAutoresizingMaskIntoConstraints = false
         addSubview(waitingBackdrop)
         let waitingLabel = UILabel()
-        waitingLabel.text = "Waiting for others to join\nShare this jam link with your group."
+        waitingLabel.text = "You're connected. Waiting for others."
         waitingLabel.textColor = .white
         waitingLabel.font = .preferredFont(forTextStyle: .title3)
         waitingLabel.adjustsFontForContentSizeCategory = true
         waitingLabel.textAlignment = .center
         waitingLabel.numberOfLines = 0
-        waitingLabel.translatesAutoresizingMaskIntoConstraints = false
-        waitingBackdrop.addSubview(waitingLabel)
+        let waitingColumn = UIStackView(arrangedSubviews: [waitingLabel])
+        waitingColumn.axis = .vertical
+        waitingColumn.alignment = .center
+        waitingColumn.spacing = 12
+        if invitationURL != nil {
+            let invite = UIButton(type: .system)
+            invite.configuration = .tinted()
+            invite.configuration?.title = "Invite musicians"
+            invite.configuration?.image = UIImage(systemName: "square.and.arrow.up")
+            invite.tintColor = UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
+            invite.addAction(UIAction { [weak self] _ in
+                self?.workspace.shareInvitation(from: invite)
+            }, for: .touchUpInside)
+            let copy = UIButton(type: .system)
+            copy.configuration = .plain()
+            copy.configuration?.title = "Copy link"
+            copy.tintColor = UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
+            copy.addAction(UIAction { [weak self] _ in self?.workspace.copyInvitation() },
+                           for: .touchUpInside)
+            waitingColumn.addArrangedSubview(invite)
+            waitingColumn.addArrangedSubview(copy)
+        }
+        waitingColumn.translatesAutoresizingMaskIntoConstraints = false
+        waitingBackdrop.addSubview(waitingColumn)
         NSLayoutConstraint.activate([
             waitingBackdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
             waitingBackdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
             waitingBackdrop.topAnchor.constraint(equalTo: topAnchor),
             waitingBackdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
-            waitingLabel.centerXAnchor.constraint(equalTo: waitingBackdrop.centerXAnchor),
-            waitingLabel.centerYAnchor.constraint(equalTo: waitingBackdrop.centerYAnchor),
-            waitingLabel.leadingAnchor.constraint(greaterThanOrEqualTo: waitingBackdrop.leadingAnchor, constant: 20),
-            waitingLabel.trailingAnchor.constraint(lessThanOrEqualTo: waitingBackdrop.trailingAnchor, constant: -20),
+            waitingColumn.centerXAnchor.constraint(equalTo: waitingBackdrop.centerXAnchor),
+            waitingColumn.centerYAnchor.constraint(equalTo: waitingBackdrop.centerYAnchor),
+            waitingColumn.leadingAnchor.constraint(greaterThanOrEqualTo: waitingBackdrop.leadingAnchor, constant: 20),
+            waitingColumn.trailingAnchor.constraint(lessThanOrEqualTo: waitingBackdrop.trailingAnchor, constant: -20),
         ])
 
         let leave = Self.button("Leave", symbol: "phone.down.fill")
         catchUpButton.configuration = Self.iconConfiguration("text.bubble")
         catchUpButton.accessibilityLabel = "Chat"
+        missedButton.configuration = Self.iconConfiguration("clock.arrow.circlepath")
+        missedButton.accessibilityLabel = "Catch up"
+        missedButton.isHidden = true
         displayButton.configuration = Self.iconConfiguration(displayMode.symbol)
         displayButton.accessibilityLabel = "Display: \(displayMode.title)"
         moreButton.configuration = Self.iconConfiguration("ellipsis.circle.fill", title: "More")
@@ -102,8 +136,13 @@ final class CallControls: UIView {
         participantsButton.configuration = Self.iconConfiguration("person.2.fill")
         participantsButton.accessibilityLabel = "Musicians"
         configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
-        microphone.configuration = Self.iconConfiguration("mic.slash.fill", title: "Mic")
-        camera.configuration = Self.iconConfiguration("video.slash.fill", title: "Video")
+        microphone.configuration = Self.iconConfiguration("mic.slash.fill", title: "Mic off")
+        camera.configuration = Self.iconConfiguration("video.slash.fill", title: "Cam off")
+        for button in [microphone, camera, catchUpButton, missedButton, moreButton, participantsButton] {
+            button.showsLargeContentViewer = true
+            button.largeContentTitle = button.accessibilityLabel
+            button.largeContentImage = button.configuration?.image
+        }
         leave.configuration?.baseForegroundColor = .systemRed
 
         microphone.addAction(UIAction { _ in
@@ -117,14 +156,14 @@ final class CallControls: UIView {
             coordinator.toggleCamera(isOn: turnOn)
         }, for: .touchUpInside)
         leave.addAction(UIAction { _ in onLeave() }, for: .touchUpInside)
+        workspace.toggleMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
+        workspace.toggleCamera = { [weak self] in self?.camera.sendActions(for: .touchUpInside) }
+        workspace.leave = { leave.sendActions(for: .touchUpInside) }
         catchUpButton.addAction(UIAction { [weak self] _ in
-            guard let self else { return }
-            var responder: UIResponder? = self
-            while let current = responder, !(current is UIViewController) { responder = current.next }
-            guard let presenter = responder as? UIViewController else { return }
-            presenter.present(ConversationPanelViewController(catchUp: catchUp, chat: chat,
-                                                              showTranscript: catchUp.timeline.unreadCount > 0),
-                              animated: true)
+            self?.openConversation(catchUp: catchUp, chat: chat, selected: .chat)
+        }, for: .touchUpInside)
+        missedButton.addAction(UIAction { [weak self] _ in
+            self?.openConversation(catchUp: catchUp, chat: chat, selected: .catchUp)
         }, for: .touchUpInside)
         participantsButton.addAction(UIAction { _ in router.openParticipants() }, for: .touchUpInside)
 
@@ -186,7 +225,8 @@ final class CallControls: UIView {
         let identity = UIStackView(arrangedSubviews: [titleLabel, countLabel, routeLabel, callStateLabel])
         identity.axis = .vertical
         identity.spacing = 1
-        let header = UIStackView(arrangedSubviews: [identity, participantsButton, catchUpButton])
+        let header = UIStackView(arrangedSubviews: [identity, participantsButton,
+                                                    missedButton, catchUpButton])
         header.axis = .horizontal
         header.alignment = .center
         header.spacing = 4
@@ -239,6 +279,7 @@ final class CallControls: UIView {
             participantsButton.heightAnchor.constraint(equalToConstant: 48),
             catchUpButton.widthAnchor.constraint(equalToConstant: 48),
             catchUpButton.heightAnchor.constraint(equalToConstant: 48),
+            missedWidth, missedHeight,
             noticeTop,
             notices.centerXAnchor.constraint(equalTo: safeAreaLayoutGuide.centerXAnchor),
             notices.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
@@ -271,8 +312,13 @@ final class CallControls: UIView {
             print("Microphone state changed: \(media)")
             #endif
             self.microphone.configuration?.image = UIImage(systemName: media == .on ? "mic.fill" : "mic.slash.fill")
+            self.microphone.configuration?.title = media == .on ? "Mic on" : "Mic off"
+            self.microphone.configuration?.baseForegroundColor = media == .on ?
+                UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
             self.microphone.isEnabled = media != .disabled
             self.microphone.accessibilityLabel = media == .on ? "Mute microphone" : "Unmute microphone"
+            self.microphone.largeContentTitle = self.microphone.accessibilityLabel
+            self.workspace.microphoneOn = media == .on
         }.store(in: &subscriptions)
         state.$cameraState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
@@ -280,10 +326,15 @@ final class CallControls: UIView {
             print("Camera state changed: \(media)")
             #endif
             self.camera.configuration?.image = UIImage(systemName: media == .on ? "video.fill" : "video.slash.fill")
+            self.camera.configuration?.title = media == .on ? "Cam on" : "Cam off"
+            self.camera.configuration?.baseForegroundColor = media == .on ?
+                UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
             self.camera.isEnabled = media != .disabled
             self.cameraOn = media == .on
             self.configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
             self.camera.accessibilityLabel = media == .on ? "Stop video" : "Start video"
+            self.camera.largeContentTitle = self.camera.accessibilityLabel
+            self.workspace.cameraOn = media == .on
         }.store(in: &subscriptions)
         Publishers.CombineLatest3(state.$localParticipant, state.$remoteParticipants,
                                   state.$dominantSpeaker)
@@ -293,8 +344,9 @@ final class CallControls: UIView {
                 self.waitingBackdrop.isHidden = !remote.isEmpty || local.camera.isOn ||
                     self.displayMode == .audioOnly
                 self.participantsButton.accessibilityLabel = "Musicians, \(remote.count + 1)"
-                self.countLabel.text = remote.isEmpty ? "Waiting for others" :
-                    "\(remote.count + 1) participants"
+                let identifier = self.workspace.roomIdentifier.map { " · \($0)" } ?? ""
+                self.countLabel.text = remote.isEmpty ? "Waiting for others\(identifier)" :
+                    "\(remote.count + 1) participants\(identifier)"
                 self.participantsButton.accessibilityValue = remote.values.contains { $0.screenSharing.isOn }
                     ? "A screen is being shared" : nil
                 if let speaker, speaker.microphone.isOn {
@@ -311,6 +363,17 @@ final class CallControls: UIView {
 
     required init?(coder: NSCoder) { nil }
 
+    private func openConversation(catchUp: CatchUpStore, chat: ChatStore,
+                                  selected: ConversationMode) {
+        var responder: UIResponder? = self
+        while let current = responder, !(current is UIViewController) { responder = current.next }
+        guard let presenter = responder as? UIViewController,
+              presenter.presentedViewController == nil else { return }
+        presenter.present(ConversationPanelViewController(catchUp: catchUp, chat: chat,
+                                                           initialMode: selected, call: workspace),
+                          animated: true)
+    }
+
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
         // The SDK's video renderer sits behind this full-screen controls view.
@@ -326,6 +389,7 @@ final class CallControls: UIView {
 
     func setHeld(_ held: Bool) {
         isHeld = held
+        workspace.onHold = held
         renderCallStatus()
     }
 
@@ -336,6 +400,7 @@ final class CallControls: UIView {
 
     func setAudioRouteName(_ name: String) {
         routeLabel.text = "Audio · \(name)"
+        workspace.routeName = name
         route.accessibilityValue = name
     }
 
@@ -346,12 +411,12 @@ final class CallControls: UIView {
 
     private func updateChatBadge() {
         catchUpButton.configuration?.title = unreadChatCount > 0 ? "\(unreadChatCount)" : nil
-        catchUpButton.configuration?.baseForegroundColor = missedCount > 0 ? .systemOrange :
-            UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
+        missedButton.isHidden = missedCount == 0
+        missedButton.configuration?.title = missedCount > 0 ? "\(missedCount)" : nil
+        missedButton.accessibilityLabel = "Catch up, \(missedCount) missed " +
+            (missedCount == 1 ? "section" : "sections")
         let unread = unreadChatCount > 0 ? ", \(unreadChatCount) unread" : ""
-        let missed = missedCount > 0 ?
-            ", \(missedCount) missed section\(missedCount == 1 ? "" : "s")" : ""
-        catchUpButton.accessibilityLabel = "Chat\(unread)\(missed)"
+        catchUpButton.accessibilityLabel = "Chat\(unread)"
     }
 
     deinit {
@@ -434,7 +499,17 @@ final class CallControls: UIView {
                            image: UIImage(systemName: "arrow.down.right.and.arrow.up.left")) { [weak self] _ in
             self?.fitZoomedContent()
         }
-        moreButton.menu = UIMenu(children: [viewMenu, fit, flip])
+        var actions: [UIMenuElement] = [viewMenu, fit, flip]
+        if workspace.invitationURL != nil {
+            actions.insert(UIAction(title: "Invite musicians", image: UIImage(systemName: "square.and.arrow.up")) {
+                [weak self] _ in guard let self else { return }
+                self.workspace.shareInvitation(from: self.moreButton)
+            }, at: 0)
+            actions.insert(UIAction(title: "Copy link", image: UIImage(systemName: "doc.on.doc")) {
+                [weak self] _ in self?.workspace.copyInvitation()
+            }, at: 1)
+        }
+        moreButton.menu = UIMenu(children: actions)
     }
 
     private func fitZoomedContent() {
@@ -456,6 +531,9 @@ final class CallControls: UIView {
         let button = UIButton(type: .system)
         button.configuration = iconConfiguration(symbol, title: title)
         button.accessibilityLabel = title
+        button.showsLargeContentViewer = true
+        button.largeContentTitle = title
+        button.largeContentImage = UIImage(systemName: symbol)
         return button
     }
 

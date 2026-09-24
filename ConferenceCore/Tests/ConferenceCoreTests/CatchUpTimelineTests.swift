@@ -68,4 +68,41 @@ final class CatchUpTimelineTests: XCTestCase {
         XCTAssertEqual(restored.intervals[0].end, start.addingTimeInterval(90))
         XCTAssertEqual(restored.transcript(during: restored.intervals[0]).map(\.text), ["Decision"])
     }
+
+    func testReviewingOneGapPreservesOtherUnreadGapsAcrossStorage() throws {
+        var timeline = CatchUpTimeline()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        timeline.begin(.anotherCall, at: start)
+        timeline.end(.anotherCall, at: start.addingTimeInterval(10))
+        timeline.begin(.connection, at: start.addingTimeInterval(20))
+        timeline.end(.connection, at: start.addingTimeInterval(30))
+        timeline.markReviewed(timeline.intervals[1].id)
+        XCTAssertEqual(timeline.unreadCount, 1)
+        XCTAssertTrue(timeline.isReviewed(timeline.intervals[1]))
+        XCTAssertFalse(timeline.isReviewed(timeline.intervals[0]))
+
+        let restored = try JSONDecoder().decode(CatchUpTimeline.self,
+                                                 from: JSONEncoder().encode(timeline))
+        XCTAssertEqual(restored.unreadCount, 1)
+        XCTAssertTrue(restored.isReviewed(restored.intervals[1]))
+    }
+
+    func testOldStoredReviewCountMigratesToIndividualSections() throws {
+        var timeline = CatchUpTimeline()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        timeline.begin(.anotherCall, at: start)
+        timeline.end(.anotherCall, at: start.addingTimeInterval(5))
+        timeline.markReviewed()
+        timeline.begin(.connection, at: start.addingTimeInterval(10))
+        timeline.end(.connection, at: start.addingTimeInterval(15))
+
+        var oldArchive = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(timeline))
+                                       as? [String: Any])
+        oldArchive.removeValue(forKey: "reviewedIntervalIDs")
+        let restored = try JSONDecoder().decode(CatchUpTimeline.self,
+            from: JSONSerialization.data(withJSONObject: oldArchive))
+        XCTAssertTrue(restored.isReviewed(restored.intervals[0]))
+        XCTAssertFalse(restored.isReviewed(restored.intervals[1]))
+        XCTAssertEqual(restored.unreadCount, 1)
+    }
 }

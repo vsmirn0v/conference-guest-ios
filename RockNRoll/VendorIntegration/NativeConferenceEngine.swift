@@ -44,6 +44,8 @@ final class NativeConferenceEngine {
     private var mediaReconnectTimedOut = false
     private var mediaReconnectGeneration: UInt64 = 0
     private var activeRoom: JazzRoom?
+    private var activeInvitationURL: URL?
+    private var activeRoomIdentifier: String?
     #if DEBUG
     private var testHoldScheduled = false
     #endif
@@ -330,6 +332,8 @@ final class NativeConferenceEngine {
     }
 
     func join(target: JoinTarget, displayName: String) throws {
+        activeInvitationURL = target.invitationURL
+        activeRoomIdentifier = target.roomID
         chat?.clear()
         currentNotices = []
         identity.setName(displayName)
@@ -464,6 +468,8 @@ final class NativeConferenceEngine {
                                         catchUp: self.catchUp,
                                         chat: self.chat ?? ChatStore(),
                                         initialDisplayMode: self.displayMode,
+                                        invitationURL: self.activeInvitationURL,
+                                        roomIdentifier: self.activeRoomIdentifier,
                                         onDisplayMode: { mode in
                                             self.displayMode = mode
                                             coordinator.toggleIncomingStreamsDisabled(isEnabled: mode != .audioOnly)

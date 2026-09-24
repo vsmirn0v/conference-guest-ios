@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import ConferenceCore
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
@@ -34,7 +35,90 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         model.configure(container: controller)
 
         #if DEBUG
+        if let fixture = ProcessInfo.processInfo.environment["CONFERENCE_TEST_UI_FIXTURE"] {
+            let invitation = URL(string: "https://rock.glowsoft.ru/jams/test")!
+            if fixture == "home" {
+                let marker = ProcessInfo.processInfo.environment["CONFERENCE_TEST_FIXTURE_ROOM_ID"] ?? "test"
+                let savedURL = URL(string: "https://meeting.example.test/calls/\(marker)?psw=fixture")!
+                model.history.record(url: savedURL, title: "Open rehearsal \(marker)", identifier: marker)
+                if model.history.rooms.first(where: { $0.invitationURL == savedURL })?.isStarred == false {
+                    model.history.toggleStar(savedURL)
+                }
+                return
+            }
+            if fixture == "participants" {
+                let panel = ParticipantPanelViewController()
+                panel.onPin = { _ in }
+                panel.update([
+                    ParticipantStatus(id: "local", name: "Musician", isLocal: true,
+                                      microphoneOn: false, cameraOn: false, screenShareOn: false,
+                                      isSpeaking: false, videoKey: nil, shareKey: nil),
+                    ParticipantStatus(id: "remote", name: "Alexander Petrosyan — acoustic guitar",
+                                      isLocal: false, microphoneOn: true, cameraOn: true,
+                                      screenShareOn: true, isSpeaking: true, videoKey: "video", shareKey: "share")
+                ], pinnedKey: "share")
+                window.rootViewController = UINavigationController(rootViewController: panel)
+                return
+            }
+            let chat = model.chat
+            chat.canSend = fixture != "unavailable"
+            chat.onSend = { [weak chat] message in
+                chat?.append(ChatEntry(id: UUID().uuidString, sender: "You", text: message,
+                                       sentAt: Date(), isOwn: true))
+            }
+            chat.onRetry = { [weak chat] entry in chat?.setDelivery(.sent, for: entry.id) }
+            chat.replace([
+                ChatEntry(id: "1", sender: "Ani", text: "Shall we start with the slower version today?",
+                          sentAt: Date().addingTimeInterval(-200), isOwn: false),
+                ChatEntry(id: "2", sender: "You", text: "I have the chords ready.",
+                          sentAt: Date().addingTimeInterval(-180), isOwn: true),
+                ChatEntry(id: "3", sender: "You", text: "I can bring the amplifier on Friday.",
+                          sentAt: Date().addingTimeInterval(-150), isOwn: true, delivery: .failed),
+                ChatEntry(id: "4", sender: "Alexander Petrosyan — acoustic guitar",
+                          text: "Here is the arrangement: https://rock.glowsoft.ru/community",
+                          sentAt: Date().addingTimeInterval(-100), isOwn: false)
+            ])
+            let store = model.catchUpStore
+            store.enter(roomKey: "https://rock.glowsoft.ru/jams/fixture")
+            store.begin(.anotherCall)
+            store.observe(messages: [TranscriptSegment(id: "line", speaker: "Ani",
+                text: "We will meet Friday at six thirty.", spokenAt: Date())],
+                canView: fixture != "unavailable", enabled: fixture != "unavailable")
+            store.end(.anotherCall)
+            if fixture == "transcript" {
+                let lines = (0..<30).map { index in
+                    TranscriptSegment(id: "sample-\(index)", speaker: "Musician \(index % 3 + 1)",
+                        text: "Rehearsal note \(index + 1): repeat the bridge after the guitar solo.",
+                        spokenAt: Date().addingTimeInterval(Double(index - 30) * 15))
+                }
+                store.observe(messages: lines, canView: true, enabled: true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                    store.observe(messages: [TranscriptSegment(id: "new-live-line", speaker: "Ani",
+                        text: "New line received while reading earlier notes.", spokenAt: Date())],
+                        canView: true, enabled: true)
+                }
+            }
+            let controls = CallWorkspaceControls()
+            controls.invitationURL = invitation
+            controls.roomIdentifier = "test"
+            controls.toggleMicrophone = { controls.microphoneOn.toggle() }
+            controls.toggleCamera = { controls.cameraOn.toggle() }
+            controls.toggleSpeaker = { controls.speakerOn.toggle() }
+            window.rootViewController = ConversationPanelViewController(catchUp: store, chat: chat,
+                                                                         call: controls)
+            return
+        }
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_LAYOUT_FIXTURE"] == "rock" {
+            controller.present(RockCallViewController(title: "Open rehearsal",
+                catchUp: model.catchUpStore, chat: model.chat), animated: false)
+            return
+        }
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_LAYOUT_FIXTURE"] == "rock-unread" {
+            model.catchUpStore.enter(roomKey: "https://rock.glowsoft.ru/jams/fixture")
+            model.catchUpStore.begin(.anotherCall)
+            model.catchUpStore.end(.anotherCall)
+            model.chat.append(ChatEntry(id: "incoming", sender: "Ani", text: "Are you here?",
+                                       sentAt: Date(), isOwn: false))
             controller.present(RockCallViewController(title: "Open rehearsal",
                 catchUp: model.catchUpStore, chat: model.chat), animated: false)
             return

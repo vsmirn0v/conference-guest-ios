@@ -97,6 +97,14 @@ final class CatchUpStore: ObservableObject {
         writeNow()
     }
 
+    func markReviewed(_ id: UUID) {
+        var updated = timeline
+        updated.markReviewed(id)
+        guard updated.unreadCount != timeline.unreadCount else { return }
+        timeline = updated
+        writeNow()
+    }
+
     private func scheduleWrite() {
         pendingWrite?.cancel()
         let item = DispatchWorkItem { [weak self] in self?.writeNow() }
