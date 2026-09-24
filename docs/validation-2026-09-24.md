@@ -43,3 +43,11 @@ Both room engines now use one CallKit provider. A clicked native meeting link di
 Build 6 was uploaded successfully and is **Testing** in the one-tester `Rock’n’Roll Internal` TestFlight group. Its internal “What to Test” notes cover consecutive links, transcript-notice placement, rotation, and audio/layout reports. It has not been added to the public beta group; build 5 remains the approved public beta while build 6 is checked internally.
 
 The user supplied an iPhone screenshot showing a transcript-start notice covering the bottom controls. The guest integration now renders its notice stream as compact top banners, including available notice actions. A simulator layout fixture passed portrait, both landscape orientations, and return to portrait; visual inspection confirmed the banner and controls do not overlap. The provider's live transcript-start event was not retested on iPhone because the device was disconnecting, so this remains a runtime check for the next physical-device session.
+
+## Guest screen-share pinch fix (source only)
+
+The guest SDK's normal renderer includes a zoomable scroll view for a remote screen share. The app's full-screen, transparent controls view intercepted touches above it. Empty control space now passes touches to that renderer; buttons remain active. A custom stream-renderer experiment was rejected after it displayed a black canvas during a live share.
+
+- An iPhone 17 Pro Max simulator joined the live guest room through a Debug-only media path because simulator CallKit rejected an outgoing call. Another participant published a screen share. Before/after UI-test screenshots visibly show the shared window enlarged by a pinch; the Leave control remained hittable. `testManualGuestScreenSharePinch` passed.
+- `testGuestControlsSurviveRotationCycles` passed on the simulator after the change.
+- The test participants left and screen sharing stopped. A physical-device check and a new TestFlight build remain outstanding; no uploaded build includes this fix yet.

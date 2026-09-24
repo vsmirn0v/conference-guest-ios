@@ -30,6 +30,7 @@ final class CallControls: UIView {
         backgroundColor = .clear
         audioOnlyBackdrop.backgroundColor = .black
         audioOnlyBackdrop.isHidden = true
+        audioOnlyBackdrop.isUserInteractionEnabled = false
         audioOnlyBackdrop.translatesAutoresizingMaskIntoConstraints = false
         addSubview(audioOnlyBackdrop)
         let audioOnlyLabel = UILabel()
@@ -123,6 +124,7 @@ final class CallControls: UIView {
         speakerLabel.layer.cornerRadius = 8
         speakerLabel.clipsToBounds = true
         speakerLabel.isHidden = true
+        speakerLabel.isUserInteractionEnabled = false
         speakerLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(speakerLabel)
         let bottom = bar.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -4)
@@ -187,6 +189,8 @@ final class CallControls: UIView {
             .sink { [weak self] _, remote, speaker in
                 guard let self else { return }
                 self.participantsButton.accessibilityLabel = "Musicians, \(remote.count + 1)"
+                self.participantsButton.accessibilityValue = remote.values.contains { $0.screenSharing.isOn }
+                    ? "A screen is being shared" : nil
                 if let speaker, speaker.microphone.isOn {
                     self.speakerLabel.text = "  Speaking: \(speaker.isLocal ? "You" : (speaker.userName ?? "Musician"))  "
                     self.speakerLabel.isHidden = false
@@ -197,6 +201,15 @@ final class CallControls: UIView {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        // The SDK's video renderer sits behind this full-screen controls view.
+        // Passing empty space through lets its own screen-share scroll view
+        // receive pinch and pan gestures without changing the video renderer.
+        if hit === self { return nil }
+        return hit
+    }
 
     func showNotices(_ items: [InCallNotice]) {
         notices.show(items)

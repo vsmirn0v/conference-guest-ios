@@ -84,6 +84,7 @@ final class NativeConferenceEngine {
         print("SDK default service URL: \(JazzNetwork.default.hostUrl.host ?? "unknown")")
         #endif
         JazzSession.shared.$jazzConferencePhase
+            .dropFirst() // The initial inactive value is not a completed join.
             .receive(on: DispatchQueue.main)
             .sink { [weak self] phase in
                 guard let self, self.hasMediaJoinStarted else { return }
@@ -211,6 +212,12 @@ final class NativeConferenceEngine {
         startNetworkMonitor()
         hasJoinStarted = true
         installCallHandlers()
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
+            startMediaAfterActivation()
+            return
+        }
+        #endif
         systemCall.start()
     }
 
@@ -233,6 +240,12 @@ final class NativeConferenceEngine {
         guard hasJoinStarted else { return }
         leaveRequested = true
         pendingRoom = nil
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
+            JazzSession.shared.terminateActiveConference()
+            return
+        }
+        #endif
         systemCall.end()
     }
 

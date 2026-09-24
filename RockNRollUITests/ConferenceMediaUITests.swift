@@ -2,6 +2,31 @@ import UIKit
 import XCTest
 
 final class ConferenceMediaUITests: XCTestCase {
+    func testManualGuestScreenSharePinch() throws {
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_SHARE"] == "1",
+              let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
+            throw XCTSkip("Start a synthetic share in the supplied guest room before running this test.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Guest Zoom QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
+        app.launch()
+        defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 45))
+        let sharing = app.buttons.matching(NSPredicate(
+            format: "value == %@", "A screen is being shared"
+        )).firstMatch
+        XCTAssertTrue(sharing.waitForExistence(timeout: 30))
+        Thread.sleep(forTimeInterval: 3)
+        XCTAssertGreaterThanOrEqual(app.scrollViews.count, 1)
+        attachScreenshot(of: app, named: "Guest share before pinch")
+        app.windows.firstMatch.pinch(withScale: 2, velocity: 1)
+        XCTAssertTrue(app.buttons["Leave"].isHittable)
+        attachScreenshot(of: app, named: "Guest share after pinch")
+    }
     func testMeetingNoticesStayAboveControlsInBothOrientations() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "notice"
@@ -255,6 +280,9 @@ final class ConferenceMediaUITests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone Guest QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
         app.launch()
         defer {
             XCUIDevice.shared.orientation = .portrait
