@@ -18,6 +18,7 @@ final class CallControls: UIView {
     private let callStateLabel = UILabel()
     private let speakerLabel = UILabel()
     private let audioOnlyBackdrop = UIView()
+    private let screenSharesBackdrop = UIView()
     private let waitingBackdrop = UIView()
     private let notices = TopNoticeView()
     private var barBottomConstraint: NSLayoutConstraint?
@@ -28,6 +29,8 @@ final class CallControls: UIView {
     private var headerCenterConstraint: NSLayoutConstraint?
     private var orientationObserver: NSObjectProtocol?
     private var displayMode: ConferenceDisplayMode = .all
+    private var hasScreenShare = false
+    private var isWaitingForOthers = false
     private var cameraOn = false
     private var isHeld = false
     private var mediaStatus: String?
@@ -75,8 +78,32 @@ final class CallControls: UIView {
             audioOnlyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: audioOnlyBackdrop.leadingAnchor, constant: 20),
             audioOnlyLabel.trailingAnchor.constraint(lessThanOrEqualTo: audioOnlyBackdrop.trailingAnchor, constant: -20),
         ])
+        // Keep the SDK renderer: it prioritizes a live share, while this coordinator
+        // only switches all incoming video together. Cover camera-only output.
+        screenSharesBackdrop.backgroundColor = .black
+        screenSharesBackdrop.isHidden = initialDisplayMode != .screenShares
+        screenSharesBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(screenSharesBackdrop)
+        let noShareLabel = UILabel()
+        noShareLabel.text = "No screen share is live.\nJam audio continues."
+        noShareLabel.textColor = .lightGray
+        noShareLabel.font = .preferredFont(forTextStyle: .title3)
+        noShareLabel.adjustsFontForContentSizeCategory = true
+        noShareLabel.numberOfLines = 0
+        noShareLabel.textAlignment = .center
+        noShareLabel.translatesAutoresizingMaskIntoConstraints = false
+        screenSharesBackdrop.addSubview(noShareLabel)
+        NSLayoutConstraint.activate([
+            screenSharesBackdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
+            screenSharesBackdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
+            screenSharesBackdrop.topAnchor.constraint(equalTo: topAnchor),
+            screenSharesBackdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
+            noShareLabel.centerXAnchor.constraint(equalTo: screenSharesBackdrop.centerXAnchor),
+            noShareLabel.centerYAnchor.constraint(equalTo: screenSharesBackdrop.centerYAnchor),
+            noShareLabel.leadingAnchor.constraint(greaterThanOrEqualTo: screenSharesBackdrop.leadingAnchor, constant: 20),
+            noShareLabel.trailingAnchor.constraint(lessThanOrEqualTo: screenSharesBackdrop.trailingAnchor, constant: -20)
+        ])
         waitingBackdrop.backgroundColor = .black
-        waitingBackdrop.isUserInteractionEnabled = false
         waitingBackdrop.isHidden = true
         waitingBackdrop.translatesAutoresizingMaskIntoConstraints = false
         addSubview(waitingBackdrop)
@@ -341,8 +368,11 @@ final class CallControls: UIView {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] local, remote, speaker in
                 guard let self else { return }
-                self.waitingBackdrop.isHidden = !remote.isEmpty || local.camera.isOn ||
-                    self.displayMode == .audioOnly
+                self.hasScreenShare = local.screenSharing.isOn ||
+                    remote.values.contains { $0.screenSharing.isOn }
+                self.isWaitingForOthers = remote.isEmpty && !local.camera.isOn &&
+                    !local.screenSharing.isOn
+                self.updateDisplayBackdrops()
                 self.participantsButton.accessibilityLabel = "Musicians, \(remote.count + 1)"
                 let identifier = self.workspace.roomIdentifier.map { " · \($0)" } ?? ""
                 self.countLabel.text = remote.isEmpty ? "Waiting for others\(identifier)" :
@@ -481,14 +511,11 @@ final class CallControls: UIView {
     private func configureMoreMenu(coordinator: JazzActiveConferenceCoordinator,
                                    onChange: @escaping (ConferenceDisplayMode) -> Void) {
         let viewMenu = UIMenu(title: "View", children: ConferenceDisplayMode.allCases.map { option in
-            UIAction(title: option == .screenShares ? "Screen shares unavailable" : option.title,
-                     image: UIImage(systemName: option.symbol),
-                     attributes: option == .screenShares ? .disabled : [],
+            UIAction(title: option.title, image: UIImage(systemName: option.symbol),
                      state: option == displayMode ? .on : .off) { [weak self] _ in
                 guard let self else { return }
                 self.displayMode = option
-                self.audioOnlyBackdrop.isHidden = option != .audioOnly
-                if option == .audioOnly { self.waitingBackdrop.isHidden = true }
+                self.updateDisplayBackdrops()
                 self.configureMoreMenu(coordinator: coordinator, onChange: onChange)
                 onChange(option)
             }
@@ -510,6 +537,12 @@ final class CallControls: UIView {
             }, at: 1)
         }
         moreButton.menu = UIMenu(children: actions)
+    }
+
+    private func updateDisplayBackdrops() {
+        audioOnlyBackdrop.isHidden = displayMode != .audioOnly
+        screenSharesBackdrop.isHidden = displayMode != .screenShares || hasScreenShare
+        waitingBackdrop.isHidden = displayMode != .all || !isWaitingForOthers
     }
 
     private func fitZoomedContent() {
