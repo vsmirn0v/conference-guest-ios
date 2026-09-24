@@ -79,7 +79,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                           sentAt: Date().addingTimeInterval(-100), isOwn: false)
             ])
             let store = model.catchUpStore
-            store.enter(roomKey: "https://rock.glowsoft.ru/jams/fixture")
+            store.enter(roomKey: "https://rock.glowsoft.ru/jams/fixture-\(UUID().uuidString)")
             store.begin(.anotherCall)
             store.observe(messages: [TranscriptSegment(id: "line", speaker: "Ani",
                 text: "We will meet Friday at six thirty.", spokenAt: Date())],

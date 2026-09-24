@@ -350,6 +350,9 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         callStrip.layer.cornerRadius = 12
         for button in [micButton, cameraButton, speakerButton, leaveButton] {
             button.configuration = .tinted()
+            button.configuration?.imagePlacement = .top
+            button.configuration?.imagePadding = 2
+            button.configuration?.contentInsets = .init(top: 2, leading: 2, bottom: 2, trailing: 2)
             callStrip.addArrangedSubview(button)
         }
         micButton.addAction(UIAction { _ in call.toggleMicrophone?() }, for: .touchUpInside)

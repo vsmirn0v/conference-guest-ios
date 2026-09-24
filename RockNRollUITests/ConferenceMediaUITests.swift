@@ -100,6 +100,13 @@ final class ConferenceMediaUITests: XCTestCase {
         let card = app.scrollViews["Catch up sections"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Transcript received"].exists)
+        for label in ["Mic off", "Cam off"] {
+            let controlLabel = app.staticTexts[label]
+            XCTAssertTrue(controlLabel.exists)
+            XCTAssertGreaterThan(controlLabel.frame.width, 30, "Narrow \(label) label")
+            XCTAssertLessThan(controlLabel.frame.height, 25, "Wrapped \(label) label")
+        }
+        attachScreenshot(of: app, named: "Catch up on compact screen")
         app.buttons["Mark section reviewed"].tap()
         XCTAssertTrue(app.staticTexts["Reviewed"].exists)
     }
