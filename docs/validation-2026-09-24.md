@@ -44,10 +44,19 @@ Build 6 was uploaded successfully and is **Testing** in the one-tester `Rock’n
 
 The user supplied an iPhone screenshot showing a transcript-start notice covering the bottom controls. The guest integration now renders its notice stream as compact top banners, including available notice actions. A simulator layout fixture passed portrait, both landscape orientations, and return to portrait; visual inspection confirmed the banner and controls do not overlap. The provider's live transcript-start event was not retested on iPhone because the device was disconnecting, so this remains a runtime check for the next physical-device session.
 
-## Guest screen-share pinch fix (source only)
+## Guest screen-share pinch fix
 
 The guest SDK's normal renderer includes a zoomable scroll view for a remote screen share. The app's full-screen, transparent controls view intercepted touches above it. Empty control space now passes touches to that renderer; buttons remain active. A custom stream-renderer experiment was rejected after it displayed a black canvas during a live share.
 
 - An iPhone 17 Pro Max simulator joined the live guest room through a Debug-only media path because simulator CallKit rejected an outgoing call. Another participant published a screen share. Before/after UI-test screenshots visibly show the shared window enlarged by a pinch; the Leave control remained hittable. `testManualGuestScreenSharePinch` passed.
 - `testGuestControlsSurviveRotationCycles` passed on the simulator after the change.
-- The test participants left and screen sharing stopped. A physical-device check and a new TestFlight build remain outstanding; no uploaded build includes this fix yet.
+- The test participants left and screen sharing stopped. A physical-device check of the distribution build remains outstanding.
+
+## Build 0.2.0 (7): internal and public TestFlight
+
+Build 7 includes the guest screen-share pinch fix and the guest Screen shares viewing mode. The mode follows a live screen share, hides camera feeds, and shows an empty state before or after sharing. The public test jam and compatible guest invitations remain in the same build.
+
+- `swift test --package-path ConferenceCore`: 18 passed. The selected iPhone 17 Pro Max simulator UI tests passed: layout/rotation, notice placement, and starred-room naming; one guest-share fixture skipped because its external camera participant was absent. The live guest share, stop/restart, and display-mode behavior was verified on the simulator in the preceding source revision.
+- The Release archive embedded version `0.2.0 (7)`, the Bluetooth purpose string, and `ITSAppUsesNonExemptEncryption=false`. Xcode reported `EXPORT SUCCEEDED` and `Upload succeeded`; App Store Connect processed the upload.
+- App Store Connect lists build 7 as **Testing** in both `Rock’n’Roll Internal` (1 tester) and `Rock’n’Roll Public Beta` (4 testers). The public group retains [its existing invitation link](https://testflight.apple.com/join/Hd13C9U3), limited to 100 testers. The build-specific “What to Test” notes and existing distribution screenshots contain no provider branding.
+- Xcode again reported missing third-party framework dSYMs during symbol upload. Upload succeeded, but crashes inside those frameworks may have incomplete symbolication. Installation and media behavior from build 7 have not yet been checked on a physical device.
