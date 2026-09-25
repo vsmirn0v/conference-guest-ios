@@ -39,6 +39,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             FloatingVideoPreference.enabled = true
         }
         if let fixture = ProcessInfo.processInfo.environment["CONFERENCE_TEST_UI_FIXTURE"] {
+            if fixture == "guest-color" {
+                window.rootViewController = GuestColorFixtureViewController()
+                return
+            }
             if fixture == "guest-zoom" {
                 window.rootViewController = GuestStreamViewportFixtureViewController()
                 return
@@ -202,6 +206,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneWillResignActive(_ scene: UIScene) {
         conference?.prepareToFloat()
+    }
+
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        conference?.backgroundedWithoutFloatingVideo()
     }
 
     #if DEBUG

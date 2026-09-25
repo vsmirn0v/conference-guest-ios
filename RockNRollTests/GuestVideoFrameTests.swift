@@ -32,6 +32,8 @@ final class GuestVideoFrameTests: XCTestCase {
                 XCTFail("Missing pixels"); delivered.fulfill(); return
             }
             XCTAssertEqual(CVPixelBufferGetPixelFormatType(buffer), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+            let matrix = CVBufferGetAttachment(buffer, kCVImageBufferYCbCrMatrixKey, nil)
+            XCTAssertTrue(matrix.map { CFEqual($0.takeUnretainedValue(), kCVImageBufferYCbCrMatrix_ITU_R_601_4) } ?? false)
             CVPixelBufferLockBaseAddress(buffer, .readOnly)
             defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
             let y = CVPixelBufferGetBaseAddressOfPlane(buffer, 0)!.assumingMemoryBound(to: UInt8.self)
@@ -46,6 +48,46 @@ final class GuestVideoFrameTests: XCTestCase {
         processor.submit(makeFrame())
         await fulfillment(of: [delivered], timeout: 3)
         processor.setEnabled(false)
+    }
+
+    func testCroppedFullRangeFrameKeepsItsRangeAndColorTags() async throws {
+        var pixelBuffer: CVPixelBuffer?
+        let attributes = [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 4, 4,
+            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, attributes, &pixelBuffer), kCVReturnSuccess)
+        let source = try XCTUnwrap(pixelBuffer)
+        CVBufferSetAttachment(source, kCVImageBufferYCbCrMatrixKey,
+                              kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
+        CVPixelBufferLockBaseAddress(source, [])
+        let y = CVPixelBufferGetBaseAddressOfPlane(source, 0)!.assumingMemoryBound(to: UInt8.self)
+        let uv = CVPixelBufferGetBaseAddressOfPlane(source, 1)!.assumingMemoryBound(to: UInt8.self)
+        for row in 0..<4 {
+            for column in 0..<4 {
+                y[row * CVPixelBufferGetBytesPerRowOfPlane(source, 0) + column] = column < 2 ? 0 : 255
+            }
+        }
+        for row in 0..<2 {
+            for column in 0..<4 { uv[row * CVPixelBufferGetBytesPerRowOfPlane(source, 1) + column] = 128 }
+        }
+        CVPixelBufferUnlockBaseAddress(source, [])
+        let cropped = RTCCVPixelBuffer(pixelBuffer: source, adaptedWidth: 2, adaptedHeight: 2,
+                                       cropWidth: 2, cropHeight: 2, cropX: 2, cropY: 0)
+        let frame = RTCVideoFrame(buffer: cropped, rotation: RTCVideoRotation(rawValue: 0)!, timeStampNs: 1)
+        let processor = GuestVideoFrameProcessor()
+        let delivered = expectation(description: "Cropped full-range frame")
+        processor.onSample = { sample, _, _ in
+            guard let output = CMSampleBufferGetImageBuffer(sample) else {
+                XCTFail("Missing converted pixels"); delivered.fulfill(); return
+            }
+            XCTAssertEqual(CVPixelBufferGetPixelFormatType(output),
+                           kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+            let matrix = CVBufferGetAttachment(output, kCVImageBufferYCbCrMatrixKey, nil)
+            XCTAssertTrue(matrix.map { CFEqual($0.takeUnretainedValue(), kCVImageBufferYCbCrMatrix_ITU_R_709_2) } ?? false)
+            delivered.fulfill()
+        }
+        processor.setEnabled(true)
+        processor.submit(frame)
+        await fulfillment(of: [delivered], timeout: 3)
     }
 
     func testResetDropsQueuedFramesFromPreviousMeeting() async {

@@ -1,3 +1,4 @@
+import CoreMedia
 import UIKit
 
 /// Owned by the stream, so replacing a participant tile does not discard its viewport.
@@ -11,6 +12,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
     private let scroll = UIScrollView()
     private let content = UIView()
     private let video: UIView
+    private let correctedVideo = GuestSampleBufferView()
     private let state: StreamViewportState
     private let owner = UUID()
     private var viewportSize = CGSize.zero
@@ -44,6 +46,11 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
         video.translatesAutoresizingMaskIntoConstraints = true
         video.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         content.addSubview(video)
+        correctedVideo.isHidden = true
+        correctedVideo.isUserInteractionEnabled = false
+        correctedVideo.translatesAutoresizingMaskIntoConstraints = true
+        correctedVideo.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        content.addSubview(correctedVideo)
 
         if showsPlaceholder {
             let label = UILabel()
@@ -98,6 +105,18 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
 
     func containsRenderer(_ renderer: UIView) -> Bool { renderer.superview === content }
 
+    func showCorrectedVideo(_ sample: CMSampleBuffer, rotation: Int) {
+        correctedVideo.frame = content.bounds
+        if correctedVideo.enqueue(sample, rotation: rotation) {
+            correctedVideo.isHidden = false
+        }
+    }
+
+    func clearCorrectedVideo() {
+        correctedVideo.isHidden = true
+        correctedVideo.clear()
+    }
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
         onVisibilityChanged?()
@@ -120,6 +139,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
         viewportSize = bounds.size
         content.frame = CGRect(origin: .zero, size: viewportSize)
         if video.superview === content { video.frame = content.bounds }
+        correctedVideo.frame = content.bounds
         scroll.contentSize = viewportSize
         scroll.setZoomScale(scale, animated: false)
         let size = scroll.contentSize

@@ -64,6 +64,8 @@ final class NativeConferenceEngine {
         floatingVideo?.setSuspended(!hasBecomeActive || leaveRequested || isSystemHeld || isAudioInterrupted)
     }
 
+    func backgroundedWithoutFloatingVideo() { floatingVideo?.backgrounded() }
+
     func restoreFromFloatingVideo() {
         prepareToFloat()
         floatingVideo?.foregrounded()

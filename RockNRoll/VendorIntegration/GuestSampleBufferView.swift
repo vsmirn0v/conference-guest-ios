@@ -14,14 +14,17 @@ final class GuestSampleBufferView: UIView {
 
     required init?(coder: NSCoder) { nil }
 
-    func enqueue(_ sample: CMSampleBuffer, rotation: Int) {
+    @discardableResult
+    func enqueue(_ sample: CMSampleBuffer, rotation: Int) -> Bool {
         if self.rotation != rotation {
             self.rotation = rotation
             setNeedsLayout()
             layoutIfNeeded()
         }
         if display.status == .failed { display.flush() }
-        if display.isReadyForMoreMediaData { display.enqueue(sample) }
+        guard display.isReadyForMoreMediaData else { return false }
+        display.enqueue(sample)
+        return true
     }
 
     func clear() { display.flushAndRemoveImage() }

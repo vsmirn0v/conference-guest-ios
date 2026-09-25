@@ -422,6 +422,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         zoom.accessibilityValue = "100%"
         zoom.translatesAutoresizingMaskIntoConstraints = false
         let video = VideoView()
+        // Use the same color-managed renderer as the floating video surface.
+        video.renderMode = .sampleBuffer
         video.layoutMode = isShare ? .fit : .fill
         video.track = track
         video.translatesAutoresizingMaskIntoConstraints = false

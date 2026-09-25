@@ -44,11 +44,12 @@ renderer classes and continuing to deliver frames in the background. An SDK
 upgrade requires the physical live-frame tests below. Unknown renderers do not
 enable guest PiP. Prefer an official frame API if the provider supplies one.
 
-Guest frames go to a separate `AVSampleBufferDisplayLayer`: at most 15 fps, one
-conversion in flight, pooled NV12 buffers, and zero-copy hardware buffers when
-uncropped. Frames stay in memory. Source IDs and generation checks reject pending
-frames after renderer replacement, suspension, or room changes. The processor
-warms one frame inline and otherwise runs only while PiP is presenting.
+Guest frames go to `AVSampleBufferDisplayLayer` surfaces for the focused inline
+stream and PiP: at most 30 fps inline or 15 fps in PiP, one conversion in
+flight, pooled NV12 buffers, and zero-copy hardware buffers when uncropped.
+Frames stay in memory. Source IDs and generation checks reject pending frames
+after renderer replacement, suspension, or room changes. The processor pauses
+in the background when PiP is absent. See [color rendering](color-rendering.md).
 
 ## Validation — 25 September 2026
 

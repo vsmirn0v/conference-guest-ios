@@ -73,6 +73,10 @@ final class ConferenceModel: ObservableObject {
         }
     }
 
+    func backgroundedWithoutFloatingVideo() {
+        if case .guest = activeRoute { engine.backgroundedWithoutFloatingVideo() }
+    }
+
     private func configuredJamEngine() -> RockRoomEngine {
         if let jamEngine { return jamEngine }
         let selected = RockRoomEngine(catchUp: engine.catchUp, chat: chat,

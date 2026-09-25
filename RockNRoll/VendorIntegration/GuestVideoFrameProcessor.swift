@@ -3,7 +3,7 @@ import Foundation
 import QuartzCore
 import WebRTC
 
-/// Keeps at most one frame in flight and caps the small PiP surface at 15 fps.
+/// Keeps at most one frame in flight: 30 fps inline, 15 fps in floating video.
 /// All pixels remain in memory. Generation checks discard frames from a prior room.
 final class GuestVideoFrameProcessor: @unchecked Sendable {
     var onSample: (@MainActor (CMSampleBuffer, CGSize, Int) -> Void)?
@@ -14,8 +14,10 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
     private var enabled = false
     private var busy = false
     private var lastFrameTime: CFTimeInterval = 0
+    private var frameInterval: CFTimeInterval = 1.0 / 30
     private var pool: CVPixelBufferPool?
     private var poolSize = CGSize.zero
+    private var poolPixelFormat: OSType = 0
 
     func setEnabled(_ enabled: Bool) {
         lock.lock()
@@ -36,11 +38,17 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
         return sourceID
     }
 
+    func setFrameRate(_ framesPerSecond: Int) {
+        lock.lock()
+        frameInterval = 1.0 / Double(max(framesPerSecond, 1))
+        lock.unlock()
+    }
+
     func submit(_ frame: RTCVideoFrame, source: UUID? = nil) {
         lock.lock()
         let now = CACurrentMediaTime()
         guard (source == nil || source == sourceID), enabled, !busy,
-              now - lastFrameTime >= 1.0 / 15 else { lock.unlock(); return }
+              now - lastFrameTime >= frameInterval else { lock.unlock(); return }
         busy = true
         lastFrameTime = now
         let expected = generation
@@ -99,16 +107,22 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
         let width = Int(source.width), height = Int(source.height)
         guard width > 0, height > 0 else { return nil }
         let size = CGSize(width: width, height: height)
-        if pool == nil || size != poolSize {
+        let sourcePixelFormat = (frame.buffer as? RTCCVPixelBuffer)
+            .map { CVPixelBufferGetPixelFormatType($0.pixelBuffer) }
+        let pixelFormat = sourcePixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        if pool == nil || size != poolSize || poolPixelFormat != pixelFormat {
             pool = nil
             let attributes: [CFString: Any] = [
-                kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                kCVPixelBufferPixelFormatTypeKey: pixelFormat,
                 kCVPixelBufferWidthKey: width, kCVPixelBufferHeightKey: height,
                 kCVPixelBufferIOSurfacePropertiesKey: [:]
             ]
             guard CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attributes as CFDictionary, &pool)
                 == kCVReturnSuccess else { return nil }
             poolSize = size
+            poolPixelFormat = pixelFormat
         }
         guard let pool else { return nil }
         var output: CVPixelBuffer?
@@ -132,6 +146,19 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
                 destination[column * 2] = u[column]
                 destination[column * 2 + 1] = v[column]
             }
+        }
+        CVBufferRemoveAllAttachments(output)
+        if let native = frame.buffer as? RTCCVPixelBuffer,
+           sourcePixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+           sourcePixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange {
+            CVBufferPropagateAttachments(native.pixelBuffer, output)
+        } else {
+            CVBufferSetAttachment(output, kCVImageBufferYCbCrMatrixKey,
+                                  kCVImageBufferYCbCrMatrix_ITU_R_601_4, .shouldPropagate)
+            CVBufferSetAttachment(output, kCVImageBufferColorPrimariesKey,
+                                  kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+            CVBufferSetAttachment(output, kCVImageBufferTransferFunctionKey,
+                                  kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
         }
         return output
     }
