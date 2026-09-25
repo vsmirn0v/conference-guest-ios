@@ -49,6 +49,10 @@ iOS `16.0`, and `ITSAppUsesNonExemptEncryption=false`. Xcode's upload finished
 with `Upload succeeded` on 25 September 2026 and Apple began processing it.
 Third-party framework dSYMs were again absent from the archive, which limits
 symbolication of crashes inside those frameworks; this did not block upload.
-App Store Connect processing and TestFlight group assignment require separate
-verification. Build 10 remains the last confirmed Testing build until that
-verification is complete.
+App Store Connect completed processing. The build-specific **What to Test**
+notes describe zoom persistence without provider branding. Build 11 is
+**Testing** in both `Rock’n’Roll Internal` and `Rock’n’Roll Public Beta`.
+The public group's build list shows `0.2.0 (11)` as Testing, and its tester list
+already shows an installation of build 11 on an iOS 17.7.1 device. The existing
+[public TestFlight link](https://testflight.apple.com/join/Hd13C9U3) remains
+active with a 100-tester limit.
