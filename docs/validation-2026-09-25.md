@@ -39,5 +39,16 @@ Local log: `/tmp/rock-zoom-acceptance.log`.
 Screenshots: `/tmp/rock-zoom-final-attachments/`.
 
 This fix has simulator/live-service coverage; a physical-device pinch check has
-not been performed for this change. No beta was uploaded; TestFlight build 10
-does not contain this fix.
+not been performed for this change.
+
+## Build 0.2.0 (11) upload
+
+The signed Release archive passed `codesign --verify --deep --strict` with team
+`5V64BP2H3P`. Its embedded app reports version `0.2.0`, build `11`, minimum
+iOS `16.0`, and `ITSAppUsesNonExemptEncryption=false`. Xcode's upload finished
+with `Upload succeeded` on 25 September 2026 and Apple began processing it.
+Third-party framework dSYMs were again absent from the archive, which limits
+symbolication of crashes inside those frameworks; this did not block upload.
+App Store Connect processing and TestFlight group assignment require separate
+verification. Build 10 remains the last confirmed Testing build until that
+verification is complete.

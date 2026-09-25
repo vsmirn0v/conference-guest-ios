@@ -26,6 +26,10 @@ Rock’n’Roll is a jam room for small music groups in Yerevan. Join by link wi
 
 Join the public test jam with microphone and camera off, then open a second browser participant at https://rock.glowsoft.ru/jams/test. Share the demo card and check All video, Screen shares, and Audio only. Open consecutive invitations and confirm the latest room connects with your saved name. Rotate the phone, use chat and Catch up, rename a starred recent jam, and verify that meeting audio returns after a call. For a compatible guest invitation, check that Screen shares follows an active share, hides camera video, and shows a clear empty state when sharing stops. Pinch to zoom a shared screen.
 
+## Build 0.2.0 (11): What to Test
+
+Join a room where another participant is sharing a screen. Pinch to zoom and pan the shared screen, then ask the participant to turn their camera on or off. The screen should remain at the chosen zoom level. Rotate the iPhone and check that zoom remains in place; use **Fit shared screen** to reset it. If sharing stops and starts again, the new share should begin fitted. Also check muted joining, chat, and audio recovery after a call.
+
 ## App Review notes
 
 Rock’n’Roll supports more than one jam engine. The public test jam exercises our self-hosted engine and is available in the same production build as every other supported link. No reviewer account, payment, or private access is needed.
