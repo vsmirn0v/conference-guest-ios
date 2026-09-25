@@ -865,6 +865,172 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertTrue(camera.exists)
     }
 
+    func testLiveJamShareFloatsOverHomeScreen() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("The iOS simulator reports system Picture in Picture as unsupported.")
+        #endif
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_REMOTE_MEDIA"] == "1" else {
+            throw XCTSkip("Start the browser demo-card share before this test.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Floating QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
+        app.launchEnvironment["CONFERENCE_TEST_RESET_FLOATING_VIDEO"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@", "Floating video QA · Screen"
+        )).firstMatch.waitForExistence(timeout: 35))
+        attachScreenshot(of: app, named: "Jam share before minimizing")
+        expectation(for: NSPredicate(format: "value == %@", "Floating video available"),
+                    evaluatedWith: app.buttons["More call options"])
+        waitForExpectations(timeout: 20)
+        XCUIDevice.shared.press(.home)
+        Thread.sleep(forTimeInterval: 3)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        assertLiveFloatingVideo(app)
+        attachScreenshot(of: springboard, named: "Jam share floating over Home")
+        returnFromFloatingVideo(app)
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 10))
+        attachScreenshot(of: app, named: "Jam share after returning")
+        app.buttons["Leave"].tap()
+    }
+
+    func testLiveGuestShareFloatsOverHomeScreen() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("The iOS simulator reports system Picture in Picture as unsupported.")
+        #endif
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_SHARE"] == "1",
+              let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
+            throw XCTSkip("Start a browser participant sharing a screen in the guest room.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Floating guest iPhone"
+        app.launchEnvironment["CONFERENCE_TEST_RESET_FLOATING_VIDEO"] = "1"
+        app.launch()
+        let viewport = app.scrollViews["Shared screen viewport"].firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 60))
+        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: viewport)
+        waitForExpectations(timeout: 10)
+        Thread.sleep(forTimeInterval: 2)
+        viewport.pinch(withScale: 2, velocity: 1)
+        if viewport.value as? String == "100%" {
+            viewport.pinch(withScale: 2.5, velocity: 1)
+        }
+        let initialZoom = viewport.value as? String
+        XCTAssertNotEqual(initialZoom, "100%")
+        expectation(for: NSPredicate(format: "value == %@", "Floating video available"),
+                    evaluatedWith: app.buttons["More call options"])
+        waitForExpectations(timeout: 20)
+        for manual in [false, true] {
+            if manual {
+                app.buttons["More call options"].tap()
+                app.buttons["Show floating video"].tap()
+                Thread.sleep(forTimeInterval: 2)
+            }
+            XCUIDevice.shared.press(.home)
+            Thread.sleep(forTimeInterval: 5)
+            let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            assertLiveFloatingVideo(app)
+            attachScreenshot(of: system, named: manual ? "Guest manual PiP" : "Guest automatic PiP")
+            returnFromFloatingVideo(app)
+            XCTAssertTrue(viewport.waitForExistence(timeout: 20))
+            XCTAssertEqual(viewport.value as? String, initialZoom)
+            attachScreenshot(of: app, named: "Guest restored zoom \(manual)")
+            Thread.sleep(forTimeInterval: 2)
+        }
+        app.buttons["More call options"].tap()
+        app.buttons["Floating video when multitasking"].tap()
+        XCUIDevice.shared.press(.home)
+        Thread.sleep(forTimeInterval: 3)
+        XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            .windows["PIP-SBInteractionPassThroughView"].exists)
+        returnFromFloatingVideo(app)
+        app.buttons["More call options"].tap()
+        app.buttons["Show floating video"].tap()
+        XCUIDevice.shared.press(.home)
+        assertLiveFloatingVideo(app)
+        returnFromFloatingVideo(app)
+        app.buttons["More call options"].tap()
+        app.buttons["Floating video when multitasking"].tap()
+        app.buttons["More call options"].tap()
+        if app.buttons["View"].exists { app.buttons["View"].tap() }
+        app.buttons["Audio only"].tap()
+        XCUIDevice.shared.press(.home)
+        Thread.sleep(forTimeInterval: 3)
+        XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            .windows["PIP-SBInteractionPassThroughView"].exists)
+        returnFromFloatingVideo(app)
+        app.buttons["Leave"].tap()
+    }
+
+    func testLiveGuestCameraFloatsAndRespectsScreenShareMode() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("System PiP requires a physical iPhone.")
+        #endif
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_CAMERA"] == "1",
+              let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
+            throw XCTSkip("Publish an animated remote camera, with no screen share, before this test.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Floating camera iPhone"
+        app.launchEnvironment["CONFERENCE_TEST_RESET_FLOATING_VIDEO"] = "1"
+        app.launch()
+        defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
+        XCTAssertTrue(app.buttons["More call options"].waitForExistence(timeout: 45))
+        expectation(for: NSPredicate(format: "value == %@", "Floating video available"),
+                    evaluatedWith: app.buttons["More call options"])
+        waitForExpectations(timeout: 20)
+        XCUIDevice.shared.press(.home)
+        assertLiveFloatingVideo(app)
+        attachScreenshot(of: XCUIApplication(bundleIdentifier: "com.apple.springboard"),
+                         named: "Guest camera floating over Home")
+        returnFromFloatingVideo(app)
+        app.buttons["More call options"].tap()
+        if app.buttons["View"].exists { app.buttons["View"].tap() }
+        app.buttons["Screen shares"].tap()
+        XCUIDevice.shared.press(.home)
+        Thread.sleep(forTimeInterval: 3)
+        XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            .windows["PIP-SBInteractionPassThroughView"].exists)
+        returnFromFloatingVideo(app)
+    }
+
+    private func assertLiveFloatingVideo(_ app: XCUIApplication,
+                                         file: StaticString = #filePath, line: UInt = #line) {
+        let surface = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            .windows["PIP-SBInteractionPassThroughView"]
+        XCTAssertTrue(surface.waitForExistence(timeout: 8), file: file, line: line)
+        guard surface.exists else { return }
+        func pixels() -> Data? {
+            let screenshot = XCUIScreen.main.screenshot().image
+            guard let image = screenshot.cgImage else { return nil }
+            let screen = XCUIApplication(bundleIdentifier: "com.apple.springboard").windows.firstMatch.frame
+            let scale = CGFloat(image.width) / screen.width
+            let rect = surface.frame.applying(CGAffineTransform(scaleX: scale, y: scale))
+            return image.cropping(to: rect)?.dataProvider?.data as Data?
+        }
+        let first = pixels()
+        Thread.sleep(forTimeInterval: 2)
+        let second = pixels()
+        XCTAssertNotNil(first, file: file, line: line)
+        XCTAssertNotNil(second, file: file, line: line)
+        XCTAssertNotEqual(first, second, "The animated remote share must keep updating in PiP.",
+                          file: file, line: line)
+    }
+
+    private func returnFromFloatingVideo(_ app: XCUIApplication) {
+        app.activate()
+        let surface = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            .windows["PIP-SBInteractionPassThroughView"]
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: surface)
+        waitForExpectations(timeout: 10)
+    }
+
     func testCommunityJamHoldMarksMissedTime() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"

@@ -17,11 +17,17 @@ final class GuestStreamViews {
     private var viewports: [Key: StreamViewportState] = [:]
     private var renderedTiles: [Key: RenderedTile] = [:]
     private var participantSubscription: AnyCancellable?
+    private var selectionUpdateScheduled = false
+    var onPreferredVideo: ((StreamViewport?, String, Bool) -> Void)?
+    var displayMode: ConferenceDisplayMode = .all {
+        didSet { updatePreferredVideo() }
+    }
 
     func reset() {
         participantSubscription = nil
         viewports.removeAll()
         renderedTiles.removeAll()
+        onPreferredVideo?(nil, "", false)
     }
 
     func observe(_ state: JazzActiveConferenceState) {
@@ -39,6 +45,7 @@ final class GuestStreamViews {
         renderedTiles = renderedTiles.filter {
             active.contains($0.key.participant) && (!$0.key.isShare || sharing.contains($0.key.participant))
         }
+        updatePreferredVideo()
     }
 
     func makeView(model: JazzParticipantViewModel, video: UIView) -> UIView {
@@ -47,6 +54,7 @@ final class GuestStreamViews {
         // video view for an unchanged model would invalidate that same layout again.
         if let tile = renderedTiles[key], tile.model == model, let view = tile.view,
            tile.video === video, view.containsRenderer(video) {
+            updatePreferredVideo()
             return view
         }
         let state: StreamViewportState
@@ -68,7 +76,53 @@ final class GuestStreamViews {
                               watermark: watermark,
                               showsPlaceholder: !model.isVideoOn && !model.isSharingScreen)
         renderedTiles[key] = RenderedTile(model: model, video: video, view: view)
+        view.onVisibilityChanged = { [weak self] in self?.updatePreferredVideo() }
+        updatePreferredVideo()
         return view
+    }
+
+    private func updatePreferredVideo() {
+        guard !selectionUpdateScheduled else { return }
+        selectionUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.selectionUpdateScheduled = false
+            self.publishPreferredVideo()
+        }
+    }
+
+    private func publishPreferredVideo() {
+        let available = renderedTiles.values.filter {
+            displayMode != .audioOnly && isVisible($0.view) && $0.video != nil &&
+            $0.model.displayMode != .pip && !$0.model.isLocal &&
+            ($0.model.isSharingScreen || (displayMode == .all && $0.model.isVideoOn))
+        }.sorted {
+            func priority(_ tile: RenderedTile) -> Int {
+                let content = tile.model.isPinned ? 0 : tile.model.isSharingScreen ? 10 : 20
+                switch tile.model.displayMode {
+                case .speaker: return content
+                case .tile: return content + 1
+                case .thumbnail: return content + 2
+                case .pip: return content + 3
+                @unknown default: return content + 4
+                }
+            }
+            if priority($0) != priority($1) { return priority($0) < priority($1) }
+            return $0.model.id < $1.model.id
+        }
+        let preferred = available.first
+        onPreferredVideo?(preferred?.view, preferred?.model.name ?? "",
+                          preferred?.model.isSharingScreen == true)
+    }
+
+    private func isVisible(_ view: UIView?) -> Bool {
+        guard let view, let window = view.window, !view.bounds.isEmpty else { return false }
+        var ancestor: UIView? = view
+        while let current = ancestor {
+            if current.isHidden || current.alpha < 0.01 { return false }
+            ancestor = current.superview
+        }
+        return view.convert(view.bounds, to: window).intersects(window.bounds)
     }
 }
 

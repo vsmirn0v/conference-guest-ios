@@ -15,6 +15,8 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
     private let owner = UUID()
     private var viewportSize = CGSize.zero
     private var restoring = false
+    var onVisibilityChanged: (() -> Void)?
+    var rendererView: UIView { video }
 
     init(video: UIView, state: StreamViewportState, zoomable: Bool,
          name: String, showInfo: Bool, microphoneOn: Bool, pinned: Bool,
@@ -96,6 +98,11 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
 
     func containsRenderer(_ renderer: UIView) -> Bool { renderer.superview === content }
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onVisibilityChanged?()
+    }
+
     // The SDK measures custom tiles through sizeThatFits; UIView's default zero
     // size would prevent the supplied video renderer from receiving any bounds.
     override func sizeThatFits(_ size: CGSize) -> CGSize { size }
@@ -121,6 +128,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
             y: min(max(center.y * size.height - bounds.height / 2, 0), max(size.height - bounds.height, 0)))
         restoring = false
         updateAccessibility()
+        onVisibilityChanged?()
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { content }

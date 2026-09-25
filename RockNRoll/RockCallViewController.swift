@@ -31,6 +31,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
     private let moreButton = UIButton(type: .system)
     private let fitButton = UIButton(type: .system)
     private var currentPrimaryKey: String?
+    private var floatingVideo: RockVideoPictureInPicture?
     private var zoomStates: [String: (CGFloat, CGPoint)] = [:]
     private weak var primaryZoom: UIScrollView?
     private weak var participantsPanel: ParticipantPanelViewController?
@@ -63,9 +64,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
 
     required init?(coder: NSCoder) { nil }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        floatingVideo?.refreshPreference()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.085, alpha: 1)
+        floatingVideo = RockVideoPictureInPicture(sourceView: view)
         let identity = UIStackView(arrangedSubviews: [titleLabel, countLabel, routeLabel])
         identity.axis = .vertical
         identity.spacing = 2
@@ -288,9 +295,13 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             pinnedStreamKey = nil
         }
         let primary = streams.first { $0.1.sid.stringValue == pinnedStreamKey } ??
-            streams.first { $0.1.source == .screenShareVideo } ?? streams.first
+            streams.first { $0.1.source == .screenShareVideo } ??
+            streams.first { $0.0 is RemoteParticipant } ?? streams.first
         if let primary {
             let primaryKey = primary.1.sid.stringValue
+            floatingVideo?.show(track: primary.0 is RemoteParticipant ? primary.2 : nil,
+                                name: primary.0.name ?? "Musician",
+                                isScreenShare: primary.1.source == .screenShareVideo)
             // The selected stream fills the available viewing area. Other streams remain below it.
             let primaryTile = videoTile(for: primary.0, publication: primary.1,
                                         track: primary.2, primary: true)
@@ -303,6 +314,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             if currentPrimaryKey != primaryKey { streamScroll.setContentOffset(.zero, animated: false) }
             currentPrimaryKey = primaryKey
         } else {
+            floatingVideo?.clear()
             currentPrimaryKey = nil
             primaryZoom = nil
             fitButton.isHidden = true
@@ -322,6 +334,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             waiting.heightAnchor.constraint(equalTo: streamScroll.frameLayoutGuide.heightAnchor).isActive = true
         }
         refreshSpeaking(room: room)
+        configureMoreMenu()
     }
 
     private func waitingRoomView() -> UIView {
@@ -540,6 +553,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
     }
 
     private func configureMoreMenu() {
+        moreButton.accessibilityValue = floatingVideo?.canShow == true ? "Floating video available" : nil
         var items: [UIMenuElement] = []
         if workspace.invitationURL != nil {
             items.append(UIAction(title: "Invite musicians", image: UIImage(systemName: "square.and.arrow.up")) {
@@ -551,6 +565,17 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             })
         }
         items += [
+            UIAction(title: "Show floating video", image: UIImage(systemName: "pip.enter"),
+                     attributes: floatingVideo?.canShow == true && !isHeld ? [] : [.disabled]) {
+                [weak self] _ in self?.floatingVideo?.start(manual: true)
+            },
+            UIAction(title: "Floating video when multitasking",
+                     image: UIImage(systemName: "pip"),
+                     state: FloatingVideoPreference.enabled ? .on : .off) { [weak self] _ in
+                FloatingVideoPreference.enabled.toggle()
+                self?.floatingVideo?.refreshPreference()
+                self?.configureMoreMenu()
+            },
             UIMenu(title: "View", children: ConferenceDisplayMode.allCases.map { option in
                 UIAction(title: option.title, image: UIImage(systemName: option.symbol),
                          state: option == displayMode ? .on : .off) { [weak self] _ in
@@ -604,8 +629,18 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
     func setHeld(_ held: Bool) {
         isHeld = held
         workspace.onHold = held
+        floatingVideo?.setSuspended(held)
+        configureMoreMenu()
         updateStatus()
     }
+
+    func prepareToFloat() {
+        floatingVideo?.setSuspended(isHeld || displayMode == .audioOnly)
+    }
+
+    func restoreFromFloatingVideo() { floatingVideo?.foregrounded() }
+
+    func endFloatingVideo() { floatingVideo?.clear() }
 
     func showMediaStatus(_ message: String?) {
         mediaStatus = message

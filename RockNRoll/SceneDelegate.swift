@@ -35,6 +35,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         model.configure(container: controller)
 
         #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_RESET_FLOATING_VIDEO"] == "1" {
+            FloatingVideoPreference.enabled = true
+        }
         if let fixture = ProcessInfo.processInfo.environment["CONFERENCE_TEST_UI_FIXTURE"] {
             if fixture == "guest-zoom" {
                 window.rootViewController = GuestStreamViewportFixtureViewController()
@@ -193,7 +196,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
+        conference?.restoreFromFloatingVideo()
         conference?.resumeSystemCallIfPossible()
+    }
+
+    func sceneWillResignActive(_ scene: UIScene) {
+        conference?.prepareToFloat()
     }
 
     #if DEBUG

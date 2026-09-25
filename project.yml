@@ -20,6 +20,7 @@ targets:
     scheme:
       testTargets:
         - RockNRollUITests
+        - RockNRollTests
     sources:
       - path: RockNRoll
     dependencies:
@@ -42,6 +43,21 @@ targets:
       - name: Copy provider SDK resources
         script: bash "$PROJECT_DIR/scripts/copy-sdk-resources.sh"
         basedOnDependencyAnalysis: false
+  RockNRollTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: RockNRollTests
+    dependencies:
+      - target: RockNRoll
+      - package: JazzSDK
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 5V64BP2H3P
   RockNRollUITests:
     type: bundle.ui-testing
     platform: iOS

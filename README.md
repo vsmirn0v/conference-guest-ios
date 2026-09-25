@@ -10,6 +10,11 @@ The app saves the chosen display name and a device-only list of ten recent jams 
 
 Meeting notices appear at the top of the call view, clear of the bottom controls.
 
+When multitasking, native Picture in Picture keeps the selected remote screen
+share or video visible. The More menu offers manual floating video and a saved
+automatic-start preference; audio-only mode suppresses it. Returning restores the
+meeting's share zoom. See [behavior, compatibility boundaries, and device tests](docs/floating-video.md).
+
 A native app link opens its jam directly. If another jam is active or connecting, the latest native link replaces it after the current system call ends. A single CallKit provider coordinates both media engines, and service discovery is reused for later rooms on the same website during that app session.
 
 The native jam engine uses LiveKit Swift, and the small Go service issues short-lived, room-scoped guest tokens for a single configured test room. The browser is an optional participant, not an embedded app view. Keys remain on the server. The server is isolated in two Podman containers behind a dedicated nginx virtual host; deployment inputs live in [RockServer](RockServer/).

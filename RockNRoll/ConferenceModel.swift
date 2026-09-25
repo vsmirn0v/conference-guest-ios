@@ -56,6 +56,23 @@ final class ConferenceModel: ObservableObject {
         engine.chat = chat
     }
 
+    func prepareToFloat() {
+        guard isInConference else { return }
+        switch activeRoute {
+        case .guest: engine.prepareToFloat()
+        case .jam: jamEngine?.prepareToFloat()
+        case nil: break
+        }
+    }
+
+    func restoreFromFloatingVideo() {
+        switch activeRoute {
+        case .guest: engine.restoreFromFloatingVideo()
+        case .jam: jamEngine?.restoreFromFloatingVideo()
+        case nil: break
+        }
+    }
+
     private func configuredJamEngine() -> RockRoomEngine {
         if let jamEngine { return jamEngine }
         let selected = RockRoomEngine(catchUp: engine.catchUp, chat: chat,

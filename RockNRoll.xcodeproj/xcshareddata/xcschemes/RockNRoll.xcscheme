@@ -50,6 +50,17 @@
                ReferencedContainer = "container:RockNRoll.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "5D11BF711A79FE6D7A8A90A7"
+               BuildableName = "RockNRollTests.xctest"
+               BlueprintName = "RockNRollTests"
+               ReferencedContainer = "container:RockNRoll.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>

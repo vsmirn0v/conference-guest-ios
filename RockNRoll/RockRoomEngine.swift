@@ -118,6 +118,9 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         systemCall.resumeIfPossible()
     }
 
+    func prepareToFloat() { callView?.prepareToFloat() }
+    func restoreFromFloatingVideo() { callView?.restoreFromFloatingVideo() }
+
     func showMediaStatus(_ message: String?) { callView?.showMediaStatus(message) }
 
     private func installCallHandlers() {
@@ -286,6 +289,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
 
     private func finish(failed: Bool) {
         guard hasJoinStarted else { return }
+        callView?.endFloatingVideo()
         #if DEBUG
         print("Jam engine: finishing; failed=\(failed), connected=\(hasConnected), leaving=\(leaveRequested)")
         #endif

@@ -33,6 +33,7 @@ final class NativeConferenceEngine {
     private var toastSubscription: AnyCancellable?
     private weak var activeControls: CallControls?
     private let streamViews = GuestStreamViews()
+    private var floatingVideo: GuestVideoPictureInPicture?
     private var currentNotices: [InCallNotice] = []
     private var configuredNetworkURL: URL?
     private var leaveRequested = false
@@ -59,6 +60,15 @@ final class NativeConferenceEngine {
 
     func showMediaStatus(_ message: String?) { activeControls?.showMediaStatus(message) }
 
+    func prepareToFloat() {
+        floatingVideo?.setSuspended(!hasBecomeActive || leaveRequested || isSystemHeld || isAudioInterrupted)
+    }
+
+    func restoreFromFloatingVideo() {
+        prepareToFloat()
+        floatingVideo?.foregrounded()
+    }
+
     func configure(container: UIViewController, networkURL: URL, displayName: String) throws {
         if let configuredNetworkURL {
             guard configuredNetworkURL == networkURL else {
@@ -67,6 +77,14 @@ final class NativeConferenceEngine {
             return
         }
         identity.setName(displayName)
+        GuestVideoFrameTap.prepare()
+        floatingVideo = GuestVideoPictureInPicture()
+        floatingVideo?.onAvailabilityChanged = { [weak self] available in
+            self?.activeControls?.setFloatingVideoAvailable(available)
+        }
+        streamViews.onPreferredVideo = { [weak self] viewport, name, isShare in
+            self?.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare)
+        }
         audio.onStatus = { [weak self] message in self?.onMediaStatus?(message) }
         audio.onRouteChanged = { [weak self] in
             guard let self else { return }
@@ -75,6 +93,7 @@ final class NativeConferenceEngine {
         audio.onInterruptionChanged = { [weak self] interrupted in
             guard let self else { return }
             self.isAudioInterrupted = interrupted
+            self.prepareToFloat()
             if interrupted { self.audioGate.markInterrupted() }
             guard self.hasBecomeActive else { return }
             if interrupted {
@@ -140,6 +159,7 @@ final class NativeConferenceEngine {
                     self.audio.ensureMixing()
                     self.recoverAudioIfReady()
                     self.systemCall.markConnected()
+                    self.prepareToFloat()
                     #if DEBUG
                     self.scheduleTestHoldIfRequested()
                     #endif
@@ -148,6 +168,7 @@ final class NativeConferenceEngine {
                     self.updateConnectionGap()
                 }
                 if case .inactive = phase {
+                    self.floatingVideo?.clear()
                     if self.isMediaReconnecting && !self.leaveRequested {
                         guard !self.hasScheduledMediaRestart else { return }
                         self.hasScheduledMediaRestart = true
@@ -198,6 +219,7 @@ final class NativeConferenceEngine {
                 guard let self, self.hasJoinStarted else { return }
                 self.audioGate.deactivate()
                 self.isAudioInterrupted = true
+                self.prepareToFloat()
                 if self.hasBecomeActive {
                     self.needsMediaReconnect = true
                     self.catchUp.begin(.audioInterruption)
@@ -214,6 +236,7 @@ final class NativeConferenceEngine {
                     self.catchUp.continueAsConnectionGap()
                 }
                 self.hasBecomeActive = false
+                self.floatingVideo?.clear()
                 self.isSDKActive = false
                 self.isMediaReconnecting = false
                 self.hasScheduledMediaRestart = false
@@ -249,6 +272,7 @@ final class NativeConferenceEngine {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.isSystemHeld = held
+                self.prepareToFloat()
                 self.audioGate.setHeld(held)
                 if self.hasBecomeActive {
                     if held { self.catchUp.begin(.anotherCall) }
@@ -293,6 +317,7 @@ final class NativeConferenceEngine {
         // provider controls its own media engine; we only restore its setting.
         restoreMediaIntent(using: coordinator)
         isAudioInterrupted = false
+        prepareToFloat()
         catchUp.end(.audioInterruption)
         onMediaStatus?(nil)
     }
@@ -334,6 +359,7 @@ final class NativeConferenceEngine {
 
     func join(target: JoinTarget, displayName: String) throws {
         streamViews.reset()
+        streamViews.displayMode = .all
         activeInvitationURL = target.invitationURL
         activeRoomIdentifier = target.roomID
         chat?.clear()
@@ -390,6 +416,7 @@ final class NativeConferenceEngine {
     func leave() {
         guard hasJoinStarted else { return }
         leaveRequested = true
+        floatingVideo?.clear()
         activeControls?.isHidden = true
         pendingRoom = nil
         #if DEBUG && targetEnvironment(simulator)
@@ -476,7 +503,12 @@ final class NativeConferenceEngine {
                                         roomIdentifier: self.activeRoomIdentifier,
                                         onDisplayMode: { mode in
                                             self.displayMode = mode
+                                            self.streamViews.displayMode = mode
                                             coordinator.toggleIncomingStreamsDisabled(isEnabled: mode != .audioOnly)
+                                        },
+                                        onFloat: { [weak self] in self?.floatingVideo?.start(manual: true) },
+                                        onFloatingPreferenceChanged: { [weak self] in
+                                            self?.floatingVideo?.refreshPreference()
                                         },
                                         onLeave: { [weak self] in self?.leave() },
                                         onMicrophoneState: { [weak self] isOn in
@@ -488,6 +520,7 @@ final class NativeConferenceEngine {
                                             self.cameraIntentOn = isOn
                                         })
             self.activeControls = controls
+            controls.setFloatingVideoAvailable(self.floatingVideo?.canShow == true)
             controls.setAudioRouteName(self.audio.outputName)
             controls.showNotices(self.currentNotices)
             return controls

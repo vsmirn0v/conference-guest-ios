@@ -30,6 +30,7 @@ final class CallControls: UIView {
     private var orientationObserver: NSObjectProtocol?
     private var displayMode: ConferenceDisplayMode = .all
     private var hasScreenShare = false
+    private var hasVideo = false
     private var isWaitingForOthers = false
     private var cameraOn = false
     private var isHeld = false
@@ -37,6 +38,15 @@ final class CallControls: UIView {
     private var missedCount = 0
     private var unreadChatCount = 0
     private let workspace = CallWorkspaceControls()
+    private let onFloat: () -> Void
+    private let onFloatingPreferenceChanged: () -> Void
+    private var floatingVideoAvailable = false
+    private var refreshMoreMenu: (() -> Void)?
+
+    var canFloatVideo: Bool {
+        floatingVideoAvailable && !isHeld && displayMode != .audioOnly &&
+            (displayMode == .screenShares ? hasScreenShare : hasScreenShare || hasVideo)
+    }
 
     init(state: JazzActiveConferenceState, coordinator: JazzActiveConferenceCoordinator,
          router: JazzActiveConferenceRouter,
@@ -44,9 +54,16 @@ final class CallControls: UIView {
          initialDisplayMode: ConferenceDisplayMode,
          invitationURL: URL?, roomIdentifier: String?,
          onDisplayMode: @escaping (ConferenceDisplayMode) -> Void,
+         onFloat: @escaping () -> Void,
+         onFloatingPreferenceChanged: @escaping () -> Void,
          onLeave: @escaping () -> Void, onMicrophoneState: @escaping (Bool) -> Void,
          onCameraState: @escaping (Bool) -> Void) {
+        self.onFloat = onFloat
+        self.onFloatingPreferenceChanged = onFloatingPreferenceChanged
         super.init(frame: .zero)
+        refreshMoreMenu = { [weak self] in
+            self?.configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
+        }
         workspace.invitationURL = invitationURL
         workspace.roomIdentifier = roomIdentifier
         displayMode = initialDisplayMode
@@ -368,8 +385,15 @@ final class CallControls: UIView {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] local, remote, speaker in
                 guard let self else { return }
-                self.hasScreenShare = local.screenSharing.isOn ||
+                let hasShare = local.screenSharing.isOn ||
                     remote.values.contains { $0.screenSharing.isOn }
+                let hasVideo = remote.values.contains { $0.camera.isOn }
+                let availabilityChanged = self.hasScreenShare != hasShare || self.hasVideo != hasVideo
+                self.hasScreenShare = hasShare
+                self.hasVideo = hasVideo
+                if availabilityChanged {
+                    self.configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
+                }
                 self.isWaitingForOthers = remote.isEmpty && !local.camera.isOn &&
                     !local.screenSharing.isOn
                 self.updateDisplayBackdrops()
@@ -420,7 +444,15 @@ final class CallControls: UIView {
     func setHeld(_ held: Bool) {
         isHeld = held
         workspace.onHold = held
+        refreshMoreMenu?()
         renderCallStatus()
+    }
+
+    func setFloatingVideoAvailable(_ available: Bool) {
+        guard floatingVideoAvailable != available else { return }
+        floatingVideoAvailable = available
+        moreButton.accessibilityValue = available ? "Floating video available" : nil
+        refreshMoreMenu?()
     }
 
     func showMediaStatus(_ message: String?) {
@@ -526,7 +558,19 @@ final class CallControls: UIView {
                            image: UIImage(systemName: "arrow.down.right.and.arrow.up.left")) { [weak self] _ in
             self?.fitZoomedContent()
         }
-        var actions: [UIMenuElement] = [viewMenu, fit, flip]
+        let float = UIAction(title: "Show floating video", image: UIImage(systemName: "pip.enter"),
+                             attributes: canFloatVideo ? [] : [.disabled]) { [weak self] _ in
+            guard self?.canFloatVideo == true else { return }
+            self?.onFloat()
+        }
+        let automatic = UIAction(title: "Floating video when multitasking",
+                                 image: UIImage(systemName: "pip"),
+                                 state: FloatingVideoPreference.enabled ? .on : .off) { [weak self] _ in
+            FloatingVideoPreference.enabled.toggle()
+            self?.onFloatingPreferenceChanged()
+            self?.configureMoreMenu(coordinator: coordinator, onChange: onChange)
+        }
+        var actions: [UIMenuElement] = [float, automatic, viewMenu, fit, flip]
         if workspace.invitationURL != nil {
             actions.insert(UIAction(title: "Invite musicians", image: UIImage(systemName: "square.and.arrow.up")) {
                 [weak self] _ in guard let self else { return }
