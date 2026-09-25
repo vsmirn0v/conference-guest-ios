@@ -32,6 +32,7 @@ final class NativeConferenceEngine {
     private var roomTitleSubscription: AnyCancellable?
     private var toastSubscription: AnyCancellable?
     private weak var activeControls: CallControls?
+    private let streamViews = GuestStreamViews()
     private var currentNotices: [InCallNotice] = []
     private var configuredNetworkURL: URL?
     private var leaveRequested = false
@@ -332,6 +333,7 @@ final class NativeConferenceEngine {
     }
 
     func join(target: JoinTarget, displayName: String) throws {
+        streamViews.reset()
         activeInvitationURL = target.invitationURL
         activeRoomIdentifier = target.roomID
         chat?.clear()
@@ -453,6 +455,7 @@ final class NativeConferenceEngine {
     }
 
     private func minimalRepresentation() -> JazzConferenceRepresentation {
+        let streams = streamViews
         let overlay = JazzActiveConferenceOverlayRepresentation { [weak self] state, coordinator, router, _ in
             guard let self else { return UIView() }
             self.activeCoordinator = coordinator
@@ -464,6 +467,7 @@ final class NativeConferenceEngine {
             self.roomTitleSubscription?.cancel()
             self.roomTitleSubscription = state.$conferenceTitle.receive(on: DispatchQueue.main)
                 .sink { [weak self] in self?.onRoomTitle?($0) }
+            streams.observe(state)
             let controls = CallControls(state: state, coordinator: coordinator, router: router,
                                         catchUp: self.catchUp,
                                         chat: self.chat ?? ChatStore(),
@@ -499,7 +503,9 @@ final class NativeConferenceEngine {
                 placeholder.isUserInteractionEnabled = false
                 return placeholder
             },
-            videoStreamsRepresentation: nil
+            videoStreamsRepresentation: JazzActiveConferenceVideoStreamsRepresentation { model, video in
+                streams.makeView(model: model, video: video)
+            }
         )
     }
 

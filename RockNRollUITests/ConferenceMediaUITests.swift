@@ -145,6 +145,29 @@ final class ConferenceMediaUITests: XCTestCase {
         attachScreenshot(of: app, named: "Participants at accessibility text size")
     }
 
+    func testGuestScreenViewportSurvivesTileReplacement() throws {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-zoom"
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let viewport = app.scrollViews["Shared screen viewport"]
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+        viewport.pinch(withScale: 2, velocity: 1)
+        let zoom = try XCTUnwrap(viewport.value as? String)
+        XCTAssertNotEqual(zoom, "100%")
+        viewport.swipeLeft()
+        for _ in 0..<3 {
+            app.buttons["Refresh participant"].tap()
+            XCTAssertEqual(viewport.value as? String, zoom)
+        }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertEqual(viewport.value as? String, zoom)
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertEqual(viewport.value as? String, zoom)
+        app.buttons["Start new share"].tap()
+        XCTAssertEqual(viewport.value as? String, "100%")
+    }
+
     func testManualGuestScreenSharePinch() throws {
         guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_SHARE"] == "1",
               let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
@@ -167,11 +190,26 @@ final class ConferenceMediaUITests: XCTestCase {
         )).firstMatch
         XCTAssertTrue(sharing.waitForExistence(timeout: 30))
         Thread.sleep(forTimeInterval: 3)
-        XCTAssertGreaterThanOrEqual(app.scrollViews.count, 1)
+        let viewport = app.scrollViews["Shared screen viewport"].firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
         attachScreenshot(of: app, named: "Guest share before pinch")
-        app.windows.firstMatch.pinch(withScale: 2, velocity: 1)
+        viewport.pinch(withScale: 2, velocity: 1)
+        let zoom = try XCTUnwrap(Int((viewport.value as? String ?? "").replacingOccurrences(of: "%", with: "")))
+        XCTAssertGreaterThan(zoom, 110)
         XCTAssertTrue(app.buttons["Leave"].isHittable)
         attachScreenshot(of: app, named: "Guest share after pinch")
+        Thread.sleep(forTimeInterval: 15)
+        attachScreenshot(of: app, named: "Guest share 15 seconds after pinch")
+        let retained = try XCTUnwrap(Int((viewport.value as? String ?? "").replacingOccurrences(of: "%", with: "")))
+        XCTAssertEqual(retained, zoom, "Participant updates must not reset screen-share zoom")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertEqual(viewport.value as? String, "\(zoom)%")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertEqual(viewport.value as? String, "\(zoom)%")
+        attachScreenshot(of: app, named: "Guest share zoom after rotation")
+        app.buttons["More call options"].tap()
+        app.buttons["Fit shared screen"].tap()
+        XCTAssertEqual(viewport.value as? String, "100%")
     }
     func testMeetingNoticesStayAboveControlsInBothOrientations() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
@@ -451,16 +489,23 @@ final class ConferenceMediaUITests: XCTestCase {
         let shares = app.buttons["Screen shares"]
         XCTAssertTrue(shares.isEnabled)
         shares.tap()
+        let viewport = app.scrollViews["Shared screen viewport"].firstMatch
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+        viewport.pinch(withScale: 2, velocity: 1)
+        XCTAssertNotEqual(viewport.value as? String, "100%")
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@",
             "No screen share is live.")).firstMatch.exists)
         attachScreenshot(of: app, named: "Guest shared screen view")
         XCUIDevice.shared.orientation = .landscapeLeft
-        XCTAssertTrue(app.buttons["Leave"].isHittable)
+        let leaveReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "hittable == true"), object: app.buttons["Leave"])
+        XCTAssertEqual(XCTWaiter.wait(for: [leaveReady], timeout: 10), .completed)
         attachScreenshot(of: app, named: "Guest shared screen landscape")
         XCUIDevice.shared.orientation = .portrait
 
         let empty = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@",
             "No screen share is live.")).firstMatch
+        print("GUEST_SHARE_TEST_AWAITING_STOP")
         XCTAssertTrue(empty.waitForExistence(timeout: 60),
                       "Stop the synthetic browser share while this test waits.")
         attachScreenshot(of: app, named: "Guest waiting for a screen share")
@@ -475,11 +520,14 @@ final class ConferenceMediaUITests: XCTestCase {
         if app.buttons["View"].exists { app.buttons["View"].tap() }
         app.buttons["Screen shares"].tap()
         XCTAssertTrue(empty.waitForExistence(timeout: 10))
+        print("GUEST_SHARE_TEST_AWAITING_RESTART")
         XCTAssertTrue(sharing.waitForExistence(timeout: 60),
                       "Restart the synthetic browser share while this test waits.")
         let hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
                                                object: empty)
         XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 10), .completed)
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+        XCTAssertEqual(viewport.value as? String, "100%", "A new share must start fitted")
         attachScreenshot(of: app, named: "Guest screen share resumed")
     }
 

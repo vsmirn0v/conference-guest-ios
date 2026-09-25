@@ -36,6 +36,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         #if DEBUG
         if let fixture = ProcessInfo.processInfo.environment["CONFERENCE_TEST_UI_FIXTURE"] {
+            if fixture == "guest-zoom" {
+                window.rootViewController = GuestStreamViewportFixtureViewController()
+                return
+            }
             let invitation = URL(string: "https://rock.glowsoft.ru/jams/test")!
             if fixture == "home" {
                 let marker = ProcessInfo.processInfo.environment["CONFERENCE_TEST_FIXTURE_ROOM_ID"] ?? "test"
