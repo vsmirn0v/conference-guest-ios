@@ -3,7 +3,8 @@ import Foundation
 import QuartzCore
 import WebRTC
 
-/// Keeps at most one frame in flight: 30 fps inline, 15 fps in floating video.
+/// Converts at most one frame at a time and keeps only the newest waiting frame.
+/// Limits output to 30 fps inline or 15 fps in floating video.
 /// All pixels remain in memory. Generation checks discard frames from a prior room.
 final class GuestVideoFrameProcessor: @unchecked Sendable {
     var onSample: (@MainActor (CMSampleBuffer, CGSize, Int) -> Void)?
@@ -13,8 +14,10 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
     private var sourceID = UUID()
     private var enabled = false
     private var busy = false
-    private var lastFrameTime: CFTimeInterval = 0
+    private var nextFrameTime: CFTimeInterval = 0
     private var frameInterval: CFTimeInterval = 1.0 / 30
+    private var pendingFrame: RTCVideoFrame?
+    private var drainScheduled = false
     private var pool: CVPixelBufferPool?
     private var poolSize = CGSize.zero
     private var poolPixelFormat: OSType = 0
@@ -24,7 +27,9 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
         generation &+= 1
         self.enabled = enabled
         busy = false
-        lastFrameTime = 0
+        nextFrameTime = 0
+        pendingFrame = nil
+        drainScheduled = false
         lock.unlock()
     }
 
@@ -34,7 +39,9 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
         generation &+= 1
         enabled = false
         busy = false
-        lastFrameTime = 0
+        nextFrameTime = 0
+        pendingFrame = nil
+        drainScheduled = false
         return sourceID
     }
 
@@ -46,11 +53,30 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
 
     func submit(_ frame: RTCVideoFrame, source: UUID? = nil) {
         lock.lock()
+        guard (source == nil || source == sourceID), enabled else { lock.unlock(); return }
+        pendingFrame = frame
+        lock.unlock()
+        drainPendingFrame()
+    }
+
+    private func drainPendingFrame() {
+        lock.lock()
+        guard enabled, !busy, let frame = pendingFrame else { lock.unlock(); return }
         let now = CACurrentMediaTime()
-        guard (source == nil || source == sourceID), enabled, !busy,
-              now - lastFrameTime >= frameInterval else { lock.unlock(); return }
+        if now < nextFrameTime {
+            if !drainScheduled {
+                drainScheduled = true
+                let expected = generation
+                DispatchQueue.main.asyncAfter(deadline: .now() + (nextFrameTime - now)) { [weak self] in
+                    self?.drainScheduledFrame(generation: expected)
+                }
+            }
+            lock.unlock()
+            return
+        }
+        pendingFrame = nil
         busy = true
-        lastFrameTime = now
+        nextFrameTime = now + frameInterval
         let expected = generation
         lock.unlock()
         queue.async { [weak self] in
@@ -66,11 +92,22 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
                 let current = self.enabled && self.generation == expected
                 if current { self.busy = false }
                 self.lock.unlock()
-                guard current, let sample else { return }
-                self.onSample?(sample, CGSize(width: Int(frame.width), height: Int(frame.height)),
-                               frame.rotation.rawValue)
+                guard current else { return }
+                if let sample {
+                    self.onSample?(sample, CGSize(width: Int(frame.width), height: Int(frame.height)),
+                                   frame.rotation.rawValue)
+                }
+                self.drainPendingFrame()
             }
         }
+    }
+
+    private func drainScheduledFrame(generation expected: UInt64) {
+        lock.lock()
+        guard enabled && generation == expected else { lock.unlock(); return }
+        drainScheduled = false
+        lock.unlock()
+        drainPendingFrame()
     }
 
     private func makeSample(_ frame: RTCVideoFrame) -> CMSampleBuffer? {

@@ -113,10 +113,74 @@ final class GuestVideoFrameTests: XCTestCase {
         await fulfillment(of: [currentFrame], timeout: 3)
     }
 
-    private func makeFrame() -> RTCVideoFrame {
+    func testEarlyFramesWaitForNextSlotAndUseNewestFrame() async {
+        let processor = GuestVideoFrameProcessor()
+        processor.setFrameRate(5)
+        let delivered = expectation(description: "Newest frame delivered in next slot")
+        var values: [UInt8] = []
+        var firstTime: CFTimeInterval = 0
+        processor.onSample = { sample, _, _ in
+            guard let buffer = CMSampleBufferGetImageBuffer(sample) else {
+                XCTFail("Missing frame"); delivered.fulfill(); return
+            }
+            CVPixelBufferLockBaseAddress(buffer, .readOnly)
+            let value = CVPixelBufferGetBaseAddressOfPlane(buffer, 0)!
+                .assumingMemoryBound(to: UInt8.self).pointee
+            CVPixelBufferUnlockBaseAddress(buffer, .readOnly)
+            values.append(value)
+            if values.count == 1 {
+                firstTime = CACurrentMediaTime()
+                processor.submit(self.makeFrame(firstY: 22))
+                processor.submit(self.makeFrame(firstY: 33))
+            } else if values.count == 2 {
+                XCTAssertEqual(values, [11, 33])
+                XCTAssertGreaterThanOrEqual(CACurrentMediaTime() - firstTime, 0.17)
+                delivered.fulfill()
+            }
+        }
+        processor.setEnabled(true)
+        processor.submit(makeFrame())
+        await fulfillment(of: [delivered], timeout: 3)
+        processor.setEnabled(false)
+    }
+
+    func testPendingFrameDoesNotCrossMeetingSwitch() async {
+        let processor = GuestVideoFrameProcessor()
+        processor.setFrameRate(5)
+        let first = expectation(description: "First meeting frame")
+        let next = expectation(description: "Next meeting frame")
+        let stale = expectation(description: "No pending frame from old meeting")
+        stale.isInverted = true
+        processor.onSample = { sample, _, _ in
+            guard let buffer = CMSampleBufferGetImageBuffer(sample) else { XCTFail("Missing frame"); return }
+            CVPixelBufferLockBaseAddress(buffer, .readOnly)
+            let value = CVPixelBufferGetBaseAddressOfPlane(buffer, 0)!
+                .assumingMemoryBound(to: UInt8.self).pointee
+            CVPixelBufferUnlockBaseAddress(buffer, .readOnly)
+            switch value {
+            case 11: first.fulfill()
+            case 22: stale.fulfill()
+            case 44: next.fulfill()
+            default: XCTFail("Unexpected frame \(value)")
+            }
+        }
+        let previousSource = processor.replaceSource()
+        processor.setEnabled(true)
+        processor.submit(makeFrame(), source: previousSource)
+        await fulfillment(of: [first], timeout: 3)
+        processor.submit(makeFrame(firstY: 22), source: previousSource)
+        let currentSource = processor.replaceSource()
+        processor.setEnabled(true)
+        processor.submit(makeFrame(firstY: 44), source: currentSource)
+        await fulfillment(of: [next], timeout: 3)
+        await fulfillment(of: [stale], timeout: 0.3)
+        processor.setEnabled(false)
+    }
+
+    private func makeFrame(firstY: UInt8 = 11) -> RTCVideoFrame {
         let buffer = RTCMutableI420Buffer(width: 4, height: 2, strideY: 8, strideU: 4, strideV: 4)
         for row in 0..<2 {
-            for column in 0..<4 { buffer.mutableDataY[row * 8 + column] = UInt8(11 + row * 10 + column) }
+            for column in 0..<4 { buffer.mutableDataY[row * 8 + column] = firstY + UInt8(row * 10 + column) }
         }
         buffer.mutableDataU[0] = 31; buffer.mutableDataU[1] = 32
         buffer.mutableDataV[0] = 41; buffer.mutableDataV[1] = 42

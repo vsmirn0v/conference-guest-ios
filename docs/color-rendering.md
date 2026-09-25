@@ -43,6 +43,18 @@ target. Result bundles for the final simulator fixture are
 `/tmp/RockColorSim17Metal.xcresult` and `/tmp/RockColorSim26Metal.xcresult`;
 the final four conversion tests passed in `/tmp/RockColorFinalUnits17b.xcresult`.
 
+## Frame pacing — 25 September 2026
+
+On an iOS 27 simulator, a synthetic 720p planar stream submitted 30 frames per
+second. The former elapsed-time gate processed about 19 per second because
+slightly early arrivals were dropped. The paced, single-slot latest-frame queue
+processed about 29 per second while retaining the 30 fps inline cap. At the
+15 fps floating-video cap it processed about 145 of every 300 submitted frames.
+Six frame tests, including queued-frame replacement and meeting-switch cleanup,
+passed on iOS 27 and iOS 17.5 simulators in `/tmp/RockFramePacer27Final.xcresult`
+and `/tmp/RockFramePacer17Final.xcresult`. The temporary benchmark fixture was
+removed after measurement; a live device frame-rate measurement remains open.
+
 Primary references: [libyuv format convention](https://chromium.googlesource.com/libyuv/libyuv/+/refs/heads/stable/docs/formats.md),
 [Apple color tagging](https://developer.apple.com/documentation/avfoundation/tagging-media-with-video-color-information),
 and [WebRTC's renderer shader](https://webrtc.googlesource.com/src/+/725f931f2fc2d4c4cf99e24cc567f45a0b5b4d84/sdk/objc/components/renderer/opengl/RTCDefaultShader.mm).
