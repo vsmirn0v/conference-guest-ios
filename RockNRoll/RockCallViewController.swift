@@ -30,6 +30,16 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
     private let participantsButton = UIButton(type: .system)
     private let moreButton = UIButton(type: .system)
     private let fitButton = UIButton(type: .system)
+    private struct VideoTile {
+        let tile: UIView
+        let zoom: UIScrollView
+        let video: VideoView
+        let name: UILabel
+        let pin: UIButton
+        var heightConstraint: NSLayoutConstraint?
+    }
+    private var videoTiles: [String: VideoTile] = [:]
+    private var flipCameraConstraints: [NSLayoutConstraint] = []
     private var currentPrimaryKey: String?
     private var floatingVideo: RockVideoPictureInPicture?
     private var zoomStates: [String: (CGFloat, CGPoint)] = [:]
@@ -291,6 +301,13 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
                 streams.append((participant, publication, track))
             }
         }
+        let activeKeys = Set(streams.map { $0.1.sid.stringValue })
+        videoTiles = videoTiles.filter { activeKeys.contains($0.key) }
+        if !streams.contains(where: { $0.0 === room.localParticipant && $0.1.source != .screenShareVideo }) {
+            NSLayoutConstraint.deactivate(flipCameraConstraints)
+            flipCameraConstraints.removeAll()
+            flipCamera.removeFromSuperview()
+        }
         if let pin = pinnedStreamKey, !streams.contains(where: { $0.1.sid.stringValue == pin }) {
             pinnedStreamKey = nil
         }
@@ -306,10 +323,13 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             let primaryTile = videoTile(for: primary.0, publication: primary.1,
                                         track: primary.2, primary: true)
             tiles.insertArrangedSubview(primaryTile, at: 0)
-            primaryTile.heightAnchor.constraint(equalTo: streamScroll.frameLayoutGuide.heightAnchor).isActive = true
+            setVideoTileHeight(for: primaryKey, primary: true, isShare: primary.1.source == .screenShareVideo)
             for stream in streams where stream.1.sid != primary.1.sid {
-                tiles.addArrangedSubview(videoTile(for: stream.0, publication: stream.1,
-                                                    track: stream.2, primary: false))
+                let tile = videoTile(for: stream.0, publication: stream.1,
+                                     track: stream.2, primary: false)
+                tiles.addArrangedSubview(tile)
+                setVideoTileHeight(for: stream.1.sid.stringValue, primary: false,
+                                   isShare: stream.1.source == .screenShareVideo)
             }
             if currentPrimaryKey != primaryKey { streamScroll.setContentOffset(.zero, animated: false) }
             currentPrimaryKey = primaryKey
@@ -410,13 +430,20 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
     private func videoTile(for participant: Participant, publication: TrackPublication,
                            track: VideoTrack, primary: Bool) -> UIView {
         let isShare = publication.source == .screenShareVideo
+        let key = publication.sid.stringValue
+        if var cached = videoTiles[key] {
+            configureVideoTile(&cached, participant: participant, track: track,
+                               isShare: isShare, primary: primary, key: key)
+            videoTiles[key] = cached
+            speakingTiles[participantID(participant), default: []].append(cached.tile)
+            return cached.tile
+        }
         let tile = baseTile()
         let zoom = UIScrollView()
         zoom.minimumZoomScale = 1
         zoom.maximumZoomScale = isShare ? 5 : 2
         zoom.bouncesZoom = true
         zoom.delegate = self
-        let key = publication.sid.stringValue
         zoom.accessibilityIdentifier = key
         zoom.accessibilityLabel = isShare ? "Pinch to zoom screen share" : "Video stream"
         zoom.accessibilityValue = "100%"
@@ -450,21 +477,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         }, for: .touchUpInside)
         pin.translatesAutoresizingMaskIntoConstraints = false
         tile.addSubview(pin)
-        if participant === displayedRoom?.localParticipant && !isShare {
-            flipCamera.isHidden = !isCameraOn
-            flipCamera.translatesAutoresizingMaskIntoConstraints = false
-            tile.addSubview(flipCamera)
-            NSLayoutConstraint.activate([
-                flipCamera.topAnchor.constraint(equalTo: tile.topAnchor, constant: 8),
-                flipCamera.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -8),
-                flipCamera.widthAnchor.constraint(equalToConstant: 44),
-                flipCamera.heightAnchor.constraint(equalToConstant: 44)
-            ])
-        }
         speakingTiles[participantID(participant), default: []].append(tile)
-        if !primary {
-            tile.heightAnchor.constraint(equalToConstant: isShare ? 240 : 185).isActive = true
-        }
         NSLayoutConstraint.activate([
             zoom.leadingAnchor.constraint(equalTo: tile.leadingAnchor),
             zoom.trailingAnchor.constraint(equalTo: tile.trailingAnchor),
@@ -483,7 +496,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
             pin.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
             pin.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         ])
-        if primary { primaryZoom = zoom }
         if let state = zoomStates[key] {
             DispatchQueue.main.async { [weak zoom] in
                 guard let zoom, zoom.window != nil else { return }
@@ -491,7 +503,48 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
                 zoom.setContentOffset(state.1, animated: false)
             }
         }
+        var entry = VideoTile(tile: tile, zoom: zoom, video: video, name: name, pin: pin)
+        configureVideoTile(&entry, participant: participant, track: track,
+                           isShare: isShare, primary: primary, key: key)
+        videoTiles[key] = entry
         return tile
+    }
+
+    private func configureVideoTile(_ entry: inout VideoTile, participant: Participant,
+                                    track: VideoTrack, isShare: Bool, primary: Bool, key: String) {
+        if entry.video.track !== track { entry.video.track = track }
+        entry.video.layoutMode = isShare ? .fit : .fill
+        entry.name.text = "  \(participant.name ?? "Musician") · \(isShare ? "Screen" : "Video") · \(pinnedStreamKey == key ? "Pinned" : "Auto")  "
+        entry.pin.configuration?.image = UIImage(systemName: pinnedStreamKey == key ? "pin.slash.fill" : "pin.fill")
+        entry.pin.accessibilityLabel = pinnedStreamKey == key
+            ? "Unpin \(participant.name ?? "Musician") \(isShare ? "screen" : "video")"
+            : "Pin \(participant.name ?? "Musician") \(isShare ? "screen" : "video")"
+        if primary { primaryZoom = entry.zoom }
+        if participant === displayedRoom?.localParticipant && !isShare {
+            if flipCamera.superview !== entry.tile {
+                NSLayoutConstraint.deactivate(flipCameraConstraints)
+                flipCamera.translatesAutoresizingMaskIntoConstraints = false
+                entry.tile.addSubview(flipCamera)
+                flipCameraConstraints = [
+                    flipCamera.topAnchor.constraint(equalTo: entry.tile.topAnchor, constant: 8),
+                    flipCamera.trailingAnchor.constraint(equalTo: entry.tile.trailingAnchor, constant: -8),
+                    flipCamera.widthAnchor.constraint(equalToConstant: 44),
+                    flipCamera.heightAnchor.constraint(equalToConstant: 44)
+                ]
+                NSLayoutConstraint.activate(flipCameraConstraints)
+            }
+            flipCamera.isHidden = !isCameraOn
+        }
+    }
+
+    private func setVideoTileHeight(for key: String, primary: Bool, isShare: Bool) {
+        guard var entry = videoTiles[key] else { return }
+        entry.heightConstraint?.isActive = false
+        entry.heightConstraint = primary
+            ? entry.tile.heightAnchor.constraint(equalTo: streamScroll.frameLayoutGuide.heightAnchor)
+            : entry.tile.heightAnchor.constraint(equalToConstant: isShare ? 240 : 185)
+        entry.heightConstraint?.isActive = true
+        videoTiles[key] = entry
     }
 
     private func participantID(_ participant: Participant) -> String {
@@ -569,7 +622,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         items += [
             UIAction(title: "Show floating video", image: UIImage(systemName: "pip.enter"),
                      attributes: floatingVideo?.canShow == true && !isHeld ? [] : [.disabled]) {
-                [weak self] _ in self?.floatingVideo?.start(manual: true)
+                [weak self] _ in self?.floatingVideo?.start()
             },
             UIAction(title: "Floating video when multitasking",
                      image: UIImage(systemName: "pip"),
@@ -697,12 +750,5 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView !== streamScroll, let key = scrollView.accessibilityIdentifier else { return }
         zoomStates[key] = (scrollView.zoomScale, scrollView.contentOffset)
-    }
-}
-
-private extension NSLayoutConstraint {
-    func withPriority(_ priority: UILayoutPriority) -> NSLayoutConstraint {
-        self.priority = priority
-        return self
     }
 }

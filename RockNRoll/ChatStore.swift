@@ -20,6 +20,7 @@ final class ChatStore: ObservableObject {
     @Published var canSend = false
     @Published var draft = ""
     @Published private(set) var unreadCount = 0
+    private var seenMessageIDs = Set<String>()
     var isConversationOpen = false {
         didSet { if isConversationOpen { unreadCount = 0 } }
     }
@@ -34,15 +35,17 @@ final class ChatStore: ObservableObject {
     }
 
     func replace(_ messages: [ChatEntry]) {
-        if !isConversationOpen {
-            let oldIDs = Set(items.map(\.id))
-            unreadCount += messages.filter { !$0.isOwn && !oldIDs.contains($0.id) }.count
+        var newUnread = 0
+        for message in messages where seenMessageIDs.insert(message.id).inserted {
+            if !message.isOwn && !isConversationOpen { newUnread += 1 }
         }
-        items = Array(messages.suffix(200))
+        if newUnread > 0 { unreadCount += newUnread }
+        let visible = Array(messages.suffix(200))
+        if items != visible { items = visible }
     }
 
     func append(_ message: ChatEntry) {
-        guard !items.contains(where: { $0.id == message.id }) else { return }
+        guard seenMessageIDs.insert(message.id).inserted else { return }
         if !message.isOwn && !isConversationOpen { unreadCount += 1 }
         items.append(message)
         if items.count > 200 { items.removeFirst(items.count - 200) }
@@ -61,6 +64,7 @@ final class ChatStore: ObservableObject {
     }
 
     func clear() {
+        seenMessageIDs.removeAll()
         items = []
         draft = ""
         unreadCount = 0

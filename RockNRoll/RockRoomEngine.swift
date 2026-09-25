@@ -5,7 +5,7 @@ import UIKit
 
 /// The app-owned jam service. Its media engine runs only while this route is selected.
 @MainActor
-final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
+final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Sendable {
     var onEvent: ((CallEvent) -> Void)?
     var onMediaStatus: ((String?) -> Void)?
     private let systemCall: SystemCallCoordinator
@@ -24,6 +24,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
     private var leaveRequested = false
     private var hasConnected = false
     private var displayMode: ConferenceDisplayMode = .all
+    private var refreshScheduled = false
     #if DEBUG
     private var testHoldScheduled = false
     private var directMediaForTesting = false
@@ -299,6 +300,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
         audioGate = CallAudioRecoveryGate()
         leaveRequested = true
         hasConnected = false
+        refreshScheduled = false
         chat.clear()
         joinTask?.cancel()
         joinTask = nil
@@ -427,9 +429,15 @@ final class RockRoomEngine: NSObject, RoomDelegate, @unchecked Sendable {
     }
 
     private func refresh(_ room: Room) {
-        guard self.room === room, hasJoinStarted else { return }
-        updateVideoSubscriptions(in: room)
-        callView?.render(room: room)
+        guard self.room === room, hasJoinStarted, !refreshScheduled else { return }
+        refreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.refreshScheduled = false
+            guard self.room === room, self.hasJoinStarted else { return }
+            self.updateVideoSubscriptions(in: room)
+            self.callView?.render(room: room)
+        }
     }
 
     private func setDisplayMode(_ mode: ConferenceDisplayMode) {

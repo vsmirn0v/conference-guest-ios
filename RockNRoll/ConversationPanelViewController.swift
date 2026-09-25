@@ -43,10 +43,12 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private var composerHeight: NSLayoutConstraint!
     private var catchUpHost: UIHostingController<CatchUpCardsView>!
     private var timeline = CatchUpTimeline()
+    private var renderedTranscriptSegments: [TranscriptSegment]?
     private var canViewTranscript: Bool?
     private var transcriptionEnabled = false
     private var lastMessageIDs = [String]()
-    private var retryButtons = [UIButton]()
+    private var messageViews: [String: (entry: ChatEntry, view: UIView)] = [:]
+    private var retryButtons: [String: UIButton] = [:]
     private var hasNewMessages = false
     private var isRenderingTranscript = false
     private var isCompactForKeyboard = false
@@ -450,17 +452,34 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         let nearBottom = messageList.contentSize.height - messageList.contentOffset.y -
             messageList.bounds.height < 60
         let oldOffset = messageList.contentOffset
-        messageRows.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        retryButtons.removeAll()
+        let visibleIDs = Set(items.map(\.id))
+        messageViews = messageViews.filter { visibleIDs.contains($0.key) }
+        retryButtons = retryButtons.filter { visibleIDs.contains($0.key) }
+        var desiredViews = [UIView]()
         if items.isEmpty {
             let empty = UILabel()
             empty.text = "No messages yet. Say hello to the group."
             empty.textColor = .lightGray
             empty.font = .preferredFont(forTextStyle: .body)
             empty.numberOfLines = 0
-            messageRows.addArrangedSubview(empty)
+            desiredViews = [empty]
         } else {
-            items.forEach { messageRows.addArrangedSubview(messageRow($0)) }
+            desiredViews = items.map { entry in
+                if let cached = messageViews[entry.id], cached.entry == entry { return cached.view }
+                retryButtons.removeValue(forKey: entry.id)
+                let view = messageRow(entry)
+                messageViews[entry.id] = (entry, view)
+                return view
+            }
+        }
+        let desiredIdentities = Set(desiredViews.map(ObjectIdentifier.init))
+        for view in messageRows.arrangedSubviews where !desiredIdentities.contains(ObjectIdentifier(view)) {
+            view.removeFromSuperview()
+        }
+        for (index, view) in desiredViews.enumerated() {
+            if messageRows.arrangedSubviews.count <= index || messageRows.arrangedSubviews[index] !== view {
+                messageRows.insertArrangedSubview(view, at: index)
+            }
         }
         if nearBottom { DispatchQueue.main.async { [weak self] in self?.scrollMessagesToBottom() } }
         else {
@@ -519,7 +538,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             retry.configuration?.title = "Not sent · Retry"
             retry.accessibilityLabel = "Retry message from \(sender.text ?? "You")"
             retry.isEnabled = chat.canSend
-            retryButtons.append(retry)
+            retryButtons[entry.id] = retry
             retry.addAction(UIAction { [weak self] _ in self?.chat.retry(entry.id) }, for: .touchUpInside)
             row.addArrangedSubview(retry)
         case .sent: break
@@ -533,10 +552,22 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         let offset = transcript.contentOffset
         isRenderingTranscript = true
         if canViewTranscript == true && transcriptionEnabled && !timeline.segments.isEmpty {
-            transcript.attributedText = liveTranscript()
+            let segments = timeline.segments
+            if let previous = renderedTranscriptSegments,
+               segments.count >= previous.count, segments.starts(with: previous) {
+                if segments.count > previous.count {
+                    transcript.textStorage.append(transcriptLines(segments.dropFirst(previous.count),
+                                                                  precedingLines: previous.count))
+                }
+            } else {
+                transcript.attributedText = liveTranscript()
+            }
+            renderedTranscriptSegments = segments
         } else {
-            transcript.text = CatchUpText.live(timeline: timeline, canView: canViewTranscript,
-                                               enabled: transcriptionEnabled)
+            renderedTranscriptSegments = nil
+            let message = CatchUpText.live(timeline: timeline, canView: canViewTranscript,
+                                           enabled: transcriptionEnabled)
+            if transcript.text != message { transcript.text = message }
         }
         transcript.layoutIfNeeded()
         if nearBottom { scrollTranscriptToBottom() }
@@ -549,12 +580,20 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     private func liveTranscript() -> NSAttributedString {
         let result = NSMutableAttributedString()
-        let body = UIFont.preferredFont(forTextStyle: .body)
         let caption = UIFont.preferredFont(forTextStyle: .caption1)
         result.append(NSAttributedString(string: "Text received by this phone may be incomplete.\n\n",
                                          attributes: [.font: caption, .foregroundColor: UIColor.lightGray]))
-        for (index, line) in timeline.segments.enumerated() {
-            if index > 0 { result.append(NSAttributedString(string: "\n\n")) }
+        result.append(transcriptLines(timeline.segments[...], precedingLines: 0))
+        return result
+    }
+
+    private func transcriptLines(_ lines: ArraySlice<TranscriptSegment>,
+                                 precedingLines: Int) -> NSAttributedString {
+        let result = NSMutableAttributedString()
+        let body = UIFont.preferredFont(forTextStyle: .body)
+        let caption = UIFont.preferredFont(forTextStyle: .caption1)
+        for (index, line) in lines.enumerated() {
+            if precedingLines + index > 0 { result.append(NSAttributedString(string: "\n\n")) }
             if let time = line.spokenAt {
                 result.append(NSAttributedString(string: "\(time.formatted(date: .omitted, time: .shortened))  ",
                     attributes: [.font: caption, .foregroundColor: UIColor.lightGray]))
@@ -601,7 +640,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         let count = composer.text.trimmingCharacters(in: .whitespacesAndNewlines).count
         placeholder.isHidden = !composer.text.isEmpty || !chat.canSend
         sendButton.isEnabled = chat.canSend && count > 0 && count <= 2_000
-        retryButtons.forEach { $0.isEnabled = chat.canSend }
+        retryButtons.values.forEach { $0.isEnabled = chat.canSend }
         composer.isEditable = chat.canSend
         if !chat.canSend { hint.text = "Chat isn't available right now." }
         else if count > 2_000 { hint.text = "\(count - 2_000) characters over the limit" }
@@ -635,12 +674,5 @@ private final class ConversationOverlayView: UIView {
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         guard let panel else { return false }
         return panel.frame.contains(point)
-    }
-}
-
-private extension NSLayoutConstraint {
-    func withPriority(_ priority: UILayoutPriority) -> NSLayoutConstraint {
-        self.priority = priority
-        return self
     }
 }

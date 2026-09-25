@@ -142,6 +142,7 @@ final class GuestVideoFrameTests: XCTestCase {
         processor.submit(makeFrame())
         await fulfillment(of: [delivered], timeout: 3)
         processor.setEnabled(false)
+        processor.onSample = nil
     }
 
     func testPendingFrameDoesNotCrossMeetingSwitch() async {
@@ -175,6 +176,34 @@ final class GuestVideoFrameTests: XCTestCase {
         await fulfillment(of: [next], timeout: 3)
         await fulfillment(of: [stale], timeout: 0.3)
         processor.setEnabled(false)
+    }
+
+    func testPlanarFormatChangesWithFrameSize() async {
+        let processor = GuestVideoFrameProcessor()
+        let delivered = expectation(description: "Both frame sizes")
+        delivered.expectedFulfillmentCount = 2
+        var widths = [Int32]()
+        processor.onSample = { sample, _, _ in
+            guard let format = CMSampleBufferGetFormatDescription(sample) else {
+                XCTFail("Missing format"); delivered.fulfill(); return
+            }
+            widths.append(CMVideoFormatDescriptionGetDimensions(format).width)
+            if widths.count == 1 {
+                let buffer = RTCMutableI420Buffer(width: 8, height: 4)
+                for index in 0..<(Int(buffer.strideY) * 4) { buffer.mutableDataY[index] = 128 }
+                for index in 0..<(Int(buffer.strideU) * 2) { buffer.mutableDataU[index] = 128 }
+                for index in 0..<(Int(buffer.strideV) * 2) { buffer.mutableDataV[index] = 128 }
+                processor.submit(RTCVideoFrame(buffer: buffer,
+                    rotation: RTCVideoRotation(rawValue: 0)!, timeStampNs: 2))
+            }
+            delivered.fulfill()
+        }
+        processor.setEnabled(true)
+        processor.submit(makeFrame())
+        await fulfillment(of: [delivered], timeout: 3)
+        XCTAssertEqual(widths, [4, 8])
+        processor.setEnabled(false)
+        processor.onSample = nil
     }
 
     private func makeFrame(firstY: UInt8 = 11) -> RTCVideoFrame {

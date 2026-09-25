@@ -100,7 +100,7 @@ final class GuestVideoPictureInPicture {
         floating.setSourceView(hasFrame && frameTap != nil ? viewport : nil)
     }
 
-    func start(manual: Bool = false) { if canShow { floating.start() } }
+    func start() { if canShow { floating.start() } }
     func refreshPreference() { floating.refreshPreference() }
     func foregrounded() {
         floating.foregrounded()

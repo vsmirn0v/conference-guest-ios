@@ -678,6 +678,9 @@ final class ConferenceMediaUITests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone Share QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
         app.launch()
         defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
         let display = app.buttons["More call options"]

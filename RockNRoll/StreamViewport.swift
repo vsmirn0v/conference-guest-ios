@@ -12,7 +12,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
     private let scroll = UIScrollView()
     private let content = UIView()
     private let video: UIView
-    private let correctedVideo = GuestSampleBufferView()
+    private var correctedVideo: GuestSampleBufferView?
     private let state: StreamViewportState
     private let owner = UUID()
     private var viewportSize = CGSize.zero
@@ -46,12 +46,6 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
         video.translatesAutoresizingMaskIntoConstraints = true
         video.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         content.addSubview(video)
-        correctedVideo.isHidden = true
-        correctedVideo.isUserInteractionEnabled = false
-        correctedVideo.translatesAutoresizingMaskIntoConstraints = true
-        correctedVideo.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        content.addSubview(correctedVideo)
-
         if showsPlaceholder {
             let label = UILabel()
             label.text = name
@@ -106,6 +100,15 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
     func containsRenderer(_ renderer: UIView) -> Bool { renderer.superview === content }
 
     func showCorrectedVideo(_ sample: CMSampleBuffer, rotation: Int) {
+        if correctedVideo == nil {
+            let overlay = GuestSampleBufferView()
+            overlay.isHidden = true
+            overlay.isUserInteractionEnabled = false
+            overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            content.addSubview(overlay)
+            correctedVideo = overlay
+        }
+        guard let correctedVideo else { return }
         correctedVideo.frame = content.bounds
         if correctedVideo.enqueue(sample, rotation: rotation) {
             correctedVideo.isHidden = false
@@ -113,8 +116,9 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
     }
 
     func clearCorrectedVideo() {
-        correctedVideo.isHidden = true
-        correctedVideo.clear()
+        correctedVideo?.clear()
+        correctedVideo?.removeFromSuperview()
+        correctedVideo = nil
     }
 
     override func didMoveToWindow() {
@@ -139,7 +143,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
         viewportSize = bounds.size
         content.frame = CGRect(origin: .zero, size: viewportSize)
         if video.superview === content { video.frame = content.bounds }
-        correctedVideo.frame = content.bounds
+        correctedVideo?.frame = content.bounds
         scroll.contentSize = viewportSize
         scroll.setZoomScale(scale, animated: false)
         let size = scroll.contentSize

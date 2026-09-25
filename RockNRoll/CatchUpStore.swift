@@ -12,6 +12,9 @@ final class CatchUpStore: ObservableObject {
 
     private var roomKey: String?
     private var pendingWrite: DispatchWorkItem?
+    private let writer = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.catch-up-writer")
+    private var writeVersion: UInt64 = 0
+    private var lastEnqueuedWriteAt: TimeInterval = 0
 
     var roomHost: String? { roomKey.flatMap { URL(string: $0)?.host } }
 
@@ -48,7 +51,10 @@ final class CatchUpStore: ObservableObject {
         persistenceWarning = nil
         pendingWrite?.cancel()
         pendingWrite = nil
-        try? FileManager.default.removeItem(at: Self.storageURL)
+        writeVersion &+= 1
+        let url = Self.storageURL
+        // A queued snapshot must finish before Leave removes local history.
+        writer.sync { try? FileManager.default.removeItem(at: url) }
     }
 
     func begin(_ reason: MissedReason) {
@@ -74,8 +80,8 @@ final class CatchUpStore: ObservableObject {
 
     func observe(messages: [TranscriptSegment], canView: Bool, enabled: Bool) {
         let accessChanged = canViewTranscript != canView || transcriptionEnabled != enabled
-        canViewTranscript = canView
-        transcriptionEnabled = enabled
+        if canViewTranscript != canView { canViewTranscript = canView }
+        if transcriptionEnabled != enabled { transcriptionEnabled = enabled }
         guard !messages.isEmpty else {
             if accessChanged { scheduleWrite() }
             return
@@ -106,6 +112,10 @@ final class CatchUpStore: ObservableObject {
     }
 
     private func scheduleWrite() {
+        if ProcessInfo.processInfo.systemUptime - lastEnqueuedWriteAt >= 5 {
+            writeNow()
+            return
+        }
         pendingWrite?.cancel()
         let item = DispatchWorkItem { [weak self] in self?.writeNow() }
         pendingWrite = item
@@ -116,25 +126,36 @@ final class CatchUpStore: ObservableObject {
         pendingWrite?.cancel()
         pendingWrite = nil
         guard let roomKey else { return }
-        do {
-            let saved = SavedTimeline(roomKey: roomKey, savedAt: Date(), timeline: timeline,
-                                      canViewTranscript: canViewTranscript,
-                                      transcriptionEnabled: transcriptionEnabled)
-            let data = try JSONEncoder().encode(saved)
-            let directory = Self.storageURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try data.write(to: Self.storageURL,
-                           options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-            var values = URLResourceValues()
-            values.isExcludedFromBackup = true
-            var url = Self.storageURL
-            try url.setResourceValues(values)
-            persistenceWarning = nil
-        } catch {
-            persistenceWarning = "Catch-up history is available only until this app closes."
-            #if DEBUG
-            print("Could not save local catch-up history: \(error.localizedDescription)")
-            #endif
+        lastEnqueuedWriteAt = ProcessInfo.processInfo.systemUptime
+        writeVersion &+= 1
+        let version = writeVersion
+        let saved = SavedTimeline(roomKey: roomKey, savedAt: Date(), timeline: timeline,
+                                  canViewTranscript: canViewTranscript,
+                                  transcriptionEnabled: transcriptionEnabled)
+        let url = Self.storageURL
+        writer.async { [weak self] in
+            let warning: String?
+            do {
+                let data = try JSONEncoder().encode(saved)
+                let directory = url.deletingLastPathComponent()
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try data.write(to: url,
+                               options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                var savedURL = url
+                try savedURL.setResourceValues(values)
+                warning = nil
+            } catch {
+                warning = "Catch-up history is available only until this app closes."
+                #if DEBUG
+                print("Could not save local catch-up history: \(error.localizedDescription)")
+                #endif
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.writeVersion == version else { return }
+                if self.persistenceWarning != warning { self.persistenceWarning = warning }
+            }
         }
     }
 

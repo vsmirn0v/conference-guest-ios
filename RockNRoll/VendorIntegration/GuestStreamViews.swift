@@ -68,6 +68,7 @@ final class GuestStreamViews {
         switch model.watermarkState {
         case .visible(let text): watermark = text
         case .hidden: watermark = nil
+        @unknown default: watermark = nil
         }
         let view = StreamViewport(video: video, state: state,
                               zoomable: model.isSharingScreen && model.isZoomable,

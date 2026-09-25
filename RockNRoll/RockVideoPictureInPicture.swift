@@ -53,7 +53,7 @@ final class RockVideoPictureInPicture {
         floating.setSourceView(sourceView)
     }
 
-    func start(manual: Bool = false) { floating.start() }
+    func start() { floating.start() }
     func refreshPreference() { floating.refreshPreference() }
     func setSuspended(_ suspended: Bool) { floating.setSuspended(suspended) }
     func foregrounded() { floating.foregrounded() }

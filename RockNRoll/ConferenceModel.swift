@@ -5,6 +5,7 @@ import UIKit
 
 @MainActor
 final class ConferenceModel: ObservableObject {
+    private enum SessionPhase { case idle, joining, active, leaving }
     @Published var displayName = UserDefaults.standard.string(forKey: "savedDisplayName")
         .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         ?? "Musician" {
@@ -18,14 +19,16 @@ final class ConferenceModel: ObservableObject {
     @Published private(set) var status = "Enter a jam link to begin."
     @Published private(set) var statusIsError = false
     @Published private(set) var mediaStatus: String?
-    @Published private(set) var isJoining = false
-    @Published private(set) var isInConference = false
-    @Published private(set) var isLeaving = false
+    @Published private var phase: SessionPhase = .idle
+    var isJoining: Bool { phase == .joining }
+    var isInConference: Bool { phase == .active }
+    var isLeaving: Bool { phase == .leaving }
     private(set) var connectedURL: URL?
     @Published var showSwitchConfirmation = false
 
     private let systemCall = SystemCallCoordinator()
-    private lazy var engine = NativeConferenceEngine(systemCall: systemCall)
+    let catchUpStore = CatchUpStore()
+    private lazy var engine = NativeConferenceEngine(systemCall: systemCall, catchUp: catchUpStore)
     let chat = ChatStore()
     let history = RoomHistoryStore()
     private var jamEngine: RockRoomEngine?
@@ -33,7 +36,6 @@ final class ConferenceModel: ObservableObject {
     private let jamService = JamService()
     private weak var container: UIViewController?
     private var pendingTarget: JoinDestination?
-    private var pendingAutoJoin = false
     private var replacementAfterLeave: JoinDestination?
     private var replacementAutoJoin = false
     private var activeRoute: JoinDestination?
@@ -49,7 +51,13 @@ final class ConferenceModel: ObservableObject {
     @Published var testSwitchSequenceCompleted = false
     #endif
 
-    var catchUpStore: CatchUpStore { engine.catchUp }
+    private var activeEngine: (any CallEngine)? {
+        switch activeRoute {
+        case .guest: engine
+        case .jam: jamEngine
+        case nil: nil
+        }
+    }
 
     func configure(container: UIViewController) {
         self.container = container
@@ -58,20 +66,10 @@ final class ConferenceModel: ObservableObject {
 
     func prepareToFloat() {
         guard isInConference else { return }
-        switch activeRoute {
-        case .guest: engine.prepareToFloat()
-        case .jam: jamEngine?.prepareToFloat()
-        case nil: break
-        }
+        activeEngine?.prepareToFloat()
     }
 
-    func restoreFromFloatingVideo() {
-        switch activeRoute {
-        case .guest: engine.restoreFromFloatingVideo()
-        case .jam: jamEngine?.restoreFromFloatingVideo()
-        case nil: break
-        }
-    }
+    func restoreFromFloatingVideo() { activeEngine?.restoreFromFloatingVideo() }
 
     func backgroundedWithoutFloatingVideo() {
         if case .guest = activeRoute { engine.backgroundedWithoutFloatingVideo() }
@@ -79,7 +77,7 @@ final class ConferenceModel: ObservableObject {
 
     private func configuredJamEngine() -> RockRoomEngine {
         if let jamEngine { return jamEngine }
-        let selected = RockRoomEngine(catchUp: engine.catchUp, chat: chat,
+        let selected = RockRoomEngine(catchUp: catchUpStore, chat: chat,
                                       systemCall: systemCall)
         jamEngine = selected
         return selected
@@ -98,12 +96,10 @@ final class ConferenceModel: ObservableObject {
                     replacementAfterLeave = target
                     replacementAutoJoin = true
                     pendingTarget = nil
-                    pendingAutoJoin = false
                     showSwitchConfirmation = false
                     leave()
                 } else {
                     pendingTarget = target
-                    pendingAutoJoin = false
                     showSwitchConfirmation = true
                 }
             } else {
@@ -149,7 +145,7 @@ final class ConferenceModel: ObservableObject {
         sessionGeneration &+= 1
         let generation = sessionGeneration
         terminalEventHandled = false
-        isJoining = true
+        phase = .joining
         activeRoute = target
         connectedURL = nil
         activeRoomTitle = nil
@@ -203,10 +199,10 @@ final class ConferenceModel: ObservableObject {
                         guard let self, self.sessionGeneration == generation else { return }
                         self.handle(event: event)
                     }
-                    selected.onMediaStatus = { [weak self] message in
+                    selected.onMediaStatus = { [weak self, weak selected] message in
                         guard let self, self.sessionGeneration == generation else { return }
                         self.mediaStatus = self.isJoining || self.isInConference ? message : nil
-                        selected.showMediaStatus(message)
+                        selected?.showMediaStatus(message)
                     }
                     try selected.join(target: jam, credentials: credentials, container: container)
                 }
@@ -216,7 +212,7 @@ final class ConferenceModel: ObservableObject {
             } catch {
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
                 joinTask = nil
-                isJoining = false
+                phase = .idle
                 releaseJamEngineIfSelected()
                 activeRoute = nil
                 status = error.localizedDescription
@@ -227,22 +223,11 @@ final class ConferenceModel: ObservableObject {
 
     func leave() {
         guard !isLeaving, isJoining || isInConference else { return }
-        let didStartConference: Bool
-        switch activeRoute {
-        case .guest: didStartConference = engine.hasJoinStarted
-        case .jam: didStartConference = jamEngine?.hasJoinStarted == true
-        case nil: didStartConference = false
-        }
-        isLeaving = didStartConference
+        let didStartConference = activeEngine?.hasJoinStarted == true
+        phase = didStartConference ? .leaving : .idle
         joinTask?.cancel()
         joinTask = nil
-        switch activeRoute {
-        case .guest: engine.leave()
-        case .jam: jamEngine?.leave()
-        case nil: break
-        }
-        isJoining = false
-        isInConference = false
+        activeEngine?.leave()
         connectedURL = nil
         mediaStatus = nil
         status = didStartConference ? "Leaving the jam…" : "Joining canceled."
@@ -259,26 +244,18 @@ final class ConferenceModel: ObservableObject {
         }
     }
 
-    func resumeSystemCallIfPossible() {
-        switch activeRoute {
-        case .guest: engine.resumeSystemCallIfPossible()
-        case .jam: jamEngine?.resumeSystemCallIfPossible()
-        case nil: break
-        }
-    }
+    func resumeSystemCallIfPossible() { activeEngine?.resumeSystemCallIfPossible() }
 
     func replaceWithPending() {
         guard let target = pendingTarget else { return }
         replacementAfterLeave = target
-        replacementAutoJoin = pendingAutoJoin
+        replacementAutoJoin = false
         pendingTarget = nil
-        pendingAutoJoin = false
         leave()
     }
 
     func dismissPending() {
         pendingTarget = nil
-        pendingAutoJoin = false
     }
 
     func rejoin(_ room: RecentRoom) {
@@ -317,10 +294,8 @@ final class ConferenceModel: ObservableObject {
             if isJoining { status = "Could not connect to the jam." }
             else if isInConference { status = "Disconnected from the jam." }
             statusIsError = true
-            isJoining = false
-            isInConference = false
+            phase = .idle
             connectedURL = nil
-            isLeaving = false
             releaseJamEngineIfSelected()
             activeRoute = nil
         case .connecting:
@@ -337,8 +312,7 @@ final class ConferenceModel: ObservableObject {
             #if DEBUG
             if isJoining { print("Jam join: active after \(joinElapsed)s") }
             #endif
-            isJoining = false
-            isInConference = true
+            phase = .active
             connectedURL = activeRoute?.invitationURL
             status = "In jam"
             statusIsError = false
@@ -356,8 +330,7 @@ final class ConferenceModel: ObservableObject {
         case .failed:
             guard isJoining || isInConference, !isLeaving else { return }
             terminalEventHandled = true
-            isJoining = false
-            isInConference = false
+            phase = .idle
             connectedURL = nil
             status = "Disconnected from the jam."
             statusIsError = true
@@ -366,8 +339,7 @@ final class ConferenceModel: ObservableObject {
         case .canceled:
             guard isJoining || isLeaving else { return }
             terminalEventHandled = true
-            isJoining = false
-            isLeaving = false
+            phase = .idle
             connectedURL = nil
             status = "Joining canceled."
             statusIsError = false
@@ -376,9 +348,7 @@ final class ConferenceModel: ObservableObject {
             completeReplacement()
         case .left:
             terminalEventHandled = true
-            isJoining = false
-            isInConference = false
-            isLeaving = false
+            phase = .idle
             connectedURL = nil
             mediaStatus = nil
             status = "Left the jam."
@@ -388,8 +358,7 @@ final class ConferenceModel: ObservableObject {
             completeReplacement()
         case .evicted:
             terminalEventHandled = true
-            isJoining = false
-            isInConference = false
+            phase = .idle
             connectedURL = nil
             status = "Removed from the jam."
             statusIsError = true

@@ -6,7 +6,7 @@ import Network
 import UIKit
 
 @MainActor
-final class NativeConferenceEngine {
+final class NativeConferenceEngine: CallEngine {
     var onEvent: ((CallEvent) -> Void)?
     var onMediaStatus: ((String?) -> Void)?
     var onRoomTitle: ((String) -> Void)?
@@ -14,7 +14,7 @@ final class NativeConferenceEngine {
 
     private let identity = GuestIdentity()
     private let audio = AudioCoordinator()
-    let catchUp = CatchUpStore()
+    let catchUp: CatchUpStore
     private let systemCall: SystemCallCoordinator
     private var networkMonitor: NWPathMonitor?
     private let networkQueue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.network")
@@ -54,8 +54,9 @@ final class NativeConferenceEngine {
     private(set) var hasJoinStarted = false
     private var hasMediaJoinStarted = false
 
-    init(systemCall: SystemCallCoordinator) {
+    init(systemCall: SystemCallCoordinator, catchUp: CatchUpStore) {
         self.systemCall = systemCall
+        self.catchUp = catchUp
     }
 
     func showMediaStatus(_ message: String?) { activeControls?.showMediaStatus(message) }
@@ -508,7 +509,7 @@ final class NativeConferenceEngine {
                                             self.streamViews.displayMode = mode
                                             coordinator.toggleIncomingStreamsDisabled(isEnabled: mode != .audioOnly)
                                         },
-                                        onFloat: { [weak self] in self?.floatingVideo?.start(manual: true) },
+                                        onFloat: { [weak self] in self?.floatingVideo?.start() },
                                         onFloatingPreferenceChanged: { [weak self] in
                                             self?.floatingVideo?.refreshPreference()
                                         },
@@ -574,13 +575,17 @@ final class NativeConferenceEngine {
             }
             self.catchUp.observe(messages: segments, canView: canView,
                                  enabled: menu.asrState.isOn)
-            self.chat?.canSend = canViewChat
+            if self.chat?.canSend != canViewChat { self.chat?.canSend = canViewChat }
+            let existingTimes = Dictionary(
+                (self.chat?.items ?? []).map { ($0.id, $0.sentAt) },
+                uniquingKeysWith: { first, _ in first })
             self.chat?.replace(messages.filter { !$0.isAsr }.map { message in
                 ChatEntry(id: message.id,
                           sender: message.messageType == .local ? "You" :
                               (message.userNameWhenMessageSent ?? message.currentName ?? "Musician"),
                           text: String(message.message.prefix(4_096)),
-                          sentAt: CatchUpTimeline.providerDate(message.timestamp) ?? Date(),
+                          sentAt: CatchUpTimeline.providerDate(message.timestamp)
+                              ?? existingTimes[message.id] ?? Date(),
                           isOwn: message.messageType == .local)
             })
         }
