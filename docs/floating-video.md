@@ -83,4 +83,12 @@ apart; a visible but frozen window is a failure.
 The app deployment target remains iOS 16.0. System PiP was validated on iVitalii;
 physical iOS 16/17 PiP and real call interruption while PiP is active remain
 unverified. Simulator UI/unit results do not establish physical PiP behavior.
-No TestFlight upload was made for this feature.
+
+## TestFlight build 12
+
+The signed archive embeds `0.2.0 (12)`, minimum iOS 16.0, and developer team
+`5V64BP2H3P`. Strict code-signature verification passed. Xcode reported
+`Upload succeeded` and `EXPORT SUCCEEDED` on 25 September 2026. App Store Connect
+listed build 12 as **Processing** after upload. Group assignment and tester notes
+are pending Apple's processing. Third-party frameworks again lacked dSYMs, which
+may limit symbolication of crashes inside them; upload still succeeded.
