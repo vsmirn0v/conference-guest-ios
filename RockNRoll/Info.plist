@@ -32,7 +32,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>12</string>
+	<string>13</string>
 	<key>JoinLinkHost</key>
 	<string>$(JOIN_LINK_HOST)</string>
 	<key>GuestWebsiteOrigin</key>

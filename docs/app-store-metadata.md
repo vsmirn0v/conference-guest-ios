@@ -30,6 +30,10 @@ Join the public test jam with microphone and camera off, then open a second brow
 
 Join a room where another participant is sharing a screen. Pinch to zoom and pan the shared screen, then ask the participant to turn their camera on or off. The screen should remain at the chosen zoom level. Rotate the iPhone and check that zoom remains in place; use **Fit shared screen** to reset it. If sharing stops and starts again, the new share should begin fitted. Also check muted joining, chat, and audio recovery after a call.
 
+## Build 0.2.0 (13): What to Test
+
+Join a jam with a second participant sharing a screen or camera. Check that the focused video has clear blacks, motion stays smooth, and pinch zoom remains in place through participant updates and rotation. Try chat, Catch up, and floating video while multitasking. Switch between jam links, then check that the latest room uses your saved name. On a physical iPhone, check that meeting audio returns after a phone call without rejoining.
+
 ## App Review notes
 
 Rock’n’Roll supports more than one jam engine. The public test jam exercises our self-hosted engine and is available in the same production build as every other supported link. No reviewer account, payment, or private access is needed.
