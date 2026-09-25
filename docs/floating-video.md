@@ -89,6 +89,11 @@ unverified. Simulator UI/unit results do not establish physical PiP behavior.
 The signed archive embeds `0.2.0 (12)`, minimum iOS 16.0, and developer team
 `5V64BP2H3P`. Strict code-signature verification passed. Xcode reported
 `Upload succeeded` and `EXPORT SUCCEEDED` on 25 September 2026. App Store Connect
-listed build 12 as **Processing** after upload. Group assignment and tester notes
-are pending Apple's processing. Third-party frameworks again lacked dSYMs, which
-may limit symbolication of crashes inside them; upload still succeeded.
+completed processing. The build-specific tester notes cover remote video, manual
+and automatic PiP, audio-only mode, share zoom, chat, and call recovery without
+provider branding. Build 12 is **Testing** in both `Rock’n’Roll Internal` and
+`Rock’n’Roll Public Beta`; the public TestFlight link remains
+[active](https://testflight.apple.com/join/Hd13C9U3). Installation of this build
+through TestFlight has not yet been observed. Third-party frameworks again
+lacked dSYMs, which may limit symbolication of crashes inside them; upload still
+succeeded.
