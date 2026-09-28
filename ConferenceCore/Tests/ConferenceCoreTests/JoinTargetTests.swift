@@ -11,6 +11,20 @@ final class JoinTargetTests: XCTestCase {
         XCTAssertEqual(target.originURL.absoluteString, "https://meeting.example.test")
     }
 
+    func testRootRoomInvitationPreservesOriginCredentialsAndPath() throws {
+        let invitation = "https://enterprise.example.test/team-ikc006?psw=a%2Bb%26c"
+        let target = try JoinTarget.parse(invitation)
+        XCTAssertEqual(target.roomID, "team-ikc006")
+        XCTAssertEqual(target.password, "a+b&c")
+        XCTAssertEqual(target.originURL.absoluteString, "https://enterprise.example.test")
+        XCTAssertEqual(target.invitationURL.absoluteString, invitation)
+        XCTAssertEqual(try JoinDestination.parse(invitation), .guest(target))
+
+        var handoff = URLComponents(string: "conferenceguest://join")!
+        handoff.queryItems = [URLQueryItem(name: "url", value: invitation)]
+        XCTAssertEqual(try JoinDestination.parse(handoff.url!.absoluteString), .guest(target))
+    }
+
     func testCustomSchemeAndOwnedUniversalLinkCarryInvitation() throws {
         var custom = URLComponents()
         custom.scheme = "conferenceguest"
@@ -33,7 +47,14 @@ final class JoinTargetTests: XCTestCase {
             "https://meeting.example.test/calls/create",
             "https://meeting.example.test/calls/svcavt",
             "https://meeting.example.test/calls/other/path?psw=x",
-            "https://meeting.example.test/calls/svcavt?psw=x&psw=y"
+            "https://meeting.example.test/calls/svcavt?psw=x&psw=y",
+            "https://meeting.example.test/?psw=x",
+            "https://meeting.example.test/other/svcavt?psw=x",
+            "https://meeting.example.test/team-ikc006",
+            "https://meeting.example.test/team-ikc006?psw=x&psw=y",
+            "https://meeting.example.test/team%20ikc006?psw=x",
+            "http://meeting.example.test/team-ikc006?psw=x",
+            "https://person@meeting.example.test/team-ikc006?psw=x"
         ] {
             XCTAssertThrowsError(try JoinTarget.parse(text), text)
         }
@@ -52,6 +73,12 @@ final class JoinTargetTests: XCTestCase {
         XCTAssertEqual(endpoint.absoluteString, "https://api.example.test")
         XCTAssertEqual(DiscoveryStub.requestedURL?.absoluteString,
                        "https://meeting.example.test/.well-known/s2b-services.json")
+
+        let rootTarget = try JoinTarget.parse("https://enterprise.example.test/team-ikc006?psw=x")
+        let rootEndpoint = try await resolver.resolve(for: rootTarget)
+        XCTAssertEqual(rootEndpoint, endpoint)
+        XCTAssertEqual(DiscoveryStub.requestedURL?.absoluteString,
+                       "https://enterprise.example.test/.well-known/s2b-services.json")
 
         DiscoveryStub.response = #"{"service":{"serverUrl":"http://api.example.test"}}"#.data(using: .utf8)!
         await XCTAssertThrowsErrorAsync(try await resolver.resolve(for: target))

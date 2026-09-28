@@ -6,6 +6,8 @@ Rock’n’Roll helps small music groups in Yerevan meet between rehearsals. Mus
 
 The public test jam is [rock.glowsoft.ru/jams/test](https://rock.glowsoft.ru/jams/test). The same page explains the group and lets a second participant join in a browser. The app also supports `conferenceguest://join?url=<percent-encoded HTTPS invitation>` from a web handoff. Only Rock links use the self-hosted room service; compatible guest invitations keep their existing endpoint-discovery flow.
 
+Guest invitations accept both `https://<host>/calls/<room>?psw=…` and `https://<host>/<room>?psw=…`. The invitation's HTTPS origin supplies service discovery; no deployment domain is hardcoded.
+
 The app saves the chosen display name and a device-only list of ten recent jams plus any starred jams. New installs show “Musician” and can fill the name from a contact selected by the user. The in-call conversation panel switches between chat and available transcript lines. Both meeting engines offer all video, screen shares, and audio-only views. In guest rooms, the screen-share view uses the SDK's shared-screen focus and covers camera-only playback when no share is live; it does not change the meeting's camera policy. Compatible guest websites can hand off a `jcp` invitation; its HTTPS website origin is editable in the app.
 
 Meeting notices appear at the top of the call view, clear of the bottom controls.

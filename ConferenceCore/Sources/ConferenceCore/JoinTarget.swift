@@ -50,9 +50,12 @@ public struct JoinTarget: Equatable, Sendable {
             throw JoinTargetError.invalidLink
         }
         let path = components.path.split(separator: "/", omittingEmptySubsequences: true)
-        guard path.count == 2, path[0] == "calls",
-              (1...128).contains(path[1].count),
-              path[1].unicodeScalars.allSatisfy({
+        // Deployments publish invitations either at /<room> or /calls/<room>.
+        // The path carries the room ID; discovery always uses the HTTPS origin.
+        guard path.count == 1 || (path.count == 2 && path[0] == "calls"),
+              let roomID = path.last,
+              (1...128).contains(roomID.count),
+              roomID.unicodeScalars.allSatisfy({
                   CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-").contains($0)
               }),
               let passwords = components.queryItems?.filter({ $0.name == "psw" }),
@@ -69,7 +72,7 @@ public struct JoinTarget: Equatable, Sendable {
         return JoinTarget(
             invitationURL: invitationURL,
             originURL: originURL,
-            roomID: String(path[1]),
+            roomID: String(roomID),
             password: password
         )
     }
