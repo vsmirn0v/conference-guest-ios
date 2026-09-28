@@ -19,10 +19,11 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private var joinTask: Task<Void, Never>?
     private var microphoneIntentOn = false
     private var cameraIntentOn = false
-    private var isHeld = false
+    private var isHeld = false { didSet { updatePiPMicrophoneStatus() } }
+    private var audioAvailable = false { didSet { updatePiPMicrophoneStatus() } }
     private var audioGate = CallAudioRecoveryGate()
-    private var leaveRequested = false
-    private var hasConnected = false
+    private var leaveRequested = false { didSet { updatePiPMicrophoneStatus() } }
+    private var hasConnected = false { didSet { updatePiPMicrophoneStatus() } }
     private var displayMode: ConferenceDisplayMode = .all
     private var refreshScheduled = false
     #if DEBUG
@@ -44,6 +45,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         audio.onInterruptionChanged = { [weak self] interrupted in
             guard let self, self.hasConnected else { return }
             if interrupted {
+                self.audioAvailable = false
                 self.audioGate.markInterrupted()
                 self.catchUp.begin(.audioInterruption)
             } else {
@@ -63,6 +65,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         self.testHoldScheduled = false
         self.directMediaForTesting = false
         #endif
+        self.audioAvailable = false
         self.isHeld = false
         self.audioGate = CallAudioRecoveryGate()
         self.microphoneIntentOn = false
@@ -139,6 +142,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         systemCall.onDeactivated = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.hasJoinStarted else { return }
+                self.audioAvailable = false
                 self.audioGate.deactivate()
                 if self.hasConnected { self.catchUp.begin(.audioInterruption) }
                 self.onMediaStatus?("Jam audio paused by iOS")
@@ -185,9 +189,11 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             try AudioManager.shared.setEngineAvailability(.none)
             try AudioManager.shared.setEngineAvailability(.default)
             audio.ensureMixing()
+            audioAvailable = true
             applyMediaIntent()
             catchUp.end(.audioInterruption)
         } catch {
+            audioAvailable = false
             audioGate.markInterrupted()
             onMediaStatus?("Audio could not resume: \(error.localizedDescription)")
         }
@@ -228,6 +234,22 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         }
     }
 
+    private func updatePiPMicrophoneStatus() {
+        guard hasConnected, !leaveRequested, !isHeld, audioAvailable,
+              let room, room.connectionState == .connected else {
+            callView?.setFloatingMicrophoneStatus(.unavailable)
+            return
+        }
+        let microphone = room.localParticipant.audioTracks.first { $0.source == .microphone }
+        let status: PiPMicrophoneStatus
+        if let microphone {
+            status = microphone.isMuted ? .muted : .on
+        } else {
+            status = microphoneIntentOn ? .unavailable : .muted
+        }
+        callView?.setFloatingMicrophoneStatus(status)
+    }
+
     private func setMicrophone(_ enabled: Bool) {
         guard hasJoinStarted else { return }
         microphoneIntentOn = enabled
@@ -237,13 +259,16 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         Task { @MainActor [weak self] in
             do {
                 _ = try await room.localParticipant.setMicrophone(enabled: enabled)
-                self?.callView?.render(room: room)
+                guard let self, self.room === room, !self.leaveRequested else { return }
+                self.updatePiPMicrophoneStatus()
+                self.callView?.render(room: room)
             } catch {
                 if self?.microphoneIntentOn == enabled {
                     self?.microphoneIntentOn = false
                     self?.callView?.setMicrophone(false)
                     self?.systemCall.setMuted(true)
                 }
+                self?.updatePiPMicrophoneStatus()
                 self?.onMediaStatus?("Microphone unavailable: \(error.localizedDescription)")
             }
         }
@@ -274,6 +299,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             guard let self else { return }
             _ = try? await room.localParticipant.setMicrophone(enabled: self.microphoneIntentOn)
             _ = try? await room.localParticipant.setCamera(enabled: self.cameraIntentOn)
+            guard self.room === room, !self.leaveRequested else { return }
+            self.updatePiPMicrophoneStatus()
             self.callView?.render(room: room)
         }
     }
@@ -364,6 +391,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     nonisolated func room(_ room: Room, didStartReconnectWithMode reconnectMode: ReconnectMode) {
         Task { @MainActor [weak self] in
             guard let self, self.room === room, self.hasConnected else { return }
+            self.updatePiPMicrophoneStatus()
             self.catchUp.begin(.connection)
             self.onEvent?(.connecting)
         }
@@ -429,7 +457,9 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     }
 
     private func refresh(_ room: Room) {
-        guard self.room === room, hasJoinStarted, !refreshScheduled else { return }
+        guard self.room === room, hasJoinStarted else { return }
+        updatePiPMicrophoneStatus()
+        guard !refreshScheduled else { return }
         refreshScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }

@@ -6,7 +6,7 @@ import UIKit
 @MainActor
 final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictureControllerDelegate {
     private enum Phase { case idle, starting, active, stopping }
-    private let contentView: UIView
+    private let contentView: FloatingVideoContentView
     private weak var sourceView: UIView?
     private weak var configuredSource: UIView?
     private var contentController: AVPictureInPictureVideoCallViewController?
@@ -23,12 +23,16 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     }
 
     init(contentView: UIView) {
-        self.contentView = contentView
+        self.contentView = FloatingVideoContentView(videoContent: contentView)
         super.init()
     }
 
     var canShow: Bool {
         AVPictureInPictureController.isPictureInPictureSupported() && sourceView != nil && !suspended
+    }
+
+    func setMicrophoneStatus(_ status: PiPMicrophoneStatus) {
+        contentView.setMicrophoneStatus(status)
     }
 
     func setSourceView(_ view: UIView?) {

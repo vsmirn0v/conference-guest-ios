@@ -108,6 +108,7 @@ final class GuestVideoPictureInPicture {
     }
 
     func start() { if canShow { floating.start() } }
+    func setMicrophoneStatus(_ status: PiPMicrophoneStatus) { floating.setMicrophoneStatus(status) }
     func refreshPreference() { floating.refreshPreference() }
     func foregrounded() {
         floating.foregrounded()

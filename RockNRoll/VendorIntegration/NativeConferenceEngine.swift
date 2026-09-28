@@ -19,15 +19,18 @@ final class NativeConferenceEngine: CallEngine {
     private var networkMonitor: NWPathMonitor?
     private let networkQueue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.network")
     private var activeCoordinator: JazzActiveConferenceCoordinator?
-    private var isSystemHeld = false
+    private var isSystemHeld = false { didSet { updatePiPMicrophoneStatus() } }
     private var audioGate = CallAudioRecoveryGate()
     private var displayMode: ConferenceDisplayMode = .all
-    private var isAudioInterrupted = false
+    private var isAudioInterrupted = false { didSet { updatePiPMicrophoneStatus() } }
     private var microphoneIntentOn = false
     private var cameraIntentOn = false
     private let events = EventRelay()
     private let tokenProvider = AnonymousTokenProvider()
     private var subscriptions = Set<AnyCancellable>()
+    private var microphoneSubscription: AnyCancellable?
+    private var microphoneObservationID = UUID()
+    private var reportedMicrophoneStatus: PiPMicrophoneStatus = .unavailable
     private var transcriptSubscription: AnyCancellable?
     private var roomTitleSubscription: AnyCancellable?
     private var toastSubscription: AnyCancellable?
@@ -36,12 +39,12 @@ final class NativeConferenceEngine: CallEngine {
     private var floatingVideo: GuestVideoPictureInPicture?
     private var currentNotices: [InCallNotice] = []
     private var configuredNetworkURL: URL?
-    private var leaveRequested = false
+    private var leaveRequested = false { didSet { updatePiPMicrophoneStatus() } }
     private var hasBecomeActive = false
-    private var isSDKActive = false
-    private var isNetworkAvailable = true
+    private var isSDKActive = false { didSet { updatePiPMicrophoneStatus() } }
+    private var isNetworkAvailable = true { didSet { updatePiPMicrophoneStatus() } }
     private var needsMediaReconnect = false
-    private var isMediaReconnecting = false
+    private var isMediaReconnecting = false { didSet { updatePiPMicrophoneStatus() } }
     private var hasScheduledMediaRestart = false
     private var mediaReconnectTimedOut = false
     private var mediaReconnectGeneration: UInt64 = 0
@@ -81,14 +84,42 @@ final class NativeConferenceEngine: CallEngine {
         floatingVideo?.setSuspended(!hasBecomeActive || leaveRequested || isSystemHeld || isAudioInterrupted)
     }
 
-    func configure(container: UIViewController, networkURL: URL, displayName: String) throws {
-        if let configuredNetworkURL {
-            guard configuredNetworkURL == networkURL else {
-                throw ProviderError.differentConferenceEndpoint
+    private func updatePiPMicrophoneStatus() {
+        let available = isSDKActive && isNetworkAvailable && !leaveRequested &&
+            !isSystemHeld && !isAudioInterrupted && !isMediaReconnecting
+        floatingVideo?.setMicrophoneStatus(available ? reportedMicrophoneStatus : .unavailable)
+    }
+
+    private func resetPiPMicrophoneObservation() {
+        microphoneObservationID = UUID()
+        microphoneSubscription = nil
+        reportedMicrophoneStatus = .unavailable
+        updatePiPMicrophoneStatus()
+    }
+
+    private func observePiPMicrophone(state: JazzActiveConferenceState) {
+        resetPiPMicrophoneObservation()
+        let observationID = microphoneObservationID
+        microphoneSubscription = state.$microphoneState.removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] media in
+                guard let self, self.microphoneObservationID == observationID else { return }
+                switch media {
+                case .on: self.reportedMicrophoneStatus = .on
+                case .off: self.reportedMicrophoneStatus = .muted
+                default: self.reportedMicrophoneStatus = .unavailable
+                }
+                self.updatePiPMicrophoneStatus()
             }
+    }
+
+    func configure(container: UIViewController, networkURL: URL, displayName: String) throws {
+        identity.setName(displayName)
+        if configuredNetworkURL != nil {
+            // The SDK initializes only once, but each parsed JazzRoom carries its own host.
+            // Joining that room connects to its host even when the initial network differs.
             return
         }
-        identity.setName(displayName)
         GuestVideoFrameTap.prepare()
         floatingVideo = GuestVideoPictureInPicture(sourceView: container.view)
         floatingVideo?.onAvailabilityChanged = { [weak self] available in
@@ -180,6 +211,7 @@ final class NativeConferenceEngine: CallEngine {
                     self.updateConnectionGap()
                 }
                 if case .inactive = phase {
+                    self.resetPiPMicrophoneObservation()
                     self.floatingVideo?.clear()
                     if self.isMediaReconnecting && !self.leaveRequested {
                         guard !self.hasScheduledMediaRestart else { return }
@@ -248,6 +280,7 @@ final class NativeConferenceEngine: CallEngine {
                     self.catchUp.continueAsConnectionGap()
                 }
                 self.hasBecomeActive = false
+                self.resetPiPMicrophoneObservation()
                 self.floatingVideo?.clear()
                 self.isSDKActive = false
                 self.isMediaReconnecting = false
@@ -370,6 +403,7 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     func join(target: JoinTarget, displayName: String) throws {
+        resetPiPMicrophoneObservation()
         streamViews.reset()
         streamViews.displayMode = .all
         activeInvitationURL = target.invitationURL
@@ -428,6 +462,7 @@ final class NativeConferenceEngine: CallEngine {
     func leave() {
         guard hasJoinStarted else { return }
         leaveRequested = true
+        resetPiPMicrophoneObservation()
         floatingVideo?.clear()
         activeControls?.isHidden = true
         pendingRoom = nil
@@ -499,6 +534,7 @@ final class NativeConferenceEngine: CallEngine {
             guard let self else { return UIView() }
             self.activeCoordinator = coordinator
             coordinator.toggleIncomingStreamsDisabled(isEnabled: self.displayMode != .audioOnly)
+            self.observePiPMicrophone(state: state)
             self.observeTranscript(state: state)
             self.chat?.onSend = { [weak self] message in
                 self?.activeCoordinator?.sendMessage(message: message)
@@ -612,14 +648,8 @@ final class NativeConferenceEngine: CallEngine {
 }
 
 private enum ProviderError: LocalizedError {
-    case differentConferenceEndpoint
     case unsupportedInvitation
     var errorDescription: String? {
-        switch self {
-        case .differentConferenceEndpoint:
-            return "This app session is connected to another conference service. Reopen the app to use this link."
-        case .unsupportedInvitation:
-            return "The installed provider SDK cannot read this meeting invitation."
-        }
+        "The installed provider SDK cannot read this meeting invitation."
     }
 }

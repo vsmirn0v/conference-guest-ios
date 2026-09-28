@@ -39,6 +39,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             FloatingVideoPreference.enabled = true
         }
         if let fixture = ProcessInfo.processInfo.environment["CONFERENCE_TEST_UI_FIXTURE"] {
+            if fixture == "pip-microphone" {
+                window.rootViewController = PiPMicrophoneFixtureViewController()
+                return
+            }
             if fixture == "guest-color" {
                 window.rootViewController = GuestColorFixtureViewController()
                 return
@@ -143,6 +147,13 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             model.testDisplayNameOverride = ProcessInfo.processInfo.environment["CONFERENCE_TEST_NAME"]
             model.receive(url: url)
             model.join()
+            if let rawLink = ProcessInfo.processInfo.environment["CONFERENCE_TEST_LINK_WHILE_ACTIVE"],
+               let link = URL(string: rawLink) {
+                Task { @MainActor in
+                    guard await self.waitForConnectedJam(model, after: nil) else { return }
+                    model.receive(url: link)
+                }
+            }
             if let rawLinks = ProcessInfo.processInfo.environment["CONFERENCE_TEST_SWITCH_URLS"],
                let data = rawLinks.data(using: .utf8),
                let links = try? JSONDecoder().decode([URL].self, from: data),

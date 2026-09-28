@@ -668,6 +668,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate {
         updateStatus()
     }
 
+    func setFloatingMicrophoneStatus(_ status: PiPMicrophoneStatus) {
+        floatingVideo?.setMicrophoneStatus(status)
+    }
+
     func setCamera(_ enabled: Bool) {
         isCameraOn = enabled
         workspace.cameraOn = enabled

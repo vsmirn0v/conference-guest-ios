@@ -53,4 +53,20 @@ final class RecentRoomsTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(RecentRooms.self,
                        from: JSONEncoder().encode(history)), history)
     }
+
+    func testSameRoomOnDifferentWebsitesKeepsBothInvitationsAndStars() throws {
+        let first = URL(string: "https://meet-one.example.org/calls/rehearsal?psw=secret")!
+        let second = URL(string: "https://meet-two.example.org/rehearsal?psw=secret")!
+        var history = RecentRooms()
+        history.record(url: first, title: "Rehearsal", identifier: "rehearsal")
+        history.record(url: second, title: "Rehearsal", identifier: "rehearsal")
+        history.toggleStar(for: second)
+
+        let restored = try JSONDecoder().decode(RecentRooms.self, from: JSONEncoder().encode(history))
+        XCTAssertEqual(restored.items.count, 2)
+        XCTAssertEqual(restored.items.first?.invitationURL, second)
+        XCTAssertTrue(restored.items.first?.isStarred == true)
+        XCTAssertEqual(restored.items.last?.invitationURL, first)
+        XCTAssertFalse(restored.items.last?.isStarred == true)
+    }
 }

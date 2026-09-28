@@ -8,7 +8,9 @@ final class ConferenceMediaUITests: XCTestCase {
         let marker = String(UUID().uuidString.prefix(8))
         app.launchEnvironment["CONFERENCE_TEST_FIXTURE_ROOM_ID"] = marker
         app.launch()
-        let room = app.buttons["Rejoin Open rehearsal \(marker)"]
+        let room = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Rejoin Open rehearsal \(marker)")
+        ).firstMatch
         XCTAssertTrue(room.waitForExistence(timeout: 15))
         room.press(forDuration: 0.9)
         app.buttons["Rename"].tap()
@@ -17,10 +19,16 @@ final class ConferenceMediaUITests: XCTestCase {
         name.tap()
         name.typeText("Friday quartet \(marker)")
         app.buttons["Save"].tap()
-        XCTAssertTrue(app.buttons["Rejoin Friday quartet \(marker)"].waitForExistence(timeout: 5))
+        let renamed = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Rejoin Friday quartet \(marker)")
+        ).firstMatch
+        XCTAssertTrue(renamed.waitForExistence(timeout: 5))
         app.terminate()
         app.launch()
-        XCTAssertTrue(app.buttons["Rejoin Friday quartet \(marker)"].waitForExistence(timeout: 10))
+        let reopened = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Rejoin Friday quartet \(marker)")
+        ).firstMatch
+        XCTAssertTrue(reopened.waitForExistence(timeout: 10))
     }
 
     func testHomeIdentityRowOpensNameEditor() throws {
@@ -32,6 +40,17 @@ final class ConferenceMediaUITests: XCTestCase {
         identity.tap()
         XCTAssertTrue(app.textFields["Name shown to musicians"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Choose my contact"].exists)
+    }
+
+    func testSavedJamShowsItsWebsite() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "home"
+        app.launchEnvironment["CONFERENCE_TEST_FIXTURE_ROOM_ID"] = "domain-check"
+        app.launch()
+        let website = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "meeting.example.test")
+        ).firstMatch
+        XCTAssertTrue(website.waitForExistence(timeout: 10))
     }
 
     func testLandscapeConversationKeepsHistoryAndCallActionsVisible() throws {
@@ -371,9 +390,9 @@ final class ConferenceMediaUITests: XCTestCase {
 
     func testNativeGuestSchemesResolveIntoInvitations() throws {
         let links = [
-            ("jcp://jazz?code=schemeprobejcp&psw=fixturepass", "schemeprobejcp"),
-            ("jazz://join?id=schemeprobejazz&password=fixturepass", "schemeprobejazz"),
-            ("jazz://jazz?code=schemeprobealias&psw=fixturepass", "schemeprobealias")
+            ("jcp://jazz?code=schemeprobejcp&psw=fixturepass&host=meeting.example.test", "schemeprobejcp"),
+            ("jazz://join?id=schemeprobejazz@meeting.example.test&password=fixturepass", "schemeprobejazz"),
+            ("jazz://jazz?code=schemeprobealias&psw=fixturepass&host=meeting.example.test", "schemeprobealias")
         ]
         for (raw, roomID) in links {
             let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
@@ -387,6 +406,30 @@ final class ConferenceMediaUITests: XCTestCase {
             if app.buttons["Leave"].exists { app.buttons["Leave"].tap() }
             app.terminate()
         }
+    }
+
+    func testNativeLinkWithoutHostRequestsWebsite() throws {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-guestWebsiteOrigin", ""]
+        app.launch()
+        let link = try XCTUnwrap(URL(string: "jcp://jazz?code=site-selection-\(UUID().uuidString)&psw=fixturepass"))
+        app.open(link)
+        XCTAssertTrue(app.navigationBars["Meeting website"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.textFields["https://meeting.example.org"].exists)
+    }
+
+    func testMissingHostCanBeSelectedDuringGuestCall() throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_INVITE"] else {
+            throw XCTSkip("Provide a live guest invitation.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-guestWebsiteOrigin", ""]
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        let link = try XCTUnwrap(URL(string: "jcp://jazz?code=site-selection-\(UUID().uuidString)&psw=fixturepass"))
+        app.launchEnvironment["CONFERENCE_TEST_LINK_WHILE_ACTIVE"] = link.absoluteString
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Meeting website"].waitForExistence(timeout: 45))
     }
 
     func testNativeGuestLinkJoinsImmediately() throws {
@@ -1244,6 +1287,28 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts[firstID].exists)
         XCTAssertTrue(app.staticTexts[secondID].exists)
         XCTAssertTrue(app.staticTexts["test"].exists)
+    }
+
+    func testGuestWebsiteSwitchWithoutRestart() throws {
+        guard let first = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_FIRST_INVITE"],
+              let second = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SECOND_APP_LINK"],
+              let firstURL = URL(string: first), let secondURL = URL(string: second) else {
+            throw XCTSkip("Provide two live guest invitations on different websites.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = first
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        var returnLink = URLComponents(string: "jcp://jazz")!
+        returnLink.queryItems = [URLQueryItem(name: "url", value: firstURL.absoluteString)]
+        let encoded = try JSONEncoder().encode([secondURL, try XCTUnwrap(returnLink.url)])
+        app.launchEnvironment["CONFERENCE_TEST_SWITCH_URLS"] = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        app.launch()
+
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@ AND enabled == true",
+                                                                   "Switch sequence connected"),
+                                              object: app.buttons["Join jam"])
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 120), .completed)
+        XCTAssertEqual(app.textFields["Invitation link"].value as? String, firstURL.absoluteString)
     }
 
     func testRapidLinksDuringJoinUseLatestInvitation() throws {

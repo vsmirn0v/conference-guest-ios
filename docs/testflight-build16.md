@@ -1,0 +1,9 @@
+# TestFlight 1.0.0 (16) — 28 September 2026
+
+Build 16 is signed for team `5V64BP2H3P`, supports iOS 16.0+, and passed strict code-signature verification. Xcode reported `Uploaded RockNRoll` and `EXPORT SUCCEEDED`; App Store Connect marked the upload complete. The `Rock’n’Roll Internal` group shows **Testing**. Build 16 is attached to `Rock’n’Roll Public Beta` and is **Waiting for Review**; external availability depends on Apple’s approval. The earlier build 15 review submission was withdrawn to submit build 16. The [public TestFlight link](https://testflight.apple.com/join/Hd13C9U3) remains active.
+
+The saved invitation URL, including its HTTPS domain, remains the key for recent and starred jams. Rows now show the website. A regression test stores the same room ID on two domains, stars one, and verifies both URLs after serialization. A signed iOS 17.5 simulator test confirmed that a starred room and its custom name persist through app relaunch; unsigned simulator builds cannot access Keychain (`-34018`) and are unsuitable for this persistence check.
+
+Validation: 21 `ConferenceCore` tests, 9 native-link adapter tests, the signed Keychain persistence test, and signed iOS 17.5 saved-jam UI tests passed. The prior live iOS 17.5 test switched guest services and back without restarting. The archive binary SHA-256 is `a85b2122a36388fb2c30766a49728d672b0f3dcc2b673e87563968cc7ec407a4`.
+
+Build-specific tester notes mention stability when opening jams in succession and minor interface fixes. Global review instructions describe only the practice-room flow. Xcode warned that several third-party frameworks lack dSYMs; upload succeeded, but crashes inside those binaries may be harder to symbolicate. External TestFlight installation and a post-upload physical media smoke test remain unverified.

@@ -136,6 +136,13 @@ struct JoinView: View {
             }
             .sheet(isPresented: $showingSettings) { settingsSheet }
             .sheet(isPresented: $showingNameEditor) { nameSheet }
+            .sheet(item: $model.siteSelection) { selection in
+                MeetingWebsiteSelectionView(
+                    rememberedOrigins: selection.rememberedOrigins,
+                    onChoose: { model.chooseWebsite($0) ? nil : model.status },
+                    onCancel: { model.siteSelection = nil }
+                )
+            }
             .sheet(item: $editingRoom) { room in
                 NavigationStack {
                     Form {
@@ -222,7 +229,7 @@ struct JoinView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Rejoin \(room.displayTitle)")
+                    .accessibilityLabel("Rejoin \(room.displayTitle) on \(room.invitationURL.host() ?? "meeting website")")
                     .contextMenu {
                         Button { startRename(room) } label: {
                             Label("Rename", systemImage: "pencil")
@@ -268,12 +275,7 @@ struct JoinView: View {
     }
 
     private func roomSubtitle(_ room: RecentRoom) -> String {
-        let duplicates = history.rooms.filter {
-            $0.id != room.id && $0.displayTitle == room.displayTitle &&
-                $0.identifier == room.identifier
-        }
-        let origin = duplicates.isEmpty ? "" : " · \(room.invitationURL.host() ?? "Meeting")"
-        return "\(room.identifier)\(origin) · \(room.lastJoined.formatted(.relative(presentation: .named)))"
+        "\(room.identifier) · \(room.invitationURL.host() ?? "Meeting") · \(room.lastJoined.formatted(.relative(presentation: .named)))"
     }
 
     private var settingsSheet: some View {
@@ -290,7 +292,7 @@ struct JoinView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                    Text("Used to open compatible meeting links in the app.")
+                    Text("Fallback for app links that omit their website. Links with an embedded host open directly.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("About") {
@@ -307,6 +309,44 @@ struct JoinView: View {
                 ContactNamePicker(isPresented: $showingContactPicker) { model.displayName = $0 }
             }
         }
+    }
+}
+
+struct MeetingWebsiteSelectionView: View {
+    let rememberedOrigins: [URL]
+    let onChoose: (String) -> String?
+    let onCancel: () -> Void
+    @State private var website = ""
+    @State private var error: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("This app link does not identify its meeting website. Choose one you trust to open the invitation.")
+                        .font(.footnote)
+                    ForEach(rememberedOrigins, id: \.absoluteString) { origin in
+                        Button(origin.host() ?? origin.absoluteString) {
+                            error = onChoose(origin.absoluteString)
+                        }
+                    }
+                } header: {
+                    Text("Previously used websites")
+                }
+                Section("Another website") {
+                    TextField("https://meeting.example.org", text: $website)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                    Button("Open invitation") { error = onChoose(website) }
+                        .disabled(website.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if let error { Text(error).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("Meeting website")
+            .toolbar { Button("Cancel", action: onCancel) }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 

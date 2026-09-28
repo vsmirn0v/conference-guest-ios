@@ -1,6 +1,7 @@
 import Combine
 import ConferenceCore
 import Foundation
+import SwiftUI
 import UIKit
 
 @MainActor
@@ -12,8 +13,7 @@ final class ConferenceModel: ObservableObject {
         didSet { UserDefaults.standard.set(displayName, forKey: "savedDisplayName") }
     }
     @Published var invite = ""
-    @Published var guestWebsiteOrigin = UserDefaults.standard.string(forKey: "guestWebsiteOrigin")
-        ?? (Bundle.main.object(forInfoDictionaryKey: "GuestWebsiteOrigin") as? String ?? "") {
+    @Published var guestWebsiteOrigin = UserDefaults.standard.string(forKey: "guestWebsiteOrigin") ?? "" {
         didSet { UserDefaults.standard.set(guestWebsiteOrigin, forKey: "guestWebsiteOrigin") }
     }
     @Published private(set) var status = "Enter a jam link to begin."
@@ -25,6 +25,7 @@ final class ConferenceModel: ObservableObject {
     var isLeaving: Bool { phase == .leaving }
     private(set) var connectedURL: URL?
     @Published var showSwitchConfirmation = false
+    @Published var siteSelection: LinkSiteSelection?
 
     private let systemCall = SystemCallCoordinator()
     let catchUpStore = CatchUpStore()
@@ -44,6 +45,9 @@ final class ConferenceModel: ObservableObject {
     private var terminalEventHandled = false
     private var sessionGeneration: UInt64 = 0
     private var endpointCache: [URL: URL] = [:]
+    private var activeWebsiteWindow: UIWindow?
+    private weak var previousKeyWindow: UIWindow?
+    private var websiteLinkAwaitingSelection: URL?
     #if DEBUG
     private var joinStartedAt: TimeInterval?
     /// Launch-fixture identity must never replace the user's saved name.
@@ -107,8 +111,18 @@ final class ConferenceModel: ObservableObject {
                 if autoJoin { startJoin(target) }
             }
         } catch {
+            let needsWebsite = error as? GuestSiteLinkError == .websiteNeeded
+            if needsWebsite {
+                if isJoining || isInConference || isLeaving {
+                    presentWebsitePicker(for: url)
+                } else {
+                    siteSelection = LinkSiteSelection(link: url,
+                        rememberedOrigins: GuestSiteLinkAdapter.rememberedOrigins(
+                            from: history.rooms.map(\.invitationURL)))
+                }
+            }
             status = error.localizedDescription
-            statusIsError = true
+            statusIsError = !needsWebsite
         }
     }
 
@@ -118,9 +132,77 @@ final class ConferenceModel: ObservableObject {
             let target = try destination(for: invite)
             startJoin(target)
         } catch {
+            let needsWebsite = error as? GuestSiteLinkError == .websiteNeeded
+            if needsWebsite,
+               let url = URL(string: invite.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                siteSelection = LinkSiteSelection(link: url,
+                    rememberedOrigins: GuestSiteLinkAdapter.rememberedOrigins(
+                        from: history.rooms.map(\.invitationURL)))
+            }
+            status = error.localizedDescription
+            statusIsError = !needsWebsite
+        }
+    }
+
+    @discardableResult
+    func chooseWebsite(_ website: String) -> Bool {
+        guard let selection = siteSelection else { return false }
+        do {
+            _ = try GuestSiteLinkAdapter.invitation(from: selection.link,
+                websiteOrigin: website, recentInvitations: history.rooms.map(\.invitationURL))
+            guestWebsiteOrigin = website.hasPrefix("https://") ? website : "https://\(website)"
+            siteSelection = nil
+            receive(url: selection.link)
+            return true
+        } catch {
             status = error.localizedDescription
             statusIsError = true
+            return false
         }
+    }
+
+    private func presentWebsitePicker(for link: URL) {
+        websiteLinkAwaitingSelection = link
+        guard activeWebsiteWindow == nil,
+              let scene = container?.view.window?.windowScene else { return }
+        let origins = GuestSiteLinkAdapter.rememberedOrigins(from: history.rooms.map(\.invitationURL))
+        let picker = UIHostingController(rootView: MeetingWebsiteSelectionView(
+            rememberedOrigins: origins,
+            onChoose: { [weak self] website in
+                guard let self, let link = self.websiteLinkAwaitingSelection else {
+                    return "Jam view is unavailable."
+                }
+                do {
+                    _ = try GuestSiteLinkAdapter.invitation(from: link,
+                        websiteOrigin: website,
+                        recentInvitations: self.history.rooms.map(\.invitationURL))
+                    self.guestWebsiteOrigin = website.hasPrefix("https://") ? website : "https://\(website)"
+                    self.websiteLinkAwaitingSelection = nil
+                    self.dismissWebsiteWindow()
+                    self.receive(url: link)
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            },
+            onCancel: { [weak self] in
+                self?.websiteLinkAwaitingSelection = nil
+                self?.dismissWebsiteWindow()
+            }
+        ))
+        let window = UIWindow(windowScene: scene)
+        window.windowLevel = .alert + 1
+        window.rootViewController = picker
+        previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        activeWebsiteWindow = window
+        window.makeKeyAndVisible()
+    }
+
+    private func dismissWebsiteWindow() {
+        activeWebsiteWindow?.isHidden = true
+        activeWebsiteWindow = nil
+        (previousKeyWindow ?? container?.view.window)?.makeKey()
+        previousKeyWindow = nil
     }
 
     private func startJoin(_ target: JoinDestination) {
@@ -376,7 +458,8 @@ final class ConferenceModel: ObservableObject {
         let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: candidate), GuestSiteLinkAdapter.handles(url) {
             let invitation = try GuestSiteLinkAdapter.invitation(from: url,
-                                                                 websiteOrigin: guestWebsiteOrigin)
+                websiteOrigin: guestWebsiteOrigin,
+                recentInvitations: history.rooms.map(\.invitationURL))
             return try JoinDestination.parse(invitation.absoluteString, joinLinkHost: joinLinkHost)
         }
         return try JoinDestination.parse(candidate, joinLinkHost: joinLinkHost)
@@ -400,6 +483,12 @@ final class ConferenceModel: ObservableObject {
         return String(format: "%.2f", ProcessInfo.processInfo.systemUptime - joinStartedAt)
     }
     #endif
+}
+
+struct LinkSiteSelection: Identifiable {
+    let id = UUID()
+    let link: URL
+    let rememberedOrigins: [URL]
 }
 
 enum CallEvent {
