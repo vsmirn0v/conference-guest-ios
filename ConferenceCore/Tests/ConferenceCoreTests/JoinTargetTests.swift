@@ -36,23 +36,27 @@ final class JoinTargetTests: XCTestCase {
         universal.queryItems = [URLQueryItem(name: "url", value: raw)]
         XCTAssertEqual(try JoinTarget.parse(universal.url!.absoluteString, joinLinkHost: "join.example.com"),
                        try JoinTarget.parse(raw))
-        XCTAssertThrowsError(try JoinTarget.parse(universal.url!.absoluteString,
-                                                  joinLinkHost: "other.example.com"))
+        let foreign = try JoinTarget.parse(universal.url!.absoluteString,
+                                           joinLinkHost: "other.example.com")
+        XCTAssertEqual(foreign.originURL.absoluteString, "https://join.example.com")
+        XCTAssertEqual(foreign.roomID, "join")
     }
 
-    func testRejectsIncompleteOrUnsafeInvitations() {
+    func testPassesDeploymentSpecificInvitationShapeToSDK() throws {
+        let raw = "https://enterprise.example.test/teams/music/room%20one?ticket=opaque&psw=x&psw=y"
+        let target = try JoinTarget.parse(raw)
+        XCTAssertEqual(target.invitationURL.absoluteString, raw)
+        XCTAssertEqual(target.originURL.absoluteString, "https://enterprise.example.test")
+        XCTAssertEqual(target.roomID, "room one")
+        XCTAssertEqual(try JoinTarget.parse("https://enterprise.example.test/calls/create").roomID,
+                       "create")
+    }
+
+    func testRejectsUnsafeOriginsAndMissingRoom() {
         for text in [
             "http://meeting.example.test/calls/svcavt?psw=x",
             "https://person@meeting.example.test/calls/svcavt?psw=x",
-            "https://meeting.example.test/calls/create",
-            "https://meeting.example.test/calls/svcavt",
-            "https://meeting.example.test/calls/other/path?psw=x",
-            "https://meeting.example.test/calls/svcavt?psw=x&psw=y",
             "https://meeting.example.test/?psw=x",
-            "https://meeting.example.test/other/svcavt?psw=x",
-            "https://meeting.example.test/team-ikc006",
-            "https://meeting.example.test/team-ikc006?psw=x&psw=y",
-            "https://meeting.example.test/team%20ikc006?psw=x",
             "http://meeting.example.test/team-ikc006?psw=x",
             "https://person@meeting.example.test/team-ikc006?psw=x"
         ] {

@@ -17,7 +17,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.2.0</string>
+	<string>1.0.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -32,19 +32,25 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>14</string>
-	<key>JoinLinkHost</key>
-	<string>$(JOIN_LINK_HOST)</string>
+	<string>15</string>
 	<key>GuestWebsiteOrigin</key>
 	<string>https://salutejazz.ru</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>JoinLinkHost</key>
+	<string>$(JOIN_LINK_HOST)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>Share video when you choose to turn on your camera in a jam.</string>
+	<!-- ATS otherwise rejects app-bundled CA anchors on arbitrary HTTPS invitation hosts. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Use Bluetooth headphones and other audio devices for jam audio, including when the jam continues in the background.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Share video when you choose to turn on your camera in a jam.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Choose a contact to fill your jam name. Only the selected name is sent when you join.</string>
 	<key>NSMicrophoneUsageDescription</key>

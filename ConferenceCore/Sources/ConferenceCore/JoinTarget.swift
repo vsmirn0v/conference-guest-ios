@@ -1,7 +1,7 @@
 import Foundation
 
-/// A complete invitation carries both the meeting credentials and the origin
-/// from which this deployment publishes service discovery.
+/// Carries the original invitation and the origin used for service discovery.
+/// The conferencing SDK decides whether the invitation itself is supported.
 public struct JoinTarget: Equatable, Sendable {
     public let invitationURL: URL
     public let originURL: URL
@@ -50,18 +50,7 @@ public struct JoinTarget: Equatable, Sendable {
             throw JoinTargetError.invalidLink
         }
         let path = components.path.split(separator: "/", omittingEmptySubsequences: true)
-        // Deployments publish invitations either at /<room> or /calls/<room>.
-        // The path carries the room ID; discovery always uses the HTTPS origin.
-        guard path.count == 1 || (path.count == 2 && path[0] == "calls"),
-              let roomID = path.last,
-              (1...128).contains(roomID.count),
-              roomID.unicodeScalars.allSatisfy({
-                  CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-").contains($0)
-              }),
-              let passwords = components.queryItems?.filter({ $0.name == "psw" }),
-              passwords.count == 1,
-              let password = passwords.first?.value,
-              (1...128).contains(password.count) else {
+        guard let roomID = path.last, !roomID.isEmpty else {
             throw JoinTargetError.invalidLink
         }
         var origin = URLComponents()
@@ -73,7 +62,7 @@ public struct JoinTarget: Equatable, Sendable {
             invitationURL: invitationURL,
             originURL: originURL,
             roomID: String(roomID),
-            password: password
+            password: components.queryItems?.first(where: { $0.name == "psw" })?.value ?? ""
         )
     }
 }

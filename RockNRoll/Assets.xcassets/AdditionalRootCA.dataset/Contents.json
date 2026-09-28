@@ -1,0 +1,12 @@
+{
+  "data" : [
+    {
+      "filename" : "AdditionalRootCA.cer",
+      "idiom" : "universal"
+    }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  }
+}
