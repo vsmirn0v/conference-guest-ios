@@ -18,6 +18,9 @@ final class GuestStreamViews {
     private var renderedTiles: [Key: RenderedTile] = [:]
     private var participantSubscription: AnyCancellable?
     private var selectionUpdateScheduled = false
+    private var preserveBackgroundSelection = false
+    private var activeShares: Set<String>?
+    private var activeCameras: Set<String>?
     var onPreferredVideo: ((StreamViewport?, String, Bool) -> Void)?
     var displayMode: ConferenceDisplayMode = .all {
         didSet { updatePreferredVideo() }
@@ -25,9 +28,18 @@ final class GuestStreamViews {
 
     func reset() {
         participantSubscription = nil
+        preserveBackgroundSelection = false
+        activeShares = nil
+        activeCameras = nil
         viewports.removeAll()
         renderedTiles.removeAll()
         onPreferredVideo?(nil, "", false)
+    }
+
+    func setBackgrounded(_ backgrounded: Bool) {
+        guard preserveBackgroundSelection != backgrounded else { return }
+        preserveBackgroundSelection = backgrounded
+        updatePreferredVideo()
     }
 
     func observe(_ state: JazzActiveConferenceState) {
@@ -40,7 +52,10 @@ final class GuestStreamViews {
 
     private func retainShares(for participants: [JazzConferenceParticipant]) {
         let sharing = Set(participants.filter { $0.screenSharing.isOn }.map(\.id))
+        let cameras = Set(participants.filter { $0.camera.isOn }.map(\.id))
         let active = Set(participants.map(\.id))
+        activeShares = sharing
+        activeCameras = cameras
         viewports = viewports.filter { sharing.contains($0.key.participant) }
         renderedTiles = renderedTiles.filter {
             active.contains($0.key.participant) && (!$0.key.isShare || sharing.contains($0.key.participant))
@@ -93,10 +108,13 @@ final class GuestStreamViews {
     }
 
     private func publishPreferredVideo() {
+        // The call window can become hidden while system PiP remains active.
+        // Keep a signaled stream eligible until the participant ends it.
         let available = renderedTiles.values.filter {
-            displayMode != .audioOnly && isVisible($0.view) && $0.video != nil &&
+            displayMode != .audioOnly && $0.view != nil && $0.video != nil &&
             $0.model.displayMode != .pip && !$0.model.isLocal &&
-            ($0.model.isSharingScreen || (displayMode == .all && $0.model.isVideoOn))
+            isActiveStream($0) &&
+            (preserveBackgroundSelection || isVisible($0.view))
         }.sorted {
             func priority(_ tile: RenderedTile) -> Int {
                 let content = tile.model.isPinned ? 0 : tile.model.isSharingScreen ? 10 : 20
@@ -114,6 +132,14 @@ final class GuestStreamViews {
         let preferred = available.first
         onPreferredVideo?(preferred?.view, preferred?.model.name ?? "",
                           preferred?.model.isSharingScreen == true)
+    }
+
+    private func isActiveStream(_ tile: RenderedTile) -> Bool {
+        if tile.model.isSharingScreen {
+            return activeShares?.contains(tile.model.id) ?? true
+        }
+        return displayMode == .all && tile.model.isVideoOn &&
+            (activeCameras?.contains(tile.model.id) ?? true)
     }
 
     private func isVisible(_ view: UIView?) -> Bool {

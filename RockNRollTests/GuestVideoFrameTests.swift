@@ -1,4 +1,5 @@
 import AVFoundation
+import JazzSDK
 import UIKit
 import WebRTC
 import XCTest
@@ -6,6 +7,44 @@ import XCTest
 
 @MainActor
 final class GuestVideoFrameTests: XCTestCase {
+    func testHiddenGuestShareRemainsSelectedForBackgroundPiP() async {
+        let streams = GuestStreamViews()
+        let model = JazzParticipantViewModel(
+            name: "Share", isAudioOn: false, isVideoOn: true, isPinned: false,
+            isSharingScreen: true, isLocal: false, id: "share", isDominantSpeaker: false,
+            shouldShowParticipantInfo: false, isZoomable: true,
+            watermarkState: .hidden, displayMode: .speaker)
+        let tile = streams.makeView(model: model, video: UIView())
+        tile.frame = CGRect(x: 0, y: 0, width: 320, height: 180)
+        tile.isHidden = true
+        let selected = expectation(description: "Background share retained")
+        var chosen: StreamViewport?
+        streams.onPreferredVideo = { viewport, _, _ in
+            chosen = viewport
+            if viewport === tile { selected.fulfill() }
+        }
+        streams.setBackgrounded(true)
+        await fulfillment(of: [selected], timeout: 2)
+        XCTAssertTrue(chosen === tile)
+        streams.reset()
+        XCTAssertNil(chosen)
+    }
+
+    func testSelectedGuestTileStaysAliveUntilFloatingVideoClears() {
+        let floating = GuestVideoPictureInPicture(sourceView: UIView())
+        let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
+        var viewport: StreamViewport? = StreamViewport(
+            video: renderer, state: StreamViewportState(), zoomable: true,
+            name: "Share", showInfo: false, microphoneOn: false,
+            pinned: false, watermark: nil)
+        weak var retained = viewport
+        floating.select(viewport: viewport, name: "Share", isScreenShare: true)
+        viewport = nil
+        XCTAssertNotNil(retained)
+        floating.clear()
+        XCTAssertNil(retained)
+    }
+
     func testRendererTapReceivesFramesAndDetaches() {
         let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
         var frames = 0

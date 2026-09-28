@@ -5,6 +5,7 @@ import UIKit
 /// sample-buffer surfaces with the same color interpretation.
 @MainActor
 final class GuestVideoPictureInPicture {
+    private let sourceView: UIView
     private let content = UIView()
     private let caption = UILabel()
     private let video = GuestSampleBufferView()
@@ -14,12 +15,13 @@ final class GuestVideoPictureInPicture {
     private var hasFrame = false
     private var presenting = false
     private var suspended = false
-    private weak var selectedViewport: StreamViewport?
+    private var selectedViewport: StreamViewport?
     private weak var selectedRenderer: UIView?
     var onAvailabilityChanged: ((Bool) -> Void)?
     var canShow: Bool { hasFrame && frameTap != nil && !suspended && floating.canShow }
 
-    init() {
+    init(sourceView: UIView) {
+        self.sourceView = sourceView
         floating = FloatingVideoController(contentView: content)
         content.backgroundColor = .black
         content.accessibilityIdentifier = "Floating video surface"
@@ -64,7 +66,7 @@ final class GuestVideoPictureInPicture {
                 ? CGSize(width: size.height, height: size.width) : size
             if !self.hasFrame {
                 self.hasFrame = true
-                self.floating.setSourceView(self.selectedViewport)
+                self.floating.setSourceView(self.sourceView)
                 self.onAvailabilityChanged?(self.canShow)
             }
         }
@@ -85,9 +87,14 @@ final class GuestVideoPictureInPicture {
             frameTap = nil
             let sourceID = processor.replaceSource()
             processor.setEnabled(false)
-            video.clear()
-            hasFrame = false
-            onAvailabilityChanged?(false)
+            // The SDK may replace a tile while the call is backgrounded. Keep
+            // the last displayed frame and the stable PiP anchor until the new
+            // renderer supplies a frame, so a layout refresh cannot close PiP.
+            if !presenting || UIApplication.shared.applicationState == .active {
+                video.clear()
+                hasFrame = false
+                onAvailabilityChanged?(false)
+            }
             selectedRenderer = viewport.rendererView
             let processor = processor
             frameTap = GuestVideoFrameTap(view: viewport.rendererView) { [weak processor] frame in
@@ -97,7 +104,7 @@ final class GuestVideoPictureInPicture {
         }
         caption.text = name.isEmpty ? nil : "  \(name)\(isScreenShare ? " · Screen" : "")  "
         caption.isHidden = name.isEmpty
-        floating.setSourceView(hasFrame && frameTap != nil ? viewport : nil)
+        floating.setSourceView(hasFrame && frameTap != nil ? sourceView : nil)
     }
 
     func start() { if canShow { floating.start() } }

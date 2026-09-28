@@ -85,6 +85,9 @@ The app deployment target remains iOS 16.0. System PiP was validated on iVitalii
 physical iOS 16/17 PiP and real call interruption while PiP is active remain
 unverified. Simulator UI/unit results do not establish physical PiP behavior.
 
+For the later guest share cutoff report and build 14 change, see
+[guest floating-video continuity](guest-pip-background-2026-09-28.md).
+
 ## TestFlight build 12
 
 The signed archive embeds `0.2.0 (12)`, minimum iOS 16.0, and developer team

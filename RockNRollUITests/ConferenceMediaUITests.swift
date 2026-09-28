@@ -164,8 +164,12 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertEqual(viewport.value as? String, zoom)
         XCUIDevice.shared.orientation = .portrait
         XCTAssertEqual(viewport.value as? String, zoom)
+        // The simulator may report portrait before the rotated button layout
+        // finishes accepting taps.
+        Thread.sleep(forTimeInterval: 1)
         app.buttons["Start new share"].tap()
-        XCTAssertEqual(viewport.value as? String, "100%")
+        expectation(for: NSPredicate(format: "value == %@", "100%"), evaluatedWith: viewport)
+        waitForExpectations(timeout: 3)
     }
 
     func testManualGuestScreenSharePinch() throws {

@@ -62,14 +62,23 @@ final class NativeConferenceEngine: CallEngine {
     func showMediaStatus(_ message: String?) { activeControls?.showMediaStatus(message) }
 
     func prepareToFloat() {
-        floatingVideo?.setSuspended(!hasBecomeActive || leaveRequested || isSystemHeld || isAudioInterrupted)
+        streamViews.setBackgrounded(UIApplication.shared.applicationState != .active)
+        updateFloatingSuspension()
     }
 
-    func backgroundedWithoutFloatingVideo() { floatingVideo?.backgrounded() }
+    func backgroundedWithoutFloatingVideo() {
+        streamViews.setBackgrounded(true)
+        floatingVideo?.backgrounded()
+    }
 
     func restoreFromFloatingVideo() {
-        prepareToFloat()
+        streamViews.setBackgrounded(false)
+        updateFloatingSuspension()
         floatingVideo?.foregrounded()
+    }
+
+    private func updateFloatingSuspension() {
+        floatingVideo?.setSuspended(!hasBecomeActive || leaveRequested || isSystemHeld || isAudioInterrupted)
     }
 
     func configure(container: UIViewController, networkURL: URL, displayName: String) throws {
@@ -81,7 +90,7 @@ final class NativeConferenceEngine: CallEngine {
         }
         identity.setName(displayName)
         GuestVideoFrameTap.prepare()
-        floatingVideo = GuestVideoPictureInPicture()
+        floatingVideo = GuestVideoPictureInPicture(sourceView: container.view)
         floatingVideo?.onAvailabilityChanged = { [weak self] available in
             self?.activeControls?.setFloatingVideoAvailable(available)
         }

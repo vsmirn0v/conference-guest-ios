@@ -34,6 +34,10 @@ Join a room where another participant is sharing a screen. Pinch to zoom and pan
 
 Join a jam with a second participant sharing a screen or camera. Check that the focused video has clear blacks, motion stays smooth, and pinch zoom remains in place through participant updates and rotation. Try chat, Catch up, and floating video while multitasking. Switch between jam links, then check that the latest room uses your saved name. On a physical iPhone, check that meeting audio returns after a phone call without rejoining.
 
+## Build 0.2.0 (14): What to Test
+
+Join a compatible guest jam while another participant shares a moving screen. Send the app to Home and leave the floating video visible for at least two minutes, then switch to another app and back. The floating window should remain present and the shared screen should keep updating while the jam stays connected. Return to the jam and check that audio and share zoom still work. If the picture stops moving, report whether the floating window stayed visible or closed.
+
 ## App Review notes
 
 Rock’n’Roll supports more than one jam engine. The public test jam exercises our self-hosted engine and is available in the same production build as every other supported link. No reviewer account, payment, or private access is needed.
