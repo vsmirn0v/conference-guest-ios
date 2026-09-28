@@ -23,6 +23,8 @@ Validation:
   for rotation to settle before its synthetic tap. A prior run lost that tap;
   its recording showed the previous participant tile was still on screen.
 - A signed Release archive for build 14 compiled with the iOS 16.0 minimum.
+- Build 14 uploaded successfully and reached **Testing** in both the internal
+  and public TestFlight groups on 28 September 2026.
 
 The iOS simulator reports system video-call PiP as unsupported. Per the user's
 simulator-only test preference, the 30–60 second live PiP behavior has not been
