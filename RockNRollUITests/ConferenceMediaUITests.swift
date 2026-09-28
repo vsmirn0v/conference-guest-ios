@@ -471,6 +471,28 @@ final class ConferenceMediaUITests: XCTestCase {
         waitForExpectations(timeout: 45)
     }
 
+    func testRootPathGuestInvitationConnectsToBrowserParticipant() throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
+            throw XCTSkip("Provide a live guest invitation with a browser participant.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
+        app.launch()
+        defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
+        let link = app.textFields["Invitation link"]
+        XCTAssertTrue(link.waitForExistence(timeout: 15))
+        link.tap()
+        link.typeText(invitation)
+        app.buttons["Join jam"].tap()
+        let musicians = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Musicians"))
+            .firstMatch
+        XCTAssertTrue(musicians.waitForExistence(timeout: 60))
+        musicians.tap()
+        XCTAssertTrue(app.staticTexts["Browser Media QA"].waitForExistence(timeout: 30))
+    }
+
     func testGuestScreenShareViewModeFollowsLiveShare() throws {
         guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_SHARE_TRANSITIONS"] == "1",
               let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
