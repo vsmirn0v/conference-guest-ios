@@ -1,0 +1,56 @@
+{
+  "source": "31e9a541dd84d552ed78ac332c6a962a610d273e",
+  "appVersion": "0.2.0",
+  "build": "23",
+  "capture": "Current native UI, live public test room, Simulator direct-media bypass; no UI fixtures. Dark appearance. Original PNG capture data is preserved.",
+  "images": [
+    {
+      "file": "iPad-13/01-saved-jams.png",
+      "width": 2064,
+      "height": 2752,
+      "sha256": "0f56d26fa315f7b0971e08d901d639ce31bf201aa66ed31a9e97c69c3ae3dfa9"
+    },
+    {
+      "file": "iPad-13/02-screen-sharing.png",
+      "width": 2064,
+      "height": 2752,
+      "sha256": "1a71ae73cdcb76ac7284375697fcb23763f4554c29d889fb81bef3bc4342955d"
+    },
+    {
+      "file": "iPad-13/03-chat.png",
+      "width": 2064,
+      "height": 2752,
+      "sha256": "65536911f095449891bda12ded4cd87c57d4c8e3adfde1be63c0bfd0288cd542"
+    },
+    {
+      "file": "iPad-13/04-musicians.png",
+      "width": 2064,
+      "height": 2752,
+      "sha256": "4e70974cd170daa291d2940521cf22942a6668821dbd5e5881e24eca7405b605"
+    },
+    {
+      "file": "iPhone-6.9/01-saved-jams.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "e72b72b12df2c7de1fe6f8adfc422279f3065846beefe35de6b69d3d32fa7320"
+    },
+    {
+      "file": "iPhone-6.9/02-screen-sharing.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "bc94a9c69ddc46aa3f4920d5504c63503f1e6b844b149675082365e37fff2b27"
+    },
+    {
+      "file": "iPhone-6.9/03-chat.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "c3cd2a8477779b7f18a5b1f342355957e5ec06d249cec9c6fa61bea405512c93"
+    },
+    {
+      "file": "iPhone-6.9/04-musicians.png",
+      "width": 1320,
+      "height": 2868,
+      "sha256": "9309c87d1a09ccaa7bc23b53091cd3a3c18829f475c33722a2f28c7920b773a7"
+    }
+  ]
+}
