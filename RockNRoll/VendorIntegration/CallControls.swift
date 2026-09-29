@@ -90,7 +90,8 @@ final class CallControls: UIView {
          onDisplayMode: @escaping (ConferenceDisplayMode) -> Void,
          onFloat: @escaping () -> Void,
          onFloatingPreferenceChanged: @escaping () -> Void,
-         onLeave: @escaping () -> Void, onMicrophoneState: @escaping (Bool) -> Void,
+         onLeave: @escaping () -> Void, onScreenShare: @escaping (Bool) -> Void,
+         onMicrophoneState: @escaping (Bool) -> Void,
          onCameraState: @escaping (Bool) -> Void) {
         self.onFloat = onFloat
         self.onFloatingPreferenceChanged = onFloatingPreferenceChanged
@@ -277,7 +278,7 @@ final class CallControls: UIView {
             coordinator.toggleCamera(isOn: turnOn)
         }, for: .touchUpInside)
         share.addAction(UIAction { _ in
-            coordinator.toggleShareScreen(isOn: state.screenShareState != .on)
+            onScreenShare(state.screenShareState != .on)
         }, for: .touchUpInside)
         leave.addAction(UIAction { _ in onLeave() }, for: .touchUpInside)
         workspace.toggleMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }

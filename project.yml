@@ -23,8 +23,12 @@ targets:
         - RockNRollTests
     sources:
       - path: RockNRoll
+      - path: Shared/GuestBroadcastStop.swift
+      - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
     dependencies:
       - package: JazzSDK
+      - framework: GuestBroadcast/VendorSDK/JazzSDKScreenShare.xcframework
+        embed: false
       - package: ConferenceCore
       - package: LiveKit
       - target: RockBroadcast
@@ -69,6 +73,7 @@ targets:
     platform: iOS
     sources:
       - path: GuestBroadcast/SampleHandler.swift
+      - path: Shared/GuestBroadcastStop.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
     dependencies:
       - package: JazzSDK

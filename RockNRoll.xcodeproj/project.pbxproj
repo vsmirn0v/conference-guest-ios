@@ -12,6 +12,7 @@
 		08245B21B07D8A02CAB118A4 /* CallControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0DDC3D21920474CDC247639 /* CallControls.swift */; };
 		0E9EE5795A57769858BFC5C4 /* GuestVideoFrameTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 908B7BD8621D56B596FE8550 /* GuestVideoFrameTests.swift */; };
 		0F1E328D1D17EB3FBC4BBB80 /* RockRoomEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A05CC817B412E4FA9E2EE3A /* RockRoomEngine.swift */; };
+		1B5855178CAEB4440A6E84E9 /* JazzSDKScreenShare.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5674A993FC2046A52AD92A60 /* JazzSDKScreenShare.xcframework */; };
 		1CC2B05D459CDF2803AA2BB3 /* GuestStreamViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E8939A9D93D27C2352C20B /* GuestStreamViews.swift */; };
 		1D215FCF2BF4D33961AB1F25 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40ADF9352DB719D2F965B798 /* AppDelegate.swift */; };
 		1D9636718D82A88CBF3B1B20 /* ConferenceMediaUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54AEAC9A8CBF663384D79667 /* ConferenceMediaUITests.swift */; };
@@ -23,7 +24,9 @@
 		31E028D55499DB31084579D1 /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 57D559C6B683E448E9EF28F5 /* JazzSDK */; };
 		380277071DCDE8182BEE081F /* GuestSiteLinkAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAB474DA91D3DC74B6A0A6CE /* GuestSiteLinkAdapter.swift */; };
 		39A122CD5DC9D10C3DCC29DA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BD6CCF5106C0A518803CCA07 /* Assets.xcassets */; };
+		39FC79EBE991260A8057C6AB /* GuestBroadcastStop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70BDFD0E30DDEF30801600B2 /* GuestBroadcastStop.swift */; };
 		3B8C312FD7D35EF6922D7539 /* CatchUpText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BF0C685736838C7E66914CF /* CatchUpText.swift */; };
+		4191EE91F0E3DD1BAD51424B /* GuestBroadcastLifecycleUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD56910A0D71A2C43AB9BEBD /* GuestBroadcastLifecycleUITests.swift */; };
 		4348F04B521CB67613009F69 /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3F91314298394121DA8F1D /* JazzSDK */; };
 		4510D964728C36F5FE264FAE /* GuestIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC54A79FFF8952C055E7A7F7 /* GuestIdentity.swift */; };
 		459BD79F3E24CA87ADA9F089 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF64302A8DFA2B622264D317 /* SceneDelegate.swift */; };
@@ -37,10 +40,13 @@
 		64FA40B018F31D9C80C32016 /* GuestVideoPictureInPicture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11FE8907579C87CCDFD6B0DC /* GuestVideoPictureInPicture.swift */; };
 		7715492FDE15C262A39D2B74 /* ConferenceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65570B6D840AF2D71932D313 /* ConferenceModel.swift */; };
 		772D6857C9D1ADD26D37C906 /* FloatingVideoContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1567DFCAF9DFADA92D9DECFF /* FloatingVideoContentView.swift */; };
+		7CE9DD1C0D26F8BFD632134E /* GuestScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = B756DA6C961B8D0289A606EE /* GuestScreenCapture.swift */; };
 		7E12467922DF5F5C89E54D31 /* GuestBroadcast.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3CCCF54E4D96F10DF8446D48 /* GuestBroadcast.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		7ECAE69B4571F80DBEE4733F /* GuestBroadcastStop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70BDFD0E30DDEF30801600B2 /* GuestBroadcastStop.swift */; };
 		854816A56F9A823805D6270C /* GuestStreamSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC9017A1D53B2ADECBD4A7AC /* GuestStreamSelectionTests.swift */; };
 		874E54A0C9EDF053C688FC85 /* JoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D74813F24B6D41F4DE4FD6C /* JoinView.swift */; };
 		88D5A969729A522616DB9AC1 /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = AB6F15C1E25726E56A54D099 /* LiveKit */; };
+		89311DB1696CAA632627CC3D /* JazzScreenShareResources.bundle in Resources */ = {isa = PBXBuildFile; fileRef = DE3198CBF3E9C793FD28E25F /* JazzScreenShareResources.bundle */; };
 		8EB0755F8EF29A4FEA8F9AE9 /* RoomHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0749D2146BB11184D76828DA /* RoomHistoryStore.swift */; };
 		915DAB4B920E1EB0274822DE /* EventRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5DD3C92B147421C014181FA /* EventRelay.swift */; };
 		94B17975FE9853977FD4B120 /* RockBroadcast.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1CE7740CA4FFBA32B49D81D2 /* RockBroadcast.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -150,6 +156,7 @@
 		5DB9260C3E8754FB5368FF99 /* AnonymousTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnonymousTokenProvider.swift; sourceTree = "<group>"; };
 		65570B6D840AF2D71932D313 /* ConferenceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceModel.swift; sourceTree = "<group>"; };
 		6D74813F24B6D41F4DE4FD6C /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
+		70BDFD0E30DDEF30801600B2 /* GuestBroadcastStop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestBroadcastStop.swift; sourceTree = "<group>"; };
 		70E1D2B21C4871293EC9597C /* CatchUpStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpStoreTests.swift; sourceTree = "<group>"; };
 		7A05CC817B412E4FA9E2EE3A /* RockRoomEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RockRoomEngine.swift; sourceTree = "<group>"; };
 		8673A1476A9A30C9EE82E814 /* FloatingVideoController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingVideoController.swift; sourceTree = "<group>"; };
@@ -161,7 +168,9 @@
 		A3D56ADB9C4C008AF8FFBAB9 /* SampleHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleHandler.swift; sourceTree = "<group>"; };
 		A447AAD83CAB2DE79FB5FDAA /* StreamViewport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamViewport.swift; sourceTree = "<group>"; };
 		A5F280C9F27221EB0AEAE300 /* SystemCallCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemCallCoordinator.swift; sourceTree = "<group>"; };
+		AD56910A0D71A2C43AB9BEBD /* GuestBroadcastLifecycleUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestBroadcastLifecycleUITests.swift; sourceTree = "<group>"; };
 		AE94B4A550B25F959F5622EB /* RockVideoPictureInPicture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RockVideoPictureInPicture.swift; sourceTree = "<group>"; };
+		B756DA6C961B8D0289A606EE /* GuestScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestScreenCapture.swift; sourceTree = "<group>"; };
 		B9CD858D9C42BF13EBDB3F9C /* AdditionalRootTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdditionalRootTrust.swift; sourceTree = "<group>"; };
 		BD6CCF5106C0A518803CCA07 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C09FCE59F22D1FD6B3AD3F2A /* RockCallViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RockCallViewController.swift; sourceTree = "<group>"; };
@@ -209,6 +218,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4348F04B521CB67613009F69 /* JazzSDK in Frameworks */,
+				1B5855178CAEB4440A6E84E9 /* JazzSDKScreenShare.xcframework in Frameworks */,
 				96E45477868AE00B30673F3A /* ConferenceCore in Frameworks */,
 				88D5A969729A522616DB9AC1 /* LiveKit in Frameworks */,
 			);
@@ -264,6 +274,7 @@
 				D236B2060583426D0D293D20 /* RockNRoll */,
 				DA4E1195A6EAE225E8C05321 /* RockNRollTests */,
 				E680D93E3830A213621DCA70 /* RockNRollUITests */,
+				7100DAB29E893979A4E34C9B /* Shared */,
 				00BA1FA86FF89E567B5BAF77 /* Frameworks */,
 				2835BD9AF29D4B9549DF8290 /* Products */,
 			);
@@ -284,6 +295,14 @@
 				AAAF80F72166B50CB7E2E712 /* VendorSDK */,
 			);
 			path = GuestBroadcast;
+			sourceTree = "<group>";
+		};
+		7100DAB29E893979A4E34C9B /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				70BDFD0E30DDEF30801600B2 /* GuestBroadcastStop.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		AAAF80F72166B50CB7E2E712 /* VendorSDK */ = {
@@ -341,6 +360,7 @@
 				3F368F0EFC03992D825902F9 /* GuestColorFixtureViewController.swift */,
 				FC54A79FFF8952C055E7A7F7 /* GuestIdentity.swift */,
 				F1E61E7BB62527702FCC1510 /* GuestSampleBufferView.swift */,
+				B756DA6C961B8D0289A606EE /* GuestScreenCapture.swift */,
 				EAB474DA91D3DC74B6A0A6CE /* GuestSiteLinkAdapter.swift */,
 				49E8939A9D93D27C2352C20B /* GuestStreamViews.swift */,
 				0978B250E002B9455D9AD06E /* GuestVideoFrameProcessor.swift */,
@@ -370,6 +390,7 @@
 			isa = PBXGroup;
 			children = (
 				54AEAC9A8CBF663384D79667 /* ConferenceMediaUITests.swift */,
+				AD56910A0D71A2C43AB9BEBD /* GuestBroadcastLifecycleUITests.swift */,
 				FE7E7ABE77FAC05896773221 /* GuestColorUITests.swift */,
 				9220E07FD2C07210BDFDAF9D /* PiPMicrophoneUITests.swift */,
 			);
@@ -556,6 +577,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				39A122CD5DC9D10C3DCC29DA /* Assets.xcassets in Resources */,
+				89311DB1696CAA632627CC3D /* JazzScreenShareResources.bundle in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -614,9 +636,11 @@
 				772D6857C9D1ADD26D37C906 /* FloatingVideoContentView.swift in Sources */,
 				CA2328A007DE4223C0D0CA82 /* FloatingVideoController.swift in Sources */,
 				1F35805A29943F09662AEB20 /* FloatingVideoPreference.swift in Sources */,
+				7ECAE69B4571F80DBEE4733F /* GuestBroadcastStop.swift in Sources */,
 				0404C944CB6DE7D37D409B83 /* GuestColorFixtureViewController.swift in Sources */,
 				4510D964728C36F5FE264FAE /* GuestIdentity.swift in Sources */,
 				C8AF96D7FA1436CEDAEE8E5F /* GuestSampleBufferView.swift in Sources */,
+				7CE9DD1C0D26F8BFD632134E /* GuestScreenCapture.swift in Sources */,
 				380277071DCDE8182BEE081F /* GuestSiteLinkAdapter.swift in Sources */,
 				1CC2B05D459CDF2803AA2BB3 /* GuestStreamViews.swift in Sources */,
 				A48340505EAAA06923521161 /* GuestVideoFrameProcessor.swift in Sources */,
@@ -643,6 +667,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				39FC79EBE991260A8057C6AB /* GuestBroadcastStop.swift in Sources */,
 				4D46045EFF13D15BC016E8F9 /* SampleHandler.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -652,6 +677,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1D9636718D82A88CBF3B1B20 /* ConferenceMediaUITests.swift in Sources */,
+				4191EE91F0E3DD1BAD51424B /* GuestBroadcastLifecycleUITests.swift in Sources */,
 				E790C8615063FA4E4E5E76BA /* GuestColorUITests.swift in Sources */,
 				C0E9815B9D93822773CAEAEF /* PiPMicrophoneUITests.swift in Sources */,
 			);
@@ -982,6 +1008,10 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 5V64BP2H3P;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"GuestBroadcast/VendorSDK\"",
+				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RockNRoll/Info.plist;
 				JOIN_LINK_HOST = "";
@@ -1005,6 +1035,10 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 5V64BP2H3P;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"GuestBroadcast/VendorSDK\"",
+				);
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = RockNRoll/Info.plist;
 				JOIN_LINK_HOST = "";

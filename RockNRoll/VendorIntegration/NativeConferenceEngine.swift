@@ -19,6 +19,8 @@ final class NativeConferenceEngine: CallEngine {
     private var networkMonitor: NWPathMonitor?
     private let networkQueue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.network")
     private var activeCoordinator: JazzActiveConferenceCoordinator?
+    private var screenCapture: GuestScreenCapture?
+    private var screenCaptureStop: Task<Void, Never>?
     private var isSystemHeld = false { didSet { updatePiPMicrophoneStatus() } }
     private var audioGate = CallAudioRecoveryGate()
     private var displayMode: ConferenceDisplayMode = .all
@@ -287,6 +289,7 @@ final class NativeConferenceEngine: CallEngine {
         systemCall.onEnded = { [weak self] userEnded in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                await self.stopScreenSharing()
                 if self.leaveRequested || userEnded {
                     self.catchUp.finishMeeting()
                 } else if self.hasBecomeActive {
@@ -339,7 +342,7 @@ final class NativeConferenceEngine: CallEngine {
                 if held {
                     self.activeCoordinator?.toggleMicrohone(isOn: false)
                     self.activeCoordinator?.toggleCamera(isOn: false)
-                    self.activeCoordinator?.toggleShareScreen(isOn: false)
+                    await self.stopScreenSharing()
                 }
                 self.activeControls?.setHeld(held)
                 if !held { self.recoverAudioIfReady() }
@@ -475,21 +478,72 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     func leave() {
-        guard hasJoinStarted else { return }
+        guard hasJoinStarted, !leaveRequested else { return }
         leaveRequested = true
-        activeCoordinator?.toggleShareScreen(isOn: false)
         resetPiPMicrophoneObservation()
         floatingVideo?.clear()
         activeControls?.isHidden = true
         pendingRoom = nil
-        #if DEBUG && targetEnvironment(simulator)
-        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
-            JazzSession.shared.terminateActiveConference()
+        Task { @MainActor in
+            await stopScreenSharing()
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
+                JazzSession.shared.terminateActiveConference()
+                return
+            }
+            #endif
+            systemCall.end()
+        }
+    }
+
+    private func setScreenSharing(_ enabled: Bool) {
+        #if DEBUG
+        print("Guest capture requested: enabled=\(enabled), leaving=\(leaveRequested), held=\(isSystemHeld), stopping=\(screenCaptureStop != nil)")
+        #endif
+        guard !leaveRequested, !isSystemHeld, screenCaptureStop == nil else { return }
+        if !enabled {
+            Task { @MainActor in await stopScreenSharing() }
+            return
+        }
+        #if canImport(ScreenCaptureKit)
+        if #available(iOS 27.0, *) {
+            if screenCapture == nil {
+                screenCapture = NativeGuestScreenCapture { [weak self] message in
+                    self?.activeControls?.showMediaStatus(message)
+                }
+            }
+            screenCapture?.start()
             return
         }
         #endif
-        systemCall.end()
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            activeControls?.showMediaStatus("Screen sharing requires macOS 27 or later.")
+        } else if GuestBroadcastStop.prepare() {
+            activeCoordinator?.toggleShareScreen(isOn: true)
+        } else {
+            activeControls?.showMediaStatus("Could not prepare screen sharing. Please try again.")
+        }
     }
+
+    private func stopScreenSharing() async {
+        #if DEBUG
+        print("Guest capture stop: native=\(screenCapture != nil), pending=\(screenCaptureStop != nil)")
+        #endif
+        if let screenCaptureStop {
+            await screenCaptureStop.value
+            return
+        }
+        if let screenCapture {
+            self.screenCapture = nil
+            let stop = Task { @MainActor in await screenCapture.stop() }
+            screenCaptureStop = stop
+            await stop.value
+            screenCaptureStop = nil
+        } else {
+            GuestBroadcastStop.request()
+        }
+    }
+
 
     func resumeSystemCallIfPossible() {
         systemCall.resumeIfPossible()
@@ -575,6 +629,9 @@ final class NativeConferenceEngine: CallEngine {
                                             self?.floatingVideo?.refreshPreference()
                                         },
                                         onLeave: { [weak self] in self?.leave() },
+                                        onScreenShare: { [weak self] enabled in
+                                            self?.setScreenSharing(enabled)
+                                        },
                                         onMicrophoneState: { [weak self] isOn in
                                             guard let self, !self.isSystemHeld else { return }
                                             self.microphoneIntentOn = isOn
