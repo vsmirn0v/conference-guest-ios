@@ -303,6 +303,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                 if !enabled { BroadcastManager.shared.requestStop() }
                 guard let self, self.room === room else { return }
                 self.callView?.render(room: room)
+            } catch let error as LiveKitError where error.type == .cancelled {
+                self?.callView?.render(room: room)
             } catch {
                 self?.onMediaStatus?("Screen sharing unavailable: \(error.localizedDescription)")
             }

@@ -1,9 +1,9 @@
 # Adaptive iPad and Mac experience
 
-Status: adaptive layout and direct pinning implemented locally. Rock jam
-screen broadcasting has an extension and Share control, but broadcast startup
-still needs a physical iPhone check. Guest-engine outgoing sharing and Mac
-window lifecycle remain open for the reasons below.
+Status: adaptive layout and direct pinning implemented locally. Rock jam screen
+sharing was verified on a physical iOS 27 iPhone and received in a browser.
+ReplayKit sharing on iOS 16–26, guest-engine outgoing sharing, and Mac window
+lifecycle remain open for the reasons below.
 
 ## Scope and invariants
 
@@ -165,10 +165,12 @@ changes do not by themselves address the measured outgoing-video CPU cost.
   The guest SDK's built-in participants sheet has no public pin-selection API,
   so its own pin affordance cannot yet reflect an app-owned direct tile pin.
 - A LiveKit Broadcast Upload Extension is included for Rock jams, with shared
-  App Group entitlements on app and extension. The Share control requests the
-  system broadcast picker, and Stop/Leave requests broadcast stop. ReplayKit
-  did not display its picker in the Simulator; publishing from a physical
-  iPhone therefore remains unverified.
+  App Group entitlements on app and extension. iOS 27 uses LiveKit's
+  ScreenCaptureKit picker; the ReplayKit broadcast picker remains for iOS
+  16–26. On a physical iOS 27 iPhone, the Share control opened the system
+  picker, the browser participant received the live screen, and Stop Sharing
+  ended it. The older ReplayKit path still needs physical-device verification;
+  its picker does not appear in Simulator.
 - Guest-engine outgoing sharing is blocked by the distributed SDK package:
   its separate screen-share binary imports modules absent from the published
   package. The existing guest SDK can receive and pin shared screens. We did

@@ -956,7 +956,7 @@
 			repositoryURL = "https://github.com/livekit/client-sdk-swift.git";
 			requirement = {
 				kind = revision;
-				revision = f07831a7f06bca9e2fc2e136db591b7b42f16d8d;
+				revision = 57a84d71c33e97349963c1cbd442fb4b01428b7c;
 			};
 		};
 		F9F8D192EC109A45CD86AF9F /* XCRemoteSwiftPackageReference "jazz-ios-sdk" */ = {

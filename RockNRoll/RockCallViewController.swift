@@ -1,6 +1,7 @@
 import AVKit
 import Combine
 import LiveKit
+import ReplayKit
 import UIKit
 
 @MainActor
@@ -41,6 +42,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let flipCamera = UIButton(type: .system)
     private let speaker = UIButton(type: .system)
     private let share = UIButton(type: .system)
+    private let sharePicker = RPSystemBroadcastPickerView()
+    private let shareTitle = UILabel()
     private let displayModeButton = UIButton(type: .system)
     private let conversationButton = UIButton(type: .system)
     private let missedButton = UIButton(type: .system)
@@ -168,6 +171,22 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         configure(microphone, symbol: "mic.slash.fill", label: "Unmute microphone", title: "Mic off")
         configure(camera, symbol: "video.slash.fill", label: "Start video", title: "Cam off")
         configure(share, symbol: "rectangle.on.rectangle", label: "Share screen", title: "Share")
+        if #available(iOS 27.0, *) {
+            share.isHidden = false
+            sharePicker.isHidden = true
+            shareTitle.isHidden = true
+        } else {
+            share.isHidden = true
+        }
+        sharePicker.preferredExtension = Bundle.main.bundleIdentifier.map { "\($0).broadcast" }
+        sharePicker.showsMicrophoneButton = false
+        sharePicker.tintColor = accent
+        sharePicker.isAccessibilityElement = true
+        sharePicker.accessibilityTraits = .button
+        sharePicker.accessibilityLabel = "Share screen"
+        shareTitle.text = "Share"
+        shareTitle.font = .preferredFont(forTextStyle: .caption2)
+        shareTitle.textColor = accent
         microphone.configuration?.baseForegroundColor = .white
         camera.configuration?.baseForegroundColor = .white
         configure(flipCamera, symbol: "arrow.triangle.2.circlepath.camera", label: "Flip camera")
@@ -281,7 +300,24 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             audioTitle.bottomAnchor.constraint(equalTo: audioControl.bottomAnchor, constant: -4)
         ])
         audioControl.accessibilityLabel = "Audio output"
-        let bar = UIStackView(arrangedSubviews: [microphone, camera, audioControl, share, moreButton, leave])
+        let shareControl = UIView()
+        for item in [share, sharePicker, shareTitle] {
+            item.translatesAutoresizingMaskIntoConstraints = false
+            shareControl.addSubview(item)
+        }
+        NSLayoutConstraint.activate([
+            share.leadingAnchor.constraint(equalTo: shareControl.leadingAnchor),
+            share.trailingAnchor.constraint(equalTo: shareControl.trailingAnchor),
+            share.topAnchor.constraint(equalTo: shareControl.topAnchor),
+            share.bottomAnchor.constraint(equalTo: shareControl.bottomAnchor),
+            sharePicker.centerXAnchor.constraint(equalTo: shareControl.centerXAnchor),
+            sharePicker.centerYAnchor.constraint(equalTo: shareControl.centerYAnchor, constant: -7),
+            sharePicker.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            sharePicker.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            shareTitle.centerXAnchor.constraint(equalTo: shareControl.centerXAnchor),
+            shareTitle.bottomAnchor.constraint(equalTo: shareControl.bottomAnchor, constant: -4)
+        ])
+        let bar = UIStackView(arrangedSubviews: [microphone, camera, audioControl, shareControl, moreButton, leave])
         bar.axis = .horizontal
         bar.distribution = .fillEqually
         bar.spacing = 4
@@ -901,6 +937,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func setSharing(_ enabled: Bool) {
         isSharingScreen = enabled
+        if #available(iOS 27.0, *) {
+            share.isHidden = false
+            sharePicker.isHidden = true
+            shareTitle.isHidden = true
+        } else {
+            share.isHidden = !enabled
+            sharePicker.isHidden = enabled
+            shareTitle.isHidden = enabled
+        }
         share.configuration?.image = UIImage(systemName: enabled ? "rectangle.slash" : "rectangle.on.rectangle")
         updateControlTitles()
         share.configuration?.baseForegroundColor = enabled ? accent : .white
