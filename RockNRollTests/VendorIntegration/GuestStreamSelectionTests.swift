@@ -57,6 +57,28 @@ final class GuestStreamSelectionTests: XCTestCase {
         await assertSelection(streams, mode: .all, expected: share)
     }
 
+    func testCameraOffHidesRetainedRendererUntilCameraReturns() async {
+        let streams = GuestStreamViews()
+        let renderer = UIView()
+        let camera = streams.makeView(model: model("camera", pinned: false, share: false),
+                                      video: renderer)
+        XCTAssertFalse(renderer.isHidden)
+
+        streams.updateActiveMedia(sharing: [], cameras: ["camera"], participants: ["camera"])
+        streams.updateActiveMedia(sharing: [], cameras: [], participants: ["camera"])
+        XCTAssertTrue(renderer.isHidden, "The SDK may retain its last frame after camera-off")
+        XCTAssertTrue(camera.subviews.contains {
+            guard let label = $0 as? UILabel else { return false }
+            return label.text == "camera" && !label.isHidden
+        })
+
+        streams.updateActiveMedia(sharing: [], cameras: ["camera"], participants: ["camera"])
+        XCTAssertFalse(renderer.isHidden)
+
+        streams.updateActiveMedia(sharing: [], cameras: [], participants: [])
+        XCTAssertTrue(renderer.isHidden, "A departed participant must not leave a frozen tile")
+    }
+
     private func assertSelection(_ streams: GuestStreamViews, mode: ConferenceDisplayMode,
                                  expected: UIView?, file: StaticString = #filePath, line: UInt = #line) async {
         let selected = expectation(description: "Visible stream selection")

@@ -510,6 +510,10 @@ final class CallControls: UIView {
 
     func setPinnedPresentation(id: String?, name: String?, isShare: Bool, active: Bool) {
         let changed = pinnedID != id || pinnedName != name || pinnedIsShare != isShare
+        if pinnedActive && !active {
+            pinnedVideo.clear()
+            pinnedHasFrame = false
+        }
         if changed { pinnedHasFrame = false }
         pinnedID = id
         pinnedName = name

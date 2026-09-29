@@ -76,6 +76,10 @@ final class GuestStreamViews {
         let sharing = Set(participants.filter { $0.screenSharing.isOn }.map(\.id))
         let cameras = Set(participants.filter { $0.camera.isOn }.map(\.id))
         let active = Set(participants.map(\.id))
+        updateActiveMedia(sharing: sharing, cameras: cameras, participants: active)
+    }
+
+    func updateActiveMedia(sharing: Set<String>, cameras: Set<String>, participants active: Set<String>) {
         activeShares = sharing
         activeCameras = cameras
         activeParticipants = active
@@ -102,6 +106,11 @@ final class GuestStreamViews {
                 pinnedTarget = nil
             }
         }
+        // A renderer can retain its last frame after its camera track ends.
+        // Hide it before dropping the tile, even if the SDK keeps that view onscreen.
+        for tile in renderedTiles.values {
+            tile.view?.setMediaActive(active.contains(tile.model.id) && isActiveStream(tile.model))
+        }
         viewports = viewports.filter { sharing.contains($0.key.participant) }
         renderedTiles = renderedTiles.filter {
             active.contains($0.key.participant) && (!$0.key.isShare || sharing.contains($0.key.participant))
@@ -121,6 +130,7 @@ final class GuestStreamViews {
            tile.video === video, view.containsRenderer(video) {
             view.updatePin(name: model.name, isShare: model.isSharingScreen,
                            pinned: pinnedTarget == target, onPin: onPin)
+            view.setMediaActive(isActiveStream(model))
             view.accessibilityElementsHidden = pinStageVisible && onPinPresentation != nil
             updatePreferredVideo()
             return view
@@ -147,6 +157,7 @@ final class GuestStreamViews {
                               onPin: onPin)
         view.updatePin(name: model.name, isShare: model.isSharingScreen,
                        pinned: pinnedTarget == target, onPin: onPin)
+        view.setMediaActive(isActiveStream(model))
         view.accessibilityElementsHidden = pinStageVisible && onPinPresentation != nil
         renderedTiles[key] = RenderedTile(model: model, video: video, view: view)
         view.onVisibilityChanged = { [weak self] in self?.updatePreferredVideo() }
@@ -186,8 +197,9 @@ final class GuestStreamViews {
         // Keep a signaled stream eligible until the participant ends it.
         let available = renderedTiles.values.filter {
             displayMode != .audioOnly && $0.view != nil && $0.video != nil &&
+            (displayMode == .all || $0.model.isSharingScreen) &&
             $0.model.displayMode != .pip && !$0.model.isLocal &&
-            isActiveStream($0) &&
+            isActiveStream($0.model) &&
             (preserveBackgroundSelection || isVisible($0.view) ||
                 pinnedTarget == PinTarget(participant: $0.model.id,
                                           isShare: $0.model.isSharingScreen))
@@ -232,12 +244,11 @@ final class GuestStreamViews {
                           preferred?.model.isSharingScreen == true)
     }
 
-    private func isActiveStream(_ tile: RenderedTile) -> Bool {
-        if tile.model.isSharingScreen {
-            return activeShares?.contains(tile.model.id) ?? true
+    private func isActiveStream(_ model: JazzParticipantViewModel) -> Bool {
+        if model.isSharingScreen {
+            return activeShares?.contains(model.id) ?? true
         }
-        return displayMode == .all && tile.model.isVideoOn &&
-            (activeCameras?.contains(tile.model.id) ?? true)
+        return model.isVideoOn && (activeCameras?.contains(model.id) ?? true)
     }
 
     private func isVisible(_ view: UIView?) -> Bool {

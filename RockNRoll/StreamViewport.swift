@@ -13,6 +13,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     private let content = UIView()
     private let video: UIView
     private var correctedVideo: GuestSampleBufferView?
+    private let mediaPlaceholder = UILabel()
     private let state: StreamViewportState
     private let owner = UUID()
     private var viewportSize = CGSize.zero
@@ -100,21 +101,20 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             ])
         }
         updatePin(name: name, isShare: false, pinned: pinned, onPin: onPin)
-        if showsPlaceholder {
-            let label = UILabel()
-            label.text = name
-            label.font = .preferredFont(forTextStyle: .title2)
-            label.textColor = .white
-            label.numberOfLines = 0
-            label.textAlignment = .center
-            label.translatesAutoresizingMaskIntoConstraints = false
-            addSubview(label)
-            NSLayoutConstraint.activate([
-                label.centerXAnchor.constraint(equalTo: centerXAnchor),
-                label.centerYAnchor.constraint(equalTo: centerYAnchor),
-                label.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.9)
-            ])
-        }
+        mediaPlaceholder.text = name
+        mediaPlaceholder.font = .preferredFont(forTextStyle: .title2)
+        mediaPlaceholder.textColor = .white
+        mediaPlaceholder.numberOfLines = 0
+        mediaPlaceholder.textAlignment = .center
+        mediaPlaceholder.isHidden = true
+        mediaPlaceholder.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(mediaPlaceholder)
+        NSLayoutConstraint.activate([
+            mediaPlaceholder.centerXAnchor.constraint(equalTo: centerXAnchor),
+            mediaPlaceholder.centerYAnchor.constraint(equalTo: centerYAnchor),
+            mediaPlaceholder.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.9)
+        ])
+        setMediaActive(!showsPlaceholder)
 
         if showInfo {
             let label = UILabel()
@@ -178,7 +178,15 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
 
     func containsRenderer(_ renderer: UIView) -> Bool { renderer.superview === content }
 
+    func setMediaActive(_ active: Bool) {
+        if video.isHidden == !active { return }
+        video.isHidden = !active
+        mediaPlaceholder.isHidden = active
+        if !active { clearCorrectedVideo() }
+    }
+
     func showCorrectedVideo(_ sample: CMSampleBuffer, rotation: Int) {
+        guard !video.isHidden else { return }
         if correctedVideo == nil {
             let overlay = GuestSampleBufferView()
             overlay.isHidden = true

@@ -9,7 +9,7 @@
   <key>CFBundleDisplayName</key><string>Rock’n’Roll Guest Share</string>
   <key>CFBundlePackageType</key><string>XPC!</string>
   <key>CFBundleShortVersionString</key><string>0.2.0</string>
-  <key>CFBundleVersion</key><string>18</string>
+  <key>CFBundleVersion</key><string>19</string>
   <key>RTCAppGroupIdentifier</key><string>group.dev.vsmirn0v.conferenceguest</string>
   <key>NSExtension</key>
   <dict>
