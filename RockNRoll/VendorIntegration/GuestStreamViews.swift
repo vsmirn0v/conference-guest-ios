@@ -121,7 +121,7 @@ final class GuestStreamViews {
     func makeView(model: JazzParticipantViewModel, video: UIView) -> UIView {
         let key = Key(participant: model.id, mode: model.displayMode, isShare: model.isSharingScreen)
         let target = PinTarget(participant: model.id, isShare: model.isSharingScreen)
-        let onPin: () -> Void = { [weak self] in
+        let onPin: (() -> Void)? = model.isLocal && model.isSharingScreen ? nil : { [weak self] in
             self?.setPin(self?.pinnedTarget == target ? nil : target)
         }
         // The SDK also invokes this builder from layoutSubviews. Reparenting its
@@ -153,7 +153,10 @@ final class GuestStreamViews {
                               name: model.name, showInfo: model.shouldShowParticipantInfo,
                               microphoneOn: model.isAudioOn, pinned: model.isPinned,
                               watermark: watermark,
-                              showsPlaceholder: !model.isVideoOn && !model.isSharingScreen,
+                              showsPlaceholder: !model.isVideoOn && !model.isSharingScreen ||
+                                  model.isLocal && model.isSharingScreen,
+                              placeholderText: model.isLocal && model.isSharingScreen ?
+                                  "Sharing your screen\nOpen another app to show it" : nil,
                               onPin: onPin)
         view.updatePin(name: model.name, isShare: model.isSharingScreen,
                        pinned: pinnedTarget == target, onPin: onPin)
@@ -172,7 +175,7 @@ final class GuestStreamViews {
             tile.view?.updatePin(name: tile.model.name, isShare: key.isShare,
                                  pinned: target == PinTarget(participant: key.participant,
                                                              isShare: key.isShare),
-                                 onPin: { [weak self] in
+                                 onPin: tile.model.isLocal && key.isShare ? nil : { [weak self] in
                 let selected = PinTarget(participant: key.participant, isShare: key.isShare)
                 self?.setPin(self?.pinnedTarget == selected ? nil : selected)
             })
@@ -246,6 +249,9 @@ final class GuestStreamViews {
 
     private func isActiveStream(_ model: JazzParticipantViewModel) -> Bool {
         if model.isSharingScreen {
+            // The SDK's local broadcast renderer is a solid red preview; the
+            // ReplayKit extension still sends the real screen to other peers.
+            if model.isLocal { return false }
             return activeShares?.contains(model.id) ?? true
         }
         return model.isVideoOn && (activeCameras?.contains(model.id) ?? true)

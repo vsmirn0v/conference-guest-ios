@@ -30,6 +30,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     init(video: UIView, state: StreamViewportState, zoomable: Bool,
          name: String, showInfo: Bool, microphoneOn: Bool, pinned: Bool,
          watermark: String?, showsPlaceholder: Bool = false,
+         placeholderText: String? = nil,
          onPin: (() -> Void)? = nil) {
         self.video = video
         self.state = state
@@ -101,7 +102,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             ])
         }
         updatePin(name: name, isShare: false, pinned: pinned, onPin: onPin)
-        mediaPlaceholder.text = name
+        mediaPlaceholder.text = placeholderText ?? name
         mediaPlaceholder.font = .preferredFont(forTextStyle: .title2)
         mediaPlaceholder.textColor = .white
         mediaPlaceholder.numberOfLines = 0

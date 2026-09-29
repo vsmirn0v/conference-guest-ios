@@ -79,6 +79,25 @@ final class GuestStreamSelectionTests: XCTestCase {
         XCTAssertTrue(renderer.isHidden, "A departed participant must not leave a frozen tile")
     }
 
+    func testLocalBroadcastUsesGuidanceInsteadOfSDKRedPreview() {
+        let streams = GuestStreamViews()
+        let localRenderer = UIView()
+        let local = streams.makeView(model: model("self", pinned: false, share: true, local: true),
+                                     video: localRenderer)
+        let remoteRenderer = UIView()
+        _ = streams.makeView(model: model("peer", pinned: false, share: true),
+                             video: remoteRenderer)
+        streams.updateActiveMedia(sharing: ["self", "peer"], cameras: [],
+                                  participants: ["self", "peer"])
+
+        XCTAssertTrue(localRenderer.isHidden)
+        XCTAssertFalse(remoteRenderer.isHidden)
+        XCTAssertTrue(local.subviews.contains {
+            guard let label = $0 as? UILabel else { return false }
+            return label.text == "Sharing your screen\nOpen another app to show it" && !label.isHidden
+        })
+    }
+
     private func assertSelection(_ streams: GuestStreamViews, mode: ConferenceDisplayMode,
                                  expected: UIView?, file: StaticString = #filePath, line: UInt = #line) async {
         let selected = expectation(description: "Visible stream selection")
@@ -91,9 +110,9 @@ final class GuestStreamSelectionTests: XCTestCase {
         streams.onPreferredVideo = nil
     }
 
-    private func model(_ id: String, pinned: Bool, share: Bool) -> JazzParticipantViewModel {
+    private func model(_ id: String, pinned: Bool, share: Bool, local: Bool = false) -> JazzParticipantViewModel {
         JazzParticipantViewModel(name: id, isAudioOn: false, isVideoOn: !share, isPinned: pinned,
-            isSharingScreen: share, isLocal: false, id: id, isDominantSpeaker: false,
+            isSharingScreen: share, isLocal: local, id: id, isDominantSpeaker: false,
             shouldShowParticipantInfo: true, isZoomable: share, watermarkState: .hidden, displayMode: .speaker)
     }
 }

@@ -52,6 +52,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private var hasNewMessages = false
     private var isRenderingTranscript = false
     private var isCompactForKeyboard = false
+    private var keyboardPresented = false
     private let docked: Bool
     var onClose: (() -> Void)?
 
@@ -145,6 +146,18 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
                 }
                 .store(in: &subscriptions)
         }
+        NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.keyboardPresented = true
+                self?.view.setNeedsLayout()
+            }.store(in: &subscriptions)
+        NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.keyboardPresented = false
+                self?.view.setNeedsLayout()
+            }.store(in: &subscriptions)
         renderMode()
         updateComposer()
     }
@@ -176,13 +189,16 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         } else if sidePanel {
             panelSideWidth.constant = min(420, max(320, view.bounds.width * 0.34))
         }
-        let keyboardVisible = panel.keyboardLayoutGuide.layoutFrame.minY <
+        let keyboardVisible = keyboardPresented || panel.keyboardLayoutGuide.layoutFrame.minY <
             panel.bounds.height - panel.safeAreaInsets.bottom - 20
-        let compact = call != nil && sidePanel && keyboardVisible
+        let usableHeight = panel.keyboardLayoutGuide.layoutFrame.minY - panel.safeAreaInsets.top
+        let compact = call != nil && keyboardVisible &&
+            (sidePanel || usableHeight < 320 || panel.bounds.height < 450)
         if compact != isCompactForKeyboard {
             isCompactForKeyboard = compact
             header.isHidden = compact
             mode.isHidden = compact
+            hint.isHidden = compact
             callStrip.viewWithTag(29)?.isHidden = !compact
             if let call {
                 renderCallState(microphone: call.microphoneOn, camera: call.cameraOn,

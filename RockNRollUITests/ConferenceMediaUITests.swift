@@ -2,13 +2,14 @@ import UIKit
 import XCTest
 
 final class ConferenceMediaUITests: XCTestCase {
-    func testWideHomeKeepsJoinAndSavedRoomsSideBySide() {
+    func testWideHomeKeepsJoinAndSavedRoomsSideBySide() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "home"
         app.launch()
         defer { XCUIDevice.shared.orientation = .portrait }
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertGreaterThan(app.frame.width, app.frame.height, "The iPad must rotate for this layout check")
+        guard app.frame.width >= 700 else { throw XCTSkip("Requires a wide window") }
         let join = app.buttons["Join jam"]
         let favorite = app.buttons.matching(
             NSPredicate(format: "label BEGINSWITH %@", "Rejoin Open rehearsal")
@@ -20,13 +21,14 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Profile and settings"].isHittable)
     }
 
-    func testWideJamDocksConversationAndKeepsControlsVisible() {
+    func testWideJamDocksConversationAndKeepsControlsVisible() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
         app.launch()
         defer { XCUIDevice.shared.orientation = .portrait }
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertGreaterThan(app.frame.width, app.frame.height, "The iPad must rotate for this layout check")
+        guard app.frame.width >= 700 else { throw XCTSkip("Requires a wide window") }
         let chat = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Chat")).firstMatch
         XCTAssertTrue(chat.waitForExistence(timeout: 10))
         chat.tap()
@@ -1142,6 +1144,9 @@ final class ConferenceMediaUITests: XCTestCase {
     }
 
     func testCommunityJamHoldMarksMissedTime() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("CallKit hold lifecycle requires a physical iPhone")
+        #endif
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "iPhone Hold QA"
