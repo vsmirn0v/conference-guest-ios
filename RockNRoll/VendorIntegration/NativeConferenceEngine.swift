@@ -19,6 +19,9 @@ final class NativeConferenceEngine: CallEngine {
     private var networkMonitor: NWPathMonitor?
     private let networkQueue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.network")
     private var activeCoordinator: JazzActiveConferenceCoordinator?
+    private let localSharePreview = LocalSharePreview()
+    private let localPreviewReceiver = LocalSharePreviewReceiver()
+    private var localPreviewEpoch = UUID()
     private var screenCapture: GuestScreenCapture?
     private var screenCaptureStop: Task<Void, Never>?
     private var isSystemHeld = false { didSet { updatePiPMicrophoneStatus() } }
@@ -129,12 +132,19 @@ final class NativeConferenceEngine: CallEngine {
             self?.activeControls?.setFloatingVideoAvailable(available)
         }
         streamViews.onPreferredVideo = { [weak self] viewport, name, isShare in
-            self?.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare)
+            guard let self else { return }
+            self.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare)
+            if self.streamViews.pinnedTarget == nil {
+                let show = self.localSharePreview.active && viewport != nil
+                self.activeControls?.setPinnedPresentation(id: show ? "local-share-stage" : nil,
+                    name: show ? name : nil, isShare: isShare, active: show, automatic: true)
+            }
         }
         streamViews.onPinPresentation = { [weak self] target, name, active in
-            self?.activeControls?.setPinnedPresentation(id: target?.participant, name: name,
-                                                        isShare: target?.isShare ?? false,
-                                                        active: active)
+            guard let self else { return }
+            if target == nil && self.localSharePreview.active { return }
+            self.activeControls?.setPinnedPresentation(id: target?.participant, name: name,
+                                                       isShare: target?.isShare ?? false, active: active)
         }
         streamViews.onShareOffer = { [weak self] name, target in
             self?.activeControls?.setShareOffer(name: name)
@@ -508,7 +518,7 @@ final class NativeConferenceEngine: CallEngine {
         #if canImport(ScreenCaptureKit)
         if #available(iOS 27.0, *) {
             if screenCapture == nil {
-                screenCapture = NativeGuestScreenCapture { [weak self] message in
+                screenCapture = NativeGuestScreenCapture(preview: localSharePreview) { [weak self] message in
                     self?.activeControls?.showMediaStatus(message)
                 }
             }
@@ -519,6 +529,13 @@ final class NativeConferenceEngine: CallEngine {
         if ProcessInfo.processInfo.isiOSAppOnMac {
             activeControls?.showMediaStatus("Screen sharing requires macOS 27 or later.")
         } else if GuestBroadcastStop.prepare() {
+            let epoch = UUID()
+            localPreviewEpoch = epoch
+            localSharePreview.onCapturePolicyChanged = { [weak self] in self?.localPreviewReceiver.setWanted($0) }
+            localPreviewReceiver.start { [weak self] image in
+                guard let self, self.localPreviewEpoch == epoch else { return }
+                self.localSharePreview.acceptThumbnail(image)
+            }
             activeCoordinator?.toggleShareScreen(isOn: true)
         } else {
             activeControls?.showMediaStatus("Could not prepare screen sharing. Please try again.")
@@ -526,6 +543,9 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func stopScreenSharing() async {
+        localPreviewEpoch = UUID()
+        localSharePreview.end()
+        localPreviewReceiver.stop()
         #if DEBUG
         print("Guest capture stop: native=\(screenCapture != nil), pending=\(screenCaptureStop != nil)")
         #endif
@@ -613,7 +633,7 @@ final class NativeConferenceEngine: CallEngine {
             self.roomTitleSubscription = state.$conferenceTitle.receive(on: DispatchQueue.main)
                 .sink { [weak self] in self?.onRoomTitle?($0) }
             streams.observe(state)
-            let controls = CallControls(state: state, coordinator: coordinator, router: router,
+            let controls = CallControls(localPreview: self.localSharePreview, state: state, coordinator: coordinator, router: router,
                                         catchUp: self.catchUp,
                                         chat: self.chat ?? ChatStore(),
                                         initialDisplayMode: self.displayMode,

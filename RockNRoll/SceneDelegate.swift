@@ -52,6 +52,16 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                 return
             }
             let invitation = URL(string: "https://rock.glowsoft.ru/jams/test")!
+            if fixture == "ambiguous-link" {
+                let marker = UUID().uuidString
+                for host in ["meet-one.example.test", "meet-two.example.test"] {
+                    model.history.record(url: URL(string: "https://\(host)/team/\(marker)?psw=fixture")!,
+                        title: "Rehearsal", identifier: marker)
+                }
+                model.guestWebsiteOrigin = "https://meet-one.example.test"
+                model.receive(url: URL(string: "jcp://jazz?code=\(marker)&psw=fixture")!)
+                return
+            }
             if fixture == "home" {
                 let marker = ProcessInfo.processInfo.environment["CONFERENCE_TEST_FIXTURE_ROOM_ID"] ?? "test"
                 let savedURL = URL(string: "https://meeting.example.test/calls/\(marker)?psw=fixture")!
@@ -123,9 +133,34 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                                                                          call: controls)
             return
         }
-        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_LAYOUT_FIXTURE"] == "rock" {
-            controller.present(RockCallViewController(title: "Open rehearsal",
-                catchUp: model.catchUpStore, chat: model.chat), animated: false)
+        if let fixture = ProcessInfo.processInfo.environment["CONFERENCE_TEST_LAYOUT_FIXTURE"],
+           fixture == "rock" || fixture == "local-share" {
+            model.chat.canSend = true
+            model.chat.onSend = { [weak chat = model.chat] message in
+                chat?.append(ChatEntry(id: UUID().uuidString, sender: "You", text: message,
+                                       sentAt: Date(), isOwn: true))
+            }
+            model.catchUpStore.enter(roomKey: "layout-fixture")
+            model.catchUpStore.begin(.anotherCall)
+            model.catchUpStore.end(.anotherCall)
+            let call = RockCallViewController(title: "Open rehearsal",
+                catchUp: model.catchUpStore, chat: model.chat)
+            call.fixtureParticipants = [ParticipantStatus(id: "local", name: "Rock QA", isLocal: true,
+                microphoneOn: false, cameraOn: false, screenShareOn: false, isSpeaking: false,
+                videoKey: nil, shareKey: nil)]
+            controller.present(call, animated: false)
+            if fixture == "local-share" {
+                call.localSharePreview.begin()
+                call.localSharePreview.setForeground(false)
+                let renderer = UIGraphicsImageRenderer(size: CGSize(width: 320, height: 180))
+                call.localSharePreview.acceptThumbnail(renderer.image { context in
+                    UIColor.systemIndigo.setFill(); context.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
+                    NSString(string: "Shared rehearsal notes").draw(at: CGPoint(x: 18, y: 60),
+                        withAttributes: [.font: UIFont.systemFont(ofSize: 22), .foregroundColor: UIColor.white])
+                })
+                call.localSharePreview.setForeground(true)
+                call.onShare = { [weak call] enabled in if !enabled { call?.localSharePreview.end() } }
+            }
             return
         }
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_LAYOUT_FIXTURE"] == "rock-unread" {

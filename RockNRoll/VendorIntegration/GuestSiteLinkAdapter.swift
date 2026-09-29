@@ -9,7 +9,7 @@ enum GuestSiteLinkAdapter {
     }
 
     static func invitation(from url: URL, websiteOrigin: String,
-                           recentInvitations: [URL] = []) throws -> URL {
+                           recentInvitations: [URL] = [], selectedWebsite: String? = nil) throws -> URL {
         guard let link = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let scheme = link.scheme?.lowercased(),
               let linkType = link.host?.lowercased(),
@@ -62,8 +62,18 @@ enum GuestSiteLinkAdapter {
 
         let matches = recentInvitations.compactMap(guestTarget)
             .filter { $0.roomID == code && $0.password == password }
-            .map(\.invitationURL)
-        if matches.count == 1 { return matches[0] }
+        // Keep the original path for sites whose invitation is not /calls/{id}.
+        if let selectedWebsite {
+            let selected = try origin(selectedWebsite)
+            if let match = matches.first(where: { $0.originURL == selected }) {
+                return match.invitationURL
+            }
+            return try makeInvitation(code: code, password: password, origin: selected)
+        }
+        let origins = Array(Set(matches.map(\.originURL)))
+            .sorted { $0.absoluteString < $1.absoluteString }
+        if origins.count > 1 { throw GuestSiteLinkError.ambiguousWebsites(origins) }
+        if let match = matches.first { return match.invitationURL }
 
         guard let savedOrigin = try? origin(websiteOrigin) else {
             throw GuestSiteLinkError.websiteNeeded
@@ -120,12 +130,26 @@ enum GuestSiteLinkAdapter {
 
 enum GuestSiteLinkError: LocalizedError, Equatable {
     case invalidLink, conflictingHosts, websiteNeeded
+    case ambiguousWebsites([URL])
+
+    var requiresWebsite: Bool {
+        switch self {
+        case .websiteNeeded, .ambiguousWebsites: true
+        default: false
+        }
+    }
+
+    var candidateOrigins: [URL]? {
+        if case .ambiguousWebsites(let origins) = self { return origins }
+        return nil
+    }
 
     var errorDescription: String? {
         switch self {
         case .invalidLink: "This meeting app link is incomplete or invalid."
         case .conflictingHosts: "This meeting link names two different websites."
         case .websiteNeeded: "Choose the meeting website to open this link."
+        case .ambiguousWebsites: "This room is saved on more than one website. Choose where to join."
         }
     }
 }

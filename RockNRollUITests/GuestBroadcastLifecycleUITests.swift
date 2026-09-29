@@ -37,13 +37,26 @@ final class GuestBroadcastLifecycleUITests: XCTestCase {
         print("SHARE_LIFECYCLE_RECEIVER_CHECK")
         sleep(20) // Leave time to verify real Home Screen pixels at the receiver.
         app.activate()
+        XCTAssertTrue(app.buttons["Stop sharing screen"].exists)
+        XCTAssertTrue(app.staticTexts["Last shared frame · Preview paused"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Local shared screen thumbnail"].isHittable)
+        XCTAssertLessThanOrEqual(app.buttons["Local shared screen thumbnail"].frame.height, 85)
+        XCTAssertLessThan(app.otherElements["Local sharing preview card"].frame.height, 250)
         let sharing = XCTAttachment(screenshot: app.screenshot())
         sharing.name = "Active guest capture"
         sharing.lifetime = .keepAlways
         add(sharing)
-        XCTAssertTrue(app.buttons["Stop sharing screen"].exists)
+        app.buttons["Enlarge local sharing preview"].tap()
+        XCTAssertTrue(app.buttons["Close preview"].waitForExistence(timeout: 5))
+        app.buttons["Close preview"].tap()
+        app.buttons["Hide local preview"].tap()
+        XCTAssertFalse(app.buttons["Local shared screen thumbnail"].exists)
+        XCTAssertTrue(app.buttons["Stop local screen sharing"].isHittable)
+        app.buttons["Show local preview"].tap()
+        XCTAssertTrue(app.buttons["Local shared screen thumbnail"].isHittable)
         app.buttons["Leave"].tap()
         XCTAssertTrue(app.buttons["Join jam"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["Local shared screen thumbnail"].exists)
         sleep(15) // Catch the delayed ReplayKit error from the original regression.
         XCTAssertFalse(system.alerts.containing(NSPredicate(format: "label CONTAINS[c] 'Screen'")).firstMatch.exists)
         XCTAssertFalse(app.buttons["Share Entire Screen"].exists)

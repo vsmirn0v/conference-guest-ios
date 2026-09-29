@@ -156,7 +156,7 @@ final class GuestStreamViews {
                               showsPlaceholder: !model.isVideoOn && !model.isSharingScreen ||
                                   model.isLocal && model.isSharingScreen,
                               placeholderText: model.isLocal && model.isSharingScreen ?
-                                  "Sharing your screen\nOpen another app to show it" : nil,
+                                  "" : nil,
                               onPin: onPin)
         view.updatePin(name: model.name, isShare: model.isSharingScreen,
                        pinned: pinnedTarget == target, onPin: onPin)

@@ -1,11 +1,13 @@
 import JazzSDKScreenShare
 import ReplayKit
+import ImageIO
 
 final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
     private lazy var screenShare = JazzScreenShare { [weak self] error in
         self?.stop(reason: error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                    ? "The meeting has ended." : error.localizedDescription)
     }
+    private let preview = LocalSharePreviewSender()
     private let stopLock = NSLock()
     private var stopped = false
 
@@ -34,6 +36,11 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
         let shouldStop = stopped
         stopLock.unlock()
         guard !shouldStop else { return }
+        if sampleBufferType == .video, let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) {
+            let orientation = (CMGetAttachment(sampleBuffer, key: RPVideoSampleOrientationKey as CFString,
+                                                attachmentModeOut: nil) as? NSNumber)?.uint32Value ?? 1
+            preview.send(pixels, orientation: CGImagePropertyOrientation(rawValue: orientation) ?? .up)
+        }
         screenShare.processSampleBuffer(sampleBuffer, with: sampleBufferType)
     }
 

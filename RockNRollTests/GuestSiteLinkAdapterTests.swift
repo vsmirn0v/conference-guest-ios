@@ -33,6 +33,27 @@ final class GuestSiteLinkAdapterTests: XCTestCase {
         XCTAssertEqual(result, history[0])
     }
 
+    func testAmbiguousHistoryRequiresChoiceEvenWithSavedWebsite() throws {
+        let link = URL(string: "jcp://jazz?code=room-1&psw=secret")!
+        let history = [URL(string: "\(first)/calls/room-1?psw=secret")!,
+                       URL(string: "\(second)/team/room-1?psw=secret")!]
+        XCTAssertThrowsError(try GuestSiteLinkAdapter.invitation(from: link,
+            websiteOrigin: first, recentInvitations: history)) {
+            XCTAssertEqual($0 as? GuestSiteLinkError,
+                           .ambiguousWebsites([URL(string: self.first)!, URL(string: self.second)!]))
+        }
+        let selected = try GuestSiteLinkAdapter.invitation(from: link, websiteOrigin: first,
+            recentInvitations: history, selectedWebsite: second)
+        XCTAssertEqual(selected, history[1])
+    }
+
+    func testRepeatedHistoryOnSameWebsiteIsNotAmbiguous() throws {
+        let link = URL(string: "jcp://jazz?code=room-1&psw=secret")!
+        let invitation = URL(string: "\(second)/team/room-1?psw=secret")!
+        XCTAssertEqual(try GuestSiteLinkAdapter.invitation(from: link, websiteOrigin: first,
+            recentInvitations: [invitation, invitation]), invitation)
+    }
+
     func testMissingWebsiteRequiresSelection() {
         let link = URL(string: "jcp://jazz?code=room-1&psw=secret")!
         XCTAssertThrowsError(try GuestSiteLinkAdapter.invitation(from: link, websiteOrigin: "")) {

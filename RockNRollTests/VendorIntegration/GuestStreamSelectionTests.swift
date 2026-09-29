@@ -79,7 +79,7 @@ final class GuestStreamSelectionTests: XCTestCase {
         XCTAssertTrue(renderer.isHidden, "A departed participant must not leave a frozen tile")
     }
 
-    func testLocalBroadcastUsesGuidanceInsteadOfSDKRedPreview() {
+    func testLocalBroadcastDoesNotPromoteSDKRedPreview() {
         let streams = GuestStreamViews()
         let localRenderer = UIView()
         let local = streams.makeView(model: model("self", pinned: false, share: true, local: true),
@@ -92,10 +92,10 @@ final class GuestStreamSelectionTests: XCTestCase {
 
         XCTAssertTrue(localRenderer.isHidden)
         XCTAssertFalse(remoteRenderer.isHidden)
-        XCTAssertTrue(local.subviews.contains {
+        XCTAssertFalse(local.subviews.contains {
             guard let label = $0 as? UILabel else { return false }
             return label.text == "Sharing your screen\nOpen another app to show it" && !label.isHidden
-        })
+        }, "Local sharing confidence belongs in the compact card, not a full-stage reminder")
     }
 
     private func assertSelection(_ streams: GuestStreamViews, mode: ConferenceDisplayMode,

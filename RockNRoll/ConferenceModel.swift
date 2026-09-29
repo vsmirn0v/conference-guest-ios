@@ -90,40 +90,53 @@ final class ConferenceModel: ObservableObject {
     func receive(url: URL) {
         do {
             let target = try destination(for: url.absoluteString)
-            let autoJoin = GuestSiteLinkAdapter.handles(url)
-            if isLeaving {
-                replacementAfterLeave = target
-                replacementAutoJoin = autoJoin
-            } else if isJoining || isInConference {
-                guard target != activeRoute else { return }
-                if autoJoin {
-                    replacementAfterLeave = target
-                    replacementAutoJoin = true
-                    pendingTarget = nil
-                    showSwitchConfirmation = false
-                    leave()
-                } else {
-                    pendingTarget = target
-                    showSwitchConfirmation = true
-                }
-            } else {
-                set(target: target)
-                if autoJoin { startJoin(target) }
-            }
+            receive(target: target, autoJoin: GuestSiteLinkAdapter.handles(url))
         } catch {
-            let needsWebsite = error as? GuestSiteLinkError == .websiteNeeded
+            let needsWebsite = (error as? GuestSiteLinkError)?.requiresWebsite == true
             if needsWebsite {
                 if isJoining || isInConference || isLeaving {
-                    presentWebsitePicker(for: url)
+                    presentWebsitePicker(for: url, origins: websiteOrigins(for: error))
                 } else {
                     siteSelection = LinkSiteSelection(link: url,
-                        rememberedOrigins: GuestSiteLinkAdapter.rememberedOrigins(
-                            from: history.rooms.map(\.invitationURL)))
+                        rememberedOrigins: websiteOrigins(for: error))
                 }
             }
             status = error.localizedDescription
             statusIsError = !needsWebsite
         }
+    }
+
+    private func receive(target: JoinDestination, autoJoin: Bool) {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_RESOLVE_ONLY"] == "1" {
+            set(target: target)
+            return
+        }
+        #endif
+        if isLeaving {
+            replacementAfterLeave = target
+            replacementAutoJoin = autoJoin
+        } else if isJoining || isInConference {
+            guard target != activeRoute else { return }
+            if autoJoin {
+                replacementAfterLeave = target
+                replacementAutoJoin = true
+                pendingTarget = nil
+                showSwitchConfirmation = false
+                leave()
+            } else {
+                pendingTarget = target
+                showSwitchConfirmation = true
+            }
+        } else {
+            set(target: target)
+            if autoJoin { startJoin(target) }
+        }
+    }
+
+    private func websiteOrigins(for error: Error) -> [URL] {
+        (error as? GuestSiteLinkError)?.candidateOrigins ??
+            GuestSiteLinkAdapter.rememberedOrigins(from: history.rooms.map(\.invitationURL))
     }
 
     func join() {
@@ -132,12 +145,11 @@ final class ConferenceModel: ObservableObject {
             let target = try destination(for: invite)
             startJoin(target)
         } catch {
-            let needsWebsite = error as? GuestSiteLinkError == .websiteNeeded
+            let needsWebsite = (error as? GuestSiteLinkError)?.requiresWebsite == true
             if needsWebsite,
                let url = URL(string: invite.trimmingCharacters(in: .whitespacesAndNewlines)) {
                 siteSelection = LinkSiteSelection(link: url,
-                    rememberedOrigins: GuestSiteLinkAdapter.rememberedOrigins(
-                        from: history.rooms.map(\.invitationURL)))
+                    rememberedOrigins: websiteOrigins(for: error))
             }
             status = error.localizedDescription
             statusIsError = !needsWebsite
@@ -148,11 +160,12 @@ final class ConferenceModel: ObservableObject {
     func chooseWebsite(_ website: String) -> Bool {
         guard let selection = siteSelection else { return false }
         do {
-            _ = try GuestSiteLinkAdapter.invitation(from: selection.link,
-                websiteOrigin: website, recentInvitations: history.rooms.map(\.invitationURL))
+            let invitation = try GuestSiteLinkAdapter.invitation(from: selection.link,
+                websiteOrigin: website, recentInvitations: history.rooms.map(\.invitationURL),
+                selectedWebsite: website)
             guestWebsiteOrigin = website.hasPrefix("https://") ? website : "https://\(website)"
             siteSelection = nil
-            receive(url: selection.link)
+            receive(target: try destination(for: invitation.absoluteString), autoJoin: true)
             return true
         } catch {
             status = error.localizedDescription
@@ -161,11 +174,10 @@ final class ConferenceModel: ObservableObject {
         }
     }
 
-    private func presentWebsitePicker(for link: URL) {
+    private func presentWebsitePicker(for link: URL, origins: [URL]) {
         websiteLinkAwaitingSelection = link
-        guard activeWebsiteWindow == nil,
-              let scene = container?.view.window?.windowScene else { return }
-        let origins = GuestSiteLinkAdapter.rememberedOrigins(from: history.rooms.map(\.invitationURL))
+        if activeWebsiteWindow != nil { dismissWebsiteWindow() }
+        guard let scene = container?.view.window?.windowScene else { return }
         let picker = UIHostingController(rootView: MeetingWebsiteSelectionView(
             rememberedOrigins: origins,
             onChoose: { [weak self] website in
@@ -173,13 +185,13 @@ final class ConferenceModel: ObservableObject {
                     return "Jam view is unavailable."
                 }
                 do {
-                    _ = try GuestSiteLinkAdapter.invitation(from: link,
+                    let invitation = try GuestSiteLinkAdapter.invitation(from: link,
                         websiteOrigin: website,
-                        recentInvitations: self.history.rooms.map(\.invitationURL))
+                        recentInvitations: self.history.rooms.map(\.invitationURL), selectedWebsite: website)
                     self.guestWebsiteOrigin = website.hasPrefix("https://") ? website : "https://\(website)"
                     self.websiteLinkAwaitingSelection = nil
                     self.dismissWebsiteWindow()
-                    self.receive(url: link)
+                    self.receive(target: try self.destination(for: invitation.absoluteString), autoJoin: true)
                     return nil
                 } catch {
                     return error.localizedDescription

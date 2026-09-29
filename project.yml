@@ -24,6 +24,7 @@ targets:
     sources:
       - path: RockNRoll
       - path: Shared/GuestBroadcastStop.swift
+      - path: Shared/LocalSharePreviewTransport.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
     dependencies:
       - package: JazzSDK
@@ -74,6 +75,7 @@ targets:
     sources:
       - path: GuestBroadcast/SampleHandler.swift
       - path: Shared/GuestBroadcastStop.swift
+      - path: Shared/LocalSharePreviewTransport.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
     dependencies:
       - package: JazzSDK

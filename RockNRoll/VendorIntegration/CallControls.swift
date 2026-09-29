@@ -23,6 +23,9 @@ final class CallControls: UIView {
     @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
     @objc private func keyFitScreen() { fitZoomedContent() }
     private var subscriptions = Set<AnyCancellable>()
+    private let localPreview: LocalSharePreview
+    private let localShareCard: LocalSharePreviewCard
+    private var localShareConstraints: [NSLayoutConstraint] = []
     private let microphone = UIButton(type: .system)
     private let camera = UIButton(type: .system)
     private let share = UIButton(type: .system)
@@ -82,7 +85,7 @@ final class CallControls: UIView {
             (displayMode == .screenShares ? hasScreenShare : hasScreenShare || hasVideo)
     }
 
-    init(state: JazzActiveConferenceState, coordinator: JazzActiveConferenceCoordinator,
+    init(localPreview: LocalSharePreview, state: JazzActiveConferenceState, coordinator: JazzActiveConferenceCoordinator,
          router: JazzActiveConferenceRouter,
          catchUp: CatchUpStore, chat: ChatStore,
          initialDisplayMode: ConferenceDisplayMode,
@@ -93,9 +96,12 @@ final class CallControls: UIView {
          onLeave: @escaping () -> Void, onScreenShare: @escaping (Bool) -> Void,
          onMicrophoneState: @escaping (Bool) -> Void,
          onCameraState: @escaping (Bool) -> Void) {
+        self.localPreview = localPreview
+        self.localShareCard = LocalSharePreviewCard(model: localPreview)
         self.onFloat = onFloat
         self.onFloatingPreferenceChanged = onFloatingPreferenceChanged
         super.init(frame: .zero)
+        localShareCard.onStop = { onScreenShare(false) }
         refreshMoreMenu = { [weak self] in
             self?.configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
         }
@@ -464,6 +470,7 @@ final class CallControls: UIView {
         state.$screenShareState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
             let isSharing = media == .on
+            if isSharing { self.localPreview.begin() } else { self.localPreview.end() }
             self.share.configuration?.image = UIImage(systemName: isSharing ? "rectangle.slash" : "rectangle.on.rectangle")
             self.share.configuration?.title = isSharing ? "Stop share" : "Share"
             self.share.configuration?.baseForegroundColor = isSharing ?
@@ -509,7 +516,7 @@ final class CallControls: UIView {
 
     required init?(coder: NSCoder) { nil }
 
-    func setPinnedPresentation(id: String?, name: String?, isShare: Bool, active: Bool) {
+    func setPinnedPresentation(id: String?, name: String?, isShare: Bool, active: Bool, automatic: Bool = false) {
         let changed = pinnedID != id || pinnedName != name || pinnedIsShare != isShare
         if pinnedActive && !active {
             pinnedVideo.clear()
@@ -526,6 +533,7 @@ final class CallControls: UIView {
         pinnedStatus.text = active ? "Waiting for \(name ?? "Musician")'s \(isShare ? "screen share" : "video")…" :
             "\(name ?? "Musician") · \(isShare ? "Screen share" : "Camera") unavailable · Pinned"
         pinnedStatus.isHidden = active && pinnedHasFrame
+        pinnedUnpin.isHidden = automatic
         pinnedUnpin.accessibilityLabel = "Unpin \(name ?? "Musician") \(isShare ? "screen share" : "video")"
         if changed {
             pinnedVideo.clear()
@@ -534,9 +542,9 @@ final class CallControls: UIView {
             if name != nil {
                 let viewport = StreamViewport(video: pinnedVideo, state: StreamViewportState(),
                     zoomable: isShare, name: name ?? "Musician", showInfo: true,
-                    microphoneOn: true, pinned: true, watermark: nil)
+                    microphoneOn: true, pinned: !automatic, watermark: nil)
                 viewport.updatePin(name: name ?? "Musician", isShare: isShare,
-                                   pinned: true, onPin: nil)
+                                   pinned: !automatic, onPin: nil)
                 viewport.translatesAutoresizingMaskIntoConstraints = false
                 pinnedBackdrop.insertSubview(viewport, at: 0)
                 NSLayoutConstraint.activate([
@@ -563,6 +571,7 @@ final class CallControls: UIView {
             pinnedBackdrop.bottomAnchor.constraint(equalTo: window.safeAreaLayoutGuide.bottomAnchor, constant: -72)
         ]
         NSLayoutConstraint.activate(pinnedBackdropConstraints)
+        window.bringSubviewToFront(localShareCard)
     }
 
     private func restorePinnedStageWhenDetached() {
@@ -662,11 +671,30 @@ final class CallControls: UIView {
         if let orientationObserver { NotificationCenter.default.removeObserver(orientationObserver) }
         NSLayoutConstraint.deactivate(pinnedBackdropConstraints)
         pinnedBackdrop.removeFromSuperview()
+        localShareCard.removeFromSuperview()
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if window == nil { restorePinnedStageWhenDetached(); return }
+        if window == nil {
+            restorePinnedStageWhenDetached()
+            NSLayoutConstraint.deactivate(localShareConstraints)
+            localShareCard.removeFromSuperview()
+            return
+        }
+        if let window, localShareCard.superview !== window {
+            NSLayoutConstraint.deactivate(localShareConstraints)
+            localShareCard.removeFromSuperview()
+            localShareCard.translatesAutoresizingMaskIntoConstraints = false
+            window.addSubview(localShareCard)
+            localShareConstraints = [
+                localShareCard.leadingAnchor.constraint(equalTo: window.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+                localShareCard.bottomAnchor.constraint(equalTo: window.safeAreaLayoutGuide.bottomAnchor, constant: -80),
+                localShareCard.widthAnchor.constraint(equalToConstant: 216),
+                localShareCard.topAnchor.constraint(greaterThanOrEqualTo: window.safeAreaLayoutGuide.topAnchor, constant: 70)
+            ]
+            NSLayoutConstraint.activate(localShareConstraints)
+        }
         alignBarWithVisibleWindow()
         if window != nil { becomeFirstResponder() }
         if pinnedName != nil { movePinnedStageAboveSDKVideo() }
@@ -674,6 +702,7 @@ final class CallControls: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        localShareCard.refreshLayout()
         alignBarWithVisibleWindow()
     }
 

@@ -26,6 +26,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private var hasConnected = false { didSet { updatePiPMicrophoneStatus() } }
     private var displayMode: ConferenceDisplayMode = .all
     private var refreshScheduled = false
+    private let videoSubscriptions = VideoSubscriptionCoordinator<ObjectIdentifier>()
     #if DEBUG
     private var testHoldScheduled = false
     private var directMediaForTesting = false
@@ -37,6 +38,9 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         self.chat = chat
         self.systemCall = systemCall
         super.init()
+        videoSubscriptions.onError = { [weak self] error in
+            self?.onMediaStatus?("Video preference could not update: \(error.localizedDescription)")
+        }
         audio.onStatus = { [weak self] in self?.onMediaStatus?($0) }
         audio.onRouteChanged = { [weak self] in
             guard let self else { return }
@@ -58,6 +62,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         guard !hasJoinStarted else { return }
         self.container = container
         self.credentials = credentials
+        videoSubscriptions.reset()
         self.room = Room(delegate: self)
         self.leaveRequested = false
         self.hasConnected = false
@@ -346,6 +351,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         leaveRequested = true
         hasConnected = false
         refreshScheduled = false
+        videoSubscriptions.reset()
         chat.clear()
         joinTask?.cancel()
         joinTask = nil
@@ -422,6 +428,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             self.callView?.setConnectionRecovering(false)
             self.catchUp.end(.connection)
             self.applyMediaIntent()
+            self.videoSubscriptions.reset()
             self.refresh(room)
             self.onEvent?(.active)
         }
@@ -496,17 +503,17 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     }
 
     private func updateVideoSubscriptions(in room: Room) {
-        for participant in room.remoteParticipants.values {
-            for item in participant.videoTracks {
-                guard let publication = item as? RemoteTrackPublication else { continue }
+        let requests = room.remoteParticipants.values.flatMap { participant in
+            participant.videoTracks.compactMap { item -> VideoSubscriptionCoordinator<ObjectIdentifier>.Request? in
+                guard let publication = item as? RemoteTrackPublication else { return nil }
                 let wanted = displayMode == .all ||
                     (displayMode == .screenShares && publication.source == .screenShareVideo)
-                Task { [weak self] in
-                    do { try await publication.set(subscribed: wanted) }
-                    catch { self?.onMediaStatus?("Video preference could not update: \(error.localizedDescription)") }
+                return .init(key: ObjectIdentifier(publication), subscribed: wanted) {
+                    try await publication.set(subscribed: $0)
                 }
             }
         }
+        videoSubscriptions.update(requests)
     }
 
     #if DEBUG

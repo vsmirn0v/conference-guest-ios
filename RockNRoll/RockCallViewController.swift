@@ -54,6 +54,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let zoomOutButton = UIButton(type: .system)
     private let zoomControls = UIStackView()
     private let shareOffer = UIButton(type: .system)
+    let localSharePreview = LocalSharePreview()
+    private lazy var localShareCard = LocalSharePreviewCard(model: localSharePreview)
+    private lazy var localShareRenderer = LocalShareTrackPreview(preview: localSharePreview)
+    #if DEBUG
+    var fixtureParticipants: [ParticipantStatus]?
+    #endif
     private struct PinnedStream: Equatable {
         let participantID: String
         let isScreenShare: Bool
@@ -121,6 +127,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        localShareCard.refreshLayout()
         let compact = view.bounds.width < 390
         if compact != compactControls {
             compactControls = compact
@@ -231,7 +238,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             guard let self, let offer = self.offeredShare else { return }
             self.setPin(offer)
         }, for: .touchUpInside)
+        #if DEBUG
+        participantsButton.isEnabled = fixtureParticipants != nil
+        #else
         participantsButton.isEnabled = false
+        #endif
         let routePicker = AVRoutePickerView()
         routePicker.tintColor = accent
         routePicker.activeTintColor = accent
@@ -264,14 +275,20 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self?.openConversation(.chat)
         }, for: .touchUpInside)
         participantsButton.addAction(UIAction { [weak self] _ in
-            guard let self, let room = self.displayedRoom, self.presentedViewController == nil else { return }
+            guard let self, self.presentedViewController == nil else { return }
+            #if DEBUG
+            let statuses = self.displayedRoom.map(self.statuses(in:)) ?? self.fixtureParticipants ?? []
+            #else
+            guard let room = self.displayedRoom else { return }
+            let statuses = self.statuses(in: room)
+            #endif
             let panel = ParticipantPanelViewController()
             panel.onPin = { [weak self] key in
                 guard let self else { return }
                 self.setPin(key.flatMap { self.streamPinTargets[$0] })
             }
             self.participantsPanel = panel
-            panel.update(self.statuses(in: room), pinnedKey: self.pinnedStreamKey)
+            panel.update(statuses, pinnedKey: self.pinnedStreamKey)
             let navigation = UINavigationController(rootViewController: panel)
             navigation.sheetPresentationController?.detents = [.medium(), .large()]
             self.present(navigation, animated: true)
@@ -336,6 +353,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             item.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(item)
         }
+        localShareCard.translatesAutoresizingMaskIntoConstraints = false
+        localShareCard.onStop = { [weak self] in self?.onShare?(false) }
+        view.addSubview(localShareCard)
+        NSLayoutConstraint.activate([
+            localShareCard.leadingAnchor.constraint(equalTo: streamScroll.leadingAnchor, constant: 4),
+            localShareCard.bottomAnchor.constraint(equalTo: streamScroll.bottomAnchor, constant: -4),
+            localShareCard.widthAnchor.constraint(equalToConstant: 216),
+            localShareCard.topAnchor.constraint(greaterThanOrEqualTo: streamScroll.topAnchor)
+        ])
         let dockWidth = conversationHost.widthAnchor.constraint(equalToConstant: 0)
         conversationWidth = dockWidth
         NSLayoutConstraint.activate([
@@ -473,6 +499,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let participants: [Participant] = [room.localParticipant] + room.remoteParticipants.values.sorted {
             ($0.identity?.stringValue ?? "") < ($1.identity?.stringValue ?? "")
         }
+        let localTrack = room.localParticipant.videoTracks.first {
+            $0.source == .screenShareVideo && !$0.isMuted
+        }?.track as? VideoTrack
+        localShareRenderer.setTrack(localTrack)
         let sharing = room.localParticipant.videoTracks.contains {
             $0.source == .screenShareVideo && !$0.isMuted
         }
@@ -502,7 +532,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         speakingTiles.removeAll()
         var streams: [(Participant, TrackPublication, VideoTrack)] = []
         for participant in participants {
-            let publications = participant.videoTracks.filter { !$0.isMuted && $0.track is VideoTrack }
+            let publications = participant.videoTracks.filter {
+                !$0.isMuted && $0.track is VideoTrack &&
+                    !(participant === room.localParticipant && $0.source == .screenShareVideo)
+            }
                 .filter { displayMode == .all ||
                     (displayMode == .screenShares && $0.source == .screenShareVideo) }
             if displayMode == .audioOnly ||
@@ -842,7 +875,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 screenShareOn: videos.contains { $0.source == .screenShareVideo },
                 isSpeaking: participant.isSpeaking,
                 videoKey: videos.first { $0.source != .screenShareVideo && $0.track is VideoTrack }?.sid.stringValue,
-                shareKey: videos.first { $0.source == .screenShareVideo && $0.track is VideoTrack }?.sid.stringValue)
+                shareKey: participant === room.localParticipant ? nil :
+                    videos.first { $0.source == .screenShareVideo && $0.track is VideoTrack }?.sid.stringValue)
         }
     }
 
@@ -994,7 +1028,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func restoreFromFloatingVideo() { floatingVideo?.foregrounded() }
 
-    func endFloatingVideo() { floatingVideo?.clear() }
+    func endFloatingVideo() { floatingVideo?.clear(); localShareRenderer.setTrack(nil); localSharePreview.end() }
 
     func showMediaStatus(_ message: String?) {
         mediaStatus = message

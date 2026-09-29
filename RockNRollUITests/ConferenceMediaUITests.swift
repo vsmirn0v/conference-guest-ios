@@ -311,11 +311,7 @@ final class ConferenceMediaUITests: XCTestCase {
 
     func testControlsAndConversationFitBothOrientations() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
-        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
-        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Rock QA"
-        #if targetEnvironment(simulator)
-        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
-        #endif
+        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
         app.launch()
         defer {
             XCUIDevice.shared.orientation = .portrait
@@ -353,6 +349,39 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label == %@", "Unmute microphone"))
             .allElementsBoundByIndex.contains { $0.isHittable })
         app.buttons["Close conversation"].tap()
+    }
+
+    func testLocalSharingPreviewRotatesHidesEnlargesAndStops() throws {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "local-share"
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCTAssertTrue(app.staticTexts["Last shared frame · Preview paused"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Local shared screen thumbnail"].isHittable)
+        XCTAssertLessThanOrEqual(app.buttons["Local shared screen thumbnail"].frame.height, 85)
+        XCTAssertLessThan(app.otherElements["Local sharing preview card"].frame.height, 250)
+        app.buttons["Enlarge local sharing preview"].tap()
+        XCTAssertTrue(app.buttons["Close preview"].waitForExistence(timeout: 5))
+        app.buttons["Close preview"].tap()
+        app.buttons["Hide local preview"].tap()
+        XCTAssertFalse(app.buttons["Local shared screen thumbnail"].exists)
+        XCTAssertTrue(app.buttons["Stop local screen sharing"].isHittable)
+        app.buttons["Show local preview"].tap()
+        XCTAssertTrue(app.buttons["Local shared screen thumbnail"].isHittable)
+        XCTAssertGreaterThan(app.buttons["Local shared screen thumbnail"].frame.height, 60)
+        for orientation: UIDeviceOrientation in [.landscapeLeft, .portrait, .landscapeRight, .portrait] {
+            XCUIDevice.shared.orientation = orientation
+            assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
+                                                    "Musicians", "More call options", "Chat"])
+            XCTAssertTrue(app.buttons["Stop local screen sharing"].isHittable)
+            if orientation == .portrait {
+                XCTAssertTrue(app.buttons["Local shared screen thumbnail"].isHittable)
+                XCTAssertGreaterThan(app.buttons["Local shared screen thumbnail"].frame.height, 60)
+            }
+            attachScreenshot(of: app, named: "Local sharing preview \(orientation.rawValue)")
+        }
+        app.buttons["Stop local screen sharing"].tap()
+        XCTAssertFalse(app.buttons["Enlarge local sharing preview"].exists)
     }
 
     func testJamChatWithBrowserParticipant() throws {
@@ -446,6 +475,23 @@ final class ConferenceMediaUITests: XCTestCase {
             if app.buttons["Leave"].exists { app.buttons["Leave"].tap() }
             app.terminate()
         }
+    }
+
+    func testAmbiguousNativeLinkAsksWebsiteAndUsesExplicitChoice() throws {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "ambiguous-link"
+        app.launchEnvironment["CONFERENCE_TEST_RESOLVE_ONLY"] = "1"
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Meeting website"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["meet-one.example.test"].exists)
+        let second = app.buttons["meet-two.example.test"]
+        XCTAssertTrue(second.exists)
+        attachScreenshot(of: app, named: "Ambiguous invitation website choice")
+        second.tap()
+        let address = app.textFields["Invitation link"]
+        XCTAssertTrue(address.waitForExistence(timeout: 5))
+        XCTAssertTrue((address.value as? String)?.hasPrefix("https://meet-two.example.test/team/") == true)
+        XCTAssertFalse(app.navigationBars["Meeting website"].exists)
     }
 
     func testNativeLinkWithoutHostRequestsWebsite() throws {

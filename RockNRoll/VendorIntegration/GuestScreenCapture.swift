@@ -20,9 +20,14 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture {
     private var uploadStarted = false
     private var picking = false
     private var generation = 0
+    private var captureSource: LocalSharePreview.Source = .screen
     private let onError: (String) -> Void
+    private let preview: LocalSharePreview
 
-    init(onError: @escaping (String) -> Void) { self.onError = onError }
+    init(preview: LocalSharePreview, onError: @escaping (String) -> Void) {
+        self.preview = preview
+        self.onError = onError
+    }
 
     func start() {
         guard stream == nil, !picking else { return }
@@ -47,6 +52,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture {
 
     func stop() async {
         generation += 1
+        preview.end()
         releasePicker()
         let previous = stream
         stream = nil
@@ -64,6 +70,13 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture {
     private func selected(_ filter: SCContentFilter) async {
         guard picking, stream == nil else { return }
         let attempt = generation
+        let source: LocalSharePreview.Source
+        switch filter.style {
+        case .window: source = .window
+        case .application: source = .application
+        default: source = .screen
+        }
+        captureSource = source
         let config = SCStreamConfiguration()
         config.width = 1920
         config.height = 1080
@@ -123,8 +136,10 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
             // are available, rather than publishing an empty stream during setup.
             if !uploadStarted {
                 uploadStarted = true
+                preview.begin(source: captureSource)
                 upload.broadcastStarted(withSetupInfo: nil)
             }
+            if let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) { preview.accept(pixels) }
             upload.processSampleBuffer(sampleBuffer, with: .video)
         }
     }
@@ -133,6 +148,7 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
         Task { @MainActor [weak self] in
             guard let self, self.stream === stream else { return }
             self.stream = nil
+            self.preview.end()
             self.generation += 1
             if self.uploadStarted { self.upload?.broadcastFinished() }
             self.uploadStarted = false
