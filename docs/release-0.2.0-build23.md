@@ -1,6 +1,7 @@
 # Rock’n’Roll 0.2.0 (23)
 
 Prepared 2026-09-30, against published source `6f946b6` / build 21.
+Implementation source: `e63eee672e4d3b6a8617c3f7eb2284ff5f91c26b`.
 Minimum deployment version remains iOS 16.0 for the app and both extensions.
 
 ## Implemented review findings
@@ -126,5 +127,20 @@ and was absent from App Store Connect's build list when checked.
 Beta notes: “Improved stability when opening multiple jams in succession.
 Smoother sharing previews and fixes for chat and saved rooms.”
 
-TestFlight upload, processing and group availability will be recorded after
-read-back verification; uploading alone is not publication.
+Upload succeeded at 2026-09-30 00:53 MSK after retrying an Apple metadata
+completion stall. App Store Connect showed build 23 processing at 00:54 MSK.
+Bundled third-party frameworks reported missing dSYMs; delivery succeeded, but
+crash symbolication inside those frameworks remains limited.
+
+App Store Connect completed processing. At 2026-09-30 00:59 MSK, after saving
+the beta notes and submitting the selected groups for review, both existing
+groups explicitly showed build **0.2.0 (23)** as **Testing**, expiring in 90 days:
+
+- Rock’n’Roll Internal
+- Rock’n’Roll Public Beta
+
+Automatically notify testers remained enabled. Public invitation remains
+https://testflight.apple.com/join/Hd13C9U3 .
+Public status screenshot: `/tmp/rock-build23-public-testing.png`.
+App Store Connect build identity: `3fee24ca-d0c8-42ee-b11e-5841ce781e54`.
+Upload log: `/tmp/rock-build23-upload-retry.log` (`EXPORT SUCCEEDED`).
