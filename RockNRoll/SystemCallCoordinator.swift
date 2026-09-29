@@ -12,8 +12,17 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     var onHoldChanged: ((Bool) -> Void)?
     var onFailure: ((Error) -> Void)?
 
-    private let provider: CXProvider
-    private let controller = CXCallController()
+    private lazy var provider: CXProvider = {
+        let configuration = CXProviderConfiguration()
+        configuration.supportsVideo = true
+        configuration.includesCallsInRecents = false
+        configuration.supportedHandleTypes = [.generic]
+        configuration.maximumCallsPerCallGroup = 1
+        configuration.maximumCallGroups = 1
+        return CXProvider(configuration: configuration)
+    }()
+    private lazy var controller = CXCallController()
+    private let usesSystemCall = !ProcessInfo.processInfo.isiOSAppOnMac
     private var callID: UUID?
     private var isConnected = false
     private var isMuted = true
@@ -28,23 +37,15 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     }
 
     override init() {
-        let configuration = CXProviderConfiguration()
-        configuration.supportsVideo = true
-        configuration.includesCallsInRecents = false
-        configuration.supportedHandleTypes = [.generic]
-        configuration.maximumCallsPerCallGroup = 1
-        configuration.maximumCallGroups = 1
-        provider = CXProvider(configuration: configuration)
         super.init()
-        provider.setDelegate(self, queue: .main)
-        controller.callObserver.setDelegate(self, queue: .main)
+        if usesSystemCall {
+            provider.setDelegate(self, queue: .main)
+            controller.callObserver.setDelegate(self, queue: .main)
+        }
     }
 
     func start() {
         guard callID == nil else { return }
-        #if DEBUG
-        print("System call: requesting start")
-        #endif
         let id = UUID()
         callID = id
         isConnected = false
@@ -54,6 +55,25 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         holdStartedAt = nil
         resumeRequested = false
         isAudioSessionActive = false
+        if !usesSystemCall {
+            // iOS apps running on Mac don't receive the CallKit audio activation
+            // callback reliably; the app owns this session until the jam ends.
+            #if DEBUG
+            print("Mac meeting audio: activating")
+            #endif
+            do {
+                try AVAudioSession.sharedInstance().setActive(true)
+                isAudioSessionActive = true
+                onActivated?()
+            } catch {
+                callID = nil
+                onFailure?(error)
+            }
+            return
+        }
+        #if DEBUG
+        print("System call: requesting start")
+        #endif
         let handle = CXHandle(type: .generic, value: "Jam")
         let action = CXStartCallAction(call: id, handle: handle)
         action.isVideo = true
@@ -73,6 +93,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     func markConnected() {
         guard let callID, !isConnected else { return }
         isConnected = true
+        guard usesSystemCall else { return }
         provider.reportOutgoingCall(with: callID, connectedAt: nil)
         setMuted(isMuted, force: true)
     }
@@ -85,6 +106,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         guard let callID else { return }
         let changed = isMuted != muted
         isMuted = muted
+        guard usesSystemCall else { return }
         guard isConnected, changed || force else { return }
         controller.request(CXTransaction(action: CXSetMutedCallAction(call: callID, muted: muted))) { error in
             guard let error else { return }
@@ -96,6 +118,15 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
 
     func end() {
         guard let callID else { return }
+        if !usesSystemCall {
+            self.callID = nil
+            isConnected = false
+            isAudioSessionActive = false
+            try? AVAudioSession.sharedInstance().setActive(false,
+                options: .notifyOthersOnDeactivation)
+            onEnded?(true)
+            return
+        }
         controller.request(CXTransaction(action: CXEndCallAction(call: callID))) { [weak self] error in
             guard let error else { return }
             DispatchQueue.main.async {
@@ -117,10 +148,11 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         holdStartedAt = nil
         resumeRequested = false
         isAudioSessionActive = false
-        provider.reportCall(with: callID, endedAt: nil, reason: reason)
+        if usesSystemCall { provider.reportCall(with: callID, endedAt: nil, reason: reason) }
     }
 
     func providerDidReset(_ provider: CXProvider) {
+        guard usesSystemCall else { return }
         #if DEBUG
         print("System call: provider reset")
         #endif
@@ -226,6 +258,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     }
 
     func resumeIfPossible() {
+        guard usesSystemCall else { return }
         guard let callID, isHeld, heldForAnotherCall,
               !hasAnotherActiveCall, !resumeRequested else { return }
         resumeRequested = true
@@ -253,6 +286,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     #endif
 
     private var hasAnotherActiveCall: Bool {
+        guard usesSystemCall else { return false }
         guard let callID else { return false }
         return controller.callObserver.calls.contains { $0.uuid != callID && !$0.hasEnded }
     }
