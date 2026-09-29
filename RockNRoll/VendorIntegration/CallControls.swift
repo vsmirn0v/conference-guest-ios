@@ -25,6 +25,7 @@ final class CallControls: UIView {
     private var subscriptions = Set<AnyCancellable>()
     private let microphone = UIButton(type: .system)
     private let camera = UIButton(type: .system)
+    private let share = UIButton(type: .system)
     private let route = UIView()
     private let catchUpButton = UIButton(type: .system)
     private let missedButton = UIButton(type: .system)
@@ -256,7 +257,9 @@ final class CallControls: UIView {
         configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
         microphone.configuration = Self.iconConfiguration("mic.slash.fill", title: "Mic off")
         camera.configuration = Self.iconConfiguration("video.slash.fill", title: "Cam off")
-        for button in [microphone, camera, catchUpButton, missedButton, moreButton, participantsButton] {
+        share.configuration = Self.iconConfiguration("rectangle.on.rectangle", title: "Share")
+        share.accessibilityLabel = "Share screen"
+        for button in [microphone, camera, share, catchUpButton, missedButton, moreButton, participantsButton] {
             button.showsLargeContentViewer = true
             button.largeContentTitle = button.accessibilityLabel
             button.largeContentImage = button.configuration?.image
@@ -272,6 +275,9 @@ final class CallControls: UIView {
             let turnOn = state.cameraState != .on
             onCameraState(turnOn)
             coordinator.toggleCamera(isOn: turnOn)
+        }, for: .touchUpInside)
+        share.addAction(UIAction { _ in
+            coordinator.toggleShareScreen(isOn: state.screenShareState != .on)
         }, for: .touchUpInside)
         leave.addAction(UIAction { _ in onLeave() }, for: .touchUpInside)
         workspace.toggleMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
@@ -315,7 +321,7 @@ final class CallControls: UIView {
             routeTitle.bottomAnchor.constraint(equalTo: route.bottomAnchor, constant: -4),
         ])
 
-        let bar = UIStackView(arrangedSubviews: [microphone, camera, route, moreButton, leave])
+        let bar = UIStackView(arrangedSubviews: [microphone, camera, route, share, moreButton, leave])
         bar.axis = .horizontal
         bar.distribution = .fillEqually
         bar.alignment = .fill
@@ -453,6 +459,17 @@ final class CallControls: UIView {
             self.camera.accessibilityLabel = media == .on ? "Stop video" : "Start video"
             self.camera.largeContentTitle = self.camera.accessibilityLabel
             self.workspace.cameraOn = media == .on
+        }.store(in: &subscriptions)
+        state.$screenShareState.receive(on: DispatchQueue.main).sink { [weak self] media in
+            guard let self else { return }
+            let isSharing = media == .on
+            self.share.configuration?.image = UIImage(systemName: isSharing ? "rectangle.slash" : "rectangle.on.rectangle")
+            self.share.configuration?.title = isSharing ? "Stop share" : "Share"
+            self.share.configuration?.baseForegroundColor = isSharing ?
+                UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
+            self.share.isEnabled = media != .disabled
+            self.share.accessibilityLabel = isSharing ? "Stop sharing screen" : "Share screen"
+            self.share.largeContentTitle = self.share.accessibilityLabel
         }.store(in: &subscriptions)
         Publishers.CombineLatest3(state.$localParticipant, state.$remoteParticipants,
                                   state.$dominantSpeaker)

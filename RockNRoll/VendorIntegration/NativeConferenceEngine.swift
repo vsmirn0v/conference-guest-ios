@@ -174,7 +174,7 @@ final class NativeConferenceEngine: CallEngine {
             network: JazzNetwork(hostUrl: networkURL),
             buttonsVisibility: .allVisible,
             inviteButton: nil,
-            screenShareExtensionIdentifier: nil,
+            screenShareExtensionIdentifier: Bundle.main.bundleIdentifier.map { "\($0).guestbroadcast" },
             userNameService: identity
         )
         try Jazz.initialize(
@@ -339,6 +339,7 @@ final class NativeConferenceEngine: CallEngine {
                 if held {
                     self.activeCoordinator?.toggleMicrohone(isOn: false)
                     self.activeCoordinator?.toggleCamera(isOn: false)
+                    self.activeCoordinator?.toggleShareScreen(isOn: false)
                 }
                 self.activeControls?.setHeld(held)
                 if !held { self.recoverAudioIfReady() }
@@ -476,6 +477,7 @@ final class NativeConferenceEngine: CallEngine {
     func leave() {
         guard hasJoinStarted else { return }
         leaveRequested = true
+        activeCoordinator?.toggleShareScreen(isOn: false)
         resetPiPMicrophoneObservation()
         floatingVideo?.clear()
         activeControls?.isHidden = true

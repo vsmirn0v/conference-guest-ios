@@ -171,10 +171,15 @@ changes do not by themselves address the measured outgoing-video CPU cost.
   picker, the browser participant received the live screen, and Stop Sharing
   ended it. The older ReplayKit path still needs physical-device verification;
   its picker does not appear in Simulator.
-- Guest-engine outgoing sharing is blocked by the distributed SDK package:
-  its separate screen-share binary imports modules absent from the published
-  package. The existing guest SDK can receive and pin shared screens. We did
-  not ship an unbuildable extension or claim guest outgoing share support.
+- Guest meetings now use a separate Broadcast Upload Extension. The published
+  package omits its screen-share target and contains unusable Swift interface
+  imports; the isolated vendored binary preserves its original executable and
+  uses corrected public interfaces. On a physical iPhone, the Share control
+  opened the system picker, a browser participant received the live screen,
+  and Stop sharing ended the broadcast. The iPhone SE iOS 17.5 Simulator
+  passed the guest controls test through repeated landscape/portrait rotations,
+  including the new Share control. The system picker still needs an older
+  physical iOS-device test.
 - The iPad mini iOS 17.5 Simulator passed wide home, docked conversation,
   landscape, and direct guest-tile pin tests. An iPhone SE iOS 17.5 Simulator
   showed all primary controls in a single compact row. Live Rock and guest

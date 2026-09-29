@@ -28,6 +28,7 @@ targets:
       - package: ConferenceCore
       - package: LiveKit
       - target: RockBroadcast
+      - target: GuestBroadcast
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest
@@ -57,6 +58,27 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.broadcast
         INFOPLIST_FILE: RockBroadcast/Info.plist
         CODE_SIGN_ENTITLEMENTS: RockBroadcast/Extension.entitlements
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 5V64BP2H3P
+        GENERATE_INFOPLIST_FILE: NO
+        APPLICATION_EXTENSION_API_ONLY: YES
+  GuestBroadcast:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: GuestBroadcast/SampleHandler.swift
+      - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
+    dependencies:
+      - package: JazzSDK
+      - framework: GuestBroadcast/VendorSDK/JazzSDKScreenShare.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.guestbroadcast
+        INFOPLIST_FILE: GuestBroadcast/Info.plist
+        CODE_SIGN_ENTITLEMENTS: GuestBroadcast/Extension.entitlements
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic

@@ -298,7 +298,7 @@ final class ConferenceMediaUITests: XCTestCase {
                                                   .landscapeRight, .portrait] {
             XCUIDevice.shared.orientation = orientation
             assertCallControlsVisible(app, labels: ["Leave", "Unmute microphone", "Start video",
-                                                    "Musicians", "More call options", "Chat"])
+                                                    "Share screen", "Musicians", "More call options", "Chat"])
             let frame = app.windows.firstMatch.frame
             let leave = app.buttons["Leave"].frame
             XCTAssertGreaterThanOrEqual(leave.minX, frame.minX - 1)
