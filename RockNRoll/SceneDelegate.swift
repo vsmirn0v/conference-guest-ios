@@ -12,6 +12,11 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         options connectionOptions: UIScene.ConnectionOptions
     ) {
         guard let windowScene = scene as? UIWindowScene else { return }
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_CLEAR_NAME"] == "1" {
+            UserDefaults.standard.removeObject(forKey: "savedDisplayName")
+        }
+        #endif
         let model = ConferenceModel()
         let hosting = UIHostingController(rootView: JoinView(model: model,
                                                             catchUp: model.catchUpStore,

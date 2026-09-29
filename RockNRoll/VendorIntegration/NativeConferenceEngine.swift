@@ -13,6 +13,8 @@ final class NativeConferenceEngine: CallEngine {
     var chat: ChatStore?
 
     private let identity = GuestIdentity()
+    private var nameForNextCoordinator: String?
+    private var nameUpdateGeneration: UInt64 = 0
     private let audio = AudioCoordinator()
     let catchUp: CatchUpStore
     private let systemCall: SystemCallCoordinator
@@ -440,6 +442,8 @@ final class NativeConferenceEngine: CallEngine {
         currentNotices = []
         identity.setName(displayName)
         let room = try resolve(target)
+        nameUpdateGeneration &+= 1
+        nameForNextCoordinator = displayName
         pendingRoom = room
         activeRoom = room
         catchUp.enter(roomKey: target.originURL.absoluteString + "/" + target.roomID)
@@ -623,6 +627,18 @@ final class NativeConferenceEngine: CallEngine {
         let overlay = JazzActiveConferenceOverlayRepresentation { [weak self] state, coordinator, router, _ in
             guard let self else { return UIView() }
             self.activeCoordinator = coordinator
+            // The SDK reads its name service at initialization and retains that name
+            // between rooms. Update the conference profile on every new join too.
+            if let name = self.nameForNextCoordinator {
+                self.nameForNextCoordinator = nil
+                let generation = self.nameUpdateGeneration
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !self.leaveRequested,
+                          self.nameUpdateGeneration == generation else { return }
+                    self.identity.setName(name)
+                    coordinator.changeUserName(newName: name)
+                }
+            }
             coordinator.toggleIncomingStreamsDisabled(isEnabled: self.displayMode != .audioOnly)
             self.observePiPMicrophone(state: state)
             self.observeTranscript(state: state)

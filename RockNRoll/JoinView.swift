@@ -10,7 +10,6 @@ struct JoinView: View {
     @State private var showingSavedHistory = false
     @State private var showingContactPicker = false
     @State private var showingSettings = false
-    @State private var showingNameEditor = false
     @State private var showingAllRooms = false
     @State private var editingRoom: RecentRoom?
     @State private var roomAlias = ""
@@ -58,10 +57,10 @@ struct JoinView: View {
                         }
                         .font(.subheadline.weight(.semibold))
                     }
-                    Button { showingNameEditor = true } label: {
+                    Button { model.showingNameEditor = true } label: {
                         HStack {
                             Image(systemName: "person.crop.circle")
-                            Text("Joining as \(model.displayName.isEmpty ? "Add a name" : model.displayName)")
+                            Text(model.displayName.isEmpty ? "Add your name" : "Joining as \(model.displayName)")
                                 .multilineTextAlignment(.leading)
                             Spacer(minLength: 4)
                             Image(systemName: "chevron.right")
@@ -70,7 +69,7 @@ struct JoinView: View {
                         .font(.subheadline)
                     }
                     .accessibilityLabel("Edit your name, currently \(model.displayName)")
-                    if !validDisplayName {
+                    if !model.displayName.isEmpty && !validDisplayName {
                         Text("Enter a name of up to 80 characters before joining.")
                             .font(.footnote).foregroundStyle(.red)
                     }
@@ -156,7 +155,7 @@ struct JoinView: View {
                 SavedCatchUpView(store: catchUp)
             }
             .sheet(isPresented: $showingSettings) { settingsSheet }
-            .sheet(isPresented: $showingNameEditor) { nameSheet }
+            .sheet(isPresented: $model.showingNameEditor, onDismiss: model.nameEditorDismissed) { nameSheet }
             .sheet(item: $model.siteSelection) { selection in
                 MeetingWebsiteSelectionView(
                     rememberedOrigins: selection.rememberedOrigins,
@@ -206,12 +205,11 @@ struct JoinView: View {
     }
 
     private var validDisplayName: Bool {
-        let count = model.displayName.trimmingCharacters(in: .whitespacesAndNewlines).count
-        return (1...80).contains(count)
+        model.validDisplayName
     }
 
     private var canJoin: Bool {
-        !model.invite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && validDisplayName &&
+        !model.invite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !model.isJoining && !model.isInConference && !model.isLeaving
     }
 
@@ -230,7 +228,15 @@ struct JoinView: View {
                 }
             }
             .navigationTitle("Your name")
-            .toolbar { Button("Done") { showingNameEditor = false } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { model.showingNameEditor = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(model.isNameRequiredForJoin ? "Join jam" : "Done") { model.confirmNameEntry() }
+                        .disabled(!validDisplayName)
+                }
+            }
             .sheet(isPresented: $showingContactPicker) {
                 ContactNamePicker(isPresented: $showingContactPicker) { model.displayName = $0 }
             }

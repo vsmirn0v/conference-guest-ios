@@ -9,7 +9,7 @@ final class ConferenceModel: ObservableObject {
     private enum SessionPhase { case idle, joining, active, leaving }
     @Published var displayName = UserDefaults.standard.string(forKey: "savedDisplayName")
         .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
-        ?? "Musician" {
+        ?? "" {
         didSet { UserDefaults.standard.set(displayName, forKey: "savedDisplayName") }
     }
     @Published var invite = ""
@@ -26,6 +26,28 @@ final class ConferenceModel: ObservableObject {
     private(set) var connectedURL: URL?
     @Published var showSwitchConfirmation = false
     @Published var siteSelection: LinkSiteSelection?
+    @Published var showingNameEditor = false
+    private var joinAwaitingName: JoinDestination?
+    private var nameEntryConfirmed = false
+    var isNameRequiredForJoin: Bool { joinAwaitingName != nil }
+    var validDisplayName: Bool {
+        (1...80).contains(displayName.trimmingCharacters(in: .whitespacesAndNewlines).count)
+    }
+
+    func confirmNameEntry() {
+        guard validDisplayName else { return }
+        displayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        nameEntryConfirmed = true
+        showingNameEditor = false
+    }
+
+    func nameEditorDismissed() {
+        let target = joinAwaitingName
+        joinAwaitingName = nil
+        let confirmed = nameEntryConfirmed
+        nameEntryConfirmed = false
+        if confirmed, let target { startJoin(target) }
+    }
 
     private let systemCall = SystemCallCoordinator()
     let catchUpStore = CatchUpStore()
@@ -113,6 +135,11 @@ final class ConferenceModel: ObservableObject {
             return
         }
         #endif
+        if joinAwaitingName != nil {
+            set(target: target)
+            joinAwaitingName = target
+            return
+        }
         if isLeaving {
             replacementAfterLeave = target
             replacementAutoJoin = autoJoin
@@ -227,8 +254,11 @@ final class ConferenceModel: ObservableObject {
         #endif
         let name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 80 else {
-            status = "Enter a display name (up to 80 characters)."
-            statusIsError = true
+            joinAwaitingName = target
+            nameEntryConfirmed = false
+            showingNameEditor = true
+            status = "Choose the name other musicians will see."
+            statusIsError = false
             return
         }
         guard let container else {
