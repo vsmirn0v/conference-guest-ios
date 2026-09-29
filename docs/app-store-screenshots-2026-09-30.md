@@ -36,4 +36,6 @@ Previous screenshot files remain in `AppStore/Screenshots/` for rollback.
 App: 6815394127. Editable iOS App 1.0 draft, English (U.S.).
 Four new iPhone 6.9-inch screenshots were uploaded and listed in filename order.
 The older custom 6.5-inch set and the new iPad upload still require final read-back
-verification; the Safari confirmation window became inaccessible to automation.
+verification. Safari recovered after its confirmation window became inaccessible,
+but App Store Connect then required a fresh sign-in. No saved password was offered;
+publication work awaits the user signing in to the existing Safari tab.
