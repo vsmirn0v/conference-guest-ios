@@ -4,6 +4,10 @@ import UIKit
 
 /// View state belongs to the active share, not the SDK's short-lived participant tile.
 final class GuestStreamViews {
+    struct PinTarget: Hashable {
+        let participant: String
+        let isShare: Bool
+    }
     private struct Key: Hashable {
         let participant: String
         let mode: JazzParticipantViewModel.DisplayMode
@@ -21,9 +25,20 @@ final class GuestStreamViews {
     private var preserveBackgroundSelection = false
     private var activeShares: Set<String>?
     private var activeCameras: Set<String>?
+    private var activeParticipants = Set<String>()
+    private var pinLossTask: Task<Void, Never>?
+    private var pinLossGeneration = UUID()
+    private(set) var pinnedTarget: PinTarget?
     var onPreferredVideo: ((StreamViewport?, String, Bool) -> Void)?
+    var onPinPresentation: ((PinTarget?, String?, Bool) -> Void)?
+    var onShareOffer: ((String?, PinTarget?) -> Void)?
     var displayMode: ConferenceDisplayMode = .all {
         didSet { updatePreferredVideo() }
+    }
+
+    private var pinStageVisible: Bool {
+        guard let pinnedTarget else { return false }
+        return displayMode == .all || displayMode == .screenShares && pinnedTarget.isShare
     }
 
     func reset() {
@@ -31,9 +46,16 @@ final class GuestStreamViews {
         preserveBackgroundSelection = false
         activeShares = nil
         activeCameras = nil
+        activeParticipants.removeAll()
+        pinLossTask?.cancel()
+        pinLossTask = nil
+        pinLossGeneration = UUID()
+        pinnedTarget = nil
         viewports.removeAll()
         renderedTiles.removeAll()
         onPreferredVideo?(nil, "", false)
+        onPinPresentation?(nil, nil, false)
+        onShareOffer?(nil, nil)
     }
 
     func setBackgrounded(_ backgrounded: Bool) {
@@ -56,6 +78,30 @@ final class GuestStreamViews {
         let active = Set(participants.map(\.id))
         activeShares = sharing
         activeCameras = cameras
+        activeParticipants = active
+        if let pin = pinnedTarget,
+           !active.contains(pin.participant) {
+            if pinLossTask == nil {
+                let generation = UUID()
+                pinLossGeneration = generation
+                pinLossTask = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(8))
+                    guard let self, !Task.isCancelled,
+                          self.pinLossGeneration == generation else { return }
+                    if !self.activeParticipants.contains(pin.participant) && self.pinnedTarget == pin {
+                        self.setPin(nil)
+                    }
+                    self.pinLossTask = nil
+                }
+            }
+        } else {
+            pinLossTask?.cancel()
+            pinLossTask = nil
+            pinLossGeneration = UUID()
+            if let pin = pinnedTarget, pin.isShare && !sharing.contains(pin.participant) {
+                pinnedTarget = nil
+            }
+        }
         viewports = viewports.filter { sharing.contains($0.key.participant) }
         renderedTiles = renderedTiles.filter {
             active.contains($0.key.participant) && (!$0.key.isShare || sharing.contains($0.key.participant))
@@ -65,10 +111,17 @@ final class GuestStreamViews {
 
     func makeView(model: JazzParticipantViewModel, video: UIView) -> UIView {
         let key = Key(participant: model.id, mode: model.displayMode, isShare: model.isSharingScreen)
+        let target = PinTarget(participant: model.id, isShare: model.isSharingScreen)
+        let onPin: () -> Void = { [weak self] in
+            self?.setPin(self?.pinnedTarget == target ? nil : target)
+        }
         // The SDK also invokes this builder from layoutSubviews. Reparenting its
         // video view for an unchanged model would invalidate that same layout again.
         if let tile = renderedTiles[key], tile.model == model, let view = tile.view,
            tile.video === video, view.containsRenderer(video) {
+            view.updatePin(name: model.name, isShare: model.isSharingScreen,
+                           pinned: pinnedTarget == target, onPin: onPin)
+            view.accessibilityElementsHidden = pinStageVisible && onPinPresentation != nil
             updatePreferredVideo()
             return view
         }
@@ -90,12 +143,33 @@ final class GuestStreamViews {
                               name: model.name, showInfo: model.shouldShowParticipantInfo,
                               microphoneOn: model.isAudioOn, pinned: model.isPinned,
                               watermark: watermark,
-                              showsPlaceholder: !model.isVideoOn && !model.isSharingScreen)
+                              showsPlaceholder: !model.isVideoOn && !model.isSharingScreen,
+                              onPin: onPin)
+        view.updatePin(name: model.name, isShare: model.isSharingScreen,
+                       pinned: pinnedTarget == target, onPin: onPin)
+        view.accessibilityElementsHidden = pinStageVisible && onPinPresentation != nil
         renderedTiles[key] = RenderedTile(model: model, video: video, view: view)
         view.onVisibilityChanged = { [weak self] in self?.updatePreferredVideo() }
         updatePreferredVideo()
         return view
     }
+
+    func setPin(_ target: PinTarget?) {
+        guard pinnedTarget != target else { return }
+        pinnedTarget = target
+        for (key, tile) in renderedTiles {
+            tile.view?.updatePin(name: tile.model.name, isShare: key.isShare,
+                                 pinned: target == PinTarget(participant: key.participant,
+                                                             isShare: key.isShare),
+                                 onPin: { [weak self] in
+                let selected = PinTarget(participant: key.participant, isShare: key.isShare)
+                self?.setPin(self?.pinnedTarget == selected ? nil : selected)
+            })
+        }
+        updatePreferredVideo()
+    }
+
+    func refreshSelection() { updatePreferredVideo() }
 
     private func updatePreferredVideo() {
         guard !selectionUpdateScheduled else { return }
@@ -114,7 +188,9 @@ final class GuestStreamViews {
             displayMode != .audioOnly && $0.view != nil && $0.video != nil &&
             $0.model.displayMode != .pip && !$0.model.isLocal &&
             isActiveStream($0) &&
-            (preserveBackgroundSelection || isVisible($0.view))
+            (preserveBackgroundSelection || isVisible($0.view) ||
+                pinnedTarget == PinTarget(participant: $0.model.id,
+                                          isShare: $0.model.isSharingScreen))
         }.sorted {
             func priority(_ tile: RenderedTile) -> Int {
                 let content = tile.model.isPinned ? 0 : tile.model.isSharingScreen ? 10 : 20
@@ -129,7 +205,29 @@ final class GuestStreamViews {
             if priority($0) != priority($1) { return priority($0) < priority($1) }
             return $0.model.id < $1.model.id
         }
-        let preferred = available.first
+        let eligiblePin = pinnedTarget.flatMap { pin -> PinTarget? in
+            if displayMode == .audioOnly || displayMode == .screenShares && !pin.isShare { return nil }
+            return pin
+        }
+        for tile in renderedTiles.values {
+            tile.view?.accessibilityElementsHidden = eligiblePin != nil && onPinPresentation != nil
+        }
+        let preferred = eligiblePin == nil ? available.first : available.first {
+            $0.model.id == eligiblePin?.participant && $0.model.isSharingScreen == eligiblePin?.isShare
+        }
+        let pinName = pinnedTarget.flatMap { target in
+            renderedTiles.first { $0.key.participant == target.participant &&
+                $0.key.isShare == target.isShare }?.value.model.name
+        }
+        onPinPresentation?(eligiblePin, eligiblePin == nil ? nil : (pinName ?? "Musician"),
+                           preferred != nil)
+        if let pin = eligiblePin, !pin.isShare,
+           let share = available.first(where: { $0.model.isSharingScreen }) {
+            onShareOffer?(share.model.name,
+                          PinTarget(participant: share.model.id, isShare: true))
+        } else {
+            onShareOffer?(nil, nil)
+        }
         onPreferredVideo?(preferred?.view, preferred?.model.name ?? "",
                           preferred?.model.isSharingScreen == true)
     }

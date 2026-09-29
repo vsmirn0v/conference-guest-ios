@@ -30,6 +30,33 @@ final class GuestStreamSelectionTests: XCTestCase {
         await assertSelection(streams, mode: .all, expected: nil)
     }
 
+    func testTilePinOverridesAutomaticShareAndSurvivesDisplayFiltering() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        let controller = UIViewController()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let streams = GuestStreamViews()
+        let camera = streams.makeView(model: model("camera", pinned: false, share: false), video: UIView())
+        let share = streams.makeView(model: model("share", pinned: false, share: true), video: UIView())
+        camera.frame = CGRect(x: 10, y: 100, width: 140, height: 200)
+        share.frame = CGRect(x: 160, y: 100, width: 140, height: 200)
+        controller.view.addSubview(camera)
+        controller.view.addSubview(share)
+        controller.view.layoutIfNeeded()
+
+        streams.setPin(.init(participant: "camera", isShare: false))
+        await assertSelection(streams, mode: .all, expected: camera)
+        camera.isHidden = true
+        await assertSelection(streams, mode: .all, expected: camera)
+        camera.isHidden = false
+        await assertSelection(streams, mode: .screenShares, expected: share)
+        await assertSelection(streams, mode: .all, expected: camera)
+        streams.setPin(nil)
+        await assertSelection(streams, mode: .all, expected: share)
+    }
+
     private func assertSelection(_ streams: GuestStreamViews, mode: ConferenceDisplayMode,
                                  expected: UIView?, file: StaticString = #filePath, line: UInt = #line) async {
         let selected = expectation(description: "Visible stream selection")

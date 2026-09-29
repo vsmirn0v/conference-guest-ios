@@ -2,6 +2,19 @@ import CoreGraphics
 import XCTest
 
 final class GuestColorUITests: XCTestCase {
+    func testScreenShareTileCanBePinnedDirectly() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-zoom"
+        app.launch()
+        let pin = app.buttons["Pin Participant update 1 screen share"]
+        XCTAssertTrue(pin.waitForExistence(timeout: 10))
+        pin.tap()
+        let unpin = app.buttons["Unpin Participant update 1 screen share"]
+        XCTAssertTrue(unpin.waitForExistence(timeout: 5))
+        unpin.tap()
+        XCTAssertTrue(pin.waitForExistence(timeout: 5))
+    }
+
     func testStudioRangeRampKeepsBlacksAndWhitesInTheMainView() {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-color"

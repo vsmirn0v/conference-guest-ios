@@ -86,6 +86,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         view.onLeave = { [weak self] in self?.leave() }
         view.onMicrophone = { [weak self] in self?.setMicrophone($0) }
         view.onCamera = { [weak self] in self?.setCamera($0) }
+        view.onShare = { [weak self] in self?.setScreenShare($0) }
         view.onFlipCamera = { [weak self] in self?.flipCamera() }
         view.onSpeaker = { preferred in AudioManager.shared.isSpeakerOutputPreferred = preferred }
         view.onDisplayMode = { [weak self] mode in self?.setDisplayMode(mode) }
@@ -112,6 +113,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         guard hasJoinStarted, !leaveRequested else { return }
         leaveRequested = true
         joinTask?.cancel()
+        BroadcastManager.shared.requestStop()
         #if DEBUG
         if directMediaForTesting { finish(failed: false); return }
         #endif
@@ -293,6 +295,20 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         }
     }
 
+    private func setScreenShare(_ enabled: Bool) {
+        guard hasJoinStarted, !leaveRequested, let room else { return }
+        Task { @MainActor [weak self] in
+            do {
+                _ = try await room.localParticipant.setScreenShare(enabled: enabled)
+                if !enabled { BroadcastManager.shared.requestStop() }
+                guard let self, self.room === room else { return }
+                self.callView?.render(room: room)
+            } catch {
+                self?.onMediaStatus?("Screen sharing unavailable: \(error.localizedDescription)")
+            }
+        }
+    }
+
     private func applyMediaIntent() {
         guard let room else { return }
         Task { @MainActor [weak self] in
@@ -391,6 +407,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     nonisolated func room(_ room: Room, didStartReconnectWithMode reconnectMode: ReconnectMode) {
         Task { @MainActor [weak self] in
             guard let self, self.room === room, self.hasConnected else { return }
+            self.callView?.setConnectionRecovering(true)
             self.updatePiPMicrophoneStatus()
             self.catchUp.begin(.connection)
             self.onEvent?(.connecting)
@@ -400,6 +417,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     nonisolated func room(_ room: Room, didCompleteReconnectWithMode reconnectMode: ReconnectMode) {
         Task { @MainActor [weak self] in
             guard let self, self.room === room, self.hasConnected else { return }
+            self.callView?.setConnectionRecovering(false)
             self.catchUp.end(.connection)
             self.applyMediaIntent()
             self.refresh(room)

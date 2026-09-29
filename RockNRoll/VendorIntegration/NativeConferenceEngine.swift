@@ -36,6 +36,7 @@ final class NativeConferenceEngine: CallEngine {
     private var toastSubscription: AnyCancellable?
     private weak var activeControls: CallControls?
     private let streamViews = GuestStreamViews()
+    private var offeredShare: GuestStreamViews.PinTarget?
     private var floatingVideo: GuestVideoPictureInPicture?
     private var currentNotices: [InCallNotice] = []
     private var configuredNetworkURL: URL?
@@ -127,6 +128,18 @@ final class NativeConferenceEngine: CallEngine {
         }
         streamViews.onPreferredVideo = { [weak self] viewport, name, isShare in
             self?.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare)
+        }
+        streamViews.onPinPresentation = { [weak self] target, name, active in
+            self?.activeControls?.setPinnedPresentation(id: target?.participant, name: name,
+                                                        isShare: target?.isShare ?? false,
+                                                        active: active)
+        }
+        streamViews.onShareOffer = { [weak self] name, target in
+            self?.activeControls?.setShareOffer(name: name)
+            self?.offeredShare = target
+        }
+        floatingVideo?.onInlineSample = { [weak self] sample, rotation in
+            self?.activeControls?.showPinnedFrame(sample, rotation: rotation)
         }
         audio.onStatus = { [weak self] message in self?.onMediaStatus?(message) }
         audio.onRouteChanged = { [weak self] in
@@ -405,6 +418,7 @@ final class NativeConferenceEngine: CallEngine {
     func join(target: JoinTarget, displayName: String) throws {
         resetPiPMicrophoneObservation()
         streamViews.reset()
+        offeredShare = nil
         streamViews.displayMode = .all
         activeInvitationURL = target.invitationURL
         activeRoomIdentifier = target.roomID
@@ -568,6 +582,12 @@ final class NativeConferenceEngine: CallEngine {
                                             self.cameraIntentOn = isOn
                                         })
             self.activeControls = controls
+            controls.onUnpin = { [weak self] in self?.streamViews.setPin(nil) }
+            controls.onViewShare = { [weak self] in
+                guard let self, let target = self.offeredShare else { return }
+                self.streamViews.setPin(target)
+            }
+            streams.refreshSelection()
             controls.setFloatingVideoAvailable(self.floatingVideo?.canShow == true)
             controls.setAudioRouteName(self.audio.outputName)
             controls.showNotices(self.currentNotices)

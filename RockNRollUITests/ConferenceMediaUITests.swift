@@ -2,6 +2,44 @@ import UIKit
 import XCTest
 
 final class ConferenceMediaUITests: XCTestCase {
+    func testWideHomeKeepsJoinAndSavedRoomsSideBySide() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "home"
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertGreaterThan(app.frame.width, app.frame.height, "The iPad must rotate for this layout check")
+        let join = app.buttons["Join jam"]
+        let favorite = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "Rejoin Open rehearsal")
+        ).firstMatch
+        XCTAssertTrue(join.waitForExistence(timeout: 10))
+        XCTAssertTrue(favorite.waitForExistence(timeout: 10))
+        XCTAssertTrue(favorite.frame.maxX < join.frame.minX,
+                      "Saved rooms should sit beside the join form in a wide window")
+        XCTAssertTrue(app.buttons["Profile and settings"].isHittable)
+    }
+
+    func testWideJamDocksConversationAndKeepsControlsVisible() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertGreaterThan(app.frame.width, app.frame.height, "The iPad must rotate for this layout check")
+        let chat = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Chat")).firstMatch
+        XCTAssertTrue(chat.waitForExistence(timeout: 10))
+        chat.tap()
+        let conversation = app.segmentedControls["Conversation mode"]
+        XCTAssertTrue(conversation.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons.matching(identifier: "Leave").allElementsBoundByIndex.contains { $0.isHittable })
+        XCTAssertTrue(app.buttons["Share screen"].isHittable)
+        XCTAssertTrue(app.buttons["Close conversation"].isHittable)
+        XCTAssertGreaterThan(conversation.frame.minX, app.frame.midX,
+                             "Conversation should dock beside the main stage")
+        attachScreenshot(of: app, named: "Wide jam with docked conversation")
+    }
+
     func testStarredRoomCanBeRenamedByLongPressAndPersists() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "home"

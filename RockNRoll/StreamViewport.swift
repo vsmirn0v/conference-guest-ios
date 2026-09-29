@@ -8,7 +8,7 @@ final class StreamViewportState {
     fileprivate var owner = UUID()
 }
 
-final class StreamViewport: UIView, UIScrollViewDelegate {
+final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteractionDelegate {
     private let scroll = UIScrollView()
     private let content = UIView()
     private let video: UIView
@@ -17,12 +17,19 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
     private let owner = UUID()
     private var viewportSize = CGSize.zero
     private var restoring = false
+    private let pinButton = UIButton(type: .system)
+    private let zoomControls = UIStackView()
+    private var pinAction: (() -> Void)?
+    private var pinName = ""
+    private var pinIsShare = false
+    private var pinnedLocally = false
     var onVisibilityChanged: (() -> Void)?
     var rendererView: UIView { video }
 
     init(video: UIView, state: StreamViewportState, zoomable: Bool,
          name: String, showInfo: Bool, microphoneOn: Bool, pinned: Bool,
-         watermark: String?, showsPlaceholder: Bool = false) {
+         watermark: String?, showsPlaceholder: Bool = false,
+         onPin: (() -> Void)? = nil) {
         self.video = video
         self.state = state
         super.init(frame: .zero)
@@ -35,6 +42,10 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
         scroll.contentInsetAdjustmentBehavior = .never
         scroll.showsHorizontalScrollIndicator = false
         scroll.showsVerticalScrollIndicator = false
+        pinAction = onPin
+        pinName = name
+        pinIsShare = false
+        pinnedLocally = pinned
         if zoomable {
             scroll.isAccessibilityElement = true
             scroll.accessibilityIdentifier = "Shared screen viewport"
@@ -46,6 +57,49 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
         video.translatesAutoresizingMaskIntoConstraints = true
         video.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         content.addSubview(video)
+        pinButton.configuration = .tinted()
+        pinButton.translatesAutoresizingMaskIntoConstraints = false
+        pinButton.addAction(UIAction { [weak self] _ in
+            self?.pinAction?()
+        }, for: .touchUpInside)
+        addSubview(pinButton)
+        addInteraction(UIContextMenuInteraction(delegate: self))
+        NSLayoutConstraint.activate([
+            pinButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            pinButton.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            pinButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            pinButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+        ])
+        if zoomable {
+            zoomControls.axis = .horizontal
+            zoomControls.spacing = 4
+            zoomControls.translatesAutoresizingMaskIntoConstraints = false
+            for (title, symbol, action) in [
+                ("Zoom out", "minus.magnifyingglass", -1),
+                ("Fit shared screen", "arrow.down.right.and.arrow.up.left", 0),
+                ("Zoom in", "plus.magnifyingglass", 1)
+            ] {
+                let button = UIButton(type: .system)
+                button.configuration = .tinted()
+                button.configuration?.image = UIImage(systemName: symbol)
+                button.accessibilityLabel = title
+                button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+                button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+                button.addAction(UIAction { [weak self] _ in
+                    guard let self else { return }
+                    let scale = action == 0 ? 1 : self.scroll.zoomScale * (action > 0 ? 1.5 : 1 / 1.5)
+                    self.scroll.setZoomScale(min(self.scroll.maximumZoomScale,
+                                                 max(self.scroll.minimumZoomScale, scale)), animated: true)
+                }, for: .touchUpInside)
+                zoomControls.addArrangedSubview(button)
+            }
+            addSubview(zoomControls)
+            NSLayoutConstraint.activate([
+                zoomControls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+                zoomControls.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
+            ])
+        }
+        updatePin(name: name, isShare: false, pinned: pinned, onPin: onPin)
         if showsPlaceholder {
             let label = UILabel()
             label.text = name
@@ -96,6 +150,31 @@ final class StreamViewport: UIView, UIScrollViewDelegate {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    func updatePin(name: String, isShare: Bool, pinned: Bool, onPin: (() -> Void)?) {
+        pinName = name
+        pinIsShare = isShare
+        pinnedLocally = pinned
+        pinAction = onPin
+        pinButton.isHidden = onPin == nil
+        pinButton.configuration?.image = UIImage(systemName: pinned ? "pin.fill" : "pin")
+        pinButton.accessibilityLabel = "\(pinned ? "Unpin" : "Pin") \(name) \(isShare ? "screen share" : "video")"
+        pinButton.accessibilityHint = "Changes only your view"
+        pinButton.showsLargeContentViewer = true
+        pinButton.largeContentTitle = pinButton.accessibilityLabel
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+                                configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        guard let pinAction else { return nil }
+        let label = "\(pinnedLocally ? "Unpin" : "Pin") \(pinName) \(pinIsShare ? "screen share" : "video")"
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
+            UIMenu(children: [UIAction(title: label,
+                image: UIImage(systemName: self.pinnedLocally ? "pin.slash" : "pin")) { _ in
+                    pinAction()
+                }])
+        }
+    }
 
     func containsRenderer(_ renderer: UIView) -> Bool { renderer.superview === content }
 

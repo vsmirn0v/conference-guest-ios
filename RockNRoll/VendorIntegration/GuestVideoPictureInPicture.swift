@@ -1,4 +1,5 @@
 import AVKit
+import CoreMedia
 import UIKit
 
 /// One decoded frame feeds the focused inline tile and floating video through
@@ -18,6 +19,7 @@ final class GuestVideoPictureInPicture {
     private var selectedViewport: StreamViewport?
     private weak var selectedRenderer: UIView?
     var onAvailabilityChanged: ((Bool) -> Void)?
+    var onInlineSample: ((CMSampleBuffer, Int) -> Void)?
     var canShow: Bool { hasFrame && frameTap != nil && !suspended && floating.canShow }
 
     init(sourceView: UIView) {
@@ -61,6 +63,7 @@ final class GuestVideoPictureInPicture {
             if self.presenting || !self.hasFrame { self.video.enqueue(sample, rotation: rotation) }
             if !self.suspended && UIApplication.shared.applicationState != .background {
                 self.selectedViewport?.showCorrectedVideo(sample, rotation: rotation)
+                self.onInlineSample?(sample, rotation)
             }
             self.floating.preferredSize = rotation == 90 || rotation == 270
                 ? CGSize(width: size.height, height: size.width) : size

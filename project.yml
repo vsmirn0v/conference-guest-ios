@@ -27,12 +27,14 @@ targets:
       - package: JazzSDK
       - package: ConferenceCore
       - package: LiveKit
+      - target: RockBroadcast
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest
         INFOPLIST_FILE: RockNRoll/Info.plist
+        CODE_SIGN_ENTITLEMENTS: RockNRoll/App.entitlements
         SWIFT_VERSION: "5.0"
-        TARGETED_DEVICE_FAMILY: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 5V64BP2H3P
         GENERATE_INFOPLIST_FILE: NO
@@ -43,6 +45,24 @@ targets:
       - name: Copy provider SDK resources
         script: bash "$PROJECT_DIR/scripts/copy-sdk-resources.sh"
         basedOnDependencyAnalysis: false
+  RockBroadcast:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: RockBroadcast
+    dependencies:
+      - package: LiveKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.broadcast
+        INFOPLIST_FILE: RockBroadcast/Info.plist
+        CODE_SIGN_ENTITLEMENTS: RockBroadcast/Extension.entitlements
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 5V64BP2H3P
+        GENERATE_INFOPLIST_FILE: NO
+        APPLICATION_EXTENSION_API_ONLY: YES
   RockNRollTests:
     type: bundle.unit-test
     platform: iOS

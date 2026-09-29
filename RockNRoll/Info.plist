@@ -37,6 +37,8 @@
 	<false/>
 	<key>JoinLinkHost</key>
 	<string>$(JOIN_LINK_HOST)</string>
+	<key>RTCAppGroupIdentifier</key>
+	<string>group.dev.vsmirn0v.conferenceguest</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<!-- ATS otherwise rejects app-bundled CA anchors on arbitrary HTTPS invitation hosts. -->

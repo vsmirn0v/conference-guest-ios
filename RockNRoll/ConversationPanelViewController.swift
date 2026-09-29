@@ -52,12 +52,16 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private var hasNewMessages = false
     private var isRenderingTranscript = false
     private var isCompactForKeyboard = false
+    private let docked: Bool
+    var onClose: (() -> Void)?
 
     init(catchUp: CatchUpStore, chat: ChatStore,
-         initialMode: ConversationMode = .chat, call: CallWorkspaceControls? = nil) {
+         initialMode: ConversationMode = .chat, call: CallWorkspaceControls? = nil,
+         docked: Bool = false) {
         self.catchUp = catchUp
         self.chat = chat
         self.call = call
+        self.docked = docked
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .overFullScreen
         mode.selectedSegmentIndex = initialMode.rawValue
@@ -66,6 +70,10 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     required init?(coder: NSCoder) { nil }
 
     override func loadView() {
+        if docked {
+            view = UIView()
+            return
+        }
         let overlay = ConversationOverlayView()
         overlay.panel = panel
         view = overlay
@@ -79,7 +87,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         panel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(panel)
         panelLeading = panel.leadingAnchor.constraint(equalTo: view.leadingAnchor)
-        panelSideWidth = panel.widthAnchor.constraint(equalTo: view.widthAnchor, multiplier: 0.58)
+        panelSideWidth = panel.widthAnchor.constraint(equalToConstant: 380)
         NSLayoutConstraint.activate([
             panelLeading,
             panel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -109,7 +117,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
         mode.accessibilityLabel = "Conversation mode"
         mode.addAction(UIAction { [weak self] _ in self?.renderMode() }, for: .valueChanged)
-        callStrip.isHidden = call == nil
+        callStrip.isHidden = call == nil || docked
         Publishers.CombineLatest3(catchUp.$timeline, catchUp.$canViewTranscript,
                                   catchUp.$transcriptionEnabled)
             .receive(on: DispatchQueue.main)
@@ -153,13 +161,20 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let sidePanel = view.bounds.width > view.bounds.height
+        let sidePanel = !docked && view.bounds.width >= 700
         if sidePanel != isSidePanel {
             isSidePanel = sidePanel
             panelLeading.isActive = !sidePanel
             panelSideWidth.isActive = sidePanel
             panel.layer.cornerRadius = sidePanel ? 16 : 0
             panel.layer.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner]
+        }
+        if docked {
+            panel.layer.cornerRadius = 0
+            panelLeading.isActive = true
+            panelSideWidth.isActive = false
+        } else if sidePanel {
+            panelSideWidth.constant = min(420, max(320, view.bounds.width * 0.34))
         }
         let keyboardVisible = panel.keyboardLayoutGuide.layoutFrame.minY <
             panel.bounds.height - panel.safeAreaInsets.bottom - 20
@@ -213,7 +228,11 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         let close = UIButton(type: .system)
         close.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
         close.accessibilityLabel = "Close conversation"
-        close.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .touchUpInside)
+        close.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            if let onClose = self.onClose { onClose() }
+            else { self.dismiss(animated: true) }
+        }, for: .touchUpInside)
         close.widthAnchor.constraint(equalToConstant: 44).isActive = true
         header.axis = .horizontal
         header.alignment = .center

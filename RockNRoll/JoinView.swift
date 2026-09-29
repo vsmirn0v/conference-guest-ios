@@ -26,8 +26,26 @@ struct JoinView: View {
     private var recent: [RecentRoom] { history.rooms.filter { !$0.isStarred } }
 
     var body: some View {
-        NavigationStack {
-            Form {
+        GeometryReader { window in
+          NavigationStack {
+            HStack(spacing: 0) {
+              if window.size.width >= 900 {
+                  Form {
+                      if !favorites.isEmpty { roomSection("Favorites", rooms: favorites) }
+                      if !recent.isEmpty {
+                          roomSection("Recent jams", rooms: showingAllRooms ? recent : Array(recent.prefix(3)))
+                          if recent.count > 3 {
+                              Button(showingAllRooms ? "Show fewer" : "See all \(recent.count) recent jams") {
+                                  showingAllRooms.toggle()
+                              }
+                          }
+                      }
+                  }
+                  .frame(width: min(350, window.size.width * 0.34))
+                  .scrollContentBackground(.hidden)
+                  .background(Color(uiColor: .secondarySystemGroupedBackground))
+              }
+              Form {
                 Section("Join a jam") {
                     HStack {
                         TextField("Invitation link", text: $model.invite)
@@ -87,8 +105,10 @@ struct JoinView: View {
                         Button("Leave jam", role: .destructive) { model.leave() }
                     }
                 }
-                if !favorites.isEmpty { roomSection("Favorites", rooms: favorites) }
-                if !recent.isEmpty {
+                if window.size.width < 900 && !favorites.isEmpty {
+                    roomSection("Favorites", rooms: favorites)
+                }
+                if window.size.width < 900 && !recent.isEmpty {
                     roomSection("Recent jams", rooms: showingAllRooms ? recent : Array(recent.prefix(3)))
                     if recent.count > 3 {
                         Button(showingAllRooms ? "Show fewer" : "See all \(recent.count) recent jams") {
@@ -110,6 +130,7 @@ struct JoinView: View {
                     Text("Practice with a shared music group. Other visitors can join; your microphone and camera start off.")
                 }
             }
+            .frame(maxWidth: window.size.width >= 900 ? 720 : .infinity)
             .scrollContentBackground(.hidden)
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Rock’n’Roll")
@@ -177,6 +198,9 @@ struct JoinView: View {
                 Button("Leave current jam") { model.replaceWithPending() }
                 Button("Stay here", role: .cancel) { model.dismissPending() }
             }
+            Spacer(minLength: 0)
+            }
+          }
         }
         .tint(linkAccent)
     }

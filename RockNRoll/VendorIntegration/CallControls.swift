@@ -1,8 +1,27 @@
 import Combine
+import CoreMedia
 import JazzSDK
 import UIKit
 
 final class CallControls: UIView {
+    override var canBecomeFirstResponder: Bool { true }
+    override var keyCommands: [UIKeyCommand]? { [
+        UIKeyCommand(title: "Mute or unmute microphone", action: #selector(keyToggleMicrophone),
+                     input: "a", modifierFlags: [.command, .shift]),
+        UIKeyCommand(title: "Start or stop video", action: #selector(keyToggleCamera),
+                     input: "v", modifierFlags: [.command, .shift]),
+        UIKeyCommand(title: "Open chat", action: #selector(keyOpenChat),
+                     input: "c", modifierFlags: [.command, .shift]),
+        UIKeyCommand(title: "Show musicians", action: #selector(keyOpenParticipants),
+                     input: "p", modifierFlags: [.command, .shift]),
+        UIKeyCommand(title: "Fit shared screen", action: #selector(keyFitScreen),
+                     input: "0", modifierFlags: [.command])
+    ] }
+    @objc private func keyToggleMicrophone() { microphone.sendActions(for: .touchUpInside) }
+    @objc private func keyToggleCamera() { camera.sendActions(for: .touchUpInside) }
+    @objc private func keyOpenChat() { catchUpButton.sendActions(for: .touchUpInside) }
+    @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
+    @objc private func keyFitScreen() { fitZoomedContent() }
     private var subscriptions = Set<AnyCancellable>()
     private let microphone = UIButton(type: .system)
     private let camera = UIButton(type: .system)
@@ -20,6 +39,20 @@ final class CallControls: UIView {
     private let audioOnlyBackdrop = UIView()
     private let screenSharesBackdrop = UIView()
     private let waitingBackdrop = UIView()
+    private let pinnedBackdrop = UIView()
+    private var pinnedBackdropConstraints: [NSLayoutConstraint] = []
+    private let pinnedVideo = GuestSampleBufferView()
+    private let pinnedStatus = UILabel()
+    private let pinnedUnpin = UIButton(type: .system)
+    private let shareOffer = UIButton(type: .system)
+    private var pinnedViewport: StreamViewport?
+    private var pinnedID: String?
+    private var pinnedName: String?
+    private var pinnedIsShare = false
+    private var pinnedActive = false
+    private var pinnedHasFrame = false
+    var onUnpin: (() -> Void)?
+    var onViewShare: (() -> Void)?
     private let notices = TopNoticeView()
     private var barBottomConstraint: NSLayoutConstraint?
     private var barLeadingConstraint: NSLayoutConstraint?
@@ -164,6 +197,47 @@ final class CallControls: UIView {
             waitingColumn.centerYAnchor.constraint(equalTo: waitingBackdrop.centerYAnchor),
             waitingColumn.leadingAnchor.constraint(greaterThanOrEqualTo: waitingBackdrop.leadingAnchor, constant: 20),
             waitingColumn.trailingAnchor.constraint(lessThanOrEqualTo: waitingBackdrop.trailingAnchor, constant: -20),
+        ])
+        pinnedBackdrop.backgroundColor = .black
+        pinnedBackdrop.isHidden = true
+        pinnedBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(pinnedBackdrop)
+        pinnedStatus.textColor = .white
+        pinnedStatus.textAlignment = .center
+        pinnedStatus.numberOfLines = 0
+        pinnedStatus.translatesAutoresizingMaskIntoConstraints = false
+        pinnedBackdrop.addSubview(pinnedStatus)
+        pinnedUnpin.configuration = .tinted()
+        pinnedUnpin.configuration?.title = "Unpin"
+        pinnedUnpin.configuration?.image = UIImage(systemName: "pin.slash")
+        pinnedUnpin.addAction(UIAction { [weak self] _ in self?.onUnpin?() }, for: .touchUpInside)
+        pinnedUnpin.translatesAutoresizingMaskIntoConstraints = false
+        pinnedBackdrop.addSubview(pinnedUnpin)
+        shareOffer.configuration = .tinted()
+        shareOffer.configuration?.image = UIImage(systemName: "rectangle.on.rectangle")
+        shareOffer.isHidden = true
+        shareOffer.addAction(UIAction { [weak self] _ in self?.onViewShare?() }, for: .touchUpInside)
+        shareOffer.translatesAutoresizingMaskIntoConstraints = false
+        pinnedBackdrop.addSubview(shareOffer)
+        pinnedBackdropConstraints = [
+            pinnedBackdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
+            pinnedBackdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
+            pinnedBackdrop.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 70),
+            pinnedBackdrop.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -72)
+        ]
+        NSLayoutConstraint.activate(pinnedBackdropConstraints + [
+            pinnedStatus.centerXAnchor.constraint(equalTo: pinnedBackdrop.centerXAnchor),
+            pinnedStatus.centerYAnchor.constraint(equalTo: pinnedBackdrop.centerYAnchor),
+            pinnedStatus.leadingAnchor.constraint(greaterThanOrEqualTo: pinnedBackdrop.leadingAnchor, constant: 16),
+            pinnedStatus.trailingAnchor.constraint(lessThanOrEqualTo: pinnedBackdrop.trailingAnchor, constant: -16),
+            pinnedUnpin.trailingAnchor.constraint(equalTo: pinnedBackdrop.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            pinnedUnpin.topAnchor.constraint(equalTo: pinnedBackdrop.topAnchor, constant: 8),
+            pinnedUnpin.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            shareOffer.centerXAnchor.constraint(equalTo: pinnedBackdrop.centerXAnchor),
+            shareOffer.topAnchor.constraint(equalTo: pinnedUnpin.bottomAnchor, constant: 8),
+            shareOffer.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            shareOffer.leadingAnchor.constraint(greaterThanOrEqualTo: pinnedBackdrop.leadingAnchor, constant: 8),
+            shareOffer.trailingAnchor.constraint(lessThanOrEqualTo: pinnedBackdrop.trailingAnchor, constant: -8)
         ])
 
         let leave = Self.button("Leave", symbol: "phone.down.fill")
@@ -417,6 +491,87 @@ final class CallControls: UIView {
 
     required init?(coder: NSCoder) { nil }
 
+    func setPinnedPresentation(id: String?, name: String?, isShare: Bool, active: Bool) {
+        let changed = pinnedID != id || pinnedName != name || pinnedIsShare != isShare
+        if changed { pinnedHasFrame = false }
+        pinnedID = id
+        pinnedName = name
+        pinnedIsShare = isShare
+        pinnedActive = active
+        if name != nil { movePinnedStageAboveSDKVideo() }
+        pinnedBackdrop.isHidden = name == nil || displayMode == .audioOnly ||
+            displayMode == .screenShares && !isShare
+        pinnedStatus.text = active ? "Waiting for \(name ?? "Musician")'s \(isShare ? "screen share" : "video")…" :
+            "\(name ?? "Musician") · \(isShare ? "Screen share" : "Camera") unavailable · Pinned"
+        pinnedStatus.isHidden = active && pinnedHasFrame
+        pinnedUnpin.accessibilityLabel = "Unpin \(name ?? "Musician") \(isShare ? "screen share" : "video")"
+        if changed {
+            pinnedVideo.clear()
+            pinnedViewport?.removeFromSuperview()
+            pinnedViewport = nil
+            if name != nil {
+                let viewport = StreamViewport(video: pinnedVideo, state: StreamViewportState(),
+                    zoomable: isShare, name: name ?? "Musician", showInfo: true,
+                    microphoneOn: true, pinned: true, watermark: nil)
+                viewport.updatePin(name: name ?? "Musician", isShare: isShare,
+                                   pinned: true, onPin: nil)
+                viewport.translatesAutoresizingMaskIntoConstraints = false
+                pinnedBackdrop.insertSubview(viewport, at: 0)
+                NSLayoutConstraint.activate([
+                    viewport.leadingAnchor.constraint(equalTo: pinnedBackdrop.leadingAnchor),
+                    viewport.trailingAnchor.constraint(equalTo: pinnedBackdrop.trailingAnchor),
+                    viewport.topAnchor.constraint(equalTo: pinnedBackdrop.topAnchor),
+                    viewport.bottomAnchor.constraint(equalTo: pinnedBackdrop.bottomAnchor)
+                ])
+                pinnedViewport = viewport
+            }
+        }
+        pinnedViewport?.isHidden = !active
+    }
+
+    private func movePinnedStageAboveSDKVideo() {
+        guard let window, pinnedBackdrop.superview !== window else { return }
+        NSLayoutConstraint.deactivate(pinnedBackdropConstraints)
+        pinnedBackdrop.removeFromSuperview()
+        window.addSubview(pinnedBackdrop)
+        pinnedBackdropConstraints = [
+            pinnedBackdrop.leadingAnchor.constraint(equalTo: window.leadingAnchor),
+            pinnedBackdrop.trailingAnchor.constraint(equalTo: window.trailingAnchor),
+            pinnedBackdrop.topAnchor.constraint(equalTo: window.safeAreaLayoutGuide.topAnchor, constant: 70),
+            pinnedBackdrop.bottomAnchor.constraint(equalTo: window.safeAreaLayoutGuide.bottomAnchor, constant: -72)
+        ]
+        NSLayoutConstraint.activate(pinnedBackdropConstraints)
+    }
+
+    private func restorePinnedStageWhenDetached() {
+        guard pinnedBackdrop.superview is UIWindow else { return }
+        NSLayoutConstraint.deactivate(pinnedBackdropConstraints)
+        pinnedBackdrop.removeFromSuperview()
+        addSubview(pinnedBackdrop)
+        pinnedBackdropConstraints = [
+            pinnedBackdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
+            pinnedBackdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
+            pinnedBackdrop.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 70),
+            pinnedBackdrop.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -72)
+        ]
+        NSLayoutConstraint.activate(pinnedBackdropConstraints)
+        pinnedBackdrop.isHidden = true
+    }
+
+    func showPinnedFrame(_ sample: CMSampleBuffer, rotation: Int) {
+        guard pinnedName != nil, pinnedActive, !pinnedBackdrop.isHidden else { return }
+        if pinnedVideo.enqueue(sample, rotation: rotation) {
+            pinnedHasFrame = true
+            pinnedStatus.isHidden = true
+        }
+    }
+
+    func setShareOffer(name: String?) {
+        shareOffer.isHidden = name == nil || pinnedBackdrop.isHidden
+        shareOffer.configuration?.title = name.map { "\($0) is sharing · View" }
+        shareOffer.accessibilityLabel = name.map { "View \($0) screen share" }
+    }
+
     private func openConversation(catchUp: CatchUpStore, chat: ChatStore,
                                   selected: ConversationMode) {
         var responder: UIResponder? = self
@@ -483,11 +638,16 @@ final class CallControls: UIView {
 
     deinit {
         if let orientationObserver { NotificationCenter.default.removeObserver(orientationObserver) }
+        NSLayoutConstraint.deactivate(pinnedBackdropConstraints)
+        pinnedBackdrop.removeFromSuperview()
     }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        if window == nil { restorePinnedStageWhenDetached(); return }
         alignBarWithVisibleWindow()
+        if window != nil { becomeFirstResponder() }
+        if pinnedName != nil { movePinnedStageAboveSDKVideo() }
     }
 
     override func layoutSubviews() {
@@ -587,6 +747,9 @@ final class CallControls: UIView {
         audioOnlyBackdrop.isHidden = displayMode != .audioOnly
         screenSharesBackdrop.isHidden = displayMode != .screenShares || hasScreenShare
         waitingBackdrop.isHidden = displayMode != .all || !isWaitingForOthers
+        pinnedBackdrop.isHidden = pinnedName == nil || displayMode == .audioOnly ||
+            displayMode == .screenShares && !pinnedIsShare
+        shareOffer.isHidden = shareOffer.configuration?.title == nil || pinnedBackdrop.isHidden
     }
 
     private func fitZoomedContent() {
