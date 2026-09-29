@@ -11,6 +11,10 @@ final class LocalSharePreview: ObservableObject {
     @Published private(set) var source: Source = .screen
     @Published private(set) var live = false
     @Published var hidden = false
+    @Published private(set) var paused = false
+    private var enlarged = false
+    private var refreshRequested = false
+    private var publishedPolicy: Bool?
     private(set) var foreground = true
     var ownSceneIsNotCaptured: (() -> Bool)?
     var onCapturePolicyChanged: ((Bool) -> Void)?
@@ -33,17 +37,26 @@ final class LocalSharePreview: ObservableObject {
     }
 
     var acceptsFrames: Bool {
-        guard active else { return false }
+        guard active, !hidden else { return false }
+        if refreshRequested { return true }
         if !isMac { return !foreground }
-        // One initial snapshot is safe even when the source is unknown: it
-        // cannot feed a repeating live image back into the captured window.
-        return foreground && !hidden && (image == nil || ownSceneIsNotCaptured?() == true)
+        // The compact thumbnail shrinks recursion rather than amplifying it.
+        // Enlarging a captured/unknown scene pauses the feedback loop.
+        return foreground && !paused && (!enlarged || ownSceneIsNotCaptured?() == true)
     }
+
+    func togglePaused() { paused.toggle(); refreshPolicy() }
+    func setEnlarged(_ value: Bool) { enlarged = value; refreshPolicy() }
+    func refreshFrame() { refreshRequested = true; lastFrameTime = -.infinity; refreshPolicy() }
 
     func begin(source: Source = .screen) {
         guard !active else { return }
-        self.source = isMac && source == .screen ? .selected : source
+        self.source = source
         active = true
+        paused = false
+        enlarged = false
+        refreshRequested = false
+        publishedPolicy = nil
         hidden = false
         lastFrameTime = -.infinity
         refreshPolicy()
@@ -55,7 +68,11 @@ final class LocalSharePreview: ObservableObject {
         live = false
         hidden = false
         lastFrameTime = -.infinity
-        onCapturePolicyChanged?(false)
+        paused = false
+        enlarged = false
+        refreshRequested = false
+        publishedPolicy = nil
+        refreshPolicy()
     }
 
     func setForeground(_ value: Bool) {
@@ -64,15 +81,20 @@ final class LocalSharePreview: ObservableObject {
     }
 
     func refreshPolicy() {
-        let nowLive = active && foreground && isMac && !hidden && ownSceneIsNotCaptured?() == true
+        let nowLive = active && foreground && isMac && !hidden && !paused &&
+            (!enlarged || ownSceneIsNotCaptured?() == true)
         if live != nowLive { live = nowLive }
-        onCapturePolicyChanged?(acceptsFrames)
+        let wanted = acceptsFrames
+        if publishedPolicy != wanted {
+            publishedPolicy = wanted
+            onCapturePolicyChanged?(wanted)
+        }
     }
 
     func accept(_ pixelBuffer: CVPixelBuffer, rotation: Int = 0,
                 time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         refreshPolicy()
-        guard acceptsFrames, time - lastFrameTime >= 1 else { return }
+        guard acceptsFrames, time - lastFrameTime >= (isMac ? 0.5 : 1) else { return }
         lastFrameTime = time
         var input = CIImage(cvPixelBuffer: pixelBuffer)
         switch rotation {
@@ -86,6 +108,8 @@ final class LocalSharePreview: ObservableObject {
         input = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         if let thumbnail = context.createCGImage(input, from: input.extent) {
             image = UIImage(cgImage: thumbnail)
+            refreshRequested = false
+            refreshPolicy()
         }
     }
 
@@ -93,6 +117,8 @@ final class LocalSharePreview: ObservableObject {
         refreshPolicy()
         guard acceptsFrames else { return }
         image = thumbnail
+        refreshRequested = false
+        refreshPolicy()
     }
 
     deinit { observations.forEach(NotificationCenter.default.removeObserver) }
@@ -106,6 +132,8 @@ final class LocalSharePreviewCard: UIView {
     private var thumbnailHeight: NSLayoutConstraint!
     private let title = UIButton(type: .system)
     private let visibility = UIButton(type: .system)
+    private let pause = UIButton(type: .system)
+    private let refresh = UIButton(type: .system)
     private let detail = UILabel()
     private var subscriptions = Set<AnyCancellable>()
     var onStop: (() -> Void)?
@@ -119,7 +147,7 @@ final class LocalSharePreviewCard: UIView {
         layer.cornerRadius = 12
         layer.borderWidth = 1
         layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
-        title.setTitle("Local preview", for: .normal)
+        title.setTitle("Preview", for: .normal)
         title.titleLabel?.font = .preferredFont(forTextStyle: .caption1)
         title.setTitleColor(.white, for: .normal)
         title.accessibilityLabel = "Enlarge local sharing preview"
@@ -130,7 +158,14 @@ final class LocalSharePreviewCard: UIView {
             self.model.hidden.toggle()
             self.model.refreshPolicy()
         }, for: .touchUpInside)
-        let header = UIStackView(arrangedSubviews: [title, visibility])
+        pause.tintColor = .lightGray
+        pause.isHidden = !model.isMac
+        pause.addAction(UIAction { [weak model] _ in model?.togglePaused() }, for: .touchUpInside)
+        refresh.tintColor = .lightGray
+        refresh.setImage(UIImage(systemName: "arrow.clockwise"), for: .normal)
+        refresh.accessibilityLabel = "Refresh sharing preview"
+        refresh.addAction(UIAction { [weak model] _ in model?.refreshFrame() }, for: .touchUpInside)
+        let header = UIStackView(arrangedSubviews: [title, pause, refresh, visibility])
         header.spacing = 4
         accessibilityIdentifier = "Local sharing preview card"
         thumbnailView.contentMode = .scaleAspectFit
@@ -166,11 +201,15 @@ final class LocalSharePreviewCard: UIView {
             column.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             column.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
             visibility.widthAnchor.constraint(equalToConstant: 44),
+            pause.widthAnchor.constraint(equalToConstant: 44),
+            refresh.widthAnchor.constraint(equalToConstant: 44),
             header.heightAnchor.constraint(equalToConstant: 44),
             stop.heightAnchor.constraint(equalToConstant: 44)
         ])
         model.ownSceneIsNotCaptured = { [weak self] in
             guard let self, self.window != nil else { return false }
+            // Designed-for-iPad on Mac does not reliably expose capture membership.
+            if self.model.isMac { return false }
             if #available(iOS 17, *) { return self.traitCollection.sceneCaptureState == .inactive }
             return false
         }
@@ -197,6 +236,7 @@ final class LocalSharePreviewCard: UIView {
     }
 
     private func render() {
+        accessibilityElementsHidden = !model.active
         isHidden = !model.active
         let landscape = !model.isMac && traitCollection.verticalSizeClass == .compact
         lastLandscape = landscape
@@ -206,6 +246,8 @@ final class LocalSharePreviewCard: UIView {
         if showImage { thumbnailHeight.isActive = true }
         thumbnailView.image = model.image
         title.isEnabled = model.image != nil
+        pause.setImage(UIImage(systemName: model.paused ? "play.fill" : "pause.fill"), for: .normal)
+        pause.accessibilityLabel = model.paused ? "Resume sharing preview" : "Pause sharing preview"
         visibility.setImage(UIImage(systemName: model.hidden ? "eye" : "eye.slash"), for: .normal)
         visibility.accessibilityLabel = model.hidden ? "Show local preview" : "Hide local preview"
         if model.image == nil {
@@ -225,7 +267,8 @@ final class LocalSharePreviewCard: UIView {
         while let presented = controller.presentedViewController { controller = presented }
         guard !controller.isBeingDismissed else { return }
         let panel = LocalSharePreviewPanel(model: model, onStop: { [weak self] in self?.onStop?() })
-        panel.onClose = { [weak self] in self?.enlarged = nil }
+        model.setEnlarged(true)
+        panel.onClose = { [weak self] in self?.model.setEnlarged(false); self?.enlarged = nil }
         panel.modalPresentationStyle = .pageSheet
         panel.sheetPresentationController?.detents = [.large()]
         enlarged = panel
@@ -256,7 +299,11 @@ private final class LocalSharePreviewPanel: UIViewController, UIScrollViewDelega
         stop.setTitle("Stop Sharing", for: .normal)
         stop.tintColor = .systemOrange
         stop.addAction(UIAction { [weak self] _ in self?.onStop() }, for: .touchUpInside)
-        let bar = UIStackView(arrangedSubviews: [close, stop])
+        let refresh = UIButton(type: .system)
+        refresh.setTitle("Refresh", for: .normal)
+        refresh.accessibilityLabel = "Refresh sharing preview"
+        refresh.addAction(UIAction { [weak model] _ in model?.refreshFrame() }, for: .touchUpInside)
+        let bar = UIStackView(arrangedSubviews: [close, refresh, stop])
         bar.distribution = .fillEqually
         detail.textColor = .lightGray
         detail.font = .preferredFont(forTextStyle: .footnote)
@@ -295,6 +342,11 @@ private final class LocalSharePreviewPanel: UIViewController, UIScrollViewDelega
         detail.text = model.live ? "Local preview · Remote delivery may differ." :
             "Last shared frame · Preview paused while this app is visible to avoid a repeating screen."
         if !model.active { dismiss(animated: false); onClose?() }
+    }
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        model.setEnlarged(false)
+        onClose?()
     }
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { onClose?() }

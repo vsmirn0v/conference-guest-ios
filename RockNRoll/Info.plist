@@ -32,16 +32,13 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>21</string>
+	<string>23</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>JoinLinkHost</key>
 	<string>$(JOIN_LINK_HOST)</string>
-	<key>RTCAppGroupIdentifier</key>
-	<string>group.dev.vsmirn0v.conferenceguest</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<!-- ATS otherwise rejects app-bundled CA anchors on arbitrary HTTPS invitation hosts. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -55,6 +52,8 @@
 	<string>Choose a contact to fill your jam name. Only the selected name is sent when you join.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Let others hear you when you turn on your microphone in a jam.</string>
+	<key>RTCAppGroupIdentifier</key>
+	<string>group.dev.vsmirn0v.conferenceguest</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

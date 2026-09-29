@@ -20,12 +20,10 @@ public struct ConferenceEndpointResolver {
         var request = URLRequest(url: discoveryURL)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 10
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse,
-              http.statusCode == 200,
+        let (data, http) = try await BoundedHTTP.load(request, session: session, maximumBytes: 65_536)
+        guard http.statusCode == 200,
               http.url?.scheme?.lowercased() == "https",
               http.url?.host?.lowercased() == target.originURL.host?.lowercased(),
-              data.count <= 65_536,
               let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let service = document[serviceName] as? [String: Any],
               let serverURL = service["serverUrl"] as? String,

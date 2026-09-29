@@ -23,11 +23,11 @@ struct JamDetails: Decodable {
 struct JamService {
     private let session: URLSession
 
-    init() {
+    init(session: URLSession? = nil) {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.urlCache = nil
-        session = URLSession(configuration: configuration)
+        self.session = session ?? URLSession(configuration: configuration)
     }
 
     func join(_ target: JamTarget, name: String) async throws -> JamCredentials {
@@ -47,7 +47,7 @@ struct JamService {
         for attempt in 0..<3 {
             try Task.checkCancellation()
             do {
-                result = try await session.data(for: request)
+                result = try await BoundedHTTP.load(request, session: session, maximumBytes: 16_384)
                 break
             } catch let error as URLError where attempt < 2 &&
                 [.networkConnectionLost, .timedOut, .cannotConnectToHost].contains(error.code) {
@@ -56,11 +56,18 @@ struct JamService {
         }
         guard let received = result else { throw JamServiceError.invalidResponse }
         (data, response) = received
+        if let http = response as? HTTPURLResponse {
+            switch http.statusCode {
+            case 400: throw JamServiceError.invalidName
+            case 429: throw JamServiceError.busy
+            case 500...599: throw JamServiceError.unavailable
+            default: break
+            }
+        }
         guard let http = response as? HTTPURLResponse,
               http.statusCode == 200,
               http.url?.scheme?.lowercased() == "https",
               http.url?.host?.lowercased() == target.originURL.host?.lowercased(),
-              data.count <= 16_384,
               let credentials = try? JSONDecoder().decode(JamCredentials.self, from: data),
               credentials.serverURL.scheme?.lowercased() == "wss",
               credentials.serverURL.host?.lowercased() == target.originURL.host?.lowercased(),
@@ -77,6 +84,13 @@ struct JamService {
 }
 
 enum JamServiceError: LocalizedError {
-    case invalidResponse
-    var errorDescription: String? { "This jam could not provide a secure connection." }
+    case invalidResponse, invalidName, busy, unavailable
+    var errorDescription: String? {
+        switch self {
+        case .invalidResponse: "This jam could not provide a secure connection."
+        case .invalidName: "This jam needs a name of up to 60 characters without control characters. Edit your name and try again."
+        case .busy: "This jam is busy. Wait a moment and try again."
+        case .unavailable: "The jam service is temporarily unavailable. Try again shortly."
+        }
+    }
 }

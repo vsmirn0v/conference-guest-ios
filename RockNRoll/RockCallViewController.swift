@@ -8,18 +8,10 @@ import UIKit
 final class RockCallViewController: UIViewController, UIScrollViewDelegate, UIContextMenuInteractionDelegate {
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .allButUpsideDown }
     override var shouldAutorotate: Bool { true }
-    override var keyCommands: [UIKeyCommand]? { [
-        UIKeyCommand(title: "Mute or unmute microphone", action: #selector(keyToggleMicrophone),
-                     input: "a", modifierFlags: [.command, .shift]),
-        UIKeyCommand(title: "Start or stop video", action: #selector(keyToggleCamera),
-                     input: "v", modifierFlags: [.command, .shift]),
-        UIKeyCommand(title: "Open chat", action: #selector(keyOpenChat),
-                     input: "c", modifierFlags: [.command, .shift]),
-        UIKeyCommand(title: "Show musicians", action: #selector(keyOpenParticipants),
-                     input: "p", modifierFlags: [.command, .shift]),
-        UIKeyCommand(title: "Fit shared screen", action: #selector(keyFitScreen),
-                     input: "0", modifierFlags: [.command])
-    ] }
+    override var keyCommands: [UIKeyCommand]? {
+        CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
+            chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen))
+    }
     var onLeave: (() -> Void)?
     var onMicrophone: ((Bool) -> Void)?
     var onCamera: ((Bool) -> Void)?

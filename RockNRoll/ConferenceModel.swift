@@ -30,8 +30,9 @@ final class ConferenceModel: ObservableObject {
     private var joinAwaitingName: JoinDestination?
     private var nameEntryConfirmed = false
     var isNameRequiredForJoin: Bool { joinAwaitingName != nil }
+    var namePolicy: MeetingInputPolicy { joinAwaitingName?.inputPolicy ?? MeetingInputPolicy(maximumNameScalars: 80) }
     var validDisplayName: Bool {
-        (1...80).contains(displayName.trimmingCharacters(in: .whitespacesAndNewlines).count)
+        namePolicy.accepts(name: displayName)
     }
 
     func confirmNameEntry() {
@@ -59,16 +60,15 @@ final class ConferenceModel: ObservableObject {
     private let jamService = JamService()
     private weak var container: UIViewController?
     private var pendingTarget: JoinDestination?
-    private var replacementAfterLeave: JoinDestination?
-    private var replacementAutoJoin = false
+    private struct PendingInvitation { let target: JoinDestination; let autoJoin: Bool }
+    private var replacementAfterLeave: PendingInvitation?
     private var activeRoute: JoinDestination?
     private var activeRoomTitle: String?
     private var joinTask: Task<Void, Never>?
     private var terminalEventHandled = false
     private var sessionGeneration: UInt64 = 0
     private var endpointCache: [URL: URL] = [:]
-    private var activeWebsiteWindow: UIWindow?
-    private weak var previousKeyWindow: UIWindow?
+    private let websitePresenter = MeetingWebsitePresenter()
     private var websiteLinkAwaitingSelection: URL?
     #if DEBUG
     private var joinStartedAt: TimeInterval?
@@ -141,13 +141,11 @@ final class ConferenceModel: ObservableObject {
             return
         }
         if isLeaving {
-            replacementAfterLeave = target
-            replacementAutoJoin = autoJoin
+            replacementAfterLeave = PendingInvitation(target: target, autoJoin: autoJoin)
         } else if isJoining || isInConference {
             guard target != activeRoute else { return }
             if autoJoin {
-                replacementAfterLeave = target
-                replacementAutoJoin = true
+                replacementAfterLeave = PendingInvitation(target: target, autoJoin: true)
                 pendingTarget = nil
                 showSwitchConfirmation = false
                 leave()
@@ -203,9 +201,7 @@ final class ConferenceModel: ObservableObject {
 
     private func presentWebsitePicker(for link: URL, origins: [URL]) {
         websiteLinkAwaitingSelection = link
-        if activeWebsiteWindow != nil { dismissWebsiteWindow() }
-        guard let scene = container?.view.window?.windowScene else { return }
-        let picker = UIHostingController(rootView: MeetingWebsiteSelectionView(
+        websitePresenter.present(in: container?.view.window, view: MeetingWebsiteSelectionView(
             rememberedOrigins: origins,
             onChoose: { [weak self] website in
                 guard let self, let link = self.websiteLinkAwaitingSelection else {
@@ -229,19 +225,10 @@ final class ConferenceModel: ObservableObject {
                 self?.dismissWebsiteWindow()
             }
         ))
-        let window = UIWindow(windowScene: scene)
-        window.windowLevel = .alert + 1
-        window.rootViewController = picker
-        previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
-        activeWebsiteWindow = window
-        window.makeKeyAndVisible()
     }
 
     private func dismissWebsiteWindow() {
-        activeWebsiteWindow?.isHidden = true
-        activeWebsiteWindow = nil
-        (previousKeyWindow ?? container?.view.window)?.makeKey()
-        previousKeyWindow = nil
+        websitePresenter.dismiss(fallback: container?.view.window)
     }
 
     private func startJoin(_ target: JoinDestination) {
@@ -253,7 +240,7 @@ final class ConferenceModel: ObservableObject {
         let requestedName = displayName
         #endif
         let name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name.count <= 80 else {
+        guard target.inputPolicy.accepts(name: name) else {
             joinAwaitingName = target
             nameEntryConfirmed = false
             showingNameEditor = true
@@ -372,8 +359,7 @@ final class ConferenceModel: ObservableObject {
 
     func replaceWithPending() {
         guard let target = pendingTarget else { return }
-        replacementAfterLeave = target
-        replacementAutoJoin = false
+        replacementAfterLeave = PendingInvitation(target: target, autoJoin: false)
         pendingTarget = nil
         leave()
     }
@@ -395,12 +381,10 @@ final class ConferenceModel: ObservableObject {
     }
 
     private func completeReplacement() {
-        guard let target = replacementAfterLeave else { return }
-        let autoJoin = replacementAutoJoin
+        guard let invitation = replacementAfterLeave else { return }
         replacementAfterLeave = nil
-        replacementAutoJoin = false
-        set(target: target)
-        if autoJoin { startJoin(target) }
+        set(target: invitation.target)
+        if invitation.autoJoin { startJoin(invitation.target) }
     }
 
     private func set(target: JoinDestination) {

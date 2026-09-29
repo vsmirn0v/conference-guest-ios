@@ -3,6 +3,36 @@ import XCTest
 
 @MainActor
 final class RoomHistoryStoreTests: XCTestCase {
+    final class FakeStorage: RoomHistoryStorage {
+        var data: Data?
+        var failing = true
+        var writes = 0
+        func read() -> Data? { data }
+        func write(_ data: Data) throws {
+            writes += 1
+            if failing { throw NSError(domain: "Keychain", code: -34018) }
+            self.data = data
+        }
+    }
+    func testFailedSaveCanBeRetriedAndIdenticalTitleDoesNotWrite() {
+        let storage = FakeStorage()
+        let store = RoomHistoryStore(storage: storage)
+        let url = URL(string: "https://meeting.example.test/calls/one?psw=secret")!
+        store.record(url: url, title: "Room", identifier: "one")
+        XCTAssertNotNil(store.persistenceWarning)
+        store.toggleStar(url)
+        store.setAlias("Quartet", for: url)
+        storage.failing = false
+        store.retrySave()
+        XCTAssertNil(store.persistenceWarning)
+        let restored = RoomHistoryStore(storage: storage)
+        XCTAssertEqual(restored.rooms.first?.alias, "Quartet")
+        XCTAssertTrue(restored.rooms.first?.isStarred == true)
+        let count = storage.writes
+        restored.updateTitle(for: url, title: "Room")
+        XCTAssertEqual(storage.writes, count)
+    }
+
     func testFavoriteAliasAndWebsiteSurviveStoreRecreation() {
         let marker = UUID().uuidString
         let invitation = URL(string: "https://meeting.example.test/calls/\(marker)?psw=fixture")!

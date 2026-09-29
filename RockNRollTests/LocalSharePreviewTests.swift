@@ -39,26 +39,55 @@ final class LocalSharePreviewTests: XCTestCase {
         XCTAssertFalse(first === preview.image)
     }
 
-    func testMacOnlyPreviewsWhenOwnSceneIsKnownNotCaptured() {
+    func testMacThumbnailConversionCostStaysBounded() throws {
         let preview = LocalSharePreview(isMac: true, observeLifecycle: false)
+        preview.begin()
+        var buffer: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 1920, 1080, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer), kCVReturnSuccess)
+        let pixels = try XCTUnwrap(buffer)
+        preview.accept(pixels, time: 1)
+        let start = Date()
+        for index in 0..<100 { preview.accept(pixels, time: Double(index) * 0.6 + 2) }
+        print("PERF 1080p→640px preview average ms: \(Date().timeIntervalSince(start) * 10)")
+        XCTAssertLessThanOrEqual(max(preview.image!.size.width, preview.image!.size.height), 640)
+    }
+
+    func testMacThumbnailIsLiveButCapturedEnlargementPauses() {
+        let preview = LocalSharePreview(isMac: true, observeLifecycle: false)
+        var policies: [Bool] = []
+        preview.onCapturePolicyChanged = { policies.append($0) }
         preview.begin(source: .window)
         preview.acceptThumbnail(thumbnail)
         let initial = preview.image
-        XCTAssertNotNil(initial, "Unknown sources can show one frozen confidence snapshot")
-        XCTAssertFalse(preview.live)
-        preview.acceptThumbnail(thumbnail)
-        XCTAssertTrue(preview.image === initial, "An unknown source must not form a repeating live preview")
-        preview.ownSceneIsNotCaptured = { true }
-        preview.acceptThumbnail(thumbnail)
-        XCTAssertNotNil(preview.image)
         XCTAssertTrue(preview.live)
-        preview.ownSceneIsNotCaptured = { false }
-        let safe = preview.image
         preview.acceptThumbnail(thumbnail)
-        XCTAssertTrue(preview.image === safe)
+        XCTAssertFalse(preview.image === initial)
+        XCTAssertEqual(policies, [true], "Unchanged frames must not write preview policy metadata")
+        preview.setEnlarged(true)
+        let paused = preview.image
+        preview.acceptThumbnail(thumbnail)
+        XCTAssertTrue(preview.image === paused)
         XCTAssertFalse(preview.live)
-        preview.hidden = true
-        preview.ownSceneIsNotCaptured = { true }
+        preview.refreshFrame()
+        preview.acceptThumbnail(thumbnail)
+        XCTAssertFalse(preview.image === paused)
+        XCTAssertFalse(preview.acceptsFrames, "Refresh accepts exactly one frame")
+        preview.setEnlarged(false)
+        XCTAssertTrue(preview.live)
+        preview.togglePaused()
         XCTAssertFalse(preview.acceptsFrames)
+        preview.togglePaused()
+        XCTAssertTrue(preview.live)
+        preview.setEnlarged(true)
+        preview.ownSceneIsNotCaptured = { true }
+        preview.refreshPolicy()
+        XCTAssertTrue(preview.live, "An external window can remain live while enlarged")
+        preview.hidden = true
+        preview.refreshPolicy()
+        XCTAssertFalse(preview.acceptsFrames)
+        preview.end()
+        preview.begin()
+        XCTAssertTrue(preview.acceptsFrames)
     }
 }

@@ -19,7 +19,8 @@ let toneTrack;
 let toneContext;
 let toneOscillator;
 let toneTimer;
-const chatTopic = 'rock.chat.v1';
+const seenChatIDs = new Set();
+import { chatTopic, encodeChat, decodeChat } from './chat-packet.js';
 let room;
 
 function addChat(sender, text) {
@@ -41,7 +42,7 @@ async function sendChat() {
   if (!text || [...text].length > 2000) return;
   const packet = {id: crypto.randomUUID(), text};
   try {
-    await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(packet)),
+    await room.localParticipant.publishData(encodeChat(packet),
       {reliable:true, topic:chatTopic});
     addChat(room.localParticipant.name || 'You', text);
     chatInput.value = '';
@@ -111,7 +112,7 @@ function updateOwnMediaStatus() {
 
 document.getElementById('join-browser').addEventListener('click', async () => {
   const displayName = name.value.trim();
-  if (!displayName || [...displayName].length > 60) {
+  if (!displayName || [...displayName].length > 60 || /\p{Cc}/u.test(displayName)) {
     status.textContent = 'Enter a name of up to 60 characters.';
     return;
   }
@@ -146,15 +147,17 @@ document.getElementById('join-browser').addEventListener('click', async () => {
     room.on(RoomEvent.LocalTrackPublished, updateOwnMediaStatus);
     room.on(RoomEvent.LocalTrackUnpublished, updateOwnMediaStatus);
     room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-      if (topic !== chatTopic || payload.byteLength > 4096) return;
+      if (topic !== chatTopic) return;
       try {
-        const packet = JSON.parse(new TextDecoder().decode(payload));
-        if (typeof packet.id !== 'string' || typeof packet.text !== 'string' ||
-            !packet.text || [...packet.text].length > 2000) return;
+        const packet = decodeChat(payload);
+        const identity = (participant?.identity || '') + ':' + packet.id;
+        if (seenChatIDs.has(identity)) return;
+        seenChatIDs.add(identity);
+        if (seenChatIDs.size > 2048) seenChatIDs.delete(seenChatIDs.values().next().value);
         addChat(participant?.name || 'Musician', packet.text);
       } catch { /* Ignore malformed room data. */ }
     });
-    room.on(RoomEvent.Disconnected, () => { room = undefined; void stopDemoCard(); void stopTone(); controls.hidden = true; chat.hidden = true; chatMessages.textContent = 'No messages yet.'; status.textContent = 'Left the jam.'; people.replaceChildren(); count.textContent = '0 participants'; });
+    room.on(RoomEvent.Disconnected, () => { room = undefined; seenChatIDs.clear(); void stopDemoCard(); void stopTone(); controls.hidden = true; chat.hidden = true; chatMessages.textContent = 'No messages yet.'; status.textContent = 'Left the jam.'; people.replaceChildren(); count.textContent = '0 participants'; });
     await room.connect(credentials.server_url, credentials.participant_token);
     await room.startAudio();
     controls.hidden = false;

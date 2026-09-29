@@ -3,14 +3,22 @@ import ConferenceCore
 import Foundation
 import Security
 
+protocol RoomHistoryStorage {
+    func read() -> Data?
+    func write(_ data: Data) throws
+}
+
 @MainActor
 final class RoomHistoryStore: ObservableObject {
     @Published private(set) var rooms: [RecentRoom] = []
     private var history: RecentRooms
+    private let storage: any RoomHistoryStorage
+    @Published private(set) var persistenceWarning: String?
     private(set) var removedRoom: RecentRoom?
 
-    init() {
-        if let data = Self.read(), let restored = try? JSONDecoder().decode(RecentRooms.self, from: data) {
+    init(storage: any RoomHistoryStorage = KeychainRoomHistoryStorage()) {
+        self.storage = storage
+        if let data = storage.read(), let restored = try? JSONDecoder().decode(RecentRooms.self, from: data) {
             history = restored
         } else {
             history = RecentRooms()
@@ -24,6 +32,7 @@ final class RoomHistoryStore: ObservableObject {
     }
 
     func updateTitle(for url: URL, title: String) {
+        guard history.items.first(where: { $0.invitationURL == url })?.title != title else { return }
         history.updateTitle(for: url, title: title)
         save()
     }
@@ -51,21 +60,35 @@ final class RoomHistoryStore: ObservableObject {
         save()
     }
 
+    func retrySave() { save() }
+
     private func save() {
         rooms = history.items
-        guard let data = try? JSONEncoder().encode(history) else { return }
+        do {
+            try storage.write(JSONEncoder().encode(history))
+            persistenceWarning = nil
+        } catch {
+            persistenceWarning = "Room changes are not saved yet. Tap Retry to keep them after restarting."
+        }
+    }
+}
+
+struct KeychainRoomHistoryStorage: RoomHistoryStorage {
+    func write(_ data: Data) throws {
         let query = Self.query
         let update: [String: Any] = [kSecValueData as String: data]
-        if SecItemUpdate(query as CFDictionary, update as CFDictionary) == errSecItemNotFound {
+        var status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        if status == errSecItemNotFound {
             var addition = query
             addition[kSecValueData as String] = data
             addition[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            SecItemAdd(addition as CFDictionary, nil)
+            status = SecItemAdd(addition as CFDictionary, nil)
         }
+        guard status == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
     }
 
-    private static func read() -> Data? {
-        var query = self.query
+    func read() -> Data? {
+        var query = Self.query
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?

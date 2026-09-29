@@ -136,6 +136,10 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         chat.$canSend.receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateComposer() }
             .store(in: &subscriptions)
+        chat.$unreadCoverageIsLimited.removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.updateComposer() }
+            .store(in: &subscriptions)
         if let call {
             Publishers.CombineLatest4(call.$microphoneOn, call.$cameraOn,
                                       call.$speakerOn, call.$onHold)
@@ -672,14 +676,17 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     private func updateComposer() {
         guard isViewLoaded else { return }
-        let count = composer.text.trimmingCharacters(in: .whitespacesAndNewlines).count
+        let clean = composer.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let count = clean.unicodeScalars.count
         placeholder.isHidden = !composer.text.isEmpty || !chat.canSend
-        sendButton.isEnabled = chat.canSend && count > 0 && count <= 2_000
+        sendButton.isEnabled = chat.canSend && RoomChatPacket.accepts(text: clean)
         retryButtons.values.forEach { $0.isEnabled = chat.canSend }
         composer.isEditable = chat.canSend
         if !chat.canSend { hint.text = "Chat isn't available right now." }
         else if count > 2_000 { hint.text = "\(count - 2_000) characters over the limit" }
+        else if count > 0 && !RoomChatPacket.accepts(text: clean) { hint.text = "This message is too large to send." }
         else if count >= 1_800 { hint.text = "\(count)/2,000 characters" }
+        else if chat.unreadCoverageIsLimited { hint.text = "Earlier unread messages may be incomplete after history changed." }
         else { hint.text = nil }
         hint.isHidden = hint.text == nil
         updateComposerHeight()

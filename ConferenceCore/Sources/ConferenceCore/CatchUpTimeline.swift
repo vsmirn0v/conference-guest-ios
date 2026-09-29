@@ -102,23 +102,30 @@ public struct CatchUpTimeline: Codable {
         intervals[index].end = max(time, intervals[index].start)
     }
 
+    public func shouldRetain(id: String, spokenAt: Date?) -> Bool {
+        guard isTruncated, segments.count == 5_000, segmentsByID[id] == nil, let first = segments.first else { return true }
+        return Self.precedes(first, TranscriptSegment(id: id, speaker: nil, text: "", spokenAt: spokenAt))
+    }
+
+    private static func precedes(_ a: TranscriptSegment, _ b: TranscriptSegment) -> Bool {
+        switch (a.spokenAt, b.spokenAt) {
+        case let (x?, y?): return x == y ? a.id < b.id : x < y
+        case (nil, _?): return false
+        case (_?, nil): return true
+        case (nil, nil): return a.id < b.id
+        }
+    }
+
     public mutating func upsert(_ incoming: [TranscriptSegment]) {
         var changed = false
-        for segment in incoming where !segment.id.isEmpty && !segment.text.isEmpty {
+        for segment in incoming where !segment.id.isEmpty && !segment.text.isEmpty && shouldRetain(id: segment.id, spokenAt: segment.spokenAt) {
             if segmentsByID[segment.id] != segment {
                 segmentsByID[segment.id] = segment
                 changed = true
             }
         }
         guard changed else { return }
-        let ordered = segmentsByID.values.sorted {
-            switch ($0.spokenAt, $1.spokenAt) {
-            case let (a?, b?): return a == b ? $0.id < $1.id : a < b
-            case (nil, _?): return false
-            case (_?, nil): return true
-            case (nil, nil): return $0.id < $1.id
-            }
-        }
+        let ordered = segmentsByID.values.sorted(by: Self.precedes)
         if ordered.count > 5_000 {
             isTruncated = true
             segments = Array(ordered.suffix(5_000))

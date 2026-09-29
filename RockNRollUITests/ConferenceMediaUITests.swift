@@ -381,7 +381,9 @@ final class ConferenceMediaUITests: XCTestCase {
             attachScreenshot(of: app, named: "Local sharing preview \(orientation.rawValue)")
         }
         app.buttons["Stop local screen sharing"].tap()
-        XCTAssertFalse(app.buttons["Enlarge local sharing preview"].exists)
+        let removed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+            object: app.buttons["Enlarge local sharing preview"])
+        XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed)
     }
 
     func testJamChatWithBrowserParticipant() throws {

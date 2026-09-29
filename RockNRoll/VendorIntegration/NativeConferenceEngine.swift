@@ -14,6 +14,9 @@ final class NativeConferenceEngine: CallEngine {
 
     private let identity = GuestIdentity()
     private var nameForNextCoordinator: String?
+    private var sessionEpoch = UUID()
+    private var finishing: Task<Void, Never>?
+    private var accessSubscription: AnyCancellable?
     private var nameUpdateGeneration: UInt64 = 0
     private let audio = AudioCoordinator()
     let catchUp: CatchUpStore
@@ -174,16 +177,6 @@ final class NativeConferenceEngine: CallEngine {
                 self.recoverAudioIfReady()
             }
         }
-        events.onEvent = { [weak self] event in
-            guard let self else { return }
-            if self.isMediaReconnecting {
-                switch event {
-                case .left, .inactive, .canceled, .failed: return
-                default: break
-                }
-            }
-            self.onEvent?(event)
-        }
         let settings = JazzSettings(
             network: JazzNetwork(hostUrl: networkURL),
             buttonsVisibility: .allVisible,
@@ -206,13 +199,15 @@ final class NativeConferenceEngine: CallEngine {
         #endif
         JazzSession.shared.$jazzConferencePhase
             .dropFirst() // The initial inactive value is not a completed join.
+            .map { [weak self] phase in (phase, self?.sessionEpoch) }
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] phase in
-                guard let self, self.hasMediaJoinStarted else { return }
+            .sink { [weak self] phase, epoch in
+                guard let self, self.sessionEpoch == epoch, self.finishing == nil, self.hasMediaJoinStarted else { return }
                 #if DEBUG
                 print("Conference phase event: \(Self.map(phase))")
                 #endif
-                if case .activeConference = phase {
+                if case .activeConference(let room) = phase {
+                    guard let expected = self.activeRoom, EventRelay.matches(room, expected) else { return }
                     self.isSDKActive = true
                     self.hasBecomeActive = true
                     if self.isMediaReconnecting {
@@ -247,26 +242,17 @@ final class NativeConferenceEngine: CallEngine {
                         self.activeControls = nil
                         self.hasMediaJoinStarted = false
                         self.pendingRoom = self.activeRoom
+                        let epoch = self.sessionEpoch
                         Task { @MainActor [weak self] in
                             try? await Task.sleep(for: .milliseconds(350))
-                            guard let self, self.isMediaReconnecting,
+                            guard let self, self.sessionEpoch == epoch, self.isMediaReconnecting,
                                   !self.leaveRequested else { return }
                             self.startMediaAfterActivation()
                         }
                         return
                     }
-                    self.isSDKActive = false
-                    self.updateConnectionGap()
-                    self.hasJoinStarted = false
-                    self.hasMediaJoinStarted = false
-                    self.activeCoordinator = nil
-                    self.activeRoom = nil
-                    self.toastSubscription?.cancel()
-                    self.toastSubscription = nil
-                    self.currentNotices = []
-                    self.activeControls?.isHidden = true
-                    self.activeControls = nil
-                    self.systemCall.markEnded(reason: .failed)
+                    self.finishSession(userEnded: self.leaveRequested, event: .left)
+                    return
                 }
                 self.onEvent?(Self.map(phase))
             }
@@ -274,9 +260,10 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func installCallHandlers() {
+        let epoch = sessionEpoch
         systemCall.onActivated = { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self, self.hasJoinStarted, !self.leaveRequested else { return }
+                guard let self, self.sessionEpoch == epoch, self.hasJoinStarted, !self.leaveRequested else { return }
                 self.audioGate.activate()
                 self.audio.callAudioDidActivate()
                 self.activeControls?.setAudioRouteName(self.audio.outputName)
@@ -287,7 +274,7 @@ final class NativeConferenceEngine: CallEngine {
         }
         systemCall.onDeactivated = { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self, self.hasJoinStarted else { return }
+                guard let self, self.sessionEpoch == epoch, self.hasJoinStarted else { return }
                 self.audioGate.deactivate()
                 self.isAudioInterrupted = true
                 self.prepareToFloat()
@@ -300,41 +287,13 @@ final class NativeConferenceEngine: CallEngine {
         }
         systemCall.onEnded = { [weak self] userEnded in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                await self.stopScreenSharing()
-                if self.leaveRequested || userEnded {
-                    self.catchUp.finishMeeting()
-                } else if self.hasBecomeActive {
-                    self.catchUp.continueAsConnectionGap()
-                }
-                self.hasBecomeActive = false
-                self.resetPiPMicrophoneObservation()
-                self.floatingVideo?.clear()
-                self.isSDKActive = false
-                self.isMediaReconnecting = false
-                self.hasScheduledMediaRestart = false
-                self.needsMediaReconnect = false
-                self.activeRoom = nil
-                self.networkMonitor?.cancel()
-                self.networkMonitor = nil
-                self.leaveRequested = false
-                self.toastSubscription?.cancel()
-                self.toastSubscription = nil
-                self.currentNotices = []
-                self.activeControls?.isHidden = true
-                self.activeControls = nil
-                JazzSession.shared.terminateActiveConference()
-                self.activeCoordinator = nil
-                self.hasJoinStarted = false
-                self.hasMediaJoinStarted = false
-                let terminalEvent: CallEvent = self.mediaReconnectTimedOut ? .failed : .left
-                self.mediaReconnectTimedOut = false
-                self.onEvent?(terminalEvent)
+                guard let self, self.sessionEpoch == epoch else { return }
+                self.finishSession(userEnded: userEnded, event: self.mediaReconnectTimedOut ? .failed : .left)
             }
         }
         systemCall.onMuteChanged = { [weak self] muted in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.sessionEpoch == epoch else { return }
                 self.microphoneIntentOn = !muted
                 if !self.isSystemHeld {
                     self.activeCoordinator?.toggleMicrohone(isOn: !muted)
@@ -343,7 +302,7 @@ final class NativeConferenceEngine: CallEngine {
         }
         systemCall.onHoldChanged = { [weak self] held in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.sessionEpoch == epoch else { return }
                 self.isSystemHeld = held
                 self.prepareToFloat()
                 self.audioGate.setHeld(held)
@@ -355,6 +314,7 @@ final class NativeConferenceEngine: CallEngine {
                     self.activeCoordinator?.toggleMicrohone(isOn: false)
                     self.activeCoordinator?.toggleCamera(isOn: false)
                     await self.stopScreenSharing()
+                    guard self.sessionEpoch == epoch else { return }
                 }
                 self.activeControls?.setHeld(held)
                 if !held { self.recoverAudioIfReady() }
@@ -363,9 +323,8 @@ final class NativeConferenceEngine: CallEngine {
         }
         systemCall.onFailure = { [weak self] error in
             Task { @MainActor [weak self] in
-                self?.hasJoinStarted = false
-                self?.hasMediaJoinStarted = false
-                self?.onEvent?(.failed)
+                guard let self, self.sessionEpoch == epoch else { return }
+                self.finishSession(userEnded: false, event: .failed)
                 #if DEBUG
                 print("System call failed: \(error.localizedDescription)")
                 #endif
@@ -397,9 +356,10 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func scheduleUnpairedInterruptionRecovery() {
+        let epoch = sessionEpoch
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(500))
-            guard let self, self.hasMediaJoinStarted, self.hasBecomeActive,
+            guard let self, self.sessionEpoch == epoch, self.hasMediaJoinStarted, self.hasBecomeActive,
                   self.isAudioInterrupted, !self.leaveRequested,
                   self.systemCall.canRestoreAudio else { return }
             do {
@@ -422,9 +382,10 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func scheduleMediaReconnectTimeout(for generation: UInt64) {
+        let epoch = sessionEpoch
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(12))
-            guard let self, self.isMediaReconnecting, !self.leaveRequested,
+            guard let self, self.sessionEpoch == epoch, self.isMediaReconnecting, !self.leaveRequested,
                   self.mediaReconnectGeneration == generation else { return }
             self.mediaReconnectTimedOut = true
             self.systemCall.end()
@@ -432,6 +393,9 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     func join(target: JoinTarget, displayName: String) throws {
+        guard finishing == nil else { throw ProviderError.teardownInProgress }
+        sessionEpoch = UUID()
+        bindEvents()
         resetPiPMicrophoneObservation()
         streamViews.reset()
         offeredShare = nil
@@ -498,11 +462,13 @@ final class NativeConferenceEngine: CallEngine {
         floatingVideo?.clear()
         activeControls?.isHidden = true
         pendingRoom = nil
+        let epoch = sessionEpoch
         Task { @MainActor in
             await stopScreenSharing()
+            guard sessionEpoch == epoch else { return }
             #if DEBUG && targetEnvironment(simulator)
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
-                JazzSession.shared.terminateActiveConference()
+                finishSession(userEnded: true, event: .left)
                 return
             }
             #endif
@@ -585,9 +551,10 @@ final class NativeConferenceEngine: CallEngine {
     private func startNetworkMonitor() {
         guard networkMonitor == nil else { return }
         let monitor = NWPathMonitor()
+        let epoch = sessionEpoch
         monitor.pathUpdateHandler = { [weak self] path in
             Task { @MainActor [weak self] in
-                guard let self else { return }
+                guard let self, self.sessionEpoch == epoch else { return }
                 self.isNetworkAvailable = path.status == .satisfied
                 self.updateConnectionGap()
             }
@@ -624,8 +591,9 @@ final class NativeConferenceEngine: CallEngine {
 
     private func minimalRepresentation() -> JazzConferenceRepresentation {
         let streams = streamViews
+        let epoch = sessionEpoch
         let overlay = JazzActiveConferenceOverlayRepresentation { [weak self] state, coordinator, router, _ in
-            guard let self else { return UIView() }
+            guard let self, self.sessionEpoch == epoch, !self.leaveRequested else { return UIView() }
             self.activeCoordinator = coordinator
             // The SDK reads its name service at initialization and retains that name
             // between rooms. Update the conference profile on every new join too.
@@ -643,11 +611,15 @@ final class NativeConferenceEngine: CallEngine {
             self.observePiPMicrophone(state: state)
             self.observeTranscript(state: state)
             self.chat?.onSend = { [weak self] message in
-                self?.activeCoordinator?.sendMessage(message: message)
+                guard let self, self.sessionEpoch == epoch else { return }
+                self.activeCoordinator?.sendMessage(message: message)
             }
             self.roomTitleSubscription?.cancel()
             self.roomTitleSubscription = state.$conferenceTitle.receive(on: DispatchQueue.main)
-                .sink { [weak self] in self?.onRoomTitle?($0) }
+                .sink { [weak self] title in
+                    guard let self, self.sessionEpoch == epoch else { return }
+                    self.onRoomTitle?(title)
+                }
             streams.observe(state)
             let controls = CallControls(localPreview: self.localSharePreview, state: state, coordinator: coordinator, router: router,
                                         catchUp: self.catchUp,
@@ -655,7 +627,8 @@ final class NativeConferenceEngine: CallEngine {
                                         initialDisplayMode: self.displayMode,
                                         invitationURL: self.activeInvitationURL,
                                         roomIdentifier: self.activeRoomIdentifier,
-                                        onDisplayMode: { mode in
+                                        onDisplayMode: { [weak self] mode in
+                                            guard let self, self.sessionEpoch == epoch else { return }
                                             self.displayMode = mode
                                             self.streamViews.displayMode = mode
                                             coordinator.toggleIncomingStreamsDisabled(isEnabled: mode != .audioOnly)
@@ -664,16 +637,20 @@ final class NativeConferenceEngine: CallEngine {
                                         onFloatingPreferenceChanged: { [weak self] in
                                             self?.floatingVideo?.refreshPreference()
                                         },
-                                        onLeave: { [weak self] in self?.leave() },
+                                        onLeave: { [weak self] in
+                                            guard let self, self.sessionEpoch == epoch else { return }
+                                            self.leave()
+                                        },
                                         onScreenShare: { [weak self] enabled in
-                                            self?.setScreenSharing(enabled)
+                                            guard let self, self.sessionEpoch == epoch else { return }
+                                            self.setScreenSharing(enabled)
                                         },
                                         onMicrophoneState: { [weak self] isOn in
-                                            guard let self, !self.isSystemHeld else { return }
+                                            guard let self, self.sessionEpoch == epoch, !self.isSystemHeld else { return }
                                             self.microphoneIntentOn = isOn
                                             self.systemCall.setMuted(!isOn)
                                         }, onCameraState: { [weak self] isOn in
-                                            guard let self, !self.isSystemHeld else { return }
+                                            guard let self, self.sessionEpoch == epoch, !self.isSystemHeld else { return }
                                             self.cameraIntentOn = isOn
                                         })
             self.activeControls = controls
@@ -692,15 +669,20 @@ final class NativeConferenceEngine: CallEngine {
             connectionRepresentation: nil,
             overlayRepresentation: overlay,
             toastsRepresentation: .custom { [weak self] publisher in
-                self?.toastSubscription?.cancel()
-                self?.toastSubscription = publisher.receive(on: DispatchQueue.main)
-                    .sink { [weak self] toasts in self?.showToasts(toasts) }
+                guard let self, self.sessionEpoch == epoch else { return UIView() }
+                self.toastSubscription?.cancel()
+                self.toastSubscription = publisher.receive(on: DispatchQueue.main)
+                    .sink { [weak self] toasts in
+                        guard let self, self.sessionEpoch == epoch else { return }
+                        self.showToasts(toasts)
+                    }
                 let placeholder = UIView()
                 placeholder.isUserInteractionEnabled = false
                 return placeholder
             },
-            videoStreamsRepresentation: JazzActiveConferenceVideoStreamsRepresentation { model, video in
-                streams.makeView(model: model, video: video)
+            videoStreamsRepresentation: JazzActiveConferenceVideoStreamsRepresentation { [weak self] model, video in
+                guard self?.sessionEpoch == epoch else { return UIView() }
+                return streams.makeView(model: model, video: video)
             }
         )
     }
@@ -717,37 +699,97 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func observeTranscript(state: JazzActiveConferenceState) {
-        transcriptSubscription?.cancel()
-        transcriptSubscription = Publishers.CombineLatest4(
-            state.$messages, state.$canViewAsr, state.$activeConferenceMenuState,
-            state.$canViewChat
-        )
-        .receive(on: DispatchQueue.main)
-        .sink { [weak self] messages, canView, menu, canViewChat in
-            guard let self else { return }
-            let segments = messages.filter(\.isAsr).map { message in
-                TranscriptSegment(
-                    id: message.id,
-                    speaker: message.userNameWhenMessageSent ?? message.currentName,
-                    text: String(message.message.prefix(4_096)),
-                    spokenAt: CatchUpTimeline.providerDate(message.timestamp)
-                )
+        let epoch = sessionEpoch
+        accessSubscription = Publishers.CombineLatest3(state.$canViewAsr,
+            state.$activeConferenceMenuState, state.$canViewChat)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] canView, menu, canChat in
+                guard let self, self.sessionEpoch == epoch else { return }
+                self.catchUp.observe(messages: [], canView: canView, enabled: menu.asrState.isOn)
+                if self.chat?.canSend != canChat { self.chat?.canSend = canChat }
             }
-            self.catchUp.observe(messages: segments, canView: canView,
-                                 enabled: menu.asrState.isOn)
-            if self.chat?.canSend != canViewChat { self.chat?.canSend = canViewChat }
-            let existingTimes = Dictionary(
-                (self.chat?.items ?? []).map { ($0.id, $0.sentAt) },
-                uniquingKeysWith: { first, _ in first })
-            self.chat?.replace(messages.filter { !$0.isAsr }.map { message in
-                ChatEntry(id: message.id,
-                          sender: message.messageType == .local ? "You" :
-                              (message.userNameWhenMessageSent ?? message.currentName ?? "Musician"),
-                          text: String(message.message.prefix(4_096)),
-                          sentAt: CatchUpTimeline.providerDate(message.timestamp)
-                              ?? existingTimes[message.id] ?? Date(),
-                          isOwn: message.messageType == .local)
-            })
+        transcriptSubscription = state.$messages.removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] messages in
+                guard let self, self.sessionEpoch == epoch else { return }
+                let segments = messages.filter { $0.isAsr && self.catchUp.timeline.shouldRetain(
+                    id: $0.id, spokenAt: CatchUpTimeline.providerDate($0.timestamp)) }.map { message in
+                    TranscriptSegment(id: message.id,
+                        speaker: message.userNameWhenMessageSent ?? message.currentName,
+                        text: String(message.message.prefix(4_096)),
+                        spokenAt: CatchUpTimeline.providerDate(message.timestamp))
+                }
+                self.catchUp.observe(messages: segments, canView: state.canViewAsr,
+                                     enabled: state.activeConferenceMenuState.asrState.isOn)
+                let existingTimes = Dictionary((self.chat?.items ?? []).map { ($0.id, $0.sentAt) },
+                                               uniquingKeysWith: { first, _ in first })
+                self.chat?.replaceSnapshot(messages.filter { !$0.isAsr }, id: { $0.id },
+                    timestamp: { CatchUpTimeline.providerDate($0.timestamp) },
+                    isOwn: { $0.messageType == .local }, entry: { message in
+                        ChatEntry(id: message.id,
+                            sender: message.messageType == .local ? "You" :
+                                (message.userNameWhenMessageSent ?? message.currentName ?? "Musician"),
+                            text: String(message.message.prefix(4_096)),
+                            sentAt: CatchUpTimeline.providerDate(message.timestamp) ?? existingTimes[message.id] ?? Date(),
+                            isOwn: message.messageType == .local)
+                    })
+            }
+    }
+
+    private func bindEvents() {
+        let epoch = sessionEpoch
+        events.onEvent = { [weak self] event, room in
+            guard let self, self.sessionEpoch == epoch, self.finishing == nil else { return }
+            if let room, let active = self.activeRoom, !EventRelay.matches(room, active) { return }
+            if self.isMediaReconnecting {
+                switch event { case .left, .inactive, .canceled, .failed: return; default: break }
+            }
+            switch event {
+            case .left, .inactive, .canceled, .failed, .evicted:
+                self.finishSession(userEnded: self.leaveRequested, event: event)
+            default: self.onEvent?(event)
+            }
+        }
+    }
+
+    private func finishSession(userEnded: Bool, event: CallEvent) {
+        guard finishing == nil, hasJoinStarted else { return }
+        let epoch = sessionEpoch
+        let destination = onEvent
+        events.onEvent = nil
+        pendingRoom = nil
+        activeControls?.isHidden = true
+        finishing = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.stopScreenSharing()
+            guard self.sessionEpoch == epoch else { return }
+            if self.leaveRequested || userEnded { await self.catchUp.finishMeeting().value }
+            else if self.hasBecomeActive { self.catchUp.continueAsConnectionGap() }
+            guard self.sessionEpoch == epoch else { return }
+            self.hasBecomeActive = false
+            self.resetPiPMicrophoneObservation()
+            self.floatingVideo?.clear()
+            self.isSDKActive = false
+            self.isMediaReconnecting = false
+            self.hasScheduledMediaRestart = false
+            self.needsMediaReconnect = false
+            self.activeRoom = nil
+            self.networkMonitor?.cancel(); self.networkMonitor = nil
+            self.toastSubscription?.cancel(); self.toastSubscription = nil
+            self.transcriptSubscription?.cancel(); self.accessSubscription?.cancel()
+            self.currentNotices = []
+            self.activeControls = nil
+            self.systemCall.markEnded(reason: .remoteEnded)
+            self.hasJoinStarted = false
+            self.hasMediaJoinStarted = false
+            JazzSession.shared.terminateActiveConference()
+            self.activeCoordinator = nil
+            self.leaveRequested = false
+            self.mediaReconnectTimedOut = false
+            // Drain termination's queued SDK notifications before a replacement join.
+            await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+            guard self.sessionEpoch == epoch else { return }
+            self.finishing = nil
+            destination?(event)
         }
     }
 
@@ -763,8 +805,12 @@ final class NativeConferenceEngine: CallEngine {
 }
 
 private enum ProviderError: LocalizedError {
+    case teardownInProgress
     case unsupportedInvitation
     var errorDescription: String? {
-        "The installed provider SDK cannot read this meeting invitation."
+        switch self {
+        case .teardownInProgress: "The previous jam is still closing. Try again shortly."
+        case .unsupportedInvitation: "The installed provider SDK cannot read this meeting invitation."
+        }
     }
 }

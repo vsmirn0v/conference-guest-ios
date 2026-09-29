@@ -363,18 +363,23 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             directMediaForTesting = false
         }
         #endif
-        if let room { Task { await room.disconnect() } }
+        let departingRoom = room
         room = nil
         credentials = nil
+        let cleanup: Task<Void, Never>?
         if failed && wasConnected {
             catchUp.begin(.connection)
             catchUp.continueAsConnectionGap()
-        } else {
-            catchUp.finishMeeting()
-        }
+            cleanup = nil
+        } else { cleanup = catchUp.finishMeeting() }
         callView?.dismiss(animated: false)
         callView = nil
-        onEvent?(failed ? .failed : .left)
+        let destination = onEvent
+        Task {
+            await departingRoom?.disconnect()
+            await cleanup?.value
+            destination?(failed ? .failed : .left)
+        }
     }
 
     nonisolated func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {
@@ -448,9 +453,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     nonisolated func room(_ room: Room, participant: RemoteParticipant?,
                           didReceiveData data: Data, forTopic topic: String,
                           encryptionType: EncryptionType) {
-        guard topic == RockChatPacket.topic, data.count <= 4_096,
-              let packet = try? JSONDecoder().decode(RockChatPacket.self, from: data),
-              !packet.text.isEmpty, packet.text.count <= 2_000 else { return }
+        guard topic == RoomChatPacket.topic,
+              let packet = try? RoomChatPacket.decode(data) else { return }
         Task { @MainActor [weak self] in
             guard let self, self.room === room else { return }
             self.chat.append(ChatEntry(id: packet.id,
@@ -461,7 +465,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
 
     private func sendChat(_ text: String) {
         guard hasConnected else { return }
-        let packet = RockChatPacket(id: UUID().uuidString, text: text)
+        let packet = RoomChatPacket(id: UUID().uuidString, text: text)
+        guard (try? packet.encoded()) != nil else { return }
         chat.append(ChatEntry(id: packet.id, sender: "You", text: text,
                               sentAt: Date(), isOwn: true, delivery: .pending))
         publishChat(id: packet.id, text: text)
@@ -469,16 +474,18 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
 
     private func publishChat(id: String, text: String) {
         guard hasConnected, let room else { return }
-        let packet = RockChatPacket(id: id, text: text)
+        let packet = RoomChatPacket(id: id, text: text)
         Task { @MainActor [weak self] in
             do {
                 try await room.localParticipant.publish(
-                    data: JSONEncoder().encode(packet),
-                    options: DataPublishOptions(topic: RockChatPacket.topic, reliable: true))
-                self?.chat.setDelivery(.sent, for: packet.id)
+                    data: packet.encoded(),
+                    options: DataPublishOptions(topic: RoomChatPacket.topic, reliable: true))
+                guard let self, self.room === room, !self.leaveRequested else { return }
+                self.chat.setDelivery(.sent, for: packet.id)
             } catch {
-                self?.chat.setDelivery(.failed, for: packet.id)
-                self?.onMediaStatus?("Chat could not send: \(error.localizedDescription)")
+                guard let self, self.room === room, !self.leaveRequested else { return }
+                self.chat.setDelivery(.failed, for: packet.id)
+                self.onMediaStatus?("Chat could not send: \(error.localizedDescription)")
             }
         }
     }
@@ -532,10 +539,4 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         }
     }
     #endif
-}
-
-private struct RockChatPacket: Codable {
-    static let topic = "rock.chat.v1"
-    let id: String
-    let text: String
 }

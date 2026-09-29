@@ -18,7 +18,11 @@ final class LocalShareTrackPreview: @unchecked Sendable {
     private var pending = false
     private var lastFrame: TimeInterval = -.infinity
     private var generation = 0
-    @MainActor init(preview: LocalSharePreview) { self.preview = preview }
+    private let frameInterval: TimeInterval
+    @MainActor init(preview: LocalSharePreview) {
+        self.preview = preview
+        frameInterval = preview.isMac ? 0.5 : 1
+    }
     @MainActor func setTrack(_ track: VideoTrack?) {
         guard self.track !== track else { return }
         lock.lock(); generation += 1; lastFrame = -.infinity; let epoch = generation; lock.unlock()
@@ -35,7 +39,7 @@ final class LocalShareTrackPreview: @unchecked Sendable {
     private func receive(_ frame: VideoFrame, epoch: Int) {
         let time = ProcessInfo.processInfo.systemUptime
         lock.lock()
-        guard generation == epoch, !pending, time - lastFrame >= 1 else { lock.unlock(); return }
+        guard generation == epoch, !pending, time - lastFrame >= frameInterval else { lock.unlock(); return }
         pending = true; lastFrame = time
         lock.unlock()
         Task { @MainActor [weak self] in

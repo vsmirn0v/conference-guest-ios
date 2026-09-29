@@ -22,8 +22,9 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         return CXProvider(configuration: configuration)
     }()
     private lazy var controller = CXCallController()
-    private let usesSystemCall = !ProcessInfo.processInfo.isiOSAppOnMac
-    private var callID: UUID?
+    private let usesSystemCall: Bool
+    private let transactionRequester: ((CXTransaction, @escaping (Error?) -> Void) -> Void)?
+    private(set) var callID: UUID?
     private var isConnected = false
     private var isMuted = true
     private var isHeld = false
@@ -36,12 +37,19 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         callID != nil && isAudioSessionActive && !isHeld && !hasAnotherActiveCall
     }
 
-    override init() {
+    init(transactionRequester: ((CXTransaction, @escaping (Error?) -> Void) -> Void)? = nil) {
+        self.transactionRequester = transactionRequester
+        usesSystemCall = transactionRequester != nil || !ProcessInfo.processInfo.isiOSAppOnMac
         super.init()
-        if usesSystemCall {
+        if usesSystemCall && transactionRequester == nil {
             provider.setDelegate(self, queue: .main)
             controller.callObserver.setDelegate(self, queue: .main)
         }
+    }
+
+    private func request(_ transaction: CXTransaction, completion: @escaping (Error?) -> Void) {
+        if let transactionRequester { transactionRequester(transaction, completion) }
+        else { controller.request(transaction, completion: completion) }
     }
 
     func start() {
@@ -77,7 +85,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         let handle = CXHandle(type: .generic, value: "Jam")
         let action = CXStartCallAction(call: id, handle: handle)
         action.isVideo = true
-        controller.request(CXTransaction(action: action)) { [weak self] error in
+        request(CXTransaction(action: action)) { [weak self] error in
             guard let error else { return }
             DispatchQueue.main.async {
                 guard self?.callID == id else { return }
@@ -108,7 +116,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         isMuted = muted
         guard usesSystemCall else { return }
         guard isConnected, changed || force else { return }
-        controller.request(CXTransaction(action: CXSetMutedCallAction(call: callID, muted: muted))) { error in
+        request(CXTransaction(action: CXSetMutedCallAction(call: callID, muted: muted))) { error in
             guard let error else { return }
             #if DEBUG
             print("System call: mute update failed: \(error.localizedDescription)")
@@ -127,12 +135,13 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             onEnded?(true)
             return
         }
-        controller.request(CXTransaction(action: CXEndCallAction(call: callID))) { [weak self] error in
+        request(CXTransaction(action: CXEndCallAction(call: callID))) { [weak self] error in
             guard let error else { return }
             DispatchQueue.main.async {
                 #if DEBUG
                 print("System call: end failed: \(error.localizedDescription)")
                 #endif
+                guard self?.callID == callID else { return }
                 self?.markEnded(reason: .failed)
                 self?.onEnded?(true)
             }
@@ -148,7 +157,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         holdStartedAt = nil
         resumeRequested = false
         isAudioSessionActive = false
-        if usesSystemCall { provider.reportCall(with: callID, endedAt: nil, reason: reason) }
+        if usesSystemCall && transactionRequester == nil { provider.reportCall(with: callID, endedAt: nil, reason: reason) }
     }
 
     func providerDidReset(_ provider: CXProvider) {
@@ -265,9 +274,10 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         #if DEBUG
         print("System call: requesting resume after other call")
         #endif
-        controller.request(CXTransaction(action: CXSetHeldCallAction(call: callID, onHold: false))) { [weak self] error in
+        request(CXTransaction(action: CXSetHeldCallAction(call: callID, onHold: false))) { [weak self] error in
             guard let error else { return }
             DispatchQueue.main.async {
+                guard self?.callID == callID else { return }
                 self?.resumeRequested = false
                 #if DEBUG
                 print("System call: resume failed: \(error.localizedDescription)")
@@ -279,7 +289,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     #if DEBUG
     func requestHoldForTesting(_ held: Bool) {
         guard let callID else { return }
-        controller.request(CXTransaction(action: CXSetHeldCallAction(call: callID, onHold: held))) { error in
+        request(CXTransaction(action: CXSetHeldCallAction(call: callID, onHold: held))) { error in
             if let error { print("Test hold request failed: \(error.localizedDescription)") }
         }
     }

@@ -12,17 +12,26 @@ final class CatchUpStore: ObservableObject {
 
     private var roomKey: String?
     private var pendingWrite: DispatchWorkItem?
-    private let writer = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.catch-up-writer")
+    private static let sharedWriter = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.catch-up-writer")
+    private let writer: DispatchQueue
+    private let storage: URL
+    private var sessionID: String?
+    private var markerWarning: String?
+    private let revision = WriteRevision()
     private var writeVersion: UInt64 = 0
     private var lastEnqueuedWriteAt: TimeInterval = 0
 
     var roomHost: String? { roomKey.flatMap { URL(string: $0)?.host } }
 
-    init() {
-        guard let data = try? Data(contentsOf: Self.storageURL),
-              let saved = try? JSONDecoder().decode(SavedTimeline.self, from: data) else { return }
+    init(storageURL: URL? = nil, writer: DispatchQueue? = nil) {
+        self.storage = storageURL ?? Self.storageURL
+        self.writer = writer ?? Self.sharedWriter
+        guard let data = try? Data(contentsOf: storage),
+              let saved = try? JSONDecoder().decode(SavedTimeline.self, from: data),
+              readSessionMarker() == saved.sessionID else { return }
+        sessionID = saved.sessionID
         guard saved.savedAt > Date().addingTimeInterval(-86_400) else {
-            try? FileManager.default.removeItem(at: Self.storageURL)
+            try? FileManager.default.removeItem(at: storage)
             return
         }
         roomKey = saved.roomKey
@@ -36,25 +45,38 @@ final class CatchUpStore: ObservableObject {
     func enter(roomKey: String) {
         guard self.roomKey != roomKey else { return }
         self.roomKey = roomKey
+        sessionID = UUID().uuidString
         timeline = CatchUpTimeline()
         canViewTranscript = nil
         transcriptionEnabled = false
         persistenceWarning = nil
+        writeSessionMarker(sessionID ?? "ended")
         writeNow()
     }
 
-    func finishMeeting() {
+    @discardableResult
+    func finishMeeting() -> Task<Void, Never> {
+        sessionID = nil
         roomKey = nil
         timeline = CatchUpTimeline()
         canViewTranscript = nil
         transcriptionEnabled = false
         persistenceWarning = nil
+        writeSessionMarker("ended")
         pendingWrite?.cancel()
         pendingWrite = nil
         writeVersion &+= 1
-        let url = Self.storageURL
-        // A queued snapshot must finish before Leave removes local history.
-        writer.sync { try? FileManager.default.removeItem(at: url) }
+        revision.set(writeVersion)
+        let url = storage
+        let writer = writer
+        let completion = AsyncStream<Void> { continuation in
+            writer.async {
+                try? FileManager.default.removeItem(at: url)
+                continuation.yield(())
+                continuation.finish()
+            }
+        }
+        return Task { for await _ in completion {} }
     }
 
     func begin(_ reason: MissedReason) {
@@ -129,11 +151,14 @@ final class CatchUpStore: ObservableObject {
         lastEnqueuedWriteAt = ProcessInfo.processInfo.systemUptime
         writeVersion &+= 1
         let version = writeVersion
-        let saved = SavedTimeline(roomKey: roomKey, savedAt: Date(), timeline: timeline,
+        revision.set(version)
+        let revision = revision
+        let saved = SavedTimeline(sessionID: sessionID, roomKey: roomKey, savedAt: Date(), timeline: timeline,
                                   canViewTranscript: canViewTranscript,
                                   transcriptionEnabled: transcriptionEnabled)
-        let url = Self.storageURL
+        let url = storage
         writer.async { [weak self] in
+            guard revision.matches(version) else { return }
             let warning: String?
             do {
                 let data = try JSONEncoder().encode(saved)
@@ -154,8 +179,27 @@ final class CatchUpStore: ObservableObject {
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.writeVersion == version else { return }
-                if self.persistenceWarning != warning { self.persistenceWarning = warning }
+                let effectiveWarning = warning ?? self.markerWarning
+                if self.persistenceWarning != effectiveWarning { self.persistenceWarning = effectiveWarning }
             }
+        }
+    }
+
+    private var markerURL: URL { storage.appendingPathExtension("session") }
+    private func readSessionMarker() -> String? {
+        guard let data = try? Data(contentsOf: markerURL), data.count <= 64 else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+    private func writeSessionMarker(_ marker: String) {
+        // A tiny separate atomic marker survives force quit without waiting for
+        // the queue encoding/writing transcript history. UserDefaults flushes asynchronously.
+        do {
+            try FileManager.default.createDirectory(at: storage.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(marker.utf8).write(to: markerURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            markerWarning = nil
+        } catch {
+            markerWarning = "Local history could not be updated. Try deleting it again."
+            persistenceWarning = "Local history could not be updated. Try deleting it again."
         }
     }
 
@@ -166,9 +210,18 @@ final class CatchUpStore: ObservableObject {
 }
 
 private struct SavedTimeline: Codable {
+    let sessionID: String?
     let roomKey: String
     let savedAt: Date
     let timeline: CatchUpTimeline
     let canViewTranscript: Bool?
     let transcriptionEnabled: Bool?
+}
+
+/// The writer reads only this lock-protected revision, never observable UI state.
+private final class WriteRevision: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64 = 0
+    func set(_ value: UInt64) { lock.lock(); self.value = value; lock.unlock() }
+    func matches(_ value: UInt64) -> Bool { lock.lock(); defer { lock.unlock() }; return self.value == value }
 }

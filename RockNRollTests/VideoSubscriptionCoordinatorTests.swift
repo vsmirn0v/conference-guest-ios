@@ -82,10 +82,20 @@ final class VideoSubscriptionCoordinatorTests: XCTestCase {
         coordinator.reset()
     }
 
-    func testFailedOperationDoesNotSpinAndReconnectRetries() async {
-        let coordinator = VideoSubscriptionCoordinator<String>()
+    func testTransientFailureRetriesWithoutToggleAndPermanentFailureIsBounded() async {
+        let coordinator = VideoSubscriptionCoordinator<String>(retryDelay: 1_000_000)
         var count = 0
-        let failed = expectation(description: "Error reported once")
+        let recovered = expectation(description: "Transient failure recovered")
+        coordinator.update([.init(key: "video", subscribed: false) { _ in
+            count += 1
+            if count == 1 { throw NSError(domain: "network", code: 1) }
+            recovered.fulfill()
+        }])
+        await fulfillment(of: [recovered], timeout: 2)
+        XCTAssertEqual(count, 2)
+        coordinator.reset()
+        count = 0
+        let failed = expectation(description: "Permanent failure reported once")
         coordinator.onError = { _ in failed.fulfill() }
         let request = VideoSubscriptionCoordinator<String>.Request(key: "video", subscribed: false) { _ in
             count += 1
@@ -94,14 +104,26 @@ final class VideoSubscriptionCoordinatorTests: XCTestCase {
         coordinator.update([request])
         await fulfillment(of: [failed], timeout: 2)
         coordinator.update([request])
-        await Task.yield()
-        XCTAssertEqual(count, 1)
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(count, 3, "Identical intent must not restart an exhausted retry loop")
         coordinator.reset()
-        let retried = expectation(description: "Reconnect retries")
-        coordinator.onError = { _ in retried.fulfill() }
-        coordinator.update([request])
-        await fulfillment(of: [retried], timeout: 2)
-        XCTAssertEqual(count, 2)
+    }
+
+    func testIntentChangeDuringBackoffSkipsOldRetry() async {
+        let coordinator = VideoSubscriptionCoordinator<String>(retryDelay: 50_000_000)
+        let first = expectation(description: "First attempt")
+        let latest = expectation(description: "Latest intent")
+        var calls: [Bool] = []
+        let apply: (Bool) async throws -> Void = { value in
+            calls.append(value)
+            if value { first.fulfill(); throw NSError(domain: "network", code: 1) }
+            latest.fulfill()
+        }
+        coordinator.update([.init(key: "camera", subscribed: true, apply: apply)])
+        await fulfillment(of: [first], timeout: 2)
+        coordinator.update([.init(key: "camera", subscribed: false, apply: apply)])
+        await fulfillment(of: [latest], timeout: 2)
+        XCTAssertEqual(calls, [true, false])
         coordinator.reset()
     }
 }

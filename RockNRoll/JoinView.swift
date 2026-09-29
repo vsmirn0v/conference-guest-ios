@@ -70,7 +70,7 @@ struct JoinView: View {
                     }
                     .accessibilityLabel("Edit your name, currently \(model.displayName)")
                     if !model.displayName.isEmpty && !validDisplayName {
-                        Text("Enter a name of up to 80 characters before joining.")
+                        Text("Enter a name of up to \(model.namePolicy.maximumNameScalars) characters before joining.")
                             .font(.footnote).foregroundStyle(.red)
                     }
                     Button { model.join() } label: {
@@ -102,6 +102,18 @@ struct JoinView: View {
                     }
                     if model.isJoining || model.isInConference {
                         Button("Leave jam", role: .destructive) { model.leave() }
+                    }
+                }
+                if let warning = catchUp.persistenceWarning, catchUp.timeline.intervals.isEmpty {
+                    Section {
+                        Text(warning).font(.footnote).foregroundStyle(.orange)
+                        Button("Delete local history") { catchUp.finishMeeting() }
+                    }
+                }
+                if let warning = history.persistenceWarning {
+                    Section {
+                        Text(warning).font(.footnote).foregroundStyle(.orange)
+                        Button("Retry saving rooms") { history.retrySave() }
                     }
                 }
                 if window.size.width < 900 && !favorites.isEmpty {
@@ -224,7 +236,7 @@ struct JoinView: View {
                 } header: {
                     Text("Your name")
                 } footer: {
-                    Text("This name is saved on your phone for future jams.")
+                    Text("This name is saved on your phone for future jams. Use up to \(model.namePolicy.maximumNameScalars) characters.")
                 }
             }
             .navigationTitle("Your name")

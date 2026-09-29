@@ -61,7 +61,7 @@ final class LocalSharePreviewReceiver: @unchecked Sendable {
 
     func setWanted(_ wanted: Bool) {
         queue.async { [weak self] in
-            guard let self else { return }
+            guard let self, self.wanted != wanted else { return }
             self.wanted = wanted
             self.endpoint?.wantsFrames = wanted
             self.writeEndpoint()

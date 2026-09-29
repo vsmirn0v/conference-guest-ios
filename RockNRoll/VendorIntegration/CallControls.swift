@@ -5,18 +5,10 @@ import UIKit
 
 final class CallControls: UIView {
     override var canBecomeFirstResponder: Bool { true }
-    override var keyCommands: [UIKeyCommand]? { [
-        UIKeyCommand(title: "Mute or unmute microphone", action: #selector(keyToggleMicrophone),
-                     input: "a", modifierFlags: [.command, .shift]),
-        UIKeyCommand(title: "Start or stop video", action: #selector(keyToggleCamera),
-                     input: "v", modifierFlags: [.command, .shift]),
-        UIKeyCommand(title: "Open chat", action: #selector(keyOpenChat),
-                     input: "c", modifierFlags: [.command, .shift]),
-        UIKeyCommand(title: "Show musicians", action: #selector(keyOpenParticipants),
-                     input: "p", modifierFlags: [.command, .shift]),
-        UIKeyCommand(title: "Fit shared screen", action: #selector(keyFitScreen),
-                     input: "0", modifierFlags: [.command])
-    ] }
+    override var keyCommands: [UIKeyCommand]? {
+        CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
+            chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen))
+    }
     @objc private func keyToggleMicrophone() { microphone.sendActions(for: .touchUpInside) }
     @objc private func keyToggleCamera() { camera.sendActions(for: .touchUpInside) }
     @objc private func keyOpenChat() { catchUpButton.sendActions(for: .touchUpInside) }
