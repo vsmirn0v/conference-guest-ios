@@ -8,15 +8,12 @@
   <key>CFBundleName</key><string>Rock’n’Roll Share</string>
   <key>CFBundleDisplayName</key><string>Rock’n’Roll Share</string>
   <key>CFBundlePackageType</key><string>XPC!</string>
-  <key>CFBundleShortVersionString</key><string>1.0.0</string>
-  <key>CFBundleVersion</key><string>17</string>
+  <key>CFBundleShortVersionString</key><string>0.2.0</string>
+  <key>CFBundleVersion</key><string>18</string>
   <key>RTCAppGroupIdentifier</key><string>group.dev.vsmirn0v.conferenceguest</string>
   <key>NSExtension</key>
   <dict>
-    <key>NSExtensionAttributes</key>
-    <dict>
-      <key>RPBroadcastProcessMode</key><string>RPBroadcastProcessModeSampleBuffer</string>
-    </dict>
+    <key>RPBroadcastProcessMode</key><string>RPBroadcastProcessModeSampleBuffer</string>
     <key>NSExtensionPointIdentifier</key><string>com.apple.broadcast-services-upload</string>
     <key>NSExtensionPrincipalClass</key><string>$(PRODUCT_MODULE_NAME).SampleHandler</string>
   </dict>
