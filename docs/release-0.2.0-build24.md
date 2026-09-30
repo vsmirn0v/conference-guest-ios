@@ -72,3 +72,16 @@ Upload succeeded at 2026-09-30 10:33 MSK (`/tmp/rock-build24-upload.log`,
 `EXPORT SUCCEEDED`). Apple began processing the package. Existing bundled
 third-party framework dSYM warnings remain; upload succeeded, but symbolication
 inside those frameworks is limited. Group availability is verified separately.
+
+At 2026-09-30 10:42 MSK, App Store Connect explicitly showed build **0.2.0
+(24)** as **Testing**, expiring in 90 days, in both existing groups:
+
+- Rock’n’Roll Internal
+- Rock’n’Roll Public Beta
+
+Beta notes were saved, selected groups submitted, and Automatically notify
+testers remained enabled. Public link remains
+https://testflight.apple.com/join/Hd13C9U3 .
+Build identity: `640a76f3-548e-49d3-8fcb-e87773b540a4`.
+Proof: `/tmp/rock-build24-public-testing.png` and
+`/tmp/rock-build24-internal-testing.png`.
