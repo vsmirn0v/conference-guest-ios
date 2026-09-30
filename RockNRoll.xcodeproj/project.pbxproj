@@ -7,7 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0145989841EB0E92681768AB /* RoomSyncSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 823027E72F5C2F40A2D1639B /* RoomSyncSettingsView.swift */; };
 		0404C944CB6DE7D37D409B83 /* GuestColorFixtureViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F368F0EFC03992D825902F9 /* GuestColorFixtureViewController.swift */; };
+		04BE01C06E14D4D2BAEACA91 /* RoomSyncLiveProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FFCA5602816073CDAEE4132 /* RoomSyncLiveProbe.swift */; };
 		05C6EA4C3F9A2DE876113A9D /* ChatStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36335245A0855B2E5BC15592 /* ChatStoreTests.swift */; };
 		08245B21B07D8A02CAB118A4 /* CallControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0DDC3D21920474CDC247639 /* CallControls.swift */; };
 		0ABE8A6E964F738D6B1C74B5 /* MeetingWebsitePresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7B28F52B13A50B0278FC5F1 /* MeetingWebsitePresenter.swift */; };
@@ -21,6 +23,7 @@
 		21570B208BECECA604469258 /* NSLayoutConstraint+Priority.swift in Sources */ = {isa = PBXBuildFile; fileRef = 912ED3A027AB9D2DFD1EBBC9 /* NSLayoutConstraint+Priority.swift */; };
 		23DE3D169843E74CAA125E65 /* CatchUpStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70E1D2B21C4871293EC9597C /* CatchUpStoreTests.swift */; };
 		29A92AF9133DA95B92B92E84 /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = 72993603D3AE089A79E5B15E /* LiveKit */; };
+		2B56CB9B10F7E7D0C38CB657 /* RoomSyncUIFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60A6FB138DC969DF89E3C736 /* RoomSyncUIFixture.swift */; };
 		2E7ACBEBBF9B770C63EBAFB5 /* AnonymousTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DB9260C3E8754FB5368FF99 /* AnonymousTokenProvider.swift */; };
 		31E028D55499DB31084579D1 /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 57D559C6B683E448E9EF28F5 /* JazzSDK */; };
 		380277071DCDE8182BEE081F /* GuestSiteLinkAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAB474DA91D3DC74B6A0A6CE /* GuestSiteLinkAdapter.swift */; };
@@ -57,6 +60,7 @@
 		88D5A969729A522616DB9AC1 /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = AB6F15C1E25726E56A54D099 /* LiveKit */; };
 		890C09AE7B3441DF9E70D1DD /* CallKeyboardCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4262C6D2F0644094F1F6D2A /* CallKeyboardCommands.swift */; };
 		89311DB1696CAA632627CC3D /* JazzScreenShareResources.bundle in Resources */ = {isa = PBXBuildFile; fileRef = DE3198CBF3E9C793FD28E25F /* JazzScreenShareResources.bundle */; };
+		89A5D36AFF45E97D225E8F65 /* RoomSyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D9BCE384C727532AF9FEDD2 /* RoomSyncCoordinator.swift */; };
 		8EB0755F8EF29A4FEA8F9AE9 /* RoomHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0749D2146BB11184D76828DA /* RoomHistoryStore.swift */; };
 		8F43AA9F0044B87E68E3646E /* JamServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9ECBC97504D70EFB9B2E28C /* JamServiceTests.swift */; };
 		915DAB4B920E1EB0274822DE /* EventRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5DD3C92B147421C014181FA /* EventRelay.swift */; };
@@ -82,11 +86,15 @@
 		D0252200EC7E1912249B10F1 /* GuestVideoFrameTap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B250F182880CE4EB00EB820 /* GuestVideoFrameTap.swift */; };
 		D44F3CA4202ADBEDB878DC84 /* RockCallViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C09FCE59F22D1FD6B3AD3F2A /* RockCallViewController.swift */; };
 		D9E827D41E62EC8E63511272 /* ChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B653B040BAC24FB00F892D0 /* ChatStore.swift */; };
+		DB67BC27E439A130FAA4FF10 /* RoomSyncUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65F648EC831C55B448DD9A37 /* RoomSyncUITests.swift */; };
 		DCB9C347482577A35E60FBF7 /* CatchUpStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88EF3E7A0EEE19E9A9B3E857 /* CatchUpStore.swift */; };
+		DD76B7C3FFD74D6416883136 /* RoomSyncCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33040F702F0225D226CAF319 /* RoomSyncCoordinatorTests.swift */; };
+		DFA97014FF6DE00F01A831DE /* CloudRoomTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6673913BECEEFC32B70FC769 /* CloudRoomTransport.swift */; };
 		E61B81F919301455353210C3 /* VendorEndpointResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C5C7EE579F37BACDF9E7710 /* VendorEndpointResolver.swift */; };
 		E790C8615063FA4E4E5E76BA /* GuestColorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE7E7ABE77FAC05896773221 /* GuestColorUITests.swift */; };
 		EBFB29EAF0E158D02A7D994A /* LocalSharePreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4091D6233BEB5241015750C /* LocalSharePreviewTests.swift */; };
 		ECB1DF9730064526359FD8D8 /* GuestSiteLinkAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F7A8F59787FB9FB78206745 /* GuestSiteLinkAdapterTests.swift */; };
+		ED01B9897B6498D41959E5DE /* CloudRoomTransportLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 137E5631A28C4071CF574A68 /* CloudRoomTransportLiveTests.swift */; };
 		ED2CC8CCA7516E5980D91315 /* SessionOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A5389C79CA11B6343CA2427 /* SessionOwnershipTests.swift */; };
 		F372B3CC2FE375267CBA4AF7 /* SampleHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3D56ADB9C4C008AF8FFBAB9 /* SampleHandler.swift */; };
 		F4FC62A22ECE7E6441E1452D /* AdditionalRootTrust.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9CD858D9C42BF13EBDB3F9C /* AdditionalRootTrust.swift */; };
@@ -149,12 +157,14 @@
 		0DD12DC1E0D2B670F8DE1382 /* ConversationPanelViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationPanelViewController.swift; sourceTree = "<group>"; };
 		1167BF2406C1BD98F1732473 /* RoomHistoryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomHistoryStoreTests.swift; sourceTree = "<group>"; };
 		11FE8907579C87CCDFD6B0DC /* GuestVideoPictureInPicture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestVideoPictureInPicture.swift; sourceTree = "<group>"; };
+		137E5631A28C4071CF574A68 /* CloudRoomTransportLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudRoomTransportLiveTests.swift; sourceTree = "<group>"; };
 		1567DFCAF9DFADA92D9DECFF /* FloatingVideoContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingVideoContentView.swift; sourceTree = "<group>"; };
 		1BF0C685736838C7E66914CF /* CatchUpText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpText.swift; sourceTree = "<group>"; };
 		1CE7740CA4FFBA32B49D81D2 /* RockBroadcast.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = RockBroadcast.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		2215B1821C480CC0FAD34730 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		25B3E7D53DBEAD7F16EFFDF8 /* NameEntryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NameEntryUITests.swift; sourceTree = "<group>"; };
 		2C5C7EE579F37BACDF9E7710 /* VendorEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VendorEndpointResolver.swift; sourceTree = "<group>"; };
+		33040F702F0225D226CAF319 /* RoomSyncCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncCoordinatorTests.swift; sourceTree = "<group>"; };
 		36335245A0855B2E5BC15592 /* ChatStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStoreTests.swift; sourceTree = "<group>"; };
 		3CCCF54E4D96F10DF8446D48 /* GuestBroadcast.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = GuestBroadcast.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		3F368F0EFC03992D825902F9 /* GuestColorFixtureViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestColorFixtureViewController.swift; sourceTree = "<group>"; };
@@ -169,6 +179,7 @@
 		4C049BADA8D8CC43635B8F59 /* AudioCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCoordinator.swift; sourceTree = "<group>"; };
 		4C4CA635B347F09002064FE5 /* VideoSubscriptionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoSubscriptionCoordinatorTests.swift; sourceTree = "<group>"; };
 		4D2401FC45A41D25A4D8B4D5 /* Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Extension.entitlements; sourceTree = "<group>"; };
+		4FFCA5602816073CDAEE4132 /* RoomSyncLiveProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncLiveProbe.swift; sourceTree = "<group>"; };
 		54AB06E7B00CA5AC1FCCC395 /* RockNRollUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RockNRollUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		54AEAC9A8CBF663384D79667 /* ConferenceMediaUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceMediaUITests.swift; sourceTree = "<group>"; };
 		5674A993FC2046A52AD92A60 /* JazzSDKScreenShare.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = JazzSDKScreenShare.xcframework; path = GuestBroadcast/VendorSDK/JazzSDKScreenShare.xcframework; sourceTree = "<group>"; };
@@ -177,11 +188,16 @@
 		5CFE89ACD94BAAE54053186F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		5D568E47D305B534191890EC /* VideoSubscriptionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoSubscriptionCoordinator.swift; sourceTree = "<group>"; };
 		5DB9260C3E8754FB5368FF99 /* AnonymousTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnonymousTokenProvider.swift; sourceTree = "<group>"; };
+		60A6FB138DC969DF89E3C736 /* RoomSyncUIFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncUIFixture.swift; sourceTree = "<group>"; };
 		65570B6D840AF2D71932D313 /* ConferenceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConferenceModel.swift; sourceTree = "<group>"; };
+		65F648EC831C55B448DD9A37 /* RoomSyncUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncUITests.swift; sourceTree = "<group>"; };
+		6673913BECEEFC32B70FC769 /* CloudRoomTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudRoomTransport.swift; sourceTree = "<group>"; };
 		6D74813F24B6D41F4DE4FD6C /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
+		6D9BCE384C727532AF9FEDD2 /* RoomSyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncCoordinator.swift; sourceTree = "<group>"; };
 		70BDFD0E30DDEF30801600B2 /* GuestBroadcastStop.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestBroadcastStop.swift; sourceTree = "<group>"; };
 		70E1D2B21C4871293EC9597C /* CatchUpStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpStoreTests.swift; sourceTree = "<group>"; };
 		7A05CC817B412E4FA9E2EE3A /* RockRoomEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RockRoomEngine.swift; sourceTree = "<group>"; };
+		823027E72F5C2F40A2D1639B /* RoomSyncSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncSettingsView.swift; sourceTree = "<group>"; };
 		8673A1476A9A30C9EE82E814 /* FloatingVideoController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingVideoController.swift; sourceTree = "<group>"; };
 		88EF3E7A0EEE19E9A9B3E857 /* CatchUpStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpStore.swift; sourceTree = "<group>"; };
 		908B7BD8621D56B596FE8550 /* GuestVideoFrameTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestVideoFrameTests.swift; sourceTree = "<group>"; };
@@ -361,6 +377,7 @@
 				88EF3E7A0EEE19E9A9B3E857 /* CatchUpStore.swift */,
 				1BF0C685736838C7E66914CF /* CatchUpText.swift */,
 				5B653B040BAC24FB00F892D0 /* ChatStore.swift */,
+				6673913BECEEFC32B70FC769 /* CloudRoomTransport.swift */,
 				463E69085989E90DC1C70351 /* ConferenceDisplayMode.swift */,
 				65570B6D840AF2D71932D313 /* ConferenceModel.swift */,
 				0DD12DC1E0D2B670F8DE1382 /* ConversationPanelViewController.swift */,
@@ -380,6 +397,10 @@
 				7A05CC817B412E4FA9E2EE3A /* RockRoomEngine.swift */,
 				AE94B4A550B25F959F5622EB /* RockVideoPictureInPicture.swift */,
 				0749D2146BB11184D76828DA /* RoomHistoryStore.swift */,
+				6D9BCE384C727532AF9FEDD2 /* RoomSyncCoordinator.swift */,
+				4FFCA5602816073CDAEE4132 /* RoomSyncLiveProbe.swift */,
+				823027E72F5C2F40A2D1639B /* RoomSyncSettingsView.swift */,
+				60A6FB138DC969DF89E3C736 /* RoomSyncUIFixture.swift */,
 				DF64302A8DFA2B622264D317 /* SceneDelegate.swift */,
 				C22ED977A6A00525FC0E8F35 /* SceneDelegate+Fixtures.swift */,
 				A447AAD83CAB2DE79FB5FDAA /* StreamViewport.swift */,
@@ -417,6 +438,7 @@
 			children = (
 				70E1D2B21C4871293EC9597C /* CatchUpStoreTests.swift */,
 				36335245A0855B2E5BC15592 /* ChatStoreTests.swift */,
+				137E5631A28C4071CF574A68 /* CloudRoomTransportLiveTests.swift */,
 				438B77B82846C21E6041F25D /* DisplayNameTests.swift */,
 				0C9FECFED16879ABE8E529D2 /* FloatingVideoContentTests.swift */,
 				3F7A8F59787FB9FB78206745 /* GuestSiteLinkAdapterTests.swift */,
@@ -426,6 +448,7 @@
 				CC88E9E453A5EA13BE6235C0 /* LocalSharePreviewTransportTests.swift */,
 				B308E6CF88B25C5E9B51E130 /* LocalShareTrackPreviewTests.swift */,
 				1167BF2406C1BD98F1732473 /* RoomHistoryStoreTests.swift */,
+				33040F702F0225D226CAF319 /* RoomSyncCoordinatorTests.swift */,
 				5A5389C79CA11B6343CA2427 /* SessionOwnershipTests.swift */,
 				4C4CA635B347F09002064FE5 /* VideoSubscriptionCoordinatorTests.swift */,
 				5D4E2991A548588165E9049E /* VendorIntegration */,
@@ -442,6 +465,7 @@
 				25B3E7D53DBEAD7F16EFFDF8 /* NameEntryUITests.swift */,
 				9220E07FD2C07210BDFDAF9D /* PiPMicrophoneUITests.swift */,
 				F5B62747320CF4363ED7E58E /* ReviewRegressionUITests.swift */,
+				65F648EC831C55B448DD9A37 /* RoomSyncUITests.swift */,
 			);
 			path = RockNRollUITests;
 			sourceTree = "<group>";
@@ -679,6 +703,7 @@
 				DCB9C347482577A35E60FBF7 /* CatchUpStore.swift in Sources */,
 				3B8C312FD7D35EF6922D7539 /* CatchUpText.swift in Sources */,
 				D9E827D41E62EC8E63511272 /* ChatStore.swift in Sources */,
+				DFA97014FF6DE00F01A831DE /* CloudRoomTransport.swift in Sources */,
 				9554DB9BCCF4400903CCA0BB /* ConferenceDisplayMode.swift in Sources */,
 				7715492FDE15C262A39D2B74 /* ConferenceModel.swift in Sources */,
 				CDDEE70553C1B8CF7AABD492 /* ConversationPanelViewController.swift in Sources */,
@@ -710,6 +735,10 @@
 				0F1E328D1D17EB3FBC4BBB80 /* RockRoomEngine.swift in Sources */,
 				A0D3A3026370550A166E4F2A /* RockVideoPictureInPicture.swift in Sources */,
 				8EB0755F8EF29A4FEA8F9AE9 /* RoomHistoryStore.swift in Sources */,
+				89A5D36AFF45E97D225E8F65 /* RoomSyncCoordinator.swift in Sources */,
+				04BE01C06E14D4D2BAEACA91 /* RoomSyncLiveProbe.swift in Sources */,
+				0145989841EB0E92681768AB /* RoomSyncSettingsView.swift in Sources */,
+				2B56CB9B10F7E7D0C38CB657 /* RoomSyncUIFixture.swift in Sources */,
 				864D8CEB2EF1F12219F2AEC7 /* SceneDelegate+Fixtures.swift in Sources */,
 				459BD79F3E24CA87ADA9F089 /* SceneDelegate.swift in Sources */,
 				B390D3BA41CDB930AF496177 /* StreamViewport.swift in Sources */,
@@ -739,6 +768,7 @@
 				FD504DE1027F7EF3521DDD09 /* NameEntryUITests.swift in Sources */,
 				C0E9815B9D93822773CAEAEF /* PiPMicrophoneUITests.swift in Sources */,
 				B134CD8859004C6BA0333EED /* ReviewRegressionUITests.swift in Sources */,
+				DB67BC27E439A130FAA4FF10 /* RoomSyncUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -756,6 +786,7 @@
 			files = (
 				23DE3D169843E74CAA125E65 /* CatchUpStoreTests.swift in Sources */,
 				05C6EA4C3F9A2DE876113A9D /* ChatStoreTests.swift in Sources */,
+				ED01B9897B6498D41959E5DE /* CloudRoomTransportLiveTests.swift in Sources */,
 				4F7D5CD26D51A11CF067FCBB /* DisplayNameTests.swift in Sources */,
 				A0ED65C0456B8BC3BD5A2E05 /* FloatingVideoContentTests.swift in Sources */,
 				ECB1DF9730064526359FD8D8 /* GuestSiteLinkAdapterTests.swift in Sources */,
@@ -766,6 +797,7 @@
 				6FA8AF8715C2CC1F53AB3094 /* LocalSharePreviewTransportTests.swift in Sources */,
 				4C4825217F464DDE8D8593E6 /* LocalShareTrackPreviewTests.swift in Sources */,
 				B7CD6BF98C916A53E12F28A6 /* RoomHistoryStoreTests.swift in Sources */,
+				DD76B7C3FFD74D6416883136 /* RoomSyncCoordinatorTests.swift in Sources */,
 				ED2CC8CCA7516E5980D91315 /* SessionOwnershipTests.swift in Sources */,
 				63349913ADE097BA69743188 /* VideoSubscriptionCoordinatorTests.swift in Sources */,
 			);
@@ -1069,6 +1101,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLOUDKIT_ENVIRONMENT = Production;
 				CODE_SIGN_ENTITLEMENTS = RockNRoll/App.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
@@ -1096,6 +1129,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLOUDKIT_ENVIRONMENT = Development;
 				CODE_SIGN_ENTITLEMENTS = RockNRoll/App.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;

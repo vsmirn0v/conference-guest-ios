@@ -10,7 +10,10 @@ final class ConferenceModel: ObservableObject {
     @Published var displayName = UserDefaults.standard.string(forKey: "savedDisplayName")
         .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         ?? "" {
-        didSet { UserDefaults.standard.set(displayName, forKey: "savedDisplayName") }
+        didSet {
+            UserDefaults.standard.set(displayName, forKey: "savedDisplayName")
+            if !applyingSyncedName { sync.nameDidChange(displayName) }
+        }
     }
     @Published var invite = ""
     @Published var guestWebsiteOrigin = UserDefaults.standard.string(forKey: "guestWebsiteOrigin") ?? "" {
@@ -55,6 +58,25 @@ final class ConferenceModel: ObservableObject {
     private lazy var engine = NativeConferenceEngine(systemCall: systemCall, catchUp: catchUpStore)
     let chat = ChatStore()
     let history = RoomHistoryStore()
+    private var applyingSyncedName = false
+    lazy var sync: RoomSyncCoordinator = {
+        let coordinator = RoomSyncCoordinator(history: history, name: displayName)
+        coordinator.onRemoteName = { [weak self] name in
+            self?.applySyncedName(name)
+        }
+        return coordinator
+    }()
+    private func applySyncedName(_ name: String) {
+        applyingSyncedName = true
+        displayName = name
+        applyingSyncedName = false
+    }
+    #if DEBUG
+    func installSyncFixture(_ coordinator: RoomSyncCoordinator) {
+        sync = coordinator
+        coordinator.onRemoteName = { [weak self] name in self?.applySyncedName(name) }
+    }
+    #endif
     private var jamEngine: RockRoomEngine?
     private let resolver = VendorEndpointResolver.make()
     private let jamService = JamService()

@@ -47,6 +47,11 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         JOIN_LINK_HOST: ""
+      configs:
+        Debug:
+          CLOUDKIT_ENVIRONMENT: Development
+        Release:
+          CLOUDKIT_ENVIRONMENT: Production
     postBuildScripts:
       - name: Copy provider SDK resources
         script: bash "$PROJECT_DIR/scripts/copy-sdk-resources.sh"

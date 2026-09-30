@@ -7,6 +7,7 @@ struct JoinView: View {
     @ObservedObject var model: ConferenceModel
     @ObservedObject var catchUp: CatchUpStore
     @ObservedObject var history: RoomHistoryStore
+    @ObservedObject var sync: RoomSyncCoordinator
     @State private var showingSavedHistory = false
     @State private var showingContactPicker = false
     @State private var showingSettings = false
@@ -114,6 +115,16 @@ struct JoinView: View {
                     Section {
                         Text(warning).font(.footnote).foregroundStyle(.orange)
                         Button("Retry saving rooms") { history.retrySave() }
+                    }
+                }
+                if sync.offerSync && !model.isJoining && !model.isInConference {
+                    Section("Keep your jams across devices") {
+                        Text("Sync your name, favorites and recent jams through your private iCloud account.")
+                            .font(.subheadline)
+                        Button("Enable iCloud Sync") {
+                            sync.dismissOffer(); sync.setEnabled(true); showingSettings = true
+                        }
+                        Button("Not now") { sync.dismissOffer() }.foregroundStyle(.secondary)
                     }
                 }
                 if window.size.width < 900 && !favorites.isEmpty {
@@ -236,7 +247,7 @@ struct JoinView: View {
                 } header: {
                     Text("Your name")
                 } footer: {
-                    Text("This name is saved on your phone for future jams. Use up to \(model.namePolicy.maximumNameScalars) characters.")
+                    Text("This name is saved for future jams. Use up to \(model.namePolicy.maximumNameScalars) characters.")
                 }
             }
             .navigationTitle("Your name")
@@ -253,6 +264,8 @@ struct JoinView: View {
                 ContactNamePicker(isPresented: $showingContactPicker) { model.displayName = $0 }
             }
         }
+        .onAppear { sync.beginNameEditing() }
+        .onDisappear { sync.endNameEditing() }
     }
 
     private func roomSection(_ title: String, rooms: [RecentRoom]) -> some View {
@@ -337,6 +350,7 @@ struct JoinView: View {
                     Text("Fallback for app links that omit their website. Links with an embedded host open directly.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                RoomSyncSettingsView(sync: sync)
                 Section("About") {
                     Text("Small music groups in Yerevan can plan sessions and share ideas live.")
                     Link("Community", destination: URL(string: "https://rock.glowsoft.ru/community")!)
@@ -351,6 +365,8 @@ struct JoinView: View {
                 ContactNamePicker(isPresented: $showingContactPicker) { model.displayName = $0 }
             }
         }
+        .onAppear { sync.beginNameEditing() }
+        .onDisappear { sync.endNameEditing() }
     }
 }
 

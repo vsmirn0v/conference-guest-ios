@@ -18,9 +18,13 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         #endif
         let model = ConferenceModel()
+        #if DEBUG
+        RoomSyncUIFixture.configure(model)
+        #endif
         let hosting = UIHostingController(rootView: JoinView(model: model,
                                                             catchUp: model.catchUpStore,
-                                                            history: model.history))
+                                                            history: model.history,
+                                                            sync: model.sync))
         let controller = UIViewController()
         controller.addChild(hosting)
         controller.view.addSubview(hosting.view)
@@ -40,6 +44,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         model.configure(container: controller)
 
         #if DEBUG
+        if RoomSyncLiveProbe.runIfRequested(window: window) { return }
         if configureFixtures(model: model, controller: controller, window: window) { return }
         #endif
 
@@ -61,6 +66,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
+        conference?.sync.foregrounded()
         conference?.restoreFromFloatingVideo()
         conference?.resumeSystemCallIfPossible()
     }
