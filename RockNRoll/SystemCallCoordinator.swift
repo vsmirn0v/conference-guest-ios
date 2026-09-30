@@ -35,6 +35,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private(set) var transferHolding = false
     private var transferHoldCompletion: ((Error?) -> Void)?
     private var transferHoldGeneration = UUID()
+    private var transferHoldActionID: UUID?
 
     var canRestoreAudio: Bool {
         callID != nil && isAudioSessionActive && !isHeld && !hasAnotherActiveCall
@@ -164,8 +165,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         resumeRequested = false
         isAudioSessionActive = false
         transferHolding = false
-        transferHoldCompletion?(NSError(domain: "JamTransfer", code: 2))
-        transferHoldCompletion = nil
+        finishPendingTransferHold()
         if usesSystemCall && transactionRequester == nil { provider.reportCall(with: callID, endedAt: nil, reason: reason) }
     }
 
@@ -250,9 +250,11 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             holdStartedAt = nil
         }
         onHoldChanged?(isHeld)
-        let transferCompletion = transferHoldCompletion
-        transferHoldCompletion = nil
-        DispatchQueue.main.async { transferCompletion?(nil) }
+        if transferHoldActionID == action.uuid {
+            let transferCompletion = transferHoldCompletion
+            transferHoldCompletion = nil; transferHoldActionID = nil
+            DispatchQueue.main.async { transferCompletion?(nil) }
+        }
         action.fulfill()
         resumeIfPossible()
     }
@@ -331,20 +333,24 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             return
         }
         try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+            let action = CXSetHeldCallAction(call: id, onHold: held)
+            transferHoldActionID = action.uuid
             transferHoldCompletion = { error in
                 if let error { done.resume(throwing: error) } else { done.resume() }
             }
-            request(CXTransaction(action: CXSetHeldCallAction(call: id, onHold: held))) { [weak self] error in
+            request(CXTransaction(action: action)) { [weak self] error in
                 guard let error else { return }
                 DispatchQueue.main.async {
-                    guard self?.callID == id else { return }
-                    self?.transferHoldCompletion?(error); self?.transferHoldCompletion = nil
+                    guard self?.callID == id, self?.transferHoldGeneration == generation else { return }
+                    let completion = self?.transferHoldCompletion
+                    self?.transferHoldCompletion = nil; self?.transferHoldActionID = nil
+                    completion?(error)
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
                 guard self?.callID == id, self?.transferHoldGeneration == generation,
                       let completion = self?.transferHoldCompletion else { return }
-                self?.transferHoldCompletion = nil
+                self?.transferHoldCompletion = nil; self?.transferHoldActionID = nil
                 completion(NSError(domain: "JamTransfer", code: 3))
             }
         }
@@ -352,6 +358,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private func finishPendingTransferHold() {
         transferHoldCompletion?(NSError(domain: "JamTransfer", code: 2))
         transferHoldCompletion = nil
+        transferHoldActionID = nil
         transferHolding = false; transferHoldGeneration = UUID()
     }
 

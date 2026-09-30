@@ -37,6 +37,13 @@ final class MeetingContinuationCoordinator: ObservableObject {
     private var tick: Task<Void, Never>?
     private var transferTask: Task<Void, Never>?
     private var receiver: JamTransfer?
+    private struct DepartureAcknowledgement {
+        let request: JamTransfer
+        let targetSession: UUID
+        let quiet: Bool
+    }
+    private var departureAcknowledgement: DepartureAcknowledgement?
+    private var cancellingRequestID: UUID?
     private var prepared: JamTransfer?
     private var holdExpiry: Task<Void, Never>?
     private var revision = 0
@@ -77,6 +84,8 @@ final class MeetingContinuationCoordinator: ObservableObject {
         let abandoned = targetConnected ? nil : receiver
         let invitation = destinationInvitation, targetID = targetSession
         tick?.cancel(); tick = nil; candidates = []; moving = false; receiver = nil
+        departureAcknowledgement = nil
+        targetConnected = false; targetSession = nil; destinationInvitation = nil
         let old = prepared; clearPrepared()
         if let old { Task { await onResumeSource?(old.sourceSession, false) } }
         let expected = revision
@@ -103,12 +112,21 @@ final class MeetingContinuationCoordinator: ObservableObject {
             clearPrepared()
         }
         current = jam
+        if let pending = departureAcknowledgement, pending.targetSession != jam?.sessionID {
+            departureAcknowledgement = nil
+            let expected = revision
+            // The destination has ended. Conditional cancellation can release the
+            // original if it has not already committed to leaving.
+            Task {
+                guard expected == revision else { return }
+                _ = try? await transport.transition(pending.request, to: .cancelled, actor: deviceID)
+            }
+        }
         if jam == nil && receiver != nil && targetConnected {
             targetConnected = false; targetDidFail()
         }
         if receiver != nil, let jam, jam.invitation != destinationInvitation || jam.sessionID != targetSession {
-            transferTask?.cancel()
-            Task { await cancelTransfer(message: "Move cancelled because another jam was opened.") }
+            requestCancellation(message: "Move cancelled because another jam was opened.")
         }
         if changedSession && receiver == nil { status = nil; onStatus?(nil, false) }
         Task { await refresh() }
@@ -118,9 +136,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
         targetConnected = true
     }
     func targetDidFail() {
-        guard receiver != nil else { return }
-        transferTask?.cancel()
-        Task { await cancelTransfer(message: "Could not move the jam. Check the other device before retrying.") }
+        requestCancellation(message: "Could not move the jam. Check the other device before retrying.")
     }
     func refresh() async {
         guard enabled, let account else { return }
@@ -160,12 +176,8 @@ final class MeetingContinuationCoordinator: ObservableObject {
             refreshFailed = false
             candidates = remote.filter { $0.deviceID != deviceID && $0.isVisible(at: now()) }
                 .sorted { $0.updatedAt > $1.updatedAt }.prefix(8).map { $0 }
-            if let receiver, targetConnected, !moving,
-               let latest = try await transport.transfer(sourceSession: receiver.sourceSession),
-               latest.id == receiver.id, latest.phase == .completed {
-                self.receiver = nil; destinationInvitation = nil
-                show(completionMessage); pendingRefresh = true
-            }
+            await refreshDepartureAcknowledgement(expected: expected)
+            guard expected == revision else { return }
             if let jam = current, receiver == nil,
                let command = try await transport.transfer(sourceSession: jam.sessionID) {
                 guard expected == revision, current?.sessionID == jam.sessionID else { return }
@@ -260,6 +272,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
             show("This active jam is unconfirmed. Refresh or use Join here."); return
         }
         moving = true; targetConnected = false
+        targetSession = nil; departureAcknowledgement = nil
         quietDestination = jam.supportsCompanion && jam.audioPaused == true
         destinationInvitation = jam.invitation
         let request = JamTransfer(source: jam, targetDevice: deviceID, targetLabel: deviceLabel, now: now())
@@ -270,7 +283,9 @@ final class MeetingContinuationCoordinator: ObservableObject {
             do {
                 show("Preparing to move jam from \(jam.deviceLabel)…")
                 try await transport.claim(request)
+                guard ownsTransfer(request, expected: expected), !Task.isCancelled else { return }
                 let prepared = try await waitFor(request, expected: expected, phases: [.prepared, .rejected], limit: 20)
+                guard ownsTransfer(request, expected: expected), !Task.isCancelled else { return }
                 guard prepared.phase == .prepared else { throw ContinuationError.unavailable }
                 show("Connecting here… The other device stays in the jam.")
                 targetSession = onJoinTarget?(jam, quietDestination)
@@ -283,21 +298,23 @@ final class MeetingContinuationCoordinator: ObservableObject {
                 }
                 guard targetConnected else { throw ContinuationError.expired }
                 let connected = try await transport.transition(prepared, to: .connected, actor: deviceID)
+                guard ownsTransfer(request, expected: expected), !Task.isCancelled else { return }
                 receiver = connected
                 show("Connected here. Waiting for \(jam.deviceLabel) to leave…")
                 _ = try await waitFor(connected, expected: expected, phases: [.completed], limit: 15)
-                guard expected == revision else { return }
-                receiver = nil; moving = false; transferTask = nil
+                guard ownsTransfer(request, expected: expected) else { return }
+                clearReceiver()
                 show(completionMessage)
                 await refresh()
             } catch {
-                guard expected == revision else { return }
+                guard ownsTransfer(request, expected: expected) else { return }
                 if targetConnected {
-                    moving = false; transferTask = nil
-                    show("Connected here. Could not confirm that \(jam.deviceLabel) left. Check the other device.")
+                    keepConnectedDestination(message: "Connected here. Could not confirm that \(jam.deviceLabel) left. Check the other device.")
+                    await refresh()
                     return
                 }
-                await cancelTransfer(message: "Move was not confirmed. Check the other device before retrying.")
+                await cancelTransfer(request, expected: expected,
+                                     message: "Move was not confirmed. Check the other device before retrying.")
             }
         }
     }
@@ -306,6 +323,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
             try Task.checkCancellation()
             guard expected == revision else { throw CancellationError() }
             if let value = try await transport.transfer(sourceSession: request.sourceSession) {
+                guard ownsTransfer(request, expected: expected), !Task.isCancelled else { throw CancellationError() }
                 guard value.id == request.id else { throw ContinuationError.conflict }
                 guard value.phase == .completed || value.expiresAt > now() else { throw ContinuationError.expired }
                 if phases.contains(value.phase) { return value }
@@ -317,25 +335,68 @@ final class MeetingContinuationCoordinator: ObservableObject {
     }
     func cancel() {
         if targetConnected {
-            moving = false
-            show("Jam stays connected here. Check the other device if its exit was not confirmed.")
+            transferTask?.cancel()
+            keepConnectedDestination(message: "Jam stays connected here. Check the other device if its exit was not confirmed.")
+            Task { await refresh() }
             return
         }
-        transferTask?.cancel()
-        Task { await cancelTransfer(message: "Move cancelled. The original device stays in the jam.") }
+        requestCancellation(message: "Move cancelled. The original device stays in the jam.")
     }
-    private func cancelTransfer(message: String) async {
+    private func requestCancellation(message: String) {
         guard let request = receiver else { return }
+        let expected = revision
+        transferTask?.cancel()
+        Task { await cancelTransfer(request, expected: expected, message: message) }
+    }
+    private func ownsTransfer(_ request: JamTransfer, expected: Int) -> Bool {
+        expected == revision && receiver?.id == request.id
+    }
+    private func cancelTransfer(_ request: JamTransfer, expected: Int, message: String) async {
+        guard ownsTransfer(request, expected: expected), cancellingRequestID != request.id else { return }
+        cancellingRequestID = request.id
+        defer { if cancellingRequestID == request.id { cancellingRequestID = nil } }
         // Never resume the original while this destination can still produce audio.
-        if let destinationInvitation, let targetSession, await onCancelTarget?(destinationInvitation, targetSession) == false {
-            show("Could not end this connection. Leave this jam before resuming on the other device.")
-            return
+        if let destinationInvitation, let targetSession {
+            let ended = await onCancelTarget?(destinationInvitation, targetSession)
+            guard ownsTransfer(request, expected: expected) else { return }
+            if ended == false {
+                show("Could not end this connection. Leave this jam before resuming on the other device.")
+                return
+            }
         }
         _ = try? await transport.transition(request, to: .cancelled, actor: deviceID)
+        guard ownsTransfer(request, expected: expected) else { return }
+        clearReceiver()
+        show(message); await refresh()
+    }
+    private func clearReceiver() {
         receiver = nil; moving = false; transferTask = nil; targetConnected = false
         destinationInvitation = nil
         targetSession = nil
-        show(message); await refresh()
+    }
+    private func keepConnectedDestination(message: String) {
+        if let request = receiver, let targetSession {
+            departureAcknowledgement = .init(request: request, targetSession: targetSession, quiet: quietDestination)
+        }
+        clearReceiver()
+        show(message)
+    }
+    private func refreshDepartureAcknowledgement(expected: Int) async {
+        guard let pending = departureAcknowledgement else { return }
+        guard current?.sessionID == pending.targetSession,
+              pending.request.expiresAt > now() else {
+            departureAcknowledgement = nil
+            return
+        }
+        // A missing departure acknowledgement never gates this device's presence
+        // heartbeat or its real media connection. Keep the existing warning on failure.
+        guard let latest = try? await transport.transfer(sourceSession: pending.request.sourceSession),
+              expected == revision, departureAcknowledgement?.request.id == pending.request.id,
+              current?.sessionID == pending.targetSession else { return }
+        if latest.id == pending.request.id, latest.phase == .completed {
+            departureAcknowledgement = nil
+            show(completionMessage(quiet: pending.quiet))
+        }
     }
     private func show(_ value: String?) {
         status = value; onStatus?(value, moving || prepared != nil)
@@ -349,7 +410,10 @@ final class MeetingContinuationCoordinator: ObservableObject {
         show("Move was not confirmed. Check the other device, then resume here with mic and camera off.")
     }
     private var completionMessage: String {
-        quietDestination ? "Quiet connection moved here. Audio, microphone and camera are off." :
+        completionMessage(quiet: quietDestination)
+    }
+    private func completionMessage(quiet: Bool) -> String {
+        quiet ? "Quiet connection moved here. Audio, microphone and camera are off." :
             "Jam moved here. Microphone and camera are off."
     }
     func deleteCloudData() async throws {

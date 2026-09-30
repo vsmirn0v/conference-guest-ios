@@ -12,6 +12,9 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         var publishes = 0
         var suspendConnect = false
         var connectWaiter: CheckedContinuation<Void, Never>?
+        var failConnectedTransferReads = false
+        var transferReads: [UUID: Int] = [:]
+        var transitionGate: ((JamTransfer, JamTransfer.Phase) async -> Void)?
         func connect(account: String) async throws {
             if suspendConnect { await withCheckedContinuation { connectWaiter = $0 } }
             if !available { throw ContinuationError.unavailable }
@@ -27,11 +30,19 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
             }
             requests[value.sourceSession] = value; onChange?()
         }
-        func transfer(sourceSession: UUID) async throws -> JamTransfer? { requests[sourceSession] }
+        func transfer(sourceSession: UUID) async throws -> JamTransfer? {
+            transferReads[sourceSession, default: 0] += 1
+            if failConnectedTransferReads, requests[sourceSession]?.phase == .connected {
+                throw ContinuationError.unavailable
+            }
+            return requests[sourceSession]
+        }
         func transition(_ value: JamTransfer, to phase: JamTransfer.Phase, actor: String) async throws -> JamTransfer {
             guard var stored = requests[value.sourceSession], stored.id == value.id,
                   stored.permitsTransition(to: phase, actor: actor, now: Date()) else { throw ContinuationError.conflict }
-            stored.phase = phase; requests[value.sourceSession] = stored; onChange?(); return stored
+            stored.phase = phase; requests[value.sourceSession] = stored
+            await transitionGate?(stored, phase)
+            onChange?(); return stored
         }
         func clear() async throws { records = [:]; requests = [:] }
     }
@@ -199,5 +210,142 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         target.begin(active)
         await eventually { !target.moving }
         XCTAssertEqual(cloud.requests[active.sessionID]?.targetDevice, "another-phone")
+    }
+
+    func testOldCancellationCannotClearAReplacementMove() async {
+        let cloud = Cloud(), firstSource = make(cloud, "mac"), nextSource = make(cloud, "ipad"), target = make(cloud, "phone")
+        let first = jam(), next = jam("ipad")
+        var originalResumed = false
+        firstSource.onPrepareSource = { _ in }
+        firstSource.onResumeSource = { _, _ in originalResumed = true }
+        nextSource.onPrepareSource = { _ in }
+        firstSource.updateCurrent(first); nextSource.updateCurrent(next)
+        await firstSource.refresh(); await nextSource.refresh()
+        cloud.onChange = { Task { await firstSource.refresh(); await nextSource.refresh() } }
+        var cancellation: CheckedContinuation<Void, Never>?
+        cloud.transitionGate = { request, phase in
+            if request.sourceSession == first.sessionID, phase == .cancelled {
+                await withCheckedContinuation { cancellation = $0 }
+            }
+        }
+        var joins = 0
+        target.onJoinTarget = { _, _ in
+            joins += 1
+            if joins == 1 { Task { target.targetDidFail() } }
+            return UUID()
+        }
+        target.onCancelTarget = { _, _ in true }
+        target.begin(first)
+        await eventually { cancellation != nil }
+        target.setEnabled(false); target.setEnabled(true); target.begin(next)
+        await eventually { joins == 2 }
+        XCTAssertTrue(target.moving)
+        cancellation?.resume(); cancellation = nil
+        await eventually { originalResumed }
+        XCTAssertTrue(target.moving, "Old cancellation must not clear the new transfer")
+        XCTAssertEqual(target.destinationInvitation, next.invitation)
+        target.cancel(); await eventually { !target.moving }
+    }
+
+    func testUnconfirmedDestinationPublishesPresenceAndExpiresOnlyItsAcknowledgement() async {
+        let cloud = Cloud(); var date = Date()
+        let source = make(cloud, "mac"), target = make(cloud, "phone", now: { date }), active = jam()
+        var local = jam("phone")
+        local = .init(deviceID: local.deviceID, sessionID: local.sessionID, invitation: active.invitation,
+                      title: active.title, name: active.name, deviceLabel: "phone")
+        source.onPrepareSource = { _ in }
+        source.updateCurrent(active); await source.refresh()
+        cloud.onChange = { Task { await source.refresh() } }
+        cloud.failConnectedTransferReads = true
+        target.onJoinTarget = { value, _ in
+            Task { target.targetDidConnect(invitation: value.invitation, sessionID: local.sessionID); target.updateCurrent(local) }
+            return local.sessionID
+        }
+        target.onCancelTarget = { _, _ in XCTFail("Connected destination must stay connected"); return false }
+        target.begin(active)
+        await eventually { !target.moving && target.status?.contains("Could not confirm") == true }
+        await target.refresh()
+        XCTAssertEqual(cloud.records["phone"]?.sessionID, local.sessionID)
+        XCTAssertEqual(target.current?.sessionID, local.sessionID)
+        let reads = cloud.transferReads[active.sessionID]
+        date = date.addingTimeInterval(80)
+        await target.refresh(); await target.refresh()
+        XCTAssertEqual(cloud.transferReads[active.sessionID], reads,
+                       "Expired acknowledgements must not keep polling the old source")
+        XCTAssertEqual(cloud.records["phone"]?.sessionID, local.sessionID)
+        XCTAssertTrue(target.status?.contains("Could not confirm") == true)
+        target.setEnabled(false); source.setEnabled(false)
+    }
+
+    func testLateDepartureAcknowledgementDoesNotChangeReplacementSessionStatus() async {
+        let cloud = Cloud(), source = make(cloud, "mac"), target = make(cloud, "phone"), active = jam()
+        let local = jam("phone")
+        source.onPrepareSource = { _ in }
+        source.updateCurrent(active); await source.refresh()
+        cloud.onChange = { Task { await source.refresh() } }
+        cloud.failConnectedTransferReads = true
+        target.onJoinTarget = { value, _ in
+            Task { target.targetDidConnect(invitation: value.invitation, sessionID: local.sessionID); target.updateCurrent(local) }
+            return local.sessionID
+        }
+        target.begin(active)
+        await eventually { !target.moving && target.status?.contains("Could not confirm") == true }
+        let replacement = jam("phone")
+        target.updateCurrent(replacement)
+        cloud.requests[active.sessionID]?.phase = .completed
+        cloud.failConnectedTransferReads = false
+        await target.refresh()
+        XCTAssertNil(target.status)
+        XCTAssertEqual(target.current?.sessionID, replacement.sessionID)
+        XCTAssertEqual(cloud.records["phone"]?.sessionID, replacement.sessionID)
+        target.setEnabled(false); source.setEnabled(false)
+    }
+
+    func testUnconfirmedDestinationCanAcknowledgeDepartureLater() async {
+        let cloud = Cloud(), source = make(cloud, "mac"), target = make(cloud, "phone"), active = jam()
+        let local = jam("phone")
+        var left = false
+        source.onPrepareSource = { _ in }
+        source.onLeaveSource = { _, _ in left = true; source.updateCurrent(nil); return true }
+        source.updateCurrent(active); await source.refresh()
+        cloud.onChange = { Task { await source.refresh() } }
+        cloud.failConnectedTransferReads = true
+        target.onJoinTarget = { value, _ in
+            Task { target.targetDidConnect(invitation: value.invitation, sessionID: local.sessionID); target.updateCurrent(local) }
+            return local.sessionID
+        }
+        target.begin(active)
+        await eventually { !target.moving && target.status?.contains("Could not confirm") == true }
+        XCTAssertFalse(left)
+        cloud.failConnectedTransferReads = false
+        await source.refresh(); await target.refresh()
+        XCTAssertTrue(left)
+        XCTAssertTrue(target.status?.contains("Jam moved here") == true)
+        XCTAssertEqual(cloud.records["phone"]?.sessionID, local.sessionID)
+        target.setEnabled(false); source.setEnabled(false)
+    }
+
+    func testUnconfirmedDestinationDepartureResumesOriginalWithoutTouchingReplacement() async {
+        let cloud = Cloud(), source = make(cloud, "mac"), target = make(cloud, "phone"), active = jam()
+        let local = jam("phone"), replacement = jam("phone")
+        var resumed = false
+        source.onPrepareSource = { _ in }
+        source.onResumeSource = { _, restore in XCTAssertFalse(restore); resumed = true }
+        source.onLeaveSource = { _, _ in XCTFail("Original must not leave after destination ends"); return false }
+        source.updateCurrent(active); await source.refresh()
+        cloud.onChange = { Task { await source.refresh() } }
+        cloud.failConnectedTransferReads = true
+        target.onJoinTarget = { value, _ in
+            Task { target.targetDidConnect(invitation: value.invitation, sessionID: local.sessionID); target.updateCurrent(local) }
+            return local.sessionID
+        }
+        target.begin(active)
+        await eventually { !target.moving && target.status?.contains("Could not confirm") == true }
+        target.updateCurrent(replacement)
+        await eventually { resumed }
+        XCTAssertEqual(cloud.requests[active.sessionID]?.phase, .cancelled)
+        XCTAssertEqual(target.current?.sessionID, replacement.sessionID)
+        XCTAssertNil(target.status)
+        target.setEnabled(false); source.setEnabled(false)
     }
 }

@@ -60,8 +60,6 @@ final class ConferenceModel: ObservableObject {
     let history = RoomHistoryStore()
     private var liveSessionID: UUID?
     private var liveName = ""
-    private var continuationJoinName: String?
-    private var quietNextJoin = false
     private(set) var companionAudioPaused = false
     private var departureWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
     let continuationBanner = ContinuationBanner()
@@ -89,7 +87,12 @@ final class ConferenceModel: ObservableObject {
     #endif
     private var jamEngine: RockRoomEngine?
     private let resolver = VendorEndpointResolver.make()
-    private let jamService = JamService()
+    private let jamService: JamService
+    private struct JoinRequest {
+        let target: JoinDestination
+        let name: String
+        let quiet: Bool
+    }
     private weak var container: UIViewController?
     private var pendingTarget: JoinDestination?
     private struct PendingInvitation { let target: JoinDestination; let autoJoin: Bool }
@@ -108,6 +111,8 @@ final class ConferenceModel: ObservableObject {
     var testDisplayNameOverride: String?
     @Published var testSwitchSequenceCompleted = false
     #endif
+
+    init(jamService: JamService = JamService()) { self.jamService = jamService }
 
     private var activeEngine: (any CallEngine)? {
         switch activeRoute {
@@ -263,16 +268,15 @@ final class ConferenceModel: ObservableObject {
         websitePresenter.dismiss(fallback: container?.view.window)
     }
 
-    private func startJoin(_ target: JoinDestination) {
+    private func startJoin(_ target: JoinDestination, nameOverride: String? = nil, quiet: Bool = false) {
         guard !isJoining && !isInConference && !isLeaving else { return }
         #if DEBUG
-        let requestedName = continuationJoinName ?? testDisplayNameOverride ?? displayName
+        let requestedName = nameOverride ?? testDisplayNameOverride ?? displayName
         testDisplayNameOverride = nil
         #else
-        let requestedName = continuationJoinName ?? displayName
+        let requestedName = nameOverride ?? displayName
         #endif
         let name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        continuationJoinName = nil
         guard target.inputPolicy.accepts(name: name) else {
             joinAwaitingName = target
             nameEntryConfirmed = false
@@ -286,12 +290,13 @@ final class ConferenceModel: ObservableObject {
             statusIsError = true
             return
         }
+        let request = JoinRequest(target: target, name: name, quiet: quiet)
         sessionGeneration &+= 1
         let generation = sessionGeneration
         terminalEventHandled = false
         phase = .joining
         activeRoute = target
-        companionAudioPaused = quietNextJoin
+        companionAudioPaused = request.quiet
         liveSessionID = UUID(); liveName = name
         connectedURL = nil
         activeRoomTitle = nil
@@ -304,7 +309,7 @@ final class ConferenceModel: ObservableObject {
         joinTask = Task { [weak self] in
             guard let self else { return }
             do {
-                switch target {
+                switch request.target {
                 case .guest(let guest):
                     let networkURL: URL
                     if let cached = endpointCache[guest.originURL] {
@@ -331,10 +336,10 @@ final class ConferenceModel: ObservableObject {
                         self.setActiveRoomTitle(title)
                     }
                     try engine.configure(container: container, networkURL: networkURL,
-                                         displayName: name)
-                    try engine.join(target: guest, displayName: name)
+                                         displayName: request.name)
+                    try engine.join(target: guest, displayName: request.name)
                 case .jam(let jam):
-                    let credentials = try await jamService.join(jam, name: name)
+                    let credentials = try await jamService.join(jam, name: request.name)
                     try Task.checkCancellation()
                     #if DEBUG
                     print("Jam join: credentials ready after \(self.joinElapsed)s")
@@ -350,9 +355,8 @@ final class ConferenceModel: ObservableObject {
                         self.mediaStatus = self.isJoining || self.isInConference ? message : nil
                         selected?.showMediaStatus(message)
                     }
-                    try selected.join(target: jam, credentials: credentials, container: container, quiet: quietNextJoin)
+                    try selected.join(target: jam, credentials: credentials, container: container, quiet: request.quiet)
                 }
-                quietNextJoin = false
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
                 joinTask = nil
                 status = "Connecting with microphone and camera off…"
@@ -360,6 +364,7 @@ final class ConferenceModel: ObservableObject {
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
                 joinTask = nil
                 phase = .idle
+                companionAudioPaused = false; liveSessionID = nil
                 continuation.targetDidFail()
                 releaseJamEngineIfSelected()
                 activeRoute = nil
@@ -381,6 +386,7 @@ final class ConferenceModel: ObservableObject {
         status = didStartConference ? "Leaving the jam…" : "Joining canceled."
         statusIsError = false
         if !didStartConference {
+            companionAudioPaused = false; liveSessionID = nil
             sessionGeneration &+= 1
             terminalEventHandled = true
             releaseJamEngineIfSelected()
@@ -582,10 +588,9 @@ final class ConferenceModel: ObservableObject {
         guard !isJoining && !isInConference && !isLeaving else {
             continuation.targetDidFail(); return nil
         }
-        continuationJoinName = jam.name; quietNextJoin = quiet
         do {
             let target = try destination(for: jam.invitation.absoluteString)
-            set(target: target); startJoin(target)
+            set(target: target); startJoin(target, nameOverride: jam.name, quiet: quiet)
         } catch { status = error.localizedDescription; statusIsError = true; continuation.targetDidFail() }
         return isJoining ? liveSessionID : nil
     }

@@ -25,11 +25,20 @@ If preparation or joining fails, the destination ends its attempted connection
 before asking the original to resume. Mic and camera remain off when resuming
 this way. If completion acknowledgement is delayed after joining, the destination
 stays connected and says that the other device's departure is unconfirmed.
+Its active-jam advertisement continues independently of that acknowledgement;
+late confirmation updates the notice only for that same destination session.
+Ending an unconfirmed destination conditionally cancels its exact request so an
+original that has not committed to leaving can resume. An expired acknowledgement
+stops polling without ending the destination or claiming that the original left.
 An independent deadline and a foreground check keep **Resume here** available
 even while a cloud request is waiting. An expired source hold offers **Resume here**; it never automatically enables a
 microphone after losing contact with the destination. A fresh source session is
 required for every leave/hold command, so a delayed request cannot close a newer
 meeting on the same device.
+Cancellation and system hold callbacks also carry the operation identity: late
+completion of an older request cannot reset a newer transfer or finish its resume.
+Name and quiet-audio choices belong to one join, so failed or cancelled attempts
+cannot change the next ordinary join's saved name or audio mode.
 
 An active card is fresh for three minutes. Older activity, up to fifteen minutes,
 is labelled unconfirmed and offers **Join here** after an echo warning. It does
