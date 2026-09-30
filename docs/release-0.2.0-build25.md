@@ -1,6 +1,6 @@
 # Rock’n’Roll 0.2.0 (25)
 
-Prepared 2026-09-30. Minimum iOS remains 16.0.
+Prepared 2026-09-30. Implementation source: `42f5cb3`. Minimum iOS remains 16.0.
 
 ## Change
 
@@ -81,3 +81,8 @@ NSUserActivityTypes includes the opaque continuation activity. Main executable
 SHA-256: 713bd21f11bdf13ba53de72e59d4f77f39a6ccbcec09a811ec47cbb1a0d5b4e5.
 Distribution export signs production APNs separately from the development-signed
 archive. TestFlight availability is verified separately from upload.
+
+Upload succeeded on 2026-09-30 (`/tmp/rock-build25-upload.log`, EXPORT SUCCEEDED).
+Apple received 0.2.0 (25). Existing bundled framework dSYM warnings remain;
+they limit symbolication inside those dependencies and did not block upload.
+Internal/public group availability is pending final App Store Connect verification.
