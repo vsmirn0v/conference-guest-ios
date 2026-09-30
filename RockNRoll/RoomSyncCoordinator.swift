@@ -47,6 +47,10 @@ final class RoomSyncCoordinator: ObservableObject {
     private var networkMonitor: NWPathMonitor?
     private var networkWasAvailable = false
     var onRemoteName: ((String) -> Void)?
+    var onCloudAccessChanged: ((String?) -> Void)?
+    var beforeDeleteSyncedData: (() async throws -> Void)?
+    var deviceID: String { state.document.device }
+    var cloudAccount: String? { enabled && !needsFreshAccount ? state.owner : nil }
     var canDeleteSyncedData: Bool { state.owner != nil && state.generation != nil && !needsFreshAccount }
 
     init(history: RoomHistoryStore, name: String, preferences: UserDefaults = .standard,
@@ -114,6 +118,7 @@ final class RoomSyncCoordinator: ObservableObject {
         guard value != enabled else { return }
         revision += 1; task?.cancel(); task = nil
         enabled = value; state.enabled = value
+        if !value { onCloudAccessChanged?(nil) }
         if value {
             status = "Connecting to iCloud…"
             state.needsInitialNameCheck = state.needsInitialNameCheck || state.generation == nil
@@ -238,6 +243,7 @@ final class RoomSyncCoordinator: ObservableObject {
                 return
             }
             state.owner = session.account; state.generation = session.generation
+            onCloudAccessChanged?(session.account)
             for attempt in 0..<3 {
                 let changes = try await transport.fetch(session: session, after: state.token)
                 guard valid(expected) else { return }
@@ -338,6 +344,7 @@ final class RoomSyncCoordinator: ObservableObject {
 
     private func pause(_ message: String) {
         enabled = false; state.enabled = false; status = message
+        onCloudAccessChanged?(nil)
         networkMonitor?.cancel(); networkMonitor = nil
         keepLocalNameWhenPausing()
         _ = persist()
@@ -360,7 +367,8 @@ final class RoomSyncCoordinator: ObservableObject {
         do {
             let session = try await transport.connect()
             guard expected == revision, let owner = state.owner, owner == session.account,
-                  state.generation == session.generation else { throw RoomCloudError.generationChanged }
+            state.generation == session.generation else { throw RoomCloudError.generationChanged }
+            try await beforeDeleteSyncedData?()
             try await transport.clear(session: session)
             guard expected == revision else { return }
             state.generation = nil; state.token = nil; state.acknowledged = [:]

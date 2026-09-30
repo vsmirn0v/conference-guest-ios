@@ -5,10 +5,15 @@ import CloudKit
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
                      fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        guard CKNotification(fromRemoteNotificationDictionary: userInfo)?.subscriptionID == "SavedJamsChanges" else {
+        let subscription = CKNotification(fromRemoteNotificationDictionary: userInfo)?.subscriptionID
+        guard subscription == "SavedJamsChanges" || subscription == "ActiveJamsChanges" else {
             completionHandler(.noData); return
         }
         Task { @MainActor in
+            if subscription == "ActiveJamsChanges" {
+                await MeetingContinuationCoordinator.active?.refresh()
+                completionHandler(.newData); return
+            }
             guard let sync = RoomSyncCoordinator.active, sync.enabled else { completionHandler(.noData); return }
             await sync.synchronizeForNotification()
             completionHandler(.newData)

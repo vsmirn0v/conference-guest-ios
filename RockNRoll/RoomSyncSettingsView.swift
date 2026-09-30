@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RoomSyncSettingsView: View {
     @ObservedObject var sync: RoomSyncCoordinator
+    @ObservedObject var continuation: MeetingContinuationCoordinator
     @State private var confirmDelete = false
     @State private var confirmFresh = false
     var body: some View {
@@ -9,6 +10,7 @@ struct RoomSyncSettingsView: View {
             Toggle("Sync with iCloud", isOn: Binding(get: { sync.enabled }, set: { sync.setEnabled($0) }))
                 .disabled(sync.busy)
             if sync.enabled {
+                Toggle("Show active jams on my devices", isOn: Binding(get: { continuation.enabled }, set: { continuation.setEnabled($0) }))
                 Toggle("Include recent jams", isOn: Binding(get: { sync.includeRecent }, set: { sync.setIncludeRecent($0) }))
                 Button("Sync now") { sync.requestSync(immediate: true) }.disabled(sync.busy)
             }
@@ -34,7 +36,7 @@ struct RoomSyncSettingsView: View {
         } header: {
             Text("Across your devices")
         } footer: {
-            Text("Sync uses the same iCloud Apple Account on your devices. Names and saved invitations, including invitation passwords, stay in your private iCloud storage. Audio, video, chat and transcripts are not synced. Turning sync off keeps this device’s data.")
+            Text("Sync uses the same iCloud Apple Account on your devices. Names and saved invitations, including invitation passwords, stay in your private iCloud storage. Optional active-jam sharing lets another device continue your current jam and includes its name, invitation and device type. Audio, video, chat and transcripts are not synced. Turning sync off keeps this device’s data.")
         }
         .confirmationDialog("Delete your name and saved jams from iCloud?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete from iCloud", role: .destructive) { Task { await sync.deleteSyncedData() } }

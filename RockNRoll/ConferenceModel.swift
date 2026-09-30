@@ -58,6 +58,15 @@ final class ConferenceModel: ObservableObject {
     private lazy var engine = NativeConferenceEngine(systemCall: systemCall, catchUp: catchUpStore)
     let chat = ChatStore()
     let history = RoomHistoryStore()
+    private var liveSessionID: UUID?
+    private var liveName = ""
+    private var continuationJoinName: String?
+    private var quietNextJoin = false
+    private(set) var companionAudioPaused = false
+    private var departureWaiters: [UUID: CheckedContinuation<Bool, Never>] = [:]
+    let continuationBanner = ContinuationBanner()
+    var currentContinuationActivity: NSUserActivity?
+    lazy var continuation: MeetingContinuationCoordinator = makeContinuationCoordinator()
     private var applyingSyncedName = false
     lazy var sync: RoomSyncCoordinator = {
         let coordinator = RoomSyncCoordinator(history: history, name: displayName)
@@ -76,6 +85,7 @@ final class ConferenceModel: ObservableObject {
         sync = coordinator
         coordinator.onRemoteName = { [weak self] name in self?.applySyncedName(name) }
     }
+    func installContinuationFixture(_ coordinator: MeetingContinuationCoordinator) { continuation = coordinator }
     #endif
     private var jamEngine: RockRoomEngine?
     private let resolver = VendorEndpointResolver.make()
@@ -256,12 +266,13 @@ final class ConferenceModel: ObservableObject {
     private func startJoin(_ target: JoinDestination) {
         guard !isJoining && !isInConference && !isLeaving else { return }
         #if DEBUG
-        let requestedName = testDisplayNameOverride ?? displayName
+        let requestedName = continuationJoinName ?? testDisplayNameOverride ?? displayName
         testDisplayNameOverride = nil
         #else
-        let requestedName = displayName
+        let requestedName = continuationJoinName ?? displayName
         #endif
         let name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        continuationJoinName = nil
         guard target.inputPolicy.accepts(name: name) else {
             joinAwaitingName = target
             nameEntryConfirmed = false
@@ -280,6 +291,8 @@ final class ConferenceModel: ObservableObject {
         terminalEventHandled = false
         phase = .joining
         activeRoute = target
+        companionAudioPaused = quietNextJoin
+        liveSessionID = UUID(); liveName = name
         connectedURL = nil
         activeRoomTitle = nil
         status = "Finding this jam…"
@@ -337,8 +350,9 @@ final class ConferenceModel: ObservableObject {
                         self.mediaStatus = self.isJoining || self.isInConference ? message : nil
                         selected?.showMediaStatus(message)
                     }
-                    try selected.join(target: jam, credentials: credentials, container: container)
+                    try selected.join(target: jam, credentials: credentials, container: container, quiet: quietNextJoin)
                 }
+                quietNextJoin = false
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
                 joinTask = nil
                 status = "Connecting with microphone and camera off…"
@@ -346,6 +360,7 @@ final class ConferenceModel: ObservableObject {
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
                 joinTask = nil
                 phase = .idle
+                continuation.targetDidFail()
                 releaseJamEngineIfSelected()
                 activeRoute = nil
                 status = error.localizedDescription
@@ -417,6 +432,16 @@ final class ConferenceModel: ObservableObject {
 
     private func handle(event: CallEvent) {
         guard !terminalEventHandled else { return }
+        defer {
+            if phase == .idle {
+                liveSessionID = nil
+                companionAudioPaused = false
+                let waiters = departureWaiters.values; departureWaiters.removeAll()
+                for waiter in waiters { waiter.resume(returning: true) }
+            }
+            continuation.updateCurrent(continuationSnapshot())
+            updateContinuationActivity()
+        }
         switch event {
         case .inactive:
             guard !isLeaving else { return }
@@ -445,6 +470,8 @@ final class ConferenceModel: ObservableObject {
             phase = .active
             connectedURL = activeRoute?.invitationURL
             status = "In jam"
+            continuation.targetDidConnect(invitation: connectedURL, sessionID: liveSessionID)
+            refreshContinuationBanner()
             statusIsError = false
             if let activeRoute {
                 let identifier: String
@@ -520,9 +547,68 @@ final class ConferenceModel: ObservableObject {
     private func setActiveRoomTitle(_ title: String) {
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         activeRoomTitle = title
+        continuation.updateCurrent(continuationSnapshot())
         if isInConference, let url = activeRoute?.invitationURL {
             history.updateTitle(for: url, title: title)
         }
+    }
+
+    func continuationSnapshot() -> ActiveJam? {
+        guard isInConference, let invitation = connectedURL, let id = liveSessionID else { return nil }
+        return ActiveJam(deviceID: continuation.deviceID, sessionID: id, invitation: invitation,
+                         title: activeRoomTitle ?? invitation.lastPathComponent,
+                         name: liveName, deviceLabel: continuation.deviceLabel,
+                         isSharingScreen: activeEngine?.isSharingScreen == true,
+                         supportsCompanion: { if case .jam = activeRoute { return true }; return false }(),
+                         audioPaused: companionAudioPaused)
+    }
+    func holdForContinuation(_ id: UUID, held: Bool, restoreSending: Bool) async throws {
+        guard liveSessionID == id, let activeEngine else { throw ContinuationError.expired }
+        try await activeEngine.setTransferHeld(held, restoreSending: restoreSending)
+    }
+    func leaveForContinuation(_ id: UUID? = nil) async -> Bool {
+        if let id, liveSessionID != id { return false }
+        guard isJoining || isInConference || isLeaving else { return true }
+        return await withCheckedContinuation { result in
+            let token = UUID(); departureWaiters[token] = result
+            leave()
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(12))
+                self?.departureWaiters.removeValue(forKey: token)?.resume(returning: false)
+            }
+        }
+    }
+    @discardableResult func joinFromContinuation(_ jam: ActiveJam, quiet: Bool) -> UUID? {
+        guard !isJoining && !isInConference && !isLeaving else {
+            continuation.targetDidFail(); return nil
+        }
+        continuationJoinName = jam.name; quietNextJoin = quiet
+        do {
+            let target = try destination(for: jam.invitation.absoluteString)
+            set(target: target); startJoin(target)
+        } catch { status = error.localizedDescription; statusIsError = true; continuation.targetDidFail() }
+        return isJoining ? liveSessionID : nil
+    }
+    func enableCompanionAudio() {
+        do {
+            try jamEngine?.enableReception(); companionAudioPaused = false
+            continuationBanner.show(nil, in: nil)
+            continuation.updateCurrent(continuationSnapshot())
+        } catch {
+            mediaStatus = "Audio could not start. Try enabling audio again."
+            jamEngine?.showMediaStatus(mediaStatus)
+        }
+    }
+    func cancelContinuationTarget(_ expected: URL, sessionID: UUID?) async -> Bool {
+        if let sessionID, liveSessionID != sessionID { return true }
+        guard activeRoute?.invitationURL == expected else { return true }
+        return await leaveForContinuation()
+    }
+    var continuationHostView: UIView? {
+        if let view = activeEngine?.continuationHostView { return view }
+        var host = container
+        while let next = host?.presentedViewController { host = next }
+        return host?.view
     }
 
     #if DEBUG

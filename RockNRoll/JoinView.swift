@@ -8,6 +8,7 @@ struct JoinView: View {
     @ObservedObject var catchUp: CatchUpStore
     @ObservedObject var history: RoomHistoryStore
     @ObservedObject var sync: RoomSyncCoordinator
+    @ObservedObject var continuation: MeetingContinuationCoordinator
     @State private var showingSavedHistory = false
     @State private var showingContactPicker = false
     @State private var showingSettings = false
@@ -16,6 +17,8 @@ struct JoinView: View {
     @State private var roomAlias = ""
     @State private var showingUndo = false
     @State private var undoToken = UUID()
+    @State private var staleContinuation: ActiveJam?
+    @State private var confirmingStaleContinuation = false
     private let accent = Color(red: 1, green: 0.60, blue: 0.33)
     private let linkAccent = Color(uiColor: .init { traits in
         traits.userInterfaceStyle == .dark ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) :
@@ -46,6 +49,9 @@ struct JoinView: View {
                   .background(Color(uiColor: .secondarySystemGroupedBackground))
               }
               Form {
+                MeetingContinuationView(continuation: continuation,
+                                        busy: model.isJoining || model.isInConference || model.isLeaving,
+                                        onJoinHere: { staleContinuation = $0; confirmingStaleContinuation = true })
                 Section("Join a jam") {
                     HStack {
                         TextField("Invitation link", text: $model.invite)
@@ -178,6 +184,14 @@ struct JoinView: View {
                 SavedCatchUpView(store: catchUp)
             }
             .sheet(isPresented: $showingSettings) { settingsSheet }
+            .alert("Join here without moving the other device?",
+                                isPresented: $confirmingStaleContinuation,
+                                presenting: staleContinuation) { jam in
+                Button("Join with mic and camera off") { model.joinFromContinuation(jam, quiet: false) }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("The other device may still play meeting audio. Disconnect it or use headphones to avoid echo.")
+            }
             .sheet(isPresented: $model.showingNameEditor, onDismiss: model.nameEditorDismissed) { nameSheet }
             .sheet(item: $model.siteSelection) { selection in
                 MeetingWebsiteSelectionView(
@@ -350,7 +364,7 @@ struct JoinView: View {
                     Text("Fallback for app links that omit their website. Links with an embedded host open directly.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                RoomSyncSettingsView(sync: sync)
+                RoomSyncSettingsView(sync: sync, continuation: continuation)
                 Section("About") {
                     Text("Small music groups in Yerevan can plan sessions and share ideas live.")
                     Link("Community", destination: URL(string: "https://rock.glowsoft.ru/community")!)

@@ -45,6 +45,7 @@ final class NativeConferenceEngine: CallEngine {
     private var roomTitleSubscription: AnyCancellable?
     private var toastSubscription: AnyCancellable?
     private weak var activeControls: CallControls?
+    var continuationHostView: UIView? { activeControls }
     private let streamViews = GuestStreamViews()
     private var offeredShare: GuestStreamViews.PinTarget?
     private var floatingVideo: GuestVideoPictureInPicture?
@@ -67,6 +68,13 @@ final class NativeConferenceEngine: CallEngine {
     #endif
     private(set) var hasJoinStarted = false
     private var hasMediaJoinStarted = false
+    var isSharingScreen: Bool { localSharePreview.active }
+    func setTransferHeld(_ held: Bool, restoreSending: Bool) async throws {
+        if !held && !restoreSending { microphoneIntentOn = false; cameraIntentOn = false }
+        try await systemCall.setTransferHeld(held)
+        // Hold handlers apply mic/camera controls asynchronously on the main actor.
+        await Task.yield()
+    }
 
     init(systemCall: SystemCallCoordinator, catchUp: CatchUpStore) {
         self.systemCall = systemCall

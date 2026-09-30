@@ -18,8 +18,9 @@ final class RoomSyncUITests: XCTestCase {
         reveal(cloudName, in: app)
         XCTAssertTrue(cloudName.waitForExistence(timeout: 10))
         cloudName.tap()
-        app.swipeDown()
-        XCTAssertEqual(app.textFields["Your name"].value as? String, "Ani")
+        let name = app.textFields["Your name"]
+        reveal(name, in: app, down: true)
+        XCTAssertEqual(name.value as? String, "Ani")
         let recent = app.switches["Include recent jams"]
         reveal(recent, in: app)
         XCTAssertEqual(recent.value as? String, "1")
@@ -43,7 +44,11 @@ final class RoomSyncUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Done"].isHittable)
         XCUIDevice.shared.orientation = .portrait
+        let settled = NSPredicate { _, _ in app.frame.width < app.frame.height && app.buttons["Done"].frame.maxX <= app.frame.width }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: nil)], timeout: 5), .completed)
         app.buttons["Done"].tap()
+        let closed = NSPredicate { _, _ in !app.navigationBars["Profile and settings"].exists }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: closed, object: nil)], timeout: 5), .completed)
         let invite = app.textFields["Invitation link"]
         invite.tap(); invite.typeText("https://rock.glowsoft.ru/jams/test")
         XCTAssertTrue(app.buttons["Join jam"].isEnabled)
@@ -57,10 +62,10 @@ final class RoomSyncUITests: XCTestCase {
     private func toggle(_ element: XCUIElement) {
         element.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
     }
-    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication, down: Bool = false) {
         for _ in 0..<4 {
             if element.exists && element.isHittable { return }
-            app.swipeUp()
+            if down { app.swipeDown() } else { app.swipeUp() }
         }
     }
 }

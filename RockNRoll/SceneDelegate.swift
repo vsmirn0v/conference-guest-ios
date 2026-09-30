@@ -20,11 +20,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let model = ConferenceModel()
         #if DEBUG
         RoomSyncUIFixture.configure(model)
+        MeetingContinuationUIFixture.configure(model)
+        MeetingContinuationLiveFixture.configure(model)
         #endif
         let hosting = UIHostingController(rootView: JoinView(model: model,
                                                             catchUp: model.catchUpStore,
                                                             history: model.history,
-                                                            sync: model.sync))
+                                                            sync: model.sync,
+                                                            continuation: model.continuation))
         let controller = UIViewController()
         controller.addChild(hosting)
         controller.view.addSubview(hosting.view)
@@ -50,8 +53,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
         if let url = connectionOptions.urlContexts.first?.url {
             model.receive(url: url)
-        } else if let url = connectionOptions.userActivities.first?.webpageURL {
-            model.receive(url: url)
+        } else if let activity = connectionOptions.userActivities.first {
+            if !model.receiveContinuationActivity(activity), let url = activity.webpageURL { model.receive(url: url) }
         }
     }
 
@@ -61,12 +64,15 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+        if conference?.receiveContinuationActivity(userActivity) == true { return }
         guard let url = userActivity.webpageURL else { return }
         conference?.receive(url: url)
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
         conference?.sync.foregrounded()
+        conference?.continuation.setForeground(true)
+        conference?.updateContinuationActivity()
         conference?.restoreFromFloatingVideo()
         conference?.resumeSystemCallIfPossible()
     }
@@ -76,6 +82,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
+        conference?.continuation.setForeground(false)
         conference?.backgroundedWithoutFloatingVideo()
     }
 

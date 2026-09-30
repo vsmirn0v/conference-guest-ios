@@ -32,6 +32,9 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private var holdStartedAt: Date?
     private var resumeRequested = false
     private var isAudioSessionActive = false
+    private(set) var transferHolding = false
+    private var transferHoldCompletion: ((Error?) -> Void)?
+    private var transferHoldGeneration = UUID()
 
     var canRestoreAudio: Bool {
         callID != nil && isAudioSessionActive && !isHeld && !hasAnotherActiveCall
@@ -54,6 +57,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
 
     func start() {
         guard callID == nil else { return }
+        finishPendingTransferHold()
         let id = UUID()
         callID = id
         isConnected = false
@@ -63,6 +67,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         holdStartedAt = nil
         resumeRequested = false
         isAudioSessionActive = false
+        transferHolding = false
         if !usesSystemCall {
             // iOS apps running on Mac don't receive the CallKit audio activation
             // callback reliably; the app owns this session until the jam ends.
@@ -127,6 +132,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     func end() {
         guard let callID else { return }
         if !usesSystemCall {
+            finishPendingTransferHold()
             self.callID = nil
             isConnected = false
             isAudioSessionActive = false
@@ -157,11 +163,15 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         holdStartedAt = nil
         resumeRequested = false
         isAudioSessionActive = false
+        transferHolding = false
+        transferHoldCompletion?(NSError(domain: "JamTransfer", code: 2))
+        transferHoldCompletion = nil
         if usesSystemCall && transactionRequester == nil { provider.reportCall(with: callID, endedAt: nil, reason: reason) }
     }
 
     func providerDidReset(_ provider: CXProvider) {
         guard usesSystemCall else { return }
+        finishPendingTransferHold()
         #if DEBUG
         print("System call: provider reset")
         #endif
@@ -204,6 +214,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             action.fail()
             return
         }
+        finishPendingTransferHold()
         callID = nil
         isConnected = false
         isAudioSessionActive = false
@@ -239,6 +250,9 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             holdStartedAt = nil
         }
         onHoldChanged?(isHeld)
+        let transferCompletion = transferHoldCompletion
+        transferHoldCompletion = nil
+        DispatchQueue.main.async { transferCompletion?(nil) }
         action.fulfill()
         resumeIfPossible()
     }
@@ -267,7 +281,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     }
 
     func resumeIfPossible() {
-        guard usesSystemCall else { return }
+        guard usesSystemCall, !transferHolding else { return }
         guard let callID, isHeld, heldForAnotherCall,
               !hasAnotherActiveCall, !resumeRequested else { return }
         resumeRequested = true
@@ -294,6 +308,52 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         }
     }
     #endif
+
+    /// Use the established conference hold path instead of competing with the
+    /// provider's WebRTC audio session. The Mac runtime owns its AVAudioSession.
+    func setTransferHeld(_ held: Bool) async throws {
+        guard let id = callID, transferHoldCompletion == nil else { throw NSError(domain: "JamTransfer", code: 1) }
+        transferHolding = held
+        let generation = UUID(); transferHoldGeneration = generation
+        if !usesSystemCall {
+            isHeld = held
+            onHoldChanged?(held)
+            if held {
+                try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                isAudioSessionActive = false
+                onDeactivated?()
+            } else {
+                try AVAudioSession.sharedInstance().setActive(true)
+                isAudioSessionActive = true
+                onActivated?()
+            }
+            await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
+            return
+        }
+        try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+            transferHoldCompletion = { error in
+                if let error { done.resume(throwing: error) } else { done.resume() }
+            }
+            request(CXTransaction(action: CXSetHeldCallAction(call: id, onHold: held))) { [weak self] error in
+                guard let error else { return }
+                DispatchQueue.main.async {
+                    guard self?.callID == id else { return }
+                    self?.transferHoldCompletion?(error); self?.transferHoldCompletion = nil
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+                guard self?.callID == id, self?.transferHoldGeneration == generation,
+                      let completion = self?.transferHoldCompletion else { return }
+                self?.transferHoldCompletion = nil
+                completion(NSError(domain: "JamTransfer", code: 3))
+            }
+        }
+    }
+    private func finishPendingTransferHold() {
+        transferHoldCompletion?(NSError(domain: "JamTransfer", code: 2))
+        transferHoldCompletion = nil
+        transferHolding = false; transferHoldGeneration = UUID()
+    }
 
     private var hasAnotherActiveCall: Bool {
         guard usesSystemCall else { return false }

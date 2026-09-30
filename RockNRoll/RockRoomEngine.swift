@@ -32,6 +32,19 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private var directMediaForTesting = false
     #endif
     private(set) var hasJoinStarted = false
+    private var receptionPaused = false
+    var isSharingScreen: Bool { room?.localParticipant.isScreenShareEnabled() == true }
+    var continuationHostView: UIView? { callView?.viewIfLoaded }
+    func setTransferHeld(_ held: Bool, restoreSending: Bool) async throws {
+        if !held && !restoreSending { microphoneIntentOn = false; cameraIntentOn = false }
+        try await systemCall.setTransferHeld(held)
+        await Task.yield()
+    }
+    func enableReception() throws {
+        try AudioManager.shared.setEngineAvailability(.default)
+        receptionPaused = false
+        callView?.setHeld(false)
+    }
 
     init(catchUp: CatchUpStore, chat: ChatStore, systemCall: SystemCallCoordinator) {
         self.catchUp = catchUp
@@ -58,7 +71,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         }
     }
 
-    func join(target: JamTarget, credentials: JamCredentials, container: UIViewController) throws {
+    func join(target: JamTarget, credentials: JamCredentials, container: UIViewController, quiet: Bool = false) throws {
         guard !hasJoinStarted else { return }
         self.container = container
         self.credentials = credentials
@@ -71,6 +84,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         self.directMediaForTesting = false
         #endif
         self.audioAvailable = false
+        self.receptionPaused = quiet
         self.isHeld = false
         self.audioGate = CallAudioRecoveryGate()
         self.microphoneIntentOn = false
@@ -96,6 +110,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         view.onSpeaker = { preferred in AudioManager.shared.isSpeakerOutputPreferred = preferred }
         view.onDisplayMode = { [weak self] mode in self?.setDisplayMode(mode) }
         self.callView = view
+        view.setHeld(quiet)
         view.setAudioRouteName(audio.outputName)
         container.present(view, animated: false)
         installCallHandlers()
@@ -194,7 +209,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             // The outgoing cellular call can release hold before CallKit gives
             // this call its audio session back. Restart the engine only after both.
             try AudioManager.shared.setEngineAvailability(.none)
-            try AudioManager.shared.setEngineAvailability(.default)
+            if !receptionPaused { try AudioManager.shared.setEngineAvailability(.default) }
             audio.ensureMixing()
             audioAvailable = true
             applyMediaIntent()
@@ -259,6 +274,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
 
     private func setMicrophone(_ enabled: Bool) {
         guard hasJoinStarted else { return }
+        guard !receptionPaused else { systemCall.setMuted(true); return }
         microphoneIntentOn = enabled
         callView?.setMicrophone(enabled)
         systemCall.setMuted(!enabled)
@@ -283,6 +299,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
 
     private func setCamera(_ enabled: Bool) {
         guard hasJoinStarted else { return }
+        guard !receptionPaused else { return }
         cameraIntentOn = enabled
         callView?.setCamera(enabled)
         guard !isHeld, let room else { return }
@@ -320,8 +337,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         guard let room else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            _ = try? await room.localParticipant.setMicrophone(enabled: self.microphoneIntentOn)
-            _ = try? await room.localParticipant.setCamera(enabled: self.cameraIntentOn)
+            _ = try? await room.localParticipant.setMicrophone(enabled: self.microphoneIntentOn && !self.receptionPaused)
+            _ = try? await room.localParticipant.setCamera(enabled: self.cameraIntentOn && !self.receptionPaused)
             guard self.room === room, !self.leaveRequested else { return }
             self.updatePiPMicrophoneStatus()
             self.callView?.render(room: room)
