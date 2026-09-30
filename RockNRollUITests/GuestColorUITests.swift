@@ -39,6 +39,32 @@ final class GuestColorUITests: XCTestCase {
         XCTAssertGreaterThan(correctedWhite, originalWhite + 8, "Video-range white must fill the display range")
     }
 
+    func testSpeakerChangesDoNotExposeBrighterFrames() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-color"
+        app.launch()
+        let corrected = app.otherElements["Corrected video"]
+        XCTAssertTrue(corrected.waitForExistence(timeout: 10))
+        let ready = expectation(for: NSPredicate(format: "value == %@", "Rendered"), evaluatedWith: corrected)
+        wait(for: [ready], timeout: 5)
+        let screenWidth = app.windows.firstMatch.frame.width
+        func pixels() -> [Int] {
+            let image = XCUIScreen.main.screenshot().image.cgImage!
+            return [1.0 / 6, 0.5, 5.0 / 6].map { fraction in
+                brightness(in: image, at: CGPoint(x: corrected.frame.minX + corrected.frame.width * fraction,
+                                                  y: corrected.frame.midY), screenWidth: screenWidth)
+            }
+        }
+        let baseline = pixels()
+        for _ in 0..<4 {
+            app.buttons["Change speaker without a frame"].tap()
+            for (before, after) in zip(baseline, pixels()) {
+                XCTAssertLessThanOrEqual(abs(before - after), 2,
+                                         "Speaker metadata must not change the displayed frame's brightness")
+            }
+        }
+    }
+
     private func brightness(in image: CGImage, at point: CGPoint, screenWidth: CGFloat) -> Int {
         let scale = CGFloat(image.width) / screenWidth
         let crop = CGRect(x: (point.x * scale).rounded(), y: (point.y * scale).rounded(), width: 1, height: 1)

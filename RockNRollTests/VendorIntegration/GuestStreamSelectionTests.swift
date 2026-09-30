@@ -1,3 +1,4 @@
+import AVFoundation
 import JazzSDK
 import UIKit
 import XCTest
@@ -5,6 +6,70 @@ import XCTest
 
 @MainActor
 final class GuestStreamSelectionTests: XCTestCase {
+    func testSpeakerChangesKeepTheSharedScreenViewport() {
+        let streams = GuestStreamViews()
+        let renderer = UIView()
+        let original = streams.makeView(model: model("share", pinned: false, share: true), video: renderer)
+        for speaking in [true, false, true, false] {
+            let updated = streams.makeView(model: model("share", pinned: false, share: true,
+                                                       speaking: speaking), video: renderer)
+            XCTAssertTrue(updated === original,
+                          "Speaker metadata must not expose a new uncorrected video surface")
+        }
+    }
+
+    func testMetadataUpdatesKeepCorrectedPixelsAndRefreshPresentation() throws {
+        let streams = GuestStreamViews()
+        let renderer = UIView()
+        let original = try XCTUnwrap(streams.makeView(model: model("share", pinned: false, share: true),
+                                                     video: renderer) as? StreamViewport)
+        original.showCorrectedVideo(try sample(), rotation: 0)
+        let surface = try XCTUnwrap(descendants(original).first { $0 is GuestSampleBufferView })
+        let updatedModel = JazzParticipantViewModel(name: "Renamed musician", isAudioOn: true,
+            isVideoOn: true, isPinned: true, isSharingScreen: true, isLocal: false,
+            id: "share", isDominantSpeaker: true, shouldShowParticipantInfo: true,
+            isZoomable: true, watermarkState: .visible("Meeting watermark"), displayMode: .speaker)
+        let updated = streams.makeView(model: updatedModel, video: renderer)
+        XCTAssertTrue(updated === original)
+        XCTAssertTrue(descendants(updated).first { $0 is GuestSampleBufferView } === surface)
+        let labels = descendants(updated).compactMap { $0 as? UILabel }
+        XCTAssertTrue(labels.contains { $0.text == "  Renamed musician · Pinned  " && !$0.isHidden })
+        XCTAssertTrue(labels.contains { $0.text == "Meeting watermark" && !$0.isHidden })
+        XCTAssertTrue(updated.accessibilityElementsHidden == false)
+        XCTAssertTrue(descendants(updated).compactMap { $0 as? UIButton }.contains {
+            $0.accessibilityLabel == "Pin Renamed musician screen share"
+        })
+    }
+
+    func testReplacingTheDecodedRendererDoesNotReuseItsOldSurface() {
+        let streams = GuestStreamViews()
+        let original = streams.makeView(model: model("share", pinned: false, share: true), video: UIView())
+        let replacement = streams.makeView(model: model("share", pinned: false, share: true), video: UIView())
+        XCTAssertFalse(replacement === original)
+        XCTAssertFalse(descendants(replacement).contains { $0 is GuestSampleBufferView })
+    }
+
+    private func descendants(_ view: UIView) -> [UIView] {
+        view.subviews.flatMap { [$0] + descendants($0) }
+    }
+
+    private func sample() throws -> CMSampleBuffer {
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 4, 4, kCVPixelFormatType_32BGRA,
+                                           nil, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        var format: CMVideoFormatDescription?
+        XCTAssertEqual(CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
+            imageBuffer: buffer, formatDescriptionOut: &format), noErr)
+        var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: .zero,
+                                       decodeTimeStamp: .invalid)
+        var sample: CMSampleBuffer?
+        XCTAssertEqual(CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault,
+            imageBuffer: buffer, formatDescription: try XCTUnwrap(format), sampleTiming: &timing,
+            sampleBufferOut: &sample), noErr)
+        return try XCTUnwrap(sample)
+    }
+
     func testPinnedVideoRespectsShareOnlyAudioOnlyAndVisibility() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene)
@@ -110,9 +175,10 @@ final class GuestStreamSelectionTests: XCTestCase {
         streams.onPreferredVideo = nil
     }
 
-    private func model(_ id: String, pinned: Bool, share: Bool, local: Bool = false) -> JazzParticipantViewModel {
+    private func model(_ id: String, pinned: Bool, share: Bool, local: Bool = false,
+                       speaking: Bool = false) -> JazzParticipantViewModel {
         JazzParticipantViewModel(name: id, isAudioOn: false, isVideoOn: !share, isPinned: pinned,
-            isSharingScreen: share, isLocal: local, id: id, isDominantSpeaker: false,
+            isSharingScreen: share, isLocal: local, id: id, isDominantSpeaker: speaking,
             shouldShowParticipantInfo: true, isZoomable: share, watermarkState: .hidden, displayMode: .speaker)
     }
 }

@@ -14,6 +14,8 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     private let video: UIView
     private var correctedVideo: GuestSampleBufferView?
     private let mediaPlaceholder = UILabel()
+    private let participantInfo = UILabel()
+    private let watermarkLabel = UILabel()
     private let state: StreamViewportState
     private let owner = UUID()
     private var viewportSize = CGSize.zero
@@ -117,9 +119,8 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         ])
         setMediaActive(!showsPlaceholder)
 
-        if showInfo {
-            let label = UILabel()
-            label.text = "  \(name)\(microphoneOn ? "" : " · Mic off")\(pinned ? " · Pinned" : "")  "
+        do {
+            let label = participantInfo
             label.font = .preferredFont(forTextStyle: .caption1)
             label.textColor = .white
             label.backgroundColor = UIColor.black.withAlphaComponent(0.65)
@@ -133,9 +134,8 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
                 label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8)
             ])
         }
-        if let watermark {
-            let label = UILabel()
-            label.text = watermark
+        do {
+            let label = watermarkLabel
             label.numberOfLines = 0
             label.textAlignment = .center
             label.textColor = UIColor.white.withAlphaComponent(0.65)
@@ -148,9 +148,28 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
                 label.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.9)
             ])
         }
+        updatePresentation(name: name, showInfo: showInfo, microphoneOn: microphoneOn,
+                           pinned: pinned, watermark: watermark, zoomable: zoomable,
+                           placeholderText: placeholderText)
     }
 
     required init?(coder: NSCoder) { nil }
+
+    /// Participant metadata changes without changing the decoded stream. Keep
+    /// the corrected surface and scroll state while updating its visible labels.
+    func updatePresentation(name: String, showInfo: Bool, microphoneOn: Bool,
+                            pinned: Bool, watermark: String?, zoomable: Bool,
+                            placeholderText: String? = nil) {
+        participantInfo.text = "  \(name)\(microphoneOn ? "" : " · Mic off")\(pinned ? " · Pinned" : "")  "
+        participantInfo.isHidden = !showInfo
+        mediaPlaceholder.text = placeholderText ?? name
+        watermarkLabel.text = watermark
+        watermarkLabel.isHidden = watermark == nil
+        scroll.maximumZoomScale = zoomable ? 5 : 1
+        if scroll.zoomScale > scroll.maximumZoomScale {
+            scroll.setZoomScale(scroll.maximumZoomScale, animated: false)
+        }
+    }
 
     func updatePin(name: String, isShare: Bool, pinned: Bool, onPin: (() -> Void)?) {
         pinName = name

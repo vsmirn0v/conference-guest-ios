@@ -20,6 +20,28 @@ I420 without metadata remains ambiguous because WebRTC's frame type carries
 no range field. If that source occurs, it needs a provider-level range signal
 or a source-specific correction, not an inferred contrast adjustment.
 
+## Speaker-change flicker — 30 September 2026
+
+The guest tile cache previously required the entire participant view model to
+remain equal. Changing its dominant-speaker flag rebuilt the viewport even with
+the same decoded renderer and stream identity. The new viewport had no corrected
+sample-buffer layer until another frame arrived, exposing the SDK's brighter
+color path. The speaker-change identity regression failed on all four transitions
+before the fix in `/tmp/rock-share-color-before.xcresult`.
+
+Tiles now retain their viewport, corrected surface and zoom state while updating
+name, microphone, pin, watermark and other presentation metadata in place. An
+actual renderer replacement still creates a new surface, and stopped media still
+clears the old image. Frame conversion, color tags and frame-rate caps are unchanged.
+
+Validation: 19 targeted tests passed on iOS 27 and 20 on an iOS 17.5 iPhone SE,
+including frame conversion, pinning, media cleanup and zoom/rotation. The pixel
+regression changes speakers four times while withholding further video frames;
+displayed black, midtone and white values stay within two code values of their
+baseline. Results: `/tmp/rock-share-color-fixed27.xcresult` and
+`/tmp/rock-share-color-fixed17.xcresult`. The affected live Mac meeting was not
+retested, and this source fix is not yet in the published build 25.
+
 ## Validation — 25 September 2026
 
 On an iOS 26.5 simulator, a deterministic neutral ramp used luma codes 16,

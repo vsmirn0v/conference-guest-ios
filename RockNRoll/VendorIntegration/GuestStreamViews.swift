@@ -124,10 +124,26 @@ final class GuestStreamViews {
         let onPin: (() -> Void)? = model.isLocal && model.isSharingScreen ? nil : { [weak self] in
             self?.setPin(self?.pinnedTarget == target ? nil : target)
         }
+        let watermark: String?
+        switch model.watermarkState {
+        case .visible(let text): watermark = text
+        case .hidden: watermark = nil
+        @unknown default: watermark = nil
+        }
+        let placeholderText = model.isLocal && model.isSharingScreen ? "" : nil
         // The SDK also invokes this builder from layoutSubviews. Reparenting its
         // video view for an unchanged model would invalidate that same layout again.
-        if let tile = renderedTiles[key], tile.model == model, let view = tile.view,
+        // Speaker/microphone/name updates do not replace the decoded stream:
+        // rebuilding its viewport would briefly expose the brighter SDK renderer.
+        if let tile = renderedTiles[key], let view = tile.view,
            tile.video === video, view.containsRenderer(video) {
+            if tile.model != model {
+                renderedTiles[key] = RenderedTile(model: model, video: video, view: view)
+                view.updatePresentation(name: model.name, showInfo: model.shouldShowParticipantInfo,
+                                        microphoneOn: model.isAudioOn, pinned: model.isPinned,
+                                        watermark: watermark, zoomable: model.isSharingScreen && model.isZoomable,
+                                        placeholderText: placeholderText)
+            }
             view.updatePin(name: model.name, isShare: model.isSharingScreen,
                            pinned: pinnedTarget == target, onPin: onPin)
             view.setMediaActive(isActiveStream(model))
@@ -142,12 +158,6 @@ final class GuestStreamViews {
         } else {
             state = StreamViewportState()
         }
-        let watermark: String?
-        switch model.watermarkState {
-        case .visible(let text): watermark = text
-        case .hidden: watermark = nil
-        @unknown default: watermark = nil
-        }
         let view = StreamViewport(video: video, state: state,
                               zoomable: model.isSharingScreen && model.isZoomable,
                               name: model.name, showInfo: model.shouldShowParticipantInfo,
@@ -155,8 +165,7 @@ final class GuestStreamViews {
                               watermark: watermark,
                               showsPlaceholder: !model.isVideoOn && !model.isSharingScreen ||
                                   model.isLocal && model.isSharingScreen,
-                              placeholderText: model.isLocal && model.isSharingScreen ?
-                                  "" : nil,
+                              placeholderText: placeholderText,
                               onPin: onPin)
         view.updatePin(name: model.name, isShare: model.isSharingScreen,
                        pinned: pinnedTarget == target, onPin: onPin)

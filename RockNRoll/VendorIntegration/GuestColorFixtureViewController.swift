@@ -1,4 +1,5 @@
 #if DEBUG
+import JazzSDK
 import UIKit
 import WebRTC
 
@@ -8,13 +9,17 @@ final class GuestColorFixtureViewController: UIViewController {
     private let originalRenderer = RTCMTLVideoView()
     private let correctedRenderer = RTCMTLVideoView()
     private let processor = GuestVideoFrameProcessor()
+    private let streams = GuestStreamViews()
     private var correctedViewport: StreamViewport?
+    private var column: UIStackView!
+    private var speaking = false
     private var refresh: Timer?
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
         let column = UIStackView()
+        self.column = column
         column.axis = .vertical
         column.spacing = 12
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -30,19 +35,48 @@ final class GuestColorFixtureViewController: UIViewController {
             label.text = title
             label.textColor = .white
             column.addArrangedSubview(label)
-            let viewport = StreamViewport(video: renderer, state: StreamViewportState(),
-                                          zoomable: false, name: title, showInfo: false,
-                                          microphoneOn: false, pinned: false, watermark: nil)
+            let viewport = title == "Corrected video" ? makeCorrectedViewport() :
+                StreamViewport(video: renderer, state: StreamViewportState(),
+                               zoomable: false, name: title, showInfo: false,
+                               microphoneOn: false, pinned: false, watermark: nil)
             viewport.accessibilityIdentifier = title
             viewport.isAccessibilityElement = true
             column.addArrangedSubview(viewport)
             viewport.heightAnchor.constraint(equalTo: viewport.widthAnchor, multiplier: 0.3).isActive = true
             if title == "Corrected video" { correctedViewport = viewport }
         }
+        let changeSpeaker = UIButton(type: .system)
+        changeSpeaker.setTitle("Change speaker without a frame", for: .normal)
+        changeSpeaker.addAction(UIAction { [weak self] _ in self?.changeSpeaker() }, for: .touchUpInside)
+        column.addArrangedSubview(changeSpeaker)
         processor.onSample = { [weak self] sample, _, rotation in
             self?.correctedViewport?.showCorrectedVideo(sample, rotation: rotation)
             self?.correctedViewport?.accessibilityValue = "Rendered"
         }
+    }
+
+    private func makeCorrectedViewport() -> StreamViewport {
+        let model = JazzParticipantViewModel(name: "Corrected video", isAudioOn: true,
+            isVideoOn: true, isPinned: false, isSharingScreen: true, isLocal: false,
+            id: "color-share", isDominantSpeaker: speaking, shouldShowParticipantInfo: false,
+            isZoomable: true, watermarkState: .hidden, displayMode: .speaker)
+        return streams.makeView(model: model, video: correctedRenderer) as! StreamViewport
+    }
+
+    private func changeSpeaker() {
+        // No replacement frame may hide a brief fallback to the SDK renderer.
+        refresh?.invalidate(); refresh = nil
+        speaking.toggle()
+        guard let previous = correctedViewport else { return }
+        let viewport = makeCorrectedViewport()
+        guard viewport !== previous else { return }
+        let index = column.arrangedSubviews.firstIndex(of: previous)!
+        previous.removeFromSuperview()
+        column.insertArrangedSubview(viewport, at: index)
+        viewport.accessibilityIdentifier = "Corrected video"
+        viewport.isAccessibilityElement = true
+        viewport.heightAnchor.constraint(equalTo: viewport.widthAnchor, multiplier: 0.3).isActive = true
+        correctedViewport = viewport
     }
 
     override func viewDidAppear(_ animated: Bool) {
