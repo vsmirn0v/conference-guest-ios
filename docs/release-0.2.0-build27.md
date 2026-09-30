@@ -44,4 +44,14 @@ are packaged. CloudKit uses Production with team `5V64BP2H3P`.
 Main executable SHA-256:
 `bc372a77ca823057af9b4e1d3f021cc474a5dbabafa94b252732fe2da6d9b894`.
 
-Upload and TestFlight group verification: pending.
+Upload succeeded on 2026-09-30 (`/tmp/rock-build27-upload.log`, EXPORT SUCCEEDED).
+App Store Connect received 0.2.0 (27) and showed Processing at 22:24 MSK.
+Existing bundled dependency dSYM warnings did not block delivery; they still
+limit symbolication inside those frameworks.
+
+App Store Connect verification completed 2026-09-30 at 22:32 MSK:
+both Rock’n’Roll Internal and Rock’n’Roll Public Beta explicitly list
+0.2.0 (27) as Testing, with 90 days remaining. Automatically notify testers
+was enabled at submission. Build UUID:
+`0e518a27-3369-42c9-9afe-def759bb0eb4`.
+Public invitation: https://testflight.apple.com/join/Hd13C9U3.
