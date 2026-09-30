@@ -146,10 +146,10 @@ enum GuestSiteLinkError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .invalidLink: "This meeting app link is incomplete or invalid."
-        case .conflictingHosts: "This meeting link names two different websites."
-        case .websiteNeeded: "Choose the meeting website to open this link."
-        case .ambiguousWebsites: "This room is saved on more than one website. Choose where to join."
+        case .invalidLink: L("This meeting app link is incomplete or invalid.")
+        case .conflictingHosts: L("This meeting link names two different websites.")
+        case .websiteNeeded: L("Choose the meeting website to open this link.")
+        case .ambiguousWebsites: L("This room is saved on more than one website. Choose where to join.")
         }
     }
 }

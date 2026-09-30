@@ -87,10 +87,10 @@ enum JamServiceError: LocalizedError {
     case invalidResponse, invalidName, busy, unavailable
     var errorDescription: String? {
         switch self {
-        case .invalidResponse: "This jam could not provide a secure connection."
-        case .invalidName: "This jam needs a name of up to 60 characters without control characters. Edit your name and try again."
-        case .busy: "This jam is busy. Wait a moment and try again."
-        case .unavailable: "The jam service is temporarily unavailable. Try again shortly."
+        case .invalidResponse: L("This jam could not provide a secure connection.")
+        case .invalidName: L("This jam needs a name of up to 60 characters without control characters. Edit your name and try again.")
+        case .busy: L("This jam is busy. Wait a moment and try again.")
+        case .unavailable: L("The jam service is temporarily unavailable. Try again shortly.")
         }
     }
 }

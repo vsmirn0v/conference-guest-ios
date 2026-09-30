@@ -5,7 +5,10 @@ import UIKit
 /// A bounded local confidence preview, never a claim of remote delivery.
 @MainActor
 final class LocalSharePreview: ObservableObject {
-    enum Source: String { case selected = "Selected content", screen = "Entire screen", window = "Shared window", application = "Shared application" }
+    enum Source: String {
+        case selected = "Selected content", screen = "Entire screen", window = "Shared window", application = "Shared application"
+        var title: String { L(rawValue) }
+    }
     @Published private(set) var active = false
     @Published private(set) var image: UIImage?
     @Published private(set) var source: Source = .screen
@@ -147,10 +150,10 @@ final class LocalSharePreviewCard: UIView {
         layer.cornerRadius = 12
         layer.borderWidth = 1
         layer.borderColor = UIColor.white.withAlphaComponent(0.16).cgColor
-        title.setTitle("Preview", for: .normal)
+        title.setTitle(L("Preview"), for: .normal)
         title.titleLabel?.font = .preferredFont(forTextStyle: .caption1)
         title.setTitleColor(.white, for: .normal)
-        title.accessibilityLabel = "Enlarge local sharing preview"
+        title.accessibilityLabel = L("Enlarge local sharing preview")
         title.addAction(UIAction { [weak self] _ in self?.enlarge() }, for: .touchUpInside)
         visibility.tintColor = .lightGray
         visibility.addAction(UIAction { [weak self] _ in
@@ -163,7 +166,7 @@ final class LocalSharePreviewCard: UIView {
         pause.addAction(UIAction { [weak model] _ in model?.togglePaused() }, for: .touchUpInside)
         refresh.tintColor = .lightGray
         refresh.setImage(UIImage(systemName: "arrow.clockwise"), for: .normal)
-        refresh.accessibilityLabel = "Refresh sharing preview"
+        refresh.accessibilityLabel = L("Refresh sharing preview")
         refresh.addAction(UIAction { [weak model] _ in model?.refreshFrame() }, for: .touchUpInside)
         let header = UIStackView(arrangedSubviews: [title, pause, refresh, visibility])
         header.spacing = 4
@@ -180,15 +183,15 @@ final class LocalSharePreviewCard: UIView {
         thumbnailHeight = imageButton.heightAnchor.constraint(equalToConstant: 82)
         imageButton.backgroundColor = .black
         imageButton.clipsToBounds = true
-        imageButton.accessibilityLabel = "Local shared screen thumbnail"
+        imageButton.accessibilityLabel = L("Local shared screen thumbnail")
         imageButton.addAction(UIAction { [weak self] _ in self?.enlarge() }, for: .touchUpInside)
         detail.font = .preferredFont(forTextStyle: .caption2)
         detail.textColor = .lightGray
         detail.numberOfLines = 2
         let stop = UIButton(type: .system)
-        stop.setTitle("Stop Sharing", for: .normal)
+        stop.setTitle(L("Stop Sharing"), for: .normal)
         stop.tintColor = .systemOrange
-        stop.accessibilityLabel = "Stop local screen sharing"
+        stop.accessibilityLabel = L("Stop local screen sharing")
         stop.addAction(UIAction { [weak self] _ in self?.onStop?() }, for: .touchUpInside)
         let column = UIStackView(arrangedSubviews: [header, imageButton, detail, stop])
         column.axis = .vertical
@@ -247,16 +250,16 @@ final class LocalSharePreviewCard: UIView {
         thumbnailView.image = model.image
         title.isEnabled = model.image != nil
         pause.setImage(UIImage(systemName: model.paused ? "play.fill" : "pause.fill"), for: .normal)
-        pause.accessibilityLabel = model.paused ? "Resume sharing preview" : "Pause sharing preview"
+        pause.accessibilityLabel = model.paused ? L("Resume sharing preview") : L("Pause sharing preview")
         visibility.setImage(UIImage(systemName: model.hidden ? "eye" : "eye.slash"), for: .normal)
-        visibility.accessibilityLabel = model.hidden ? "Show local preview" : "Hide local preview"
+        visibility.accessibilityLabel = model.hidden ? L("Show local preview") : L("Hide local preview")
         if model.image == nil {
-            let hint = model.isMac ? (model.live ? "Waiting for preview…" : "Preview paused to avoid repetition") :
-                "Switch apps to share content"
-            detail.text = "\(model.source.rawValue)\n\(hint)"
+            let hint = model.isMac ? (model.live ? L("Waiting for preview…") : L("Preview paused to avoid repetition")) :
+                L("Switch apps to share content")
+            detail.text = "\(model.source.title)\n\(hint)"
         } else {
-            detail.text = model.live ? "\(model.source.rawValue) · Live preview" :
-                "Last shared frame · Preview paused"
+            detail.text = model.live ? L("%@ · Live preview", model.source.title) :
+                L("Last shared frame · Preview paused")
         }
         if !model.active { enlarged?.dismiss(animated: false); enlarged = nil }
     }
@@ -293,15 +296,17 @@ private final class LocalSharePreviewPanel: UIViewController, UIScrollViewDelega
         view.backgroundColor = .black
         presentationController?.delegate = self
         let close = UIButton(type: .system)
-        close.setTitle("Close preview", for: .normal)
+        close.setTitle(L("Close"), for: .normal)
+        close.accessibilityLabel = L("Close preview")
         close.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true); self?.onClose?() }, for: .touchUpInside)
         let stop = UIButton(type: .system)
-        stop.setTitle("Stop Sharing", for: .normal)
+        stop.setTitle(L("Stop"), for: .normal)
+        stop.accessibilityLabel = L("Stop Sharing")
         stop.tintColor = .systemOrange
         stop.addAction(UIAction { [weak self] _ in self?.onStop() }, for: .touchUpInside)
         let refresh = UIButton(type: .system)
-        refresh.setTitle("Refresh", for: .normal)
-        refresh.accessibilityLabel = "Refresh sharing preview"
+        refresh.setTitle(L("Refresh"), for: .normal)
+        refresh.accessibilityLabel = L("Refresh sharing preview")
         refresh.addAction(UIAction { [weak model] _ in model?.refreshFrame() }, for: .touchUpInside)
         let bar = UIStackView(arrangedSubviews: [close, refresh, stop])
         bar.distribution = .fillEqually
@@ -339,8 +344,8 @@ private final class LocalSharePreviewPanel: UIViewController, UIScrollViewDelega
     }
     private func render() {
         imageView.image = model.image
-        detail.text = model.live ? "Local preview · Remote delivery may differ." :
-            "Last shared frame · Preview paused while this app is visible to avoid a repeating screen."
+        detail.text = model.live ? L("Local preview · Remote delivery may differ.") :
+            L("Last shared frame · Preview paused while this app is visible to avoid a repeating screen.")
         if !model.active { dismiss(animated: false); onClose?() }
     }
     override func viewDidDisappear(_ animated: Bool) {

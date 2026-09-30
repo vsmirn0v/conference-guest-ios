@@ -1,0 +1,4 @@
+// App-owned interface copy. English keys are the fallback.
+"Screen sharing was stopped by Rock’n’Roll." = "Rock’n’Roll остановил трансляцию экрана.";
+"The meeting has ended." = "Встреча завершена.";
+"The meeting is no longer sharing. Open Rock’n’Roll to start a new share." = "Трансляция уже завершена. Откройте Rock’n’Roll, чтобы начать новую.";

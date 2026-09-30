@@ -33,7 +33,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture {
         guard stream == nil, !picking else { return }
         let picker = SCContentSharingPicker.shared
         guard picker.isAvailable, !picker.isActive else {
-            onError("Screen sharing is unavailable. Close any other sharing chooser and try again.")
+            onError(L("Screen sharing is unavailable. Close any other sharing chooser and try again."))
             return
         }
         generation += 1
@@ -62,7 +62,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture {
         upload = nil
         if let previous {
             do { try await previous.stopCapture() }
-            catch { onError("Could not stop screen sharing: \(error.localizedDescription)") }
+            catch { onError(L("Could not stop screen sharing: %@", error.localizedDescription)) }
             try? previous.removeStreamOutput(self, type: .screen)
         }
     }
@@ -90,7 +90,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture {
                 Task { @MainActor in
                     guard let self, self.generation == attempt else { return }
                     await self.stop()
-                    self.onError("Screen sharing stopped: \(error.localizedDescription)")
+                    self.onError(L("Screen sharing stopped: %@", error.localizedDescription))
                 }
             }
             upload = sender
@@ -100,7 +100,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture {
         } catch {
             guard generation == attempt else { return }
             await stop()
-            onError("Could not share screen: \(error.localizedDescription)")
+            onError(L("Could not share screen: %@", error.localizedDescription))
         }
     }
 }
@@ -120,7 +120,7 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
         Task { @MainActor [weak self] in
             guard let self, self.picking else { return }
             self.releasePicker()
-            self.onError("Could not open screen sharing: \(error.localizedDescription)")
+            self.onError(L("Could not open screen sharing: %@", error.localizedDescription))
         }
     }
 
@@ -154,7 +154,7 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
             self.uploadStarted = false
             self.upload = nil
             if (error as NSError).code != SCStreamError.Code.userStopped.rawValue {
-                self.onError("Screen sharing stopped: \(error.localizedDescription)")
+                self.onError(L("Screen sharing stopped: %@", error.localizedDescription))
             }
         }
     }

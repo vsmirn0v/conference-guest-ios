@@ -1,0 +1,9 @@
+// App-owned interface copy. English keys are the fallback.
+"Enter a complete HTTPS meeting invitation link." = "Введите полную HTTPS-ссылку-приглашение на встречу.";
+"Enter a complete jam invitation link." = "Введите полную ссылку-приглашение на джем.";
+"Enter a valid Rock’n’Roll jam link." = "Введите действительную ссылку на джем Rock’n’Roll.";
+"This jam did not provide a secure HTTPS connection." = "Этот джем не предоставил защищённое HTTPS-соединение.";
+"This jam link did not provide a valid connection endpoint." = "В ссылке на джем не удалось найти адрес подключения.";
+"This jam redirected to another website. Use an invitation for that website instead." = "Этот джем перенаправил на другой сайт. Используйте приглашение с того сайта.";
+"This jam returned an unexpectedly large response. Try again later." = "Ответ сервера джема слишком большой. Повторите попытку позже.";
+"This message is too long to send. Shorten it and try again." = "Сообщение слишком длинное. Сократите его и попробуйте ещё раз.";

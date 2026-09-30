@@ -172,7 +172,7 @@ final class CatchUpStore: ObservableObject {
                 try savedURL.setResourceValues(values)
                 warning = nil
             } catch {
-                warning = "Catch-up history is available only until this app closes."
+                warning = L("Catch-up history is available only until this app closes.")
                 #if DEBUG
                 print("Could not save local catch-up history: \(error.localizedDescription)")
                 #endif
@@ -198,8 +198,8 @@ final class CatchUpStore: ObservableObject {
             try Data(marker.utf8).write(to: markerURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             markerWarning = nil
         } catch {
-            markerWarning = "Local history could not be updated. Try deleting it again."
-            persistenceWarning = "Local history could not be updated. Try deleting it again."
+            markerWarning = L("Local history could not be updated. Try deleting it again.")
+            persistenceWarning = L("Local history could not be updated. Try deleting it again.")
         }
     }
 

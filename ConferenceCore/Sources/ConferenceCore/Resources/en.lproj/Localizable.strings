@@ -1,0 +1,9 @@
+// App-owned interface copy. English keys are the fallback.
+"Enter a complete HTTPS meeting invitation link." = "Enter a complete HTTPS meeting invitation link.";
+"Enter a complete jam invitation link." = "Enter a complete jam invitation link.";
+"Enter a valid Rock’n’Roll jam link." = "Enter a valid Rock’n’Roll jam link.";
+"This jam did not provide a secure HTTPS connection." = "This jam did not provide a secure HTTPS connection.";
+"This jam link did not provide a valid connection endpoint." = "This jam link did not provide a valid connection endpoint.";
+"This jam redirected to another website. Use an invitation for that website instead." = "This jam redirected to another website. Use an invitation for that website instead.";
+"This jam returned an unexpectedly large response. Try again later." = "This jam returned an unexpectedly large response. Try again later.";
+"This message is too long to send. Shorten it and try again." = "This message is too long to send. Shorten it and try again.";

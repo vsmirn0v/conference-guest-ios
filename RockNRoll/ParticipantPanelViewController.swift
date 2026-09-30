@@ -23,7 +23,7 @@ final class ParticipantPanelViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         overrideUserInterfaceStyle = .dark
-        title = "Musicians"
+        title = L("Musicians")
         view.backgroundColor = .systemBackground
         view.tintColor = UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
         navigationItem.rightBarButtonItem = UIBarButtonItem(
@@ -80,7 +80,7 @@ final class ParticipantPanelViewController: UIViewController {
         labels.removeAll()
         if statuses.isEmpty {
             let empty = UILabel()
-            empty.text = "No musicians are connected yet."
+            empty.text = L("No musicians are connected yet.")
             empty.textColor = .secondaryLabel
             list.addArrangedSubview(empty)
         }
@@ -101,7 +101,7 @@ final class ParticipantPanelViewController: UIViewController {
             speaking.font = .preferredFont(forTextStyle: .subheadline)
             speaking.adjustsFontForContentSizeCategory = true
             speaking.textColor = .systemGreen
-            speaking.text = "● Speaking"
+            speaking.text = L("● Speaking")
             card.addArrangedSubview(speaking)
             let media = UILabel()
             media.font = .preferredFont(forTextStyle: .subheadline)
@@ -117,10 +117,10 @@ final class ParticipantPanelViewController: UIViewController {
                     .vertical : .horizontal
                 actions.spacing = 12
                 if let key = status.videoKey {
-                    actions.addArrangedSubview(pinButton("Video", key: key, action: onPin))
+                    actions.addArrangedSubview(pinButton(L("Video"), key: key, action: onPin))
                 }
                 if let key = status.shareKey {
-                    actions.addArrangedSubview(pinButton("Screen", key: key, action: onPin))
+                    actions.addArrangedSubview(pinButton(L("Screen"), key: key, action: onPin))
                 }
                 if !actions.arrangedSubviews.isEmpty { card.addArrangedSubview(actions) }
             }
@@ -128,15 +128,15 @@ final class ParticipantPanelViewController: UIViewController {
         }
         if pinnedKey != nil, let onPin {
             let reset = UIButton(type: .system)
-            reset.setTitle("Return to automatic view", for: .normal)
-            reset.accessibilityLabel = "Return to automatic view"
+            reset.setTitle(L("Return to automatic view"), for: .normal)
+            reset.accessibilityLabel = L("Return to automatic view")
             reset.addAction(UIAction { _ in onPin(nil) }, for: .touchUpInside)
             list.addArrangedSubview(reset)
         }
         if let onMoreControls {
             let button = UIButton(type: .system)
-            button.setTitle("More participant controls", for: .normal)
-            button.accessibilityLabel = "More participant controls"
+            button.setTitle(L("More participant controls"), for: .normal)
+            button.accessibilityLabel = L("More participant controls")
             button.addAction(UIAction { [weak self] _ in
                 self?.dismiss(animated: true, completion: onMoreControls)
             }, for: .touchUpInside)
@@ -146,17 +146,17 @@ final class ParticipantPanelViewController: UIViewController {
 
     private func updateLabels(_ status: ParticipantStatus) {
         guard let cell = labels[status.id] else { return }
-        cell.name.text = status.name + (status.isLocal ? " (you)" : "")
+        cell.name.text = status.name + (status.isLocal ? L(" (you)") : "")
         cell.name.accessibilityLabel = cell.name.text
         cell.speaking.isHidden = !status.isSpeaking
-        cell.media.text = "Mic \(status.microphoneOn ? "on" : "off") · Video \(status.cameraOn ? "on" : "off")" +
-            (status.screenShareOn ? " · Sharing screen" : "")
+        cell.media.text = L("Mic %@ · Video %@", status.microphoneOn ? L("on") : L("off"), status.cameraOn ? L("on") : L("off")) +
+            (status.screenShareOn ? L(" · Sharing screen") : "")
     }
 
     private func pinButton(_ title: String, key: String, action: @escaping (String?) -> Void) -> UIButton {
         let button = UIButton(type: .system)
         var configuration = UIButton.Configuration.tinted()
-        configuration.title = key == pinnedKey ? "Unpin \(title.lowercased())" : "Pin \(title.lowercased())"
+        configuration.title = key == pinnedKey ? L("Unpin %@", title.lowercased()) : L("Pin %@", title.lowercased())
         configuration.image = UIImage(systemName: key == pinnedKey ? "pin.slash" : "pin")
         button.configuration = configuration
         button.titleLabel?.numberOfLines = 0

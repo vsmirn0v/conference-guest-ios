@@ -12,7 +12,7 @@ final class AudioCoordinator {
     private var cameraWarning: String?
 
     var outputName: String {
-        AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? "Audio output"
+        AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? L("Audio output")
     }
 
     init() {
@@ -60,7 +60,7 @@ final class AudioCoordinator {
             print("Restored audio mixing: options=\(session.categoryOptions.rawValue)")
             #endif
         } catch {
-            audioWarning = "Cannot mix jam audio with other apps"
+            audioWarning = L("Cannot mix jam audio with other apps")
             publishStatus()
         }
     }
@@ -94,21 +94,21 @@ final class AudioCoordinator {
             let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
             let type = raw.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
             if type == .began {
-                audioWarning = "Audio interrupted by iOS"
+                audioWarning = L("Audio interrupted by iOS")
                 onInterruptionChanged?(true)
             } else if type == .ended {
                 let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
                 let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
                 audioWarning = options.contains(.shouldResume)
-                    ? nil : "Audio is paused by iOS; check the call audio"
+                    ? nil : L("Audio is paused by iOS; check the call audio")
                 onInterruptionChanged?(false)
             }
         case AVAudioSession.mediaServicesWereLostNotification:
-            audioWarning = "Audio service unavailable"
+            audioWarning = L("Audio service unavailable")
         case AVAudioSession.mediaServicesWereResetNotification:
-            audioWarning = "Audio service restarted; rejoin if audio does not recover"
+            audioWarning = L("Audio service restarted; rejoin if audio does not recover")
         case AVCaptureSession.wasInterruptedNotification:
-            cameraWarning = "Camera paused by iOS"
+            cameraWarning = L("Camera paused by iOS")
         case AVCaptureSession.interruptionEndedNotification:
             cameraWarning = nil
         case AVAudioSession.routeChangeNotification:

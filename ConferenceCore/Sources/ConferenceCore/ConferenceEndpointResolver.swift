@@ -43,6 +43,6 @@ public enum EndpointDiscoveryError: LocalizedError {
     case invalidDiscovery
 
     public var errorDescription: String? {
-        "This jam link did not provide a valid connection endpoint."
+        CoreL("This jam link did not provide a valid connection endpoint.")
     }
 }

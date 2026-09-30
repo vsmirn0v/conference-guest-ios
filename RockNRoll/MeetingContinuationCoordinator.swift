@@ -13,7 +13,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
     @Published private(set) var moving = false
     @Published private(set) var needsManualResume = false
     var waitingForMove: Bool { moving || prepared != nil }
-    var moveActionTitle: String { targetConnected ? "Keep connected here" : "Cancel move" }
+    var moveActionTitle: String { targetConnected ? L("Keep connected here") : L("Cancel move") }
     var isAvailable: Bool { enabled && account != nil }
     var onActivityChanged: (() -> Void)?
     var onPrepareSource: ((UUID) async throws -> Void)?
@@ -126,7 +126,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
             targetConnected = false; targetDidFail()
         }
         if receiver != nil, let jam, jam.invitation != destinationInvitation || jam.sessionID != targetSession {
-            requestCancellation(message: "Move cancelled because another jam was opened.")
+            requestCancellation(message: L("Move cancelled because another jam was opened."))
         }
         if changedSession && receiver == nil { status = nil; onStatus?(nil, false) }
         Task { await refresh() }
@@ -136,7 +136,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
         targetConnected = true
     }
     func targetDidFail() {
-        requestCancellation(message: "Could not move the jam. Check the other device before retrying.")
+        requestCancellation(message: L("Could not move the jam. Check the other device before retrying."))
     }
     func refresh() async {
         guard enabled, let account else { return }
@@ -192,8 +192,8 @@ final class MeetingContinuationCoordinator: ObservableObject {
             #endif
             if error is ContinuationError, case ContinuationError.expired = error {
                 enabled = false; preferences.set(false, forKey: "shareActiveJams"); stopSharing()
-                status = "Active-jam sharing was reset. Enable it again to continue."
-            } else if !moving && prepared == nil { status = "Active jams could not refresh. Try again when iCloud is available." }
+                status = L("Active-jam sharing was reset. Enable it again to continue.")
+            } else if !moving && prepared == nil { status = L("Active jams could not refresh. Try again when iCloud is available.") }
         }
     }
     private func scheduleTick() {
@@ -223,8 +223,8 @@ final class MeetingContinuationCoordinator: ObservableObject {
                     _ = try await transport.transition(committed, to: .completed, actor: deviceID)
                     try await transport.withdraw(deviceID: deviceID, sessionID: command.sourceSession)
                     clearPrepared()
-                    show("Jam moved to \(command.targetLabel).")
-                } catch { clearPrepared(); show("Jam left here. Check the other device’s connection.") }
+                    show(L("Jam moved to %@.", command.targetLabel))
+                } catch { clearPrepared(); show(L("Jam left here. Check the other device’s connection.")) }
                 return
             }
             if command.expiresAt <= now() {
@@ -246,7 +246,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
                 do { try await Task.sleep(for: .seconds(max(0, command.expiresAt.timeIntervalSinceNow))) } catch { return }
                 self?.checkExpiredHold()
             }
-            show("Moving jam to \(command.targetLabel)… Audio paused here.")
+            show(L("Moving jam to %@… Audio paused here.", command.targetLabel))
             let accepted = try await transport.transition(command, to: .prepared, actor: deviceID)
             guard expected == revision, prepared?.id == command.id else { return }
             prepared = accepted
@@ -269,7 +269,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
             _ = onJoinTarget?(jam, true); return
         }
         guard jam.deviceID != deviceID, jam.isRecent(at: now()) else {
-            show("This active jam is unconfirmed. Refresh or use Join here."); return
+            show(L("This active jam is unconfirmed. Refresh or use Join here.")); return
         }
         moving = true; targetConnected = false
         targetSession = nil; departureAcknowledgement = nil
@@ -281,13 +281,13 @@ final class MeetingContinuationCoordinator: ObservableObject {
         transferTask = Task { [weak self] in
             guard let self else { return }
             do {
-                show("Preparing to move jam from \(jam.deviceLabel)…")
+                show(L("Preparing to move jam from %@…", jam.deviceLabel))
                 try await transport.claim(request)
                 guard ownsTransfer(request, expected: expected), !Task.isCancelled else { return }
                 let prepared = try await waitFor(request, expected: expected, phases: [.prepared, .rejected], limit: 20)
                 guard ownsTransfer(request, expected: expected), !Task.isCancelled else { return }
                 guard prepared.phase == .prepared else { throw ContinuationError.unavailable }
-                show("Connecting here… The other device stays in the jam.")
+                show(L("Connecting here… The other device stays in the jam."))
                 targetSession = onJoinTarget?(jam, quietDestination)
                 guard targetSession != nil else { throw ContinuationError.unavailable }
                 for _ in 0..<35 {
@@ -300,7 +300,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
                 let connected = try await transport.transition(prepared, to: .connected, actor: deviceID)
                 guard ownsTransfer(request, expected: expected), !Task.isCancelled else { return }
                 receiver = connected
-                show("Connected here. Waiting for \(jam.deviceLabel) to leave…")
+                show(L("Connected here. Waiting for %@ to leave…", jam.deviceLabel))
                 _ = try await waitFor(connected, expected: expected, phases: [.completed], limit: 15)
                 guard ownsTransfer(request, expected: expected) else { return }
                 clearReceiver()
@@ -309,12 +309,12 @@ final class MeetingContinuationCoordinator: ObservableObject {
             } catch {
                 guard ownsTransfer(request, expected: expected) else { return }
                 if targetConnected {
-                    keepConnectedDestination(message: "Connected here. Could not confirm that \(jam.deviceLabel) left. Check the other device.")
+                    keepConnectedDestination(message: L("Connected here. Could not confirm that %@ left. Check the other device.", jam.deviceLabel))
                     await refresh()
                     return
                 }
                 await cancelTransfer(request, expected: expected,
-                                     message: "Move was not confirmed. Check the other device before retrying.")
+                                     message: L("Move was not confirmed. Check the other device before retrying."))
             }
         }
     }
@@ -336,11 +336,11 @@ final class MeetingContinuationCoordinator: ObservableObject {
     func cancel() {
         if targetConnected {
             transferTask?.cancel()
-            keepConnectedDestination(message: "Jam stays connected here. Check the other device if its exit was not confirmed.")
+            keepConnectedDestination(message: L("Jam stays connected here. Check the other device if its exit was not confirmed."))
             Task { await refresh() }
             return
         }
-        requestCancellation(message: "Move cancelled. The original device stays in the jam.")
+        requestCancellation(message: L("Move cancelled. The original device stays in the jam."))
     }
     private func requestCancellation(message: String) {
         guard let request = receiver else { return }
@@ -360,7 +360,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
             let ended = await onCancelTarget?(destinationInvitation, targetSession)
             guard ownsTransfer(request, expected: expected) else { return }
             if ended == false {
-                show("Could not end this connection. Leave this jam before resuming on the other device.")
+                show(L("Could not end this connection. Leave this jam before resuming on the other device."))
                 return
             }
         }
@@ -407,14 +407,14 @@ final class MeetingContinuationCoordinator: ObservableObject {
     private func checkExpiredHold() {
         guard !needsManualResume, let prepared, current?.sessionID == prepared.sourceSession, prepared.expiresAt <= now() else { return }
         needsManualResume = true
-        show("Move was not confirmed. Check the other device, then resume here with mic and camera off.")
+        show(L("Move was not confirmed. Check the other device, then resume here with mic and camera off."))
     }
     private var completionMessage: String {
         completionMessage(quiet: quietDestination)
     }
     private func completionMessage(quiet: Bool) -> String {
-        quiet ? "Quiet connection moved here. Audio, microphone and camera are off." :
-            "Jam moved here. Microphone and camera are off."
+        quiet ? L("Quiet connection moved here. Audio, microphone and camera are off.") :
+            L("Jam moved here. Microphone and camera are off.")
     }
     func deleteCloudData() async throws {
         guard let account else { return }

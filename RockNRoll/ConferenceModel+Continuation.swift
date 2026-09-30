@@ -38,10 +38,10 @@ extension ConferenceModel {
         }
         let text = continuation.status
         if companionAudioPaused && isInConference {
-            continuationBanner.show("Joined alongside the other device. Audio, microphone and camera are off.",
-                                    in: continuationHostView, button: "Enable audio here") { [weak self] in self?.enableCompanionAudio() }
+            continuationBanner.show(L("Joined alongside the other device. Audio, microphone and camera are off."),
+                                    in: continuationHostView, button: L("Enable audio here")) { [weak self] in self?.enableCompanionAudio() }
         } else if continuation.needsManualResume {
-            continuationBanner.show(text, in: continuationHostView, button: "Resume here") { [weak self] in self?.continuation.resumeHere() }
+            continuationBanner.show(text, in: continuationHostView, button: L("Resume here")) { [weak self] in self?.continuation.resumeHere() }
         } else if continuation.moving {
             continuationBanner.show(text, in: continuationHostView, button: continuation.moveActionTitle) { [weak self] in self?.continuation.cancel() }
         } else {
@@ -54,7 +54,7 @@ extension ConferenceModel {
             currentContinuationActivity?.invalidate(); currentContinuationActivity = nil; return
         }
         let activity = currentContinuationActivity ?? NSUserActivity(activityType: "dev.vsmirn0v.conferenceguest.continue-jam")
-        activity.title = "Continue jam"
+        activity.title = L("Continue jam")
         activity.isEligibleForHandoff = true
         activity.isEligibleForSearch = false; activity.isEligibleForPublicIndexing = false
         activity.expirationDate = Date().addingTimeInterval(180)

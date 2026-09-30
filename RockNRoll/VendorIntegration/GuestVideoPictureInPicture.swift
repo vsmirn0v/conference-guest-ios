@@ -105,7 +105,7 @@ final class GuestVideoPictureInPicture {
             }
             processor.setEnabled(shouldProcessFrames)
         }
-        caption.text = name.isEmpty ? nil : "  \(name)\(isScreenShare ? " · Screen" : "")  "
+        caption.text = name.isEmpty ? nil : "  \(name)\(isScreenShare ? L(" · Screen") : "")  "
         caption.isHidden = name.isEmpty
         floating.setSourceView(hasFrame && frameTap != nil ? sourceView : nil)
     }

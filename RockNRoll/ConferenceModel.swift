@@ -19,7 +19,7 @@ final class ConferenceModel: ObservableObject {
     @Published var guestWebsiteOrigin = UserDefaults.standard.string(forKey: "guestWebsiteOrigin") ?? "" {
         didSet { UserDefaults.standard.set(guestWebsiteOrigin, forKey: "guestWebsiteOrigin") }
     }
-    @Published private(set) var status = "Enter a jam link to begin."
+    @Published private(set) var status = L("Enter a jam link to begin.")
     @Published private(set) var statusIsError = false
     @Published private(set) var mediaStatus: String?
     @Published private var phase: SessionPhase = .idle
@@ -242,7 +242,7 @@ final class ConferenceModel: ObservableObject {
             rememberedOrigins: origins,
             onChoose: { [weak self] website in
                 guard let self, let link = self.websiteLinkAwaitingSelection else {
-                    return "Jam view is unavailable."
+                    return L("Jam view is unavailable.")
                 }
                 do {
                     let invitation = try GuestSiteLinkAdapter.invitation(from: link,
@@ -281,12 +281,12 @@ final class ConferenceModel: ObservableObject {
             joinAwaitingName = target
             nameEntryConfirmed = false
             showingNameEditor = true
-            status = "Choose the name other musicians will see."
+            status = L("Choose the name other musicians will see.")
             statusIsError = false
             return
         }
         guard let container else {
-            status = "Jam view is unavailable."
+            status = L("Jam view is unavailable.")
             statusIsError = true
             return
         }
@@ -300,7 +300,7 @@ final class ConferenceModel: ObservableObject {
         liveSessionID = UUID(); liveName = name
         connectedURL = nil
         activeRoomTitle = nil
-        status = "Finding this jam…"
+        status = L("Finding this jam…")
         statusIsError = false
         #if DEBUG
         joinStartedAt = ProcessInfo.processInfo.systemUptime
@@ -359,7 +359,7 @@ final class ConferenceModel: ObservableObject {
                 }
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
                 joinTask = nil
-                status = "Connecting with microphone and camera off…"
+                status = L("Connecting with microphone and camera off…")
             } catch {
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
                 joinTask = nil
@@ -383,7 +383,7 @@ final class ConferenceModel: ObservableObject {
         activeEngine?.leave()
         connectedURL = nil
         mediaStatus = nil
-        status = didStartConference ? "Leaving the jam…" : "Joining canceled."
+        status = didStartConference ? L("Leaving the jam…") : L("Joining canceled.")
         statusIsError = false
         if !didStartConference {
             companionAudioPaused = false; liveSessionID = nil
@@ -432,7 +432,7 @@ final class ConferenceModel: ObservableObject {
 
     private func set(target: JoinDestination) {
         invite = target.invitationURL.absoluteString
-        status = "Jam ready. Join with your microphone and camera off."
+        status = L("Jam ready. Join with your microphone and camera off.")
         statusIsError = false
     }
 
@@ -452,8 +452,8 @@ final class ConferenceModel: ObservableObject {
         case .inactive:
             guard !isLeaving else { return }
             terminalEventHandled = true
-            if isJoining { status = "Could not connect to the jam." }
-            else if isInConference { status = "Disconnected from the jam." }
+            if isJoining { status = L("Could not connect to the jam.") }
+            else if isInConference { status = L("Disconnected from the jam.") }
             statusIsError = true
             phase = .idle
             connectedURL = nil
@@ -462,11 +462,11 @@ final class ConferenceModel: ObservableObject {
         case .connecting:
             guard !isLeaving else { return }
             statusIsError = false
-            if isJoining { status = "Connecting…" }
-            else if isInConference { status = "Reconnecting…" }
+            if isJoining { status = L("Connecting…") }
+            else if isInConference { status = L("Reconnecting…") }
         case .lobby:
             guard isJoining, !isLeaving else { return }
-            status = "Waiting for the host to admit you…"
+            status = L("Waiting for the host to admit you…")
             statusIsError = false
         case .active, .joined:
             guard isJoining || isInConference, !isLeaving else { return }
@@ -475,7 +475,7 @@ final class ConferenceModel: ObservableObject {
             #endif
             phase = .active
             connectedURL = activeRoute?.invitationURL
-            status = "In jam"
+            status = L("In jam")
             continuation.targetDidConnect(invitation: connectedURL, sessionID: liveSessionID)
             refreshContinuationBanner()
             statusIsError = false
@@ -495,7 +495,7 @@ final class ConferenceModel: ObservableObject {
             terminalEventHandled = true
             phase = .idle
             connectedURL = nil
-            status = "Disconnected from the jam."
+            status = L("Disconnected from the jam.")
             statusIsError = true
             releaseJamEngineIfSelected()
             activeRoute = nil
@@ -504,7 +504,7 @@ final class ConferenceModel: ObservableObject {
             terminalEventHandled = true
             phase = .idle
             connectedURL = nil
-            status = "Joining canceled."
+            status = L("Joining canceled.")
             statusIsError = false
             releaseJamEngineIfSelected()
             activeRoute = nil
@@ -514,7 +514,7 @@ final class ConferenceModel: ObservableObject {
             phase = .idle
             connectedURL = nil
             mediaStatus = nil
-            status = "Left the jam."
+            status = L("Left the jam.")
             statusIsError = false
             releaseJamEngineIfSelected()
             activeRoute = nil
@@ -523,7 +523,7 @@ final class ConferenceModel: ObservableObject {
             terminalEventHandled = true
             phase = .idle
             connectedURL = nil
-            status = "Removed from the jam."
+            status = L("Removed from the jam.")
             statusIsError = true
             releaseJamEngineIfSelected()
             activeRoute = nil
@@ -600,7 +600,7 @@ final class ConferenceModel: ObservableObject {
             continuationBanner.show(nil, in: nil)
             continuation.updateCurrent(continuationSnapshot())
         } catch {
-            mediaStatus = "Audio could not start. Try enabling audio again."
+            mediaStatus = L("Audio could not start. Try enabling audio again.")
             jamEngine?.showMediaStatus(mediaStatus)
         }
     }

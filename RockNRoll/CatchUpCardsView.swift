@@ -22,9 +22,9 @@ struct CatchUpCardsView: View {
                         Image(systemName: "checkmark.circle")
                             .font(.largeTitle)
                             .foregroundStyle(.secondary)
-                        Text("No interruptions recorded")
+                        Text(L("No interruptions recorded"))
                             .font(.headline)
-                        Text("This phone has not detected a missed section in this jam.")
+                        Text(L("This phone has not detected a missed section in this jam."))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -39,11 +39,11 @@ struct CatchUpCardsView: View {
                 let unaligned = store.timeline.segments.filter { $0.spokenAt == nil }
                 if !unaligned.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Text with unknown timing").font(.headline)
-                        Text("These lines cannot be assigned to an interruption.")
+                        Text(L("Text with unknown timing")).font(.headline)
+                        Text(L("These lines cannot be assigned to an interruption."))
                             .font(.footnote).foregroundStyle(.secondary)
                         ForEach(unaligned) { line in
-                            Text("\(line.speaker ?? "Participant"): \(line.text)")
+                            Text("\(line.speaker ?? L("Participant")): \(line.text)")
                                 .font(.body).textSelection(.enabled)
                         }
                     }
@@ -53,7 +53,7 @@ struct CatchUpCardsView: View {
                                 in: RoundedRectangle(cornerRadius: 16))
                 }
                 if store.timeline.isTruncated {
-                    Text("Older local history was removed to save space.")
+                    Text(L("Older local history was removed to save space."))
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
@@ -65,10 +65,10 @@ struct CatchUpCardsView: View {
 
     private var availability: String {
         switch (store.canViewTranscript, store.transcriptionEnabled) {
-        case (nil, _): return "Checking transcript availability…"
-        case (false, _): return "Transcripts are unavailable in this room. Missed times can still be shown."
-        case (true, false): return "Transcription is off. The host may be able to enable it."
-        case (true, true): return "Only text received by this phone is shown. Other speech may be missing."
+        case (nil, _): return L("Checking transcript availability…")
+        case (false, _): return L("Transcripts are unavailable in this room. Missed times can still be shown.")
+        case (true, false): return L("Transcription is off. The host may be able to enable it.")
+        case (true, true): return L("Only text received by this phone is shown. Other speech may be missing.")
         }
     }
 
@@ -84,28 +84,28 @@ struct CatchUpCardsView: View {
                 }
                 Spacer(minLength: 8)
                 if store.timeline.isReviewed(interval) {
-                    Label("Reviewed", systemImage: "checkmark.circle.fill")
+                    Label(L("Reviewed"), systemImage: "checkmark.circle.fill")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Label(lines.isEmpty ? "No transcript received" : "Transcript received",
+            Label(lines.isEmpty ? L("No transcript received") : L("Transcript received"),
                   systemImage: lines.isEmpty ? "text.badge.xmark" : "text.bubble")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(lines.isEmpty ? .secondary : .primary)
             ForEach(lines) { line in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(line.speaker ?? "Participant").font(.subheadline.weight(.semibold))
+                    Text(line.speaker ?? L("Participant")).font(.subheadline.weight(.semibold))
                     Text(line.text).font(.body).textSelection(.enabled)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 4)
             }
             if !lines.isEmpty {
-                Text("Other speech may still be missing.")
+                Text(L("Other speech may still be missing."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             if !store.timeline.isReviewed(interval) && !interval.isOngoing {
-                Button("Mark section reviewed") { store.markReviewed(interval.id) }
+                Button(L("Mark section reviewed")) { store.markReviewed(interval.id) }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("Review section \(interval.id)")
             }
@@ -117,17 +117,17 @@ struct CatchUpCardsView: View {
 
     private func reasonTitle(_ reasons: Set<MissedReason>) -> String {
         var names = [String]()
-        if reasons.contains(.anotherCall) { names.append("Another call") }
-        if reasons.contains(.connection) { names.append("Connection gap") }
-        if reasons.contains(.audioInterruption) { names.append("Audio interruption") }
+        if reasons.contains(.anotherCall) { names.append(L("Another call")) }
+        if reasons.contains(.connection) { names.append(L("Connection gap")) }
+        if reasons.contains(.audioInterruption) { names.append(L("Audio interruption")) }
         return names.joined(separator: " · ")
     }
 
     private func timeRange(_ interval: MissedInterval) -> String {
         let start = interval.start.formatted(date: .omitted, time: .shortened)
-        guard let end = interval.end else { return "\(start) – ongoing" }
+        guard let end = interval.end else { return L("%@ – ongoing", start) }
         let duration = Int(end.timeIntervalSince(interval.start))
-        let length = duration < 60 ? "\(duration) sec" : "\(duration / 60) min \(duration % 60) sec"
+        let length = duration < 60 ? L("%ld sec", duration) : L("%ld min %ld sec", duration / 60, duration % 60)
         return "\(start)–\(end.formatted(date: .omitted, time: .shortened)) · \(length)"
     }
 }

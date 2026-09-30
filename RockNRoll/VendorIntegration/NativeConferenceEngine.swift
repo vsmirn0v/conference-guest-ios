@@ -290,7 +290,7 @@ final class NativeConferenceEngine: CallEngine {
                     self.needsMediaReconnect = true
                     self.catchUp.begin(.audioInterruption)
                 }
-                self.onMediaStatus?("Jam audio paused by iOS")
+                self.onMediaStatus?(L("Jam audio paused by iOS"))
             }
         }
         systemCall.onEnded = { [weak self] userEnded in
@@ -326,7 +326,7 @@ final class NativeConferenceEngine: CallEngine {
                 }
                 self.activeControls?.setHeld(held)
                 if !held { self.recoverAudioIfReady() }
-                self.onMediaStatus?(held ? "Jam on hold" : "Resuming jam audio…")
+                self.onMediaStatus?(held ? L("Jam on hold") : L("Resuming jam audio…"))
             }
         }
         systemCall.onFailure = { [weak self] error in
@@ -348,7 +348,7 @@ final class NativeConferenceEngine: CallEngine {
             isMediaReconnecting = true
             hasScheduledMediaRestart = false
             mediaReconnectGeneration &+= 1
-            onMediaStatus?("Restoring jam audio…")
+            onMediaStatus?(L("Restoring jam audio…"))
             JazzSession.shared.terminateActiveConference()
             scheduleMediaReconnectTimeout(for: mediaReconnectGeneration)
             return
@@ -374,7 +374,7 @@ final class NativeConferenceEngine: CallEngine {
                 try self.audio.reactivateAfterInterruption()
                 self.recoverAudioIfReady()
             } catch {
-                self.onMediaStatus?("Jam audio is paused; waiting for iOS")
+                self.onMediaStatus?(L("Jam audio is paused; waiting for iOS"))
                 #if DEBUG
                 print("Guest audio reactivation failed: \(error.localizedDescription)")
                 #endif
@@ -505,7 +505,7 @@ final class NativeConferenceEngine: CallEngine {
         }
         #endif
         if ProcessInfo.processInfo.isiOSAppOnMac {
-            activeControls?.showMediaStatus("Screen sharing requires macOS 27 or later.")
+            activeControls?.showMediaStatus(L("Screen sharing requires macOS 27 or later."))
         } else if GuestBroadcastStop.prepare() {
             let epoch = UUID()
             localPreviewEpoch = epoch
@@ -516,7 +516,7 @@ final class NativeConferenceEngine: CallEngine {
             }
             activeCoordinator?.toggleShareScreen(isOn: true)
         } else {
-            activeControls?.showMediaStatus("Could not prepare screen sharing. Please try again.")
+            activeControls?.showMediaStatus(L("Could not prepare screen sharing. Please try again."))
         }
     }
 
@@ -734,8 +734,8 @@ final class NativeConferenceEngine: CallEngine {
                     timestamp: { CatchUpTimeline.providerDate($0.timestamp) },
                     isOwn: { $0.messageType == .local }, entry: { message in
                         ChatEntry(id: message.id,
-                            sender: message.messageType == .local ? "You" :
-                                (message.userNameWhenMessageSent ?? message.currentName ?? "Musician"),
+                            sender: message.messageType == .local ? L("You") :
+                                (message.userNameWhenMessageSent ?? message.currentName ?? L("Musician")),
                             text: String(message.message.prefix(4_096)),
                             sentAt: CatchUpTimeline.providerDate(message.timestamp) ?? existingTimes[message.id] ?? Date(),
                             isOwn: message.messageType == .local)
@@ -817,8 +817,8 @@ private enum ProviderError: LocalizedError {
     case unsupportedInvitation
     var errorDescription: String? {
         switch self {
-        case .teardownInProgress: "The previous jam is still closing. Try again shortly."
-        case .unsupportedInvitation: "The installed provider SDK cannot read this meeting invitation."
+        case .teardownInProgress: L("The previous jam is still closing. Try again shortly.")
+        case .unsupportedInvitation: L("The installed provider SDK cannot read this meeting invitation.")
         }
     }
 }

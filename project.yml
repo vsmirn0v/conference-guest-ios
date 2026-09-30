@@ -1,5 +1,7 @@
 name: RockNRoll
 options:
+  developmentLanguage: en
+  knownRegions: [en, ru]
   bundleIdPrefix: dev.vsmirn0v
   deploymentTarget:
     iOS: "16.0"
@@ -24,6 +26,7 @@ targets:
     sources:
       - path: RockNRoll
       - path: Shared/GuestBroadcastStop.swift
+      - path: Shared/Localization.swift
       - path: Shared/LocalSharePreviewTransport.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
     dependencies:
@@ -78,7 +81,9 @@ targets:
     type: app-extension
     platform: iOS
     sources:
-      - path: GuestBroadcast/SampleHandler.swift
+      - path: GuestBroadcast
+        excludes: [VendorSDK]
+      - path: Shared/Localization.swift
       - path: Shared/GuestBroadcastStop.swift
       - path: Shared/LocalSharePreviewTransport.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle

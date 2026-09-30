@@ -5,7 +5,7 @@ import ImageIO
 final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
     private lazy var screenShare = JazzScreenShare { [weak self] error in
         self?.stop(reason: error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                   ? "The meeting has ended." : error.localizedDescription)
+                   ? L("The meeting has ended.") : error.localizedDescription)
     }
     private let preview = LocalSharePreviewSender()
     private let stopLock = NSLock()
@@ -16,10 +16,10 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
             Unmanaged.passUnretained(self).toOpaque(), { _, observer, _, _, _ in
                 guard let observer else { return }
                 Unmanaged<SampleHandler>.fromOpaque(observer).takeUnretainedValue()
-                    .stop(reason: "Screen sharing was stopped by Rock’n’Roll.")
+                    .stop(reason: L("Screen sharing was stopped by Rock’n’Roll."))
             }, GuestBroadcastStop.notification.rawValue, nil, .deliverImmediately)
         guard GuestBroadcastStop.isPermitted else {
-            stop(reason: "The meeting is no longer sharing. Open Rock’n’Roll to start a new share.")
+            stop(reason: L("The meeting is no longer sharing. Open Rock’n’Roll to start a new share."))
             return
         }
         screenShare.broadcastStarted(withSetupInfo: setupInfo)

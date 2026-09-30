@@ -53,7 +53,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         if zoomable {
             scroll.isAccessibilityElement = true
             scroll.accessibilityIdentifier = "Shared screen viewport"
-            scroll.accessibilityLabel = "Pinch to zoom screen share"
+            scroll.accessibilityLabel = L("Pinch to zoom screen share")
             scroll.accessibilityValue = "100%"
         }
         addSubview(scroll)
@@ -79,9 +79,9 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             zoomControls.spacing = 4
             zoomControls.translatesAutoresizingMaskIntoConstraints = false
             for (title, symbol, action) in [
-                ("Zoom out", "minus.magnifyingglass", -1),
-                ("Fit shared screen", "arrow.down.right.and.arrow.up.left", 0),
-                ("Zoom in", "plus.magnifyingglass", 1)
+                (L("Zoom out"), "minus.magnifyingglass", -1),
+                (L("Fit shared screen"), "arrow.down.right.and.arrow.up.left", 0),
+                (L("Zoom in"), "plus.magnifyingglass", 1)
             ] {
                 let button = UIButton(type: .system)
                 button.configuration = .tinted()
@@ -160,7 +160,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     func updatePresentation(name: String, showInfo: Bool, microphoneOn: Bool,
                             pinned: Bool, watermark: String?, zoomable: Bool,
                             placeholderText: String? = nil) {
-        participantInfo.text = "  \(name)\(microphoneOn ? "" : " · Mic off")\(pinned ? " · Pinned" : "")  "
+        participantInfo.text = "  \(name)\(microphoneOn ? "" : L(" · Mic off"))\(pinned ? L(" · Pinned") : "")  "
         participantInfo.isHidden = !showInfo
         mediaPlaceholder.text = placeholderText ?? name
         watermarkLabel.text = watermark
@@ -178,8 +178,8 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         pinAction = onPin
         pinButton.isHidden = onPin == nil
         pinButton.configuration?.image = UIImage(systemName: pinned ? "pin.fill" : "pin")
-        pinButton.accessibilityLabel = "\(pinned ? "Unpin" : "Pin") \(name) \(isShare ? "screen share" : "video")"
-        pinButton.accessibilityHint = "Changes only your view"
+        pinButton.accessibilityLabel = "\(pinned ? L("Unpin") : L("Pin")) \(name) \(isShare ? L("screen share") : L("video"))"
+        pinButton.accessibilityHint = L("Changes only your view")
         pinButton.showsLargeContentViewer = true
         pinButton.largeContentTitle = pinButton.accessibilityLabel
     }
@@ -187,7 +187,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
                                 configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
         guard let pinAction else { return nil }
-        let label = "\(pinnedLocally ? "Unpin" : "Pin") \(pinName) \(pinIsShare ? "screen share" : "video")"
+        let label = "\(pinnedLocally ? L("Unpin") : L("Pin")) \(pinName) \(pinIsShare ? L("screen share") : L("video"))"
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
             UIMenu(children: [UIAction(title: label,
                 image: UIImage(systemName: self.pinnedLocally ? "pin.slash" : "pin")) { _ in

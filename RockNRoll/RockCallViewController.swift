@@ -150,10 +150,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         titleLabel.lineBreakMode = .byTruncatingTail
         countLabel.font = .preferredFont(forTextStyle: .subheadline)
         countLabel.textColor = .lightGray
-        countLabel.text = "Connecting…"
+        countLabel.text = L("Connecting…")
         routeLabel.font = .preferredFont(forTextStyle: .caption1)
         routeLabel.textColor = .lightGray
-        routeLabel.text = "Audio output"
+        routeLabel.text = L("Audio output")
 
         tiles.axis = .vertical
         tiles.spacing = 10
@@ -167,9 +167,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             tiles.widthAnchor.constraint(equalTo: streamScroll.frameLayoutGuide.widthAnchor)
         ])
 
-        configure(microphone, symbol: "mic.slash.fill", label: "Unmute microphone", title: "Mic off")
-        configure(camera, symbol: "video.slash.fill", label: "Start video", title: "Cam off")
-        configure(share, symbol: "rectangle.on.rectangle", label: "Share screen", title: "Share")
+        configure(microphone, symbol: "mic.slash.fill", label: L("Unmute microphone"), title: L("Mic off"))
+        configure(camera, symbol: "video.slash.fill", label: L("Start video"), title: L("Cam off"))
+        configure(share, symbol: "rectangle.on.rectangle", label: L("Share screen"), title: L("Share"))
         if #available(iOS 27.0, *) {
             share.isHidden = false
             sharePicker.isHidden = true
@@ -182,31 +182,31 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         sharePicker.tintColor = accent
         sharePicker.isAccessibilityElement = true
         sharePicker.accessibilityTraits = .button
-        sharePicker.accessibilityLabel = "Share screen"
-        shareTitle.text = "Share"
+        sharePicker.accessibilityLabel = L("Share screen")
+        shareTitle.text = L("Share")
         shareTitle.font = .preferredFont(forTextStyle: .caption2)
         shareTitle.textColor = accent
         microphone.configuration?.baseForegroundColor = .white
         camera.configuration?.baseForegroundColor = .white
-        configure(flipCamera, symbol: "arrow.triangle.2.circlepath.camera", label: "Flip camera")
+        configure(flipCamera, symbol: "arrow.triangle.2.circlepath.camera", label: L("Flip camera"))
         flipCamera.isEnabled = false
-        configure(speaker, symbol: "speaker.wave.2.fill", label: "Use iPhone speaker")
-        configure(displayModeButton, symbol: displayMode.symbol, label: "Display: All video")
+        configure(speaker, symbol: "speaker.wave.2.fill", label: L("Use iPhone speaker"))
+        configure(displayModeButton, symbol: displayMode.symbol, label: L("Display: All video"))
         displayModeButton.showsMenuAsPrimaryAction = true
         configureModeMenu()
-        configure(conversationButton, symbol: "text.bubble", label: "Chat")
-        configure(missedButton, symbol: "clock.arrow.circlepath", label: "Catch up")
+        configure(conversationButton, symbol: "text.bubble", label: L("Chat"))
+        configure(missedButton, symbol: "clock.arrow.circlepath", label: L("Catch up"))
         missedButton.isHidden = true
         missedButton.addAction(UIAction { [weak self] _ in
             self?.openConversation(.catchUp)
         }, for: .touchUpInside)
-        configure(participantsButton, symbol: "person.2.fill", label: "Musicians")
-        configure(moreButton, symbol: "ellipsis.circle.fill", label: "More call options", title: "More")
+        configure(participantsButton, symbol: "person.2.fill", label: L("Musicians"))
+        configure(moreButton, symbol: "ellipsis.circle.fill", label: L("More call options"), title: L("More"))
         moreButton.showsMenuAsPrimaryAction = true
         configureMoreMenu()
-        configure(fitButton, symbol: "arrow.down.right.and.arrow.up.left", label: "Fit shared screen at 100%")
-        configure(zoomInButton, symbol: "plus.magnifyingglass", label: "Zoom in shared screen")
-        configure(zoomOutButton, symbol: "minus.magnifyingglass", label: "Zoom out shared screen")
+        configure(fitButton, symbol: "arrow.down.right.and.arrow.up.left", label: L("Fit shared screen at 100%"))
+        configure(zoomInButton, symbol: "plus.magnifyingglass", label: L("Zoom in shared screen"))
+        configure(zoomOutButton, symbol: "minus.magnifyingglass", label: L("Zoom out shared screen"))
         zoomControls.axis = .horizontal
         zoomControls.spacing = 4
         zoomControls.addArrangedSubview(zoomOutButton)
@@ -238,9 +238,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let routePicker = AVRoutePickerView()
         routePicker.tintColor = accent
         routePicker.activeTintColor = accent
-        routePicker.accessibilityLabel = "Choose audio output"
+        routePicker.accessibilityLabel = L("Choose audio output")
         let leave = UIButton(type: .system)
-        configure(leave, symbol: "phone.down.fill", label: "Leave", title: "Leave")
+        configure(leave, symbol: "phone.down.fill", label: L("Leave"), title: L("Leave"))
         leave.configuration?.baseForegroundColor = .systemRed
 
         microphone.addAction(UIAction { [weak self] _ in
@@ -261,7 +261,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self.isSpeakerOn.toggle()
             self.workspace.speakerOn = self.isSpeakerOn
             self.onSpeaker?(self.isSpeakerOn)
-            self.speaker.accessibilityLabel = self.isSpeakerOn ? "Use iPhone receiver" : "Use iPhone speaker"
+            self.speaker.accessibilityLabel = self.isSpeakerOn ? L("Use iPhone receiver") : L("Use iPhone speaker")
         }, for: .touchUpInside)
         conversationButton.addAction(UIAction { [weak self] _ in
             self?.openConversation(.chat)
@@ -295,7 +295,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         routePicker.translatesAutoresizingMaskIntoConstraints = false
         audioControl.addSubview(routePicker)
         let audioTitle = UILabel()
-        audioTitle.text = "Audio"
+        audioTitle.text = L("Audio")
         audioTitle.font = .preferredFont(forTextStyle: .caption2)
         audioTitle.textColor = .white
         audioTitle.translatesAutoresizingMaskIntoConstraints = false
@@ -308,7 +308,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             audioTitle.centerXAnchor.constraint(equalTo: audioControl.centerXAnchor),
             audioTitle.bottomAnchor.constraint(equalTo: audioControl.bottomAnchor, constant: -4)
         ])
-        audioControl.accessibilityLabel = "Audio output"
+        audioControl.accessibilityLabel = L("Audio output")
         let shareControl = UIView()
         for item in [share, sharePicker, shareTitle] {
             item.translatesAutoresizingMaskIntoConstraints = false
@@ -337,7 +337,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.textColor = .lightGray
-        statusLabel.text = "Microphone and camera are off"
+        statusLabel.text = L("Microphone and camera are off")
         statusLabel.textAlignment = .center
         conversationHost.isHidden = true
         conversationHost.backgroundColor = .clear
@@ -405,10 +405,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self.missedButton.isHidden = timeline.unreadCount == 0
             self.missedButton.configuration?.title = timeline.unreadCount > 0 ?
                 "\(timeline.unreadCount)" : nil
-            self.missedButton.accessibilityLabel = "Catch up, \(timeline.unreadCount) missed " +
-                (timeline.unreadCount == 1 ? "section" : "sections")
+            self.missedButton.accessibilityLabel = L("Catch up, %ld missed sections", timeline.unreadCount)
             self.conversationButton.accessibilityLabel = count > 0 ?
-                "Chat, \(count) unread" : "Chat"
+                L("Chat, %ld unread", count) : L("Chat")
         }.store(in: &subscriptions)
     }
 
@@ -456,10 +455,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     private func updateControlTitles() {
-        microphone.configuration?.title = compactControls ? "Mic" : (isMicrophoneOn ? "Mic on" : "Mic off")
-        camera.configuration?.title = compactControls ? "Cam" : (isCameraOn ? "Cam on" : "Cam off")
-        share.configuration?.title = compactControls ? (isSharingScreen ? "Stop" : "Share") :
-            (isSharingScreen ? "Stop share" : "Share")
+        microphone.configuration?.title = compactControls ? L("Mic") : (isMicrophoneOn ? L("Mic on") : L("Mic off"))
+        camera.configuration?.title = compactControls ? L("Cam") : (isCameraOn ? L("Cam on") : L("Cam off"))
+        share.configuration?.title = compactControls ? (isSharingScreen ? L("Stop") : L("Share")) :
+            (isSharingScreen ? L("Stop share") : L("Share"))
     }
 
     private func setPin(_ target: PinnedStream?) {
@@ -475,11 +474,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                                 configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
         guard let key = interaction.view?.accessibilityIdentifier,
               let target = streamPinTargets[key] else { return nil }
-        let name = interaction.view?.accessibilityLabel ?? "Musician"
+        let name = interaction.view?.accessibilityLabel ?? L("Musician")
         let selected = pinnedStream == target
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             UIMenu(children: [UIAction(
-                title: selected ? "Unpin \(name)" : "Pin \(name)",
+                title: selected ? L("Unpin %@", name) : L("Pin %@", name),
                 image: UIImage(systemName: selected ? "pin.slash" : "pin")) { _ in
                     self?.setPin(selected ? nil : target)
                 }])
@@ -514,10 +513,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                     !$0.isMuted && $0.track is VideoTrack })?.sid.stringValue
         }
         let identifier = workspace.roomIdentifier.map { " · \($0)" } ?? ""
-        countLabel.text = room.remoteParticipants.isEmpty ? "Only you here\(identifier)" :
-            "\(participants.count) musicians\(identifier)"
+        countLabel.text = room.remoteParticipants.isEmpty ? L("Only you here%@", identifier) :
+            L("%ld musicians", participants.count) + identifier
         participantsButton.isEnabled = true
-        participantsButton.accessibilityLabel = "Musicians, \(participants.count)"
+        participantsButton.accessibilityLabel = L("Musicians, %ld", participants.count)
         participantsPanel?.update(statuses(in: room), pinnedKey: pinnedStreamKey)
         tiles.arrangedSubviews.forEach { $0.removeFromSuperview() }
         speakingLabels.removeAll()
@@ -561,8 +560,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
            let offer = streamPinTargets[share.1.sid.stringValue], offer != pin,
            displayMode == .all {
             offeredShare = offer
-            shareOffer.configuration?.title = "\(share.0.name ?? "Musician") is sharing · View"
-            shareOffer.accessibilityLabel = "View \(share.0.name ?? "Musician") screen share"
+            shareOffer.configuration?.title = L("%@ is sharing · View", share.0.name ?? L("Musician"))
+            shareOffer.accessibilityLabel = L("View %@ screen share", share.0.name ?? L("Musician"))
             shareOffer.isHidden = false
         } else {
             offeredShare = nil
@@ -572,13 +571,13 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
            let owner = participants.first(where: { participantID($0) == pin.participantID }) {
             let placeholder = baseTile()
             let name = UILabel()
-            name.text = "\(owner.name ?? "Musician") · Camera off · Pinned"
+            name.text = L("%@ · Camera off · Pinned", owner.name ?? L("Musician"))
             name.textColor = .white
             name.textAlignment = .center
             name.numberOfLines = 0
             let unpin = UIButton(type: .system)
             unpin.configuration = .tinted()
-            unpin.configuration?.title = "Unpin"
+            unpin.configuration?.title = L("Unpin")
             unpin.addAction(UIAction { [weak self] _ in self?.setPin(nil) }, for: .touchUpInside)
             let column = UIStackView(arrangedSubviews: [name, unpin])
             column.axis = .vertical
@@ -611,7 +610,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             zoomControls.isHidden = primary.1.source != .screenShareVideo
             fitButton.isHidden = (videoTiles[primaryKey]?.zoom.zoomScale ?? 1) <= 1.01
             floatingVideo?.show(track: primary.0 is RemoteParticipant ? primary.2 : nil,
-                                name: primary.0.name ?? "Musician",
+                                name: primary.0.name ?? L("Musician"),
                                 isScreenShare: primary.1.source == .screenShareVideo)
             // The selected stream fills the available viewing area. Other streams remain below it.
             let primaryTile = videoTile(for: primary.0, publication: primary.1,
@@ -636,7 +635,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
         if displayMode == .screenShares && streams.isEmpty {
             let empty = UILabel()
-            empty.text = "No screen share is live. Audio continues."
+            empty.text = L("No screen share is live. Audio continues.")
             empty.textColor = .lightGray
             empty.textAlignment = .center
             empty.numberOfLines = 0
@@ -655,7 +654,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private func waitingRoomView() -> UIView {
         let view = UIView()
         let title = UILabel()
-        title.text = "You're connected. Waiting for others."
+        title.text = L("You're connected. Waiting for others.")
         title.textColor = .white
         title.font = .preferredFont(forTextStyle: .title3)
         title.adjustsFontForContentSizeCategory = true
@@ -668,7 +667,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         if workspace.invitationURL != nil {
             let invite = UIButton(type: .system)
             invite.configuration = .tinted()
-            invite.configuration?.title = "Invite musicians"
+            invite.configuration?.title = L("Invite musicians")
             invite.configuration?.image = UIImage(systemName: "square.and.arrow.up")
             invite.tintColor = accent
             invite.addAction(UIAction { [weak self] _ in
@@ -677,7 +676,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             }, for: .touchUpInside)
             let copy = UIButton(type: .system)
             copy.configuration = .plain()
-            copy.configuration?.title = "Copy link"
+            copy.configuration?.title = L("Copy link")
             copy.tintColor = accent
             copy.addAction(UIAction { [weak self] _ in self?.workspace.copyInvitation() },
                            for: .touchUpInside)
@@ -698,11 +697,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private func audioTile(for participant: Participant) -> UIView {
         let tile = baseTile()
         let name = UILabel()
-        name.text = participant.name ?? "Musician"
+        name.text = participant.name ?? L("Musician")
         name.textColor = .white
         name.font = .systemFont(ofSize: 16, weight: .semibold)
         let state = UILabel()
-        state.text = participant.audioTracks.contains { !$0.isMuted } ? "Microphone on" : "Microphone off"
+        state.text = participant.audioTracks.contains { !$0.isMuted } ? L("Microphone on") : L("Microphone off")
         state.textColor = .lightGray
         state.font = .preferredFont(forTextStyle: .caption1)
         let id = participantID(participant)
@@ -735,7 +734,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
         let tile = baseTile()
         tile.accessibilityIdentifier = key
-        tile.accessibilityLabel = "\(participant.name ?? "Musician") \(isShare ? "screen share" : "video")"
+        tile.accessibilityLabel = "\(participant.name ?? L("Musician")) \(isShare ? L("screen share") : L("video"))"
         tile.addInteraction(UIContextMenuInteraction(delegate: self))
         let zoom = UIScrollView()
         zoom.minimumZoomScale = 1
@@ -743,7 +742,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         zoom.bouncesZoom = true
         zoom.delegate = self
         zoom.accessibilityIdentifier = key
-        zoom.accessibilityLabel = isShare ? "Pinch to zoom screen share" : "Video stream"
+        zoom.accessibilityLabel = isShare ? L("Pinch to zoom screen share") : L("Video stream")
         zoom.accessibilityValue = "100%"
         zoom.translatesAutoresizingMaskIntoConstraints = false
         let video = VideoView()
@@ -755,7 +754,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         zoom.addSubview(video)
         tile.addSubview(zoom)
         let name = UILabel()
-        name.text = "  \(participant.name ?? "Musician") · \(isShare ? "Screen" : "Video") · \(pinnedStreamKey == key ? "Pinned" : "Auto")  "
+        name.text = "  \(participant.name ?? L("Musician")) · \(isShare ? L("Screen") : L("Video")) · \(pinnedStreamKey == key ? L("Pinned") : L("Auto"))  "
         name.textColor = .white
         name.font = .systemFont(ofSize: 14, weight: .semibold)
         name.backgroundColor = UIColor.black.withAlphaComponent(0.65)
@@ -766,15 +765,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let pin = UIButton(type: .system)
         pin.configuration = .tinted()
         pin.configuration?.image = UIImage(systemName: pinnedStreamKey == key ? "pin.fill" : "pin")
-        pin.accessibilityLabel = pinnedStreamKey == key ? "Unpin \(participant.name ?? "Musician") \(isShare ? "screen" : "video")" :
-            "Pin \(participant.name ?? "Musician") \(isShare ? "screen" : "video")"
+        pin.accessibilityLabel = pinnedStreamKey == key ? L("Unpin %@ %@", participant.name ?? L("Musician"), isShare ? L("screen") : L("video")) :
+            L("Pin %@ %@", participant.name ?? L("Musician"), isShare ? L("screen") : L("video"))
         pin.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             let target = PinnedStream(participantID: self.participantID(participant),
                                       isScreenShare: isShare)
             self.setPin(self.pinnedStream == target ? nil : target)
         }, for: .touchUpInside)
-        pin.accessibilityHint = "Changes only your view"
+        pin.accessibilityHint = L("Changes only your view")
         pin.showsLargeContentViewer = true
         pin.largeContentTitle = pin.accessibilityLabel
         pin.translatesAutoresizingMaskIntoConstraints = false
@@ -816,11 +815,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                                     track: VideoTrack, isShare: Bool, primary: Bool, key: String) {
         if entry.video.track !== track { entry.video.track = track }
         entry.video.layoutMode = isShare ? .fit : .fill
-        entry.name.text = "  \(participant.name ?? "Musician") · \(isShare ? "Screen" : "Video") · \(pinnedStreamKey == key ? "Pinned" : "Auto")  "
+        entry.name.text = "  \(participant.name ?? L("Musician")) · \(isShare ? L("Screen") : L("Video")) · \(pinnedStreamKey == key ? L("Pinned") : L("Auto"))  "
         entry.pin.configuration?.image = UIImage(systemName: pinnedStreamKey == key ? "pin.fill" : "pin")
         entry.pin.accessibilityLabel = pinnedStreamKey == key
-            ? "Unpin \(participant.name ?? "Musician") \(isShare ? "screen" : "video")"
-            : "Pin \(participant.name ?? "Musician") \(isShare ? "screen" : "video")"
+            ? L("Unpin %@ %@", participant.name ?? L("Musician"), isShare ? L("screen") : L("video"))
+            : L("Pin %@ %@", participant.name ?? L("Musician"), isShare ? L("screen") : L("video"))
         entry.pin.largeContentTitle = entry.pin.accessibilityLabel
         if primary { primaryZoom = entry.zoom }
         if participant === displayedRoom?.localParticipant && !isShare {
@@ -861,7 +860,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         return participants.map { participant in
             let videos = participant.videoTracks.filter { !$0.isMuted }
             return ParticipantStatus(id: participantID(participant),
-                name: participant.name ?? "Musician", isLocal: participant === room.localParticipant,
+                name: participant.name ?? L("Musician"), isLocal: participant === room.localParticipant,
                 microphoneOn: participant.audioTracks.contains { !$0.isMuted },
                 cameraOn: videos.contains { $0.source != .screenShareVideo },
                 screenShareOn: videos.contains { $0.source == .screenShareVideo },
@@ -877,8 +876,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         for participant in [room.localParticipant] + Array(room.remoteParticipants.values) {
             let id = participantID(participant)
             if let label = speakingLabels[id] {
-                label.text = participant.isSpeaking ? "Speaking" :
-                    (participant.audioTracks.contains { !$0.isMuted } ? "Microphone on" : "Microphone off")
+                label.text = participant.isSpeaking ? L("Speaking") :
+                    (participant.audioTracks.contains { !$0.isMuted } ? L("Microphone on") : L("Microphone off"))
                 label.textColor = participant.isSpeaking ? .systemGreen : .lightGray
             }
             for tile in speakingTiles[id] ?? [] {
@@ -903,7 +902,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 guard let self else { return }
                 self.displayMode = option
                 self.displayModeButton.configuration?.image = UIImage(systemName: option.symbol)
-                self.displayModeButton.accessibilityLabel = "Display: \(option.title)"
+                self.displayModeButton.accessibilityLabel = L("Display: %@", option.title)
                 self.configureModeMenu()
                 if let room = self.displayedRoom { self.render(room: room) }
                 self.onDisplayMode?(option)
@@ -912,30 +911,30 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     private func configureMoreMenu() {
-        moreButton.accessibilityValue = floatingVideo?.canShow == true ? "Floating video available" : nil
+        moreButton.accessibilityValue = floatingVideo?.canShow == true ? L("Floating video available") : nil
         var items: [UIMenuElement] = []
         if workspace.invitationURL != nil {
-            items.append(UIAction(title: "Invite musicians", image: UIImage(systemName: "square.and.arrow.up")) {
+            items.append(UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
                 [weak self] _ in guard let self else { return }
                 self.workspace.shareInvitation(from: self.moreButton)
             })
-            items.append(UIAction(title: "Copy link", image: UIImage(systemName: "doc.on.doc")) {
+            items.append(UIAction(title: L("Copy link"), image: UIImage(systemName: "doc.on.doc")) {
                 [weak self] _ in self?.workspace.copyInvitation()
             })
         }
         items += [
-            UIAction(title: "Show floating video", image: UIImage(systemName: "pip.enter"),
+            UIAction(title: L("Show floating video"), image: UIImage(systemName: "pip.enter"),
                      attributes: floatingVideo?.canShow == true && !isHeld ? [] : [.disabled]) {
                 [weak self] _ in self?.floatingVideo?.start()
             },
-            UIAction(title: "Floating video when multitasking",
+            UIAction(title: L("Floating video when multitasking"),
                      image: UIImage(systemName: "pip"),
                      state: FloatingVideoPreference.enabled ? .on : .off) { [weak self] _ in
                 FloatingVideoPreference.enabled.toggle()
                 self?.floatingVideo?.refreshPreference()
                 self?.configureMoreMenu()
             },
-            UIMenu(title: "View", children: ConferenceDisplayMode.allCases.map { option in
+            UIMenu(title: L("View"), children: ConferenceDisplayMode.allCases.map { option in
                 UIAction(title: option.title, image: UIImage(systemName: option.symbol),
                          state: option == displayMode ? .on : .off) { [weak self] _ in
                     guard let self else { return }
@@ -945,7 +944,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                     self.onDisplayMode?(option)
                 }
             }),
-            UIAction(title: isSpeakerOn ? "Use iPhone receiver" : "Use iPhone speaker",
+            UIAction(title: isSpeakerOn ? L("Use iPhone receiver") : L("Use iPhone speaker"),
                      image: UIImage(systemName: "speaker.wave.2")) { [weak self] _ in
                 guard let self else { return }
                 self.isSpeakerOn.toggle()
@@ -953,7 +952,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 self.onSpeaker?(self.isSpeakerOn)
                 self.configureMoreMenu()
             },
-            UIAction(title: "Flip camera", image: UIImage(systemName: "camera.rotate"),
+            UIAction(title: L("Flip camera"), image: UIImage(systemName: "camera.rotate"),
                      attributes: isCameraOn ? [] : [.disabled]) { [weak self] _ in
                 self?.onFlipCamera?()
             }
@@ -975,7 +974,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         share.configuration?.image = UIImage(systemName: enabled ? "rectangle.slash" : "rectangle.on.rectangle")
         updateControlTitles()
         share.configuration?.baseForegroundColor = enabled ? accent : .white
-        share.accessibilityLabel = enabled ? "Stop sharing screen" : "Share screen"
+        share.accessibilityLabel = enabled ? L("Stop sharing screen") : L("Share screen")
     }
 
     func setMicrophone(_ enabled: Bool) {
@@ -984,7 +983,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         microphone.configuration?.image = UIImage(systemName: enabled ? "mic.fill" : "mic.slash.fill")
         updateControlTitles()
         microphone.configuration?.baseForegroundColor = enabled ? accent : .white
-        microphone.accessibilityLabel = enabled ? "Mute microphone" : "Unmute microphone"
+        microphone.accessibilityLabel = enabled ? L("Mute microphone") : L("Unmute microphone")
         microphone.largeContentTitle = microphone.accessibilityLabel
         updateStatus()
     }
@@ -1001,7 +1000,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         camera.configuration?.image = UIImage(systemName: enabled ? "video.fill" : "video.slash.fill")
         updateControlTitles()
         camera.configuration?.baseForegroundColor = enabled ? accent : .white
-        camera.accessibilityLabel = enabled ? "Stop video" : "Start video"
+        camera.accessibilityLabel = enabled ? L("Stop video") : L("Start video")
         camera.largeContentTitle = camera.accessibilityLabel
         updateStatus()
     }
@@ -1028,13 +1027,13 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     func setAudioRouteName(_ name: String) {
-        routeLabel.text = "Audio · \(name)"
+        routeLabel.text = L("Audio · %@", name)
         workspace.routeName = name
     }
 
     private func updateStatus() {
-        statusLabel.text = isHeld ? "Jam on hold for another call" :
-            (mediaStatus ?? "Microphone \(isMicrophoneOn ? "on" : "off") · Camera \(isCameraOn ? "on" : "off")")
+        statusLabel.text = isHeld ? L("Jam on hold for another call") :
+            (mediaStatus ?? L("Microphone %@ · Camera %@", isMicrophoneOn ? L("on") : L("off"), isCameraOn ? L("on") : L("off")))
         statusLabel.textColor = mediaStatus == nil ? .lightGray : .systemOrange
     }
 

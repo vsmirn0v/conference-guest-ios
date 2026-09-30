@@ -243,7 +243,7 @@ final class GuestStreamViews {
             renderedTiles.first { $0.key.participant == target.participant &&
                 $0.key.isShare == target.isShare }?.value.model.name
         }
-        onPinPresentation?(eligiblePin, eligiblePin == nil ? nil : (pinName ?? "Musician"),
+        onPinPresentation?(eligiblePin, eligiblePin == nil ? nil : (pinName ?? L("Musician")),
                            preferred != nil)
         if let pin = eligiblePin, !pin.isShare,
            let share = available.first(where: { $0.model.isSharingScreen }) {
@@ -287,10 +287,10 @@ final class GuestStreamViewportFixtureViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
         let refresh = UIButton(type: .system)
-        refresh.setTitle("Refresh participant", for: .normal)
+        refresh.setTitle(L("Refresh participant"), for: .normal)
         refresh.addAction(UIAction { [weak self] _ in self?.replaceTile() }, for: .touchUpInside)
         let restart = UIButton(type: .system)
-        restart.setTitle("Start new share", for: .normal)
+        restart.setTitle(L("Start new share"), for: .normal)
         restart.addAction(UIAction { [weak self] _ in
             self?.streams.reset()
             self?.replaceTile()

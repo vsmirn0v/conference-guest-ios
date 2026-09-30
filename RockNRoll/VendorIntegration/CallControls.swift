@@ -107,7 +107,7 @@ final class CallControls: UIView {
         audioOnlyBackdrop.translatesAutoresizingMaskIntoConstraints = false
         addSubview(audioOnlyBackdrop)
         let audioOnlyLabel = UILabel()
-        audioOnlyLabel.text = "Audio only\nJam audio continues"
+        audioOnlyLabel.text = L("Audio only\nJam audio continues")
         audioOnlyLabel.textColor = .lightGray
         audioOnlyLabel.font = .preferredFont(forTextStyle: .title2)
         audioOnlyLabel.numberOfLines = 2
@@ -135,7 +135,7 @@ final class CallControls: UIView {
         screenSharesBackdrop.translatesAutoresizingMaskIntoConstraints = false
         addSubview(screenSharesBackdrop)
         let noShareLabel = UILabel()
-        noShareLabel.text = "No screen share is live.\nJam audio continues."
+        noShareLabel.text = L("No screen share is live.\nJam audio continues.")
         noShareLabel.textColor = .lightGray
         noShareLabel.font = .preferredFont(forTextStyle: .title3)
         noShareLabel.adjustsFontForContentSizeCategory = true
@@ -158,7 +158,7 @@ final class CallControls: UIView {
         waitingBackdrop.translatesAutoresizingMaskIntoConstraints = false
         addSubview(waitingBackdrop)
         let waitingLabel = UILabel()
-        waitingLabel.text = "You're connected. Waiting for others."
+        waitingLabel.text = L("You're connected. Waiting for others.")
         waitingLabel.textColor = .white
         waitingLabel.font = .preferredFont(forTextStyle: .title3)
         waitingLabel.adjustsFontForContentSizeCategory = true
@@ -171,7 +171,7 @@ final class CallControls: UIView {
         if invitationURL != nil {
             let invite = UIButton(type: .system)
             invite.configuration = .tinted()
-            invite.configuration?.title = "Invite musicians"
+            invite.configuration?.title = L("Invite musicians")
             invite.configuration?.image = UIImage(systemName: "square.and.arrow.up")
             invite.tintColor = UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
             invite.addAction(UIAction { [weak self] _ in
@@ -179,7 +179,7 @@ final class CallControls: UIView {
             }, for: .touchUpInside)
             let copy = UIButton(type: .system)
             copy.configuration = .plain()
-            copy.configuration?.title = "Copy link"
+            copy.configuration?.title = L("Copy link")
             copy.tintColor = UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
             copy.addAction(UIAction { [weak self] _ in self?.workspace.copyInvitation() },
                            for: .touchUpInside)
@@ -208,7 +208,7 @@ final class CallControls: UIView {
         pinnedStatus.translatesAutoresizingMaskIntoConstraints = false
         pinnedBackdrop.addSubview(pinnedStatus)
         pinnedUnpin.configuration = .tinted()
-        pinnedUnpin.configuration?.title = "Unpin"
+        pinnedUnpin.configuration?.title = L("Unpin")
         pinnedUnpin.configuration?.image = UIImage(systemName: "pin.slash")
         pinnedUnpin.addAction(UIAction { [weak self] _ in self?.onUnpin?() }, for: .touchUpInside)
         pinnedUnpin.translatesAutoresizingMaskIntoConstraints = false
@@ -240,24 +240,24 @@ final class CallControls: UIView {
             shareOffer.trailingAnchor.constraint(lessThanOrEqualTo: pinnedBackdrop.trailingAnchor, constant: -8)
         ])
 
-        let leave = Self.button("Leave", symbol: "phone.down.fill")
+        let leave = Self.button(L("Leave"), symbol: "phone.down.fill")
         catchUpButton.configuration = Self.iconConfiguration("text.bubble")
-        catchUpButton.accessibilityLabel = "Chat"
+        catchUpButton.accessibilityLabel = L("Chat")
         missedButton.configuration = Self.iconConfiguration("clock.arrow.circlepath")
-        missedButton.accessibilityLabel = "Catch up"
+        missedButton.accessibilityLabel = L("Catch up")
         missedButton.isHidden = true
         displayButton.configuration = Self.iconConfiguration(displayMode.symbol)
-        displayButton.accessibilityLabel = "Display: \(displayMode.title)"
-        moreButton.configuration = Self.iconConfiguration("ellipsis.circle.fill", title: "More")
-        moreButton.accessibilityLabel = "More call options"
+        displayButton.accessibilityLabel = L("Display: %@", displayMode.title)
+        moreButton.configuration = Self.iconConfiguration("ellipsis.circle.fill", title: L("More"))
+        moreButton.accessibilityLabel = L("More call options")
         moreButton.showsMenuAsPrimaryAction = true
         participantsButton.configuration = Self.iconConfiguration("person.2.fill")
-        participantsButton.accessibilityLabel = "Musicians"
+        participantsButton.accessibilityLabel = L("Musicians")
         configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
-        microphone.configuration = Self.iconConfiguration("mic.slash.fill", title: "Mic off")
-        camera.configuration = Self.iconConfiguration("video.slash.fill", title: "Cam off")
-        share.configuration = Self.iconConfiguration("rectangle.on.rectangle", title: "Share")
-        share.accessibilityLabel = "Share screen"
+        microphone.configuration = Self.iconConfiguration("mic.slash.fill", title: L("Mic off"))
+        camera.configuration = Self.iconConfiguration("video.slash.fill", title: L("Cam off"))
+        share.configuration = Self.iconConfiguration("rectangle.on.rectangle", title: L("Share"))
+        share.accessibilityLabel = L("Share screen")
         for button in [microphone, camera, share, catchUpButton, missedButton, moreButton, participantsButton] {
             button.showsLargeContentViewer = true
             button.largeContentTitle = button.accessibilityLabel
@@ -291,7 +291,7 @@ final class CallControls: UIView {
         participantsButton.addAction(UIAction { _ in router.openParticipants() }, for: .touchUpInside)
 
         route.translatesAutoresizingMaskIntoConstraints = false
-        route.accessibilityLabel = "Audio route"
+        route.accessibilityLabel = L("Audio route")
         let picker = coordinator.audioRoutePickerButton
         picker.translatesAutoresizingMaskIntoConstraints = false
         route.addSubview(picker)
@@ -301,7 +301,7 @@ final class CallControls: UIView {
         routeIcon.translatesAutoresizingMaskIntoConstraints = false
         route.addSubview(routeIcon)
         let routeTitle = UILabel()
-        routeTitle.text = "Audio"
+        routeTitle.text = L("Audio")
         routeTitle.textColor = .white
         routeTitle.font = .preferredFont(forTextStyle: .caption2)
         routeTitle.isUserInteractionEnabled = false
@@ -335,13 +335,13 @@ final class CallControls: UIView {
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = .white
         titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.text = "Jam"
+        titleLabel.text = L("Jam")
         countLabel.font = .preferredFont(forTextStyle: .caption1)
         countLabel.textColor = .lightGray
-        countLabel.text = "Connecting…"
+        countLabel.text = L("Connecting…")
         routeLabel.font = .preferredFont(forTextStyle: .caption2)
         routeLabel.textColor = .lightGray
-        routeLabel.text = "Audio output"
+        routeLabel.text = L("Audio output")
         callStateLabel.font = .preferredFont(forTextStyle: .caption2)
         callStateLabel.textColor = .systemOrange
         callStateLabel.isHidden = true
@@ -435,11 +435,11 @@ final class CallControls: UIView {
             print("Microphone state changed: \(media)")
             #endif
             self.microphone.configuration?.image = UIImage(systemName: media == .on ? "mic.fill" : "mic.slash.fill")
-            self.microphone.configuration?.title = media == .on ? "Mic on" : "Mic off"
+            self.microphone.configuration?.title = media == .on ? L("Mic on") : L("Mic off")
             self.microphone.configuration?.baseForegroundColor = media == .on ?
                 UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
             self.microphone.isEnabled = media != .disabled
-            self.microphone.accessibilityLabel = media == .on ? "Mute microphone" : "Unmute microphone"
+            self.microphone.accessibilityLabel = media == .on ? L("Mute microphone") : L("Unmute microphone")
             self.microphone.largeContentTitle = self.microphone.accessibilityLabel
             self.workspace.microphoneOn = media == .on
         }.store(in: &subscriptions)
@@ -449,13 +449,13 @@ final class CallControls: UIView {
             print("Camera state changed: \(media)")
             #endif
             self.camera.configuration?.image = UIImage(systemName: media == .on ? "video.fill" : "video.slash.fill")
-            self.camera.configuration?.title = media == .on ? "Cam on" : "Cam off"
+            self.camera.configuration?.title = media == .on ? L("Cam on") : L("Cam off")
             self.camera.configuration?.baseForegroundColor = media == .on ?
                 UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
             self.camera.isEnabled = media != .disabled
             self.cameraOn = media == .on
             self.configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
-            self.camera.accessibilityLabel = media == .on ? "Stop video" : "Start video"
+            self.camera.accessibilityLabel = media == .on ? L("Stop video") : L("Start video")
             self.camera.largeContentTitle = self.camera.accessibilityLabel
             self.workspace.cameraOn = media == .on
         }.store(in: &subscriptions)
@@ -464,11 +464,11 @@ final class CallControls: UIView {
             let isSharing = media == .on
             if isSharing { self.localPreview.begin() } else { self.localPreview.end() }
             self.share.configuration?.image = UIImage(systemName: isSharing ? "rectangle.slash" : "rectangle.on.rectangle")
-            self.share.configuration?.title = isSharing ? "Stop share" : "Share"
+            self.share.configuration?.title = isSharing ? L("Stop share") : L("Share")
             self.share.configuration?.baseForegroundColor = isSharing ?
                 UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
             self.share.isEnabled = media != .disabled
-            self.share.accessibilityLabel = isSharing ? "Stop sharing screen" : "Share screen"
+            self.share.accessibilityLabel = isSharing ? L("Stop sharing screen") : L("Share screen")
             self.share.largeContentTitle = self.share.accessibilityLabel
         }.store(in: &subscriptions)
         Publishers.CombineLatest3(state.$localParticipant, state.$remoteParticipants,
@@ -488,21 +488,21 @@ final class CallControls: UIView {
                 self.isWaitingForOthers = remote.isEmpty && !local.camera.isOn &&
                     !local.screenSharing.isOn
                 self.updateDisplayBackdrops()
-                self.participantsButton.accessibilityLabel = "Musicians, \(remote.count + 1)"
+                self.participantsButton.accessibilityLabel = L("Musicians, %ld", remote.count + 1)
                 let identifier = self.workspace.roomIdentifier.map { " · \($0)" } ?? ""
-                self.countLabel.text = remote.isEmpty ? "Waiting for others\(identifier)" :
-                    "\(remote.count + 1) participants\(identifier)"
+                self.countLabel.text = remote.isEmpty ? L("Waiting for others%@", identifier) :
+                    L("%ld participants", remote.count + 1) + identifier
                 self.participantsButton.accessibilityValue = remote.values.contains { $0.screenSharing.isOn }
-                    ? "A screen is being shared" : nil
+                    ? L("A screen is being shared") : nil
                 if let speaker, speaker.microphone.isOn {
-                    self.speakerLabel.text = "  Speaking: \(speaker.isLocal ? "You" : (speaker.userName ?? "Musician"))  "
+                    self.speakerLabel.text = L("  Speaking: %@  ", speaker.isLocal ? L("You") : (speaker.userName ?? L("Musician")))
                     self.speakerLabel.isHidden = false
                 } else {
                     self.speakerLabel.isHidden = true
                 }
             }.store(in: &subscriptions)
         state.$conferenceTitle.receive(on: DispatchQueue.main)
-            .sink { [weak self] title in self?.titleLabel.text = title.isEmpty ? "Jam" : title }
+            .sink { [weak self] title in self?.titleLabel.text = title.isEmpty ? L("Jam") : title }
             .store(in: &subscriptions)
     }
 
@@ -522,20 +522,20 @@ final class CallControls: UIView {
         if name != nil { movePinnedStageAboveSDKVideo() }
         pinnedBackdrop.isHidden = name == nil || displayMode == .audioOnly ||
             displayMode == .screenShares && !isShare
-        pinnedStatus.text = active ? "Waiting for \(name ?? "Musician")'s \(isShare ? "screen share" : "video")…" :
-            "\(name ?? "Musician") · \(isShare ? "Screen share" : "Camera") unavailable · Pinned"
+        pinnedStatus.text = active ? L("Waiting for %@'s %@…", name ?? L("Musician"), isShare ? L("screen share") : L("video")) :
+            L("%@ · %@ unavailable · Pinned", name ?? L("Musician"), isShare ? L("Screen share") : L("Camera"))
         pinnedStatus.isHidden = active && pinnedHasFrame
         pinnedUnpin.isHidden = automatic
-        pinnedUnpin.accessibilityLabel = "Unpin \(name ?? "Musician") \(isShare ? "screen share" : "video")"
+        pinnedUnpin.accessibilityLabel = L("Unpin %@ %@", name ?? L("Musician"), isShare ? L("screen share") : L("video"))
         if changed {
             pinnedVideo.clear()
             pinnedViewport?.removeFromSuperview()
             pinnedViewport = nil
             if name != nil {
                 let viewport = StreamViewport(video: pinnedVideo, state: StreamViewportState(),
-                    zoomable: isShare, name: name ?? "Musician", showInfo: true,
+                    zoomable: isShare, name: name ?? L("Musician"), showInfo: true,
                     microphoneOn: true, pinned: !automatic, watermark: nil)
-                viewport.updatePin(name: name ?? "Musician", isShare: isShare,
+                viewport.updatePin(name: name ?? L("Musician"), isShare: isShare,
                                    pinned: !automatic, onPin: nil)
                 viewport.translatesAutoresizingMaskIntoConstraints = false
                 pinnedBackdrop.insertSubview(viewport, at: 0)
@@ -591,8 +591,8 @@ final class CallControls: UIView {
 
     func setShareOffer(name: String?) {
         shareOffer.isHidden = name == nil || pinnedBackdrop.isHidden
-        shareOffer.configuration?.title = name.map { "\($0) is sharing · View" }
-        shareOffer.accessibilityLabel = name.map { "View \($0) screen share" }
+        shareOffer.configuration?.title = name.map { L("%@ is sharing · View", $0) }
+        shareOffer.accessibilityLabel = name.map { L("View %@ screen share", $0) }
     }
 
     private func openConversation(catchUp: CatchUpStore, chat: ChatStore,
@@ -629,7 +629,7 @@ final class CallControls: UIView {
     func setFloatingVideoAvailable(_ available: Bool) {
         guard floatingVideoAvailable != available else { return }
         floatingVideoAvailable = available
-        moreButton.accessibilityValue = available ? "Floating video available" : nil
+        moreButton.accessibilityValue = available ? L("Floating video available") : nil
         refreshMoreMenu?()
     }
 
@@ -639,13 +639,13 @@ final class CallControls: UIView {
     }
 
     func setAudioRouteName(_ name: String) {
-        routeLabel.text = "Audio · \(name)"
+        routeLabel.text = L("Audio · %@", name)
         workspace.routeName = name
         route.accessibilityValue = name
     }
 
     private func renderCallStatus() {
-        callStateLabel.text = isHeld ? "On hold · audio resumes after your call" : mediaStatus
+        callStateLabel.text = isHeld ? L("On hold · audio resumes after your call") : mediaStatus
         callStateLabel.isHidden = callStateLabel.text == nil
     }
 
@@ -653,10 +653,9 @@ final class CallControls: UIView {
         catchUpButton.configuration?.title = unreadChatCount > 0 ? "\(unreadChatCount)" : nil
         missedButton.isHidden = missedCount == 0
         missedButton.configuration?.title = missedCount > 0 ? "\(missedCount)" : nil
-        missedButton.accessibilityLabel = "Catch up, \(missedCount) missed " +
-            (missedCount == 1 ? "section" : "sections")
-        let unread = unreadChatCount > 0 ? ", \(unreadChatCount) unread" : ""
-        catchUpButton.accessibilityLabel = "Chat\(unread)"
+        missedButton.accessibilityLabel = L("Catch up, %ld missed sections", missedCount)
+        catchUpButton.accessibilityLabel = unreadChatCount > 0 ?
+            L("Chat, %ld unread", unreadChatCount) : L("Chat")
     }
 
     deinit {
@@ -745,7 +744,7 @@ final class CallControls: UIView {
 
     private func configureMoreMenu(coordinator: JazzActiveConferenceCoordinator,
                                    onChange: @escaping (ConferenceDisplayMode) -> Void) {
-        let viewMenu = UIMenu(title: "View", children: ConferenceDisplayMode.allCases.map { option in
+        let viewMenu = UIMenu(title: L("View"), children: ConferenceDisplayMode.allCases.map { option in
             UIAction(title: option.title, image: UIImage(systemName: option.symbol),
                      state: option == displayMode ? .on : .off) { [weak self] _ in
                 guard let self else { return }
@@ -755,18 +754,18 @@ final class CallControls: UIView {
                 onChange(option)
             }
         })
-        let flip = UIAction(title: "Flip camera", image: UIImage(systemName: "camera.rotate"),
+        let flip = UIAction(title: L("Flip camera"), image: UIImage(systemName: "camera.rotate"),
                             attributes: cameraOn ? [] : [.disabled]) { _ in coordinator.switchCamera() }
-        let fit = UIAction(title: "Fit shared screen",
+        let fit = UIAction(title: L("Fit shared screen"),
                            image: UIImage(systemName: "arrow.down.right.and.arrow.up.left")) { [weak self] _ in
             self?.fitZoomedContent()
         }
-        let float = UIAction(title: "Show floating video", image: UIImage(systemName: "pip.enter"),
+        let float = UIAction(title: L("Show floating video"), image: UIImage(systemName: "pip.enter"),
                              attributes: canFloatVideo ? [] : [.disabled]) { [weak self] _ in
             guard self?.canFloatVideo == true else { return }
             self?.onFloat()
         }
-        let automatic = UIAction(title: "Floating video when multitasking",
+        let automatic = UIAction(title: L("Floating video when multitasking"),
                                  image: UIImage(systemName: "pip"),
                                  state: FloatingVideoPreference.enabled ? .on : .off) { [weak self] _ in
             FloatingVideoPreference.enabled.toggle()
@@ -775,11 +774,11 @@ final class CallControls: UIView {
         }
         var actions: [UIMenuElement] = [float, automatic, viewMenu, fit, flip]
         if workspace.invitationURL != nil {
-            actions.insert(UIAction(title: "Invite musicians", image: UIImage(systemName: "square.and.arrow.up")) {
+            actions.insert(UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
                 [weak self] _ in guard let self else { return }
                 self.workspace.shareInvitation(from: self.moreButton)
             }, at: 0)
-            actions.insert(UIAction(title: "Copy link", image: UIImage(systemName: "doc.on.doc")) {
+            actions.insert(UIAction(title: L("Copy link"), image: UIImage(systemName: "doc.on.doc")) {
                 [weak self] _ in self?.workspace.copyInvitation()
             }, at: 1)
         }
@@ -896,7 +895,7 @@ final class NoticeLayoutFixtureViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
         let notice = TopNoticeView()
-        notice.show([InCallNotice(title: "Meeting transcript is on", actionTitle: nil, action: nil)])
+        notice.show([InCallNotice(title: L("Meeting transcript is on"), actionTitle: nil, action: nil)])
         notice.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(notice)
         let controls = UIButton(type: .system)

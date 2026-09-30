@@ -23,7 +23,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private var panelSideWidth: NSLayoutConstraint!
     private var isSidePanel = false
     private let header = UIStackView()
-    private let mode = UISegmentedControl(items: ["Chat", "Live text", "Catch up"])
+    private let mode = UISegmentedControl(items: [L("Chat"), L("Live text"), L("Catch up")])
     private let messageList = UIScrollView()
     private let messageRows = UIStackView()
     private let transcript = UITextView()
@@ -116,7 +116,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             callStrip.heightAnchor.constraint(equalToConstant: 46)
         ])
 
-        mode.accessibilityLabel = "Conversation mode"
+        mode.accessibilityLabel = L("Conversation mode")
         mode.addAction(UIAction { [weak self] _ in self?.renderMode() }, for: .valueChanged)
         callStrip.isHidden = call == nil || docked
         Publishers.CombineLatest3(catchUp.$timeline, catchUp.$canViewTranscript,
@@ -240,14 +240,14 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     private func buildHeader() {
         let title = UILabel()
-        title.text = "Conversation"
+        title.text = L("Conversation")
         title.textColor = .white
         title.font = .preferredFont(forTextStyle: .title2)
         title.adjustsFontForContentSizeCategory = true
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let close = UIButton(type: .system)
         close.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
-        close.accessibilityLabel = "Close conversation"
+        close.accessibilityLabel = L("Close conversation")
         close.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             if let onClose = self.onClose { onClose() }
@@ -274,7 +274,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         messageList.backgroundColor = card
         messageList.layer.cornerRadius = 14
         messageList.keyboardDismissMode = .interactive
-        messageList.accessibilityLabel = "Jam chat messages"
+        messageList.accessibilityLabel = L("Jam chat messages")
         messageRows.axis = .vertical
         messageRows.spacing = 12
         messageRows.isLayoutMarginsRelativeArrangement = true
@@ -298,7 +298,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         transcript.font = .preferredFont(forTextStyle: .body)
         transcript.adjustsFontForContentSizeCategory = true
         transcript.textContainerInset = UIEdgeInsets(top: 16, left: 14, bottom: 16, right: 14)
-        transcript.accessibilityLabel = "Jam transcript"
+        transcript.accessibilityLabel = L("Jam transcript")
         transcript.delegate = self
         transcript.keyboardDismissMode = .interactive
 
@@ -320,10 +320,10 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         catchUpHost.didMove(toParent: self)
 
         newMessagesButton.configuration = .tinted()
-        newMessagesButton.configuration?.title = "New messages ↓"
+        newMessagesButton.configuration?.title = L("New messages ↓")
         newMessagesButton.addAction(UIAction { [weak self] _ in self?.scrollMessagesToBottom() }, for: .touchUpInside)
         followButton.configuration = .tinted()
-        followButton.configuration?.title = "Jump to latest ↓"
+        followButton.configuration?.title = L("Jump to latest ↓")
         followButton.addAction(UIAction { [weak self] _ in self?.scrollTranscriptToBottom() }, for: .touchUpInside)
         for button in [newMessagesButton, followButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
@@ -344,11 +344,11 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         composer.layer.cornerRadius = 12
         composer.delegate = self
         composer.text = chat.draft
-        composer.accessibilityLabel = "Chat message"
-        composer.accessibilityHint = "Write a message, then tap Send"
+        composer.accessibilityLabel = L("Chat message")
+        composer.accessibilityHint = L("Write a message, then tap Send")
         composerHeight = composer.heightAnchor.constraint(equalToConstant: 48)
         composerHeight.isActive = true
-        placeholder.text = "Message the group…"
+        placeholder.text = L("Message the group…")
         placeholder.font = .preferredFont(forTextStyle: .body)
         placeholder.textColor = .lightGray
         placeholder.isUserInteractionEnabled = false
@@ -361,7 +361,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         ])
         sendButton.configuration = .filled()
         sendButton.configuration?.image = UIImage(systemName: "arrow.up")
-        sendButton.accessibilityLabel = "Send chat message"
+        sendButton.accessibilityLabel = L("Send chat message")
         sendButton.addAction(UIAction { [weak self] _ in self?.sendMessage() }, for: .touchUpInside)
         sendButton.widthAnchor.constraint(equalToConstant: 48).isActive = true
         sendButton.heightAnchor.constraint(equalToConstant: 48).isActive = true
@@ -403,10 +403,10 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         let picker = AVRoutePickerView()
         picker.tintColor = accent
         picker.activeTintColor = accent
-        picker.accessibilityLabel = "Audio route"
+        picker.accessibilityLabel = L("Audio route")
         let routeControl = UIView()
         let routeTitle = UILabel()
-        routeTitle.text = "Audio"
+        routeTitle.text = L("Audio")
         routeTitle.textColor = .white
         routeTitle.font = .systemFont(ofSize: 11, weight: .semibold)
         routeTitle.isUserInteractionEnabled = false
@@ -433,7 +433,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         let compactClose = UIButton(type: .system)
         compactClose.configuration = .plain()
         compactClose.configuration?.image = UIImage(systemName: "xmark")
-        compactClose.accessibilityLabel = "Close conversation"
+        compactClose.accessibilityLabel = L("Close conversation")
         compactClose.addAction(UIAction { [weak self] _ in self?.dismiss(animated: true) }, for: .touchUpInside)
         compactClose.isHidden = true
         callStrip.addArrangedSubview(compactClose)
@@ -441,19 +441,19 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     }
 
     private func renderCallState(microphone: Bool, camera: Bool, speaker: Bool, held: Bool) {
-        style(micButton, title: held ? "On hold" : (microphone ? "Mic on" : "Mic off"),
+        style(micButton, title: held ? L("On hold") : (microphone ? L("Mic on") : L("Mic off")),
               symbol: microphone ? "mic.fill" : "mic.slash.fill", active: microphone)
         micButton.isEnabled = !held
-        micButton.accessibilityLabel = microphone ? "Mute microphone" : "Unmute microphone"
-        style(cameraButton, title: camera ? "Cam on" : "Cam off",
+        micButton.accessibilityLabel = microphone ? L("Mute microphone") : L("Unmute microphone")
+        style(cameraButton, title: camera ? L("Cam on") : L("Cam off"),
               symbol: camera ? "video.fill" : "video.slash.fill", active: camera)
-        cameraButton.accessibilityLabel = camera ? "Stop video" : "Start video"
-        style(speakerButton, title: speaker ? "Speaker" : "iPhone",
+        cameraButton.accessibilityLabel = camera ? L("Stop video") : L("Start video")
+        style(speakerButton, title: speaker ? L("Speaker") : "iPhone",
               symbol: speaker ? "speaker.wave.2" : "iphone", active: speaker)
-        speakerButton.accessibilityLabel = speaker ? "Use iPhone receiver" : "Use iPhone speaker"
-        style(leaveButton, title: "Leave", symbol: "phone.down.fill", active: false)
+        speakerButton.accessibilityLabel = speaker ? L("Use iPhone receiver") : L("Use iPhone speaker")
+        style(leaveButton, title: L("Leave"), symbol: "phone.down.fill", active: false)
         leaveButton.configuration?.baseForegroundColor = .systemRed
-        leaveButton.accessibilityLabel = "Leave"
+        leaveButton.accessibilityLabel = L("Leave")
     }
 
     private func style(_ button: UIButton, title: String, symbol: String, active: Bool) {
@@ -469,6 +469,9 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             result.font = .systemFont(ofSize: 11, weight: .semibold)
             return result
         }
+        button.titleLabel?.numberOfLines = 1
+        button.titleLabel?.adjustsFontSizeToFitWidth = true
+        button.titleLabel?.minimumScaleFactor = 0.8
     }
 
     private func renderMode() {
@@ -497,7 +500,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         var desiredViews = [UIView]()
         if items.isEmpty {
             let empty = UILabel()
-            empty.text = "No messages yet. Say hello to the group."
+            empty.text = L("No messages yet. Say hello to the group.")
             empty.textColor = .lightGray
             empty.font = .preferredFont(forTextStyle: .body)
             empty.numberOfLines = 0
@@ -543,7 +546,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             UIColor(red: 0.16, green: 0.18, blue: 0.25, alpha: 1)
         row.layer.cornerRadius = 12
         let sender = UILabel()
-        sender.text = "\(entry.isOwn ? "You" : entry.sender) · \(entry.sentAt.formatted(date: .omitted, time: .shortened))"
+        sender.text = "\(entry.isOwn ? L("You") : entry.sender) · \(entry.sentAt.formatted(date: .omitted, time: .shortened))"
         sender.font = .preferredFont(forTextStyle: .caption1)
         sender.adjustsFontForContentSizeCategory = true
         sender.textColor = entry.isOwn ? accent : .lightGray
@@ -562,20 +565,20 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         body.linkTextAttributes = [.foregroundColor: accent]
         body.textContainerInset = .zero
         body.textContainer.lineFragmentPadding = 0
-        body.accessibilityLabel = "\(entry.isOwn ? "You" : entry.sender): \(entry.text)"
+        body.accessibilityLabel = "\(entry.isOwn ? L("You") : entry.sender): \(entry.text)"
         row.addArrangedSubview(body)
         switch entry.delivery {
         case .pending:
             let state = UILabel()
-            state.text = "Sending…"
+            state.text = L("Sending…")
             state.textColor = .lightGray
             state.font = .preferredFont(forTextStyle: .caption1)
             row.addArrangedSubview(state)
         case .failed:
             let retry = UIButton(type: .system)
             retry.configuration = .tinted()
-            retry.configuration?.title = "Not sent · Retry"
-            retry.accessibilityLabel = "Retry message from \(sender.text ?? "You")"
+            retry.configuration?.title = L("Not sent · Retry")
+            retry.accessibilityLabel = L("Retry message from %@", sender.text ?? L("You"))
             retry.isEnabled = chat.canSend
             retryButtons[entry.id] = retry
             retry.addAction(UIAction { [weak self] _ in self?.chat.retry(entry.id) }, for: .touchUpInside)
@@ -620,7 +623,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private func liveTranscript() -> NSAttributedString {
         let result = NSMutableAttributedString()
         let caption = UIFont.preferredFont(forTextStyle: .caption1)
-        result.append(NSAttributedString(string: "Text received by this phone may be incomplete.\n\n",
+        result.append(NSAttributedString(string: L("Text received by this phone may be incomplete.\n\n"),
                                          attributes: [.font: caption, .foregroundColor: UIColor.lightGray]))
         result.append(transcriptLines(timeline.segments[...], precedingLines: 0))
         return result
@@ -637,7 +640,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
                 result.append(NSAttributedString(string: "\(time.formatted(date: .omitted, time: .shortened))  ",
                     attributes: [.font: caption, .foregroundColor: UIColor.lightGray]))
             }
-            result.append(NSAttributedString(string: line.speaker ?? "Participant",
+            result.append(NSAttributedString(string: line.speaker ?? L("Participant"),
                 attributes: [.font: UIFont.systemFont(ofSize: body.pointSize, weight: .semibold),
                              .foregroundColor: accent]))
             result.append(NSAttributedString(string: "\n\(line.text)",
@@ -682,11 +685,11 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         sendButton.isEnabled = chat.canSend && RoomChatPacket.accepts(text: clean)
         retryButtons.values.forEach { $0.isEnabled = chat.canSend }
         composer.isEditable = chat.canSend
-        if !chat.canSend { hint.text = "Chat isn't available right now." }
-        else if count > 2_000 { hint.text = "\(count - 2_000) characters over the limit" }
-        else if count > 0 && !RoomChatPacket.accepts(text: clean) { hint.text = "This message is too large to send." }
-        else if count >= 1_800 { hint.text = "\(count)/2,000 characters" }
-        else if chat.unreadCoverageIsLimited { hint.text = "Earlier unread messages may be incomplete after history changed." }
+        if !chat.canSend { hint.text = L("Chat isn't available right now.") }
+        else if count > 2_000 { hint.text = L("%ld characters over the limit", count - 2_000) }
+        else if count > 0 && !RoomChatPacket.accepts(text: clean) { hint.text = L("This message is too large to send.") }
+        else if count >= 1_800 { hint.text = L("%ld/2,000 characters", count) }
+        else if chat.unreadCoverageIsLimited { hint.text = L("Earlier unread messages may be incomplete after history changed.") }
         else { hint.text = nil }
         hint.isHidden = hint.text == nil
         updateComposerHeight()

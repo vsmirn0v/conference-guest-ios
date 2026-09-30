@@ -93,7 +93,7 @@ final class RoomHistoryStore: ObservableObject {
             try storage.write(JSONEncoder().encode(history))
             persistenceWarning = nil
         } catch {
-            persistenceWarning = "Room changes are not saved yet. Tap Retry to keep them after restarting."
+            persistenceWarning = L("Room changes are not saved yet. Tap Retry to keep them after restarting.")
         }
     }
 }

@@ -27,5 +27,5 @@ public struct RoomChatPacket: Codable, Sendable {
 
 public enum RoomChatError: LocalizedError {
     case tooLarge
-    public var errorDescription: String? { "This message is too long to send. Shorten it and try again." }
+    public var errorDescription: String? { CoreL("This message is too long to send. Shorten it and try again.") }
 }

@@ -52,7 +52,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         self.systemCall = systemCall
         super.init()
         videoSubscriptions.onError = { [weak self] error in
-            self?.onMediaStatus?("Video preference could not update: \(error.localizedDescription)")
+            self?.onMediaStatus?(L("Video preference could not update: %@", error.localizedDescription))
         }
         audio.onStatus = { [weak self] in self?.onMediaStatus?($0) }
         audio.onRouteChanged = { [weak self] in
@@ -167,7 +167,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                 self.audioAvailable = false
                 self.audioGate.deactivate()
                 if self.hasConnected { self.catchUp.begin(.audioInterruption) }
-                self.onMediaStatus?("Jam audio paused by iOS")
+                self.onMediaStatus?(L("Jam audio paused by iOS"))
                 try? AudioManager.shared.setEngineAvailability(.none)
             }
         }
@@ -217,7 +217,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         } catch {
             audioAvailable = false
             audioGate.markInterrupted()
-            onMediaStatus?("Audio could not resume: \(error.localizedDescription)")
+            onMediaStatus?(L("Audio could not resume: %@", error.localizedDescription))
         }
     }
 
@@ -250,7 +250,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                 print("Jam engine: join failed: \(error.localizedDescription)")
                 #endif
                 self.joinTask = nil
-                self.onMediaStatus?("Could not connect to jam: \(error.localizedDescription)")
+                self.onMediaStatus?(L("Could not connect to jam: %@", error.localizedDescription))
                 self.finish(failed: true)
             }
         }
@@ -292,7 +292,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                     self?.systemCall.setMuted(true)
                 }
                 self?.updatePiPMicrophoneStatus()
-                self?.onMediaStatus?("Microphone unavailable: \(error.localizedDescription)")
+                self?.onMediaStatus?(L("Microphone unavailable: %@", error.localizedDescription))
             }
         }
     }
@@ -312,7 +312,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                     self?.cameraIntentOn = false
                     self?.callView?.setCamera(false)
                 }
-                self?.onMediaStatus?("Camera unavailable: \(error.localizedDescription)")
+                self?.onMediaStatus?(L("Camera unavailable: %@", error.localizedDescription))
             }
         }
     }
@@ -328,7 +328,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             } catch let error as LiveKitError where error.type == .cancelled {
                 self?.callView?.render(room: room)
             } catch {
-                self?.onMediaStatus?("Screen sharing unavailable: \(error.localizedDescription)")
+                self?.onMediaStatus?(L("Screen sharing unavailable: %@", error.localizedDescription))
             }
         }
     }
@@ -351,7 +351,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
               let capturer = track.capturer as? CameraCapturer else { return }
         Task { @MainActor [weak self] in
             do { _ = try await capturer.switchCameraPosition() }
-            catch { self?.onMediaStatus?("Camera could not switch: \(error.localizedDescription)") }
+            catch { self?.onMediaStatus?(L("Camera could not switch: %@", error.localizedDescription)) }
         }
     }
 
@@ -475,7 +475,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         Task { @MainActor [weak self] in
             guard let self, self.room === room else { return }
             self.chat.append(ChatEntry(id: packet.id,
-                                       sender: participant?.name ?? "Musician",
+                                       sender: participant?.name ?? L("Musician"),
                                        text: packet.text, sentAt: Date(), isOwn: false))
         }
     }
@@ -484,7 +484,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         guard hasConnected else { return }
         let packet = RoomChatPacket(id: UUID().uuidString, text: text)
         guard (try? packet.encoded()) != nil else { return }
-        chat.append(ChatEntry(id: packet.id, sender: "You", text: text,
+        chat.append(ChatEntry(id: packet.id, sender: L("You"), text: text,
                               sentAt: Date(), isOwn: true, delivery: .pending))
         publishChat(id: packet.id, text: text)
     }
@@ -502,7 +502,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             } catch {
                 guard let self, self.room === room, !self.leaveRequested else { return }
                 self.chat.setDelivery(.failed, for: packet.id)
-                self.onMediaStatus?("Chat could not send: \(error.localizedDescription)")
+                self.onMediaStatus?(L("Chat could not send: %@", error.localizedDescription))
             }
         }
     }

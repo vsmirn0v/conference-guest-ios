@@ -7,9 +7,9 @@ enum ConferenceDisplayMode: CaseIterable {
 
     var title: String {
         switch self {
-        case .all: "All video"
-        case .screenShares: "Screen shares"
-        case .audioOnly: "Audio only"
+        case .all: L("All video")
+        case .screenShares: L("Screen shares")
+        case .audioOnly: L("Audio only")
         }
     }
 

@@ -88,7 +88,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         #if DEBUG
         print("System call: requesting start")
         #endif
-        let handle = CXHandle(type: .generic, value: "Jam")
+        let handle = CXHandle(type: .generic, value: L("Jam"))
         let action = CXStartCallAction(call: id, handle: handle)
         action.isVideo = true
         request(CXTransaction(action: action)) { [weak self] error in

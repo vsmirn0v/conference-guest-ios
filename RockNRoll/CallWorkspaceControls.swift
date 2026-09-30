@@ -9,7 +9,7 @@ final class CallWorkspaceControls: ObservableObject {
     @Published var cameraOn = false
     @Published var onHold = false
     @Published var speakerOn = true
-    @Published var routeName = "Audio output"
+    @Published var routeName = L("Audio output")
 
     var invitationURL: URL?
     var roomIdentifier: String?

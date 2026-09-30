@@ -34,11 +34,11 @@ struct JoinView: View {
             HStack(spacing: 0) {
               if window.size.width >= 900 {
                   Form {
-                      if !favorites.isEmpty { roomSection("Favorites", rooms: favorites) }
+                      if !favorites.isEmpty { roomSection(L("Favorites"), rooms: favorites) }
                       if !recent.isEmpty {
-                          roomSection("Recent jams", rooms: showingAllRooms ? recent : Array(recent.prefix(3)))
+                          roomSection(L("Recent jams"), rooms: showingAllRooms ? recent : Array(recent.prefix(3)))
                           if recent.count > 3 {
-                              Button(showingAllRooms ? "Show fewer" : "See all \(recent.count) recent jams") {
+                              Button(showingAllRooms ? L("Show fewer") : L("See all %ld recent jams", recent.count)) {
                                   showingAllRooms.toggle()
                               }
                           }
@@ -52,14 +52,14 @@ struct JoinView: View {
                 MeetingContinuationView(continuation: continuation,
                                         busy: model.isJoining || model.isInConference || model.isLeaving,
                                         onJoinHere: { staleContinuation = $0; confirmingStaleContinuation = true })
-                Section("Join a jam") {
+                Section(L("Join a jam")) {
                     HStack {
-                        TextField("Invitation link", text: $model.invite)
+                        TextField(L("Invitation link"), text: $model.invite)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.URL)
                             .textContentType(.URL)
-                        Button("Paste") {
+                        Button(L("Paste")) {
                             if let link = UIPasteboard.general.string { model.invite = link }
                         }
                         .font(.subheadline.weight(.semibold))
@@ -67,7 +67,7 @@ struct JoinView: View {
                     Button { model.showingNameEditor = true } label: {
                         HStack {
                             Image(systemName: "person.crop.circle")
-                            Text(model.displayName.isEmpty ? "Add your name" : "Joining as \(model.displayName)")
+                            Text(model.displayName.isEmpty ? L("Add your name") : L("Joining as %@", model.displayName))
                                 .multilineTextAlignment(.leading)
                             Spacer(minLength: 4)
                             Image(systemName: "chevron.right")
@@ -75,16 +75,16 @@ struct JoinView: View {
                         }
                         .font(.subheadline)
                     }
-                    .accessibilityLabel("Edit your name, currently \(model.displayName)")
+                    .accessibilityLabel(L("Edit your name, currently %@", model.displayName))
                     if !model.displayName.isEmpty && !validDisplayName {
-                        Text("Enter a name of up to \(model.namePolicy.maximumNameScalars) characters before joining.")
+                        Text(L("Enter a name of up to %ld characters before joining.", model.namePolicy.maximumNameScalars))
                             .font(.footnote).foregroundStyle(.red)
                     }
                     Button { model.join() } label: {
                         HStack {
                             Spacer()
                             if model.isJoining { ProgressView().tint(canJoin ? .black : .primary) }
-                            Text(model.isJoining ? "Joining…" : "Join jam")
+                            Text(model.isJoining ? L("Joining…") : L("Join jam"))
                                 .font(.headline)
                                 .foregroundStyle(canJoin ? Color.black : Color.primary)
                             Spacer()
@@ -97,10 +97,10 @@ struct JoinView: View {
                     #if DEBUG
                     .accessibilityValue(model.testSwitchSequenceCompleted ? "Switch sequence connected" : "")
                     #endif
-                    Label("Microphone and camera start off", systemImage: "mic.slash")
+                    Label(L("Microphone and camera start off"), systemImage: "mic.slash")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    if model.status != "Enter a jam link to begin." {
+                    if model.status != L("Enter a jam link to begin.") {
                         Text(model.status).font(.footnote)
                             .foregroundStyle(model.statusIsError ? .red : .secondary)
                     }
@@ -108,54 +108,54 @@ struct JoinView: View {
                         Text(media).font(.footnote).foregroundStyle(.red)
                     }
                     if model.isJoining || model.isInConference {
-                        Button("Leave jam", role: .destructive) { model.leave() }
+                        Button(L("Leave jam"), role: .destructive) { model.leave() }
                     }
                 }
                 if let warning = catchUp.persistenceWarning, catchUp.timeline.intervals.isEmpty {
                     Section {
                         Text(warning).font(.footnote).foregroundStyle(.orange)
-                        Button("Delete local history") { catchUp.finishMeeting() }
+                        Button(L("Delete local history")) { catchUp.finishMeeting() }
                     }
                 }
                 if let warning = history.persistenceWarning {
                     Section {
                         Text(warning).font(.footnote).foregroundStyle(.orange)
-                        Button("Retry saving rooms") { history.retrySave() }
+                        Button(L("Retry saving rooms")) { history.retrySave() }
                     }
                 }
                 if sync.offerSync && !model.isJoining && !model.isInConference {
-                    Section("Keep your jams across devices") {
-                        Text("Sync your name, favorites and recent jams through your private iCloud account.")
+                    Section(L("Keep your jams across devices")) {
+                        Text(L("Sync your name, favorites and recent jams through your private iCloud account."))
                             .font(.subheadline)
-                        Button("Enable iCloud Sync") {
+                        Button(L("Enable iCloud Sync")) {
                             sync.dismissOffer(); sync.setEnabled(true); showingSettings = true
                         }
-                        Button("Not now") { sync.dismissOffer() }.foregroundStyle(.secondary)
+                        Button(L("Not now")) { sync.dismissOffer() }.foregroundStyle(.secondary)
                     }
                 }
                 if window.size.width < 900 && !favorites.isEmpty {
-                    roomSection("Favorites", rooms: favorites)
+                    roomSection(L("Favorites"), rooms: favorites)
                 }
                 if window.size.width < 900 && !recent.isEmpty {
-                    roomSection("Recent jams", rooms: showingAllRooms ? recent : Array(recent.prefix(3)))
+                    roomSection(L("Recent jams"), rooms: showingAllRooms ? recent : Array(recent.prefix(3)))
                     if recent.count > 3 {
-                        Button(showingAllRooms ? "Show fewer" : "See all \(recent.count) recent jams") {
+                        Button(showingAllRooms ? L("Show fewer") : L("See all %ld recent jams", recent.count)) {
                             showingAllRooms.toggle()
                         }
                     }
                 }
                 if !catchUp.timeline.intervals.isEmpty && !model.isInConference {
-                    Section("Catch up") {
-                        Button("Review missed section") { showingSavedHistory = true }
+                    Section(L("Catch up")) {
+                        Button(L("Review missed section")) { showingSavedHistory = true }
                     }
                 }
                 Section {
-                    Button("Join a practice room") {
+                    Button(L("Join a practice room")) {
                         model.receive(url: URL(string: "https://rock.glowsoft.ru/jams/test")!)
                         model.join()
                     }
                 } footer: {
-                    Text("Practice with a shared music group. Other visitors can join; your microphone and camera start off.")
+                    Text(L("Practice with a shared music group. Other visitors can join; your microphone and camera start off."))
                 }
             }
             .frame(maxWidth: window.size.width >= 900 ? 720 : .infinity)
@@ -167,12 +167,12 @@ struct JoinView: View {
                     Button { showingSettings = true } label: {
                         Image(systemName: "person.crop.circle")
                     }
-                    .accessibilityLabel("Profile and settings")
+                    .accessibilityLabel(L("Profile and settings"))
                 }
             }
             .safeAreaInset(edge: .bottom) {
                 if showingUndo {
-                    Button("Room removed · Undo") {
+                    Button(L("Room removed · Undo")) {
                         history.undoRemoval()
                         showingUndo = false
                     }
@@ -184,13 +184,13 @@ struct JoinView: View {
                 SavedCatchUpView(store: catchUp)
             }
             .sheet(isPresented: $showingSettings) { settingsSheet }
-            .alert("Join here without moving the other device?",
+            .alert(L("Join here without moving the other device?"),
                                 isPresented: $confirmingStaleContinuation,
                                 presenting: staleContinuation) { jam in
-                Button("Join with mic and camera off") { model.joinFromContinuation(jam, quiet: false) }
-                Button("Cancel", role: .cancel) {}
+                Button(L("Join with mic and camera off")) { model.joinFromContinuation(jam, quiet: false) }
+                Button(L("Cancel"), role: .cancel) {}
             } message: { _ in
-                Text("The other device may still play meeting audio. Disconnect it or use headphones to avoid echo.")
+                Text(L("The other device may still play meeting audio. Disconnect it or use headphones to avoid echo."))
             }
             .sheet(isPresented: $model.showingNameEditor, onDismiss: model.nameEditorDismissed) { nameSheet }
             .sheet(item: $model.siteSelection) { selection in
@@ -204,20 +204,20 @@ struct JoinView: View {
                 NavigationStack {
                     Form {
                         Section {
-                            TextField("New jam name", text: $roomAlias)
+                            TextField(L("New jam name"), text: $roomAlias)
                                 .textInputAutocapitalization(.words)
                         } footer: {
-                            Text("Current: \(room.displayTitle). Only you see this name.")
+                            Text(L("Current: %@. Only you see this name.", room.displayTitle))
                         }
                     }
-                    .navigationTitle("Name this jam")
+                    .navigationTitle(L("Name this jam"))
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") { editingRoom = nil }
+                            Button(L("Cancel")) { editingRoom = nil }
                         }
                         ToolbarItem(placement: .confirmationAction) {
-                            Button("Save") {
+                            Button(L("Save")) {
                                 model.setAlias(roomAlias, for: room)
                                 editingRoom = nil
                             }
@@ -228,11 +228,11 @@ struct JoinView: View {
                 .presentationDetents([.medium])
             }
             .confirmationDialog(
-                "Leave the current jam and open the new invitation?",
+                L("Leave the current jam and open the new invitation?"),
                 isPresented: $model.showSwitchConfirmation
             ) {
-                Button("Leave current jam") { model.replaceWithPending() }
-                Button("Stay here", role: .cancel) { model.dismissPending() }
+                Button(L("Leave current jam")) { model.replaceWithPending() }
+                Button(L("Stay here"), role: .cancel) { model.dismissPending() }
             }
             Spacer(minLength: 0)
             }
@@ -254,23 +254,23 @@ struct JoinView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Name shown to musicians", text: $model.displayName)
+                    TextField(L("Name shown to musicians"), text: $model.displayName)
                         .textContentType(.nickname)
                         .autocorrectionDisabled()
-                    Button("Choose my contact") { showingContactPicker = true }
+                    Button(L("Choose my contact")) { showingContactPicker = true }
                 } header: {
-                    Text("Your name")
+                    Text(L("Your name"))
                 } footer: {
-                    Text("This name is saved for future jams. Use up to \(model.namePolicy.maximumNameScalars) characters.")
+                    Text(L("This name is saved for future jams. Use up to %ld characters.", model.namePolicy.maximumNameScalars))
                 }
             }
-            .navigationTitle("Your name")
+            .navigationTitle(L("Your name"))
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { model.showingNameEditor = false }
+                    Button(L("Cancel")) { model.showingNameEditor = false }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(model.isNameRequiredForJoin ? "Join jam" : "Done") { model.confirmNameEntry() }
+                    Button(model.isNameRequiredForJoin ? L("Join jam") : L("Done")) { model.confirmNameEntry() }
                         .disabled(!validDisplayName)
                 }
             }
@@ -298,19 +298,19 @@ struct JoinView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Rejoin \(room.displayTitle) on \(room.invitationURL.host() ?? "meeting website")")
+                    .accessibilityLabel(L("Rejoin %@ on %@", room.displayTitle, room.invitationURL.host() ?? L("meeting website")))
                     .contextMenu {
                         Button { startRename(room) } label: {
-                            Label("Rename", systemImage: "pencil")
+                            Label(L("Rename"), systemImage: "pencil")
                         }
                         Button {
                             UIPasteboard.general.url = room.invitationURL
                         } label: {
-                            Label("Copy invitation", systemImage: "doc.on.doc")
+                            Label(L("Copy invitation"), systemImage: "doc.on.doc")
                         }
                         if room.alias != nil {
                             Button { model.setAlias(nil, for: room) } label: {
-                                Label("Use original name", systemImage: "arrow.uturn.backward")
+                                Label(L("Use original name"), systemImage: "arrow.uturn.backward")
                             }
                         }
                     }
@@ -319,10 +319,10 @@ struct JoinView: View {
                             .frame(width: 44, height: 44)
                             .foregroundStyle(room.isStarred ? linkAccent : .secondary)
                     }
-                    .accessibilityLabel(room.isStarred ? "Unstar \(room.displayTitle)" : "Star \(room.displayTitle)")
+                    .accessibilityLabel(room.isStarred ? L("Unstar %@", room.displayTitle) : L("Star %@", room.displayTitle))
                 }
                 .swipeActions {
-                    Button("Remove", role: .destructive) {
+                    Button(L("Remove"), role: .destructive) {
                         model.remove(room)
                         showingUndo = true
                         let token = UUID()
@@ -332,7 +332,7 @@ struct JoinView: View {
                             if undoToken == token { showingUndo = false }
                         }
                     }
-                    Button("Rename") { startRename(room) }
+                    Button(L("Rename")) { startRename(room) }
                 }
             }
         }
@@ -344,37 +344,37 @@ struct JoinView: View {
     }
 
     private func roomSubtitle(_ room: RecentRoom) -> String {
-        "\(room.identifier) · \(room.invitationURL.host() ?? "Meeting") · \(room.lastJoined.formatted(.relative(presentation: .named)))"
+        "\(room.identifier) · \(room.invitationURL.host() ?? L("Meeting")) · \(room.lastJoined.formatted(.relative(presentation: .named)))"
     }
 
     private var settingsSheet: some View {
         NavigationStack {
             Form {
-                Section("Your name") {
-                    TextField("Your name", text: $model.displayName)
+                Section(L("Your name")) {
+                    TextField(L("Your name"), text: $model.displayName)
                         .textContentType(.nickname)
                         .autocorrectionDisabled()
-                    Button("Choose my contact") { showingContactPicker = true }
+                    Button(L("Choose my contact")) { showingContactPicker = true }
                 }
-                Section("Compatible meeting website") {
-                    TextField("HTTPS website address", text: $model.guestWebsiteOrigin)
+                Section(L("Compatible meeting website")) {
+                    TextField(L("HTTPS website address"), text: $model.guestWebsiteOrigin)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                    Text("Fallback for app links that omit their website. Links with an embedded host open directly.")
+                    Text(L("Fallback for app links that omit their website. Links with an embedded host open directly."))
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 RoomSyncSettingsView(sync: sync, continuation: continuation)
-                Section("About") {
-                    Text("Small music groups in Yerevan can plan sessions and share ideas live.")
-                    Link("Community", destination: URL(string: "https://rock.glowsoft.ru/community")!)
-                    Link("Privacy policy", destination: URL(string: "https://rock.glowsoft.ru/privacy")!)
-                    Link("Support", destination: URL(string: "https://rock.glowsoft.ru/support")!)
-                    Link("Third-party notices", destination: URL(string: "https://rock.glowsoft.ru/notices")!)
+                Section(L("About")) {
+                    Text(L("Small music groups in Yerevan can plan sessions and share ideas live."))
+                    Link(L("Community"), destination: URL(string: "https://rock.glowsoft.ru/community")!)
+                    Link(L("Privacy policy"), destination: URL(string: "https://rock.glowsoft.ru/privacy")!)
+                    Link(L("Support"), destination: URL(string: "https://rock.glowsoft.ru/support")!)
+                    Link(L("Third-party notices"), destination: URL(string: "https://rock.glowsoft.ru/notices")!)
                 }
             }
-            .navigationTitle("Profile and settings")
-            .toolbar { Button("Done") { showingSettings = false } }
+            .navigationTitle(L("Profile and settings"))
+            .toolbar { Button(L("Done")) { showingSettings = false } }
             .sheet(isPresented: $showingContactPicker) {
                 ContactNamePicker(isPresented: $showingContactPicker) { model.displayName = $0 }
             }
@@ -395,7 +395,7 @@ struct MeetingWebsiteSelectionView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("This app link does not identify its meeting website. Choose one you trust to open the invitation.")
+                    Text(L("This app link does not identify its meeting website. Choose one you trust to open the invitation."))
                         .font(.footnote)
                     ForEach(rememberedOrigins, id: \.absoluteString) { origin in
                         Button(origin.host() ?? origin.absoluteString) {
@@ -403,20 +403,20 @@ struct MeetingWebsiteSelectionView: View {
                         }
                     }
                 } header: {
-                    Text("Previously used websites")
+                    Text(L("Previously used websites"))
                 }
-                Section("Another website") {
+                Section(L("Another website")) {
                     TextField("https://meeting.example.org", text: $website)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                    Button("Open invitation") { error = onChoose(website) }
+                    Button(L("Open invitation")) { error = onChoose(website) }
                         .disabled(website.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     if let error { Text(error).foregroundStyle(.red) }
                 }
             }
-            .navigationTitle("Meeting website")
-            .toolbar { Button("Cancel", action: onCancel) }
+            .navigationTitle(L("Meeting website"))
+            .toolbar { Button(L("Cancel"), action: onCancel) }
         }
         .presentationDetents([.medium, .large])
     }
@@ -460,16 +460,16 @@ private struct SavedCatchUpView: View {
     var body: some View {
         NavigationStack {
             CatchUpCardsView(store: store)
-            .navigationTitle("Catch up")
+            .navigationTitle(L("Catch up"))
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button(L("Done")) { dismiss() }
                 }
             }
             .safeAreaInset(edge: .bottom) {
                 HStack {
                     Spacer()
-                    Button("Delete local history", role: .destructive) {
+                    Button(L("Delete local history"), role: .destructive) {
                         store.finishMeeting()
                         dismiss()
                     }

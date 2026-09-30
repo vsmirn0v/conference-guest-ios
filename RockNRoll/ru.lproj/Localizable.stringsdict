@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>%ld characters over the limit</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>Лишние %ld символа</string>
+			<key>many</key>
+			<string>Лишние %ld символов</string>
+			<key>one</key>
+			<string>Лишний %ld символ</string>
+			<key>other</key>
+			<string>Лишние %ld символа</string>
+		</dict>
+	</dict>
+	<key>%ld musicians</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>%ld музыканта</string>
+			<key>many</key>
+			<string>%ld музыкантов</string>
+			<key>one</key>
+			<string>%ld музыкант</string>
+			<key>other</key>
+			<string>%ld музыканта</string>
+		</dict>
+	</dict>
+	<key>%ld participants</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>%ld участника</string>
+			<key>many</key>
+			<string>%ld участников</string>
+			<key>one</key>
+			<string>%ld участник</string>
+			<key>other</key>
+			<string>%ld участника</string>
+		</dict>
+	</dict>
+	<key>Catch up, %ld missed sections</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>Пропущено %ld фрагмента</string>
+			<key>many</key>
+			<string>Пропущено %ld фрагментов</string>
+			<key>one</key>
+			<string>Пропущен %ld фрагмент</string>
+			<key>other</key>
+			<string>Пропущено %ld фрагмента</string>
+		</dict>
+	</dict>
+	<key>Chat, %ld unread</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>Чат, %ld непрочитанных сообщения</string>
+			<key>many</key>
+			<string>Чат, %ld непрочитанных сообщений</string>
+			<key>one</key>
+			<string>Чат, %ld непрочитанное сообщение</string>
+			<key>other</key>
+			<string>Чат, %ld непрочитанных сообщения</string>
+		</dict>
+	</dict>
+	<key>See all %ld recent jams</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>Показать %ld недавних джема</string>
+			<key>many</key>
+			<string>Показать %ld недавних джемов</string>
+			<key>one</key>
+			<string>Показать %ld недавний джем</string>
+			<key>other</key>
+			<string>Показать %ld недавних джема</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

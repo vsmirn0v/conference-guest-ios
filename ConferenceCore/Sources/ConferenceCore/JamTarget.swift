@@ -30,5 +30,5 @@ public struct JamTarget: Equatable, Sendable {
 
 public enum JamTargetError: LocalizedError {
     case invalidLink
-    public var errorDescription: String? { "Enter a valid Rock’n’Roll jam link." }
+    public var errorDescription: String? { CoreL("Enter a valid Rock’n’Roll jam link.") }
 }

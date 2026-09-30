@@ -5,9 +5,9 @@ enum PiPMicrophoneStatus: CaseIterable {
 
     var title: String {
         switch self {
-        case .muted: return "You · Muted"
-        case .on: return "You · Mic on"
-        case .unavailable: return "You · Mic unavailable"
+        case .muted: return L("You · Muted")
+        case .on: return L("You · Mic on")
+        case .unavailable: return L("You · Mic unavailable")
         }
     }
 
@@ -42,7 +42,7 @@ final class FloatingVideoContentView: UIView {
         badge.isAccessibilityElement = true
         badge.accessibilityTraits = .staticText
         badge.accessibilityIdentifier = "Floating microphone status"
-        badge.accessibilityLabel = "Your microphone"
+        badge.accessibilityLabel = L("Your microphone")
         icon.contentMode = .scaleAspectFit
         icon.preferredSymbolConfiguration = .init(pointSize: 12, weight: .semibold)
         label.font = .systemFont(ofSize: 11, weight: .semibold)
@@ -71,9 +71,9 @@ final class FloatingVideoContentView: UIView {
         icon.tintColor = color
         label.textColor = color
         switch microphoneStatus {
-        case .muted: badge.accessibilityValue = "Muted"
-        case .on: badge.accessibilityValue = "On"
-        case .unavailable: badge.accessibilityValue = "Unavailable"
+        case .muted: badge.accessibilityValue = L("Muted")
+        case .on: badge.accessibilityValue = L("On")
+        case .unavailable: badge.accessibilityValue = L("Unavailable")
         }
         setNeedsLayout()
     }
@@ -87,7 +87,7 @@ final class FloatingVideoContentView: UIView {
         let fullWidth = (fullTitle as NSString).size(withAttributes: [.font: label.font!]).width
         // Leave most of a small PiP window clear; retain "You" to distinguish
         // the local microphone from the participant whose video is displayed.
-        label.text = fullWidth + 33 <= available * 0.72 ? fullTitle : "You"
+        label.text = fullWidth + 33 <= available * 0.72 ? fullTitle : L("You")
         let textSize = label.sizeThatFits(CGSize(width: available, height: 24))
         let width = min(available, ceil(textSize.width) + 33)
         let height: CGFloat = 26

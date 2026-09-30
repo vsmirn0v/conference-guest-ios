@@ -4,9 +4,9 @@ public enum BoundedHTTPError: LocalizedError {
     case invalidOrigin, oversizedBody, rejectedRedirect
     public var errorDescription: String? {
         switch self {
-        case .invalidOrigin: "This jam did not provide a secure HTTPS connection."
-        case .oversizedBody: "This jam returned an unexpectedly large response. Try again later."
-        case .rejectedRedirect: "This jam redirected to another website. Use an invitation for that website instead."
+        case .invalidOrigin: CoreL("This jam did not provide a secure HTTPS connection.")
+        case .oversizedBody: CoreL("This jam returned an unexpectedly large response. Try again later.")
+        case .rejectedRedirect: CoreL("This jam redirected to another website. Use an invitation for that website instead.")
         }
     }
 }

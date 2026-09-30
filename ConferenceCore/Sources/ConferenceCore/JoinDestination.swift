@@ -46,5 +46,5 @@ public enum JoinDestination: Equatable, Sendable {
 
 public enum JoinDestinationError: LocalizedError {
     case invalidLink
-    public var errorDescription: String? { "Enter a complete jam invitation link." }
+    public var errorDescription: String? { CoreL("Enter a complete jam invitation link.") }
 }

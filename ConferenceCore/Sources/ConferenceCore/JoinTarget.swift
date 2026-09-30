@@ -71,6 +71,6 @@ public enum JoinTargetError: LocalizedError, Equatable {
     case invalidLink
 
     public var errorDescription: String? {
-        "Enter a complete HTTPS meeting invitation link."
+        CoreL("Enter a complete HTTPS meeting invitation link.")
     }
 }
