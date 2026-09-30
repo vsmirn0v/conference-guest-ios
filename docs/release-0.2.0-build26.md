@@ -51,5 +51,17 @@ Strict deep signature verification passed. Main app and both extensions report
 0.2.0 (26), minimum iOS 16.0. CloudKit uses Production and the existing container.
 The archive uses Xcode automatic development signing; the App Store Connect export
 applies distribution signing separately.
+Main executable SHA-256:
+`1a3e6a5003ab70134da5730c784797b7e3eb95ef0f537bf005926a0ee63cbad3`.
 
-Upload and TestFlight group availability: pending verification.
+Upload succeeded on 2026-09-30 (`/tmp/rock-build26-upload.log`, EXPORT SUCCEEDED).
+App Store Connect received 0.2.0 (26) and showed Processing at 19:38 MSK.
+Existing bundled dependency dSYM warnings remain; they limit symbolication inside
+those frameworks and did not block delivery.
+App Store Connect verification completed 2026-09-30 at 19:46 MSK:
+both Rock’n’Roll Internal and Rock’n’Roll Public Beta explicitly list 0.2.0 (26)
+as Testing, with 90 days remaining. Automatically notify testers was enabled at
+submission. Build UUID: `ac912b06-a5aa-4d54-ae24-aa6b6d2909ef`.
+Public invitation: https://testflight.apple.com/join/Hd13C9U3.
+Verification screenshots: `/tmp/rock-build26-internal-testing.jpg` and
+`/tmp/rock-build26-public-testing.jpg`.
