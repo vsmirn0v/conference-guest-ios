@@ -85,4 +85,10 @@ archive. TestFlight availability is verified separately from upload.
 Upload succeeded on 2026-09-30 (`/tmp/rock-build25-upload.log`, EXPORT SUCCEEDED).
 Apple received 0.2.0 (25). Existing bundled framework dSYM warnings remain;
 they limit symbolication inside those dependencies and did not block upload.
-Internal/public group availability is pending final App Store Connect verification.
+App Store Connect verification completed 2026-09-30 at 18:05 MSK:
+both Rock’n’Roll Internal and Rock’n’Roll Public Beta explicitly list
+0.2.0 (25) as Testing, with 90 days remaining. Automatically notify testers
+was enabled at submission. Build UUID: `63d8d70e-079f-433d-a214-8c93d018674f`.
+Public invitation: https://testflight.apple.com/join/Hd13C9U3.
+Verification screenshots: `/tmp/rock-build25-internal-testing.png` and
+`/tmp/rock-build25-public-testing.png`.
