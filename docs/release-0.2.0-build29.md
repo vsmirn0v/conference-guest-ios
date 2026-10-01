@@ -10,7 +10,8 @@
   actions take precedence over the idle self tile.
 - Hidden source tiles do not duplicate the main stage's accessibility content.
 
-Implementation: `9a3c149`. Detailed validation and evidence are in
+Implementation: `9a3c149`; release source/version bump: `8c44102`.
+Detailed validation and evidence are in
 `meeting-navigation-regressions.md`. This release retains minimum iOS 16.0.
 
 ## Validation
@@ -39,4 +40,12 @@ uses Production with team `5V64BP2H3P`.
 Archive executable SHA-256:
 `effff9e1e647f81aa668e115bdbec47a47da094b04c0496d2dc74511e18d495b`.
 
-App Store Connect verification will be recorded below after delivery.
+Upload succeeded on 2026-10-01 (`/tmp/rock-build29-upload.log`, EXPORT
+SUCCEEDED). Existing dependency dSYM warnings did not block delivery; they
+limit symbolication inside those frameworks.
+
+App Store Connect verification on 2026-10-01: build 29 is **Testing**, assigned
+to Rock’n’Roll Internal and Rock’n’Roll Public Beta. Automatic tester
+notification was enabled. Build ID: `278ee7d8-0a54-4fe8-aeba-75e958448ba4`.
+Public invitation: https://testflight.apple.com/join/Hd13C9U3.
+Local publication proof: `/tmp/rock-build29-testflight.png`.

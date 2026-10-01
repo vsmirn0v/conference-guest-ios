@@ -1,6 +1,7 @@
 # Phone navigation and solo meeting regression fixes
 
-2026-10-01. These changes follow build 28 and are not yet in a distributed beta.
+2026-10-01. These changes follow build 28 and are released in 0.2.0 (29),
+verified Testing in both internal and public TestFlight groups.
 
 ## Behaviour
 
