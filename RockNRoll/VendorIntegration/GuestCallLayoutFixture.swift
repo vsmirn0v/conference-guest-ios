@@ -20,25 +20,34 @@ final class GuestCallLayoutFixture: UIViewController {
         let preview = LocalSharePreview()
         let catchUp = CatchUpStore()
         catchUp.enter(roomKey: "guest-layout-\(UUID().uuidString)")
+        let scenario = ProcessInfo.processInfo.environment["CONFERENCE_TEST_GUEST_SCENARIO"]
+        let solo = scenario == "solo"
         controls = CallControls(localPreview: preview, state: nil, coordinator: nil, router: nil,
             catchUp: catchUp, chat: ChatStore(), initialDisplayMode: .all,
-            invitationURL: nil, roomIdentifier: "fixture",
+            invitationURL: URL(string: "https://rock.glowsoft.ru/jams/test"), roomIdentifier: "fixture",
             onDisplayMode: { [weak self] mode in self?.streams.displayMode = mode },
             onFloat: {}, onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
             onMicrophoneState: { _ in }, onCameraState: { _ in })
-        for (id, name, share) in [("share", "Ani’s arrangement", true), ("camera", "Aram", false)] {
+        let entries: [(String, String, Bool)] = solo ? [("self", "Your contact", false)] :
+            [("share", "Ani’s arrangement", true), ("camera", "Aram", false)]
+        for (id, name, share) in entries {
             let renderer = RTCMTLVideoView()
             renderers[id] = renderer
-            let model = JazzParticipantViewModel(name: name, isAudioOn: true, isVideoOn: !share,
-                isPinned: false, isSharingScreen: share, isLocal: false, id: id,
+            let model = JazzParticipantViewModel(name: name, isAudioOn: !solo, isVideoOn: !solo && !share,
+                isPinned: false, isSharingScreen: share, isLocal: solo, id: id,
                 isDominantSpeaker: false, shouldShowParticipantInfo: true,
-                isZoomable: share, watermarkState: .hidden, displayMode: .speaker)
+                isZoomable: share, watermarkState: .hidden,
+                displayMode: scenario == "compact" && !share ? .pip : .speaker)
             let tile = streams.makeView(model: model, video: renderer)
             views[id] = tile
             tile.frame = CGRect(x: 0, y: 0, width: 200, height: 200)
             view.addSubview(tile)
+            if scenario == "compact" && !share { tile.frame = .zero; tile.isHidden = true }
         }
-        streams.updateActiveMedia(sharing: ["share"], cameras: ["camera"], participants: ["share", "camera"])
+        streams.updateParticipants(entries.map { id, name, share in
+            GuestStreamViews.Participant(id: id, name: name, isLocal: solo,
+                microphoneOn: !solo, cameraOn: !solo && !share, sharing: share)
+        })
         streams.onStagePresentation = { [weak self] in self?.controls.setStagePresentation($0) }
         streams.onPreferredVideo = { [weak self] _, name, _ in self?.selectedName = name }
         controls.onBrowse = { [weak self] in self?.streams.browse($0) }
@@ -47,6 +56,13 @@ final class GuestCallLayoutFixture: UIViewController {
         controls.frame = view.bounds
         controls.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(controls)
+        controls.setWaitingForOthers(solo)
+        if solo {
+            // A late SDK self-tile update must not cover the invitation.
+            controls.setStagePresentation(.init(target: .init(participant: "self", isShare: false),
+                name: "Your contact", microphoneOn: false, watermark: nil, active: false,
+                automatic: true, count: 1, browsing: false))
+        }
         processor.onSample = { [weak self] sample, _, rotation in self?.controls.showStageFrame(sample, rotation: rotation) }
         processor.setEnabled(true)
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in

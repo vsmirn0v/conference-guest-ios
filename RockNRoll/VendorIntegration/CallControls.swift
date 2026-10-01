@@ -432,9 +432,8 @@ final class CallControls: UIView {
                 if availabilityChanged {
                     self.configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
                 }
-                self.isWaitingForOthers = remote.isEmpty && !local.camera.isOn &&
-                    !local.screenSharing.isOn
-                self.updateDisplayBackdrops()
+                self.setWaitingForOthers(remote.isEmpty && !local.camera.isOn &&
+                    !local.screenSharing.isOn)
                 self.participantsButton.accessibilityLabel = L("Musicians, %ld", remote.count + 1)
                 let identifier = self.workspace.roomIdentifier.map { " · \($0)" } ?? ""
                 self.countLabel.text = remote.isEmpty ? L("Waiting for others%@", identifier) :
@@ -478,8 +477,7 @@ final class CallControls: UIView {
         stagePinned = !automatic
         surface.backgroundColor = .black
         surface.accessibilityIdentifier = "Meeting stage"
-        stageView.isHidden = name == nil || displayMode == .audioOnly ||
-            displayMode == .screenShares && !isShare
+        updateDisplayBackdrops()
         stageStatus.text = active ? L("Waiting for %@'s %@…", name ?? L("Musician"), isShare ? L("screen share") : L("video")) :
             L("%@ · %@ unavailable · Pinned", name ?? L("Musician"), isShare ? L("Screen share") : L("Camera"))
         stageStatus.isHidden = !active || stageHasFrame
@@ -522,6 +520,12 @@ final class CallControls: UIView {
             stageHasFrame = true
             stageStatus.isHidden = true
         }
+    }
+
+    func setWaitingForOthers(_ waiting: Bool) {
+        isWaitingForOthers = waiting
+        updateDisplayBackdrops()
+        surface.setNeedsLayout()
     }
 
     func setShareOffer(name: String?) {
@@ -711,7 +715,7 @@ final class CallControls: UIView {
         automaticView.configuration?.image = large ? UIImage(systemName: "arrow.triangle.2.circlepath") : nil
         header.frame = geometry.header; toolbar.frame = geometry.toolbar
         header.isHidden = focus.hidden; toolbar.isHidden = focus.hidden
-        navigation.isHidden = focus.hidden || navigationCount < 2 || stagePinned || displayMode == .audioOnly
+        navigation.isHidden = focus.hidden || navigationCount < 2 || stagePinned || displayMode == .audioOnly || isWaitingForOthers
         var stage = geometry.stage
         if !navigation.isHidden {
             let width: CGFloat = automaticView.isHidden ? 100 : 260
@@ -793,7 +797,7 @@ final class CallControls: UIView {
         audioOnlyBackdrop.isHidden = displayMode != .audioOnly
         screenSharesBackdrop.isHidden = displayMode != .screenShares || hasScreenShare
         waitingBackdrop.isHidden = displayMode != .all || !isWaitingForOthers
-        stageView.isHidden = stageName == nil || displayMode == .audioOnly ||
+        stageView.isHidden = stageName == nil || displayMode == .audioOnly || isWaitingForOthers ||
             displayMode == .screenShares && !stageIsShare
         shareOffer.isHidden = shareOffer.configuration?.title == nil || stageView.isHidden
     }

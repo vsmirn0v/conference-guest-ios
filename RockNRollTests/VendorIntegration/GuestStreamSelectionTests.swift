@@ -6,6 +6,116 @@ import XCTest
 
 @MainActor
 final class GuestStreamSelectionTests: XCTestCase {
+    func testBrowsingUsesRosterBeforeOffscreenRendererExists() async throws {
+        let streams = GuestStreamViews()
+        let cameraRenderer = UIView()
+        let camera = streams.makeView(model: model("a", pinned: false, share: false), video: cameraRenderer)
+        streams.updateParticipants([
+            .init(id: "a", name: "Aram", isLocal: false, microphoneOn: false, cameraOn: true, sharing: false),
+            .init(id: "b", name: "Ani", isLocal: false, microphoneOn: true, cameraOn: true, sharing: false)
+        ])
+        // Neither SDK source is visible; the main stage owns its own viewport.
+        var presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation.count, 2)
+        XCTAssertEqual(presentation.target?.participant, "a")
+        streams.browse(1)
+        presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation.target?.participant, "b")
+        XCTAssertEqual(presentation.name, "Ani")
+        XCTAssertTrue(presentation.browsing)
+        XCTAssertTrue(presentation.active, "Await the renderer rather than pretending its camera is off")
+
+        let renderer = UIView()
+        let pipModel = JazzParticipantViewModel(name: "Ani", isAudioOn: true, isVideoOn: true,
+            isPinned: false, isSharingScreen: false, isLocal: false, id: "b",
+            isDominantSpeaker: false, shouldShowParticipantInfo: true,
+            isZoomable: false, watermarkState: .hidden, displayMode: .pip)
+        let offscreen = streams.makeView(model: pipModel, video: renderer)
+        offscreen.isHidden = true
+        let selected = expectation(description: "Use the offscreen SDK renderer")
+        streams.onPreferredVideo = { viewport, _, _ in
+            XCTAssertTrue(viewport === offscreen)
+            selected.fulfill()
+        }
+        streams.refreshSelection()
+        await fulfillment(of: [selected], timeout: 2)
+        streams.onPreferredVideo = nil
+        withExtendedLifetime([camera, offscreen, cameraRenderer, renderer]) {}
+    }
+
+    func testRosterNavigationSurvivesCameraOffAndParticipantDeparture() async {
+        let streams = GuestStreamViews()
+        let first = GuestStreamViews.Participant(id: "a", name: "Aram", isLocal: false,
+            microphoneOn: false, cameraOn: false, sharing: false)
+        let second = GuestStreamViews.Participant(id: "b", name: "Ani", isLocal: false,
+            microphoneOn: true, cameraOn: false, sharing: false)
+        streams.updateParticipants([first, second])
+        var presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation.count, 2)
+        XCTAssertEqual(presentation.name, "Aram")
+        streams.browse(1)
+        presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation.name, "Ani")
+        XCTAssertFalse(presentation.active)
+        XCTAssertTrue(presentation.microphoneOn)
+        streams.updateParticipants([first])
+        presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation.count, 1)
+        XCTAssertEqual(presentation.name, "Aram")
+        XCTAssertFalse(presentation.browsing)
+        streams.reset()
+        presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation, .empty)
+    }
+
+    func testIdleSelfTileDoesNotReplaceWaitingScreen() async {
+        let streams = GuestStreamViews()
+        let renderer = UIView()
+        let idle = JazzParticipantViewModel(name: "My contact", isAudioOn: false, isVideoOn: false,
+            isPinned: false, isSharingScreen: false, isLocal: true, id: "self",
+            isDominantSpeaker: false, shouldShowParticipantInfo: true,
+            isZoomable: false, watermarkState: .hidden, displayMode: .speaker)
+        let tile = streams.makeView(model: idle, video: renderer)
+        streams.updateParticipants([.init(id: "self", name: "My contact", isLocal: true,
+            microphoneOn: false, cameraOn: false, sharing: false)])
+        let presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation, .empty)
+        withExtendedLifetime([tile, renderer]) {}
+    }
+
+    func testOneRemoteStillAllowsBrowsingSelfWithoutMakingSelfTheDefault() async {
+        let streams = GuestStreamViews()
+        let local = GuestStreamViews.Participant(id: "a-self", name: "My contact", isLocal: true,
+            microphoneOn: false, cameraOn: false, sharing: false)
+        let remote = GuestStreamViews.Participant(id: "b-peer", name: "Aram", isLocal: false,
+            microphoneOn: true, cameraOn: false, sharing: false)
+        streams.updateParticipants([local, remote])
+        var presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation.count, 2)
+        XCTAssertEqual(presentation.name, "Aram", "An idle self tile cannot become the automatic main stage")
+        streams.browse(1)
+        presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation.name, "My contact")
+        XCTAssertTrue(presentation.browsing)
+        streams.useAutomaticView()
+        presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation.name, "Aram")
+        streams.updateParticipants([local])
+        presentation = await stageSnapshot(streams)
+        XCTAssertNil(presentation.name)
+    }
+
+    private func stageSnapshot(_ streams: GuestStreamViews) async -> GuestStreamViews.Presentation {
+        var value = GuestStreamViews.Presentation.empty
+        let delivered = expectation(description: "Stage presentation")
+        streams.onStagePresentation = { value = $0; delivered.fulfill() }
+        streams.refreshSelection()
+        await fulfillment(of: [delivered], timeout: 2)
+        // Leave the app-owned stage attached; later refreshes may occur during browsing.
+        streams.onStagePresentation = { _ in }
+        return value
+    }
+
     func testSpeakerChangesKeepTheSharedScreenViewport() {
         let streams = GuestStreamViews()
         let renderer = UIView()

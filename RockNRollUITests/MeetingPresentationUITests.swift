@@ -1,14 +1,61 @@
 import XCTest
 
 final class MeetingPresentationUITests: XCTestCase {
-    private func launch(_ language: String = "en", autoHide: Bool = false, largeText: Bool = false) -> XCUIApplication {
+    private func launch(_ language: String = "en", autoHide: Bool = false, largeText: Bool = false,
+                        scenario: String? = nil) -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(\(language))", "-AppleLocale", "en_US"]
         if largeText { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
         if autoHide { app.launchArguments += ["-automaticallyHideMeetingControls", "YES"] }
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
+        app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = scenario
         app.launch()
         return app
+    }
+
+    func testCompactSDKLayoutAllowsButtonsAndSwipeNavigation() {
+        let app = launch(scenario: "compact")
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCTAssertTrue(app.buttons["Next stream"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Next stream"].isHittable)
+        app.buttons["Next stream"].tap()
+        XCTAssertTrue(app.buttons["Pin Aram video"].waitForExistence(timeout: 5))
+        app.buttons["Previous stream"].tap()
+        let viewport = app.scrollViews["Shared screen viewport"]
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5))
+        viewport.swipeLeft()
+        XCTAssertTrue(app.buttons["Pin Aram video"].waitForExistence(timeout: 5))
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.buttons["Next stream"].waitForExistence(timeout: 5))
+        app.buttons["Automatic view"].tap()
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5))
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(app.buttons["Next stream"].isHittable)
+    }
+
+    func testSoloMeetingKeepsInviteShortcutAboveSelfTile() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for language in ["en", "ru"] {
+            let app = launch(language, scenario: "solo")
+            let invite = app.buttons[language == "ru" ? "Пригласить музыкантов" : "Invite musicians"]
+            XCTAssertTrue(invite.waitForExistence(timeout: 10))
+            for orientation: UIDeviceOrientation in [.portrait, .landscapeLeft, .portrait] {
+                XCUIDevice.shared.orientation = orientation
+                let landscape = orientation == .landscapeLeft
+                let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    let frame = app.windows.firstMatch.frame
+                    return (frame.width > frame.height) == landscape && frame.contains(invite.frame) && invite.isHittable
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed)
+                XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").count, 0)
+                XCTAssertFalse(app.buttons["Next stream"].exists)
+            }
+            app.buttons[language == "ru" ? "Копировать ссылку" : "Copy link"].tap()
+            XCTAssertTrue(invite.exists)
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "Solo meeting invitation \(language)"; attachment.lifetime = .keepAlways; add(attachment)
+            app.terminate()
+        }
     }
     private func assertControls(_ app: XCUIApplication, language: String) {
         let labels = language == "ru" ? ["Включить микрофон", "Включить видео", "Транслировать экран", "Другие действия", "Выйти"] :

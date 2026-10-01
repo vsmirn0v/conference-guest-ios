@@ -761,6 +761,51 @@ final class ConferenceMediaUITests: XCTestCase {
         }
     }
 
+    func testGuestNavigationSwitchesBetweenLiveRemoteParticipants() throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"],
+              let peersJSON = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_PEERS"],
+              let data = peersJSON.data(using: .utf8),
+              let peers = try? JSONDecoder().decode([String].self, from: data), peers.count == 2 else {
+            throw XCTSkip("Provide a live guest invitation and two remote peer names.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone navigation QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
+        app.launch()
+        defer {
+            XCUIDevice.shared.orientation = .portrait
+            if app.buttons["Leave"].exists { app.buttons["Leave"].tap() }
+        }
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
+        XCTAssertTrue(app.buttons["Next stream"].waitForExistence(timeout: 15))
+        let names = peers + ["Phone navigation QA"]
+        let initial = try XCTUnwrap(peers.first { app.buttons["Pin \($0) video"].exists })
+        var visited: Set<String> = [initial]
+        var previousName = initial
+        for _ in 1..<names.count {
+            app.buttons["Next stream"].tap()
+            let changed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                names.contains { $0 != previousName && app.buttons["Pin \($0) video"].exists }
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+            previousName = try XCTUnwrap(names.first { app.buttons["Pin \($0) video"].exists })
+            visited.insert(previousName)
+        }
+        XCTAssertEqual(visited, Set(names))
+        let stage = app.otherElements["Meeting stage"]
+        stage.swipeLeft()
+        XCTAssertTrue(app.buttons["Pin \(initial) video"].waitForExistence(timeout: 5))
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.buttons["Previous stream"].isHittable)
+        app.buttons["Previous stream"].tap()
+        XCTAssertTrue(app.buttons["Pin \(previousName) video"].waitForExistence(timeout: 5))
+        app.buttons["Automatic view"].tap()
+        XCTAssertTrue(app.buttons["Next stream"].isHittable)
+    }
+
     func testGuestControlsSurviveRotationCycles() throws {
         guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
             throw XCTSkip("Provide a live guest invitation in the test environment.")
