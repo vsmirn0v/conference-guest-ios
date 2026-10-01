@@ -67,3 +67,7 @@ Strict deep signature verification passed. App and both extensions report
 0.2.0 (28), minimum iOS 16.0. English/Russian app resources are packaged.
 CloudKit uses Production with team `5V64BP2H3P`. Archive executable SHA-256:
 `33a5ad3e92617f21f52df34cfed2b52a157b09aece90ffd47c774b3394754931`.
+
+Upload succeeded on 2026-10-01 (`/tmp/rock-build28-upload.log`, EXPORT
+SUCCEEDED). Existing bundled dependency dSYM warnings did not block delivery;
+they limit symbolication inside those frameworks.

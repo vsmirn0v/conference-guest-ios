@@ -140,6 +140,8 @@ final class LocalSharePreviewCard: UIView {
     private let detail = UILabel()
     private var subscriptions = Set<AnyCancellable>()
     var onStop: (() -> Void)?
+    var onLayoutChanged: (() -> Void)?
+    private var preferredHeight: CGFloat = 0
     private var enlarged: UIViewController?
     private var lastLandscape: Bool?
 
@@ -262,6 +264,9 @@ final class LocalSharePreviewCard: UIView {
                 L("Last shared frame · Preview paused")
         }
         if !model.active { enlarged?.dismiss(animated: false); enlarged = nil }
+        let height = systemLayoutSizeFitting(CGSize(width: max(216, bounds.width), height: 0),
+            withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
+        if height != preferredHeight { preferredHeight = height; onLayoutChanged?() }
     }
 
     private func enlarge() {
