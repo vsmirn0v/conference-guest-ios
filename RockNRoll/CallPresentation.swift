@@ -6,21 +6,23 @@ struct CallPresentationGeometry {
     let toolbar: CGRect
     let stage: CGRect
     let rail: Bool
+    let compactHeader: Bool
 
     init(bounds: CGRect, insets: UIEdgeInsets, headerHeight: CGFloat,
          toolbarHeight: CGFloat = 68, hidden: Bool, largeText: Bool = false, allowsRail: Bool = true) {
         let safe = bounds.inset(by: insets).insetBy(dx: 8, dy: 4)
         rail = allowsRail && safe.width > safe.height && safe.height < 480 && safe.height >= 284
+        compactHeader = rail && !largeText
         if hidden {
             header = .zero; toolbar = .zero; stage = safe
             return
         }
         if rail {
-            let railWidth: CGFloat = largeText ? min(296, safe.width * 0.45) : 68
+            let railWidth: CGFloat = largeText ? min(296, safe.width * 0.45) : 56
             toolbar = CGRect(x: safe.maxX - railWidth, y: safe.minY, width: railWidth, height: safe.height)
             let width = max(0, safe.width - railWidth - 8)
-            header = CGRect(x: safe.minX + max(0, (width - 440) / 2), y: safe.minY,
-                            width: min(440, width), height: headerHeight)
+            header = CGRect(x: compactHeader ? safe.minX : safe.minX + max(0, (width - 440) / 2), y: safe.minY,
+                            width: compactHeader ? width : min(440, width), height: compactHeader ? 44 : headerHeight)
             stage = CGRect(x: safe.minX, y: header.maxY + 6, width: width,
                            height: max(0, safe.maxY - header.maxY - 6))
         } else {
@@ -38,6 +40,7 @@ struct CallPresentationGeometry {
 /// All captioned actions share an optical icon center and a caption baseline.
 final class AlignedCallButton: UIButton {
     var onMenuVisibilityChanged: ((Bool) -> Void)?
+    var showsCaption = true { didSet { if oldValue != showsCaption { setNeedsLayout() } } }
     private let symbolView = UIImageView()
     private let caption = UILabel()
 
@@ -74,9 +77,10 @@ final class AlignedCallButton: UIButton {
         let color = configuration?.baseForegroundColor ?? tintColor ?? .white
         caption.textColor = color; symbolView.tintColor = color
         caption.alpha = isEnabled ? 1 : 0.4; symbolView.alpha = caption.alpha
+        caption.isHidden = !showsCaption
         symbolView.image = configuration?.image?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 22, weight: .medium))
         let captionHeight = max(17, ceil(font.lineHeight))
-        let groupHeight: CGFloat = 26 + 4 + captionHeight
+        let groupHeight: CGFloat = showsCaption ? 26 + 4 + captionHeight : 26
         let top = max(2, (bounds.height - groupHeight) / 2)
         symbolView.frame = CGRect(x: bounds.midX - 13, y: top, width: 26, height: 26)
         caption.frame = CGRect(x: 1, y: top + 30, width: max(0, bounds.width - 2), height: captionHeight)
@@ -108,11 +112,173 @@ final class CallToolbar: UIView {
         let area = bounds.insetBy(dx: 4, dy: 5)
         let width = area.width / CGFloat(columns), height = area.height / CGFloat(rows)
         for (index, item) in items.enumerated() {
+            setCaptions(in: item, visible: !rail || largeText)
             item.frame = CGRect(x: area.minX + CGFloat(index % columns) * width,
                                 y: area.minY + CGFloat(index / columns) * height,
                                 width: width, height: height).insetBy(dx: 1, dy: 0)
         }
     }
+    private func setCaptions(in view: UIView, visible: Bool) {
+        if let button = view as? AlignedCallButton { button.showsCaption = visible }
+        else { view.subviews.forEach { setCaptions(in: $0, visible: visible) } }
+    }
+}
+
+/// A single stable row outside the media. The fuller portrait header remains intact.
+final class CompactCallHeader: UIView {
+    let details = UIButton(type: .system)
+    let previous = UIButton(type: .system)
+    let nextStream = UIButton(type: .system)
+    let automatic = UIButton(type: .system)
+    let pin = UIButton(type: .system)
+    let participants = UIButton(type: .system)
+    let missed = UIButton(type: .system)
+    let conversation = UIButton(type: .system)
+    let focus = UIButton(type: .system)
+    private let chatBadge = UILabel()
+    private let missedBadge = UILabel()
+    private var actions: [UIButton] { [previous, automatic, nextStream, pin, participants, missed, conversation, focus] }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        accessibilityIdentifier = "Compact meeting header"
+        backgroundColor = UIColor.black.withAlphaComponent(0.8)
+        layer.cornerRadius = 12
+        details.contentHorizontalAlignment = .leading
+        details.configuration = .plain()
+        details.configuration?.titleLineBreakMode = .byTruncatingTail
+        details.configuration?.image = UIImage(systemName: "info.circle")
+        details.configuration?.imagePadding = 6
+        details.accessibilityIdentifier = "Meeting details"
+        addSubview(details)
+        for (button, symbol, label) in [
+            (previous, "chevron.left", L("Previous stream")),
+            (automatic, "arrow.triangle.2.circlepath", L("Automatic view")),
+            (nextStream, "chevron.right", L("Next stream")),
+            (pin, "pin", L("Pin")),
+            (participants, "person.2.fill", L("Musicians")),
+            (missed, "clock.arrow.circlepath", L("Catch up")),
+            (conversation, "bubble.left", L("Chat")),
+            (focus, "arrow.up.left.and.arrow.down.right", L("Hide controls"))
+        ] {
+            button.configuration = .plain()
+            button.configuration?.image = UIImage(systemName: symbol)
+            button.accessibilityLabel = label
+            addSubview(button)
+        }
+        for (button, badge) in [(conversation, chatBadge), (missed, missedBadge)] {
+            badge.font = .systemFont(ofSize: 10, weight: .semibold)
+            badge.textAlignment = .center
+            badge.textColor = .black; badge.backgroundColor = .systemOrange
+            badge.layer.cornerRadius = 7; badge.clipsToBounds = true
+            badge.isAccessibilityElement = false; badge.isUserInteractionEnabled = false
+            button.addSubview(badge)
+        }
+        automatic.configuration?.image = nil
+        automatic.configuration?.title = L("Auto")
+        automatic.configuration?.contentInsets = .zero
+        automatic.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = UIFont.systemFont(ofSize: 12, weight: .medium)
+            return attributes
+        }
+    }
+    required init?(coder: NSCoder) { nil }
+
+    func update(name: String, navigation: Bool, browsing: Bool, pinned: Bool,
+                pinLabel: String?, participantsLabel: String?, chatValue: String?,
+                chatCount: Int = 0, missedCount: Int = 0, status: String?, speaking: String? = nil, focusAvailable: Bool) {
+        details.configuration?.title = name
+        details.configuration?.baseForegroundColor = status == nil ? .white : .systemOrange
+        details.accessibilityLabel = L("Jam details") + ", " + name
+        details.accessibilityValue = [status, speaking].compactMap { $0 }.joined(separator: ", ")
+        for button in [previous, automatic, nextStream] { button.isHidden = !navigation }
+        previous.isEnabled = !pinned; nextStream.isEnabled = !pinned
+        automatic.isEnabled = browsing || pinned
+        pin.isHidden = pinLabel == nil
+        pin.configuration?.image = UIImage(systemName: pinned ? "pin.fill" : "pin")
+        pin.configuration?.baseForegroundColor = pinned ? .systemOrange : .white
+        pin.accessibilityLabel = pinLabel
+        pin.accessibilityHint = L("Changes only your view")
+        participants.accessibilityLabel = participantsLabel
+        conversation.configuration?.image = UIImage(systemName: chatValue == nil ? "bubble.left" : "bubble.left.fill")
+        conversation.configuration?.baseForegroundColor = chatValue == nil ? .white : .systemOrange
+        conversation.accessibilityValue = chatValue
+        chatBadge.text = chatCount > 99 ? "99+" : String(chatCount)
+        chatBadge.isHidden = chatCount == 0
+        missed.isHidden = missedCount == 0
+        missed.configuration?.baseForegroundColor = .systemOrange
+        missed.accessibilityLabel = L("Catch up, %ld missed sections", missedCount)
+        missedBadge.text = missedCount > 99 ? "99+" : String(missedCount)
+        focus.isHidden = !focusAvailable
+        setNeedsLayout()
+    }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let visible = actions.filter { !$0.isHidden }
+        let start = bounds.maxX - CGFloat(visible.count) * 44 - 4
+        details.frame = CGRect(x: 4, y: 0, width: max(0, start - 8), height: 44)
+        for (index, button) in visible.enumerated() {
+            button.frame = CGRect(x: start + CGFloat(index) * 44, y: 0, width: 44, height: 44)
+        }
+        chatBadge.frame = CGRect(x: 21, y: 3, width: 23, height: 14)
+        missedBadge.frame = chatBadge.frame
+    }
+}
+
+/// Zoom tools are discoverable after an interaction, without covering content indefinitely.
+@MainActor
+final class TransientCallControls {
+    private weak var view: UIView?
+    private let delay: TimeInterval
+    private var timer: Timer?
+    private var observer: NSObjectProtocol?
+    private var available = false
+    private var suppressed = false
+    private var interacting = false
+    private var revealed = false
+    init(view: UIView, delay: TimeInterval = 3) {
+        self.view = view; self.delay = delay
+        view.alpha = 0; view.isUserInteractionEnabled = false; view.accessibilityElementsHidden = true
+        observer = NotificationCenter.default.addObserver(forName: UIAccessibility.voiceOverStatusDidChangeNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.activity() }
+            }
+    }
+    func setAvailable(_ value: Bool) {
+        guard available != value else { return }
+        available = value
+        if value { activity() } else { invalidate(); revealed = false; render() }
+    }
+    func setSuppressed(_ value: Bool) {
+        guard suppressed != value else { return }
+        suppressed = value
+        if value { invalidate(); render() } else { activity() }
+    }
+    func activity() {
+        invalidate()
+        guard available, !suppressed else { return }
+        revealed = true; render()
+        guard !interacting, !UIAccessibility.isVoiceOverRunning else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.revealed = false; self.render()
+            }
+        }
+    }
+    func beginInteraction() { interacting = true; activity() }
+    func endInteraction() { interacting = false; activity() }
+    private func render() {
+        guard let view else { return }
+        let visible = available && !suppressed && revealed
+        view.isUserInteractionEnabled = visible
+        view.accessibilityElementsHidden = !visible
+        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.2,
+                       delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) { view.alpha = visible ? 1 : 0 }
+    }
+    private func invalidate() { timer?.invalidate(); timer = nil }
+    deinit { timer?.invalidate(); if let observer { NotificationCenter.default.removeObserver(observer) } }
 }
 
 /// Empty areas pass through to the SDK; visible media and controls own their touches.

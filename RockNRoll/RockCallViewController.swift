@@ -22,6 +22,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     private let focus = CallFocusController()
     private var headerView: UIStackView?
+    private let compactHeader = CompactCallHeader()
     private var toolbar: CallToolbar?
     private let focusButton = UIButton(type: .system)
     private let restoreButton = UIButton(type: .system)
@@ -53,6 +54,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let zoomInButton = UIButton(type: .system)
     private let zoomOutButton = UIButton(type: .system)
     private let zoomControls = UIStackView()
+    private lazy var zoomVisibility = TransientCallControls(view: zoomControls)
     private let shareOffer = UIButton(type: .system)
     let localSharePreview = LocalSharePreview()
     private lazy var localShareCard = LocalSharePreviewCard(model: localSharePreview)
@@ -71,12 +73,16 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let name: UILabel
         let pin: UIButton
         var heightConstraint: NSLayoutConstraint?
+        var viewportSize = CGSize.zero
     }
     private var videoTiles: [String: VideoTile] = [:]
     private var flipCameraConstraints: [NSLayoutConstraint] = []
     private var currentPrimaryKey: String?
     private var floatingVideo: RockVideoPictureInPicture?
+    // Scale and normalized viewport center survive rotation and Focus layout changes.
     private var zoomStates: [String: (CGFloat, CGPoint)] = [:]
+    private var restoringZoom = false
+    private var primaryName: String?
     private weak var primaryZoom: UIScrollView?
     private weak var participantsPanel: ParticipantPanelViewController?
     private var pinnedStreamKey: String?
@@ -153,6 +159,30 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         restoreButton.configuration?.title = L("Show controls")
         restoreButton.addAction(UIAction { [weak self] _ in self?.focus.show(); self?.focus.interaction() }, for: .touchUpInside)
         view.addSubview(focusButton); view.addSubview(restoreButton)
+        view.addSubview(compactHeader)
+        compactHeader.previous.addAction(UIAction { [weak self] _ in self?.browse(-1) }, for: .touchUpInside)
+        compactHeader.nextStream.addAction(UIAction { [weak self] _ in self?.browse(1) }, for: .touchUpInside)
+        compactHeader.automatic.addAction(UIAction { [weak self] _ in
+            self?.browsedStream = nil; self?.setPin(nil)
+            self?.focus.interaction()
+        }, for: .touchUpInside)
+        compactHeader.pin.addAction(UIAction { [weak self] _ in
+            guard let self, let key = self.currentPrimaryKey else { return }
+            self.videoTiles[key]?.pin.sendActions(for: .touchUpInside)
+            self.focus.interaction()
+        }, for: .touchUpInside)
+        for (button, action) in [(compactHeader.participants, participantsButton),
+                                 (compactHeader.missed, missedButton),
+                                 (compactHeader.conversation, conversationButton), (compactHeader.focus, focusButton)] {
+            button.addAction(UIAction { [weak action] _ in action?.sendActions(for: .touchUpInside) }, for: .touchUpInside)
+        }
+        compactHeader.details.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.workspace.showDetails(from: self.compactHeader.details, presenter: self,
+                title: self.titleLabel.text ?? L("Jam"),
+                lines: [self.countLabel.text, self.workspace.roomIdentifier, self.routeLabel.text,
+                        self.statusLabel.text].compactMap { $0 })
+        }, for: .touchUpInside)
         let tap = UITapGestureRecognizer(target: self, action: #selector(tappedStage))
         tap.delegate = self; tap.cancelsTouchesInView = false
         streamScroll.addGestureRecognizer(tap)
@@ -187,18 +217,36 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             conversationHost.frame = CGRect(x: stage.maxX - width, y: stage.minY, width: width, height: stage.height)
             stage.size.width = max(0, stage.width - width - 8)
         }
+        for entry in videoTiles.values where entry.zoom.window != nil { rememberZoom(entry.zoom) }
+        restoringZoom = true
         streamScroll.frame = stage
+        streamScroll.layoutIfNeeded()
+        for (key, var entry) in videoTiles where entry.zoom.window != nil && entry.zoom.bounds.size != entry.viewportSize {
+            restoreZoom(entry.zoom, key: key)
+            entry.viewportSize = entry.zoom.bounds.size
+            videoTiles[key] = entry
+        }
+        restoringZoom = false
         streamScroll.isScrollEnabled = !focus.hidden && pinnedStream == nil
-        header.isHidden = focus.hidden; toolbar.isHidden = focus.hidden
-        statusLabel.isHidden = focus.hidden
+        header.isHidden = focus.hidden || geometry.compactHeader; toolbar.isHidden = focus.hidden
+        compactHeader.frame = geometry.header
+        compactHeader.isHidden = focus.hidden || !geometry.compactHeader
+        let pin = currentPrimaryKey.flatMap { videoTiles[$0]?.pin }
+        compactHeader.update(name: isHeld || mediaStatus != nil ? statusLabel.text ?? L("Jam") : primaryName ?? titleLabel.text ?? L("Jam"),
+            navigation: orderedStreams.count > 1, browsing: browsedStream != nil, pinned: pinnedStream != nil,
+            pinLabel: pin?.accessibilityLabel, participantsLabel: participantsButton.accessibilityLabel,
+            chatValue: chat.unreadCount > 0 ? conversationButton.accessibilityLabel : nil,
+            chatCount: chat.unreadCount, missedCount: store.timeline.unreadCount,
+            status: isHeld || mediaStatus != nil ? statusLabel.text : nil, focusAvailable: primaryZoom != nil)
+        statusLabel.isHidden = focus.hidden || geometry.compactHeader
         statusLabel.frame = CGRect(x: geometry.header.minX, y: geometry.header.maxY - statusHeight,
             width: geometry.header.width, height: statusHeight)
         zoomControls.frame = CGRect(x: stage.maxX - 150, y: stage.minY + 8, width: 140, height: 44)
-        zoomControls.alpha = focus.hidden ? 0 : 1
+        zoomVisibility.setSuppressed(focus.hidden)
         shareOffer.frame = CGRect(x: stage.minX + 56, y: stage.minY + 8, width: max(0, stage.width - 210), height: 44)
         shareOffer.alpha = focus.hidden ? 0 : 1
         focusButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44)
-        focusButton.isHidden = focus.hidden || primaryZoom == nil
+        focusButton.isHidden = focus.hidden || primaryZoom == nil || geometry.compactHeader
         restoreButton.isHidden = !focus.hidden
         restoreButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: min(210, stage.width - 16), height: 44)
         restoreButton.configuration?.image = UIImage(systemName: isMicrophoneOn ? "mic.fill" : "mic.slash.fill")
@@ -214,17 +262,24 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             width: cardWidth, height: cardHeight)
         for entry in videoTiles.values {
             entry.name.alpha = focus.hidden ? 0 : 1
-            entry.pin.alpha = focus.hidden ? 0 : 1
+            entry.pin.alpha = focus.hidden || (geometry.compactHeader && entry.zoom === primaryZoom) ? 0 : 1
+            entry.pin.isUserInteractionEnabled = entry.pin.alpha > 0
+            entry.pin.accessibilityElementsHidden = entry.pin.alpha == 0
         }
         flipCamera.alpha = focus.hidden ? 0 : 1
     }
 
-    @objc private func tappedStage() { if focus.hidden { focus.show() } else { focus.interaction() } }
+    @objc private func tappedStage() {
+        if focus.hidden { focus.show() } else { focus.interaction() }
+        zoomVisibility.activity()
+    }
     @objc private func swipedStage(_ gesture: UISwipeGestureRecognizer) {
+        browse(gesture.direction == .left ? 1 : -1)
+    }
+    private func browse(_ step: Int) {
         guard let room = displayedRoom, orderedStreams.count > 1, pinnedStream == nil else { return }
         let selected = browsedStream ?? currentPrimaryKey.flatMap { streamPinTargets[$0] }
         let index = orderedStreams.firstIndex { $0 == selected } ?? 0
-        let step = gesture.direction == .left ? 1 : -1
         browsedStream = orderedStreams[(index + step + orderedStreams.count) % orderedStreams.count]
         render(room: room)
         focus.interaction()
@@ -547,6 +602,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self.missedButton.accessibilityLabel = L("Catch up, %ld missed sections", timeline.unreadCount)
             self.conversationButton.accessibilityLabel = count > 0 ?
                 L("Chat, %ld unread", count) : L("Chat")
+            self.view.setNeedsLayout()
         }.store(in: &subscriptions)
     }
 
@@ -592,6 +648,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         guard let zoom = primaryZoom else { return }
         zoom.setZoomScale(min(zoom.maximumZoomScale,
                               max(zoom.minimumZoomScale, zoom.zoomScale * factor)), animated: true)
+        zoomVisibility.activity()
     }
 
     private func updateControlTitles() {
@@ -747,9 +804,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             tiles.insertArrangedSubview(placeholder, at: 0)
             floatingVideo?.clear()
             currentPrimaryKey = nil
+            primaryName = nil
             primaryZoom = nil
             fitButton.isHidden = true
             zoomControls.isHidden = true
+            zoomVisibility.setAvailable(false)
             for stream in streams where pinnedStream == nil {
                 let tile = videoTile(for: stream.0, publication: stream.1,
                                      track: stream.2, primary: false)
@@ -760,6 +819,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         } else if let primary {
             let primaryKey = primary.1.sid.stringValue
             zoomControls.isHidden = primary.1.source != .screenShareVideo
+            zoomVisibility.setAvailable(primary.1.source == .screenShareVideo)
+            primaryName = primary.0.name ?? L("Musician")
             fitButton.isHidden = (videoTiles[primaryKey]?.zoom.zoomScale ?? 1) <= 1.01
             floatingVideo?.show(track: primary.0 is RemoteParticipant ? primary.2 : nil,
                                 name: primary.0.name ?? L("Musician"),
@@ -781,9 +842,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         } else {
             floatingVideo?.clear()
             currentPrimaryKey = nil
+            primaryName = nil
             primaryZoom = nil
             fitButton.isHidden = true
             zoomControls.isHidden = true
+            zoomVisibility.setAvailable(false)
         }
         if displayMode == .screenShares && streams.isEmpty {
             let empty = UILabel()
@@ -958,13 +1021,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             pin.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
             pin.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         ])
-        if let state = zoomStates[key] {
-            DispatchQueue.main.async { [weak zoom] in
-                guard let zoom, zoom.window != nil else { return }
-                zoom.setZoomScale(state.0, animated: false)
-                zoom.setContentOffset(state.1, animated: false)
-            }
-        }
         var entry = VideoTile(tile: tile, zoom: zoom, video: video, name: name, pin: pin)
         configureVideoTile(&entry, participant: participant, track: track,
                            isShare: isShare, primary: primary, key: key)
@@ -1084,6 +1140,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             })
         }
         items += [
+            UIAction(title: L("Fit shared screen"), image: UIImage(systemName: "arrow.down.right.and.arrow.up.left"),
+                     attributes: (primaryZoom?.maximumZoomScale ?? 1) > 1 ? [] : [.disabled]) { [weak self] _ in
+                self?.primaryZoom?.setZoomScale(1, animated: true)
+            },
             UIAction(title: L("Hide controls"), image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")) {
                 [weak self] _ in self?.focus.hide()
             },
@@ -1211,6 +1271,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         statusLabel.text = isHeld ? L("Jam on hold for another call") :
             (mediaStatus ?? L("Microphone %@ · Camera %@", isMicrophoneOn ? L("on") : L("off"), isCameraOn ? L("on") : L("off")))
         statusLabel.textColor = mediaStatus == nil ? .lightGray : .systemOrange
+        view.setNeedsLayout()
     }
 
     private func configure(_ button: UIButton, symbol: String, label: String, title: String? = nil) {
@@ -1244,15 +1305,37 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         if scrollView !== streamScroll {
             scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > 1.01
             scrollView.accessibilityValue = "\(Int((scrollView.zoomScale * 100).rounded()))%"
-            if let key = scrollView.accessibilityIdentifier {
-                zoomStates[key] = (scrollView.zoomScale, scrollView.contentOffset)
-            }
+            rememberZoom(scrollView)
+            if !restoringZoom && scrollView === primaryZoom { zoomVisibility.activity() }
             if scrollView === primaryZoom { fitButton.isHidden = scrollView.zoomScale <= 1.01 }
         }
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard scrollView !== streamScroll, let key = scrollView.accessibilityIdentifier else { return }
-        zoomStates[key] = (scrollView.zoomScale, scrollView.contentOffset)
+        rememberZoom(scrollView)
+    }
+    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) { zoomVisibility.beginInteraction() }
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) { zoomVisibility.endInteraction() }
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        if scrollView !== streamScroll { zoomVisibility.beginInteraction() }
+    }
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if scrollView !== streamScroll { zoomVisibility.endInteraction() }
+    }
+    private func rememberZoom(_ zoom: UIScrollView) {
+        guard !restoringZoom, zoom !== streamScroll, let key = zoom.accessibilityIdentifier,
+              let entry = videoTiles[key], entry.zoom === zoom, entry.viewportSize != .zero,
+              entry.viewportSize == zoom.bounds.size, zoom.window != nil,
+              zoom.contentSize.width > 0, zoom.contentSize.height > 0 else { return }
+        zoomStates[key] = (zoom.zoomScale, CGPoint(
+            x: (zoom.contentOffset.x + zoom.bounds.width / 2) / zoom.contentSize.width,
+            y: (zoom.contentOffset.y + zoom.bounds.height / 2) / zoom.contentSize.height))
+    }
+    private func restoreZoom(_ zoom: UIScrollView, key: String) {
+        guard let state = zoomStates[key] else { return }
+        zoom.setZoomScale(state.0, animated: false)
+        zoom.contentOffset = CGPoint(
+            x: min(max(0, state.1.x * zoom.contentSize.width - zoom.bounds.width / 2), max(0, zoom.contentSize.width - zoom.bounds.width)),
+            y: min(max(0, state.1.y * zoom.contentSize.height - zoom.bounds.height / 2), max(0, zoom.contentSize.height - zoom.bounds.height)))
     }
 }

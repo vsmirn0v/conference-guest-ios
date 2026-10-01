@@ -22,6 +22,7 @@ final class CallControls: UIView {
     private weak var mountedWindow: UIWindow?
     private var toolbar: CallToolbar?
     private var headerView: UIStackView?
+    private let compactHeader = CompactCallHeader()
     private let focusButton = UIButton(type: .system)
     private let restoreButton = UIButton(type: .system)
     private let navigation = UIStackView()
@@ -449,7 +450,10 @@ final class CallControls: UIView {
                 self.surface.setNeedsLayout()
             }.store(in: &subscriptions)
         state.$conferenceTitle.receive(on: DispatchQueue.main)
-            .sink { [weak self] title in self?.titleLabel.text = title.isEmpty ? L("Jam") : title }
+            .sink { [weak self] title in
+                self?.titleLabel.text = title.isEmpty ? L("Jam") : title
+                self?.surface.setNeedsLayout()
+            }
             .store(in: &subscriptions)
     }
 
@@ -590,6 +594,7 @@ final class CallControls: UIView {
     private func renderCallStatus() {
         callStateLabel.text = isHeld ? L("On hold · audio resumes after your call") : mediaStatus
         callStateLabel.isHidden = callStateLabel.text == nil
+        surface.setNeedsLayout()
     }
 
     private func updateChatBadge() {
@@ -599,6 +604,7 @@ final class CallControls: UIView {
         missedButton.accessibilityLabel = L("Catch up, %ld missed sections", missedCount)
         catchUpButton.accessibilityLabel = unreadChatCount > 0 ?
             L("Chat, %ld unread", unreadChatCount) : L("Chat")
+        surface.setNeedsLayout()
     }
 
     deinit { surface.removeFromSuperview() }
@@ -668,7 +674,24 @@ final class CallControls: UIView {
         automaticView.addAction(UIAction { [weak self] _ in self?.onAutomaticView?(); self?.focus.interaction() }, for: .touchUpInside)
         navigation.axis = .horizontal; navigation.spacing = 4; navigation.distribution = .fillEqually
         [previous, automaticView, nextStream].forEach { navigation.addArrangedSubview($0) }
-        [focusButton, restoreButton, navigation].forEach(surface.addSubview)
+        [focusButton, restoreButton, navigation, compactHeader].forEach(surface.addSubview)
+        for (button, action) in [
+            (compactHeader.previous, previous), (compactHeader.nextStream, nextStream),
+            (compactHeader.automatic, automaticView), (compactHeader.participants, participantsButton),
+            (compactHeader.missed, missedButton),
+            (compactHeader.conversation, catchUpButton), (compactHeader.focus, focusButton)
+        ] {
+            button.addAction(UIAction { [weak action] _ in action?.sendActions(for: .touchUpInside) }, for: .touchUpInside)
+        }
+        compactHeader.pin.addAction(UIAction { [weak self] _ in self?.onPinStage?(); self?.focus.interaction() }, for: .touchUpInside)
+        compactHeader.details.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.workspace.showDetails(from: self.compactHeader.details, presenter: self.presentationContainer,
+                title: self.titleLabel.text ?? L("Jam"),
+                lines: [self.countLabel.text, self.routeLabel.text,
+                        self.callStateLabel.isHidden ? nil : self.callStateLabel.text,
+                        self.speakerLabel.isHidden ? nil : self.speakerLabel.text].compactMap { $0 })
+        }, for: .touchUpInside)
         moreButton.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         updateRestoreButton()
     }
@@ -714,8 +737,21 @@ final class CallControls: UIView {
         automaticView.configuration?.title = large ? nil : L("Auto")
         automaticView.configuration?.image = large ? UIImage(systemName: "arrow.triangle.2.circlepath") : nil
         header.frame = geometry.header; toolbar.frame = geometry.toolbar
-        header.isHidden = focus.hidden; toolbar.isHidden = focus.hidden
-        navigation.isHidden = focus.hidden || navigationCount < 2 || stagePinned || displayMode == .audioOnly || isWaitingForOthers
+        header.isHidden = focus.hidden || geometry.compactHeader; toolbar.isHidden = focus.hidden
+        compactHeader.frame = geometry.header
+        compactHeader.isHidden = focus.hidden || !geometry.compactHeader
+        let showsStage = !stageView.isHidden
+        let pinLabel = showsStage ? stageName.map { "\(stagePinned ? L("Unpin") : L("Pin")) \($0) \(stageIsShare ? L("screen share") : L("video"))" } : nil
+        let status = callStateLabel.isHidden ? nil : callStateLabel.text
+        compactHeader.update(name: status ?? (showsStage ? stageName ?? titleLabel.text ?? L("Jam") : titleLabel.text ?? L("Jam")),
+            navigation: navigationCount > 1 && displayMode != .audioOnly && !isWaitingForOthers,
+            browsing: lastPresentation?.browsing == true, pinned: stagePinned,
+            pinLabel: pinLabel,
+            participantsLabel: participantsButton.accessibilityLabel,
+            chatValue: unreadChatCount > 0 ? catchUpButton.accessibilityLabel : nil,
+            chatCount: unreadChatCount, missedCount: missedCount, status: status,
+            speaking: speakerLabel.isHidden ? nil : speakerLabel.text, focusAvailable: showsStage)
+        navigation.isHidden = focus.hidden || geometry.compactHeader || navigationCount < 2 || stagePinned || displayMode == .audioOnly || isWaitingForOthers
         var stage = geometry.stage
         if !navigation.isHidden {
             let width: CGFloat = automaticView.isHidden ? 100 : 260
@@ -725,7 +761,7 @@ final class CallControls: UIView {
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop, stageView] { backdrop.frame = stage }
         notices.frame = CGRect(x: geometry.header.minX, y: geometry.header.maxY + 4,
             width: geometry.header.width, height: notices.systemLayoutSizeFitting(CGSize(width: geometry.header.width, height: 0)).height)
-        focusButton.isHidden = focus.hidden || stageView.isHidden
+        focusButton.isHidden = focus.hidden || stageView.isHidden || geometry.compactHeader
         focusButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44)
         restoreButton.isHidden = !focus.hidden
         restoreButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: min(210, stage.width - 16), height: 44)
@@ -738,6 +774,7 @@ final class CallControls: UIView {
         localShareCard.frame = CGRect(x: stage.minX + 4, y: stage.maxY - cardHeight - 44,
             width: cardWidth, height: cardHeight)
         stageViewport?.controlsHidden = focus.hidden
+        stageViewport?.pinInHeader = geometry.compactHeader
         CallStageLayout.update(window: window, owner: layoutOwner, rect: surface.convert(stage, to: window), hidden: focus.hidden,
             toggle: { [weak self] in self?.toggleControls() })
     }

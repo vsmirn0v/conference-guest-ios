@@ -117,15 +117,20 @@ final class ConferenceMediaUITests: XCTestCase {
     }
 
     func testChatBadgeOpensChatAndMissedBadgeOpensCatchUp() throws {
-        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
-        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock-unread"
-        app.launch()
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Chat")).firstMatch.tap()
-        XCTAssertTrue(app.segmentedControls["Conversation mode"].buttons["Chat"].isSelected)
-        app.buttons["Close conversation"].tap()
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Catch up")).firstMatch.tap()
-        XCTAssertTrue(app.scrollViews["Catch up sections"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.segmentedControls["Conversation mode"].buttons["Catch up"].isSelected)
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for orientation: UIDeviceOrientation in [.portrait, .landscapeLeft] {
+            let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+            app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock-unread"
+            app.launch()
+            XCUIDevice.shared.orientation = orientation
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Chat")).firstMatch.tap()
+            XCTAssertTrue(app.segmentedControls["Conversation mode"].buttons["Chat"].isSelected)
+            app.buttons["Close conversation"].tap()
+            app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Catch up")).firstMatch.tap()
+            XCTAssertTrue(app.scrollViews["Catch up sections"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.segmentedControls["Conversation mode"].buttons["Catch up"].isSelected)
+            app.terminate()
+        }
     }
 
     func testChatFailureAndUnavailableStateExplainNextAction() throws {

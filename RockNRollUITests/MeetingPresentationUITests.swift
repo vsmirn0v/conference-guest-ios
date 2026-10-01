@@ -51,8 +51,11 @@ final class MeetingPresentationUITests: XCTestCase {
                 XCTAssertFalse(app.buttons["Next stream"].exists)
             }
             app.buttons[language == "ru" ? "Копировать ссылку" : "Copy link"].tap()
+            app.buttons[language == "ru" ? "Чат" : "Chat"].tap()
+            XCTAssertTrue(app.segmentedControls["Conversation mode"].buttons[language == "ru" ? "Чат" : "Chat"].isSelected)
+            app.buttons[language == "ru" ? "Закрыть беседу" : "Close conversation"].tap()
             XCTAssertTrue(invite.exists)
-            let attachment = XCTAttachment(screenshot: app.screenshot())
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             attachment.name = "Solo meeting invitation \(language)"; attachment.lifetime = .keepAlways; add(attachment)
             app.terminate()
         }
@@ -90,7 +93,7 @@ final class MeetingPresentationUITests: XCTestCase {
                 XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed)
                 assertControls(app, language: language)
             }
-            let attachment = XCTAttachment(screenshot: app.screenshot())
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             attachment.name = "Guest controls \(language)"; attachment.lifetime = .keepAlways; add(attachment)
             app.terminate()
         }
@@ -109,7 +112,7 @@ final class MeetingPresentationUITests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed)
             assertControls(app, language: "ru")
         }
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "Largest Russian text"; attachment.lifetime = .keepAlways; add(attachment)
     }
 
@@ -156,7 +159,8 @@ final class MeetingPresentationUITests: XCTestCase {
         viewport.pinch(withScale: 2, velocity: 1)
         viewport.swipeLeft()
         XCTAssertTrue(viewport.exists, "Zoomed drag pans instead of selecting another stream")
-        app.buttons["Fit shared screen at 100%"].tap()
+        app.buttons["More call options"].tap()
+        app.buttons["Fit shared screen"].tap()
         expectation(for: NSPredicate(format: "value == '100%'"), evaluatedWith: viewport)
         waitForExpectations(timeout: 5)
         viewport.swipeLeft()
@@ -164,5 +168,65 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Automatic view"].exists)
         app.buttons["Automatic view"].tap()
         XCTAssertTrue(app.buttons["Pin Ani’s arrangement screen share"].waitForExistence(timeout: 5))
+    }
+
+    func testLandscapeHeaderKeepsNavigationAndPinOutsideMedia() throws {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for language in ["en", "ru"] {
+            let app = launch(language)
+            let viewport = app.scrollViews["Shared screen viewport"]
+            XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+            XCUIDevice.shared.orientation = .landscapeLeft
+            let header = app.otherElements["Compact meeting header"]
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                header.exists && header.frame.height == 44 && app.windows.firstMatch.frame.width > app.windows.firstMatch.frame.height
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+            XCTAssertEqual(app.otherElements["Meeting toolbar"].frame.width, 56, accuracy: 1)
+            let next = app.buttons[language == "ru" ? "Следующий поток" : "Next stream"]
+            XCTAssertTrue(next.isHittable)
+            XCTAssertLessThanOrEqual(next.frame.maxY, viewport.frame.minY)
+            let pin = app.buttons[language == "ru" ? "Закрепить Ani’s arrangement трансляция экрана" : "Pin Ani’s arrangement screen share"]
+            XCTAssertTrue(pin.isHittable)
+            XCTAssertLessThanOrEqual(pin.frame.maxY, viewport.frame.minY)
+            pin.tap()
+            XCTAssertFalse(next.isEnabled)
+            app.buttons[language == "ru" ? "Автоматический выбор" : "Automatic view"].tap()
+            XCTAssertTrue(next.isEnabled)
+            app.buttons["Meeting details"].tap()
+            XCTAssertTrue(app.buttons[language == "ru" ? "Копировать ссылку" : "Copy link"].waitForExistence(timeout: 5))
+            app.buttons[language == "ru" ? "Копировать ссылку" : "Copy link"].tap()
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = "Compact landscape \(language)"; attachment.lifetime = .keepAlways; add(attachment)
+            app.buttons["Meeting details"].tap()
+            app.buttons[language == "ru" ? "Пригласить музыкантов" : "Invite musicians"].tap()
+            let sharing = app.otherElements["Invitation sharing"]
+            if !sharing.waitForExistence(timeout: 5) {
+                let failure = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                failure.name = "Invitation sharing failure \(language)"; failure.lifetime = .keepAlways; add(failure)
+                print(app.debugDescription)
+                XCTFail("Invite must present the system share sheet")
+            }
+            app.terminate()
+            XCUIDevice.shared.orientation = .portrait
+        }
+    }
+
+    func testZoomToolsFadeAndMoreKeepsFitAvailable() throws {
+        let app = launch()
+        let viewport = app.scrollViews["Shared screen viewport"]
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+        viewport.pinch(withScale: 2, velocity: 1)
+        let zoom = try XCTUnwrap(viewport.value as? String)
+        XCTAssertNotEqual(zoom, "100%")
+        let fit = app.buttons["Fit shared screen at 100%"]
+        XCTAssertTrue(fit.isHittable)
+        let faded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !fit.isHittable }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [faded], timeout: 6), .completed)
+        XCTAssertEqual(viewport.value as? String, zoom)
+        app.buttons["More call options"].tap()
+        app.buttons["Fit shared screen"].tap()
+        expectation(for: NSPredicate(format: "value == '100%'"), evaluatedWith: viewport)
+        waitForExpectations(timeout: 5)
     }
 }

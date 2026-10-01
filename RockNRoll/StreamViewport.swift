@@ -23,6 +23,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     private var infoBottom: NSLayoutConstraint?
     private let pinButton = UIButton(type: .system)
     private let zoomControls = UIStackView()
+    private lazy var zoomVisibility = TransientCallControls(view: zoomControls)
     private var pinAction: (() -> Void)?
     private var pinName = ""
     private var pinIsShare = false
@@ -30,10 +31,11 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     var onMenuVisibilityChanged: ((Bool) -> Void)?
     var onBrowse: ((Int) -> Void)?
     var onToggleControls: (() -> Void)?
+    var pinInHeader = false { didSet { updatePinVisibility() } }
     var controlsHidden = false { didSet {
         guard oldValue != controlsHidden else { return }
-        pinButton.isHidden = controlsHidden || pinAction == nil
-        zoomControls.isHidden = controlsHidden
+        updatePinVisibility()
+        zoomVisibility.setSuppressed(controlsHidden)
         participantInfo.alpha = controlsHidden ? 0 : 1
     } }
     var zoomScale: CGFloat { scroll.zoomScale }
@@ -120,6 +122,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
                     let scale = action == 0 ? 1 : self.scroll.zoomScale * (action > 0 ? 1.5 : 1 / 1.5)
                     self.scroll.setZoomScale(min(self.scroll.maximumZoomScale,
                                                  max(self.scroll.minimumZoomScale, scale)), animated: true)
+                    self.zoomVisibility.activity()
                 }, for: .touchUpInside)
                 zoomControls.addArrangedSubview(button)
             }
@@ -128,6 +131,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
                 zoomControls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
                 zoomControls.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -44)
             ])
+            zoomVisibility.setAvailable(true)
         }
         updatePin(name: name, isShare: false, pinned: pinned, onPin: onPin)
         mediaPlaceholder.text = placeholderText ?? name
@@ -196,6 +200,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         watermarkLabel.text = watermark
         watermarkLabel.isHidden = watermark == nil
         scroll.maximumZoomScale = zoomable ? 5 : 1
+        zoomVisibility.setAvailable(zoomable)
         if scroll.zoomScale > scroll.maximumZoomScale {
             scroll.setZoomScale(scroll.maximumZoomScale, animated: false)
         }
@@ -206,13 +211,15 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         pinIsShare = isShare
         pinnedLocally = pinned
         pinAction = onPin
-        pinButton.isHidden = controlsHidden || onPin == nil
+        updatePinVisibility()
         pinButton.configuration?.image = UIImage(systemName: pinned ? "pin.fill" : "pin")
         pinButton.accessibilityLabel = "\(pinned ? L("Unpin") : L("Pin")) \(name) \(isShare ? L("screen share") : L("video"))"
         pinButton.accessibilityHint = L("Changes only your view")
         pinButton.showsLargeContentViewer = true
         pinButton.largeContentTitle = pinButton.accessibilityLabel
     }
+
+    private func updatePinVisibility() { pinButton.isHidden = controlsHidden || pinInHeader || pinAction == nil }
 
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
                                 configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
@@ -239,6 +246,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     @objc private func tappedStage() {
         if let onToggleControls { onToggleControls() }
         else { CallStageLayout.record(for: window)?.toggleControls() }
+        if !controlsHidden { zoomVisibility.activity() }
     }
     @objc private func doubleTappedStage() {
         guard scroll.maximumZoomScale > 1 else { return }
@@ -338,7 +346,13 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         rememberViewport()
         updateAccessibility()
+        if !restoring { zoomVisibility.activity() }
     }
+
+    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) { zoomVisibility.beginInteraction() }
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) { zoomVisibility.endInteraction() }
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { zoomVisibility.beginInteraction() }
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) { zoomVisibility.endInteraction() }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) { rememberViewport() }
 
