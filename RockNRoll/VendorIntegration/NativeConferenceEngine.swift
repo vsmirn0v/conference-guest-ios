@@ -139,6 +139,7 @@ final class NativeConferenceEngine: CallEngine {
             // Joining that room connects to its host even when the initial network differs.
             return
         }
+        MacCallActivity.shared.retainForGraphicsResources()
         GuestVideoFrameTap.prepare()
         floatingVideo = GuestVideoPictureInPicture(sourceView: container.view)
         floatingVideo?.rendersSelectedViewport = false
@@ -769,6 +770,7 @@ final class NativeConferenceEngine: CallEngine {
             self.hasBecomeActive = false
             self.resetPiPMicrophoneObservation()
             self.floatingVideo?.clear()
+            self.streamViews.reset()
             self.isSDKActive = false
             self.isMediaReconnecting = false
             self.hasScheduledMediaRestart = false
@@ -776,6 +778,7 @@ final class NativeConferenceEngine: CallEngine {
             self.activeRoom = nil
             self.networkMonitor?.cancel(); self.networkMonitor = nil
             self.toastSubscription?.cancel(); self.toastSubscription = nil
+            self.roomTitleSubscription?.cancel(); self.roomTitleSubscription = nil
             self.transcriptSubscription?.cancel(); self.accessSubscription?.cancel()
             self.currentNotices = []
             self.activeControls = nil

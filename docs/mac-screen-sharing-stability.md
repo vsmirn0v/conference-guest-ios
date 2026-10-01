@@ -20,10 +20,15 @@ system also uploaded those reports to Apple was not verified.
 
 ## Changes
 
-- Own a public Foundation activity token while the Mac meeting is joining,
-  active, or leaving. Repeated phase updates retain one token; reaching idle
-  ends it. The token prevents App Nap for the user-started meeting and allows
-  idle system sleep. iPhone and iPad do not acquire it.
+- Own a public Foundation activity token while a Mac meeting joins. If no media
+  engine was initialized, reaching idle ends it. Once media initializes, the
+  framework-owned graphics cache survives Leave and has no supported teardown
+  API in this runtime: a shared process-lifetime guard prevents App Nap while
+  those cache locks remain. It allows idle system sleep and is not acquired on
+  iPhone/iPad. It is a workaround for UIKit-on-Mac suspension, not a background
+  task loop, silent audio track, or global system preference.
+- Clear per-meeting stream and title subscriptions at teardown. This releases
+  our references but alone does not close the framework-owned shader cache.
 - The iOS SDK marks the macOS `NSProcessInfo` methods unavailable. The Mac-only
   bridge checks runtime availability and uses their documented Objective-C ABI;
   it calls no private API. This is specific to the existing Designed-for-iPad
@@ -41,6 +46,9 @@ lock named by RunningBoard. That SDK logging issue is not changed in this fix.
 
 ## Validation
 
-Final runtime, simulator and release results are recorded in the build 30
+Final runtime, simulator and release results are recorded in the build 31
 release note. Evidence logs and result bundles are local under `/tmp/rock-crash*`
 and `/tmp/rock-share-activity-mac.log`.
+
+Build 30 was uploaded before the post-Leave soak exposed the remaining system
+termination. It is superseded by build 31 and must not be assigned to testers.

@@ -1,16 +1,21 @@
 import Foundation
 import ObjectiveC
 
-/// The UIKit app on macOS must not nap in the middle of a live meeting.
-/// Uses public macOS Foundation APIs only, with no effect on iPhone/iPad.
+/// The UIKit app on macOS must not suspend while media owns Metal cache locks.
+/// Framework graphics caches can outlive a meeting; their guard has the same
+/// process lifetime. System sleep remains allowed. No effect on iPhone/iPad.
 @MainActor
 final class MacCallActivity {
+    static let shared = MacCallActivity()
+    private let isMac: Bool
+    private var ownsGraphicsResources = false
     private var token: AnyObject?
-    private let begin: () -> AnyObject?
-    private let end: (AnyObject) -> Void
+    private let begin: @MainActor () -> AnyObject?
+    private let end: @MainActor (AnyObject) -> Void
 
-    init(begin: @escaping () -> AnyObject? = MacCallActivity.beginNative,
-         end: @escaping (AnyObject) -> Void = MacCallActivity.endNative) {
+    init(isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac, begin: @escaping @MainActor () -> AnyObject? = MacCallActivity.beginNative,
+         end: @escaping @MainActor (AnyObject) -> Void = MacCallActivity.endNative) {
+        self.isMac = isMac
         self.begin = begin
         self.end = end
     }
@@ -18,10 +23,16 @@ final class MacCallActivity {
     func setActive(_ active: Bool) {
         if active {
             if token == nil { token = begin() }
-        } else if let token {
+        } else if !ownsGraphicsResources, let token {
             self.token = nil
             end(token)
         }
+    }
+
+    func retainForGraphicsResources() {
+        guard isMac else { return }
+        ownsGraphicsResources = true
+        setActive(true)
     }
 
     private static func beginNative() -> AnyObject? {
@@ -34,7 +45,7 @@ final class MacCallActivity {
         typealias Begin = @convention(c) (AnyObject, Selector, UInt64, NSString) -> Unmanaged<AnyObject>
         let invoke = unsafeBitCast(method, to: Begin.self)
         let options = ProcessInfo.ActivityOptions.userInitiatedAllowingIdleSystemSleep.rawValue
-        let token = invoke(process, selector, options, "Active audio/video meeting").takeUnretainedValue()
+        let token = invoke(process, selector, options, "Meeting media and graphics resources").takeUnretainedValue()
         #if DEBUG
         NSLog("Mac meeting activity began")
         #endif

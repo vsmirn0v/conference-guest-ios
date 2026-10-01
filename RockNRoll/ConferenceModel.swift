@@ -22,7 +22,7 @@ final class ConferenceModel: ObservableObject {
     @Published private(set) var status = L("Enter a jam link to begin.")
     @Published private(set) var statusIsError = false
     @Published private(set) var mediaStatus: String?
-    private let macCallActivity = MacCallActivity()
+    private let macCallActivity = MacCallActivity.shared
     @Published private var phase: SessionPhase = .idle {
         didSet { macCallActivity.setActive(phase != .idle) }
     }
@@ -358,6 +358,7 @@ final class ConferenceModel: ObservableObject {
                         self.mediaStatus = self.isJoining || self.isInConference ? message : nil
                         selected?.showMediaStatus(message)
                     }
+                    macCallActivity.retainForGraphicsResources()
                     try selected.join(target: jam, credentials: credentials, container: container, quiet: request.quiet)
                 }
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
