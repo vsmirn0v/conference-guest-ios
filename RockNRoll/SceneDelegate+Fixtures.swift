@@ -134,6 +134,24 @@ extension SceneDelegate {
                 })
                 call.localSharePreview.setForeground(true)
                 call.onShare = { [weak call] enabled in if !enabled { call?.localSharePreview.end() } }
+                if ProcessInfo.processInfo.environment["CONFERENCE_TEST_MAC_PREVIEW_FRAMES"] == "1" {
+                    var pixels: CVPixelBuffer?
+                    CVPixelBufferCreate(nil, 1920, 1080, kCVPixelFormatType_32BGRA,
+                        [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels)
+                    if let pixels {
+                        CVPixelBufferLockBaseAddress(pixels, [])
+                        if let base = CVPixelBufferGetBaseAddress(pixels) {
+                            memset(base, 128, CVPixelBufferGetBytesPerRow(pixels) * CVPixelBufferGetHeight(pixels))
+                        }
+                        CVPixelBufferUnlockBaseAddress(pixels, [])
+                        Task { @MainActor [weak call] in
+                            while let call, call.localSharePreview.active {
+                                call.localSharePreview.accept(pixels)
+                                try? await Task.sleep(nanoseconds: 500_000_000)
+                            }
+                        }
+                    }
+                }
             }
             return true
         }

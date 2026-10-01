@@ -117,6 +117,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         ])
 
         mode.accessibilityLabel = L("Conversation mode")
+        mode.accessibilityIdentifier = "Conversation mode"
         mode.addAction(UIAction { [weak self] _ in self?.renderMode() }, for: .valueChanged)
         callStrip.isHidden = call == nil || docked
         Publishers.CombineLatest3(catchUp.$timeline, catchUp.$canViewTranscript,

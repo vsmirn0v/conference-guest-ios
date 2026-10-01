@@ -53,6 +53,73 @@ final class LocalSharePreviewTests: XCTestCase {
         XCTAssertLessThanOrEqual(max(preview.image!.size.width, preview.image!.size.height), 640)
     }
 
+    func testMacConversionHandlesCameraAndCaptureFormatsAndRotation() throws {
+        for format in [kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                       kCVPixelFormatType_420YpCbCr8BiPlanarFullRange] {
+            for rotation in [0, 90, 180, 270] {
+                let preview = LocalSharePreview(isMac: true, observeLifecycle: false)
+                preview.begin()
+                var buffer: CVPixelBuffer?
+                XCTAssertEqual(CVPixelBufferCreate(nil, 1280, 720, format,
+                    [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer), kCVReturnSuccess)
+                let pixels = try XCTUnwrap(buffer)
+                preview.accept(pixels, rotation: rotation, time: 1)
+                let image = try XCTUnwrap(preview.image)
+                XCTAssertEqual(image.size, rotation == 90 || rotation == 270
+                    ? CGSize(width: 360, height: 640) : CGSize(width: 640, height: 360))
+                preview.end()
+                XCTAssertNil(preview.image)
+            }
+        }
+    }
+
+    func testMacRotatedPixelsMatchExistingRendererAndAreIndependentOfCaptureBuffer() throws {
+        var buffer: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 8, 4, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer), kCVReturnSuccess)
+        let pixels = try XCTUnwrap(buffer)
+        CVPixelBufferLockBaseAddress(pixels, [])
+        let base = try XCTUnwrap(CVPixelBufferGetBaseAddress(pixels)).assumingMemoryBound(to: UInt8.self)
+        let stride = CVPixelBufferGetBytesPerRow(pixels)
+        for y in 0..<4 {
+            for x in 0..<8 {
+                let offset = y * stride + x * 4
+                base[offset] = x < 4 ? 0 : 255
+                base[offset + 1] = y < 2 ? 0 : 255
+                base[offset + 2] = x < 4 ? 255 : 0
+                base[offset + 3] = 255
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(pixels, [])
+        for rotation in [0, 90, 180, 270] {
+            let reference = LocalSharePreview(isMac: false, observeLifecycle: false)
+            reference.begin(); reference.setForeground(false)
+            reference.accept(pixels, rotation: rotation, time: 1)
+            let mac = LocalSharePreview(isMac: true, observeLifecycle: false)
+            mac.begin(); mac.accept(pixels, rotation: rotation, time: 1)
+            let expected = try rgba(try XCTUnwrap(reference.image?.cgImage))
+            let actual = try rgba(try XCTUnwrap(mac.image?.cgImage))
+            XCTAssertEqual(actual.count, expected.count)
+            for (a, b) in zip(actual, expected) { XCTAssertLessThanOrEqual(abs(Int(a) - Int(b)), 2) }
+        }
+        let mac = LocalSharePreview(isMac: true, observeLifecycle: false)
+        mac.begin(); mac.accept(pixels, time: 1)
+        let before = try rgba(try XCTUnwrap(mac.image?.cgImage))
+        CVPixelBufferLockBaseAddress(pixels, [])
+        memset(base, 0, stride * 4)
+        CVPixelBufferUnlockBaseAddress(pixels, [])
+        XCTAssertEqual(try rgba(try XCTUnwrap(mac.image?.cgImage)), before)
+    }
+
+    private func rgba(_ image: CGImage) throws -> [UInt8] {
+        let context = try XCTUnwrap(CGContext(data: nil, width: image.width, height: image.height,
+            bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let bytes = try XCTUnwrap(context.data).assumingMemoryBound(to: UInt8.self)
+        return Array(UnsafeBufferPointer(start: bytes, count: image.width * image.height * 4))
+    }
+
     func testMacThumbnailIsLiveButCapturedEnlargementPauses() {
         let preview = LocalSharePreview(isMac: true, observeLifecycle: false)
         var policies: [Bool] = []

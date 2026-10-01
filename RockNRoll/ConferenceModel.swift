@@ -22,7 +22,10 @@ final class ConferenceModel: ObservableObject {
     @Published private(set) var status = L("Enter a jam link to begin.")
     @Published private(set) var statusIsError = false
     @Published private(set) var mediaStatus: String?
-    @Published private var phase: SessionPhase = .idle
+    private let macCallActivity = MacCallActivity()
+    @Published private var phase: SessionPhase = .idle {
+        didSet { macCallActivity.setActive(phase != .idle) }
+    }
     var isJoining: Bool { phase == .joining }
     var isInConference: Bool { phase == .active }
     var isLeaving: Bool { phase == .leaving }

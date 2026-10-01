@@ -1,6 +1,7 @@
 import Combine
 import CoreImage
 import UIKit
+import VideoToolbox
 
 /// A bounded local confidence preview, never a claim of remote delivery.
 @MainActor
@@ -99,6 +100,18 @@ final class LocalSharePreview: ObservableObject {
         refreshPolicy()
         guard acceptsFrames, time - lastFrameTime >= (isMac ? 0.5 : 1) else { return }
         lastFrameTime = time
+        // Core Image opens Metal's persistent compiler-cache lock even when
+        // software rendering is requested. UIKit-on-Mac can be terminated during
+        // suspension while that lock is open. Keep the tiny Mac preview on the
+        // VideoToolbox/Core Graphics path; the outgoing stream is unchanged.
+        if isMac {
+            if let thumbnail = Self.macThumbnail(pixelBuffer, rotation: rotation) {
+                image = UIImage(cgImage: thumbnail)
+                refreshRequested = false
+                refreshPolicy()
+            }
+            return
+        }
         var input = CIImage(cvPixelBuffer: pixelBuffer)
         switch rotation {
         case 90: input = input.oriented(.right)
@@ -114,6 +127,37 @@ final class LocalSharePreview: ObservableObject {
             refreshRequested = false
             refreshPolicy()
         }
+    }
+
+    private static func macThumbnail(_ buffer: CVPixelBuffer, rotation: Int) -> CGImage? {
+        var source: CGImage?
+        guard VTCreateCGImageFromCVPixelBuffer(buffer, options: nil, imageOut: &source) == noErr,
+              let source else { return nil }
+        let quarterTurn = rotation == 90 || rotation == 270
+        let scale = min(1, 640 / CGFloat(max(source.width, source.height)))
+        let width = max(1, Int(CGFloat(quarterTurn ? source.height : source.width) * scale))
+        let height = max(1, Int(CGFloat(quarterTurn ? source.width : source.height) * scale))
+        guard let context = CGContext(data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: source.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.interpolationQuality = .medium
+        switch rotation {
+        case 90:
+            context.translateBy(x: 0, y: CGFloat(height))
+            context.rotate(by: -.pi / 2)
+        case 180:
+            context.translateBy(x: CGFloat(width), y: CGFloat(height))
+            context.rotate(by: .pi)
+        case 270:
+            context.translateBy(x: CGFloat(width), y: 0)
+            context.rotate(by: .pi / 2)
+        default: break
+        }
+        context.draw(source, in: CGRect(x: 0, y: 0,
+            width: quarterTurn ? height : width, height: quarterTurn ? width : height))
+        // Only the bounded bitmap escapes; don't retain a full-size capture buffer.
+        return context.makeImage()
     }
 
     func acceptThumbnail(_ thumbnail: UIImage) {
