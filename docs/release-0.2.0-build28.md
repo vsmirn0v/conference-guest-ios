@@ -61,8 +61,6 @@ screens. Added Focus mode and smoother participant navigation.”
 Signed archive:
 `~/Library/Developer/Xcode/Archives/2026-10-01/RockNRoll-0.2.0-b28.xcarchive`.
 
-Publication verification will be recorded below after delivery.
-
 Strict deep signature verification passed. App and both extensions report
 0.2.0 (28), minimum iOS 16.0. English/Russian app resources are packaged.
 CloudKit uses Production with team `5V64BP2H3P`. Archive executable SHA-256:
@@ -71,3 +69,9 @@ CloudKit uses Production with team `5V64BP2H3P`. Archive executable SHA-256:
 Upload succeeded on 2026-10-01 (`/tmp/rock-build28-upload.log`, EXPORT
 SUCCEEDED). Existing bundled dependency dSYM warnings did not block delivery;
 they limit symbolication inside those frameworks.
+
+App Store Connect verification on 2026-10-01: build 28 is **Testing**, assigned
+to Rock’n’Roll Internal and Rock’n’Roll Public Beta. Automatic tester
+notification was enabled. Build ID: `ecf1be76-ff0f-4af9-bc6a-88ac7832a83a`.
+Public invitation: https://testflight.apple.com/join/Hd13C9U3.
+Local publication proof: `/tmp/rock-build28-testflight.png`.
