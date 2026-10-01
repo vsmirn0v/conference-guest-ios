@@ -7,26 +7,43 @@ final class CallControls: UIView {
     override var canBecomeFirstResponder: Bool { true }
     override var keyCommands: [UIKeyCommand]? {
         CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
-            chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen))
+            chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls))
     }
     @objc private func keyToggleMicrophone() { microphone.sendActions(for: .touchUpInside) }
     @objc private func keyToggleCamera() { camera.sendActions(for: .touchUpInside) }
     @objc private func keyOpenChat() { catchUpButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
+    @objc private func keyFocus() { focus.toggle() }
+    @objc private func keyRestoreControls() { focus.show(); focus.interaction() }
     @objc private func keyFitScreen() { fitZoomedContent() }
+    private let surface = CallChromeSurface()
+    private let focus = CallFocusController()
+    private let layoutOwner = UUID()
+    private weak var mountedWindow: UIWindow?
+    private var toolbar: CallToolbar?
+    private var headerView: UIStackView?
+    private let focusButton = UIButton(type: .system)
+    private let restoreButton = UIButton(type: .system)
+    private let navigation = UIStackView()
+    private let previous = UIButton(type: .system)
+    private let nextStream = UIButton(type: .system)
+    private let automaticView = UIButton(type: .system)
+    private var navigationCount = 0
+    private var stagePinned = false
+    var onBrowse: ((Int) -> Void)?
+    var onAutomaticView: (() -> Void)?
+    var onPinStage: (() -> Void)?
     private var subscriptions = Set<AnyCancellable>()
     private let localPreview: LocalSharePreview
     private let localShareCard: LocalSharePreviewCard
-    private var localShareConstraints: [NSLayoutConstraint] = []
-    private let microphone = UIButton(type: .system)
-    private let camera = UIButton(type: .system)
-    private let share = UIButton(type: .system)
+    private let microphone = AlignedCallButton(frame: .zero)
+    private let camera = AlignedCallButton(frame: .zero)
+    private let share = AlignedCallButton(frame: .zero)
     private let route = UIView()
     private let catchUpButton = UIButton(type: .system)
     private let missedButton = UIButton(type: .system)
-    private let displayButton = UIButton(type: .system)
     private let participantsButton = UIButton(type: .system)
-    private let moreButton = UIButton(type: .system)
+    private let moreButton = AlignedCallButton(frame: .zero)
     private let titleLabel = UILabel()
     private let countLabel = UILabel()
     private let routeLabel = UILabel()
@@ -35,28 +52,19 @@ final class CallControls: UIView {
     private let audioOnlyBackdrop = UIView()
     private let screenSharesBackdrop = UIView()
     private let waitingBackdrop = UIView()
-    private let pinnedBackdrop = UIView()
-    private var pinnedBackdropConstraints: [NSLayoutConstraint] = []
-    private let pinnedVideo = GuestSampleBufferView()
-    private let pinnedStatus = UILabel()
-    private let pinnedUnpin = UIButton(type: .system)
+    private let stageView = UIView()
+    private let stageVideo = GuestSampleBufferView()
+    private let stageStatus = UILabel()
     private let shareOffer = UIButton(type: .system)
-    private var pinnedViewport: StreamViewport?
-    private var pinnedID: String?
-    private var pinnedName: String?
-    private var pinnedIsShare = false
-    private var pinnedActive = false
-    private var pinnedHasFrame = false
-    var onUnpin: (() -> Void)?
+    private var stageViewport: StreamViewport?
+    private var lastPresentation: GuestStreamViews.Presentation?
+    private var stageID: String?
+    private var stageName: String?
+    private var stageIsShare = false
+    private var stageActive = false
+    private var stageHasFrame = false
     var onViewShare: (() -> Void)?
     private let notices = TopNoticeView()
-    private var barBottomConstraint: NSLayoutConstraint?
-    private var barLeadingConstraint: NSLayoutConstraint?
-    private var barTrailingConstraint: NSLayoutConstraint?
-    private var noticeTopConstraint: NSLayoutConstraint?
-    private var headerTopConstraint: NSLayoutConstraint?
-    private var headerCenterConstraint: NSLayoutConstraint?
-    private var orientationObserver: NSObjectProtocol?
     private var displayMode: ConferenceDisplayMode = .all
     private var hasScreenShare = false
     private var hasVideo = false
@@ -77,8 +85,8 @@ final class CallControls: UIView {
             (displayMode == .screenShares ? hasScreenShare : hasScreenShare || hasVideo)
     }
 
-    init(localPreview: LocalSharePreview, state: JazzActiveConferenceState, coordinator: JazzActiveConferenceCoordinator,
-         router: JazzActiveConferenceRouter,
+    init(localPreview: LocalSharePreview, state: JazzActiveConferenceState?, coordinator: JazzActiveConferenceCoordinator?,
+         router: JazzActiveConferenceRouter?,
          catchUp: CatchUpStore, chat: ChatStore,
          initialDisplayMode: ConferenceDisplayMode,
          invitationURL: URL?, roomIdentifier: String?,
@@ -94,6 +102,7 @@ final class CallControls: UIView {
         self.onFloatingPreferenceChanged = onFloatingPreferenceChanged
         super.init(frame: .zero)
         localShareCard.onStop = { onScreenShare(false) }
+        localShareCard.onLayoutChanged = { [weak self] in self?.surface.setNeedsLayout() }
         refreshMoreMenu = { [weak self] in
             self?.configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
         }
@@ -101,6 +110,7 @@ final class CallControls: UIView {
         workspace.roomIdentifier = roomIdentifier
         displayMode = initialDisplayMode
         backgroundColor = .clear
+        surface.tintColor = .white
         audioOnlyBackdrop.backgroundColor = .black
         audioOnlyBackdrop.isHidden = initialDisplayMode != .audioOnly
         audioOnlyBackdrop.isUserInteractionEnabled = false
@@ -198,46 +208,31 @@ final class CallControls: UIView {
             waitingColumn.leadingAnchor.constraint(greaterThanOrEqualTo: waitingBackdrop.leadingAnchor, constant: 20),
             waitingColumn.trailingAnchor.constraint(lessThanOrEqualTo: waitingBackdrop.trailingAnchor, constant: -20),
         ])
-        pinnedBackdrop.backgroundColor = .black
-        pinnedBackdrop.isHidden = true
-        pinnedBackdrop.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(pinnedBackdrop)
-        pinnedStatus.textColor = .white
-        pinnedStatus.textAlignment = .center
-        pinnedStatus.numberOfLines = 0
-        pinnedStatus.translatesAutoresizingMaskIntoConstraints = false
-        pinnedBackdrop.addSubview(pinnedStatus)
-        pinnedUnpin.configuration = .tinted()
-        pinnedUnpin.configuration?.title = L("Unpin")
-        pinnedUnpin.configuration?.image = UIImage(systemName: "pin.slash")
-        pinnedUnpin.addAction(UIAction { [weak self] _ in self?.onUnpin?() }, for: .touchUpInside)
-        pinnedUnpin.translatesAutoresizingMaskIntoConstraints = false
-        pinnedBackdrop.addSubview(pinnedUnpin)
+        stageView.backgroundColor = .black
+        stageView.isHidden = true
+        stageView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stageView)
+        stageStatus.textColor = .white
+        stageStatus.textAlignment = .center
+        stageStatus.numberOfLines = 0
+        stageStatus.translatesAutoresizingMaskIntoConstraints = false
+        stageView.addSubview(stageStatus)
         shareOffer.configuration = .tinted()
         shareOffer.configuration?.image = UIImage(systemName: "rectangle.on.rectangle")
         shareOffer.isHidden = true
         shareOffer.addAction(UIAction { [weak self] _ in self?.onViewShare?() }, for: .touchUpInside)
         shareOffer.translatesAutoresizingMaskIntoConstraints = false
-        pinnedBackdrop.addSubview(shareOffer)
-        pinnedBackdropConstraints = [
-            pinnedBackdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
-            pinnedBackdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
-            pinnedBackdrop.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 70),
-            pinnedBackdrop.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -72)
-        ]
-        NSLayoutConstraint.activate(pinnedBackdropConstraints + [
-            pinnedStatus.centerXAnchor.constraint(equalTo: pinnedBackdrop.centerXAnchor),
-            pinnedStatus.centerYAnchor.constraint(equalTo: pinnedBackdrop.centerYAnchor),
-            pinnedStatus.leadingAnchor.constraint(greaterThanOrEqualTo: pinnedBackdrop.leadingAnchor, constant: 16),
-            pinnedStatus.trailingAnchor.constraint(lessThanOrEqualTo: pinnedBackdrop.trailingAnchor, constant: -16),
-            pinnedUnpin.trailingAnchor.constraint(equalTo: pinnedBackdrop.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-            pinnedUnpin.topAnchor.constraint(equalTo: pinnedBackdrop.topAnchor, constant: 8),
-            pinnedUnpin.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            shareOffer.centerXAnchor.constraint(equalTo: pinnedBackdrop.centerXAnchor),
-            shareOffer.topAnchor.constraint(equalTo: pinnedUnpin.bottomAnchor, constant: 8),
+        stageView.addSubview(shareOffer)
+        NSLayoutConstraint.activate([
+            stageStatus.centerXAnchor.constraint(equalTo: stageView.centerXAnchor),
+            stageStatus.centerYAnchor.constraint(equalTo: stageView.centerYAnchor),
+            stageStatus.leadingAnchor.constraint(greaterThanOrEqualTo: stageView.leadingAnchor, constant: 16),
+            stageStatus.trailingAnchor.constraint(lessThanOrEqualTo: stageView.trailingAnchor, constant: -16),
+            shareOffer.centerXAnchor.constraint(equalTo: stageView.centerXAnchor),
+            shareOffer.topAnchor.constraint(equalTo: stageView.topAnchor, constant: 56),
             shareOffer.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            shareOffer.leadingAnchor.constraint(greaterThanOrEqualTo: pinnedBackdrop.leadingAnchor, constant: 8),
-            shareOffer.trailingAnchor.constraint(lessThanOrEqualTo: pinnedBackdrop.trailingAnchor, constant: -8)
+            shareOffer.leadingAnchor.constraint(greaterThanOrEqualTo: stageView.leadingAnchor, constant: 8),
+            shareOffer.trailingAnchor.constraint(lessThanOrEqualTo: stageView.trailingAnchor, constant: -8)
         ])
 
         let leave = Self.button(L("Leave"), symbol: "phone.down.fill")
@@ -246,16 +241,16 @@ final class CallControls: UIView {
         missedButton.configuration = Self.iconConfiguration("clock.arrow.circlepath")
         missedButton.accessibilityLabel = L("Catch up")
         missedButton.isHidden = true
-        displayButton.configuration = Self.iconConfiguration(displayMode.symbol)
-        displayButton.accessibilityLabel = L("Display: %@", displayMode.title)
         moreButton.configuration = Self.iconConfiguration("ellipsis.circle.fill", title: L("More"))
         moreButton.accessibilityLabel = L("More call options")
         moreButton.showsMenuAsPrimaryAction = true
         participantsButton.configuration = Self.iconConfiguration("person.2.fill")
         participantsButton.accessibilityLabel = L("Musicians")
         configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
-        microphone.configuration = Self.iconConfiguration("mic.slash.fill", title: L("Mic off"))
-        camera.configuration = Self.iconConfiguration("video.slash.fill", title: L("Cam off"))
+        microphone.configuration = Self.iconConfiguration("mic.slash.fill", title: L("Mic"))
+        camera.configuration = Self.iconConfiguration("video.slash.fill", title: L("Video"))
+        microphone.accessibilityLabel = L("Unmute microphone")
+        camera.accessibilityLabel = L("Start video")
         share.configuration = Self.iconConfiguration("rectangle.on.rectangle", title: L("Share"))
         share.accessibilityLabel = L("Share screen")
         for button in [microphone, camera, share, catchUpButton, missedButton, moreButton, participantsButton] {
@@ -266,19 +261,22 @@ final class CallControls: UIView {
         leave.configuration?.baseForegroundColor = .systemRed
 
         microphone.addAction(UIAction { _ in
-            let turnOn = state.microphoneState != .on
+            let turnOn = state?.microphoneState != .on
             onMicrophoneState(turnOn)
-            coordinator.toggleMicrohone(isOn: turnOn)
+            coordinator?.toggleMicrohone(isOn: turnOn)
         }, for: .touchUpInside)
         camera.addAction(UIAction { _ in
-            let turnOn = state.cameraState != .on
+            let turnOn = state?.cameraState != .on
             onCameraState(turnOn)
-            coordinator.toggleCamera(isOn: turnOn)
+            coordinator?.toggleCamera(isOn: turnOn)
         }, for: .touchUpInside)
         share.addAction(UIAction { _ in
-            onScreenShare(state.screenShareState != .on)
+            onScreenShare(state?.screenShareState != .on)
         }, for: .touchUpInside)
         leave.addAction(UIAction { _ in onLeave() }, for: .touchUpInside)
+        for button in [microphone, camera, share, participantsButton, catchUpButton, missedButton] {
+            button.addAction(UIAction { [weak self] _ in self?.focus.interaction() }, for: .touchUpInside)
+        }
         workspace.toggleMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
         workspace.toggleCamera = { [weak self] in self?.camera.sendActions(for: .touchUpInside) }
         workspace.leave = { leave.sendActions(for: .touchUpInside) }
@@ -288,47 +286,33 @@ final class CallControls: UIView {
         missedButton.addAction(UIAction { [weak self] _ in
             self?.openConversation(catchUp: catchUp, chat: chat, selected: .catchUp)
         }, for: .touchUpInside)
-        participantsButton.addAction(UIAction { _ in router.openParticipants() }, for: .touchUpInside)
+        participantsButton.addAction(UIAction { _ in router?.openParticipants() }, for: .touchUpInside)
 
         route.translatesAutoresizingMaskIntoConstraints = false
         route.accessibilityLabel = L("Audio route")
-        let picker = coordinator.audioRoutePickerButton
+        let picker = coordinator?.audioRoutePickerButton ?? UIButton(type: .system)
         picker.translatesAutoresizingMaskIntoConstraints = false
         route.addSubview(picker)
-        let routeIcon = UIImageView(image: UIImage(systemName: "speaker.wave.2.fill"))
-        routeIcon.tintColor = UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
-        routeIcon.isUserInteractionEnabled = false
-        routeIcon.translatesAutoresizingMaskIntoConstraints = false
-        route.addSubview(routeIcon)
-        let routeTitle = UILabel()
-        routeTitle.text = L("Audio")
-        routeTitle.textColor = .white
-        routeTitle.font = .preferredFont(forTextStyle: .caption2)
-        routeTitle.isUserInteractionEnabled = false
-        routeTitle.translatesAutoresizingMaskIntoConstraints = false
-        route.addSubview(routeTitle)
+        let routeAppearance = AlignedCallButton(frame: .zero)
+        routeAppearance.configuration = Self.iconConfiguration("speaker.wave.2.fill", title: L("Audio"))
+        routeAppearance.isUserInteractionEnabled = false
+        routeAppearance.accessibilityElementsHidden = true
+        routeAppearance.backgroundColor = UIColor(red: 0.12, green: 0.14, blue: 0.21, alpha: 1)
+        routeAppearance.translatesAutoresizingMaskIntoConstraints = false
+        route.addSubview(routeAppearance)
         NSLayoutConstraint.activate([
             picker.leadingAnchor.constraint(equalTo: route.leadingAnchor),
             picker.trailingAnchor.constraint(equalTo: route.trailingAnchor),
             picker.topAnchor.constraint(equalTo: route.topAnchor),
             picker.bottomAnchor.constraint(equalTo: route.bottomAnchor),
-            routeIcon.centerXAnchor.constraint(equalTo: route.centerXAnchor),
-            routeIcon.centerYAnchor.constraint(equalTo: route.centerYAnchor, constant: -7),
-            routeIcon.widthAnchor.constraint(equalToConstant: 25),
-            routeIcon.heightAnchor.constraint(equalToConstant: 25),
-            routeTitle.centerXAnchor.constraint(equalTo: route.centerXAnchor),
-            routeTitle.bottomAnchor.constraint(equalTo: route.bottomAnchor, constant: -4),
+            routeAppearance.leadingAnchor.constraint(equalTo: route.leadingAnchor),
+            routeAppearance.trailingAnchor.constraint(equalTo: route.trailingAnchor),
+            routeAppearance.topAnchor.constraint(equalTo: route.topAnchor),
+            routeAppearance.bottomAnchor.constraint(equalTo: route.bottomAnchor)
         ])
 
-        let bar = UIStackView(arrangedSubviews: [microphone, camera, route, share, moreButton, leave])
-        bar.axis = .horizontal
-        bar.distribution = .fillEqually
-        bar.alignment = .fill
-        bar.spacing = 4
-        bar.backgroundColor = UIColor(red: 0.12, green: 0.14, blue: 0.21, alpha: 0.96)
-        bar.layer.cornerRadius = 16
-        bar.isLayoutMarginsRelativeArrangement = true
-        bar.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 5, leading: 5, bottom: 5, trailing: 5)
+        let bar = CallToolbar(items: [microphone, camera, route, share, moreButton, leave])
+        toolbar = bar
         bar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bar)
         titleLabel.font = .preferredFont(forTextStyle: .headline)
@@ -350,6 +334,7 @@ final class CallControls: UIView {
         identity.spacing = 1
         let header = UIStackView(arrangedSubviews: [identity, participantsButton,
                                                     missedButton, catchUpButton])
+        headerView = header
         header.axis = .horizontal
         header.alignment = .center
         header.spacing = 4
@@ -370,53 +355,13 @@ final class CallControls: UIView {
         speakerLabel.isUserInteractionEnabled = false
         speakerLabel.translatesAutoresizingMaskIntoConstraints = false
         addSubview(speakerLabel)
-        let bottom = bar.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -4)
-        let leading = bar.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 6)
-        let trailing = bar.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -6)
-        barBottomConstraint = bottom
-        barLeadingConstraint = leading
-        barTrailingConstraint = trailing
-        let noticeTop = notices.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 6)
-        noticeTopConstraint = noticeTop
-        let headerTop = header.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 4)
-        let headerCenter = header.centerXAnchor.constraint(equalTo: safeAreaLayoutGuide.centerXAnchor)
-        headerTopConstraint = headerTop
-        headerCenterConstraint = headerCenter
         NSLayoutConstraint.activate([
-            leading, trailing,
-            bottom,
-            bar.heightAnchor.constraint(equalToConstant: 62),
-            bar.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
-            bar.centerXAnchor.constraint(equalTo: safeAreaLayoutGuide.centerXAnchor),
-            microphone.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            camera.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            route.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            moreButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            leave.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            headerTop,
-            header.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 8),
-            header.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -8),
-            headerCenter,
-            header.widthAnchor.constraint(lessThanOrEqualToConstant: 440),
             participantsButton.widthAnchor.constraint(equalToConstant: 48),
             participantsButton.heightAnchor.constraint(equalToConstant: 48),
             catchUpButton.widthAnchor.constraint(equalToConstant: 48),
-            catchUpButton.heightAnchor.constraint(equalToConstant: 48),
-            missedWidth, missedHeight,
-            noticeTop,
-            notices.centerXAnchor.constraint(equalTo: safeAreaLayoutGuide.centerXAnchor),
-            notices.leadingAnchor.constraint(greaterThanOrEqualTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
-            notices.trailingAnchor.constraint(lessThanOrEqualTo: safeAreaLayoutGuide.trailingAnchor, constant: -12),
-            notices.widthAnchor.constraint(lessThanOrEqualToConstant: 440),
-            speakerLabel.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 8),
-            speakerLabel.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -7),
-            speakerLabel.trailingAnchor.constraint(lessThanOrEqualTo: bar.trailingAnchor, constant: -8),
+            catchUpButton.heightAnchor.constraint(equalToConstant: 48), missedWidth, missedHeight
         ])
-        orientationObserver = NotificationCenter.default.addObserver(
-            forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            DispatchQueue.main.async { self?.alignBarWithVisibleWindow() }
-        }
+        installPresentation()
 
         catchUp.$timeline.receive(on: DispatchQueue.main).sink { [weak self] timeline in
             guard let self else { return }
@@ -429,19 +374,21 @@ final class CallControls: UIView {
             self.updateChatBadge()
         }.store(in: &subscriptions)
 
+        guard let state else { return }
         state.$microphoneState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
             #if DEBUG
             print("Microphone state changed: \(media)")
             #endif
             self.microphone.configuration?.image = UIImage(systemName: media == .on ? "mic.fill" : "mic.slash.fill")
-            self.microphone.configuration?.title = media == .on ? L("Mic on") : L("Mic off")
+            self.microphone.configuration?.title = L("Mic")
             self.microphone.configuration?.baseForegroundColor = media == .on ?
                 UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
             self.microphone.isEnabled = media != .disabled
             self.microphone.accessibilityLabel = media == .on ? L("Mute microphone") : L("Unmute microphone")
             self.microphone.largeContentTitle = self.microphone.accessibilityLabel
             self.workspace.microphoneOn = media == .on
+            self.updateRestoreButton()
         }.store(in: &subscriptions)
         state.$cameraState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
@@ -449,7 +396,7 @@ final class CallControls: UIView {
             print("Camera state changed: \(media)")
             #endif
             self.camera.configuration?.image = UIImage(systemName: media == .on ? "video.fill" : "video.slash.fill")
-            self.camera.configuration?.title = media == .on ? L("Cam on") : L("Cam off")
+            self.camera.configuration?.title = L("Video")
             self.camera.configuration?.baseForegroundColor = media == .on ?
                 UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
             self.camera.isEnabled = media != .disabled
@@ -464,7 +411,7 @@ final class CallControls: UIView {
             let isSharing = media == .on
             if isSharing { self.localPreview.begin() } else { self.localPreview.end() }
             self.share.configuration?.image = UIImage(systemName: isSharing ? "rectangle.slash" : "rectangle.on.rectangle")
-            self.share.configuration?.title = isSharing ? L("Stop share") : L("Share")
+            self.share.configuration?.title = L("Share")
             self.share.configuration?.baseForegroundColor = isSharing ?
                 UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
             self.share.isEnabled = media != .disabled
@@ -500,6 +447,7 @@ final class CallControls: UIView {
                 } else {
                     self.speakerLabel.isHidden = true
                 }
+                self.surface.setNeedsLayout()
             }.store(in: &subscriptions)
         state.$conferenceTitle.receive(on: DispatchQueue.main)
             .sink { [weak self] title in self?.titleLabel.text = title.isEmpty ? L("Jam") : title }
@@ -508,89 +456,76 @@ final class CallControls: UIView {
 
     required init?(coder: NSCoder) { nil }
 
-    func setPinnedPresentation(id: String?, name: String?, isShare: Bool, active: Bool, automatic: Bool = false) {
-        let changed = pinnedID != id || pinnedName != name || pinnedIsShare != isShare
-        if pinnedActive && !active {
-            pinnedVideo.clear()
-            pinnedHasFrame = false
+    func setStagePresentation(_ presentation: GuestStreamViews.Presentation) {
+        guard lastPresentation != presentation else { return }
+        lastPresentation = presentation
+        let id = presentation.target?.participant, name = presentation.name
+        let isShare = presentation.target?.isShare == true
+        let active = presentation.active, automatic = presentation.automatic
+        let microphoneOn = presentation.microphoneOn
+        navigationCount = presentation.count
+        automaticView.isHidden = !presentation.browsing
+        let changed = stageID != id || stageIsShare != isShare
+        if stageActive && !active {
+            stageVideo.clear()
+            stageHasFrame = false
         }
-        if changed { pinnedHasFrame = false }
-        pinnedID = id
-        pinnedName = name
-        pinnedIsShare = isShare
-        pinnedActive = active
-        if name != nil { movePinnedStageAboveSDKVideo() }
-        pinnedBackdrop.isHidden = name == nil || displayMode == .audioOnly ||
+        if changed { stageHasFrame = false }
+        stageID = id
+        stageName = name
+        stageIsShare = isShare
+        stageActive = active
+        stagePinned = !automatic
+        surface.backgroundColor = .black
+        surface.accessibilityIdentifier = "Meeting stage"
+        stageView.isHidden = name == nil || displayMode == .audioOnly ||
             displayMode == .screenShares && !isShare
-        pinnedStatus.text = active ? L("Waiting for %@'s %@…", name ?? L("Musician"), isShare ? L("screen share") : L("video")) :
+        stageStatus.text = active ? L("Waiting for %@'s %@…", name ?? L("Musician"), isShare ? L("screen share") : L("video")) :
             L("%@ · %@ unavailable · Pinned", name ?? L("Musician"), isShare ? L("Screen share") : L("Camera"))
-        pinnedStatus.isHidden = active && pinnedHasFrame
-        pinnedUnpin.isHidden = automatic
-        pinnedUnpin.accessibilityLabel = L("Unpin %@ %@", name ?? L("Musician"), isShare ? L("screen share") : L("video"))
+        stageStatus.isHidden = !active || stageHasFrame
         if changed {
-            pinnedVideo.clear()
-            pinnedViewport?.removeFromSuperview()
-            pinnedViewport = nil
+            stageVideo.clear()
+            stageViewport?.removeFromSuperview()
+            stageViewport = nil
             if name != nil {
-                let viewport = StreamViewport(video: pinnedVideo, state: StreamViewportState(),
+                let viewport = StreamViewport(video: stageVideo, state: StreamViewportState(),
                     zoomable: isShare, name: name ?? L("Musician"), showInfo: true,
-                    microphoneOn: true, pinned: !automatic, watermark: nil)
+                    microphoneOn: microphoneOn, pinned: !automatic, watermark: presentation.watermark)
                 viewport.updatePin(name: name ?? L("Musician"), isShare: isShare,
-                                   pinned: !automatic, onPin: nil)
+                                   pinned: !automatic, onPin: { [weak self] in self?.onPinStage?() })
                 viewport.translatesAutoresizingMaskIntoConstraints = false
-                pinnedBackdrop.insertSubview(viewport, at: 0)
+                stageView.insertSubview(viewport, at: 0)
                 NSLayoutConstraint.activate([
-                    viewport.leadingAnchor.constraint(equalTo: pinnedBackdrop.leadingAnchor),
-                    viewport.trailingAnchor.constraint(equalTo: pinnedBackdrop.trailingAnchor),
-                    viewport.topAnchor.constraint(equalTo: pinnedBackdrop.topAnchor),
-                    viewport.bottomAnchor.constraint(equalTo: pinnedBackdrop.bottomAnchor)
+                    viewport.leadingAnchor.constraint(equalTo: stageView.leadingAnchor),
+                    viewport.trailingAnchor.constraint(equalTo: stageView.trailingAnchor),
+                    viewport.topAnchor.constraint(equalTo: stageView.topAnchor),
+                    viewport.bottomAnchor.constraint(equalTo: stageView.bottomAnchor)
                 ])
-                pinnedViewport = viewport
+                viewport.onBrowse = { [weak self] step in self?.onBrowse?(step) }
+                viewport.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
+                viewport.onToggleControls = { [weak self] in self?.toggleControls() }
+                stageViewport = viewport
             }
         }
-        pinnedViewport?.isHidden = !active
+        stageViewport?.updatePresentation(name: name ?? L("Musician"), showInfo: true,
+            microphoneOn: microphoneOn, pinned: !automatic, watermark: presentation.watermark, zoomable: isShare,
+            placeholderText: active ? nil : "\(name ?? L("Musician")) · \(L("Camera off"))")
+        stageViewport?.updatePin(name: name ?? L("Musician"), isShare: isShare,
+            pinned: !automatic, onPin: { [weak self] in self?.onPinStage?() })
+        stageViewport?.setMediaActive(active)
+        layoutPresentation()
     }
 
-    private func movePinnedStageAboveSDKVideo() {
-        guard let window, pinnedBackdrop.superview !== window else { return }
-        NSLayoutConstraint.deactivate(pinnedBackdropConstraints)
-        pinnedBackdrop.removeFromSuperview()
-        window.addSubview(pinnedBackdrop)
-        pinnedBackdropConstraints = [
-            pinnedBackdrop.leadingAnchor.constraint(equalTo: window.leadingAnchor),
-            pinnedBackdrop.trailingAnchor.constraint(equalTo: window.trailingAnchor),
-            pinnedBackdrop.topAnchor.constraint(equalTo: window.safeAreaLayoutGuide.topAnchor, constant: 70),
-            pinnedBackdrop.bottomAnchor.constraint(equalTo: window.safeAreaLayoutGuide.bottomAnchor, constant: -72)
-        ]
-        NSLayoutConstraint.activate(pinnedBackdropConstraints)
-        window.bringSubviewToFront(localShareCard)
-    }
-
-    private func restorePinnedStageWhenDetached() {
-        guard pinnedBackdrop.superview is UIWindow else { return }
-        NSLayoutConstraint.deactivate(pinnedBackdropConstraints)
-        pinnedBackdrop.removeFromSuperview()
-        addSubview(pinnedBackdrop)
-        pinnedBackdropConstraints = [
-            pinnedBackdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
-            pinnedBackdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
-            pinnedBackdrop.topAnchor.constraint(equalTo: safeAreaLayoutGuide.topAnchor, constant: 70),
-            pinnedBackdrop.bottomAnchor.constraint(equalTo: safeAreaLayoutGuide.bottomAnchor, constant: -72)
-        ]
-        NSLayoutConstraint.activate(pinnedBackdropConstraints)
-        pinnedBackdrop.isHidden = true
-    }
-
-    func showPinnedFrame(_ sample: CMSampleBuffer, rotation: Int) {
-        guard pinnedName != nil, pinnedActive, !pinnedBackdrop.isHidden else { return }
-        if pinnedVideo.enqueue(sample, rotation: rotation) {
-            pinnedHasFrame = true
-            pinnedStatus.isHidden = true
+    func showStageFrame(_ sample: CMSampleBuffer, rotation: Int) {
+        guard stageName != nil, stageActive, !stageView.isHidden else { return }
+        if stageVideo.enqueue(sample, rotation: rotation) {
+            stageHasFrame = true
+            stageStatus.isHidden = true
         }
     }
 
     func setShareOffer(name: String?) {
-        shareOffer.isHidden = name == nil || pinnedBackdrop.isHidden
+        shareOffer.isHidden = name == nil || stageView.isHidden
         shareOffer.configuration?.title = name.map { L("%@ is sharing · View", $0) }
         shareOffer.accessibilityLabel = name.map { L("View %@ screen share", $0) }
     }
@@ -617,10 +552,13 @@ final class CallControls: UIView {
 
     func showNotices(_ items: [InCallNotice]) {
         notices.show(items)
+        if !items.isEmpty { focus.show() }
+        layoutPresentation()
     }
 
     func setHeld(_ held: Bool) {
         isHeld = held
+        if held { focus.show() }
         workspace.onHold = held
         refreshMoreMenu?()
         renderCallStatus()
@@ -635,6 +573,7 @@ final class CallControls: UIView {
 
     func showMediaStatus(_ message: String?) {
         mediaStatus = message
+        if message != nil { focus.show() }
         renderCallStatus()
     }
 
@@ -658,91 +597,148 @@ final class CallControls: UIView {
             L("Chat, %ld unread", unreadChatCount) : L("Chat")
     }
 
-    deinit {
-        if let orientationObserver { NotificationCenter.default.removeObserver(orientationObserver) }
-        NSLayoutConstraint.deactivate(pinnedBackdropConstraints)
-        pinnedBackdrop.removeFromSuperview()
-        localShareCard.removeFromSuperview()
-    }
+    deinit { surface.removeFromSuperview() }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window == nil {
-            restorePinnedStageWhenDetached()
-            NSLayoutConstraint.deactivate(localShareConstraints)
-            localShareCard.removeFromSuperview()
+            CallStageLayout.remove(window: mountedWindow, owner: layoutOwner)
+            surface.removeFromSuperview()
+            mountedWindow = nil
+            focus.invalidate()
             return
         }
-        if let window, localShareCard.superview !== window {
-            NSLayoutConstraint.deactivate(localShareConstraints)
-            localShareCard.removeFromSuperview()
-            localShareCard.translatesAutoresizingMaskIntoConstraints = false
-            window.addSubview(localShareCard)
-            localShareConstraints = [
-                localShareCard.leadingAnchor.constraint(equalTo: window.safeAreaLayoutGuide.leadingAnchor, constant: 12),
-                localShareCard.bottomAnchor.constraint(equalTo: window.safeAreaLayoutGuide.bottomAnchor, constant: -80),
-                localShareCard.widthAnchor.constraint(equalToConstant: 216),
-                localShareCard.topAnchor.constraint(greaterThanOrEqualTo: window.safeAreaLayoutGuide.topAnchor, constant: 70)
-            ]
-            NSLayoutConstraint.activate(localShareConstraints)
+        guard let window, let host = presentationContainer?.view else { return }
+        if surface.superview !== host {
+            CallStageLayout.remove(window: mountedWindow, owner: layoutOwner)
+            mountedWindow = window
+            surface.removeFromSuperview()
+            host.addSubview(surface)
+            surface.frame = host.convert(window.bounds, from: window)
         }
-        alignBarWithVisibleWindow()
-        if window != nil { becomeFirstResponder() }
-        if pinnedName != nil { movePinnedStageAboveSDKVideo() }
+        layoutPresentation()
+        becomeFirstResponder()
+        focus.interaction()
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
+    override func layoutSubviews() { super.layoutSubviews(); layoutPresentation() }
+    override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); layoutPresentation() }
+
+    private func installPresentation() {
+        NSLayoutConstraint.deactivate(constraints)
+        for child in subviews {
+            NSLayoutConstraint.deactivate(child.constraints.filter { $0.firstItem === child && $0.secondItem == nil })
+            child.removeFromSuperview()
+            child.translatesAutoresizingMaskIntoConstraints = true
+            surface.addSubview(child)
+        }
+        if let identity = headerView?.arrangedSubviews.first as? UIStackView {
+            speakerLabel.removeFromSuperview()
+            identity.addArrangedSubview(speakerLabel)
+        }
+        localShareCard.translatesAutoresizingMaskIntoConstraints = true
+        surface.addSubview(localShareCard)
+        surface.onLayout = { [weak self] in self?.layoutPresentation() }
+        focus.onChange = { [weak self] _ in self?.layoutPresentation() }
+        focus.canHide = { [weak self] in
+            guard let self else { return false }
+            return !self.isHeld && self.mediaStatus == nil && self.notices.subviews.isEmpty &&
+                self.presentationContainer?.presentedViewController == nil
+        }
+        focusButton.configuration = .tinted()
+        focusButton.configuration?.image = UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+        focusButton.accessibilityLabel = L("Hide controls")
+        focusButton.addAction(UIAction { [weak self] _ in self?.focus.hide() }, for: .touchUpInside)
+        restoreButton.configuration = .filled()
+        restoreButton.configuration?.baseBackgroundColor = UIColor.black.withAlphaComponent(0.85)
+        restoreButton.addAction(UIAction { [weak self] _ in self?.focus.show(); self?.focus.interaction() }, for: .touchUpInside)
+        for button in [previous, nextStream, automaticView] { button.configuration = .tinted() }
+        previous.configuration?.image = UIImage(systemName: "chevron.left")
+        previous.accessibilityLabel = L("Previous stream")
+        nextStream.configuration?.image = UIImage(systemName: "chevron.right")
+        nextStream.accessibilityLabel = L("Next stream")
+        automaticView.configuration?.title = L("Auto")
+        automaticView.accessibilityLabel = L("Automatic view")
+        previous.addAction(UIAction { [weak self] _ in self?.onBrowse?(-1); self?.focus.interaction() }, for: .touchUpInside)
+        nextStream.addAction(UIAction { [weak self] _ in self?.onBrowse?(1); self?.focus.interaction() }, for: .touchUpInside)
+        automaticView.addAction(UIAction { [weak self] _ in self?.onAutomaticView?(); self?.focus.interaction() }, for: .touchUpInside)
+        navigation.axis = .horizontal; navigation.spacing = 4; navigation.distribution = .fillEqually
+        [previous, automaticView, nextStream].forEach { navigation.addArrangedSubview($0) }
+        [focusButton, restoreButton, navigation].forEach(surface.addSubview)
+        moreButton.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
+        updateRestoreButton()
+    }
+
+    private var presenter: UIViewController? {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let controller = current as? UIViewController { return controller }
+            responder = current.next
+        }
+        return nil
+    }
+
+    private var presentationContainer: UIViewController? {
+        guard var controller = presenter else { return nil }
+        // The custom SDK overlay can have a zero-sized hosting controller.
+        // Its enclosing meeting controller owns the visible viewport and menus.
+        while let parent = controller.parent { controller = parent }
+        return controller
+    }
+
+    private func toggleControls() {
+        if focus.hidden { focus.show() } else { focus.interaction() }
+    }
+
+    private func updateRestoreButton() {
+        restoreButton.configuration?.title = L("Show controls")
+        restoreButton.configuration?.image = UIImage(systemName: workspace.microphoneOn ? "mic.fill" : "mic.slash.fill")
+        restoreButton.configuration?.baseForegroundColor = workspace.microphoneOn ? .systemOrange : .white
+        restoreButton.accessibilityLabel = L("Show controls") + ", " + (workspace.microphoneOn ? L("Mic on") : L("Mic off"))
+    }
+
+    private func layoutPresentation() {
+        guard let window = mountedWindow, let toolbar, let header = headerView else { return }
+        if let host = surface.superview { surface.frame = host.convert(window.bounds, from: window) }
+        let large = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+        toolbar.arrange(rail: false, largeText: large)
+        let headerHeight = max(58, header.systemLayoutSizeFitting(CGSize(width: min(440, window.bounds.width - 16), height: 0),
+            withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height)
+        let geometry = CallPresentationGeometry(bounds: surface.bounds, insets: window.safeAreaInsets,
+            headerHeight: headerHeight, toolbarHeight: toolbar.preferredHeight, hidden: focus.hidden, largeText: large)
+        toolbar.arrange(rail: geometry.rail, largeText: large)
+        automaticView.configuration?.title = large ? nil : L("Auto")
+        automaticView.configuration?.image = large ? UIImage(systemName: "arrow.triangle.2.circlepath") : nil
+        header.frame = geometry.header; toolbar.frame = geometry.toolbar
+        header.isHidden = focus.hidden; toolbar.isHidden = focus.hidden
+        navigation.isHidden = focus.hidden || navigationCount < 2 || stagePinned || displayMode == .audioOnly
+        var stage = geometry.stage
+        if !navigation.isHidden {
+            let width: CGFloat = automaticView.isHidden ? 100 : 260
+            navigation.frame = CGRect(x: stage.midX - width / 2, y: stage.minY, width: width, height: 44)
+            stage.origin.y += 48; stage.size.height = max(0, stage.height - 48)
+        }
+        for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop, stageView] { backdrop.frame = stage }
+        notices.frame = CGRect(x: geometry.header.minX, y: geometry.header.maxY + 4,
+            width: geometry.header.width, height: notices.systemLayoutSizeFitting(CGSize(width: geometry.header.width, height: 0)).height)
+        focusButton.isHidden = focus.hidden || stageView.isHidden
+        focusButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44)
+        restoreButton.isHidden = !focus.hidden
+        restoreButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: min(210, stage.width - 16), height: 44)
+        localShareCard.alpha = focus.hidden ? 0 : 1
         localShareCard.refreshLayout()
-        alignBarWithVisibleWindow()
+        let cardWidth = min(216, stage.width - 8)
+        let cardHeight = min(max(0, stage.height - 44), localShareCard.systemLayoutSizeFitting(
+            CGSize(width: cardWidth, height: 0), withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel).height)
+        localShareCard.frame = CGRect(x: stage.minX + 4, y: stage.maxY - cardHeight - 44,
+            width: cardWidth, height: cardHeight)
+        stageViewport?.controlsHidden = focus.hidden
+        CallStageLayout.update(window: window, owner: layoutOwner, rect: surface.convert(stage, to: window), hidden: focus.hidden,
+            toggle: { [weak self] in self?.toggleControls() })
     }
 
-    override func safeAreaInsetsDidChange() {
-        super.safeAreaInsetsDidChange()
-        alignBarWithVisibleWindow()
-    }
-
-    private func alignBarWithVisibleWindow() {
-        guard let window, let barBottomConstraint,
-              let barLeadingConstraint, let barTrailingConstraint else { return }
-        let visibleLeft = convert(CGPoint(x: window.safeAreaInsets.left, y: 0), from: window).x
-        let visibleRight = convert(CGPoint(x: window.bounds.maxX - window.safeAreaInsets.right, y: 0), from: window).x
-        let ownSafeLeft = safeAreaInsets.left
-        let ownSafeRight = bounds.maxX - safeAreaInsets.right
-        let leading = max(6, visibleLeft - ownSafeLeft + 6)
-        let trailing = min(-6, visibleRight - ownSafeRight - 6)
-        if abs(barLeadingConstraint.constant - leading) > 0.5 { barLeadingConstraint.constant = leading }
-        if abs(barTrailingConstraint.constant - trailing) > 0.5 { barTrailingConstraint.constant = trailing }
-        let visibleBottom = convert(
-            CGPoint(x: 0, y: window.bounds.maxY - window.safeAreaInsets.bottom), from: window
-        ).y
-        let ownSafeBottom = bounds.maxY - safeAreaInsets.bottom
-        let constant = min(-4, visibleBottom - ownSafeBottom - 4)
-        if abs(barBottomConstraint.constant - constant) > 0.5 {
-            barBottomConstraint.constant = constant
-        }
-        if let noticeTopConstraint {
-            let visibleTop = convert(CGPoint(x: 0, y: window.safeAreaInsets.top), from: window).y
-            if let headerTopConstraint {
-                let constant = max(4, visibleTop - safeAreaInsets.top + 4)
-                if abs(headerTopConstraint.constant - constant) > 0.5 {
-                    headerTopConstraint.constant = constant
-                }
-            }
-            if let headerCenterConstraint {
-                let windowMidX = (window.bounds.minX + window.bounds.maxX) / 2
-                let visibleMidX = convert(CGPoint(x: windowMidX, y: 0), from: window).x
-                let ownMidX = (safeAreaLayoutGuide.layoutFrame.minX + safeAreaLayoutGuide.layoutFrame.maxX) / 2
-                let constant = visibleMidX - ownMidX
-                if abs(headerCenterConstraint.constant - constant) > 0.5 {
-                    headerCenterConstraint.constant = constant
-                }
-            }
-            if noticeTopConstraint.constant != 6 { noticeTopConstraint.constant = 6 }
-        }
-    }
-
-    private func configureMoreMenu(coordinator: JazzActiveConferenceCoordinator,
+    private func configureMoreMenu(coordinator: JazzActiveConferenceCoordinator?,
                                    onChange: @escaping (ConferenceDisplayMode) -> Void) {
         let viewMenu = UIMenu(title: L("View"), children: ConferenceDisplayMode.allCases.map { option in
             UIAction(title: option.title, image: UIImage(systemName: option.symbol),
@@ -755,7 +751,7 @@ final class CallControls: UIView {
             }
         })
         let flip = UIAction(title: L("Flip camera"), image: UIImage(systemName: "camera.rotate"),
-                            attributes: cameraOn ? [] : [.disabled]) { _ in coordinator.switchCamera() }
+                            attributes: cameraOn ? [] : [.disabled]) { _ in coordinator?.switchCamera() }
         let fit = UIAction(title: L("Fit shared screen"),
                            image: UIImage(systemName: "arrow.down.right.and.arrow.up.left")) { [weak self] _ in
             self?.fitZoomedContent()
@@ -772,7 +768,15 @@ final class CallControls: UIView {
             self?.onFloatingPreferenceChanged()
             self?.configureMoreMenu(coordinator: coordinator, onChange: onChange)
         }
-        var actions: [UIMenuElement] = [float, automatic, viewMenu, fit, flip]
+        let focusAction = UIAction(title: L("Hide controls"), image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")) {
+            [weak self] _ in self?.focus.hide()
+        }
+        let autoHide = UIAction(title: L("Automatically hide controls"), state: focus.automaticallyHides ? .on : .off) {
+            [weak self] _ in guard let self else { return }
+            self.focus.automaticallyHides.toggle()
+            self.refreshMoreMenu?()
+        }
+        var actions: [UIMenuElement] = [focusAction, autoHide, float, automatic, viewMenu, fit, flip]
         if workspace.invitationURL != nil {
             actions.insert(UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
                 [weak self] _ in guard let self else { return }
@@ -789,13 +793,13 @@ final class CallControls: UIView {
         audioOnlyBackdrop.isHidden = displayMode != .audioOnly
         screenSharesBackdrop.isHidden = displayMode != .screenShares || hasScreenShare
         waitingBackdrop.isHidden = displayMode != .all || !isWaitingForOthers
-        pinnedBackdrop.isHidden = pinnedName == nil || displayMode == .audioOnly ||
-            displayMode == .screenShares && !pinnedIsShare
-        shareOffer.isHidden = shareOffer.configuration?.title == nil || pinnedBackdrop.isHidden
+        stageView.isHidden = stageName == nil || displayMode == .audioOnly ||
+            displayMode == .screenShares && !stageIsShare
+        shareOffer.isHidden = shareOffer.configuration?.title == nil || stageView.isHidden
     }
 
     private func fitZoomedContent() {
-        guard let root = window?.rootViewController?.view else { return }
+        guard let root = window else { return }
         var zoomed: [UIScrollView] = []
         func visit(_ view: UIView) {
             guard !view.isHidden, view.alpha > 0.01 else { return }
@@ -810,7 +814,7 @@ final class CallControls: UIView {
     }
 
     private static func button(_ title: String, symbol: String) -> UIButton {
-        let button = UIButton(type: .system)
+        let button = AlignedCallButton(frame: .zero)
         button.configuration = iconConfiguration(symbol, title: title)
         button.accessibilityLabel = title
         button.showsLargeContentViewer = true
@@ -830,7 +834,7 @@ final class CallControls: UIView {
             attributes.font = .systemFont(ofSize: 12, weight: .medium)
             return attributes
         }
-        configuration.baseForegroundColor = UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
+        configuration.baseForegroundColor = .white
         configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 19)
         return configuration
     }

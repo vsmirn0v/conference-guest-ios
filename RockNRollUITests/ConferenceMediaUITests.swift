@@ -363,8 +363,10 @@ final class ConferenceMediaUITests: XCTestCase {
         app.buttons["Enlarge local sharing preview"].tap()
         XCTAssertTrue(app.buttons["Close preview"].waitForExistence(timeout: 5))
         app.buttons["Close preview"].tap()
+        let expandedHeight = app.otherElements["Local sharing preview card"].frame.height
         app.buttons["Hide local preview"].tap()
         XCTAssertFalse(app.buttons["Local shared screen thumbnail"].exists)
+        XCTAssertLessThan(app.otherElements["Local sharing preview card"].frame.height, expandedHeight)
         XCTAssertTrue(app.buttons["Stop local screen sharing"].isHittable)
         app.buttons["Show local preview"].tap()
         XCTAssertTrue(app.buttons["Local shared screen thumbnail"].isHittable)
@@ -737,6 +739,9 @@ final class ConferenceMediaUITests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone Guest QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
         app.launch()
         defer {
             XCUIDevice.shared.orientation = .portrait

@@ -13,6 +13,10 @@ extension SceneDelegate {
                 window.rootViewController = PiPMicrophoneFixtureViewController()
                 return true
             }
+            if fixture == "guest-call" {
+                window.rootViewController = GuestCallLayoutFixture()
+                return true
+            }
             if fixture == "guest-color" {
                 window.rootViewController = GuestColorFixtureViewController()
                 return true

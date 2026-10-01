@@ -141,30 +141,21 @@ final class NativeConferenceEngine: CallEngine {
         }
         GuestVideoFrameTap.prepare()
         floatingVideo = GuestVideoPictureInPicture(sourceView: container.view)
+        floatingVideo?.rendersSelectedViewport = false
         floatingVideo?.onAvailabilityChanged = { [weak self] available in
             self?.activeControls?.setFloatingVideoAvailable(available)
         }
         streamViews.onPreferredVideo = { [weak self] viewport, name, isShare in
             guard let self else { return }
             self.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare)
-            if self.streamViews.pinnedTarget == nil {
-                let show = self.localSharePreview.active && viewport != nil
-                self.activeControls?.setPinnedPresentation(id: show ? "local-share-stage" : nil,
-                    name: show ? name : nil, isShare: isShare, active: show, automatic: true)
-            }
         }
-        streamViews.onPinPresentation = { [weak self] target, name, active in
-            guard let self else { return }
-            if target == nil && self.localSharePreview.active { return }
-            self.activeControls?.setPinnedPresentation(id: target?.participant, name: name,
-                                                       isShare: target?.isShare ?? false, active: active)
-        }
+        streamViews.onStagePresentation = { [weak self] in self?.activeControls?.setStagePresentation($0) }
         streamViews.onShareOffer = { [weak self] name, target in
             self?.activeControls?.setShareOffer(name: name)
             self?.offeredShare = target
         }
         floatingVideo?.onInlineSample = { [weak self] sample, rotation in
-            self?.activeControls?.showPinnedFrame(sample, rotation: rotation)
+            self?.activeControls?.showStageFrame(sample, rotation: rotation)
         }
         audio.onStatus = { [weak self] message in self?.onMediaStatus?(message) }
         audio.onRouteChanged = { [weak self] in
@@ -662,7 +653,9 @@ final class NativeConferenceEngine: CallEngine {
                                             self.cameraIntentOn = isOn
                                         })
             self.activeControls = controls
-            controls.onUnpin = { [weak self] in self?.streamViews.setPin(nil) }
+            controls.onBrowse = { [weak self] in self?.streamViews.browse($0) }
+            controls.onAutomaticView = { [weak self] in self?.streamViews.useAutomaticView() }
+            controls.onPinStage = { [weak self] in self?.streamViews.toggleSelectedPin() }
             controls.onViewShare = { [weak self] in
                 guard let self, let target = self.offeredShare else { return }
                 self.streamViews.setPin(target)

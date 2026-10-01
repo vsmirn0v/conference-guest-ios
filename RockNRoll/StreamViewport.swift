@@ -8,7 +8,7 @@ final class StreamViewportState {
     fileprivate var owner = UUID()
 }
 
-final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteractionDelegate {
+final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteractionDelegate, UIGestureRecognizerDelegate {
     private let scroll = UIScrollView()
     private let content = UIView()
     private let video: UIView
@@ -20,12 +20,23 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     private let owner = UUID()
     private var viewportSize = CGSize.zero
     private var restoring = false
+    private var infoBottom: NSLayoutConstraint?
     private let pinButton = UIButton(type: .system)
     private let zoomControls = UIStackView()
     private var pinAction: (() -> Void)?
     private var pinName = ""
     private var pinIsShare = false
     private var pinnedLocally = false
+    var onMenuVisibilityChanged: ((Bool) -> Void)?
+    var onBrowse: ((Int) -> Void)?
+    var onToggleControls: (() -> Void)?
+    var controlsHidden = false { didSet {
+        guard oldValue != controlsHidden else { return }
+        pinButton.isHidden = controlsHidden || pinAction == nil
+        zoomControls.isHidden = controlsHidden
+        participantInfo.alpha = controlsHidden ? 0 : 1
+    } }
+    var zoomScale: CGFloat { scroll.zoomScale }
     var onVisibilityChanged: (() -> Void)?
     var rendererView: UIView { video }
 
@@ -40,7 +51,22 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         state.owner = owner
         clipsToBounds = true
         backgroundColor = .black
+        tintColor = .white
         scroll.delegate = self
+        scroll.panGestureRecognizer.isEnabled = false
+        CallStageLayout.register(self)
+        let single = UITapGestureRecognizer(target: self, action: #selector(tappedStage))
+        let double = UITapGestureRecognizer(target: self, action: #selector(doubleTappedStage))
+        double.numberOfTapsRequired = 2
+        single.require(toFail: double)
+        single.delegate = self; double.delegate = self
+        single.cancelsTouchesInView = false
+        addGestureRecognizer(single); addGestureRecognizer(double)
+        for direction in [UISwipeGestureRecognizer.Direction.left, .right] {
+            let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swipedStage(_:)))
+            swipe.direction = direction; swipe.delegate = self
+            addGestureRecognizer(swipe)
+        }
         scroll.minimumZoomScale = 1
         scroll.maximumZoomScale = zoomable ? 5 : 1
         scroll.contentInsetAdjustmentBehavior = .never
@@ -80,7 +106,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             zoomControls.translatesAutoresizingMaskIntoConstraints = false
             for (title, symbol, action) in [
                 (L("Zoom out"), "minus.magnifyingglass", -1),
-                (L("Fit shared screen"), "arrow.down.right.and.arrow.up.left", 0),
+                (L("Fit shared screen at 100%"), "arrow.down.right.and.arrow.up.left", 0),
                 (L("Zoom in"), "plus.magnifyingglass", 1)
             ] {
                 let button = UIButton(type: .system)
@@ -100,7 +126,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             addSubview(zoomControls)
             NSLayoutConstraint.activate([
                 zoomControls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-                zoomControls.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
+                zoomControls.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -44)
             ])
         }
         updatePin(name: name, isShare: false, pinned: pinned, onPin: onPin)
@@ -128,9 +154,13 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             label.clipsToBounds = true
             label.translatesAutoresizingMaskIntoConstraints = false
             addSubview(label)
+            let bottom = label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
+            infoBottom = bottom
+            label.lineBreakMode = .byTruncatingTail
+            label.accessibilityIdentifier = "Participant name"
             NSLayoutConstraint.activate([
                 label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-                label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+                bottom,
                 label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8)
             ])
         }
@@ -176,7 +206,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         pinIsShare = isShare
         pinnedLocally = pinned
         pinAction = onPin
-        pinButton.isHidden = onPin == nil
+        pinButton.isHidden = controlsHidden || onPin == nil
         pinButton.configuration?.image = UIImage(systemName: pinned ? "pin.fill" : "pin")
         pinButton.accessibilityLabel = "\(pinned ? L("Unpin") : L("Pin")) \(name) \(isShare ? L("screen share") : L("video"))"
         pinButton.accessibilityHint = L("Changes only your view")
@@ -194,6 +224,42 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
                     pinAction()
                 }])
         }
+    }
+
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+        willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
+        onMenuVisibilityChanged?(true)
+    }
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+        willEndFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
+        if let animator { animator.addCompletion { [weak self] in self?.onMenuVisibilityChanged?(false) } }
+        else { onMenuVisibilityChanged?(false) }
+    }
+
+    @objc private func tappedStage() {
+        if let onToggleControls { onToggleControls() }
+        else { CallStageLayout.record(for: window)?.toggleControls() }
+    }
+    @objc private func doubleTappedStage() {
+        guard scroll.maximumZoomScale > 1 else { return }
+        scroll.setZoomScale(scroll.zoomScale > 1.01 ? 1 : 2, animated: true)
+    }
+    @objc private func swipedStage(_ gesture: UISwipeGestureRecognizer) {
+        onBrowse?(gesture.direction == .left ? 1 : -1)
+    }
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if gestureRecognizer is UISwipeGestureRecognizer {
+            return onBrowse != nil && !pinnedLocally && scroll.zoomScale <= 1.01
+        }
+        return true
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        var target = touch.view
+        while let current = target {
+            if current is UIControl { return false }
+            target = current.superview
+        }
+        return true
     }
 
     func containsRenderer(_ renderer: UIView) -> Bool { renderer.superview === content }
@@ -239,6 +305,11 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if let record = CallStageLayout.record(for: window), let window {
+            let visible = convert(record.rect, from: window).intersection(bounds)
+            if !visible.isNull { infoBottom?.constant = min(-8, visible.maxY - bounds.maxY - 8) }
+            controlsHidden = record.hidden
+        } else { infoBottom?.constant = -8 }
         guard bounds.width > 0, bounds.height > 0, bounds.size != viewportSize else { return }
         // Only a real viewport resize changes the base canvas. Media and participant
         // updates can lay out this view repeatedly without resetting a user's pinch.
@@ -282,5 +353,6 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
 
     private func updateAccessibility() {
         scroll.accessibilityValue = "\(Int((scroll.zoomScale * 100).rounded()))%"
+        scroll.panGestureRecognizer.isEnabled = scroll.zoomScale > 1.01
     }
 }

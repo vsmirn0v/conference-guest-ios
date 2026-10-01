@@ -19,6 +19,7 @@ final class GuestVideoPictureInPicture {
     private var selectedViewport: StreamViewport?
     private weak var selectedRenderer: UIView?
     var onAvailabilityChanged: ((Bool) -> Void)?
+    var rendersSelectedViewport = true
     var onInlineSample: ((CMSampleBuffer, Int) -> Void)?
     var canShow: Bool { hasFrame && frameTap != nil && !suspended && floating.canShow }
 
@@ -62,7 +63,7 @@ final class GuestVideoPictureInPicture {
             guard let self else { return }
             if self.presenting || !self.hasFrame { self.video.enqueue(sample, rotation: rotation) }
             if !self.suspended && UIApplication.shared.applicationState != .background {
-                self.selectedViewport?.showCorrectedVideo(sample, rotation: rotation)
+                if self.rendersSelectedViewport { self.selectedViewport?.showCorrectedVideo(sample, rotation: rotation) }
                 self.onInlineSample?(sample, rotation)
             }
             self.floating.preferredSize = rotation == 90 || rotation == 270

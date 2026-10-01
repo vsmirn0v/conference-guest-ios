@@ -8,6 +8,18 @@ final class GuestStreamViews {
         let participant: String
         let isShare: Bool
     }
+    struct Presentation: Equatable {
+        let target: PinTarget?
+        let name: String?
+        let microphoneOn: Bool
+        let watermark: String?
+        let active: Bool
+        let automatic: Bool
+        let count: Int
+        let browsing: Bool
+        static let empty = Presentation(target: nil, name: nil, microphoneOn: false,
+            watermark: nil, active: false, automatic: true, count: 0, browsing: false)
+    }
     private struct Key: Hashable {
         let participant: String
         let mode: JazzParticipantViewModel.DisplayMode
@@ -29,16 +41,14 @@ final class GuestStreamViews {
     private var pinLossTask: Task<Void, Never>?
     private var pinLossGeneration = UUID()
     private(set) var pinnedTarget: PinTarget?
+    private(set) var browsedTarget: PinTarget?
+    private var orderedTargets: [PinTarget] = []
+    private(set) var selectedTarget: PinTarget?
+    var onStagePresentation: ((Presentation) -> Void)?
     var onPreferredVideo: ((StreamViewport?, String, Bool) -> Void)?
-    var onPinPresentation: ((PinTarget?, String?, Bool) -> Void)?
     var onShareOffer: ((String?, PinTarget?) -> Void)?
     var displayMode: ConferenceDisplayMode = .all {
         didSet { updatePreferredVideo() }
-    }
-
-    private var pinStageVisible: Bool {
-        guard let pinnedTarget else { return false }
-        return displayMode == .all || displayMode == .screenShares && pinnedTarget.isShare
     }
 
     func reset() {
@@ -51,10 +61,13 @@ final class GuestStreamViews {
         pinLossTask = nil
         pinLossGeneration = UUID()
         pinnedTarget = nil
+        browsedTarget = nil
+        selectedTarget = nil
+        orderedTargets = []
+        onStagePresentation?(.empty)
         viewports.removeAll()
         renderedTiles.removeAll()
         onPreferredVideo?(nil, "", false)
-        onPinPresentation?(nil, nil, false)
         onShareOffer?(nil, nil)
     }
 
@@ -147,7 +160,7 @@ final class GuestStreamViews {
             view.updatePin(name: model.name, isShare: model.isSharingScreen,
                            pinned: pinnedTarget == target, onPin: onPin)
             view.setMediaActive(isActiveStream(model))
-            view.accessibilityElementsHidden = pinStageVisible && onPinPresentation != nil
+            view.accessibilityElementsHidden = onStagePresentation != nil && selectedTarget != nil
             updatePreferredVideo()
             return view
         }
@@ -170,7 +183,7 @@ final class GuestStreamViews {
         view.updatePin(name: model.name, isShare: model.isSharingScreen,
                        pinned: pinnedTarget == target, onPin: onPin)
         view.setMediaActive(isActiveStream(model))
-        view.accessibilityElementsHidden = pinStageVisible && onPinPresentation != nil
+        view.accessibilityElementsHidden = onStagePresentation != nil && selectedTarget != nil
         renderedTiles[key] = RenderedTile(model: model, video: video, view: view)
         view.onVisibilityChanged = { [weak self] in self?.updatePreferredVideo() }
         updatePreferredVideo()
@@ -190,6 +203,19 @@ final class GuestStreamViews {
             })
         }
         updatePreferredVideo()
+    }
+
+    func browse(_ offset: Int) {
+        guard pinnedTarget == nil, orderedTargets.count > 1 else { return }
+        let index = orderedTargets.firstIndex(of: browsedTarget ?? selectedTarget ?? orderedTargets[0]) ?? 0
+        browsedTarget = orderedTargets[(index + offset % orderedTargets.count + orderedTargets.count) % orderedTargets.count]
+        updatePreferredVideo()
+    }
+
+    func useAutomaticView() { browsedTarget = nil; setPin(nil); updatePreferredVideo() }
+    func toggleSelectedPin() {
+        guard let selectedTarget else { return }
+        setPin(pinnedTarget == selectedTarget ? nil : selectedTarget)
     }
 
     func refreshSelection() { updatePreferredVideo() }
@@ -227,30 +253,58 @@ final class GuestStreamViews {
                 }
             }
             if priority($0) != priority($1) { return priority($0) < priority($1) }
-            return $0.model.id < $1.model.id
+            if $0.model.id != $1.model.id { return $0.model.id < $1.model.id }
+            return $0.model.isSharingScreen && !$1.model.isSharingScreen
         }
         let eligiblePin = pinnedTarget.flatMap { pin -> PinTarget? in
             if displayMode == .audioOnly || displayMode == .screenShares && !pin.isShare { return nil }
             return pin
         }
         for tile in renderedTiles.values {
-            tile.view?.accessibilityElementsHidden = eligiblePin != nil && onPinPresentation != nil
+            tile.view?.accessibilityElementsHidden = onStagePresentation != nil && selectedTarget != nil
         }
-        let preferred = eligiblePin == nil ? available.first : available.first {
-            $0.model.id == eligiblePin?.participant && $0.model.isSharingScreen == eligiblePin?.isShare
+        var candidates: [PinTarget: RenderedTile] = [:]
+        for tile in renderedTiles.values.sorted(by: { $0.model.displayMode == .speaker && $1.model.displayMode != .speaker }) {
+            guard tile.view != nil, tile.model.displayMode != .pip,
+                  !(tile.model.isLocal && tile.model.isSharingScreen),
+                  preserveBackgroundSelection || isVisible(tile.view) ||
+                    pinnedTarget == PinTarget(participant: tile.model.id, isShare: tile.model.isSharingScreen) ||
+                    browsedTarget == PinTarget(participant: tile.model.id, isShare: tile.model.isSharingScreen),
+                  displayMode != .audioOnly, displayMode == .all || tile.model.isSharingScreen else { continue }
+            let target = PinTarget(participant: tile.model.id, isShare: tile.model.isSharingScreen)
+            if candidates[target] == nil { candidates[target] = tile }
         }
+        orderedTargets = candidates.keys.sorted {
+            if $0.participant != $1.participant { return $0.participant < $1.participant }
+            return !$0.isShare && $1.isShare
+        }
+        if let browsedTarget, candidates[browsedTarget] == nil { self.browsedTarget = nil }
+        let requested = eligiblePin ?? browsedTarget
+        let automatic = available.first ?? candidates.values.sorted { $0.model.id < $1.model.id }.first
+        let chosen = requested.flatMap { candidates[$0] } ?? (requested == nil ? automatic : nil)
+        let chosenTarget = chosen.map { PinTarget(participant: $0.model.id, isShare: $0.model.isSharingScreen) }
+        selectedTarget = requested ?? chosenTarget
+        let preferred = chosen.flatMap { isActiveStream($0.model) ? $0 : nil }
         let pinName = pinnedTarget.flatMap { target in
             renderedTiles.first { $0.key.participant == target.participant &&
                 $0.key.isShare == target.isShare }?.value.model.name
         }
-        onPinPresentation?(eligiblePin, eligiblePin == nil ? nil : (pinName ?? L("Musician")),
-                           preferred != nil)
         if let pin = eligiblePin, !pin.isShare,
            let share = available.first(where: { $0.model.isSharingScreen }) {
             onShareOffer?(share.model.name,
                           PinTarget(participant: share.model.id, isShare: true))
         } else {
             onShareOffer?(nil, nil)
+        }
+        let stageName = chosen?.model.name ?? (eligiblePin != nil ? pinName ?? L("Musician") : nil)
+        let watermark: String?
+        if case .visible(let text) = chosen?.model.watermarkState { watermark = text } else { watermark = nil }
+        onStagePresentation?(Presentation(target: selectedTarget, name: stageName,
+            microphoneOn: chosen?.model.isAudioOn == true, watermark: watermark,
+            active: preferred != nil, automatic: eligiblePin == nil,
+            count: orderedTargets.count, browsing: browsedTarget != nil))
+        if onStagePresentation != nil {
+            renderedTiles.values.forEach { $0.view?.accessibilityElementsHidden = stageName != nil }
         }
         onPreferredVideo?(preferred?.view, preferred?.model.name ?? "",
                           preferred?.model.isSharingScreen == true)

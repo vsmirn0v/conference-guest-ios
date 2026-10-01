@@ -171,8 +171,8 @@
 "Message the group…" = "Сообщение группе…";
 "Mic" = "Микр.";
 "Mic %@ · Video %@" = "Микрофон %@ · Видео %@";
-"Mic off" = "Микр.";
-"Mic on" = "Микр.";
+"Mic off" = "Микрофон выключен";
+"Mic on" = "Микрофон включён";
 "Microphone %@ · Camera %@" = "Микрофон %@ · Камера %@";
 "Microphone and camera are off" = "Микрофон и камера выключены";
 "Microphone and camera start off" = "Микрофон и камера изначально выключены";
@@ -375,3 +375,10 @@
 "Preview" = "Предпросмотр";
 "Refresh" = "Обновить";
 "Close" = "Закрыть";
+"Hide controls" = "Скрыть управление";
+"Show controls" = "Показать управление";
+"Automatically hide controls" = "Автоматически скрывать управление";
+"Previous stream" = "Предыдущий поток";
+"Next stream" = "Следующий поток";
+"Automatic view" = "Автоматический выбор";
+"iPhone receiver" = "Динамик iPhone";

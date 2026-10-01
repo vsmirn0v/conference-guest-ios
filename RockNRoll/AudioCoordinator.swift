@@ -12,7 +12,12 @@ final class AudioCoordinator {
     private var cameraWarning: String?
 
     var outputName: String {
-        AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? L("Audio output")
+        guard let output = AVAudioSession.sharedInstance().currentRoute.outputs.first else { return L("Audio output") }
+        switch output.portType {
+        case .builtInSpeaker: return L("Speaker")
+        case .builtInReceiver: return L("iPhone receiver")
+        default: return output.portName
+        }
     }
 
     init() {

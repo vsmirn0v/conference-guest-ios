@@ -163,6 +163,51 @@ final class GuestStreamSelectionTests: XCTestCase {
         }, "Local sharing confidence belongs in the compact card, not a full-stage reminder")
     }
 
+    func testBrowsingStaysSelectedAcrossSpeakerUpdatesUntilAutomaticView() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        let controller = UIViewController()
+        window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let streams = GuestStreamViews()
+        let cameraRenderer = UIView()
+        let camera = streams.makeView(model: model("camera", pinned: false, share: false), video: cameraRenderer)
+        let share = streams.makeView(model: model("share", pinned: false, share: true), video: UIView())
+        for tile in [camera, share] { tile.frame = CGRect(x: 0, y: 100, width: 300, height: 200); controller.view.addSubview(tile) }
+        await assertSelection(streams, mode: .all, expected: share)
+        streams.browse(1)
+        await assertSelection(streams, mode: .all, expected: camera)
+        XCTAssertEqual(streams.browsedTarget, .init(participant: "camera", isShare: false))
+        for speaking in [true, false, true] {
+            _ = streams.makeView(model: model("camera", pinned: false, share: false, speaking: speaking), video: cameraRenderer)
+            await assertSelection(streams, mode: .all, expected: camera)
+        }
+        streams.useAutomaticView()
+        await assertSelection(streams, mode: .all, expected: share)
+        XCTAssertNil(streams.browsedTarget)
+    }
+
+    func testMainStageReceivesWatermarkAndMutedState() async throws {
+        let streams = GuestStreamViews()
+        let renderer = UIView()
+        let model = JazzParticipantViewModel(name: "Ani", isAudioOn: false, isVideoOn: true,
+            isPinned: false, isSharingScreen: true, isLocal: false, id: "share",
+            isDominantSpeaker: false, shouldShowParticipantInfo: true, isZoomable: true,
+            watermarkState: .visible("Meeting watermark"), displayMode: .speaker)
+        let tile = streams.makeView(model: model, video: renderer)
+        tile.frame = CGRect(x: 0, y: 0, width: 300, height: 200)
+        let delivered = expectation(description: "Stage metadata")
+        streams.onStagePresentation = { presentation in
+            XCTAssertEqual(presentation.watermark, "Meeting watermark")
+            XCTAssertFalse(presentation.microphoneOn)
+            XCTAssertEqual(presentation.name, "Ani")
+            XCTAssertTrue(presentation.active)
+            delivered.fulfill()
+        }
+        streams.setBackgrounded(true)
+        await fulfillment(of: [delivered], timeout: 2)
+    }
+
     private func assertSelection(_ streams: GuestStreamViews, mode: ConferenceDisplayMode,
                                  expected: UIView?, file: StaticString = #filePath, line: UInt = #line) async {
         let selected = expectation(description: "Visible stream selection")
