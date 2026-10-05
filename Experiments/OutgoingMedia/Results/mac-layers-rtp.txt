@@ -1,0 +1,40 @@
+OUTGOING_PHASE_BEGIN,profile=h264TwoLayers,phase=high
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=320x180,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=1280x720,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264TwoLayers,phase=high,elapsed_s=6.0013945833197795,process_cpu_percent=12.137728820974376,decoded=180,size=1280x720,luma_psnr_db=49.26886935888675
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=320x180,fps=14.979512521189944,encode_ms=5.186813186813189,bitrate=359418.75265348697,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=1280x720,fps=29.95902504237989,encode_ms=4.714285714285715,bitrate=478722.83321346267,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264TwoLayers,phase=low
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=320x180,fps=14.73413385099299,encode_ms=6.683333333333329,bitrate=349747.08204779075,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=1280x720,fps=29.959405497019077,encode_ms=5.942622950819671,bitrate=490434.4857106122,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264TwoLayers,phase=low,elapsed_s=6.029814291687217,process_cpu_percent=8.420342243374966,decoded=91,size=320x180,luma_psnr_db=0.0
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=320x180,fps=15.064497280394145,encode_ms=4.217391304347825,bitrate=138940.51339521783,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=1280x720,fps=9.169693996761653,encode_ms=5.589285714285717,bitrate=150101.340945562,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264TwoLayers,phase=none
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=320x180,fps=15.023902006494536,encode_ms=3.4262295081967227,bitrate=51122.64412596816,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264TwoLayers,phase=none,elapsed_s=6.000157333328389,process_cpu_percent=4.272504632104271,decoded=0,size=0x0,luma_psnr_db=0.0
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=320x180,fps=3.9343604755190813,encode_ms=3.125000000000007,bitrate=10302.778631892634,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264TwoLayers,phase=high-return
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=320x180,fps=14.225143178955616,encode_ms=7.026086956521737,bitrate=294425.3338855741,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=1280x720,fps=28.326589460702923,encode_ms=6.0829694323144095,bitrate=498389.6424799448,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264TwoLayers,phase=high-return,elapsed_s=6.004917874990497,process_cpu_percent=12.530462791736205,decoded=181,size=1280x720,luma_psnr_db=50.64791956118612
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=320x180,fps=14.894122913732048,encode_ms=6.6777777777777825,bitrate=362804.9471140714,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=1280x720,fps=29.95373608206112,encode_ms=5.773480662983426,bitrate=474957.0306934553,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264SingleLayer,phase=high
+OUTGOING_RTP,source=camera,codec=video/H264,rid=single,size=1280x720,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=VideoToolbox,efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264SingleLayer,phase=high,elapsed_s=6.003513583331369,process_cpu_percent=8.667041271376101,decoded=180,size=1280x720,luma_psnr_db=47.47011347969635
+OUTGOING_RTP,source=camera,codec=video/H264,rid=single,size=1280x720,fps=29.979258493356394,encode_ms=5.258241758241757,bitrate=169963.28799807123,encoder=VideoToolbox,efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264SingleLayer,phase=low
+OUTGOING_RTP,source=camera,codec=video/H264,rid=single,size=1280x720,fps=30.08906850907061,encode_ms=4.471074380165292,bitrate=171506.69582175175,encoder=VideoToolbox,efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264SingleLayer,phase=low,elapsed_s=6.002448708284646,process_cpu_percent=9.148899502332211,decoded=180,size=1280x720,luma_psnr_db=47.535616192933425
+OUTGOING_RTP,source=camera,codec=video/H264,rid=single,size=1280x720,fps=29.963994533952857,encode_ms=5.41988950276243,bitrate=170342.49462769282,encoder=VideoToolbox,efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264SingleLayer,phase=none
+OUTGOING_RTP,source=camera,codec=video/H264,rid=single,size=1280x720,fps=29.992678041618433,encode_ms=5.727272727272725,bitrate=135961.51915672902,encoder=VideoToolbox,efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264SingleLayer,phase=none,elapsed_s=6.032320541678928,process_cpu_percent=4.471645664985259,decoded=0,size=0x0,luma_psnr_db=0.0
+OUTGOING_RTP,source=camera,codec=video/H264,rid=single,size=1280x720,fps=7.753646389842979,encode_ms=6.063829787234045,bitrate=25534.90218735012,encoder=VideoToolbox,efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264SingleLayer,phase=high-return
+OUTGOING_RTP,source=camera,codec=video/H264,rid=single,size=1280x720,fps=28.13491489604453,encode_ms=5.67543859649123,bitrate=211636.75298802508,encoder=VideoToolbox,efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264SingleLayer,phase=high-return,elapsed_s=6.003840250021312,process_cpu_percent=9.080604701267072,decoded=180,size=1280x720,luma_psnr_db=47.121200672210165
+OUTGOING_RTP,source=camera,codec=video/H264,rid=single,size=1280x720,fps=30.01570092387843,encode_ms=5.5846994535519086,bitrate=188190.24378153635,encoder=VideoToolbox,efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)

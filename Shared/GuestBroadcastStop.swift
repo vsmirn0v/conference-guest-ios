@@ -19,6 +19,9 @@ enum GuestBroadcastStop {
         guard let permissionURL else { return false }
         do {
             try Data([1]).write(to: permissionURL, options: .atomic)
+            #if DEBUG
+            OutgoingShareExperiment.prepareBroadcastConfiguration()
+            #endif
             return true
         } catch { return false }
     }

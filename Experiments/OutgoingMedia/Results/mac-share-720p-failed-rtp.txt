@@ -1,0 +1,64 @@
+OUTGOING_PHASE_BEGIN,profile=dynacast,phase=high,input=syntheticShare,wall_start_s=1791220031.033018
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=h,size=1280x720,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=q,size=640x360,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)
+OUTGOING_PHASE_END,profile=dynacast,phase=high,input=syntheticShare,wall_end_s=1791220037.063618,elapsed_s=6.0297293332987465,process_cpu_percent=8.370707408252297,decoded=23,size=640x360,luma_psnr_db=0.0,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=q,size=640x360,fps=4.945838114743225,encode_ms=2.666666666666666,bitrate=97658.54107847382,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)
+OUTGOING_PHASE_BEGIN,profile=dynacast,phase=low,input=syntheticShare,wall_start_s=1791220041.2309952
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=q,size=640x360,fps=5.200907438658729,encode_ms=2.3809523809523805,bitrate=47422.36935020826,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)
+OUTGOING_PHASE_END,profile=dynacast,phase=low,input=syntheticShare,wall_end_s=1791220047.264209,elapsed_s=6.033009041624609,process_cpu_percent=6.474033062195147,decoded=30,size=640x360,luma_psnr_db=0.0,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=q,size=640x360,fps=4.898112666098778,encode_ms=2.3,bitrate=35485.84664335243,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=dynacast,phase=none,input=syntheticShare,wall_start_s=1791220051.286405
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=q,size=640x360,fps=5.16443439341174,encode_ms=2.7619047619047614,bitrate=94791.47181294134,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=dynacast,phase=none,input=syntheticShare,wall_end_s=1791220057.295906,elapsed_s=6.009349333355203,process_cpu_percent=3.5066691635039913,decoded=0,size=0x0,luma_psnr_db=0.0,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=30.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=q,size=640x360,fps=1.3221088834888126,encode_ms=2.1250000000000018,bitrate=9786.249955584191,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=dynacast,phase=high-return,input=syntheticShare,wall_start_s=1791220065.445349
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=h,size=1280x720,fps=3.572219051088434,encode_ms=6.344827586206898,bitrate=163214.44208429597,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=q,size=640x360,fps=4.557658789319726,encode_ms=5.6756756756756745,bitrate=73985.83010666717,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=dynacast,phase=high-return,input=syntheticShare,wall_end_s=1791220071.44592,elapsed_s=6.00045104167657,process_cpu_percent=11.779897795858052,decoded=30,size=1280x720,luma_psnr_db=48.1059677908222,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=h,size=1280x720,fps=4.9599673868925,encode_ms=4.299999999999998,bitrate=169161.341052431,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/VP8,rid=q,size=640x360,fps=4.9599673868925,encode_ms=4.366666666666666,bitrate=77979.94592773897,encoder=libvpx,efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264TwoLayers,phase=high,input=syntheticShare,wall_start_s=1791220084.225637
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=1280x720,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=640x360,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264TwoLayers,phase=high,input=syntheticShare,wall_end_s=1791220090.226153,elapsed_s=6.000229541677982,process_cpu_percent=6.395438663379624,decoded=29,size=1280x720,luma_psnr_db=53.40473287144664,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=1280x720,fps=4.945354686557117,encode_ms=5.033333333333334,bitrate=27712.448902216336,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=640x360,fps=4.945354686557117,encode_ms=6.1,bitrate=31000.120697839506,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264TwoLayers,phase=low,input=syntheticShare,wall_start_s=1791220094.257386
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=1280x720,fps=3.936644699453706,encode_ms=4.687500000000001,bitrate=62943.012099565305,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=640x360,fps=4.920805874317132,encode_ms=5.499999999999999,bitrate=57734.83116218805,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)
+OUTGOING_PHASE_END,profile=h264TwoLayers,phase=low,input=syntheticShare,wall_end_s=1791220100.25884,elapsed_s=6.0012313749757595,process_cpu_percent=6.59821252103614,decoded=29,size=640x360,luma_psnr_db=0.0,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=640x360,fps=5.13545497898121,encode_ms=3.741935483870967,bitrate=24349.345633244327,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264TwoLayers,phase=none,input=syntheticShare,wall_start_s=1791220104.2811599
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=640x360,fps=4.95932002883859,encode_ms=3.6499999999999977,bitrate=49035.77271714445,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264TwoLayers,phase=none,input=syntheticShare,wall_end_s=1791220110.286742,elapsed_s=6.005414833314717,process_cpu_percent=4.231980754936804,decoded=0,size=0x0,luma_psnr_db=0.0,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=29.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=640x360,fps=1.312057016851508,encode_ms=2.8750000000000027,bitrate=6170.604150252642,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264TwoLayers,phase=high-return,input=syntheticShare,wall_start_s=1791220127.28986
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=5.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=640x360,fps=4.487098418703449,encode_ms=5.38961038961039,bitrate=78529.11734376714,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=1280x720,fps=1.282028119629557,encode_ms=7.318181818181817,bitrate=19475.638809325228,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264TwoLayers,phase=high-return,input=syntheticShare,wall_end_s=1791220133.291147,elapsed_s=6.00090104166884,process_cpu_percent=6.052557732213373,decoded=16,size=640x360,luma_psnr_db=50.326009353539916,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=screenShareVideo,size=1280x720,fps=4.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=640x360,fps=4.96380887399372,encode_ms=4.199999999999997,bitrate=45799.40987738206,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=0x0,fps=0.8273014789989533,encode_ms=5.000000000000004,bitrate=4716.280271477233,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)

@@ -30,6 +30,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     #if DEBUG
     private var testHoldScheduled = false
     private var directMediaForTesting = false
+    private let outgoingMonitor = OutgoingRoomMonitor()
     #endif
     private(set) var hasJoinStarted = false
     private var receptionPaused = false
@@ -76,7 +77,13 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         self.container = container
         self.credentials = credentials
         videoSubscriptions.reset()
+        #if DEBUG
+        if let experiment = OutgoingRoomExperiment.configured {
+            self.room = Room(delegate: self, roomOptions: experiment.options)
+        } else { self.room = Room(delegate: self) }
+        #else
         self.room = Room(delegate: self)
+        #endif
         self.leaveRequested = false
         self.hasConnected = false
         #if DEBUG
@@ -235,6 +242,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                 self.chat.canSend = true
                 #if DEBUG
                 print("Jam engine: connected")
+                if OutgoingRoomExperiment.configured != nil { self.outgoingMonitor.start(room: room) }
                 #endif
                 self.systemCall.markConnected()
                 self.catchUp.end(.connection)
@@ -360,6 +368,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         callView?.endFloatingVideo()
         #if DEBUG
         print("Jam engine: finishing; failed=\(failed), connected=\(hasConnected), leaving=\(leaveRequested)")
+        outgoingMonitor.stop()
         #endif
         let wasLeaving = leaveRequested
         let wasConnected = hasConnected

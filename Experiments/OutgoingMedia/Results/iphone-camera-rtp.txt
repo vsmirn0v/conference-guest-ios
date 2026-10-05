@@ -1,0 +1,36 @@
+OUTGOING_PHASE_BEGIN,profile=dynacast,phase=high,input=camera,wall_start_s=1791219404.338398
+OUTGOING_CAPTURE,source=camera,size=1280x720,fps=30.0
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=h,size=360x640,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=f,size=720x1280,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=q,size=180x320,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=dynacast,phase=high,input=camera,wall_end_s=1791219434.3628411,elapsed_s=30.02304920833558,process_cpu_percent=56.0360437850832,decoded=900,size=720x1280,luma_psnr_db=0.0,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=camera,size=1280x720,fps=30.0
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=h,size=360x640,fps=20.01859974373108,encode_ms=3.476033057851239,bitrate=449499.5577842255,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=f,size=720x1280,fps=30.011355318287748,encode_ms=6.846747519294377,bitrate=1697362.8441752726,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=q,size=180x320,fps=15.022221956452743,encode_ms=1.1850220264317182,bitrate=150107.0712552577,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264TwoLayers,phase=high,input=camera,wall_start_s=1791219446.895012
+OUTGOING_CAPTURE,source=camera,size=1280x720,fps=30.0
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=180x320,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=720x1280,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264TwoLayers,phase=high,input=camera,wall_end_s=1791219476.902381,elapsed_s=30.006533166684676,process_cpu_percent=13.985441026087267,decoded=900,size=720x1280,luma_psnr_db=0.0,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=camera,size=1280x720,fps=30.0
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=720x1280,fps=29.993302063867255,encode_ms=7.113765642775881,bitrate=852269.4711797053,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=180x320,fps=15.013712068374963,encode_ms=3.520454545454546,bitrate=57126.35549041755,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=dynacast,phase=high,input=camera,wall_start_s=1791219489.474199
+OUTGOING_CAPTURE,source=camera,size=1280x720,fps=30.0
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=h,size=360x640,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=f,size=720x1280,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=q,size=180x320,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=dynacast,phase=high,input=camera,wall_end_s=1791219519.477325,elapsed_s=30.002332750009373,process_cpu_percent=57.60298755434143,decoded=899,size=720x1280,luma_psnr_db=0.0,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=camera,size=1280x720,fps=30.0
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=h,size=360x640,fps=19.935346729884575,encode_ms=3.8886986301369864,bitrate=402170.22318986134,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=f,size=720x1280,fps=30.00542769789134,encode_ms=7.469852104664392,bitrate=1499816.9682239022,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/VP8,rid=q,size=180x320,fps=14.746694841284482,encode_ms=1.4074074074074074,bitrate=127014.64810269076,encoder=SimulcastEncoderAdapter (libvpx, libvpx, libvpx),efficient=false,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_BEGIN,profile=h264TwoLayers,phase=high,input=camera,wall_start_s=1791219532.6816258
+OUTGOING_CAPTURE,source=camera,size=1280x720,fps=30.0
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=180x320,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=720x1280,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_PHASE_END,profile=h264TwoLayers,phase=high,input=camera,wall_end_s=1791219562.768831,elapsed_s=30.086354625003878,process_cpu_percent=14.370012764547226,decoded=903,size=720x1280,luma_psnr_db=0.0,thermal_before=0,thermal_after=0
+OUTGOING_CAPTURE,source=camera,size=1280x720,fps=30.0
+OUTGOING_RTP,source=camera,codec=video/H264,rid=q,size=180x320,fps=14.998358358204417,encode_ms=3.567198177676538,bitrate=61132.62537153286,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=camera,codec=video/H264,rid=h,size=720x1280,fps=29.996716716408834,encode_ms=7.173120728929385,bitrate=886852.4514130714,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)

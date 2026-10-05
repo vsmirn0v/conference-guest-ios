@@ -28,6 +28,7 @@ targets:
       - path: Shared/GuestBroadcastStop.swift
       - path: Shared/Localization.swift
       - path: Shared/LocalSharePreviewTransport.swift
+      - path: Shared/OutgoingShareExperiment.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
     dependencies:
       - package: JazzSDK
@@ -59,6 +60,11 @@ targets:
       - name: Copy provider SDK resources
         script: bash "$PROJECT_DIR/scripts/copy-sdk-resources.sh"
         basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/DevicesDesignSystemResources.bundle
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/JazzResources.bundle
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/SDUIResources.bundle
+          - $(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/Spench.framework
   RockBroadcast:
     type: app-extension
     platform: iOS
@@ -86,6 +92,7 @@ targets:
       - path: Shared/Localization.swift
       - path: Shared/GuestBroadcastStop.swift
       - path: Shared/LocalSharePreviewTransport.swift
+      - path: Shared/OutgoingShareExperiment.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
     dependencies:
       - package: JazzSDK

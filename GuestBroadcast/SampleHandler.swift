@@ -10,8 +10,14 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
     private let preview = LocalSharePreviewSender()
     private let stopLock = NSLock()
     private var stopped = false
+    #if DEBUG
+    private var deliveryExperiment: OutgoingShareExperiment?
+    #endif
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
+        #if DEBUG
+        deliveryExperiment = OutgoingShareExperiment.configuredForBroadcast()
+        #endif
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
             Unmanaged.passUnretained(self).toOpaque(), { _, observer, _, _, _ in
                 guard let observer else { return }
@@ -26,6 +32,10 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
     }
 
     override func broadcastFinished() {
+        #if DEBUG
+        if let deliveryExperiment, deliveryExperiment.received > 0 { print(deliveryExperiment.summary) }
+        deliveryExperiment?.reset()
+        #endif
         removeObserver()
         screenShare.broadcastFinished()
     }
@@ -36,12 +46,24 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
         let shouldStop = stopped
         stopLock.unlock()
         guard !shouldStop else { return }
-        if sampleBufferType == .video, let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) {
+        #if DEBUG
+        if sampleBufferType == .video, let deliveryExperiment {
+            deliveryExperiment.deliver(sampleBuffer,
+                send: { screenShare.processSampleBuffer(sampleBuffer, with: sampleBufferType) },
+                preview: { sendPreview(sampleBuffer) })
+            return
+        }
+        #endif
+        if sampleBufferType == .video { sendPreview(sampleBuffer) }
+        screenShare.processSampleBuffer(sampleBuffer, with: sampleBufferType)
+    }
+
+    private func sendPreview(_ sampleBuffer: CMSampleBuffer) {
+        if let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) {
             let orientation = (CMGetAttachment(sampleBuffer, key: RPVideoSampleOrientationKey as CFString,
                                                 attachmentModeOut: nil) as? NSNumber)?.uint32Value ?? 1
             preview.send(pixels, orientation: CGImagePropertyOrientation(rawValue: orientation) ?? .up)
         }
-        screenShare.processSampleBuffer(sampleBuffer, with: sampleBufferType)
     }
 
     private func stop(reason: String) {
@@ -50,6 +72,10 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
         stopped = true
         stopLock.unlock()
         guard !alreadyStopped else { return }
+        #if DEBUG
+        if let deliveryExperiment, deliveryExperiment.received > 0 { print(deliveryExperiment.summary) }
+        deliveryExperiment?.reset()
+        #endif
         removeObserver()
         screenShare.broadcastFinished()
         // ReplayKit exposes only error-based termination to upload extensions.

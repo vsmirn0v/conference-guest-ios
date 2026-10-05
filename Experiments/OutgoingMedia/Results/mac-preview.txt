@@ -1,0 +1,2 @@
+OUTGOING_SHARE,profile=reference,previewAfter=false,received=200,forwarded=200,timingSamples=200,handoff_p95_ms=3.9268750115297735,send_p95_ms=0.00012497184798121452,preview_p95_ms=3.9268750115297735,elapsed_s=0.7078577499487437,input_fps=281.12993043363537
+OUTGOING_SHARE,profile=reference,previewAfter=true,received=200,forwarded=200,timingSamples=200,handoff_p95_ms=8.329516276717186e-05,send_p95_ms=8.335337042808533e-05,preview_p95_ms=3.9282499928958714,elapsed_s=0.7166539583122358,input_fps=277.67934257791205

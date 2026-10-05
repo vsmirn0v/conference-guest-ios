@@ -23,6 +23,9 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture {
     private var captureSource: LocalSharePreview.Source = .screen
     private let onError: (String) -> Void
     private let preview: LocalSharePreview
+    #if DEBUG
+    private let deliveryExperiment = OutgoingShareExperiment.configured()
+    #endif
 
     init(preview: LocalSharePreview, onError: @escaping (String) -> Void) {
         self.preview = preview
@@ -51,6 +54,10 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture {
     }
 
     func stop() async {
+        #if DEBUG
+        if let deliveryExperiment, deliveryExperiment.received > 0 { print(deliveryExperiment.summary) }
+        deliveryExperiment?.reset()
+        #endif
         generation += 1
         preview.end()
         releasePicker()
@@ -135,10 +142,21 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
             // ReplayKit's broadcastStarted semantics: announce only when pixels
             // are available, rather than publishing an empty stream during setup.
             if !uploadStarted {
+                #if DEBUG
+                deliveryExperiment?.reset()
+                #endif
                 uploadStarted = true
                 preview.begin(source: captureSource)
                 upload.broadcastStarted(withSetupInfo: nil)
             }
+            #if DEBUG
+            if let deliveryExperiment {
+                deliveryExperiment.deliver(sampleBuffer,
+                    send: { upload.processSampleBuffer(sampleBuffer, with: .video) },
+                    preview: { if let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) { preview.accept(pixels) } })
+                return
+            }
+            #endif
             if let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) { preview.accept(pixels) }
             upload.processSampleBuffer(sampleBuffer, with: .video)
         }
@@ -147,6 +165,10 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
         Task { @MainActor [weak self] in
             guard let self, self.stream === stream else { return }
+            #if DEBUG
+            if let deliveryExperiment, deliveryExperiment.received > 0 { print(deliveryExperiment.summary) }
+            deliveryExperiment?.reset()
+            #endif
             self.stream = nil
             self.preview.end()
             self.generation += 1
