@@ -159,6 +159,31 @@ final class GuestStreamSelectionTests: XCTestCase {
         XCTAssertFalse(descendants(replacement).contains { $0 is GuestSampleBufferView })
     }
 
+    func testReconnectDiscardsOldRendererEvenWhenSDKKeepsOldTileAlive() async {
+        let streams = GuestStreamViews()
+        let oldRenderer = UIView()
+        let oldTile = streams.makeView(model: model("peer", pinned: false, share: false), video: oldRenderer)
+        let pin = GuestStreamViews.PinTarget(participant: "peer", isShare: false)
+        streams.setPin(pin)
+        await assertSelection(streams, mode: .all, expected: oldTile)
+
+        streams.reset(preservingSelection: true)
+        XCTAssertEqual(streams.pinnedTarget, pin)
+        await assertSelection(streams, mode: .all, expected: nil)
+
+        let freshRenderer = UIView()
+        let freshModel = JazzParticipantViewModel(name: "peer", isAudioOn: true, isVideoOn: true,
+            isPinned: false, isSharingScreen: false, isLocal: false, id: "peer",
+            isDominantSpeaker: false, shouldShowParticipantInfo: true,
+            isZoomable: false, watermarkState: .hidden, displayMode: .tile)
+        let freshTile = streams.makeView(model: freshModel, video: freshRenderer)
+        // The retained old speaker tile would outrank the new tile without source invalidation.
+        await assertSelection(streams, mode: .all, expected: freshTile)
+        streams.reset()
+        XCTAssertNil(streams.pinnedTarget)
+        withExtendedLifetime([oldTile, oldRenderer, freshTile, freshRenderer]) {}
+    }
+
     private func descendants(_ view: UIView) -> [UIView] {
         view.subviews.flatMap { [$0] + descendants($0) }
     }

@@ -236,6 +236,7 @@
 "Quiet connection moved here. Audio, microphone and camera are off." = "Quiet connection moved here. Audio, microphone and camera are off.";
 "Recent jams" = "Recent jams";
 "Reconnecting…" = "Reconnecting…";
+"Waiting for network…" = "Waiting for network…";
 "Recently active. Its current connection is unconfirmed." = "Recently active. Its current connection is unconfirmed.";
 "Refresh active jams" = "Refresh active jams";
 "Refresh participant" = "Refresh participant";

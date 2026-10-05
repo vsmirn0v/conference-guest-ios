@@ -1334,6 +1334,45 @@ final class ConferenceMediaUITests: XCTestCase {
         app.buttons["Close conversation"].tap()
     }
 
+    func testGuestRecoversAfterNetworkTransition() throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_INVITE"],
+              let mode = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_NETWORK_RECOVERY"] else {
+            throw XCTSkip("Provide a live guest invitation and offline, handover, or stalled recovery mode.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Network Recovery QA"
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        // Inject transport observations, but terminate and rejoin the real SDK room.
+        app.launchEnvironment["CONFERENCE_TEST_NETWORK_RECOVERY"] = mode
+        app.launch()
+        defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
+        XCTAssertTrue(app.buttons["Unmute microphone"].waitForExistence(timeout: 60))
+        func verifyRemoteVideo(timeout: TimeInterval) {
+            guard let remote = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_REMOTE_VIDEO"] else { return }
+            let pin = app.buttons["Pin \(remote) video"]
+            let waiting = app.staticTexts["Waiting for \(remote)'s video…"]
+            // Hidden only after this renderer enqueues a frame, not just when the roster connects.
+            expectation(for: NSPredicate { _, _ in pin.exists && !waiting.exists }, evaluatedWith: nil)
+            waitForExpectations(timeout: timeout)
+        }
+        verifyRemoteVideo(timeout: 10)
+        let status = app.staticTexts[mode == "offline" ? "Waiting for network…" : "Reconnecting…"]
+        XCTAssertTrue(status.waitForExistence(timeout: 30))
+        let recovered = NSPredicate { _, _ in
+            app.buttons["Unmute microphone"].exists &&
+                !app.staticTexts["Waiting for network…"].exists &&
+                !app.staticTexts["Reconnecting…"].exists
+        }
+        expectation(for: recovered, evaluatedWith: nil)
+        waitForExpectations(timeout: 50)
+        XCTAssertTrue(app.buttons["Start video"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Leave"].isHittable)
+        verifyRemoteVideo(timeout: 30)
+        attachScreenshot(of: app, named: "Guest recovered after \(mode)")
+    }
+
     func testCatchUpPanelOpensDuringMeeting() throws {
         guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_INVITE"],
               !invitation.isEmpty else {

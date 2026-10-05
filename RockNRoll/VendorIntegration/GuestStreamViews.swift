@@ -60,22 +60,26 @@ final class GuestStreamViews {
         didSet { updatePreferredVideo() }
     }
 
-    func reset() {
+    /// A rebuilt SDK session must not reuse renderers from the old transport.
+    /// Keep view selection when reconnecting to the same room.
+    func reset(preservingSelection: Bool = false) {
         participantSubscription = nil
         participants = nil
-        preserveBackgroundSelection = false
         activeShares = nil
         activeCameras = nil
         activeParticipants.removeAll()
         pinLossTask?.cancel()
         pinLossTask = nil
         pinLossGeneration = UUID()
-        pinnedTarget = nil
-        browsedTarget = nil
+        if !preservingSelection {
+            preserveBackgroundSelection = false
+            pinnedTarget = nil
+            browsedTarget = nil
+            viewports.removeAll()
+        }
         selectedTarget = nil
         orderedTargets = []
         onStagePresentation?(.empty)
-        viewports.removeAll()
         renderedTiles.removeAll()
         onPreferredVideo?(nil, "", false)
         onShareOffer?(nil, nil)

@@ -75,4 +75,18 @@ final class SessionOwnershipTests: XCTestCase {
         XCTAssertEqual(a, 1)
         XCTAssertEqual(b, 0)
     }
+
+    func testQueuedMediaReadinessCannotCompleteReplacementAttempt() async {
+        let relay = EventRelay()
+        var old = 0, replacement = 0
+        relay.onMediaConnected = { old += 1 }
+        relay.onMediaConnectionEstablished(timeInterval: 0.1)
+        relay.onMediaConnected = { replacement += 1 }
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        XCTAssertEqual(old, 1)
+        XCTAssertEqual(replacement, 0)
+        relay.onMediaConnectionEstablished(timeInterval: 0.2)
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        XCTAssertEqual(replacement, 1)
+    }
 }

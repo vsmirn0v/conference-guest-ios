@@ -236,6 +236,7 @@
 "Quiet connection moved here. Audio, microphone and camera are off." = "Тихое подключение перенесено сюда. Звук, микрофон и камера выключены.";
 "Recent jams" = "Недавние джемы";
 "Reconnecting…" = "Восстанавливаем соединение…";
+"Waiting for network…" = "Ожидаем подключения к сети…";
 "Recently active. Its current connection is unconfirmed." = "Недавно был активен. Текущее подключение не подтверждено.";
 "Refresh active jams" = "Обновить активные джемы";
 "Refresh participant" = "Обновить участника";
