@@ -81,6 +81,21 @@ final class CallNetworkRecoveryTests: XCTestCase {
         XCTAssertEqual(recovery.nextAction(at: 102, blocked: false), .giveUp)
     }
 
+    func testUnreachableServiceDoesNotSpendRebuildBudgetWhilePathAppearsOnline() {
+        var recovery = connected()
+        recovery.sdkReconnecting(at: 1)
+        XCTAssertFalse(recovery.canAttempt(at: 8, blocked: false))
+        // The endpoint check can fail repeatedly without starting or consuming an attempt.
+        for now in stride(from: 9.0, through: 300.0, by: 6) {
+            XCTAssertTrue(recovery.canAttempt(at: now, blocked: false))
+            XCTAssertNil(recovery.nextAction(at: now, blocked: false, serviceReachable: false))
+            XCTAssertFalse(recovery.hasAttemptInFlight)
+        }
+        XCTAssertEqual(recovery.nextAction(at: 301, blocked: false), .restart)
+        recovery.attemptFinished(succeeded: true, at: 303)
+        XCTAssertFalse(recovery.requiresRecovery)
+    }
+
     private func connected() -> CallNetworkRecovery {
         var recovery = CallNetworkRecovery()
         recovery.pathChanged(available: true, changed: true, at: 0)

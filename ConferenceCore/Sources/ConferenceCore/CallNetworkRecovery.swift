@@ -39,9 +39,14 @@ public struct CallNetworkRecovery {
         reason = nil; due = nil; attempts = 0
     }
 
-    public mutating func nextAction(at now: TimeInterval, blocked: Bool) -> Action? {
-        guard requiresRecovery, isNetworkAvailable, !blocked, !hasAttemptInFlight,
-              let due, now >= due else { return nil }
+    public func canAttempt(at now: TimeInterval, blocked: Bool) -> Bool {
+        requiresRecovery && isNetworkAvailable && !blocked && !hasAttemptInFlight &&
+            due.map { now >= $0 } == true
+    }
+
+    public mutating func nextAction(at now: TimeInterval, blocked: Bool,
+                                    serviceReachable: Bool = true) -> Action? {
+        guard serviceReachable, canAttempt(at: now, blocked: blocked) else { return nil }
         guard attempts < 3 else { return .giveUp }
         attempts += 1
         attemptRevision = revision

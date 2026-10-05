@@ -659,6 +659,9 @@ final class NativeConferenceEngine: CallEngine {
                         previous.supportsIPv4 != path.supportsIPv4 || previous.supportsIPv6 != path.supportsIPv6
                 } ?? false
                 self.lastNetworkPath = path
+                #if DEBUG
+                print("Guest network path: \(path.status), interfaces=\(path.availableInterfaces.map(\.name)), changed=\(changed)")
+                #endif
                 self.applyNetworkUpdate(available: path.status == .satisfied, routeChanged: changed)
             }
         }
@@ -696,12 +699,21 @@ final class NativeConferenceEngine: CallEngine {
                     self.networkRecoveryTask = nil
                     return
                 }
-                var audioReady = self.systemCall.canRestoreAudio
-                #if DEBUG && targetEnvironment(simulator)
-                if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" { audioReady = true }
-                #endif
-                let blocked = self.isSystemHeld || self.isMediaReconnecting || !audioReady
-                switch self.networkRecovery.nextAction(at: ProcessInfo.processInfo.systemUptime, blocked: blocked) {
+                var serviceReachable = true
+                if self.networkRecovery.canAttempt(at: ProcessInfo.processInfo.systemUptime,
+                                                   blocked: self.isNetworkRecoveryBlocked) {
+                    // A VPN can keep NWPath satisfied after its physical uplink disappears.
+                    // Never spend the finite rebuild budget until the invitation host is reachable.
+                    serviceReachable = await self.canReachMeetingService()
+                    guard !Task.isCancelled, self.sessionEpoch == epoch, self.finishing == nil,
+                          !self.leaveRequested else { return }
+                    if !serviceReachable && self.networkRecovery.requiresRecovery {
+                        if !self.isSystemHeld { self.onMediaStatus?(L("Waiting for network…")) }
+                    }
+                }
+                switch self.networkRecovery.nextAction(at: ProcessInfo.processInfo.systemUptime,
+                                                       blocked: self.isNetworkRecoveryBlocked,
+                                                       serviceReachable: serviceReachable) {
                 case .restart:
                     #if DEBUG
                     print("Guest network recovery: restarting media")
@@ -712,9 +724,36 @@ final class NativeConferenceEngine: CallEngine {
                     return
                 case nil: break
                 }
-                try? await Task.sleep(for: .milliseconds(500))
+                try? await Task.sleep(for: .milliseconds(serviceReachable ? 500 : 2_000))
             }
         }
+    }
+
+    private var isNetworkRecoveryBlocked: Bool {
+        var audioReady = systemCall.canRestoreAudio
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" { audioReady = true }
+        #endif
+        return isSystemHeld || isMediaReconnecting || !audioReady
+    }
+
+    private func canReachMeetingService() async -> Bool {
+        guard let url = activeInvitationURL, let host = url.host,
+              let rawPort = UInt16(exactly: url.port ?? 443),
+              let port = NWEndpoint.Port(rawValue: rawPort) else { return false }
+        let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
+        connection.start(queue: networkQueue)
+        defer { connection.cancel() }
+        for _ in 0..<40 {
+            guard !Task.isCancelled else { return false }
+            switch connection.state {
+            case .ready: return true
+            case .failed, .cancelled: return false
+            default: break
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return false
     }
 
     #if DEBUG

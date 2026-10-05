@@ -1373,6 +1373,130 @@ final class ConferenceMediaUITests: XCTestCase {
         attachScreenshot(of: app, named: "Guest recovered after \(mode)")
     }
 
+    func testGuestPlaybackAfterRealNetworkOutage() throws {
+#if targetEnvironment(simulator)
+        throw XCTSkip("Requires a USB-connected iPhone and an animated, audible browser sender.")
+#else
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_REAL_NETWORK_OUTAGE"] == "1",
+              let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_INVITE"],
+              let remote = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_REMOTE_VIDEO"] else {
+            throw XCTSkip("Opt in explicitly: this test temporarily disables the phone's network.")
+        }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Network Acceptance QA"
+        app.launch()
+        defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
+        guard app.buttons["Unmute microphone"].waitForExistence(timeout: 60) else {
+            XCTFail("A connected baseline is required before changing device networking.")
+            return
+        }
+        func verifyMovingVideo() -> Bool {
+            let pin = app.buttons["Pin \(remote) video"]
+            let waiting = app.staticTexts["Waiting for \(remote)'s video…"]
+            let rendered = XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in pin.exists && !waiting.exists }, object: nil)
+            guard XCTWaiter.wait(for: [rendered], timeout: 30) == .completed else {
+                XCTFail("No remote video frames arrived.")
+                return false
+            }
+            // Exclude the clock, speaking label and controls: only changing picture pixels count.
+            func picture() -> Data? {
+                guard let image = app.screenshot().image.cgImage else { return nil }
+                let rect = CGRect(x: CGFloat(image.width) * 0.1,
+                                  y: CGFloat(image.height) * 0.4,
+                                  width: CGFloat(image.width) * 0.8,
+                                  height: CGFloat(image.height) * 0.25)
+                return image.cropping(to: rect)?.dataProvider?.data as Data?
+            }
+            let before = picture()
+            Thread.sleep(forTimeInterval: 2)
+            let after = picture()
+            XCTAssertNotNil(before)
+            XCTAssertNotNil(after)
+            XCTAssertNotEqual(before, after, "The remote picture must advance, not retain a stale frame.")
+            return before != nil && after != nil && before != after
+        }
+        guard verifyMovingVideo() else { return }
+        attachScreenshot(of: app, named: "Real outage baseline")
+
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        func settingsRoot() {
+            // Relaunch Settings: activation can leave its suspended AX server unavailable
+            // during an outage, even while XCTest remains connected over USB.
+            settings.launch()
+            for _ in 0..<6 {
+                if settings.switches["Airplane Mode"].exists { return }
+                let back = settings.navigationBars.buttons.firstMatch
+                guard back.exists else { break }
+                back.tap()
+            }
+            XCTAssertTrue(settings.switches["Airplane Mode"].waitForExistence(timeout: 5),
+                          settings.debugDescription)
+        }
+        func setAirplaneMode(_ enabled: Bool) {
+            settingsRoot()
+            let toggle = settings.switches["Airplane Mode"]
+            guard toggle.exists else { return }
+            setSwitch(toggle, enabled)
+        }
+        func setSwitch(_ toggle: XCUIElement, _ enabled: Bool) {
+            if (toggle.value as? String == "1") != enabled {
+                // Settings exposes some switches as the full row; tap the trailing control.
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+            }
+            let changed = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value == %@", enabled ? "1" : "0"), object: toggle)
+            XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 8), .completed,
+                           settings.debugDescription)
+            attachScreenshot(of: settings, named: "\(toggle.label) \(enabled ? "on" : "off")")
+        }
+        func setWiFi(_ enabled: Bool) {
+            settingsRoot()
+            settings.cells.containing(.staticText, identifier: "Wi-Fi").firstMatch.tap()
+            let toggle = settings.switches["Wi-Fi"]
+            XCTAssertTrue(toggle.waitForExistence(timeout: 5), settings.debugDescription)
+            guard toggle.exists else { return }
+            setSwitch(toggle, enabled)
+        }
+        settingsRoot()
+        guard settings.switches["Airplane Mode"].value as? String == "0" else {
+            throw XCTSkip("Start with Airplane Mode off; preserve the owner's current settings.")
+        }
+        settings.cells.containing(.staticText, identifier: "Wi-Fi").firstMatch.tap()
+        guard settings.switches["Wi-Fi"].value as? String == "1" else {
+            throw XCTSkip("Start with Wi-Fi on; preserve the owner's current settings.")
+        }
+        defer { setAirplaneMode(false); setWiFi(true); app.activate() }
+        setAirplaneMode(true)
+        setWiFi(false) // iOS may remember Wi-Fi on while Airplane Mode is enabled.
+        app.activate()
+        attachScreenshot(of: app, named: "Real network unavailable")
+        // Longer than the previous three-attempt budget: a VPN may keep NWPath satisfied.
+        Thread.sleep(forTimeInterval: 55)
+        setAirplaneMode(false)
+        setWiFi(true)
+        app.activate()
+        let recovered = NSPredicate { _, _ in
+            app.buttons["Unmute microphone"].exists &&
+                !app.staticTexts["Waiting for network…"].exists &&
+                !app.staticTexts["Reconnecting…"].exists
+        }
+        expectation(for: recovered, evaluatedWith: nil)
+        waitForExpectations(timeout: 60)
+        guard verifyMovingVideo() else { return }
+        XCTAssertTrue(app.buttons["Start video"].exists)
+        XCTAssertTrue(app.buttons["Leave"].isHittable)
+        attachScreenshot(of: app, named: "Real outage recovered playback")
+        if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_AUDIO_CONFIRMATION"] == "1" {
+            print("PLAYBACK_READY_FOR_AUDIO_CONFIRMATION")
+            // XCTest ends its launched app after the test. Allow an audible check before cleanup.
+            for _ in 0..<3 { Thread.sleep(forTimeInterval: 60) }
+        }
+#endif
+    }
+
     func testCatchUpPanelOpensDuringMeeting() throws {
         guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_INVITE"],
               !invitation.isEmpty else {
