@@ -33,6 +33,7 @@ final class ParticipantPanelViewController: UIViewController {
         list.layoutMargins = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         list.isLayoutMarginsRelativeArrangement = true
         let scroll = UIScrollView()
+        scroll.accessibilityIdentifier = "Participant list"
         scroll.addSubview(list)
         list.translatesAutoresizingMaskIntoConstraints = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -66,6 +67,17 @@ final class ParticipantPanelViewController: UIViewController {
         } else {
             redraw()
         }
+        view.setNeedsLayout()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard let navigation = navigationController, navigation.modalPresentationStyle == .popover else { return }
+        let content = list.systemLayoutSizeFitting(CGSize(width: view.bounds.width, height: 0),
+            withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        let height = min(600, max(200, content.height + navigation.navigationBar.frame.height))
+        let size = CGSize(width: 440, height: height)
+        if navigation.preferredContentSize != size { navigation.preferredContentSize = size }
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {

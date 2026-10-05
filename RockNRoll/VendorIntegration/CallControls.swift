@@ -33,6 +33,13 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     var onBrowse: ((Int) -> Void)?
     var onAutomaticView: (() -> Void)?
     var onPinStage: (() -> Void)?
+    var onPinParticipant: ((GuestStreamViews.PinTarget?) -> Void)?
+    private let usesNativeParticipants: Bool
+    private weak var participantsPanel: ParticipantPanelViewController?
+    private var participantRoster: [GuestStreamViews.Participant] = []
+    private var speakingParticipant: String?
+    private var pinnedParticipant: GuestStreamViews.PinTarget?
+    private var participantPinTargets: [String: GuestStreamViews.PinTarget] = [:]
     private var subscriptions = Set<AnyCancellable>()
     private let localPreview: LocalSharePreview
     private let localShareCard: LocalSharePreviewCard
@@ -95,7 +102,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
          onFloatingPreferenceChanged: @escaping () -> Void,
          onLeave: @escaping () -> Void, onScreenShare: @escaping (Bool) -> Void,
          onMicrophoneState: @escaping (Bool) -> Void,
-         onCameraState: @escaping (Bool) -> Void) {
+         onCameraState: @escaping (Bool) -> Void,
+         usesNativeParticipants: Bool = ProcessInfo.processInfo.isiOSAppOnMac) {
+        self.usesNativeParticipants = usesNativeParticipants
         self.localPreview = localPreview
         self.localShareCard = LocalSharePreviewCard(model: localPreview)
         self.onFloat = onFloat
@@ -286,7 +295,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         missedButton.addAction(UIAction { [weak self] _ in
             self?.openConversation(catchUp: catchUp, chat: chat, selected: .catchUp)
         }, for: .touchUpInside)
-        participantsButton.addAction(UIAction { _ in router?.openParticipants() }, for: .touchUpInside)
+        participantsButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            if self.usesNativeParticipants { self.openParticipantsPanel() }
+            else { router?.openParticipants() }
+        }, for: .touchUpInside)
 
         route.translatesAutoresizingMaskIntoConstraints = false
         route.accessibilityLabel = L("Audio route")
@@ -446,6 +459,13 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 } else {
                     self.speakerLabel.isHidden = true
                 }
+                if self.usesNativeParticipants {
+                    self.updateParticipantRoster(([local] + Array(remote.values)).map {
+                        GuestStreamViews.Participant(id: $0.id, name: $0.userName ?? L("Musician"),
+                            isLocal: $0.isLocal, microphoneOn: $0.microphone.isOn,
+                            cameraOn: $0.camera.isOn, sharing: $0.screenSharing.isOn)
+                    }, speaking: speaker?.microphone.isOn == true ? speaker?.id : nil)
+                }
                 self.surface.setNeedsLayout()
             }.store(in: &subscriptions)
         state.$conferenceTitle.receive(on: DispatchQueue.main)
@@ -458,7 +478,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
     required init?(coder: NSCoder) { nil }
 
-    func setStagePresentation(_ presentation: GuestStreamViews.Presentation) {
+    func setStagePresentation(_ presentation: GuestStreamViews.Presentation,
+                              pinnedParticipant: GuestStreamViews.PinTarget? = nil) {
+        self.pinnedParticipant = pinnedParticipant
+        updateParticipantsPanel()
         guard lastPresentation != presentation else { return }
         lastPresentation = presentation
         let id = presentation.target?.participant, name = presentation.name
@@ -548,6 +571,58 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                           animated: true)
     }
 
+    func updateParticipantRoster(_ roster: [GuestStreamViews.Participant], speaking: String?) {
+        participantRoster = roster.sorted {
+            if $0.isLocal != $1.isLocal { return $0.isLocal }
+            let order = $0.name.localizedStandardCompare($1.name)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
+        speakingParticipant = speaking
+        updateParticipantsPanel()
+    }
+
+    private func openParticipantsPanel() {
+        guard let presenter = presentationContainer, presenter.presentedViewController == nil else { return }
+        let panel = ParticipantPanelViewController()
+        panel.onPin = { [weak self] key in
+            guard let self, self.window != nil else { return }
+            self.onPinParticipant?(key.flatMap { self.participantPinTargets[$0] })
+        }
+        participantsPanel = panel
+        updateParticipantsPanel()
+        let navigation = UINavigationController(rootViewController: panel)
+        // A popover anchors to the visible controls even when the SDK controller's bounds are zero.
+        // A sheet uses that controller's viewport and can become invisible in the Mac runtime.
+        navigation.modalPresentationStyle = .popover
+        navigation.preferredContentSize = CGSize(width: 440, height: 520)
+        let anchor = compactHeader.isHidden ? participantsButton : compactHeader.participants
+        navigation.popoverPresentationController?.sourceView = anchor
+        navigation.popoverPresentationController?.sourceRect = anchor.bounds
+        presenter.present(navigation, animated: true)
+    }
+
+    private func updateParticipantsPanel() {
+        guard let panel = participantsPanel else { return }
+        func key(_ target: GuestStreamViews.PinTarget) -> String {
+            (target.isShare ? "share:" : "video:") + target.participant
+        }
+        participantPinTargets.removeAll(keepingCapacity: true)
+        let statuses = participantRoster.map { participant in
+            let video = GuestStreamViews.PinTarget(participant: participant.id, isShare: false)
+            let share = GuestStreamViews.PinTarget(participant: participant.id, isShare: true)
+            let videoKey = (participant.cameraOn && displayMode == .all || pinnedParticipant == video) ? key(video) : nil
+            let shareKey = (!participant.isLocal && participant.sharing && displayMode != .audioOnly || pinnedParticipant == share) ? key(share) : nil
+            if let videoKey { participantPinTargets[videoKey] = video }
+            if let shareKey { participantPinTargets[shareKey] = share }
+            return ParticipantStatus(id: participant.id, name: participant.name, isLocal: participant.isLocal,
+                microphoneOn: participant.microphoneOn, cameraOn: participant.cameraOn,
+                screenShareOn: participant.sharing,
+                isSpeaking: participant.microphoneOn && speakingParticipant == participant.id,
+                videoKey: videoKey, shareKey: shareKey)
+        }
+        panel.update(statuses, pinnedKey: pinnedParticipant.map(key))
+    }
+
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
         // The SDK's video renderer sits behind this full-screen controls view.
@@ -611,6 +686,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window == nil {
+            participantsPanel?.dismiss(animated: false)
+            participantsPanel = nil
             CallStageLayout.remove(window: mountedWindow, owner: layoutOwner)
             surface.removeFromSuperview()
             mountedWindow = nil

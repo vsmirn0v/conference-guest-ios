@@ -27,7 +27,8 @@ final class GuestCallLayoutFixture: UIViewController {
             invitationURL: URL(string: "https://rock.glowsoft.ru/jams/test"), roomIdentifier: "fixture",
             onDisplayMode: { [weak self] mode in self?.streams.displayMode = mode },
             onFloat: {}, onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
-            onMicrophoneState: { _ in }, onCameraState: { _ in })
+            onMicrophoneState: { _ in }, onCameraState: { _ in },
+            usesNativeParticipants: scenario == "participants" || ProcessInfo.processInfo.isiOSAppOnMac)
         let entries: [(String, String, Bool)] = solo ? [("self", "Your contact", false)] :
             [("share", "Ani’s arrangement", true), ("camera", "Aram", false)]
         for (id, name, share) in entries {
@@ -44,18 +45,35 @@ final class GuestCallLayoutFixture: UIViewController {
             view.addSubview(tile)
             if scenario == "compact" && !share { tile.frame = .zero; tile.isHidden = true }
         }
-        streams.updateParticipants(entries.map { id, name, share in
+        let roster = entries.map { id, name, share in
             GuestStreamViews.Participant(id: id, name: name, isLocal: solo,
                 microphoneOn: !solo, cameraOn: !solo && !share, sharing: share)
-        })
-        streams.onStagePresentation = { [weak self] in self?.controls.setStagePresentation($0) }
+        }
+        streams.updateParticipants(roster)
+        controls.updateParticipantRoster(roster, speaking: solo ? nil : "camera")
+        streams.onStagePresentation = { [weak self] presentation in
+            guard let self else { return }
+            self.controls.setStagePresentation(presentation, pinnedParticipant: self.streams.pinnedTarget)
+        }
         streams.onPreferredVideo = { [weak self] _, name, _ in self?.selectedName = name }
         controls.onBrowse = { [weak self] in self?.streams.browse($0) }
         controls.onAutomaticView = { [weak self] in self?.streams.useAutomaticView() }
         controls.onPinStage = { [weak self] in self?.streams.toggleSelectedPin() }
+        controls.onPinParticipant = { [weak self] in self?.streams.setPin($0) }
         controls.frame = view.bounds
         controls.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.addSubview(controls)
+        if scenario == "participants" {
+            // The real SDK overlay can be hosted by a zero-sized child controller.
+            // The participant popover must anchor to the visible controls above that host.
+            let host = UIViewController()
+            addChild(host)
+            view.addSubview(host.view)
+            host.view.frame = .zero
+            host.didMove(toParent: self)
+            host.view.addSubview(controls)
+        } else {
+            view.addSubview(controls)
+        }
         controls.setWaitingForOthers(solo)
         if solo {
             // A late SDK self-tile update must not cover the invitation.

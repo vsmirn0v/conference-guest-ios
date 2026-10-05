@@ -209,6 +209,42 @@ final class ConferenceMediaUITests: XCTestCase {
         attachScreenshot(of: app, named: "Participants at accessibility text size")
     }
 
+    func testNativeGuestParticipantPanelIsVisibleAndPinsAboveSDKHost() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
+        app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "participants"
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let musicians = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Musicians")).firstMatch
+        XCTAssertTrue(musicians.waitForExistence(timeout: 10))
+        musicians.tap()
+        let list = app.scrollViews["Participant list"]
+        XCTAssertTrue(list.waitForExistence(timeout: 5))
+        XCTAssertTrue(list.isHittable, "An accessible roster behind the stage is not a visible participant list.")
+        XCTAssertTrue(list.staticTexts["Aram"].isHittable)
+        XCTAssertTrue(list.staticTexts["Mic on · Video on"].exists)
+        XCTAssertTrue(list.staticTexts["Mic on · Video off · Sharing screen"].exists)
+        XCTAssertTrue(list.staticTexts["● Speaking"].exists)
+        app.buttons["Pin video"].tap()
+        XCTAssertTrue(app.buttons["Unpin video"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
+        XCTAssertFalse(list.exists)
+        XCTAssertTrue(app.buttons["Unpin Aram video"].waitForExistence(timeout: 5))
+        XCUIDevice.shared.orientation = .landscapeLeft
+        musicians.tap()
+        XCTAssertTrue(list.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !list.staticTexts["Aram"].isHittable { list.swipeUp() }
+        XCTAssertTrue(list.staticTexts["Aram"].isHittable)
+        app.buttons["Return to automatic view"].tap()
+        XCTAssertTrue(app.buttons["Pin video"].waitForExistence(timeout: 5))
+        app.buttons["Pin screen"].tap()
+        XCTAssertTrue(app.buttons["Unpin screen"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.buttons["Unpin Ani’s arrangement screen share"].waitForExistence(timeout: 5))
+        attachScreenshot(of: app, named: "Native guest participant pin survives modal and rotation")
+    }
+
     func testGuestScreenViewportSurvivesTileReplacement() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-zoom"

@@ -157,7 +157,10 @@ final class NativeConferenceEngine: CallEngine {
             guard let self else { return }
             self.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare)
         }
-        streamViews.onStagePresentation = { [weak self] in self?.activeControls?.setStagePresentation($0) }
+        streamViews.onStagePresentation = { [weak self] presentation in
+            guard let self else { return }
+            self.activeControls?.setStagePresentation(presentation, pinnedParticipant: self.streamViews.pinnedTarget)
+        }
         streamViews.onShareOffer = { [weak self] name, target in
             self?.activeControls?.setShareOffer(name: name)
             self?.offeredShare = target
@@ -873,6 +876,11 @@ final class NativeConferenceEngine: CallEngine {
                                             self.cameraIntentOn = isOn
                                         })
             self.activeControls = controls
+            controls.onPinParticipant = { [weak self] target in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                      !self.leaveRequested else { return }
+                self.streamViews.setPin(target)
+            }
             controls.onBrowse = { [weak self] in self?.streamViews.browse($0) }
             controls.onAutomaticView = { [weak self] in self?.streamViews.useAutomaticView() }
             controls.onPinStage = { [weak self] in self?.streamViews.toggleSelectedPin() }
