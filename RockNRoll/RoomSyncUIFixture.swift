@@ -1,6 +1,7 @@
 #if DEBUG
 import ConferenceCore
 import Foundation
+import UIKit
 
 /// Deterministic UI coverage without signing a simulator into a person's account.
 @MainActor
@@ -38,6 +39,8 @@ enum RoomSyncUIFixture {
         guard let mode = ProcessInfo.processInfo.environment["CONFERENCE_TEST_SYNC_FIXTURE"] else { return }
         model.history.applySyncedRooms([])
         if mode == "favorite-order" {
+            // Keep XCTest from waiting on native context-menu animations.
+            UIView.setAnimationsEnabled(false)
             let names = ["Warm-up", "Thursday rehearsal", "Songwriting circle"]
             let rooms = names.enumerated().map { index, name in
                 RecentRoom(invitationURL: URL(string: "https://fixture.example.test/room\(index)?psw=fixture")!,
