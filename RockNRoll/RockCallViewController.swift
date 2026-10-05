@@ -25,7 +25,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let compactHeader = CompactCallHeader()
     private var toolbar: CallToolbar?
     private let focusButton = UIButton(type: .system)
-    private let restoreButton = UIButton(type: .system)
     private var browsedStream: PinnedStream?
     private var orderedStreams: [PinnedStream] = []
     private let broadcastAppearance = AlignedCallButton(frame: .zero)
@@ -154,12 +153,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         focusButton.configuration?.image = UIImage(systemName: "arrow.up.left.and.arrow.down.right")
         focusButton.accessibilityLabel = L("Hide controls")
         focusButton.addAction(UIAction { [weak self] _ in self?.focus.hide() }, for: .touchUpInside)
-        restoreButton.configuration = .filled()
-        restoreButton.configuration?.baseBackgroundColor = UIColor.black.withAlphaComponent(0.85)
-        restoreButton.configuration?.title = L("Show controls")
-        restoreButton.addAction(UIAction { [weak self] _ in self?.focus.show(); self?.focus.interaction() }, for: .touchUpInside)
-        view.addSubview(focusButton); view.addSubview(restoreButton)
+        view.addSubview(focusButton)
         view.addSubview(compactHeader)
+        focus.installHint(in: view)
         compactHeader.previous.addAction(UIAction { [weak self] _ in self?.browse(-1) }, for: .touchUpInside)
         compactHeader.nextStream.addAction(UIAction { [weak self] _ in self?.browse(1) }, for: .touchUpInside)
         compactHeader.automatic.addAction(UIAction { [weak self] _ in
@@ -228,6 +224,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
         restoringZoom = false
         streamScroll.isScrollEnabled = !focus.hidden && pinnedStream == nil
+        streamScroll.isAccessibilityElement = focus.hidden && primaryZoom == nil
+        streamScroll.accessibilityLabel = L("Meeting content")
+        streamScroll.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
         header.isHidden = focus.hidden || geometry.compactHeader; toolbar.isHidden = focus.hidden
         compactHeader.frame = geometry.header
         compactHeader.isHidden = focus.hidden || !geometry.compactHeader
@@ -247,11 +246,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         shareOffer.alpha = focus.hidden ? 0 : 1
         focusButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44)
         focusButton.isHidden = focus.hidden || primaryZoom == nil || geometry.compactHeader
-        restoreButton.isHidden = !focus.hidden
-        restoreButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: min(210, stage.width - 16), height: 44)
-        restoreButton.configuration?.image = UIImage(systemName: isMicrophoneOn ? "mic.fill" : "mic.slash.fill")
-        restoreButton.configuration?.baseForegroundColor = isMicrophoneOn ? .systemOrange : .white
-        restoreButton.accessibilityLabel = L("Show controls") + ", " + (isMicrophoneOn ? L("Mic on") : L("Mic off"))
         localShareCard.alpha = focus.hidden ? 0 : 1
         localShareCard.refreshLayout()
         let cardWidth = min(216, stage.width - 8)
@@ -261,6 +255,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         localShareCard.frame = CGRect(x: stage.minX + 4, y: stage.maxY - cardHeight - 44,
             width: cardWidth, height: cardHeight)
         for entry in videoTiles.values {
+            entry.zoom.isAccessibilityElement = true
+            entry.zoom.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
             entry.name.alpha = focus.hidden ? 0 : 1
             entry.pin.alpha = focus.hidden || (geometry.compactHeader && entry.zoom === primaryZoom) ? 0 : 1
             entry.pin.isUserInteractionEnabled = entry.pin.alpha > 0
@@ -270,7 +266,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     @objc private func tappedStage() {
-        if focus.hidden { focus.show() } else { focus.interaction() }
+        focus.toggle()
         zoomVisibility.activity()
     }
     @objc private func swipedStage(_ gesture: UISwipeGestureRecognizer) {

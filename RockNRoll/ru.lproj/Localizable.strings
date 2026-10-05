@@ -377,6 +377,9 @@
 "Close" = "Закрыть";
 "Hide controls" = "Скрыть управление";
 "Show controls" = "Показать управление";
+"Tap anywhere to show controls" = "Коснитесь экрана, чтобы показать управление";
+"Click anywhere to show controls · Esc" = "Нажмите на экран или Esc, чтобы показать управление";
+"Meeting content" = "Содержимое встречи";
 "Automatically hide controls" = "Автоматически скрывать управление";
 "Previous stream" = "Предыдущий поток";
 "Next stream" = "Следующий поток";

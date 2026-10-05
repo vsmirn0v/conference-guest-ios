@@ -37,6 +37,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         updatePinVisibility()
         zoomVisibility.setSuppressed(controlsHidden)
         participantInfo.alpha = controlsHidden ? 0 : 1
+        updateFocusAccessibility()
     } }
     var zoomScale: CGFloat { scroll.zoomScale }
     var onVisibilityChanged: (() -> Void)?
@@ -185,6 +186,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         updatePresentation(name: name, showInfo: showInfo, microphoneOn: microphoneOn,
                            pinned: pinned, watermark: watermark, zoomable: zoomable,
                            placeholderText: placeholderText)
+        updateFocusAccessibility()
     }
 
     required init?(coder: NSCoder) { nil }
@@ -220,6 +222,15 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     }
 
     private func updatePinVisibility() { pinButton.isHidden = controlsHidden || pinInHeader || pinAction == nil }
+    private func updateFocusAccessibility() {
+        scroll.isAccessibilityElement = controlsHidden || scroll.maximumZoomScale > 1
+        if scroll.maximumZoomScale <= 1 { scroll.accessibilityLabel = L("Meeting content") }
+        scroll.accessibilityCustomActions = controlsHidden ? [UIAccessibilityCustomAction(name: L("Show controls")) { [weak self] _ in
+            guard let self, self.controlsHidden else { return false }
+            self.tappedStage()
+            return true
+        }] : nil
+    }
 
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
                                 configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {

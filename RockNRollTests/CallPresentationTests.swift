@@ -143,4 +143,46 @@ final class CallPresentationTests: XCTestCase {
         CallStageLayout.remove(window: window, owner: current)
         XCTAssertNil(CallStageLayout.record(for: window))
     }
+    func testFocusHintExpiresAndStaysDismissedAfterRestart() async throws {
+        let suite = "focus-hint-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let view = UIView(frame: CGRect(x: 0, y: 0, width: 375, height: 667))
+        let focus = CallFocusController(defaults: defaults)
+        focus.installHint(in: view)
+        focus.hide()
+        XCTAssertTrue(focus.hidden)
+        XCTAssertTrue(defaults.bool(forKey: CallFocusController.hintPreferenceKey))
+        let hint = try XCTUnwrap(view.subviews.first)
+        XCTAssertFalse(hint.isHidden)
+        XCTAssertFalse(hint.isUserInteractionEnabled)
+        try await Task.sleep(nanoseconds: 2_300_000_000)
+        XCTAssertEqual(hint.alpha, 0)
+        focus.toggle(); focus.toggle()
+        XCTAssertTrue(hint.isHidden)
+        let restarted = CallFocusController(defaults: defaults)
+        let nextView = UIView()
+        restarted.installHint(in: nextView); restarted.hide()
+        XCTAssertTrue(try XCTUnwrap(nextView.subviews.first).isHidden)
+    }
+    func testAccessibilityRestoresFocusedViewportAndKeepsZoom() throws {
+        let focus = CallFocusController()
+        let viewport = StreamViewport(video: UIView(), state: StreamViewportState(), zoomable: true,
+            name: "Presenter", showInfo: true, microphoneOn: false, pinned: false, watermark: nil)
+        focus.onChange = { [weak viewport] in viewport?.controlsHidden = $0 }
+        viewport.onToggleControls = { [weak focus] in focus?.toggle() }
+        let scroll = try XCTUnwrap(viewport.subviews.first { $0 is UIScrollView } as? UIScrollView)
+        scroll.setZoomScale(2, animated: false)
+        focus.hide()
+        let action = try XCTUnwrap(scroll.accessibilityCustomActions?.first)
+        XCTAssertEqual(action.name, L("Show controls"))
+        XCTAssertTrue(try XCTUnwrap(action.actionHandler)(action))
+        XCTAssertFalse(focus.hidden)
+        XCTAssertEqual(scroll.zoomScale, 2)
+        XCTAssertNil(scroll.accessibilityCustomActions)
+        focus.hide()
+        let restore = focus.restoreAccessibilityAction()
+        XCTAssertTrue(try XCTUnwrap(restore.actionHandler)(restore))
+        XCTAssertFalse(focus.hidden)
+    }
 }

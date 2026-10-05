@@ -377,6 +377,9 @@
 "Close" = "Close";
 "Hide controls" = "Hide controls";
 "Show controls" = "Show controls";
+"Tap anywhere to show controls" = "Tap anywhere to show controls";
+"Click anywhere to show controls · Esc" = "Click anywhere to show controls · Esc";
+"Meeting content" = "Meeting content";
 "Automatically hide controls" = "Automatically hide controls";
 "Previous stream" = "Previous stream";
 "Next stream" = "Next stream";

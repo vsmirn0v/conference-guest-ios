@@ -3,7 +3,7 @@ import CoreMedia
 import JazzSDK
 import UIKit
 
-final class CallControls: UIView {
+final class CallControls: UIView, UIGestureRecognizerDelegate {
     override var canBecomeFirstResponder: Bool { true }
     override var keyCommands: [UIKeyCommand]? {
         CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
@@ -24,7 +24,6 @@ final class CallControls: UIView {
     private var headerView: UIStackView?
     private let compactHeader = CompactCallHeader()
     private let focusButton = UIButton(type: .system)
-    private let restoreButton = UIButton(type: .system)
     private let navigation = UIStackView()
     private let previous = UIButton(type: .system)
     private let nextStream = UIButton(type: .system)
@@ -390,7 +389,6 @@ final class CallControls: UIView {
             self.microphone.accessibilityLabel = media == .on ? L("Mute microphone") : L("Unmute microphone")
             self.microphone.largeContentTitle = self.microphone.accessibilityLabel
             self.workspace.microphoneOn = media == .on
-            self.updateRestoreButton()
         }.store(in: &subscriptions)
         state.$cameraState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
@@ -660,9 +658,6 @@ final class CallControls: UIView {
         focusButton.configuration?.image = UIImage(systemName: "arrow.up.left.and.arrow.down.right")
         focusButton.accessibilityLabel = L("Hide controls")
         focusButton.addAction(UIAction { [weak self] _ in self?.focus.hide() }, for: .touchUpInside)
-        restoreButton.configuration = .filled()
-        restoreButton.configuration?.baseBackgroundColor = UIColor.black.withAlphaComponent(0.85)
-        restoreButton.addAction(UIAction { [weak self] _ in self?.focus.show(); self?.focus.interaction() }, for: .touchUpInside)
         for button in [previous, nextStream, automaticView] { button.configuration = .tinted() }
         previous.configuration?.image = UIImage(systemName: "chevron.left")
         previous.accessibilityLabel = L("Previous stream")
@@ -675,7 +670,14 @@ final class CallControls: UIView {
         automaticView.addAction(UIAction { [weak self] _ in self?.onAutomaticView?(); self?.focus.interaction() }, for: .touchUpInside)
         navigation.axis = .horizontal; navigation.spacing = 4; navigation.distribution = .fillEqually
         [previous, automaticView, nextStream].forEach { navigation.addArrangedSubview($0) }
-        [focusButton, restoreButton, navigation, compactHeader].forEach(surface.addSubview)
+        [focusButton, navigation, compactHeader].forEach(surface.addSubview)
+        focus.installHint(in: surface)
+        for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop] {
+            let tap = UITapGestureRecognizer(target: self, action: #selector(tappedBackdrop))
+            tap.delegate = self
+            backdrop.addGestureRecognizer(tap)
+            backdrop.accessibilityLabel = L("Meeting content")
+        }
         for (button, action) in [
             (compactHeader.previous, previous), (compactHeader.nextStream, nextStream),
             (compactHeader.automatic, automaticView), (compactHeader.participants, participantsButton),
@@ -694,7 +696,6 @@ final class CallControls: UIView {
                         self.speakerLabel.isHidden ? nil : self.speakerLabel.text].compactMap { $0 })
         }, for: .touchUpInside)
         moreButton.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
-        updateRestoreButton()
     }
 
     private var presenter: UIViewController? {
@@ -715,14 +716,16 @@ final class CallControls: UIView {
     }
 
     private func toggleControls() {
-        if focus.hidden { focus.show() } else { focus.interaction() }
+        focus.toggle()
     }
-
-    private func updateRestoreButton() {
-        restoreButton.configuration?.title = L("Show controls")
-        restoreButton.configuration?.image = UIImage(systemName: workspace.microphoneOn ? "mic.fill" : "mic.slash.fill")
-        restoreButton.configuration?.baseForegroundColor = workspace.microphoneOn ? .systemOrange : .white
-        restoreButton.accessibilityLabel = L("Show controls") + ", " + (workspace.microphoneOn ? L("Mic on") : L("Mic off"))
+    @objc private func tappedBackdrop() { toggleControls() }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        var target = touch.view
+        while let current = target {
+            if current is UIControl { return false }
+            target = current.superview
+        }
+        return true
     }
 
     private func layoutPresentation() {
@@ -760,12 +763,14 @@ final class CallControls: UIView {
             stage.origin.y += 48; stage.size.height = max(0, stage.height - 48)
         }
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop, stageView] { backdrop.frame = stage }
+        for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop] {
+            backdrop.isAccessibilityElement = focus.hidden
+            backdrop.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
+        }
         notices.frame = CGRect(x: geometry.header.minX, y: geometry.header.maxY + 4,
             width: geometry.header.width, height: notices.systemLayoutSizeFitting(CGSize(width: geometry.header.width, height: 0)).height)
         focusButton.isHidden = focus.hidden || stageView.isHidden || geometry.compactHeader
         focusButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44)
-        restoreButton.isHidden = !focus.hidden
-        restoreButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: min(210, stage.width - 16), height: 44)
         localShareCard.alpha = focus.hidden ? 0 : 1
         localShareCard.refreshLayout()
         let cardWidth = min(216, stage.width - 8)

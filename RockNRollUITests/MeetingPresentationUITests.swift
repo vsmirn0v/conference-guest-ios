@@ -124,8 +124,10 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Leave"].exists, "An open menu must prevent auto-hide")
         if app.buttons["View"].exists { app.buttons["View"].tap() }
         app.buttons["All video"].tap()
-        XCTAssertTrue(app.buttons["Show controls, Mic off"].waitForExistence(timeout: 10))
-        app.buttons["Show controls, Mic off"].tap()
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !app.buttons["Leave"].exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 10), .completed)
+        XCTAssertFalse(app.buttons["Show controls, Mic off"].exists)
+        app.scrollViews["Shared screen viewport"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)).tap()
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["Pin Ani’s arrangement screen share"].exists,
             "Restoring controls must not trigger the control underneath the tap")
@@ -141,16 +143,77 @@ final class MeetingPresentationUITests: XCTestCase {
         let zoom = try XCTUnwrap(viewport.value as? String)
         XCTAssertNotEqual(zoom, "100%")
         app.buttons["Hide controls"].tap()
-        XCTAssertTrue(app.buttons["Show controls, Mic off"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Leave"].exists)
+        XCTAssertFalse(app.buttons["Show controls, Mic off"].exists)
+        viewport.swipeLeft()
+        XCTAssertFalse(app.buttons["Leave"].exists, "Panning must keep the shared screen unobstructed")
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertEqual(viewport.value as? String, zoom)
         XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").count, 0)
-        app.buttons["Show controls, Mic off"].tap()
+        viewport.tap()
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 5))
         XCTAssertEqual(viewport.value as? String, zoom)
         XCTAssertTrue(app.buttons["Unpin Ani’s arrangement screen share"].exists)
         XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").count, 1)
+    }
+
+    func testTapTogglesChromeWhileDoubleTapOnlyZooms() {
+        let app = launch()
+        let viewport = app.scrollViews["Shared screen viewport"]
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+        viewport.doubleTap()
+        XCTAssertEqual(viewport.value as? String, "200%")
+        XCTAssertTrue(app.buttons["Leave"].exists, "A double tap must not toggle controls")
+        viewport.tap()
+        // A single tap waits for the double-tap recognizer to fail before toggling.
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !app.buttons["Leave"].exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 3), .completed)
+        viewport.doubleTap()
+        XCTAssertEqual(viewport.value as? String, "100%")
+        XCTAssertFalse(app.buttons["Leave"].exists)
+        viewport.pinch(withScale: 2, velocity: 1)
+        XCTAssertNotEqual(viewport.value as? String, "100%")
+        XCTAssertFalse(app.buttons["Leave"].exists, "Pinching must not restore controls")
+        viewport.tap()
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 5))
+    }
+
+    func testFocusHintFadesAndDoesNotReturnDuringMeeting() {
+        for language in ["en", "ru"] {
+            let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+            app.launchArguments = ["-AppleLanguages", "(\(language))", "-AppleLocale", "en_US",
+                                   "-hasSeenMeetingControlsHint", "NO", "-automaticallyHideMeetingControls", "NO"]
+            app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
+            app.launch()
+            let viewport = app.scrollViews["Shared screen viewport"]
+            XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+            viewport.tap()
+            let hint = app.staticTexts["Meeting controls hint"]
+            XCTAssertTrue(hint.waitForExistence(timeout: 1))
+            let faded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !hint.exists }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [faded], timeout: 4), .completed)
+            XCTAssertFalse(app.buttons["Show controls, Mic off"].exists)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Unobstructed shared screen \(language)"; screenshot.lifetime = .keepAlways; add(screenshot)
+            viewport.tap(); viewport.tap()
+            XCTAssertFalse(hint.exists, "The teaching hint must not become another persistent overlay")
+            app.terminate()
+        }
+    }
+
+    func testCommunityCanvasRestoresControlsWithoutFloatingButton() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-automaticallyHideMeetingControls", "NO"]
+        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
+        app.launch()
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 10))
+        app.buttons["More call options"].tap()
+        app.buttons["Hide controls"].tap()
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !app.buttons["Leave"].exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+        XCTAssertFalse(app.buttons["Show controls, Mic off"].exists)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 5))
     }
     func testSwipeBrowsesAtFitAndPansWhenZoomed() throws {
         let app = launch()
