@@ -13,7 +13,7 @@ struct JoinView: View {
     @State private var showingContactPicker = false
     @State private var showingSettings = false
     @State private var showingAllRooms = false
-    @State private var showingFavoriteOrder = false
+    @StateObject private var favoriteDrag = FavoriteDragState()
     @State private var editingRoom: RecentRoom?
     @State private var roomAlias = ""
     @State private var showingUndo = false
@@ -35,7 +35,7 @@ struct JoinView: View {
             HStack(spacing: 0) {
               if window.size.width >= 900 {
                   Form {
-                      if !favorites.isEmpty { roomSection(L("Favorites"), rooms: favorites, reorderable: true) }
+                      if !favorites.isEmpty { favoriteSection }
                       if !recent.isEmpty {
                           roomSection(L("Recent jams"), rooms: showingAllRooms ? recent : Array(recent.prefix(3)))
                           if recent.count > 3 {
@@ -56,6 +56,7 @@ struct JoinView: View {
                 Section(L("Join a jam")) {
                     HStack {
                         TextField(L("Invitation link"), text: $model.invite)
+                            .accessibilityIdentifier("invitation.input")
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .keyboardType(.URL)
@@ -135,7 +136,7 @@ struct JoinView: View {
                     }
                 }
                 if window.size.width < 900 && !favorites.isEmpty {
-                    roomSection(L("Favorites"), rooms: favorites, reorderable: true)
+                    favoriteSection
                 }
                 if window.size.width < 900 && !recent.isEmpty {
                     roomSection(L("Recent jams"), rooms: showingAllRooms ? recent : Array(recent.prefix(3)))
@@ -185,7 +186,7 @@ struct JoinView: View {
                 SavedCatchUpView(store: catchUp)
             }
             .sheet(isPresented: $showingSettings) { settingsSheet }
-            .sheet(isPresented: $showingFavoriteOrder) { FavoriteOrderView(history: history) }
+            .onDisappear { favoriteDrag.cancel() }
             .alert(L("Join here without moving the other device?"),
                                 isPresented: $confirmingStaleContinuation,
                                 presenting: staleContinuation) { jam in
@@ -284,7 +285,26 @@ struct JoinView: View {
         .onDisappear { sync.endNameEditing() }
     }
 
-    private func roomSection(_ title: String, rooms: [RecentRoom], reorderable: Bool = false) -> some View {
+    private var favoriteSection: some View {
+        Section {
+            ForEach(favoriteDrag.displayedRooms(favorites)) { room in
+                FavoriteRoomRow(room: room, subtitle: roomSubtitle(room), tint: UIColor(linkAccent),
+                    history: history, drag: favoriteDrag,
+                    onJoin: { model.rejoin(room) }, onRename: { startRename(room) },
+                    onStar: { model.toggleStar(room) }, onOriginalName: { model.setAlias(nil, for: room) })
+                .swipeActions {
+                    Button(L("Remove"), role: .destructive) { removeRoom(room) }
+                    Button(L("Rename")) { startRename(room) }
+                }
+            }
+        } header: {
+            Text(L("Favorites"))
+        } footer: {
+            if favorites.count > 1 { Text(L("Touch and hold, then drag to reorder.")) }
+        }
+    }
+
+    private func roomSection(_ title: String, rooms: [RecentRoom]) -> some View {
         Section {
             ForEach(rooms) { room in
                 HStack(spacing: 10) {
@@ -325,14 +345,7 @@ struct JoinView: View {
                 }
                 .swipeActions {
                     Button(L("Remove"), role: .destructive) {
-                        model.remove(room)
-                        showingUndo = true
-                        let token = UUID()
-                        undoToken = token
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .seconds(6))
-                            if undoToken == token { showingUndo = false }
-                        }
+                        removeRoom(room)
                     }
                     Button(L("Rename")) { startRename(room) }
                 }
@@ -341,13 +354,16 @@ struct JoinView: View {
             HStack {
                 Text(title)
                 Spacer()
-                if reorderable && favorites.count > 1 {
-                    Button(L("Reorder")) { showingFavoriteOrder = true }
-                        .font(.subheadline.weight(.semibold))
-                        .textCase(nil)
-                        .accessibilityIdentifier("favorites.reorder")
-                }
             }
+        }
+    }
+
+    private func removeRoom(_ room: RecentRoom) {
+        model.remove(room); showingUndo = true
+        let token = UUID(); undoToken = token
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(6))
+            if undoToken == token { showingUndo = false }
         }
     }
 

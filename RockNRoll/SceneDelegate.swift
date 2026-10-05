@@ -17,11 +17,13 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             UserDefaults.standard.removeObject(forKey: "savedDisplayName")
         }
         #endif
-        let model = ConferenceModel()
         #if DEBUG
+        let model = RoomSyncUIFixture.makeModel()
         RoomSyncUIFixture.configure(model)
         MeetingContinuationUIFixture.configure(model)
         MeetingContinuationLiveFixture.configure(model)
+        #else
+        let model = ConferenceModel()
         #endif
         let hosting = UIHostingController(rootView: JoinView(model: model,
                                                             catchUp: model.catchUpStore,

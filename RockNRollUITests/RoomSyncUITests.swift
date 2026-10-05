@@ -9,28 +9,41 @@ final class RoomSyncUITests: XCTestCase {
     }
     private func checkFavoriteOrder(language: String, moveDown: String) {
         let app = launch("favorite-order", language: language)
-        let reorder = app.buttons["favorites.reorder"]
-        for _ in 0..<4 where !reorder.isHittable { app.swipeUp() }
-        XCTAssertTrue(reorder.waitForExistence(timeout: 5)); reorder.tap()
-        let warmup = app.descendants(matching: .any).matching(identifier:
-            "favorite.order.https://fixture.example.test/room0?psw=fixture").firstMatch
-        let songwriting = app.descendants(matching: .any).matching(identifier:
-            "favorite.order.https://fixture.example.test/room2?psw=fixture").firstMatch
+        XCTAssertFalse(app.buttons["favorites.reorder"].exists)
+        let warmup = app.buttons["favorite.order.https://fixture.example.test/room0?psw=fixture"]
+        let songwriting = app.buttons["favorite.order.https://fixture.example.test/room2?psw=fixture"]
         XCTAssertTrue(warmup.waitForExistence(timeout: 5))
-        let source = app.cells.containing(.any, identifier: songwriting.identifier).firstMatch
-        let target = app.cells.containing(.any, identifier: warmup.identifier).firstMatch
-        source.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5))
-            .press(forDuration: 0.5, thenDragTo: target.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.15)))
+        app.swipeUp()
+        reveal(songwriting, in: app)
+        songwriting.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.5))
+            .press(forDuration: 0.65, thenDragTo: warmup.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.15)))
         let moved = NSPredicate { _, _ in songwriting.frame.minY < warmup.frame.minY }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: moved, object: nil)], timeout: 5), .completed)
         songwriting.press(forDuration: 0.8)
         app.buttons[moveDown].tap()
         let movedDown = NSPredicate { _, _ in warmup.frame.minY < songwriting.frame.minY }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: movedDown, object: nil)], timeout: 5), .completed)
-        app.buttons["favorites.reorder.done"].tap()
-        reorder.tap()
         XCTAssertLessThan(warmup.frame.minY, songwriting.frame.minY)
-        attach(app, "Favorite order saved")
+        XCTAssertFalse((app.textFields["invitation.input"].value as? String ?? "").contains("fixture.example.test"))
+        attach(app, "Favorite order changed directly")
+    }
+
+    func testCancelledDirectDragKeepsOrderAndRenameStillWorks() {
+        let app = launch("favorite-order")
+        let first = app.buttons["favorite.order.https://fixture.example.test/room0?psw=fixture"]
+        let last = app.buttons["favorite.order.https://fixture.example.test/room2?psw=fixture"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5)); app.swipeUp(); reveal(last, in: app)
+        last.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.5))
+            .press(forDuration: 0.65, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.1)))
+        XCTAssertLessThan(first.frame.minY, last.frame.minY)
+        first.press(forDuration: 0.8)
+        app.buttons["Rename"].tap()
+        XCTAssertTrue(app.navigationBars["Name this jam"].waitForExistence(timeout: 5))
+        let name = app.textFields["New jam name"]
+        name.tap(); name.typeText("My warm-up")
+        app.buttons["Save"].tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Rejoin My warm-up")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse((app.textFields["invitation.input"].value as? String ?? "").contains("fixture.example.test"))
     }
     private func launch(_ mode: String, language: String = "en") -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")

@@ -6,6 +6,11 @@ import UIKit
 /// Deterministic UI coverage without signing a simulator into a person's account.
 @MainActor
 enum RoomSyncUIFixture {
+    static func makeModel() -> ConferenceModel {
+        guard ProcessInfo.processInfo.environment["CONFERENCE_TEST_SYNC_FIXTURE"] != nil else { return ConferenceModel() }
+        return ConferenceModel(history: RoomHistoryStore(storage: Storage()),
+            preferences: UserDefaults(suiteName: "SyncUIFixture")!)
+    }
     private final class Storage: RoomHistoryStorage {
         var data: Data?
         func read() -> Data? { data }
@@ -49,11 +54,11 @@ enum RoomSyncUIFixture {
             }
             model.history.applySyncedRooms(rooms)
         }
-        model.displayName = "Aram"
         let coordinator = RoomSyncCoordinator(history: model.history, name: "Aram",
                                               preferences: UserDefaults(suiteName: "SyncUIFixture")!,
                                               storage: Storage(), transport: Cloud(available: mode == "available"))
         model.installSyncFixture(coordinator)
+        model.displayName = "Aram"
     }
 }
 #endif

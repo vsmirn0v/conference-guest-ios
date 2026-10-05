@@ -7,17 +7,16 @@ import UIKit
 @MainActor
 final class ConferenceModel: ObservableObject {
     private enum SessionPhase { case idle, joining, active, leaving }
-    @Published var displayName = UserDefaults.standard.string(forKey: "savedDisplayName")
-        .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
-        ?? "" {
+    private let preferences: UserDefaults
+    @Published var displayName: String {
         didSet {
-            UserDefaults.standard.set(displayName, forKey: "savedDisplayName")
+            preferences.set(displayName, forKey: "savedDisplayName")
             if !applyingSyncedName { sync.nameDidChange(displayName) }
         }
     }
     @Published var invite = ""
-    @Published var guestWebsiteOrigin = UserDefaults.standard.string(forKey: "guestWebsiteOrigin") ?? "" {
-        didSet { UserDefaults.standard.set(guestWebsiteOrigin, forKey: "guestWebsiteOrigin") }
+    @Published var guestWebsiteOrigin: String {
+        didSet { preferences.set(guestWebsiteOrigin, forKey: "guestWebsiteOrigin") }
     }
     @Published private(set) var status = L("Enter a jam link to begin.")
     @Published private(set) var statusIsError = false
@@ -60,7 +59,7 @@ final class ConferenceModel: ObservableObject {
     let catchUpStore = CatchUpStore()
     private lazy var engine = NativeConferenceEngine(systemCall: systemCall, catchUp: catchUpStore)
     let chat = ChatStore()
-    let history = RoomHistoryStore()
+    let history: RoomHistoryStore
     private var liveSessionID: UUID?
     private var liveName = ""
     private(set) var companionAudioPaused = false
@@ -70,7 +69,7 @@ final class ConferenceModel: ObservableObject {
     lazy var continuation: MeetingContinuationCoordinator = makeContinuationCoordinator()
     private var applyingSyncedName = false
     lazy var sync: RoomSyncCoordinator = {
-        let coordinator = RoomSyncCoordinator(history: history, name: displayName)
+        let coordinator = RoomSyncCoordinator(history: history, name: displayName, preferences: preferences)
         coordinator.onRemoteName = { [weak self] name in
             self?.applySyncedName(name)
         }
@@ -115,7 +114,12 @@ final class ConferenceModel: ObservableObject {
     @Published var testSwitchSequenceCompleted = false
     #endif
 
-    init(jamService: JamService = JamService()) { self.jamService = jamService }
+    init(jamService: JamService = JamService(), history: RoomHistoryStore? = nil, preferences: UserDefaults = .standard) {
+        self.jamService = jamService; self.history = history ?? RoomHistoryStore(); self.preferences = preferences
+        displayName = preferences.string(forKey: "savedDisplayName")
+            .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? ""
+        guestWebsiteOrigin = preferences.string(forKey: "guestWebsiteOrigin") ?? ""
+    }
 
     private var activeEngine: (any CallEngine)? {
         switch activeRoute {

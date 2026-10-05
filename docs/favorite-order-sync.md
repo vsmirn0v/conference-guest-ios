@@ -1,9 +1,17 @@
 # Favorite order
 
-On the join screen, **Favorites → Reorder** opens a native list with drag
-handles. Changes save immediately; **Done** returns to the join screen.
-Long-press a row (or secondary-click on Mac) for **Move up / Move down**.
-The editor is offered when at least two favorites exist.
+On the join screen, touch and hold a favorite, then drag it directly to its new
+position. On Mac, use the native pointer drag. There is no separate editor or
+Reorder link. Hold without moving (or secondary-click on Mac) for Rename,
+Copy invitation and Move up / Move down. VoiceOver exposes valid move actions.
+Reordering is available when at least two favorites exist.
+
+Rows move aside during the drag. Approaching the containing Form's edges scrolls
+the list. This is a temporary presentation draft: a valid drop saves once and
+starts sync. Cancelling or dropping outside Favorites restores the original
+order. The star is a separate control and dragging cannot join a meeting.
+Incoming synced changes are displayed after the drag finishes. A favorite
+removed or unstarred remotely cannot be restored by dropping its stale preview.
 
 Rejoining or renaming a favorite keeps its position. A newly starred room goes
 to the top. Recent jams keep their existing date order and ten-item limit.
@@ -23,7 +31,7 @@ required. Older payloads are migrated in their displayed order. Older builds
 remain able to read the payload but do not display custom ordering; update all
 devices for consistent presentation.
 
-Validation covers drag handles and context actions on iPhone SE / iOS 17.5,
+Validation covers direct dragging, cancellation, renaming and context actions on iPhone SE / iOS 17.5,
 local restart persistence, two simulated replicas with recent-history sync off,
 concurrent reorders with renaming/deletion, and actual encrypted CloudKit
 full/delta fetches in a disposable verification zone on Mac. No physical iPhone
