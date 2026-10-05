@@ -407,10 +407,16 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         #else
         participantsButton.isEnabled = false
         #endif
-        let routePicker = AVRoutePickerView()
-        routePicker.tintColor = accent
-        routePicker.activeTintColor = accent
-        routePicker.accessibilityLabel = L("Choose audio output")
+        let routePicker: UIView
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            routePicker = MacAudioRouteButton()
+        } else {
+            let systemPicker = AVRoutePickerView()
+            systemPicker.tintColor = accent
+            systemPicker.activeTintColor = accent
+            routePicker = systemPicker
+        }
+        routePicker.accessibilityLabel = ProcessInfo.processInfo.isiOSAppOnMac ? L("Audio devices") : L("Choose audio output")
         let leave = AlignedCallButton(frame: .zero)
         configure(leave, symbol: "phone.down.fill", label: L("Leave"), title: L("Leave"))
         leave.configuration?.baseForegroundColor = .systemRed

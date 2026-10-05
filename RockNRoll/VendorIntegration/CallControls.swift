@@ -291,7 +291,8 @@ final class CallControls: UIView {
 
         route.translatesAutoresizingMaskIntoConstraints = false
         route.accessibilityLabel = L("Audio route")
-        let picker = coordinator?.audioRoutePickerButton ?? UIButton(type: .system)
+        let picker: UIView = ProcessInfo.processInfo.isiOSAppOnMac ? MacAudioRouteButton()
+            : (coordinator?.audioRoutePickerButton ?? UIButton(type: .system))
         picker.translatesAutoresizingMaskIntoConstraints = false
         route.addSubview(picker)
         let routeAppearance = AlignedCallButton(frame: .zero)

@@ -9,6 +9,15 @@ extension SceneDelegate {
             FloatingVideoPreference.enabled = true
         }
         if let fixture = ProcessInfo.processInfo.environment["CONFERENCE_TEST_UI_FIXTURE"] {
+            if fixture == "mac-audio" {
+                if ProcessInfo.processInfo.environment["CONFERENCE_TEST_MAC_AUDIO_VERIFY_DEFAULTS"] == "1" {
+                    MacAudioLiveProbe.verifyCurrentDefaults()
+                }
+                let devices = ProcessInfo.processInfo.isiOSAppOnMac ? MacAudioDevices.shared
+                    : MacAudioDevices(isMac: true, hardware: MacAudioFixtureHardware())
+                window.rootViewController = UINavigationController(rootViewController: MacAudioDevicePicker(devices: devices))
+                return true
+            }
             if fixture == "pip-microphone" {
                 window.rootViewController = PiPMicrophoneFixtureViewController()
                 return true

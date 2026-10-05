@@ -384,3 +384,10 @@
 "iPhone receiver" = "iPhone receiver";
 
 "Jam details" = "Jam details";
+"Audio devices" = "Audio devices";
+"Output" = "Output";
+"Audio devices unavailable" = "Audio devices unavailable";
+"Selections change your Mac’s system audio devices for other apps too." = "Selections change your Mac’s system audio devices for other apps too.";
+"No output devices available" = "No output devices available";
+"No microphones available" = "No microphones available";
+"Could not change audio device. Please try again." = "Could not change audio device. Please try again.";

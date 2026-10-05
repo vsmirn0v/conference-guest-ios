@@ -384,3 +384,10 @@
 "iPhone receiver" = "Динамик iPhone";
 
 "Jam details" = "О джеме";
+"Audio devices" = "Аудиоустройства";
+"Output" = "Вывод звука";
+"Audio devices unavailable" = "Аудиоустройства недоступны";
+"Selections change your Mac’s system audio devices for other apps too." = "Выбор меняет системные аудиоустройства Mac, в том числе для других приложений.";
+"No output devices available" = "Нет доступных устройств вывода";
+"No microphones available" = "Нет доступных микрофонов";
+"Could not change audio device. Please try again." = "Не удалось сменить аудиоустройство. Попробуйте ещё раз.";

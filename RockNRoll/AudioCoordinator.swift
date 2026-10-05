@@ -1,8 +1,10 @@
 import AVFoundation
+import Combine
 import Foundation
 import UIKit
 
 /// Observes iOS media changes without competing with the provider for transport ownership.
+@MainActor
 final class AudioCoordinator {
     var onStatus: ((String?) -> Void)?
     var onInterruptionChanged: ((Bool) -> Void)?
@@ -10,8 +12,10 @@ final class AudioCoordinator {
     private var observers: [NSObjectProtocol] = []
     private var audioWarning: String?
     private var cameraWarning: String?
+    private var macRouteSubscription: AnyCancellable?
 
     var outputName: String {
+        if ProcessInfo.processInfo.isiOSAppOnMac, let name = MacAudioDevices.shared.snapshot.outputName { return name }
         guard let output = AVAudioSession.sharedInstance().currentRoute.outputs.first else { return L("Audio output") }
         switch output.portType {
         case .builtInSpeaker: return L("Speaker")
@@ -21,6 +25,10 @@ final class AudioCoordinator {
     }
 
     init() {
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            macRouteSubscription = MacAudioDevices.shared.$snapshot.dropFirst()
+                .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.onRouteChanged?() }
+        }
         let center = NotificationCenter.default
         for name in [AVAudioSession.interruptionNotification,
                      AVAudioSession.routeChangeNotification,
@@ -29,7 +37,7 @@ final class AudioCoordinator {
                      AVCaptureSession.wasInterruptedNotification,
                      AVCaptureSession.interruptionEndedNotification] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
-                self?.handle(note)
+                MainActor.assumeIsolated { self?.handle(note) }
             })
         }
     }
