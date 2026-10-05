@@ -32,7 +32,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>31</string>
+	<string>32</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>JoinLinkHost</key>
@@ -52,6 +52,10 @@
 	<string>Choose a contact to fill your jam name. Only the selected name is sent when you join.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Let others hear you when you turn on your microphone in a jam.</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>dev.vsmirn0v.conferenceguest.continue-jam</string>
+	</array>
 	<key>RTCAppGroupIdentifier</key>
 	<string>group.dev.vsmirn0v.conferenceguest</string>
 	<key>UIApplicationSceneManifest</key>
@@ -86,10 +90,6 @@
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>NSUserActivityTypes</key>
-	<array>
-		<string>dev.vsmirn0v.conferenceguest.continue-jam</string>
 	</array>
 </dict>
 </plist>
