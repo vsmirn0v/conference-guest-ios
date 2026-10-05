@@ -33,10 +33,16 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
 #if DEBUG
     private let experiment: GuestVideoConversionExperiment
     private var transferSession: VTPixelTransferSession?
+    var onDeliveryForTesting: (@MainActor (Int64) -> Void)?
+    private var nativeConversionCount = 0
+    var experimentalNativeConversions: Int {
+        lock.lock(); defer { lock.unlock() }; return nativeConversionCount
+    }
 
     init(experiment: GuestVideoConversionExperiment = .reference) {
         self.experiment = experiment
     }
+    deinit { if let transferSession { VTPixelTransferSessionInvalidate(transferSession) } }
 #endif
 
     func setEnabled(_ enabled: Bool) {
@@ -111,6 +117,9 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
                 self.lock.unlock()
                 guard current else { return }
                 if let sample {
+#if DEBUG
+                    self.onDeliveryForTesting?(frame.timeStampNs)
+#endif
                     self.onSample?(sample, CGSize(width: Int(frame.width), height: Int(frame.height)),
                                    frame.rotation.rawValue)
                 }
@@ -161,6 +170,7 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
         if let native = frame.buffer as? RTCCVPixelBuffer,
            experiment == .nativeCopy || experiment == .nativeTransfer,
            let converted = convertNativeCrop(native) {
+            lock.lock(); nativeConversionCount += 1; lock.unlock()
             return converted
         }
 #endif
@@ -323,8 +333,10 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
             // VideoToolbox's NV12 transfer leaves incomplete chroma for odd extents.
             // Those inputs take the reference path above rather than losing edge pixels.
             if transferSession == nil {
-                guard VTPixelTransferSessionCreate(allocator: nil, pixelTransferSessionOut: &transferSession)
-                    == noErr else { return nil }
+                var created: VTPixelTransferSession?
+                guard VTPixelTransferSessionCreate(allocator: nil, pixelTransferSessionOut: &created)
+                    == noErr, let created else { return nil }
+                transferSession = created
             }
             guard let transferSession else { return nil }
             // The wrapper borrows the locked source planes until the synchronous transfer returns.

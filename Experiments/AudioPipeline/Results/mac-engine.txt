@@ -1,0 +1,2 @@
+AUDIO_OPUS_ENCODERS,manufacturers=appl
+AUDIO_ENGINE,session_rate=44100.0,preferred_rate=0.0,io_ms=11.609977324263038,input_ms=0.45351473922902497,output_ms=1.2698412698412698,topology=1,voice_active=true,voice_bypassed=false,platform_aec=true,platform_ns=true,platform_agc=true,effective_aec=3,effective_ns=3,effective_agc=3,software_aec=false,software_ns=false,software_agc=false

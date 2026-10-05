@@ -352,6 +352,29 @@ final class GuestVideoFrameTests: XCTestCase {
         }
     }
 
+    func testTransferThinLineQualityAcceptanceProbe() throws {
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_TRANSFER_QUALITY"] == "1" else {
+            throw XCTSkip("Opt-in scaling-quality acceptance probe")
+        }
+        let frame = try nativeFrame(width: 128, height: 96,
+            format: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            crop: (4, 4, 120, 88), adapted: (60, 44))
+        let input = (frame.buffer as! RTCCVPixelBuffer).pixelBuffer
+        CVPixelBufferLockBaseAddress(input, [])
+        let data = CVPixelBufferGetBaseAddressOfPlane(input, 0)!.assumingMemoryBound(to: UInt8.self)
+        let stride = CVPixelBufferGetBytesPerRowOfPlane(input, 0)
+        for y in 0..<96 { for x in 0..<128 { data[y * stride + x] = (x - 4) % 8 == 0 ? 235 : 16 } }
+        CVPixelBufferUnlockBaseAddress(input, [])
+        let expected = try pixels(XCTUnwrap(GuestVideoFrameProcessor().pixelBuffer(for: frame)))[0]
+        let scaled = try pixels(XCTUnwrap(GuestVideoFrameProcessor(experiment: .nativeTransfer).pixelBuffer(for: frame)))[0]
+        let error = zip(expected, scaled).map { abs(Int($0) - Int($1)) }
+        print("TRANSFER_QUALITY_SAMPLES,reference=\(Array(expected.prefix(16))),transfer=\(Array(scaled.prefix(16)))")
+        print("TRANSFER_QUALITY,max_error=\(error.max() ?? 0),mean_error=\(Double(error.reduce(0, +)) / Double(error.count))")
+        // Five code values are about 2.3% of the video-range luma span. Large halos
+        // around fine shared UI are a quality rejection even when transfer is fast.
+        XCTAssertLessThanOrEqual(error.max() ?? 0, 5, "Scaling must not create strong halos around thin lines")
+    }
+
     func testVideoConversionExperimentBenchmark() throws {
         guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CONVERSION_BENCHMARK"] == "1" else {
             throw XCTSkip("Opt-in optimized conversion benchmark")

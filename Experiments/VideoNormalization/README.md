@@ -10,12 +10,11 @@ initializer; Release excludes them. The Metal harness is outside the app target.
 - Keep the existing native-buffer passthrough. Uncropped, unscaled native buffers
   already avoid conversion entirely.
 - Direct NV12 copying is the strongest next candidate for eligible native crops:
-  identical pixels, fewer memory passes, much less conversion CPU time on both targets.
+  identical pixels, fewer memory passes, much less conversion CPU time on Mac and iPhone.
   It cannot help ordinary I420 frames or crops that also require scaling.
-- VideoToolbox transfer merits further Mac-specific investigation for scaling. Its
-  CPU results differ considerably between the Mac and simulator. Constant colours
-  and metadata pass, but equivalent text/detail sharpness under arbitrary scaling
-  remains unproven. It is not enabled.
+- Reject the current VideoToolbox scaler for shared UI/text. Physical iPhone tests
+  show substantial halos and dark-edge undershoot around thin lines. Its speed
+  does not compensate for that change in rendering. It remains an opt-in probe.
 - Do not integrate the staged Metal repacker for this workload. It meets the 1080p
   latency budget but consumes more CPU time, adds GPU execution, and needs an extra
   memory copy. There is no measured energy benefit.
@@ -70,6 +69,83 @@ Raw rows, including candidates that fall back to the reference path, are in
 [Results/app-mac.csv](Results/app-mac.csv) and
 [Results/app-ios27-simulator.csv](Results/app-ios27-simulator.csv).
 
+## Physical iPhone qualification
+
+iVitalii, iPhone 17 Pro Max/A19, iOS 27.0.1. Same optimized DEBUG batch protocol as
+above. All 14 original converter tests passed; measured rows are in
+[Results/app-iphone.csv](Results/app-iphone.csv).
+
+| Input | Technique | Median ms | p95 ms | Process CPU ms/frame |
+| --- | --- | ---: | ---: | ---: |
+| 1080p NV12 crop | Reference | 0.142 | 0.147 | 0.143 |
+| 1080p NV12 crop | Direct copy | 0.048 | 0.052 | 0.050 |
+| 4K NV12 crop | Reference | 0.615 | 0.637 | 0.618 |
+| 4K NV12 crop | Direct copy | 0.171 | 0.192 | 0.179 |
+| 1080p → 540p NV12 | Reference | 2.054 | 2.069 | 2.055 |
+| 1080p → 540p NV12 | VideoToolbox | 0.217 | 0.223 | 0.218 |
+| 4K → 1080p NV12 | Reference | 8.206 | 8.226 | 8.207 |
+| 4K → 1080p NV12 | VideoToolbox | 1.781 | 2.016 | 1.814 |
+
+Direct copying reduced conversion CPU by about **65% at 1080p** and **71% at 4K**.
+It remains pixel-identical for its eligible crops, preserving source immutability,
+full/video range, chroma, and colour attachments. No GPU shader or additional
+display queue is introduced.
+
+### Scaling-quality rejection
+
+A new thin-line probe halves a 120×88 NV12 crop containing bright one-pixel lines
+on video-range black. The reference luma row begins `126,16,16,16,126,16,16,16`;
+the transferred row begins `126,0,13,46,114,2,12,46`. Maximum luma error is **30**
+and mean error **14.32** code values. The current transfer visibly creates a halo
+and undershoot. The probe fails its five-code-value acceptance bound intentionally
+when explicitly enabled. Constant-colour tests alone missed this problem.
+
+`kVTPixelTransferPropertyKey_DownsamplingMode` controls **chroma subsampling**, not
+the spatial luma scaler. Average versus decimate produced identical luma in this
+NV12-to-NV12 test. That prototype option was removed; the original rejection data
+is retained in [Results/iphone-transfer-quality-rejection.txt](Results/iphone-transfer-quality-rejection.txt).
+VideoToolbox is an OS transfer API; these measurements do not establish which
+hardware block performs the scaling.
+
+### Paced display replay and interruption
+
+The opt-in replay feeds eight immutable, changing 1080p NV12 crops at 30 fps through
+the real `GuestVideoFrameProcessor` and `GuestSampleBufferView`. There is no SDK
+decoder, conference, network, camera, or microphone. CPU includes feed, conversion,
+enqueue, app/test activity. Frame age measures submit to display **enqueue**, not
+glass-to-glass latency. Every phase has five seconds of warm-up before measurement.
+
+| Completed phase | Seconds | Process CPU, one core | Delivered fps | Frame age p50 / p95 ms | Refused / malformed |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reference | 150 | 6.01% | 29.1 | 16.95 / 34.44 | 0 / 0 |
+| Direct copy, first | 150 | 4.95% | 29.1 | 16.85 / 34.46 | 0 / 0 |
+| Direct copy, second | 150 | 4.92% | 29.1 | 16.78 / 34.40 | 0 / 0 |
+
+Direct copying used about **18% less process CPU** in this replay, with no measurable
+frame-age regression. The native-success counter confirms it did not silently
+fall back. All three phases remained at nominal thermal state. Rows are in
+[Results/iphone-crop-replay.csv](Results/iphone-crop-replay.csv).
+
+The user interrupted the final reference phase to use the phone. That phase has
+no completed summary and is excluded. The XCTest run therefore ended as cancelled,
+not as a passing four-phase test. One complete reference and two complete candidate
+phases support a directional CPU result, not a full reversed-order comparison.
+The earlier short replay used an overly strict one-frame age gate; both paths
+were around 34 ms. The harness now permits two intervals, matching the existing
+newest-frame pacing plus UI scheduling. Production pacing did not change.
+
+The simultaneous Power Profiler recorder disconnected after **1.65 seconds**, before
+any measured phase. Its single power sample provides no phase coverage and is not
+used to estimate energy. **Battery savings remain unmeasured.** No further phone
+test is needed to choose between these candidates: direct copy wins on pixel
+equivalence and CPU; the current scaler fails the detail-quality gate.
+
+The final iOS 27 simulator replay also passed with the same conversion-success,
+frame-age, pacing and backpressure gates. It delivered 29.3 fps with no malformed
+or refused frames; the p95 age was 36.8 ms for reference and 35.5 ms for direct copy.
+[Results/simulator-crop-replay.csv](Results/simulator-crop-replay.csv) retains those
+functional results. They do not replace physical performance measurements.
+
 ## Standalone Metal and Accelerate measurements
 
 Mac binaries built with `swiftc -O`. Synthetic padded I420 input, non-neutral chroma;
@@ -120,6 +196,17 @@ processing into one pass; simple format repacking did not justify it here.
   source/generation checks are preserved. No custom Metal work enters background PiP.
 - A signed iOS Release build passes; a binary symbol check confirms experimental
   converter names are absent.
+- DEBUG device diagnostics add a source-timestamp callback and a synchronized native
+  success counter. These are excluded from Release. The transfer session is explicitly
+  invalidated on teardown. No candidate is enabled in distribution builds.
+
+Final checks after adding the diagnostics: **20 Mac tests passed, two opt-in tests
+skipped; 23 simulator tests passed, two opt-in tests skipped**, including three UI
+colour/pinning tests and the paced replay. The new Mac audio-state diagnostic passed.
+The opt-in VideoToolbox quality probe remains a known rejection, not a claimed pass.
+A fresh signed iOS Release build and strict deep signature verification passed.
+Binary strings confirmed the experiment enum, delivery diagnostic and native counter
+are present in DEBUG and absent in Release. No new TestFlight build was uploaded.
 
 ## Reproduction
 
@@ -150,22 +237,44 @@ Without that environment variable, the performance test skips. Correctness tests
 still run. For rendering regression checks add
 `-only-testing:RockNRollUITests/GuestColorUITests`.
 
-## Energy acceptance still required
+The scaling rejection is a separate opt-in probe, expected to fail for the current
+candidate on the measured phone:
+
+```sh
+TEST_RUNNER_ROCKNROLL_TEST_TRANSFER_QUALITY=1 xcodebuild test \
+  -project RockNRoll.xcodeproj -scheme RockNRoll -configuration Debug \
+  -destination 'platform=macOS,arch=arm64,id=00008132-000C10683650401C' \
+  -disableAutomaticPackageResolution SWIFT_OPTIMIZATION_LEVEL=-O \
+  -only-testing:RockNRollTests/GuestVideoFrameTests/testTransferThinLineQualityAcceptanceProbe
+```
+
+For a paced replay, enable `TEST_RUNNER_ROCKNROLL_TEST_NORMALIZATION_DEVICE=1`,
+select `TEST_RUNNER_ROCKNROLL_TEST_NORMALIZATION_PROFILES=cropCopy`, and run only
+`RockNRollTests/NormalizationDeviceExperimentTests`. On a physical phone the default
+is **one 30-second measured phase plus five seconds of warm-up**; configuration is
+rejected if phases plus warm-up exceed 50 seconds, leaving setup/cleanup margin
+within the user's one-minute limit. Use separate short runs for comparison.
+Mac/simulator accept longer explicit configurations. Do not repeat the earlier
+long phone replay while the user needs the device.
+
+## Energy boundary and next decision
 
 No energy counters were available without additional privileges on this Mac;
 `powermetrics` required a password. CPU time, GPU execution time and memory-copy
 volume are the available proxies. Repeated warm inputs and other system activity
 limit the precision of these short benchmarks.
 
-Before enabling a candidate: compare the same live/replayed content at fixed
-resolution and 30 fps for at least five minutes per path, alternate order, and keep
-screen brightness, network, camera and microphone settings fixed. Record incoming
-frame types/crop frequency, delivered and dropped frames, frame-age p50/p95,
-process CPU, memory, thermal state, and available device energy measurements.
-Exercise rotation, source replacement, background PiP and returning to foreground.
-Verify arbitrary scaled text/detail for VideoToolbox separately. Adopt only when
-energy is better or unchanged and pixels, pacing and background behaviour remain
-acceptable. The user deferred physical iPhone testing for this experiment.
+Direct cropping is qualified as a pixel-preserving CPU optimization on this phone.
+Before promoting it to the distribution default, check live crop frequency and
+foreground/background rendering with the existing regression coverage. If actual
+battery evidence is wanted later, use repeated **sub-minute** phases with a working
+power recorder, alternate order, and hold brightness/routing/content fixed. CPU
+savings alone cannot establish whole-meeting energy savings. The current VideoToolbox
+scaler should not be promoted for screen sharing without a different filter or
+demonstrably acceptable detail quality.
+
+The separate [audio pipeline assessment](../AudioPipeline/README.md) records the
+platform-processing readback and why audio settings remain unchanged.
 
 Apple references:
 [Simulator performance limitations](https://developer.apple.com/documentation/metal/developing-metal-apps-that-run-in-simulator),

@@ -1,0 +1,2 @@
+TRANSFER_QUALITY_SAMPLES,reference=[126, 16, 16, 16, 126, 16, 16, 16, 126, 16, 16, 16, 126, 16, 16, 16],average=[126, 0, 13, 46, 114, 2, 12, 46, 114, 2, 12, 46, 114, 2, 12, 46],decimate=[126, 0, 13, 46, 114, 2, 12, 46, 114, 2, 12, 46, 114, 2, 12, 46]
+TRANSFER_QUALITY,average_max_error=30,decimate_mean_error=14.316666666666666
