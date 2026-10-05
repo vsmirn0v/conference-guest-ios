@@ -65,6 +65,7 @@ final class RoomSyncCoordinator: ObservableObject {
             for room in history.rooms { state.document.upsert(room, visited: true) }
             if !name.isEmpty { state.document.setName(name) }
         }
+        state.document.migrateFavoriteOrderIfNeeded()
         enabled = state.enabled; includeRecent = state.includeRecent
         status = enabled ? L("Changes pending") : L("Stored on this device")
         if let local = state.conflictingLocalName {
@@ -194,6 +195,7 @@ final class RoomSyncCoordinator: ObservableObject {
         switch change {
         case .upsert(let room, let visited): state.document.upsert(room, visited: visited)
         case .remove(let id): state.document.remove(id)
+        case .favoriteOrder(let ids): state.document.setFavoriteOrder(ids)
         }
         if includeRecent { state.document.trimHistory() }
         changed()
@@ -252,6 +254,7 @@ final class RoomSyncCoordinator: ObservableObject {
                     if case .profile(let name) = record { return name }; return nil
                 }.max { $0.version < $1.version }?.value
                 state.document.merge(changes.records)
+                state.document.migrateFavoriteOrderIfNeeded()
                 if state.needsInitialNameCheck {
                     state.needsInitialNameCheck = false
                     if let cloud = incomingName, !localName.isEmpty, localName != cloud {

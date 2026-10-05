@@ -2,6 +2,53 @@ import XCTest
 @testable import ConferenceCore
 
 final class RoomSyncDocumentTests: XCTestCase {
+    func testLegacyCloudFavoritesKeepTheirOrderAfterVisitsAndRepeatedMigrations() {
+        var document = RoomSyncDocument(device: "new")
+        let items = [room("one", starred: true, day: 1), room("two", starred: true, day: 2)]
+        items.forEach { document.upsert($0, visited: true) }
+        document.migrateFavoriteOrderIfNeeded()
+        document.upsert(room("one", starred: true, day: 3), visited: true)
+        XCTAssertEqual(document.visibleRooms.map(\.id), [items[1].id, items[0].id])
+        let before = document
+        document.migrateFavoriteOrderIfNeeded()
+        XCTAssertEqual(document, before)
+    }
+
+    func testConcurrentFavoriteOrdersConvergeAndDoNotOverwriteAliasOrDeletion() throws {
+        var seed = RoomSyncDocument(device: "seed")
+        let items = [room("one", starred: true), room("two", starred: true), room("three", starred: true)]
+        items.forEach { seed.upsert($0, visited: true) }
+        seed.setFavoriteOrder(items.map(\.id))
+        var phone = RoomSyncDocument(device: "phone"), mac = RoomSyncDocument(device: "mac")
+        phone.merge(seed.records); mac.merge(seed.records)
+        phone.setFavoriteOrder([items[2].id, items[0].id, items[1].id])
+        mac.setFavoriteOrder([items[1].id, items[2].id, items[0].id])
+        var renamed = items[0]; renamed.alias = "Friday band"
+        mac.upsert(renamed); mac.remove(items[1].id)
+        let phoneChanges = phone.records, macChanges = mac.records
+        phone.merge(macChanges); mac.merge(phoneChanges)
+        XCTAssertEqual(phone.visibleRooms, mac.visibleRooms)
+        XCTAssertEqual(phone.visibleRooms.map(\.id), [items[2].id, items[0].id])
+        XCTAssertEqual(phone.visibleRooms.first { $0.id == items[0].id }?.alias, "Friday band")
+        let before = phone.records; phone.merge(mac.records)
+        XCTAssertEqual(Set(before.map(\.id)), Set(phone.records.map(\.id)))
+        let restored = try JSONDecoder().decode(RoomSyncDocument.self, from: JSONEncoder().encode(phone))
+        XCTAssertEqual(restored.visibleRooms, phone.visibleRooms)
+    }
+
+    func testOlderRecordsWithoutOrderDoNotEraseSyncedOrder() throws {
+        var document = RoomSyncDocument(device: "new")
+        let items = [room("one", starred: true), room("two", starred: true)]
+        items.forEach { document.upsert($0, visited: true) }
+        document.setFavoriteOrder([items[1].id, items[0].id])
+        var legacy = RoomSyncDocument(device: "old")
+        items.forEach { legacy.upsert($0, visited: true) }
+        var renamed = items[0]; renamed.alias = "Legacy rename"
+        for _ in 0..<10 { legacy.upsert(renamed) }
+        document.merge(legacy.records)
+        XCTAssertEqual(document.visibleRooms.map(\.id), [items[1].id, items[0].id])
+        XCTAssertEqual(document.visibleRooms.last?.alias, "Legacy rename")
+    }
     private func room(_ id: String, starred: Bool = false, day: Double = 1) -> RecentRoom {
         RecentRoom(invitationURL: URL(string: "https://\(id).example.test/calls/one?psw=secret")!,
                    title: id, identifier: "one", isStarred: starred, lastJoined: Date(timeIntervalSince1970: day))

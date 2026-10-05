@@ -110,6 +110,7 @@
 		BEC243131F30647E683B8FDB /* Localization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 098634B8B5BFC9FD4D81E240 /* Localization.swift */; };
 		C0E9815B9D93822773CAEAEF /* PiPMicrophoneUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9220E07FD2C07210BDFDAF9D /* PiPMicrophoneUITests.swift */; };
 		C1CB191C2CC80344A1C3337C /* MeetingContinuationUIFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E0BE2FD5BD2E955E689DD5A /* MeetingContinuationUIFixture.swift */; };
+		C72226D0A8C8CD13E88F6891 /* FavoriteOrderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F4F959A20C425BAFB81E409 /* FavoriteOrderView.swift */; };
 		C76BB9AFEC30C10D989FBF79 /* CallEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C43FFC391C3ED3C1C530C62 /* CallEngine.swift */; };
 		C8AF96D7FA1436CEDAEE8E5F /* GuestSampleBufferView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1E61E7BB62527702FCC1510 /* GuestSampleBufferView.swift */; };
 		CA2328A007DE4223C0D0CA82 /* FloatingVideoController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8673A1476A9A30C9EE82E814 /* FloatingVideoController.swift */; };
@@ -215,6 +216,7 @@
 		25B3E7D53DBEAD7F16EFFDF8 /* NameEntryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NameEntryUITests.swift; sourceTree = "<group>"; };
 		26E84EDB6C185E0A79E26B59 /* CallPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallPresentation.swift; sourceTree = "<group>"; };
 		2C5C7EE579F37BACDF9E7710 /* VendorEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VendorEndpointResolver.swift; sourceTree = "<group>"; };
+		2F4F959A20C425BAFB81E409 /* FavoriteOrderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FavoriteOrderView.swift; sourceTree = "<group>"; };
 		33040F702F0225D226CAF319 /* RoomSyncCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncCoordinatorTests.swift; sourceTree = "<group>"; };
 		36335245A0855B2E5BC15592 /* ChatStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStoreTests.swift; sourceTree = "<group>"; };
 		3B8565722651DABA4F828498 /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/InfoPlist.strings; sourceTree = "<group>"; };
@@ -476,6 +478,7 @@
 				78D15E09F9B40733B95666CD /* ConferenceModel+Continuation.swift */,
 				8ABF3D1959D288FA94E88311 /* ContinuationBanner.swift */,
 				0DD12DC1E0D2B670F8DE1382 /* ConversationPanelViewController.swift */,
+				2F4F959A20C425BAFB81E409 /* FavoriteOrderView.swift */,
 				1567DFCAF9DFADA92D9DECFF /* FloatingVideoContentView.swift */,
 				8673A1476A9A30C9EE82E814 /* FloatingVideoController.swift */,
 				EE480DD0A0D1B8E60EE1A8BF /* FloatingVideoPreference.swift */,
@@ -854,6 +857,7 @@
 				9FDC5FCBA12DEC6FA1485263 /* ContinuationBanner.swift in Sources */,
 				CDDEE70553C1B8CF7AABD492 /* ConversationPanelViewController.swift in Sources */,
 				915DAB4B920E1EB0274822DE /* EventRelay.swift in Sources */,
+				C72226D0A8C8CD13E88F6891 /* FavoriteOrderView.swift in Sources */,
 				772D6857C9D1ADD26D37C906 /* FloatingVideoContentView.swift in Sources */,
 				CA2328A007DE4223C0D0CA82 /* FloatingVideoController.swift in Sources */,
 				1F35805A29943F09662AEB20 /* FloatingVideoPreference.swift in Sources */,

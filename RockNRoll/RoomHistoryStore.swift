@@ -11,6 +11,7 @@ protocol RoomHistoryStorage {
 enum RoomHistoryChange {
     case upsert(RecentRoom, visited: Bool)
     case remove(String)
+    case favoriteOrder([String])
 }
 
 @MainActor
@@ -45,10 +46,26 @@ final class RoomHistoryStore: ObservableObject {
         notify(url)
     }
 
+    func setFavoriteOrder(_ ids: [String]) {
+        guard history.setFavoriteOrder(ids) else { return }
+        save()
+        onLocalChange?(.favoriteOrder(rooms.filter(\.isStarred).map(\.id)))
+    }
+
+    func moveFavorites(from source: IndexSet, to destination: Int) {
+        let favorites = rooms.filter(\.isStarred)
+        guard source.allSatisfy({ favorites.indices.contains($0) }), (0...favorites.count).contains(destination) else { return }
+        let moving = source.sorted().map { favorites[$0].id }
+        var ordered = favorites.enumerated().filter { !source.contains($0.offset) }.map { $0.element.id }
+        ordered.insert(contentsOf: moving, at: destination - source.filter { $0 < destination }.count)
+        setFavoriteOrder(ordered)
+    }
+
     func toggleStar(_ url: URL) {
         history.toggleStar(for: url)
         save()
         notify(url)
+        onLocalChange?(.favoriteOrder(rooms.filter(\.isStarred).map(\.id)))
     }
 
     func remove(_ url: URL) {

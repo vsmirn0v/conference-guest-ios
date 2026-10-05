@@ -397,3 +397,13 @@
 "No output devices available" = "No output devices available";
 "No microphones available" = "No microphones available";
 "Could not change audio device. Please try again." = "Could not change audio device. Please try again.";
+
+"Reorder" = "Reorder";
+
+"Reorder favorites" = "Reorder favorites";
+
+"Move up" = "Move up";
+
+"Move down" = "Move down";
+
+"Drag the handles to change the order. Changes are saved automatically." = "Drag the handles to change the order. Changes are saved automatically.";

@@ -37,6 +37,15 @@ enum RoomSyncUIFixture {
     static func configure(_ model: ConferenceModel) {
         guard let mode = ProcessInfo.processInfo.environment["CONFERENCE_TEST_SYNC_FIXTURE"] else { return }
         model.history.applySyncedRooms([])
+        if mode == "favorite-order" {
+            let names = ["Warm-up", "Thursday rehearsal", "Songwriting circle"]
+            let rooms = names.enumerated().map { index, name in
+                RecentRoom(invitationURL: URL(string: "https://fixture.example.test/room\(index)?psw=fixture")!,
+                    title: name, identifier: "order\(index)", isStarred: true,
+                    lastJoined: Date(timeIntervalSince1970: Double(3 - index)))
+            }
+            model.history.applySyncedRooms(rooms)
+        }
         model.displayName = "Aram"
         let coordinator = RoomSyncCoordinator(history: model.history, name: "Aram",
                                               preferences: UserDefaults(suiteName: "SyncUIFixture")!,

@@ -22,24 +22,29 @@ public struct SyncedRoom: Codable, Equatable, Sendable {
     public var title: SyncValue<String>
     public var alias: SyncValue<String?>
     public var starred: SyncValue<Bool>
+    /// Optional for compatibility with records written before ordering existed.
+    public var favoritePosition: SyncValue<Int64>?
     public var lastJoined: SyncValue<Date>
     // Editing a stale room cannot revive a deletion. Only an explicit visit/undo can.
     public var exists: SyncValue<Bool>
     public var id: String { invitationURL.absoluteString }
     public var maximumCounter: Int64 {
-        [title.version, alias.version, starred.version, lastJoined.version, exists.version]
+        ([title.version, alias.version, starred.version, lastJoined.version, exists.version] +
+            (favoritePosition.map { [$0.version] } ?? []))
             .map(\.counter).max() ?? 0
     }
     public init(_ room: RecentRoom, version: SyncVersion) {
         invitationURL = room.invitationURL; identifier = room.identifier
         title = .init(room.title, version: version); alias = .init(room.alias, version: version)
         starred = .init(room.isStarred, version: version)
+        favoritePosition = room.favoritePosition.map { .init($0, version: version) }
         lastJoined = .init(room.lastJoined, version: version); exists = .init(true, version: version)
     }
     public var room: RecentRoom {
         var result = RecentRoom(invitationURL: invitationURL, title: title.value,
                                 identifier: identifier, isStarred: starred.value, lastJoined: lastJoined.value)
         result.alias = alias.value
+        result.favoritePosition = favoritePosition?.value
         return result
     }
     public func merging(_ other: Self) -> Self {
@@ -47,6 +52,9 @@ public struct SyncedRoom: Codable, Equatable, Sendable {
         var result = self
         result.title = title.merging(other.title); result.alias = alias.merging(other.alias)
         result.starred = starred.merging(other.starred); result.exists = exists.merging(other.exists)
+        if let incoming = other.favoritePosition {
+            result.favoritePosition = favoritePosition?.merging(incoming) ?? incoming
+        }
         // Latest real visit wins independently of unrelated edits and logical clocks.
         result.lastJoined = lastJoined.value == other.lastJoined.value ? lastJoined.merging(other.lastJoined) :
             (lastJoined.value < other.lastJoined.value ? other.lastJoined : lastJoined)
@@ -97,12 +105,37 @@ public struct RoomSyncDocument: Codable, Equatable, Sendable {
         }
         if existing.title.value != room.title { existing.title = .init(room.title, version: version) }
         if existing.alias.value != room.alias { existing.alias = .init(room.alias, version: version) }
-        if existing.starred.value != room.isStarred { existing.starred = .init(room.isStarred, version: version) }
+        if existing.starred.value != room.isStarred {
+            existing.starred = .init(room.isStarred, version: version)
+            if let position = room.favoritePosition { existing.favoritePosition = .init(position, version: version) }
+        }
         if visited {
+            if !existing.exists.value, let position = room.favoritePosition {
+                existing.favoritePosition = .init(position, version: version)
+            }
             existing.exists = .init(true, version: version)
             if room.lastJoined > existing.lastJoined.value { existing.lastJoined = .init(room.lastJoined, version: version) }
         }
         rooms[room.id] = existing
+    }
+
+    /// Only rank fields change. One logical version makes concurrent full-list
+    /// moves converge consistently without overwriting names, stars or tombstones.
+    public mutating func setFavoriteOrder(_ ids: [String]) {
+        let current = visibleRooms.filter(\.isStarred).map(\.id)
+        let ordered = orderedRoomIDs(ids, current: current)
+        guard ordered.enumerated().contains(where: { rooms[$0.element]?.favoritePosition?.value != Int64($0.offset) }) else { return }
+        let version = nextVersion()
+        for (position, id) in ordered.enumerated() {
+            rooms[id]?.favoritePosition = .init(Int64(position), version: version)
+        }
+    }
+
+    /// Freeze the displayed legacy order before subsequent visits can change it.
+    public mutating func migrateFavoriteOrderIfNeeded() {
+        let favorites = visibleRooms.filter(\.isStarred)
+        guard favorites.contains(where: { rooms[$0.id]?.favoritePosition == nil }) else { return }
+        setFavoriteOrder(favorites.map(\.id))
     }
 
     public mutating func remove(_ id: String) {

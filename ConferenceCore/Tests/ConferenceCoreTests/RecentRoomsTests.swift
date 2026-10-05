@@ -3,6 +3,36 @@ import XCTest
 @testable import ConferenceCore
 
 final class RecentRoomsTests: XCTestCase {
+    func testFavoriteOrderSurvivesVisitsRenamesAndRestarts() throws {
+        var history = RecentRooms()
+        let urls = (0..<3).map { URL(string: "https://example.test/\($0)")! }
+        for (index, url) in urls.enumerated() {
+            history.record(url: url, title: "Room \(index)", identifier: "\(index)", at: Date(timeIntervalSince1970: Double(index)))
+            history.toggleStar(for: url)
+        }
+        let desired = [urls[0], urls[2], urls[1]].map(\.absoluteString)
+        XCTAssertTrue(history.setFavoriteOrder(desired))
+        history.record(url: urls[1], title: "Changed title", identifier: "1", at: Date(timeIntervalSince1970: 100))
+        history.setAlias("Custom title", for: urls[2])
+        let restored = try JSONDecoder().decode(RecentRooms.self, from: JSONEncoder().encode(history))
+        XCTAssertEqual(restored.items.map(\.id), desired)
+        XCTAssertFalse(history.setFavoriteOrder(desired))
+        let new = URL(string: "https://other.example.test/new")!
+        history.record(url: new, title: "New", identifier: "new")
+        history.toggleStar(for: new)
+        XCTAssertEqual(history.items.map(\.id), [new.absoluteString] + desired)
+    }
+
+    func testLegacyFavoritesKeepTheirExistingOrderAndPartialPermutationRetainsMembership() throws {
+        let items = (0..<3).map { index in RecentRoom(invitationURL: URL(string: "https://example.test/\(index)")!,
+            title: "Room", identifier: "\(index)", isStarred: true, lastJoined: Date(timeIntervalSince1970: Double(index))) }
+        let legacy = try JSONEncoder().encode(["items": items])
+        var restored = try JSONDecoder().decode(RecentRooms.self, from: legacy)
+        XCTAssertEqual(restored.items.map(\.identifier), ["2", "1", "0"])
+        XCTAssertEqual(restored.items.compactMap(\.favoritePosition), [0, 1, 2])
+        XCTAssertTrue(restored.setFavoriteOrder([items[0].id, items[0].id, "unknown"]))
+        XCTAssertEqual(restored.items.map(\.identifier), ["0", "2", "1"])
+    }
     func testTenRecentRoomsDoNotCountStarredRooms() {
         var history = RecentRooms()
         let starred = URL(string: "https://example.org/calls/star?psw=secret")!

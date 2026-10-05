@@ -397,3 +397,13 @@
 "No output devices available" = "Нет доступных устройств вывода";
 "No microphones available" = "Нет доступных микрофонов";
 "Could not change audio device. Please try again." = "Не удалось сменить аудиоустройство. Попробуйте ещё раз.";
+
+"Reorder" = "Изменить порядок";
+
+"Reorder favorites" = "Порядок избранного";
+
+"Move up" = "Переместить выше";
+
+"Move down" = "Переместить ниже";
+
+"Drag the handles to change the order. Changes are saved automatically." = "Перетащите маркеры справа, чтобы изменить порядок. Изменения сохраняются автоматически.";

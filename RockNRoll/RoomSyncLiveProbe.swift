@@ -31,6 +31,7 @@ enum RoomSyncLiveProbe {
                 var room = RecentRoom(invitationURL: url, title: "Cloud sync fixture", identifier: "fixture",
                                       isStarred: true, lastJoined: Date())
                 room.alias = "Friday sync check"
+                room.favoritePosition = 0
                 document.upsert(room, visited: true)
                 _ = try await writer.save(document.records, session: session)
                 let readerSession = try await reader.connect()

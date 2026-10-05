@@ -4,6 +4,27 @@ import ConferenceCore
 
 @MainActor
 final class RoomSyncCoordinatorTests: XCTestCase {
+    func testFavoriteOrderSyncsBothWaysWhileRecentHistoryIsExcluded() async {
+        let cloud = Cloud()
+        let (mac, macSync) = replica(cloud)
+        let (phone, phoneSync) = replica(cloud)
+        macSync.setIncludeRecent(false); phoneSync.setIncludeRecent(false)
+        for index in 0..<3 {
+            let url = URL(string: "https://example.test/\(index)?psw=fixture")!
+            mac.record(url: url, title: "Room \(index)", identifier: "\(index)")
+            mac.toggleStar(url)
+        }
+        macSync.setEnabled(true); await sync(macSync)
+        phoneSync.setEnabled(true); await sync(phoneSync)
+        XCTAssertEqual(phone.rooms.map(\.id), mac.rooms.map(\.id))
+        phone.moveFavorites(from: IndexSet(integer: 2), to: 0)
+        await sync(phoneSync); await sync(macSync)
+        XCTAssertEqual(mac.rooms.map(\.identifier), ["0", "2", "1"])
+        XCTAssertEqual(phone.rooms.map(\.id), mac.rooms.map(\.id))
+        mac.moveFavorites(from: IndexSet(integer: 0), to: 3)
+        await sync(macSync); await sync(phoneSync)
+        XCTAssertEqual(phone.rooms.map(\.identifier), ["2", "1", "0"])
+    }
     final class Storage: RoomHistoryStorage {
         var data: Data?
         var failing = false

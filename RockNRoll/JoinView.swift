@@ -13,6 +13,7 @@ struct JoinView: View {
     @State private var showingContactPicker = false
     @State private var showingSettings = false
     @State private var showingAllRooms = false
+    @State private var showingFavoriteOrder = false
     @State private var editingRoom: RecentRoom?
     @State private var roomAlias = ""
     @State private var showingUndo = false
@@ -34,7 +35,7 @@ struct JoinView: View {
             HStack(spacing: 0) {
               if window.size.width >= 900 {
                   Form {
-                      if !favorites.isEmpty { roomSection(L("Favorites"), rooms: favorites) }
+                      if !favorites.isEmpty { roomSection(L("Favorites"), rooms: favorites, reorderable: true) }
                       if !recent.isEmpty {
                           roomSection(L("Recent jams"), rooms: showingAllRooms ? recent : Array(recent.prefix(3)))
                           if recent.count > 3 {
@@ -134,7 +135,7 @@ struct JoinView: View {
                     }
                 }
                 if window.size.width < 900 && !favorites.isEmpty {
-                    roomSection(L("Favorites"), rooms: favorites)
+                    roomSection(L("Favorites"), rooms: favorites, reorderable: true)
                 }
                 if window.size.width < 900 && !recent.isEmpty {
                     roomSection(L("Recent jams"), rooms: showingAllRooms ? recent : Array(recent.prefix(3)))
@@ -184,6 +185,7 @@ struct JoinView: View {
                 SavedCatchUpView(store: catchUp)
             }
             .sheet(isPresented: $showingSettings) { settingsSheet }
+            .sheet(isPresented: $showingFavoriteOrder) { FavoriteOrderView(history: history) }
             .alert(L("Join here without moving the other device?"),
                                 isPresented: $confirmingStaleContinuation,
                                 presenting: staleContinuation) { jam in
@@ -282,8 +284,8 @@ struct JoinView: View {
         .onDisappear { sync.endNameEditing() }
     }
 
-    private func roomSection(_ title: String, rooms: [RecentRoom]) -> some View {
-        Section(title) {
+    private func roomSection(_ title: String, rooms: [RecentRoom], reorderable: Bool = false) -> some View {
+        Section {
             ForEach(rooms) { room in
                 HStack(spacing: 10) {
                     Button { model.rejoin(room) } label: {
@@ -333,6 +335,17 @@ struct JoinView: View {
                         }
                     }
                     Button(L("Rename")) { startRename(room) }
+                }
+            }
+        } header: {
+            HStack {
+                Text(title)
+                Spacer()
+                if reorderable && favorites.count > 1 {
+                    Button(L("Reorder")) { showingFavoriteOrder = true }
+                        .font(.subheadline.weight(.semibold))
+                        .textCase(nil)
+                        .accessibilityIdentifier("favorites.reorder")
                 }
             }
         }

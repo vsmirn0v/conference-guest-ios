@@ -1,8 +1,40 @@
 import XCTest
 
 final class RoomSyncUITests: XCTestCase {
-    private func launch(_ mode: String) -> XCUIApplication {
+    func testFavoriteDragOrderAndContextActions() {
+        checkFavoriteOrder(language: "en", moveDown: "Move down")
+    }
+    func testRussianFavoriteOrderOnSmallScreen() {
+        checkFavoriteOrder(language: "ru", moveDown: "Переместить ниже")
+    }
+    private func checkFavoriteOrder(language: String, moveDown: String) {
+        let app = launch("favorite-order", language: language)
+        let reorder = app.buttons["favorites.reorder"]
+        for _ in 0..<4 where !reorder.isHittable { app.swipeUp() }
+        XCTAssertTrue(reorder.waitForExistence(timeout: 5)); reorder.tap()
+        let warmup = app.descendants(matching: .any).matching(identifier:
+            "favorite.order.https://fixture.example.test/room0?psw=fixture").firstMatch
+        let songwriting = app.descendants(matching: .any).matching(identifier:
+            "favorite.order.https://fixture.example.test/room2?psw=fixture").firstMatch
+        XCTAssertTrue(warmup.waitForExistence(timeout: 5))
+        let source = app.cells.containing(.any, identifier: songwriting.identifier).firstMatch
+        let target = app.cells.containing(.any, identifier: warmup.identifier).firstMatch
+        source.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.5))
+            .press(forDuration: 0.5, thenDragTo: target.coordinate(withNormalizedOffset: CGVector(dx: 0.94, dy: 0.15)))
+        let moved = NSPredicate { _, _ in songwriting.frame.minY < warmup.frame.minY }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: moved, object: nil)], timeout: 5), .completed)
+        songwriting.press(forDuration: 0.8)
+        app.buttons[moveDown].tap()
+        let movedDown = NSPredicate { _, _ in warmup.frame.minY < songwriting.frame.minY }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: movedDown, object: nil)], timeout: 5), .completed)
+        app.buttons["favorites.reorder.done"].tap()
+        reorder.tap()
+        XCTAssertLessThan(warmup.frame.minY, songwriting.frame.minY)
+        attach(app, "Favorite order saved")
+    }
+    private func launch(_ mode: String, language: String = "en") -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments += ["-AppleLanguages", "(\(language))", "-AppleLocale", language == "ru" ? "ru_RU" : "en_US"]
         app.launchEnvironment["CONFERENCE_TEST_SYNC_FIXTURE"] = mode
         app.launch()
         return app
