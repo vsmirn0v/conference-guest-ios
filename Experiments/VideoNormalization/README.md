@@ -1,8 +1,13 @@
 # Video normalization experiment — 2026-10-05
 
+Subsequent implementation: eligible direct NV12 cropping is now the production
+default. The remaining candidates stay DEBUG-only. See
+[production media policy](../../docs/media-efficiency.md) for adoption and checks.
+The measurements below describe the earlier comparison against the reference path.
+
 Goal: lower energy use, accepting approximately 1 ms of conversion latency rather than
-0.1 ms if the energy saving is real. This experiment does **not** change the converter
-selected by the app or upload a beta. App candidates require an explicit DEBUG
+0.1 ms if the energy saving is real. The original experiment did not change the
+distribution default or upload a beta. Alternatives require an explicit DEBUG
 initializer; Release excludes them. The Metal harness is outside the app target.
 
 ## Decision

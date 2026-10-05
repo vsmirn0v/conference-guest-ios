@@ -255,6 +255,26 @@ final class GuestVideoFrameTests: XCTestCase {
         return RTCVideoFrame(buffer: buffer, rotation: RTCVideoRotation(rawValue: 90)!, timeStampNs: 1)
     }
 
+    func testProductionNativeCropPreservesPixelsTagsAndSource() throws {
+        for format in [kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange] {
+            let frame = try nativeFrame(width: 8, height: 8, format: format, crop: (2, 2, 3, 3), adapted: nil)
+            let input = (frame.buffer as! RTCCVPixelBuffer).pixelBuffer
+            let before = try pixels(input)
+            let processor = GuestVideoFrameProcessor()
+            let output = try XCTUnwrap(processor.pixelBuffer(for: frame))
+            XCTAssertEqual(try pixels(output), [
+                [123, 152, 181, 140, 169, 198, 157, 186, 215],
+                [106, 135, 164, 193, 123, 152, 181, 210]])
+            XCTAssertEqual(CVPixelBufferGetPixelFormatType(output), format)
+            XCTAssertTrue(CFEqual(try XCTUnwrap(CVBufferGetAttachment(output, kCVImageBufferYCbCrMatrixKey, nil))
+                .takeUnretainedValue(), kCVImageBufferYCbCrMatrix_ITU_R_709_2))
+            XCTAssertEqual(try pixels(input), before)
+            #if DEBUG
+            XCTAssertEqual(processor.experimentalNativeConversions, 1, "Production silently used I420 conversion")
+            #endif
+        }
+    }
+
 #if DEBUG
     func testExperimentsKeepNativePassthroughAndBoundedPool() throws {
         let uncropped = try nativeFrame(width: 8, height: 8,
@@ -291,7 +311,7 @@ final class GuestVideoFrameTests: XCTestCase {
                 }
             }
             let frame = RTCVideoFrame(buffer: buffer, rotation: ._0, timeStampNs: 1)
-            let reference = GuestVideoFrameProcessor()
+            let reference = GuestVideoFrameProcessor(experiment: .reference)
             let expected = try pixels(XCTUnwrap(reference.pixelBuffer(for: frame)))
             for technique in [GuestVideoConversionExperiment.cachedPlanes, .accelerate] {
                 let candidate = GuestVideoFrameProcessor(experiment: technique)
@@ -308,7 +328,7 @@ final class GuestVideoFrameTests: XCTestCase {
                                              crop: (x, y, width, height), adapted: nil)
                 let native = source.buffer as! RTCCVPixelBuffer
                 let before = try pixels(native.pixelBuffer)
-                let reference = GuestVideoFrameProcessor()
+                let reference = GuestVideoFrameProcessor(experiment: .reference)
                 let expected = try XCTUnwrap(reference.pixelBuffer(for: source))
                 for technique in [GuestVideoConversionExperiment.nativeCopy, .nativeTransfer] {
                     let candidate = GuestVideoFrameProcessor(experiment: technique)
@@ -338,7 +358,7 @@ final class GuestVideoFrameTests: XCTestCase {
             }
             CVPixelBufferUnlockBaseAddress(input, [])
             let before = try pixels(input)
-            let reference = GuestVideoFrameProcessor()
+            let reference = GuestVideoFrameProcessor(experiment: .reference)
             let candidate = GuestVideoFrameProcessor(experiment: .nativeTransfer)
             let expected = try XCTUnwrap(reference.pixelBuffer(for: frame))
             let actual = try XCTUnwrap(candidate.pixelBuffer(for: frame))
@@ -433,6 +453,7 @@ final class GuestVideoFrameTests: XCTestCase {
         return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000 +
             Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1000
     }
+#endif
 
     private func pixels(_ buffer: CVPixelBuffer) throws -> [[UInt8]] {
         guard CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { throw NSError(domain: "Pixels", code: 1) }
@@ -469,5 +490,4 @@ final class GuestVideoFrameTests: XCTestCase {
             cropX: Int32(crop.0), cropY: Int32(crop.1))
         return RTCVideoFrame(buffer: source, rotation: ._0, timeStampNs: 1)
     }
-#endif
 }

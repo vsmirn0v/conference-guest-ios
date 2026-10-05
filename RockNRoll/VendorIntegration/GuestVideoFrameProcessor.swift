@@ -6,7 +6,7 @@ import WebRTC
 import Accelerate
 import VideoToolbox
 
-/// Experimental conversion paths are opt-in and excluded from distribution builds.
+/// DEBUG-only comparison selectors. Native copying is the production default.
 enum GuestVideoConversionExperiment: String, CaseIterable, Hashable {
     case reference, cachedPlanes, accelerate, nativeCopy, nativeTransfer
 }
@@ -39,7 +39,7 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }; return nativeConversionCount
     }
 
-    init(experiment: GuestVideoConversionExperiment = .reference) {
+    init(experiment: GuestVideoConversionExperiment = .nativeCopy) {
         self.experiment = experiment
     }
     deinit { if let transferSession { VTPixelTransferSessionInvalidate(transferSession) } }
@@ -167,13 +167,17 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
             return native.pixelBuffer
         }
 #if DEBUG
-        if let native = frame.buffer as? RTCCVPixelBuffer,
-           experiment == .nativeCopy || experiment == .nativeTransfer,
+        let useNativeCrop = experiment == .nativeCopy || experiment == .nativeTransfer
+#else
+        let useNativeCrop = true
+#endif
+        if useNativeCrop, let native = frame.buffer as? RTCCVPixelBuffer,
            let converted = convertNativeCrop(native) {
+#if DEBUG
             lock.lock(); nativeConversionCount += 1; lock.unlock()
+#endif
             return converted
         }
-#endif
         let source = frame.buffer.toI420()
         let width = Int(source.width), height = Int(source.height)
         guard width > 0, height > 0 else { return nil }
@@ -294,7 +298,16 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
         }}
     }
 
+#endif
+
+    /// Copy eligible NV12 crops without an I420 round trip. Scaling and odd
+    /// chroma origins retain the existing reference conversion.
     private func convertNativeCrop(_ native: RTCCVPixelBuffer) -> CVPixelBuffer? {
+#if DEBUG
+        let transfer = experiment == .nativeTransfer
+#else
+        let transfer = false
+#endif
         let input = native.pixelBuffer
         let format = CVPixelBufferGetPixelFormatType(input)
         let x = Int(native.cropX), y = Int(native.cropY)
@@ -304,8 +317,9 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
               x >= 0, y >= 0, width > 0, height > 0, x % 2 == 0, y % 2 == 0,
               x + width <= CVPixelBufferGetWidth(input), y + height <= CVPixelBufferGetHeight(input),
               CVPixelBufferGetPlaneCount(input) == 2,
-              experiment == .nativeTransfer || (width == Int(native.width) && height == Int(native.height)),
-              experiment != .nativeTransfer ||
+              native.width > 0, native.height > 0,
+              transfer || (width == Int(native.width) && height == Int(native.height)),
+              !transfer ||
                 (width % 2 == 0 && height % 2 == 0 && native.width % 2 == 0 && native.height % 2 == 0),
               let output = pooledBuffer(width: Int(native.width), height: Int(native.height), format: format),
               CVPixelBufferLockBaseAddress(input, .readOnly) == kCVReturnSuccess else { return nil }
@@ -314,22 +328,29 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
               let baseUV = CVPixelBufferGetBaseAddressOfPlane(input, 1) else { return nil }
         let strideY = CVPixelBufferGetBytesPerRowOfPlane(input, 0)
         let strideUV = CVPixelBufferGetBytesPerRowOfPlane(input, 1)
+        guard strideY >= x + width, strideUV >= x + 2 * ((width + 1) / 2),
+              CVPixelBufferGetHeightOfPlane(input, 0) >= y + height,
+              CVPixelBufferGetHeightOfPlane(input, 1) >= (y + height + 1) / 2 else { return nil }
         let croppedY = baseY.advanced(by: y * strideY + x)
         let croppedUV = baseUV.advanced(by: y / 2 * strideUV + x)
-        if experiment == .nativeCopy {
+        if !transfer {
             guard CVPixelBufferLockBaseAddress(output, []) == kCVReturnSuccess else { return nil }
             defer { CVPixelBufferUnlockBaseAddress(output, []) }
             guard let outY = CVPixelBufferGetBaseAddressOfPlane(output, 0),
                   let outUV = CVPixelBufferGetBaseAddressOfPlane(output, 1) else { return nil }
+            let outYStride = CVPixelBufferGetBytesPerRowOfPlane(output, 0)
+            let outUVStride = CVPixelBufferGetBytesPerRowOfPlane(output, 1)
             for row in 0..<height {
-                memcpy(outY.advanced(by: row * CVPixelBufferGetBytesPerRowOfPlane(output, 0)),
+                memcpy(outY.advanced(by: row * outYStride),
                        croppedY.advanced(by: row * strideY), width)
             }
             for row in 0..<((height + 1) / 2) {
-                memcpy(outUV.advanced(by: row * CVPixelBufferGetBytesPerRowOfPlane(output, 1)),
+                memcpy(outUV.advanced(by: row * outUVStride),
                        croppedUV.advanced(by: row * strideUV), 2 * ((width + 1) / 2))
             }
-        } else {
+        }
+#if DEBUG
+        if transfer {
             // VideoToolbox's NV12 transfer leaves incomplete chroma for odd extents.
             // Those inputs take the reference path above rather than losing edge pixels.
             if transferSession == nil {
@@ -354,9 +375,9 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
             guard VTPixelTransferSessionTransferImage(transferSession, from: view, to: output) == noErr
                 else { return nil }
         }
+#endif
         CVBufferRemoveAllAttachments(output)
         CVBufferPropagateAttachments(input, output)
         return output
     }
-#endif
 }

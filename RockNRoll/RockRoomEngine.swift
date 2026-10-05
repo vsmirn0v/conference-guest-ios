@@ -27,6 +27,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private var displayMode: ConferenceDisplayMode = .all
     private var refreshScheduled = false
     private let videoSubscriptions = VideoSubscriptionCoordinator<ObjectIdentifier>()
+    private var videoPublisher = RoomVideoPublisher()
     #if DEBUG
     private var testHoldScheduled = false
     private var directMediaForTesting = false
@@ -77,12 +78,14 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         self.container = container
         self.credentials = credentials
         videoSubscriptions.reset()
+        videoPublisher = RoomVideoPublisher()
         #if DEBUG
         if let experiment = OutgoingRoomExperiment.configured {
             self.room = Room(delegate: self, roomOptions: experiment.options)
-        } else { self.room = Room(delegate: self) }
+            self.videoPublisher = RoomVideoPublisher(options: experiment.options.defaultVideoPublishOptions)
+        } else { self.room = Room(delegate: self, roomOptions: RoomMediaPolicy.options) }
         #else
-        self.room = Room(delegate: self)
+        self.room = Room(delegate: self, roomOptions: RoomMediaPolicy.options)
         #endif
         self.leaveRequested = false
         self.hasConnected = false
@@ -311,11 +314,20 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         cameraIntentOn = enabled
         callView?.setCamera(enabled)
         guard !isHeld, let room else { return }
+        let publisher = videoPublisher
         Task { @MainActor [weak self] in
             do {
-                _ = try await room.localParticipant.setCamera(enabled: enabled)
+                _ = try await publisher.perform { options in
+                    guard self?.room === room, self?.leaveRequested == false,
+                          self?.cameraIntentOn == enabled, self?.isHeld == false else { throw CancellationError() }
+                    return try await room.localParticipant.setCamera(enabled: enabled, publishOptions: options)
+                }
+                guard self?.room === room, self?.leaveRequested == false else { return }
                 self?.callView?.render(room: room)
+            } catch is CancellationError {
+                return
             } catch {
+                guard self?.room === room, self?.leaveRequested == false else { return }
                 if self?.cameraIntentOn == enabled {
                     self?.cameraIntentOn = false
                     self?.callView?.setCamera(false)
@@ -327,15 +339,22 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
 
     private func setScreenShare(_ enabled: Bool) {
         guard hasJoinStarted, !leaveRequested, let room else { return }
+        let publisher = videoPublisher
         Task { @MainActor [weak self] in
             do {
-                _ = try await room.localParticipant.setScreenShare(enabled: enabled)
+                _ = try await publisher.perform { options in
+                    guard self?.room === room, self?.leaveRequested == false else { throw CancellationError() }
+                    return try await room.localParticipant.set(source: .screenShareVideo, enabled: enabled, publishOptions: options)
+                }
                 if !enabled { BroadcastManager.shared.requestStop() }
                 guard let self, self.room === room else { return }
                 self.callView?.render(room: room)
             } catch let error as LiveKitError where error.type == .cancelled {
                 self?.callView?.render(room: room)
+            } catch is CancellationError {
+                return
             } catch {
+                guard self?.room === room, self?.leaveRequested == false else { return }
                 self?.onMediaStatus?(L("Screen sharing unavailable: %@", error.localizedDescription))
             }
         }
@@ -343,10 +362,15 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
 
     private func applyMediaIntent() {
         guard let room else { return }
+        let publisher = videoPublisher
         Task { @MainActor [weak self] in
             guard let self else { return }
             _ = try? await room.localParticipant.setMicrophone(enabled: self.microphoneIntentOn && !self.receptionPaused)
-            _ = try? await room.localParticipant.setCamera(enabled: self.cameraIntentOn && !self.receptionPaused)
+            _ = try? await publisher.perform { options in
+                guard self.room === room, !self.leaveRequested else { throw CancellationError() }
+                return try await room.localParticipant.setCamera(enabled: self.cameraIntentOn && !self.receptionPaused,
+                                                         publishOptions: options)
+            }
             guard self.room === room, !self.leaveRequested else { return }
             self.updatePiPMicrophoneStatus()
             self.callView?.render(room: room)

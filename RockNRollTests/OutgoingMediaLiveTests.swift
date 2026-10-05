@@ -128,6 +128,13 @@ final class OutgoingMediaLiveTests: XCTestCase {
                 let decoded = sink.snapshot()
                 print("OUTGOING_PHASE_END,profile=\(profile.rawValue),phase=\(phase),input=\(input.rawValue),wall_end_s=\(Date().timeIntervalSince1970),elapsed_s=\(elapsed),process_cpu_percent=\(cpu / elapsed * 100),decoded=\(decoded.count),size=\(decoded.width)x\(decoded.height),luma_psnr_db=\(decoded.psnr),thermal_before=\(thermalBefore),thermal_after=\(ProcessInfo.processInfo.thermalState.rawValue)")
                 monitor.record(track: track)
+                if profile == .production, phase != "none" {
+                    let stats = track.statistics
+                    XCTAssertTrue(stats?.outboundRtpStream.contains { value in
+                        value.powerEfficientEncoder == true &&
+                            stats?.codec.first(where: { $0.id == value.codecId })?.mimeType?.lowercased() == "video/h264"
+                    } == true, "Production must negotiate the hardware H.264 path on this supported device")
+                }
                 if phase != "none" { XCTAssertGreaterThan(decoded.count, 0, "\(profile): \(phase) delivered no video") }
                 if phase == "high" || phase == "high-return" {
                     XCTAssertEqual(max(decoded.width, decoded.height), longSide, "Full resolution must return after a demand change")

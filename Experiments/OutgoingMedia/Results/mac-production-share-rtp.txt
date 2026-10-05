@@ -1,0 +1,24 @@
+OUTGOING_CAPTURE,source=screenShareVideo,size=1920x1080,fps=31.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=1920x1080,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=960x540,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_CAPTURE,source=screenShareVideo,size=1920x1080,fps=31.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=1920x1080,fps=29.999975845481433,encode_ms=7.633879781420765,bitrate=128448.42116975487,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=960x540,fps=29.999975845481433,encode_ms=9.33879781420765,bitrate=121881.86907977343,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_CAPTURE,source=screenShareVideo,size=1920x1080,fps=30.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=1920x1080,fps=30.05106680813686,encode_ms=7.90983606557377,bitrate=208848.01735039847,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=960x540,fps=30.05106680813686,encode_ms=9.868852459016392,bitrate=131536.96790229136,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_CAPTURE,source=screenShareVideo,size=1920x1080,fps=30.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=1920x1080,fps=8.240609941691202,encode_ms=6.0799999999999965,bitrate=28933.11112967548,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=960x540,fps=29.995820187755978,encode_ms=5.252747252747255,bitrate=116749.00616110895,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_CAPTURE,source=screenShareVideo,size=1920x1080,fps=30.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=960x540,fps=29.98419904689494,encode_ms=5.280991735537192,bitrate=169602.52436753738,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_CAPTURE,source=screenShareVideo,size=1920x1080,fps=31.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=0x0,fps=0.0,encode_ms=0.0,bitrate=0.0,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=960x540,fps=7.119097995585218,encode_ms=4.4651162790697505,bitrate=23414.216626224275,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_CAPTURE,source=screenShareVideo,size=1920x1080,fps=30.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=1920x1080,fps=28.19451527433462,encode_ms=7.248908296943235,bitrate=249674.86788979074,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=960x540,fps=28.56387573644381,encode_ms=8.70689655172414,bitrate=156713.24182491822,encoder=SimulcastEncoderAdapter (VideoToolbox, VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.none)
+OUTGOING_CAPTURE,source=screenShareVideo,size=1920x1080,fps=30.0
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=h,size=1920x1080,fps=18.18984173077083,encode_ms=9.450450450450447,bitrate=78091.12089202351,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)
+OUTGOING_RTP,source=screenShareVideo,codec=video/H264,rid=q,size=960x540,fps=29.98865798856813,encode_ms=9.306010928961745,bitrate=90652.92726782503,encoder=SimulcastEncoderAdapter (VideoToolbox),efficient=true,limited=Optional(LiveKit.QualityLimitationReason.bandwidth)

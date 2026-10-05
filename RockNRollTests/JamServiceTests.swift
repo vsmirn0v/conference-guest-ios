@@ -29,6 +29,7 @@ final class JamServiceTests: XCTestCase {
     }
 }
 
+#if DEBUG
 @MainActor
 final class ConferenceJoinOptionsTests: XCTestCase {
     final class FailedJoin: URLProtocol {
@@ -129,3 +130,4 @@ final class ConferenceJoinOptionsTests: XCTestCase {
         withExtendedLifetime(container) {}
     }
 }
+#endif

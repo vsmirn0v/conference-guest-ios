@@ -4,12 +4,13 @@ import LiveKit
 
 /// Explicit experiment profiles; default Room and audio options are preserved.
 enum OutgoingRoomExperiment: String, CaseIterable {
-    case reference, dynacast, h264Dynacast, h264TwoLayers, h264SingleLayer
+    case production, reference, dynacast, h264Dynacast, h264TwoLayers, h264SingleLayer
 
     static var configured: OutgoingRoomExperiment? {
         ProcessInfo.processInfo.environment["ROCKNROLL_OUTGOING_ROOM"].flatMap(Self.init(rawValue:))
     }
     var options: RoomOptions {
+        if self == .production { return RoomMediaPolicy.options }
         let hardware = self == .h264Dynacast || self == .h264TwoLayers || self == .h264SingleLayer
         let layers: [VideoParameters] = self == .h264TwoLayers
             ? [VideoParameters(dimensions: .h180_169, encoding: VideoEncoding(maxBitrate: 150_000, maxFps: 15))] : []

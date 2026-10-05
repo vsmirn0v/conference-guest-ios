@@ -1,8 +1,14 @@
 # Outgoing media experiment — 2026-10-05
 
+Subsequent implementation: the app-owned engine now uses the qualified two-layer
+H.264/Dynacast profile by default, with bounded codec fallback for explicit publish
+operations. See [production media policy](../../docs/media-efficiency.md).
+`production` is also an explicit DEBUG profile so live qualification exercises
+the actual production configuration. Measurements below retain their original context.
+
 These experiments prioritize lower energy use, accepting modest processing latency.
-They are opt-in DEBUG code; audio settings, capture resolution and distribution
-defaults retain their existing behaviour. No SDK binary or hosting configuration
+The alternatives are opt-in DEBUG code; audio settings and capture resolution
+retain their existing behaviour. No SDK binary or hosting configuration
 is modified. No beta is uploaded by this experiment.
 
 ## Findings and decisions
@@ -203,11 +209,11 @@ For an optimized DEBUG app launch:
 
 | Environment variable | Accepted values | Scope |
 | --- | --- | --- |
-| `ROCKNROLL_OUTGOING_ROOM` | `reference`, `dynacast`, `h264Dynacast`, `h264TwoLayers`, `h264SingleLayer` | App-owned engine options and two-second capture/RTP diagnostics |
+| `ROCKNROLL_OUTGOING_ROOM` | `production`, `reference`, `dynacast`, `h264Dynacast`, `h264TwoLayers`, `h264SingleLayer` | App-owned engine options and two-second capture/RTP diagnostics |
 | `ROCKNROLL_OUTGOING_SHARE` | `reference`, `cap30`, `cap15` | Guest video handoff gate and bounded timing diagnostics |
 | `ROCKNROLL_OUTGOING_PREVIEW_AFTER_SEND` | `1` | Move guest confidence preview after SDK handoff |
 
-Absent/unrecognized profiles select the existing app path. Room diagnostics enable
+Absent/unrecognized profiles select the production app path. Room diagnostics enable
 SDK statistics for local publications, remove retired RTP IDs and stop on Leave.
 Only counters/timings are kept; no media is written. Share timings hold at most
 4,096 samples, reset on stop/restart, and discard completion across a reset.

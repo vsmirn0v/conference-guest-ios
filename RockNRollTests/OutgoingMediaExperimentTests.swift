@@ -69,8 +69,9 @@ final class OutgoingMediaExperimentTests: XCTestCase {
             XCTAssertEqual(options.defaultVideoPublishOptions.simulcast, profile != .h264SingleLayer)
             XCTAssertEqual(options.dynacast, profile != .reference)
             XCTAssertEqual(options.defaultVideoPublishOptions.preferredCodec,
-                [.h264Dynacast, .h264TwoLayers, .h264SingleLayer].contains(profile) ? .h264 : nil)
-            XCTAssertEqual(options.defaultVideoPublishOptions.simulcastLayers.count, profile == .h264TwoLayers ? 1 : 0)
+                [.production, .h264Dynacast, .h264TwoLayers, .h264SingleLayer].contains(profile) ? .h264 : nil)
+            XCTAssertEqual(options.defaultVideoPublishOptions.simulcastLayers.count,
+                [.production, .h264TwoLayers].contains(profile) ? 1 : 0)
         }
     }
 

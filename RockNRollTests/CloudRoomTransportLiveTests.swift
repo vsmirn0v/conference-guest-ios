@@ -1,3 +1,4 @@
+#if DEBUG
 import ConferenceCore
 import XCTest
 @testable import RockNRoll
@@ -38,3 +39,4 @@ final class CloudRoomTransportLiveTests: XCTestCase {
         try await writer.deleteVerificationZone()
     }
 }
+#endif
