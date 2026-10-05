@@ -254,4 +254,197 @@ final class GuestVideoFrameTests: XCTestCase {
         buffer.mutableDataV[0] = 41; buffer.mutableDataV[1] = 42
         return RTCVideoFrame(buffer: buffer, rotation: RTCVideoRotation(rawValue: 90)!, timeStampNs: 1)
     }
+
+#if DEBUG
+    func testExperimentsKeepNativePassthroughAndBoundedPool() throws {
+        let uncropped = try nativeFrame(width: 8, height: 8,
+            format: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            crop: (0, 0, 8, 8), adapted: nil)
+        let original = (uncropped.buffer as! RTCCVPixelBuffer).pixelBuffer
+        let cropped = try nativeFrame(width: 8, height: 8,
+            format: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+            crop: (2, 2, 4, 4), adapted: nil)
+        for technique in GuestVideoConversionExperiment.allCases {
+            let processor = GuestVideoFrameProcessor(experiment: technique)
+            XCTAssertTrue(try XCTUnwrap(processor.pixelBuffer(for: uncropped)) === original)
+            var retained = try (0..<4).map { _ in try XCTUnwrap(processor.pixelBuffer(for: cropped)) }
+            withExtendedLifetime(retained) {
+                XCTAssertNil(processor.pixelBuffer(for: cropped), "\(technique) exceeded the pool limit")
+            }
+            retained.removeAll()
+            XCTAssertNotNil(processor.pixelBuffer(for: cropped), "\(technique) failed to reuse released buffers")
+        }
+    }
+
+    func testPlanarExperimentsMatchReferenceWithPaddingAndOddSizes() throws {
+        for (width, height) in [(4, 2), (5, 3), (17, 9)] {
+            let buffer = RTCMutableI420Buffer(width: Int32(width), height: Int32(height),
+                strideY: Int32(width + 11), strideU: Int32((width + 1) / 2 + 7),
+                strideV: Int32((width + 1) / 2 + 13))
+            for row in 0..<height {
+                for col in 0..<width { buffer.mutableDataY[row * Int(buffer.strideY) + col] = UInt8(truncatingIfNeeded: row * 19 + col * 13) }
+            }
+            for row in 0..<((height + 1) / 2) {
+                for col in 0..<((width + 1) / 2) {
+                    buffer.mutableDataU[row * Int(buffer.strideU) + col] = UInt8(truncatingIfNeeded: 43 + row * 3 + col * 7)
+                    buffer.mutableDataV[row * Int(buffer.strideV) + col] = UInt8(truncatingIfNeeded: 127 + row * 11 + col * 5)
+                }
+            }
+            let frame = RTCVideoFrame(buffer: buffer, rotation: ._0, timeStampNs: 1)
+            let reference = GuestVideoFrameProcessor()
+            let expected = try pixels(XCTUnwrap(reference.pixelBuffer(for: frame)))
+            for technique in [GuestVideoConversionExperiment.cachedPlanes, .accelerate] {
+                let candidate = GuestVideoFrameProcessor(experiment: technique)
+                XCTAssertEqual(try pixels(XCTUnwrap(candidate.pixelBuffer(for: frame))), expected,
+                               "\(technique), \(width)x\(height)")
+            }
+        }
+    }
+
+    func testNativeCropExperimentsMatchPixelsRangeTagsAndLeaveSourceUnchanged() throws {
+        for format in [kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange] {
+            for (x, y, width, height) in [(2, 2, 4, 4), (2, 2, 3, 3), (1, 1, 4, 4)] {
+                let source = try nativeFrame(width: 8, height: 8, format: format,
+                                             crop: (x, y, width, height), adapted: nil)
+                let native = source.buffer as! RTCCVPixelBuffer
+                let before = try pixels(native.pixelBuffer)
+                let reference = GuestVideoFrameProcessor()
+                let expected = try XCTUnwrap(reference.pixelBuffer(for: source))
+                for technique in [GuestVideoConversionExperiment.nativeCopy, .nativeTransfer] {
+                    let candidate = GuestVideoFrameProcessor(experiment: technique)
+                    let actual = try XCTUnwrap(candidate.pixelBuffer(for: source))
+                    XCTAssertEqual(try pixels(actual), try pixels(expected), "\(technique), crop \(x),\(y),\(width),\(height)")
+                    XCTAssertEqual(CVPixelBufferGetPixelFormatType(actual), format)
+                    let matrix = try XCTUnwrap(CVBufferGetAttachment(actual, kCVImageBufferYCbCrMatrixKey, nil))
+                    XCTAssertTrue(CFEqual(matrix.takeUnretainedValue(), kCVImageBufferYCbCrMatrix_ITU_R_709_2))
+                }
+                XCTAssertEqual(try pixels(native.pixelBuffer), before)
+            }
+        }
+    }
+
+    func testNativeTransferScalingPreservesConstantPlanesAndColorMetadata() throws {
+        for format in [kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange] {
+            let frame = try nativeFrame(width: 16, height: 12, format: format,
+                                        crop: (2, 2, 12, 8), adapted: (6, 4))
+            let input = (frame.buffer as! RTCCVPixelBuffer).pixelBuffer
+            XCTAssertEqual(CVPixelBufferLockBaseAddress(input, []), kCVReturnSuccess)
+            let y = CVPixelBufferGetBaseAddressOfPlane(input, 0)!
+            memset(y, 92, CVPixelBufferGetBytesPerRowOfPlane(input, 0) * 12)
+            let uv = CVPixelBufferGetBaseAddressOfPlane(input, 1)!.assumingMemoryBound(to: UInt8.self)
+            let stride = CVPixelBufferGetBytesPerRowOfPlane(input, 1)
+            for row in 0..<6 {
+                for column in 0..<8 { uv[row * stride + column * 2] = 73; uv[row * stride + column * 2 + 1] = 193 }
+            }
+            CVPixelBufferUnlockBaseAddress(input, [])
+            let before = try pixels(input)
+            let reference = GuestVideoFrameProcessor()
+            let candidate = GuestVideoFrameProcessor(experiment: .nativeTransfer)
+            let expected = try XCTUnwrap(reference.pixelBuffer(for: frame))
+            let actual = try XCTUnwrap(candidate.pixelBuffer(for: frame))
+            XCTAssertEqual(CVPixelBufferGetWidth(actual), 6)
+            XCTAssertEqual(CVPixelBufferGetHeight(actual), 4)
+            XCTAssertEqual(CVPixelBufferGetPixelFormatType(actual), format)
+            XCTAssertEqual(try pixels(actual), try pixels(expected))
+            XCTAssertEqual(try pixels(input), before)
+            let matrix = try XCTUnwrap(CVBufferGetAttachment(actual, kCVImageBufferYCbCrMatrixKey, nil))
+            XCTAssertTrue(CFEqual(matrix.takeUnretainedValue(), kCVImageBufferYCbCrMatrix_ITU_R_709_2))
+        }
+    }
+
+    func testVideoConversionExperimentBenchmark() throws {
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CONVERSION_BENCHMARK"] == "1" else {
+            throw XCTSkip("Opt-in optimized conversion benchmark")
+        }
+        for (width, height) in [(1280, 720), (1920, 1080), (3840, 2160)] {
+            let planar = RTCMutableI420Buffer(width: Int32(width), height: Int32(height))
+            memset(planar.mutableDataY, 120, Int(planar.strideY) * height)
+            memset(planar.mutableDataU, 73, Int(planar.strideU) * ((height + 1) / 2))
+            memset(planar.mutableDataV, 193, Int(planar.strideV) * ((height + 1) / 2))
+            let frames: [(String, RTCVideoFrame)] = [
+                ("I420", RTCVideoFrame(buffer: planar, rotation: ._0, timeStampNs: 1)),
+                ("NV12-crop", try nativeFrame(width: width + 16, height: height + 16,
+                    format: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                    crop: (8, 8, width, height), adapted: nil)),
+                ("NV12-scale", try nativeFrame(width: width + 16, height: height + 16,
+                    format: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                    crop: (8, 8, width, height), adapted: (width / 2, height / 2)))
+            ]
+            for (kind, frame) in frames {
+                let techniques = GuestVideoConversionExperiment.allCases
+                let processors = Dictionary(uniqueKeysWithValues: techniques.map {
+                    ($0, GuestVideoFrameProcessor(experiment: $0))
+                })
+                for technique in techniques {
+                    let processor = processors[technique]!
+                    for _ in 0..<10 { _ = try XCTUnwrap(processor.pixelBuffer(for: frame)) }
+                }
+                var elapsed: [GuestVideoConversionExperiment: [Double]] = [:]
+                var cpu: [GuestVideoConversionExperiment: Double] = [:]
+                // Balance order to reduce warm-up and CPU frequency bias between techniques.
+                for round in 0..<4 {
+                    for technique in round % 2 == 0 ? techniques : Array(techniques.reversed()) {
+                        let processor = processors[technique]!
+                        var milliseconds: [Double] = []
+                        let beforeCPU = processCPUTimeMilliseconds()
+                        for _ in 0..<30 {
+                            let start = CACurrentMediaTime()
+                            _ = try XCTUnwrap(processor.pixelBuffer(for: frame))
+                            milliseconds.append((CACurrentMediaTime() - start) * 1000)
+                        }
+                        cpu[technique, default: 0] += processCPUTimeMilliseconds() - beforeCPU
+                        elapsed[technique, default: []].append(contentsOf: milliseconds)
+                    }
+                }
+                for technique in techniques {
+                    let milliseconds = elapsed[technique]!.sorted()
+                    print("CONVERSION,\(width)x\(height),\(kind),\(technique.rawValue),p50_ms=\(milliseconds[60]),p95_ms=\(milliseconds[114]),cpu_ms_per_frame=\(cpu[technique]! / 120)")
+                }
+            }
+        }
+    }
+
+    private func processCPUTimeMilliseconds() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000 +
+            Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1000
+    }
+
+    private func pixels(_ buffer: CVPixelBuffer) throws -> [[UInt8]] {
+        guard CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { throw NSError(domain: "Pixels", code: 1) }
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        return (0..<CVPixelBufferGetPlaneCount(buffer)).map { plane in
+            let width = CVPixelBufferGetWidthOfPlane(buffer, plane) * (plane == 1 ? 2 : 1)
+            let height = CVPixelBufferGetHeightOfPlane(buffer, plane)
+            let stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, plane)
+            let data = CVPixelBufferGetBaseAddressOfPlane(buffer, plane)!.assumingMemoryBound(to: UInt8.self)
+            return (0..<height).flatMap { row in Array(UnsafeBufferPointer(start: data.advanced(by: row * stride), count: width)) }
+        }
+    }
+
+    private func nativeFrame(width: Int, height: Int, format: OSType,
+                             crop: (Int, Int, Int, Int), adapted: (Int, Int)?) throws -> RTCVideoFrame {
+        var buffer: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, width, height, format,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer), kCVReturnSuccess)
+        let input = try XCTUnwrap(buffer)
+        CVBufferSetAttachment(input, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
+        CVPixelBufferLockBaseAddress(input, [])
+        for plane in 0..<2 {
+            let stride = CVPixelBufferGetBytesPerRowOfPlane(input, plane)
+            let data = CVPixelBufferGetBaseAddressOfPlane(input, plane)!.assumingMemoryBound(to: UInt8.self)
+            for row in 0..<CVPixelBufferGetHeightOfPlane(input, plane) {
+                for col in 0..<CVPixelBufferGetWidthOfPlane(input, plane) * (plane == 1 ? 2 : 1) {
+                    data[row * stride + col] = UInt8(truncatingIfNeeded: 31 + row * 17 + col * 29)
+                }
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(input, [])
+        let source = RTCCVPixelBuffer(pixelBuffer: input, adaptedWidth: Int32(adapted?.0 ?? crop.2),
+            adaptedHeight: Int32(adapted?.1 ?? crop.3), cropWidth: Int32(crop.2), cropHeight: Int32(crop.3),
+            cropX: Int32(crop.0), cropY: Int32(crop.1))
+        return RTCVideoFrame(buffer: source, rotation: ._0, timeStampNs: 1)
+    }
+#endif
 }

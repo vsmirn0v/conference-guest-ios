@@ -1,0 +1,7 @@
+DEVICE,Apple M4
+1280x720,scalar,p50_ms=0.02175,p95_ms=0.025833,cpu_ms_per_frame=0.022324999999999998,gpu_p50_ms=0.0,staging_bytes=0
+1280x720,Metal-staged,p50_ms=0.326916,p95_ms=0.500125,cpu_ms_per_frame=0.066595,gpu_p50_ms=0.09254168253391981,staging_bytes=1382400
+1920x1080,scalar,p50_ms=0.046084,p95_ms=0.051,cpu_ms_per_frame=0.046665,gpu_p50_ms=0.0,staging_bytes=0
+1920x1080,Metal-staged,p50_ms=0.485541,p95_ms=0.563916,cpu_ms_per_frame=0.100215,gpu_p50_ms=0.1991249737329781,staging_bytes=3110400
+3840x2160,scalar,p50_ms=0.253042,p95_ms=0.294167,cpu_ms_per_frame=0.25462,gpu_p50_ms=0.0,staging_bytes=0
+3840x2160,Metal-staged,p50_ms=1.327083,p95_ms=2.545709,cpu_ms_per_frame=0.345465,gpu_p50_ms=0.7747500203549862,staging_bytes=12441600

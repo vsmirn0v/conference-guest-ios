@@ -1,0 +1,6 @@
+1280x720,scalar,p50_ms=0.007792,p95_ms=0.007875,cpu_ms_per_frame=0.007845
+1280x720,vImage,p50_ms=0.11175,p95_ms=0.117917,cpu_ms_per_frame=0.113155
+1920x1080,scalar,p50_ms=0.018542,p95_ms=0.021083,cpu_ms_per_frame=0.018895
+1920x1080,vImage,p50_ms=0.260958,p95_ms=0.277416,cpu_ms_per_frame=0.26236
+3840x2160,scalar,p50_ms=0.074542,p95_ms=0.0825,cpu_ms_per_frame=0.07556
+3840x2160,vImage,p50_ms=1.060334,p95_ms=1.108709,cpu_ms_per_frame=1.063825
