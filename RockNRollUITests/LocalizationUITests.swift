@@ -79,6 +79,43 @@ final class LocalizationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Микрофон выкл. · Видео выкл."].exists)
         attach(app, "Russian participants")
     }
+
+    func testGuestConversationCaptionsFitLandscapeSafeAreaAndPortrait() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for language in ["ru", "en"] {
+            let app = launch("guest-call", language: language)
+            let russian = language == "ru"
+            let chat = app.buttons[russian ? "Чат" : "Chat"]
+            XCTAssertTrue(chat.waitForExistence(timeout: 10))
+            chat.tap()
+            let modes = app.segmentedControls["Conversation mode"]
+            XCTAssertTrue(modes.waitForExistence(timeout: 5))
+            modes.buttons[russian ? "Пропущено" : "Catch up"].tap()
+            for orientation: UIDeviceOrientation in [.landscapeLeft, .landscapeRight, .portrait] {
+                XCUIDevice.shared.orientation = orientation
+                let strip = app.otherElements["Conversation call controls"]
+                XCTAssertTrue(strip.waitForExistence(timeout: 5))
+                // Content stays wide enough after the phone's landscape safe-area inset.
+                XCTAssertGreaterThanOrEqual(modes.frame.width, 288)
+                XCTAssertTrue(modes.buttons[russian ? "Пропущено" : "Catch up"].isSelected)
+                for label in [russian ? "Включить микрофон" : "Unmute microphone",
+                              russian ? "Включить видео" : "Start video",
+                              russian ? "Выйти" : "Leave"] {
+                    let button = strip.buttons[label]
+                    XCTAssertTrue(button.isHittable, label)
+                    XCTAssertTrue(strip.frame.contains(button.frame), label)
+                    XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+                    XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+                }
+                XCTAssertEqual(strip.buttons[russian ? "Включить микрофон" : "Unmute microphone"].value as? String,
+                               russian ? "Микрофон выключен" : "Microphone off")
+                XCTAssertTrue(strip.staticTexts[russian ? "Микр." : "Mic"].exists)
+                XCTAssertTrue(strip.staticTexts[russian ? "Камера" : "Cam"].exists)
+                attach(app, "Conversation captions \(language) \(orientation.rawValue)")
+            }
+            app.terminate()
+        }
+    }
     func testRussianSharingPreviewUsesTranslatedControls() throws {
         let app = launch(layout: "local-share")
         let preview = app.buttons["Увеличить предпросмотр трансляции"]

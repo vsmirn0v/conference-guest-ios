@@ -44,6 +44,8 @@
 "Cam off" = "Камера";
 "Cam on" = "Камера";
 "Camera" = "Камера";
+"Camera on" = "Камера включена";
+"Camera off" = "Камера выключена";
 "Camera could not switch: %@" = "Не удалось сменить камеру: %@";
 "Camera paused by iOS" = "iOS приостановила камеру";
 "Camera unavailable: %@" = "Камера недоступна: %@";

@@ -113,11 +113,12 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             header.heightAnchor.constraint(equalToConstant: 44),
             mode.heightAnchor.constraint(equalToConstant: 38),
             content.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).withPriority(.defaultHigh),
-            callStrip.heightAnchor.constraint(equalToConstant: 46)
+            callStrip.heightAnchor.constraint(equalToConstant: 50)
         ])
 
         mode.accessibilityLabel = L("Conversation mode")
         mode.accessibilityIdentifier = "Conversation mode"
+        mode.apportionsSegmentWidthsByContent = true
         mode.addAction(UIAction { [weak self] _ in self?.renderMode() }, for: .valueChanged)
         callStrip.isHidden = call == nil || docked
         Publishers.CombineLatest3(catchUp.$timeline, catchUp.$canViewTranscript,
@@ -192,7 +193,9 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             panelLeading.isActive = true
             panelSideWidth.isActive = false
         } else if sidePanel {
-            panelSideWidth.constant = min(420, max(320, view.bounds.width * 0.34))
+            // Keep the reading width after the landscape cutout/home-indicator inset.
+            let safeWidth = view.bounds.width - view.safeAreaInsets.left - view.safeAreaInsets.right
+            panelSideWidth.constant = min(420, max(320, safeWidth * 0.34)) + view.safeAreaInsets.right
         }
         let keyboardVisible = keyboardPresented || panel.keyboardLayoutGuide.layoutFrame.minY <
             panel.bounds.height - panel.safeAreaInsets.bottom - 20
@@ -390,6 +393,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
                                                                      bottom: 2, trailing: 4)
         callStrip.backgroundColor = card
         callStrip.layer.cornerRadius = 12
+        callStrip.accessibilityIdentifier = "Conversation call controls"
         for button in [micButton, cameraButton, speakerButton, leaveButton] {
             button.configuration = .tinted()
             button.configuration?.imagePlacement = .top
@@ -442,13 +446,17 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     }
 
     private func renderCallState(microphone: Bool, camera: Bool, speaker: Bool, held: Bool) {
-        style(micButton, title: held ? L("On hold") : (microphone ? L("Mic on") : L("Mic off")),
+        style(micButton, title: held ? L("On hold") : L("Mic"),
               symbol: microphone ? "mic.fill" : "mic.slash.fill", active: microphone)
         micButton.isEnabled = !held
         micButton.accessibilityLabel = microphone ? L("Mute microphone") : L("Unmute microphone")
-        style(cameraButton, title: camera ? L("Cam on") : L("Cam off"),
+        micButton.accessibilityValue = held ? L("On hold") : (microphone ? L("Microphone on") : L("Microphone off"))
+        micButton.largeContentTitle = micButton.accessibilityValue
+        style(cameraButton, title: L("Cam"),
               symbol: camera ? "video.fill" : "video.slash.fill", active: camera)
         cameraButton.accessibilityLabel = camera ? L("Stop video") : L("Start video")
+        cameraButton.accessibilityValue = camera ? L("Camera on") : L("Camera off")
+        cameraButton.largeContentTitle = cameraButton.accessibilityValue
         style(speakerButton, title: speaker ? L("Speaker") : "iPhone",
               symbol: speaker ? "speaker.wave.2" : "iphone", active: speaker)
         speakerButton.accessibilityLabel = speaker ? L("Use iPhone receiver") : L("Use iPhone speaker")
@@ -459,6 +467,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     private func style(_ button: UIButton, title: String, symbol: String, active: Bool) {
         button.configuration?.title = isCompactForKeyboard ? nil : title
+        button.configuration?.titleLineBreakMode = .byTruncatingTail
         button.configuration?.image = UIImage(systemName: symbol)
         button.showsLargeContentViewer = true
         button.largeContentTitle = title

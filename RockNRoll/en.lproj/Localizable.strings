@@ -44,6 +44,8 @@
 "Cam off" = "Cam off";
 "Cam on" = "Cam on";
 "Camera" = "Camera";
+"Camera on" = "Camera on";
+"Camera off" = "Camera off";
 "Camera could not switch: %@" = "Camera could not switch: %@";
 "Camera paused by iOS" = "Camera paused by iOS";
 "Camera unavailable: %@" = "Camera unavailable: %@";
