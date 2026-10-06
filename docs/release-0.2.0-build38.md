@@ -67,5 +67,27 @@ transient autorelease pool; the ownership check now drains that pool explicitly.
 Beta notes: “Private video preview, easier camera and sound settings, simpler name entry, and improved call stability.”
 
 The initial archive from b1a249d was superseded before uploading when contact
-access was removed. Final archive, signature validation, upload and tester-group
-readback are recorded below when delivery completes.
+access was removed. Final artifact and delivery evidence follow.
+
+
+- Archive source: `7792ea7e1f3cf6910866c69d1f9626f284f8328f`; app version/build `0.2.0 / 38`, minimum iOS 16.0.
+- Archive: `/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-10-06/RockNRoll-0.2.0-b38-final.xcarchive`.
+- Archive app SHA-256: `a0002d6847ad124e57a6c91719ac63cce1ec735f34427840e479b6a79f26bf45`.
+- Matching app/dSYM UUID: `9A03B6DF-24EB-33FD-A1A7-7741F3985460`.
+- Locally exported IPA SHA-256: `449aec33a1ab1f752fd3df290a6f28f0484aa208769885f3b0ede416ad58a021`.
+- Strict signatures passed for the app and both extensions, with team 5V64BP2H3P,
+  get-task-allow=false, production CloudKit/push and matching EN/RU resources
+  (437 keys per language). Main Contacts purpose string and framework links absent.
+- Xcode upload succeeded on 6 October 2026 at 20:48:58 MSK. App Store Connect
+  finished processing. Existing third-party framework dSYM warnings remain;
+  the app's own symbols match.
+- Privacy page deployed binary SHA-256:
+  `3e8475fe99f9e093977a86210b901cf27ccea9f20285b4f5d70bcca29351e13e`.
+
+- App Store Connect build ID: `f27c68a6-665b-47f4-9df9-e0b285ec7af9`.
+- Beta notes saved and read back. Both existing tester groups were selected;
+  Automatically notify testers remained enabled. Submission completed and both
+  Rock’n’Roll Internal and Rock’n’Roll Public Beta show 0.2.0 (38) **Testing**.
+- Group-status readback: 2026-10-06 18:04:01 UTC.
+- Public invitation: https://testflight.apple.com/join/Hd13C9U3
+- Local publication proof: `/tmp/rock-build38-testflight-public.png`.
