@@ -6,6 +6,12 @@ public struct CallAudioRecoveryGate {
 
     public init() {}
 
+    public var canUseMedia: Bool { isActive && !isHeld }
+
+    public func isReadyForMedia(signalingActive: Bool, transportConnected: Bool) -> Bool {
+        canUseMedia && signalingActive && transportConnected
+    }
+
     public mutating func activate() {
         isActive = true
         needsRecovery = true
@@ -24,7 +30,7 @@ public struct CallAudioRecoveryGate {
     public mutating func markInterrupted() { needsRecovery = true }
 
     public mutating func takeRecovery() -> Bool {
-        guard isActive, !isHeld, needsRecovery else { return false }
+        guard canUseMedia, needsRecovery else { return false }
         needsRecovery = false
         return true
     }

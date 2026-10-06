@@ -30,6 +30,15 @@ final class StudioModel: ObservableObject {
 
     init(audioControl: AudioControl) { self.audioControl = audioControl }
 
+    #if DEBUG
+    /// Direct-launch physical checks must not depend on XCTest keeping the app alive.
+    func applyTestProfileIfRequested() {
+        guard let raw = ProcessInfo.processInfo.environment["CONFERENCE_TEST_SOUND_PROFILE"],
+              let profile = StudioAudioProfile(rawValue: raw) else { return }
+        select(profile)
+    }
+    #endif
+
     var systemSettingsAvailable: Bool {
         #if targetEnvironment(simulator)
         return false

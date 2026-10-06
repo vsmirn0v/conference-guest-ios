@@ -40,10 +40,13 @@ The UI fixtures use the production store and presentation views, without a live
 conference connection. Existing presentation and video-color tests cover the
 related rotation, navigation, focus and brightness regressions.
 
-The physical static-PiP fixture now switches speaker names while another app is
-foregrounded. Its device test remains pending because iVitalii is unavailable.
-Simulator results establish view rendering, not system PiP background behavior
-or live provider speaker accuracy. No TestFlight release is made by this change.
+On 6 October, iVitalii (iOS 27.0.1) passed the real system PiP fixture: speaker
+names and the microphone icon changed over Calculator without new video frames.
+A live guest-room check also passed: the controlled speaking browser participant
+appeared in the compact landscape header and system PiP. These checks qualify
+the guest adapter and background metadata presentation; they do not establish
+multi-speaker accuracy for every provider. See `physical-validation-2026-10-06.md`.
+No TestFlight release is made by this validation.
 
 Accepted iOS 27 results: `/tmp/rock-speaker27-accepted.xcresult`, 163 passed,
 eight opt-in experiments skipped, zero failures. This includes the complete
@@ -64,6 +67,9 @@ repeated UIKit/call-surface layout with approximately 100% CPU. The same scenari
 reproduces at the previous commit, `c65a08e`, in an isolated checkout. That baseline
 run was interrupted after confirming the hang. It is not evidence of a regression
 introduced by the speaker labels; impact in a live room remains unqualified.
+The corresponding largest-text rotation fixture passed on physical iVitalii
+(`/tmp/rock-physical-largest-text.xcresult`). That does not resolve the simulator
+hang or establish every live-room layout at that text size.
 
 Diagnostics: `/tmp/rock-speaker27-baseline2.xcresult`,
 `/tmp/rock-speaker27-hang.sample` and `/tmp/rock-speaker27-hang.png`.

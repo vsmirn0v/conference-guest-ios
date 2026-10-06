@@ -6,15 +6,17 @@ import LiveKit
 import XCTest
 @testable import RockNRoll
 
-/// Local engine diagnostic: no Room, network transport, file, or saved PCM.
+/// Opt-in hardware diagnostics and a live Studio sender. No PCM is saved.
 @MainActor
 final class AudioPipelineDeviceExperimentTests: XCTestCase {
     func testStudioProfilesApplyToLiveSender() async throws {
         guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_STUDIO_AUDIO"] == "1",
-              ProcessInfo.processInfo.isiOSAppOnMac,
               let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_OUTGOING_JAM_URL"] else {
-            throw XCTSkip("Opt-in Mac live Studio processing check")
+            throw XCTSkip("Opt-in live Studio processing check")
         }
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Requires physical audio hardware or the Mac manual-rendering probe")
+        #endif
         let session = AVAudioSession.sharedInstance(), manager = AudioManager.shared
         guard !manager.isEngineRunning else { throw XCTSkip("Requires an idle engine") }
         let category = session.category, mode = session.mode, options = session.categoryOptions
@@ -29,15 +31,21 @@ final class AudioPipelineDeviceExperimentTests: XCTestCase {
             try? session.setCategory(category, mode: mode, options: options)
         }
         do {
-            // A synthetic silence source exercises a real sender without opening
-            // the microphone or sending any local audio to the test room.
-            try manager.setManualRenderingMode(true)
+            // Mac uses synthetic silence. The explicitly selected phone test
+            // uses its real capture path and restores the audio session afterward.
+            let synthetic = ProcessInfo.processInfo.isiOSAppOnMac
+            if synthetic { try manager.setManualRenderingMode(true) }
+            else {
+                guard session.recordPermission == .granted else { throw XCTSkip("Microphone permission not granted") }
+                try AudioCoordinator().prepareForJoin()
+                try session.setActive(true)
+            }
             let credentials = try await JamService().join(try JamTarget.parse(invitation), name: "Sound settings QA")
             try await room.connect(url: credentials.serverURL.absoluteString, token: credentials.participantToken,
                                    connectOptions: ConnectOptions(autoSubscribe: false))
             let track = await LocalAudioTrack.createTrack(options: AudioCaptureOptions(), reportStatistics: true)
             _ = try await room.localParticipant.publish(audioTrack: track, options: AudioPublishOptions(dtx: false))
-            feed = Task { @MainActor in
+            if synthetic { feed = Task { @MainActor in
                 let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
                 while !Task.isCancelled {
                     let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 480)!
@@ -46,7 +54,7 @@ final class AudioPipelineDeviceExperimentTests: XCTestCase {
                     manager.mixer.capture(appAudio: buffer)
                     try? await Task.sleep(for: .milliseconds(10))
                 }
-            }
+            } }
             var previousPackets = 0.0
             for profile in [StudioAudioProfile.conversation, .music, .conversation] {
                 _ = try await Task.detached { try track.setAudioProcessingOptions(StudioAudioPolicy.processingOptions(for: profile)) }.value
@@ -64,6 +72,7 @@ final class AudioPipelineDeviceExperimentTests: XCTestCase {
                 XCTAssertGreaterThan(packets, previousPackets, "Audio packets stopped after a profile change")
                 previousPackets = packets
                 print("STUDIO_AUDIO,profile=\(profile.rawValue),aec=\(state.echoCancellation.effective.rawValue),noise=\(state.noiseSuppression.effective.rawValue),gain=\(state.autoGainControl.effective.rawValue)")
+                print("STUDIO_AUDIO_CAPTURE,rate=\(session.sampleRate),io_ms=\(session.ioBufferDuration * 1000),packets=\(packets),input=\(session.currentRoute.inputs.map(\.portType.rawValue).joined(separator: ":"))")
             }
             feed?.cancel()
             await room.disconnect()

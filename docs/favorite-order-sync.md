@@ -34,5 +34,7 @@ devices for consistent presentation.
 Validation covers direct dragging, cancellation, renaming and context actions on iPhone SE / iOS 17.5,
 local restart persistence, two simulated replicas with recent-history sync off,
 concurrent reorders with renaming/deletion, and actual encrypted CloudKit
-full/delta fetches in a disposable verification zone on Mac. No physical iPhone
-test is needed for these storage and native-list interactions.
+full/delta fetches in a disposable verification zone on Mac. On 6 October,
+iVitalii also passed the three native drag/context/cancellation/rename UI cases
+in English and Russian (`/tmp/rock-physical-cloud-production-write-and-drag.xcresult`).
+See `physical-validation-2026-10-06.md` for cross-device cloud qualification.

@@ -7,6 +7,7 @@ final class PiPMicrophoneUITests: XCTestCase {
         throw XCTSkip("System video-call PiP requires a physical iPhone.")
         #endif
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "pip-microphone"
         app.launchEnvironment["CONFERENCE_TEST_RESET_FLOATING_VIDEO"] = "1"
         app.launch()
@@ -16,16 +17,26 @@ final class PiPMicrophoneUITests: XCTestCase {
         let pip = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             .windows["PIP-SBInteractionPassThroughView"]
         XCTAssertTrue(pip.waitForExistence(timeout: 5))
-        assertStatus("Muted", in: pip)
         assertStatus("Aram", in: pip)
+        assertStatus("You", in: pip)
+        let mutedBadge = badgePixels(in: pip)
         let calculator = XCUIApplication(bundleIdentifier: "com.apple.calculator")
         calculator.activate()
-        assertStatus("Mic on", in: pip)
         assertStatus("Ani", in: pip)
+        assertStatus("You", in: pip)
+        XCTAssertNotEqual(mutedBadge, badgePixels(in: pip), "The compact microphone icon did not update")
         XCTAssertTrue(pip.exists)
         XCTAssertEqual(calculator.state, .runningForeground)
         assertStatus("Mic unavailable", in: pip)
         XCTAssertTrue(pip.exists)
+    }
+
+    private func badgePixels(in pip: XCUIElement) -> Data? {
+        guard let image = pip.screenshot().image.cgImage else { return nil }
+        let width = CGFloat(image.width), height = CGFloat(image.height)
+        return image.cropping(to: CGRect(x: width * 0.76, y: height * 0.77,
+                                        width: width * 0.2, height: height * 0.17))
+            .map { UIImage(cgImage: $0).pngData() } ?? nil
     }
 
     private func assertStatus(_ text: String, in pip: XCUIElement) {
@@ -39,7 +50,7 @@ final class PiPMicrophoneUITests: XCTestCase {
                 $0.topCandidates(1).first?.string.contains(text) == true
             } == true
         }, evaluatedWith: pip)
-        wait(for: [visible], timeout: 8)
+        wait(for: [visible], timeout: 15)
         let attachment = XCTAttachment(screenshot: pip.screenshot())
         attachment.name = "Physical PiP · \(text)"
         attachment.lifetime = .keepAlways

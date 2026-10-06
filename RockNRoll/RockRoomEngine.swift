@@ -117,6 +117,9 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                 throw error
             }
         }
+        #if DEBUG
+        studio.applyTestProfileIfRequested()
+        #endif
         catchUp.enter(roomKey: target.originURL.absoluteString + "/" + target.jamID)
         chat.clear()
         chat.onSend = { [weak self] in self?.sendChat($0) }

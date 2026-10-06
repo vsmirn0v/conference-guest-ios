@@ -26,9 +26,14 @@ Validation:
 - Build 14 uploaded successfully and reached **Testing** in both the internal
   and public TestFlight groups on 28 September 2026.
 
-The iOS simulator reports system video-call PiP as unsupported. Per the user's
-simulator-only test preference, the 30–60 second live PiP behavior has not been
-verified on an iPhone. If the SDK stops delivering decoded frames in the
-background, PiP can remain present with its last frame but cannot display live
-changes until frames resume. Build 14's tester notes request a two-minute live
-share check to distinguish a closed PiP window from a stalled source feed.
+The iOS simulator reports system video-call PiP as unsupported. On 6 October,
+iVitalii (iOS 27.0.1) passed the previously deferred two-minute live guest share
+check. A controlled browser published an animated screen-share stream and speech;
+system PiP remained present, and content pixels changed between captures taken
+after 120 seconds in the background. Returning to the app and leaving also passed.
+Result: `/tmp/rock-physical-pip-continuity120-retry.xcresult`.
+
+An initial run was interrupted by a separate real phone call and is excluded from
+continuity acceptance. This check qualifies uninterrupted background reception
+on the tested phone. It does not prove continuity through a competing phone call,
+physical iOS 16/17 behavior, or that every provider always sends background frames.

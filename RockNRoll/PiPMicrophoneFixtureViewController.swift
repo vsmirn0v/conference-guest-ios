@@ -32,13 +32,13 @@ final class PiPMicrophoneFixtureViewController: UIViewController {
             self.backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "PiP status fixture") {
                 self.finishBackgroundTask()
             }
-            for (delay, status) in [(6.0, PiPMicrophoneStatus.on), (12.0, .unavailable), (18.0, .muted)] {
+            for (delay, status) in [(12.0, PiPMicrophoneStatus.on), (24.0, .unavailable), (36.0, .muted)] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     self?.floating?.setMicrophoneStatus(status)
                     self?.speaker.update(status == .on ? CallSpeaker(id: "ani", name: "Ani", isLocal: false) : nil)
                 }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 22) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in
                 self?.finishBackgroundTask()
             }
         }

@@ -73,5 +73,11 @@ CloudKit transports and an isolated generated verification zone: encrypted name,
 invitation/password, favorite, alias and incremental deletion were read back.
 The probe removed only its own verification zone. Real user history was untouched.
 
-A live iPhone/iPad-to-Mac propagation test is deferred at the user's request for
-this beta. Physical media/background tests were not repeated for this change.
+On 6 October, iVitalii → Mac → iVitalii propagation passed in both Development
+and Production. The phone wrote a generated name, two starred complete invitations,
+aliases and order. The Mac read them, changed the name/order, and the phone read
+back the updates. Each sequence removed only its own generated verification zone.
+Production signing entitlements were read back before the Production run.
+This qualifies live transport, payload and merge behavior across those devices;
+silent-push timing and physical iPad behavior remain outside that probe.
+See `physical-validation-2026-10-06.md` for result bundles and gesture checks.

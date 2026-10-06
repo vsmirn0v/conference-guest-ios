@@ -46,11 +46,22 @@ checks processing state and increasing RTP packet counts, then disconnects and
 restores the audio session. It saves no PCM and opens no microphone. It qualifies
 the runtime setter and sending continuity, not listening quality or battery life.
 
-Before judging effects or fidelity, use a physical iPhone to check remote camera
-output, instrument attacks/sustain, speaker echo, AirPods/receiver/speaker switching,
-and call-interruption recovery. Each requested phone test must stay within one
-minute. Sustained thermal and battery behaviour cannot be established by those
-short checks. No physical-device acceptance is claimed for this beta.
+On 6 October, iVitalii passed the real-capture Conversation → Music → Conversation
+sender check: effective processing matched the policy and RTP packets increased
+in every phase. The guest Studio UI kept capture off when choosing Music, applied
+it on unmute, and exposed Apple's camera-effect panel during active video.
+Portrait was toggled and restored. The user confirmed audible guest-meeting
+recovery after a regular cellular call with Music selected and reported the
+subsequent basic Music-profile listening check as satisfactory. A later call
+exposed a recovery-readiness gap; after tightening the guest recovery guards,
+the user confirmed recovery for both outgoing and incoming cellular calls.
+
+Remote camera-effect quality, instrument attacks/sustain, speaker echo and
+AirPods/receiver/speaker switching specifically with Music remain unqualified.
+Functional device tests may exceed a minute; the user's one-minute limit applies
+to CPU/GPU/energy profiling. Sustained thermal and battery behaviour cannot be
+established within that profiling limit. Detailed evidence and boundaries are in
+`physical-validation-2026-10-06.md`.
 
 Custom background processing, presenter composition and ML denoising remain later
 stages of the approved roadmap. They require separate quality/energy qualification;

@@ -81,3 +81,7 @@ beta groups, with 90 days remaining. Build ID:
 `bf73d37e-75b0-45b0-bea9-e060593b90f9`. The saved beta notes were read back and
 automatic tester notifications were enabled. Public invitation:
 <https://testflight.apple.com/join/Hd13C9U3>.
+
+Subsequent physical qualification on 6 October is recorded in
+`physical-validation-2026-10-06.md`. It does not change the historical release
+validation above or upload another binary.
