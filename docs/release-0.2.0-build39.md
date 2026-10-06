@@ -47,5 +47,20 @@ remains covered by the previous build's device validation.
 
 Beta notes: “Optional calendar meeting suggestions, saved room shortcuts, and improved connection stability.”
 
-Archive, signature, upload and TestFlight group evidence will be appended after
-publication.
+- Archive source: `0e1d04cb478e5046805de1d3e31ae9bfe7302ae4`; all three bundles report 0.2.0 (39).
+- Archive: `/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-10-07/RockNRoll-0.2.0-b39.xcarchive`.
+- Archive app SHA-256: `e51fa2bd64a650fc398d1e6215d90270f46f40c0ce8b690bd08e9907e419d07c`.
+- Matching app/dSYM UUID: `413E673B-670D-3C22-A774-31B5FE3A499D`.
+- Locally exported IPA SHA-256: `4922bd413736a17d7513e8ee368f8692ad3b5b3a8071d27e0b66fbf9c9bd77bc`.
+- Strict signatures passed for the app and both broadcast extensions, team
+  5V64BP2H3P, get-task-allow=false, production CloudKit/push and matching EN/RU
+  resources. Calendar/Bluetooth/camera/microphone purpose strings are present;
+  Contacts purpose string and framework links are absent. Debug fixtures are
+  absent from the Release executable. Export preserves the chosen build number.
+
+- Xcode upload succeeded on 7 October 2026 at 01:56:11 MSK. App Store Connect
+  processing and group assignments are being verified.
+
+
+- Upload completed despite the existing third-party framework dSYM warnings;
+  the app’s own executable and symbols have matching UUIDs.
