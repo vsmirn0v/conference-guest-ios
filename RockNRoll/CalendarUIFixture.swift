@@ -12,14 +12,18 @@ enum CalendarUIFixture {
         func access() -> CalendarAccess { .allowed }
         func requestAccess() -> Bool { true }
         func read(selected: Set<String>, now: Date, knownOrigins: Set<String>, aliases: [String: URL]) -> CalendarSnapshot {
-            func event(_ id: String, title: String, offset: Double, link: String?, series: String? = nil) -> CalendarMeeting {
+            func event(_ id: String, title: String, offset: Double, link: String?, series: String? = nil,
+                       quoted: String? = nil) -> CalendarMeeting {
                 .init(id: id, seriesID: series ?? id, calendarID: "work", calendarTitle: "Work",
                       title: title, start: now.addingTimeInterval(offset), end: now.addingTimeInterval(offset + 3600),
-                      links: link.flatMap(URL.init(string:)).map { [$0] } ?? [])
+                      linkGroups: CalendarLinkDiscovery.groups(url: nil, location: link, notes: quoted,
+                        knownOrigins: ["https://meeting.example.test", "https://music.example.test"], hintedHostFragments: []))
             }
             let choice = ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] == "engine-choice"
             let events = [event("daily", title: "Daily rehearsal", offset: 30,
-                                link: choice ? "https://music.example.test/jams/team" : "https://meeting.example.test/team?psw=fixture"),
+                                link: choice ? "https://music.example.test/jams/team" : "https://meeting.example.test/team?psw=fixture",
+                                quoted: ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] == "forwarded" ?
+                                    "https://meeting.example.test/older?psw=before" : nil),
                           event("sync", title: "Sync", offset: 7200, link: nil, series: "weekly-sync"),
                           event("planning", title: "Next day planning", offset: 86_400,
                                 link: "https://meeting.example.test/calls/team?psw=new"),
@@ -64,9 +68,11 @@ enum CalendarUIFixture {
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [Response.self]
         let detector = MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config))
         let calendar = CalendarMeetingStore(reader: Reader(), detector: detector, preferences: preferences, storage: Storage())
-        return ConferenceModel(jamService: JamService(session: URLSession(configuration: config)),
+        let model = ConferenceModel(jamService: JamService(session: URLSession(configuration: config)),
                                history: RoomHistoryStore(storage: Storage()), preferences: preferences,
                                engineDetector: detector, calendar: calendar)
+        if mode == "engine-choice" { model.invite = "https://music.example.test/jams/team" }
+        return model
     }
 }
 #endif

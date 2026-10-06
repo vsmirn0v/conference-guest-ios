@@ -31,6 +31,7 @@ final class CalendarEventKitIntegrationTests: XCTestCase {
         event.calendar = selected; event.title = "Calendar QA selected " + marker
         event.startDate = now.addingTimeInterval(-60); event.endDate = now.addingTimeInterval(3600)
         event.location = "https://meeting.example.test/team?psw=fixture"
+        event.notes = event.location! + "\nhttps://meeting.example.test/older?psw=before"
         event.addRecurrenceRule(EKRecurrenceRule(recurrenceWith: .daily, interval: 1,
                                                end: EKRecurrenceEnd(occurrenceCount: 2)))
         try store.save(event, span: .futureEvents, commit: true)
@@ -47,6 +48,7 @@ final class CalendarEventKitIntegrationTests: XCTestCase {
         XCTAssertEqual(Set(result.meetings.map(\.seriesID)).count, 1)
         XCTAssertEqual(Set(result.meetings.map(\.id)).count, 2)
         XCTAssertTrue(result.meetings.allSatisfy { $0.links.first?.host == "meeting.example.test" })
+        XCTAssertTrue(result.meetings.allSatisfy { $0.linkGroups.map(\.source) == [.location, .notes] })
         let none = await reader.read(selected: [], now: now, knownOrigins: [], aliases: [:])
         XCTAssertTrue(none.meetings.isEmpty)
     }

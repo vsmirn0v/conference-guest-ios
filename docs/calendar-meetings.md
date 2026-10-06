@@ -13,13 +13,16 @@ calendars are not selected automatically. The app never edits calendar events.
 - The compact agenda shows three upcoming rows and can expand to seven days.
   Active-device continuation stays above the calendar section. A matching fresh
   continuation also changes the calendar action to Continue on this device.
+- Only events with one resolved invitation and a supported engine appear in the
+  agenda or Next meeting card. Unlinked, unsupported and genuinely ambiguous
+  events are hidden. Hidden events still block overlapping automatic joins.
 - A star saves the room before its first visit, at the top of favorites. Other
   occurrences of that room reflect the same star. Saved-only rooms do not enter
   the ten recent-room slots, including after an unstar or sync round trip.
 - Existing custom names and ordering remain intact. A newly starred event title
   becomes its initial personal room name. Long press retains rename/reordering.
-- Choose room can associate an event or recurring series with a saved room or an
-  entered invitation. Associations and derived event metadata remain local.
+- A visible event's menu can associate it or its recurring series with another
+  saved room or entered invitation. Associations and derived metadata remain local.
 - Favorites/history show Next or Scheduled metadata when available. Calendar
   metadata does not rename a meeting on its server or change the participant name.
 
@@ -30,6 +33,14 @@ Recognized host fragments, previously used websites and the compatible website
 setting identify candidates. An explicitly named domain-like favorite alias can
 expand to its saved invitation; ambiguous aliases do not silently resolve.
 Ordinary words in event titles do not identify conferences.
+
+Candidate links retain their structured source: Event URL, Location, Notes, then
+Title. All accepted candidates receive the same bounded engine checks. The first
+field containing one supported room wins, so a current Location invitation is not
+made ambiguous by an older invitation in forwarded Notes. An unrelated Event URL
+does not shadow a supported Location link. Multiple supported rooms or unresolved
+engine conflicts within the same field remain ambiguous; the app never guesses
+from email wording. An explicit saved event/series association takes precedence.
 
 Native application invitations are normalized by the existing integration
 adapter. Hostless links still need an unambiguous saved/configured website. A
@@ -138,6 +149,21 @@ resource limits were unchanged. No additional backend/container was introduced.
   physical iPhone Calendar behavior have not been qualified in this change.
 - Website Go tests passed; public metadata and Calendar privacy text were read
   back after deployment, with the container's restart policy still `always`.
+
+### Link-resolution follow-up
+
+The observed forwarded event contained its current invitation in Location and an
+older room in Notes. Equal weighting previously produced Choose room. Structured
+field priority now resolves the current invitation, and the agenda hides events
+without a uniquely supported join link.
+
+76 core, 24 native and eight simulator UI/permission checks passed on this pass.
+Coverage includes source priority, unsupported Event URL fallback, ambiguity,
+hidden overlapping events, favorites, binding and Russian rotation on iOS 17.5.
+Real EventKit reads preserved Location/Notes provenance and selected-calendar
+recurrence. A private temporary fixture containing the two observed invitations
+passed read-only live discovery and selected the current Location link; no room
+was joined. That fixture was removed after the check. No user event was edited.
 
 Test fixtures are debug-only and use synthetic event names/invitations. Production
 defaults remain opt-in. This implementation does not upload a new TestFlight build.

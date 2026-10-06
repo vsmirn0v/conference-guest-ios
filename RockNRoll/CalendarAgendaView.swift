@@ -97,6 +97,7 @@ struct CalendarAgendaView: View {
                     }
                     .buttonStyle(.borderless)
                     .accessibilityLabel(L("Choose another room"))
+                    .accessibilityIdentifier("calendar.choose-room." + meeting.id)
                 }
             }
             if prominent { Text(L("Microphone and camera start off")).font(.caption).foregroundStyle(.secondary) }

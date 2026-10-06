@@ -10,7 +10,7 @@ final class CalendarUITests: XCTestCase {
         if mode == "countdown" {
             XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Joining in")).firstMatch.waitForExistence(timeout: 5))
         }
-        else { XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 10)) }
+        else { XCTAssertTrue(app.buttons[mode == "engine-choice" ? "calendar.star.planning" : "calendar.star.daily"].waitForExistence(timeout: 10)) }
     }
     func testStarSavesRoomAndAppliesToAnotherOccurrenceWithoutCreatingRecentHistory() {
         launch()
@@ -25,11 +25,12 @@ final class CalendarUITests: XCTestCase {
     func testCalendarSelectionAndLocalBinding() {
         launch()
         app.buttons["calendar.star.daily"].tap()
-        app.buttons["calendar.join.sync"].tap()
+        app.buttons["calendar.choose-room.daily"].tap()
         XCTAssertTrue(app.navigationBars["Choose room"].waitForExistence(timeout: 5))
         app.buttons["Daily rehearsal"].tap()
-        XCTAssertTrue(app.buttons["calendar.star.sync"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["calendar.star.sync"].label.contains("Unstar"))
+        XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["calendar.star.daily"].label.contains("Unstar"))
+        XCTAssertFalse(app.staticTexts["Sync"].exists)
         app.buttons["Settings"].tap()
         app.buttons["calendar.settings"].tap()
         let work = app.switches["calendar.select.work"]
@@ -63,12 +64,30 @@ final class CalendarUITests: XCTestCase {
     }
     func testGenuineEngineConflictAllowsAnExplicitChoiceToStartJoining() {
         launch("engine-choice")
-        app.buttons["calendar.join.daily"].tap()
+        XCTAssertFalse(app.buttons["calendar.join.daily"].exists)
+        let join = app.buttons["Join jam"]
+        for _ in 0..<4 where !join.isHittable { app.swipeUp() }
+        XCTAssertTrue(join.isHittable); join.tap()
         let choice = app.buttons["Community jam"]
         XCTAssertTrue(choice.waitForExistence(timeout: 5))
         choice.tap()
         let failure = app.staticTexts["The jam service is temporarily unavailable. Try again shortly."]
         for _ in 0..<3 where !failure.exists { app.swipeUp() }
         XCTAssertTrue(failure.waitForExistence(timeout: 5), "The selected engine must receive the join request; the fixture returns 503.")
+    }
+    func testUnlinkedCalendarMeetingsAreHidden() {
+        launch()
+        XCTAssertFalse(app.buttons["calendar.join.sync"].exists)
+        XCTAssertFalse(app.staticTexts["Sync"].exists)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertFalse(app.buttons["calendar.join.sync"].exists)
+        XCTAssertFalse(app.staticTexts["Sync"].exists)
+    }
+    func testCurrentLocationRemainsJoinableDespiteAQuotedOlderInvitation() {
+        launch("forwarded")
+        XCTAssertEqual(app.buttons["calendar.join.daily"].label, "Join")
+        XCTAssertTrue(app.buttons["calendar.join.daily"].isEnabled)
+        XCTAssertTrue(app.buttons["calendar.star.daily"].isHittable)
     }
 }

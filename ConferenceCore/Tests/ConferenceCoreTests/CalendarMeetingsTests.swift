@@ -46,6 +46,25 @@ final class CalendarMeetingsTests: XCTestCase {
         XCTAssertNotEqual(MeetingRoomIdentity(url), MeetingRoomIdentity(URL(string: "https://other.test/team?psw=one")!))
         XCTAssertNotEqual(MeetingRoomIdentity(url), MeetingRoomIdentity(url, engine: .community))
     }
+    func testStructuredLinkGroupsKeepCurrentLocationAheadOfQuotedInvitations() {
+        let current = URL(string: "https://meeting.example.test/current?psw=now")!
+        let quoted = URL(string: "https://meeting.example.test/older?psw=before")!
+        let groups = CalendarLinkDiscovery.groups(url: nil, location: current.absoluteString,
+            notes: current.absoluteString + "\nForwarded invitation\n" + quoted.absoluteString,
+            knownOrigins: ["https://meeting.example.test"], hintedHostFragments: [])
+        XCTAssertEqual(groups.map(\.source), [.location, .notes])
+        XCTAssertEqual(groups.map(\.links), [[current], [quoted]])
+        XCTAssertEqual(CalendarMeeting(id: "fixture", seriesID: "fixture", calendarID: "work", calendarTitle: "Work",
+            title: "Forwarded meeting", start: now, end: now.addingTimeInterval(3600), linkGroups: groups).links,
+            [current, quoted])
+    }
+    func testResolvedInvitationRequiresOneKnownEngineAndNoConflict() {
+        var item = meeting()
+        XCTAssertTrue(item.hasResolvedInvitation)
+        item.requiresChoice = true; XCTAssertFalse(item.hasResolvedInvitation)
+        item.requiresChoice = false; item.engine = nil; XCTAssertFalse(item.hasResolvedInvitation)
+        item.engine = .guest; item.invitation = nil; XCTAssertFalse(item.hasResolvedInvitation)
+    }
     func testSavingBeforeJoiningPreservesTenRealVisitsAndNoFakeHistoryOnUnstar() throws {
         var history = RecentRooms()
         for index in 0..<10 {

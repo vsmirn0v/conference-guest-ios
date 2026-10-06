@@ -121,27 +121,38 @@ final class CalendarMeetingStore: ObservableObject {
                 selected.formIntersection(available)
                 preferences.set(selected.sorted(), forKey: "calendarMeetings.selected")
                 var incoming = snapshot.meetings.filter { selected.contains($0.calendarID) }
-                for index in incoming.indices {
+                let candidateGroups = incoming.map { meeting -> [[URL]] in
+                    if let bound = state.bindings[meeting.id] ?? state.bindings[meeting.seriesID] { return [[bound]] }
                     var seen: Set<MeetingRoomIdentity> = []
-                    let links = incoming[index].links.compactMap(invitationNormalizer).filter {
-                        guard let key = MeetingRoomIdentity($0) else { return false }
-                        return seen.insert(key).inserted
+                    return meeting.linkGroups.map { group in
+                        group.links.compactMap(invitationNormalizer).filter {
+                            guard let key = MeetingRoomIdentity($0) else { return false }
+                            return seen.insert(key).inserted
+                        }
                     }
-                    if let bound = state.bindings[incoming[index].id] ?? state.bindings[incoming[index].seriesID] {
-                        incoming[index].invitation = bound
-                    } else if links.count == 1 { incoming[index].invitation = links[0] }
-                    else if links.count > 1 { incoming[index].requiresChoice = true }
                 }
                 meetings = incoming; now = Date()
-                let proofs = await probe(incoming)
+                let proofs = await probe(candidateGroups.flatMap { $0.flatMap { $0 } })
                 guard !Task.isCancelled, revision == token else { return }
                 for index in incoming.indices {
-                    guard let url = incoming[index].invitation, let proof = proofs[probeKey(url)] else { continue }
-                    switch proof {
-                    case .verified(.guest): incoming[index].engine = .guest
-                    case .verified(.community): incoming[index].engine = .community
-                    case .ambiguous: incoming[index].engine = knownEngine(url)
-                    case .unknown: break
+                    for group in candidateGroups[index] {
+                        var unresolvedConflict = false
+                        let supported = group.compactMap { url -> (URL, MeetingEngineKind)? in
+                            let kind: MeetingEngineKind?
+                            switch proofs[probeKey(url)] ?? .unknown {
+                            case .verified(.guest): kind = .guest
+                            case .verified(.community): kind = .community
+                            case .ambiguous:
+                                kind = knownEngine(url)
+                                unresolvedConflict = unresolvedConflict || kind == nil
+                            case .unknown: kind = knownEngine(url)
+                            }
+                            return kind.map { (url, $0) }
+                        }
+                        if unresolvedConflict || supported.count > 1 { incoming[index].requiresChoice = true; break }
+                        if let (url, kind) = supported.first {
+                            incoming[index].invitation = url; incoming[index].engine = kind; break
+                        }
                     }
                 }
                 // Deduplicate identical copies without collapsing different events in one room.
@@ -168,11 +179,9 @@ final class CalendarMeetingStore: ObservableObject {
         if (try? JamTarget.parseCompatibleInvitation(url.absoluteString)) != nil { return url }
         return (try? JoinTarget.parse(url.absoluteString))?.originURL ?? url
     }
-    private func probe(_ meetings: [CalendarMeeting]) async -> [URL: MeetingEngineDetection] {
+    private func probe(_ invitations: [URL]) async -> [URL: MeetingEngineDetection] {
         var unique: [URL: URL] = [:]
-        for meeting in meetings {
-            if let url = meeting.invitation { unique[probeKey(url)] = url }
-        }
+        for url in invitations { unique[probeKey(url)] = url }
         let requests = Array(unique.sorted { $0.key.absoluteString < $1.key.absoluteString }.prefix(32))
         let detector = self.detector
         return await withTaskGroup(of: (URL, MeetingEngineDetection).self) { group in
@@ -190,7 +199,7 @@ final class CalendarMeetingStore: ObservableObject {
         }
     }
 
-    var upcoming: [CalendarMeeting] { meetings.filter { $0.end > now } }
+    var upcoming: [CalendarMeeting] { meetings.filter { $0.end > now && $0.hasResolvedInvitation } }
     var next: CalendarMeeting? {
         let timely = upcoming.filter { $0.isTimely(now) }
         return timely.count == 1 ? timely[0] : nil

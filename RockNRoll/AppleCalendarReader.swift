@@ -60,17 +60,17 @@ actor AppleCalendarReader: CalendarReading {
         let meetings = store.events(matching: predicate).compactMap { event -> CalendarMeeting? in
             guard let eventCalendar = event.calendar, event.status != .canceled, let begin = event.startDate, let finish = event.endDate,
                   finish > begin, event.attendees?.contains(where: { $0.isCurrentUser && $0.participantStatus == .declined }) != true else { return nil }
-            let links = CalendarLinkDiscovery.links(url: event.url, location: event.location, notes: event.notes,
+            let groups = CalendarLinkDiscovery.groups(url: event.url, location: event.location, notes: event.notes,
                 knownOrigins: knownOrigins, hintedHostFragments: VendorEndpointResolver.calendarHostHints,
                 aliases: aliases, title: event.title, nativeSchemes: VendorEndpointResolver.calendarNativeSchemes)
-            guard !event.isAllDay || !links.isEmpty else { return nil }
+            guard !event.isAllDay || groups.contains(where: { !$0.links.isEmpty }) else { return nil }
             let series = digest(eventCalendar.calendarIdentifier + "|" + (event.calendarItemExternalIdentifier ?? event.calendarItemIdentifier))
             let occurrence = event.occurrenceDate ?? begin
             return CalendarMeeting(id: series + "|" + String(occurrence.timeIntervalSince1970),
                 seriesID: series, calendarID: eventCalendar.calendarIdentifier, calendarTitle: eventCalendar.title ?? L("Untitled calendar"),
                 title: String((event.title ?? L("Untitled meeting")).prefix(160)), start: begin, end: finish,
                 allDay: event.isAllDay, tentative: event.status == .tentative,
-                links: links)
+                linkGroups: groups)
         }.sorted { ($0.start, $0.title, $0.id) < ($1.start, $1.title, $1.id) }
         let upcoming = Array(meetings.filter { $0.end > now }.prefix(300))
         let past = Array(meetings.filter { $0.end <= now }.suffix(50))
