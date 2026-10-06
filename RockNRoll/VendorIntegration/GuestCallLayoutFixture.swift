@@ -21,6 +21,9 @@ final class GuestCallLayoutFixture: UIViewController {
         let catchUp = CatchUpStore()
         catchUp.enter(roomKey: "guest-layout-\(UUID().uuidString)")
         let scenario = ProcessInfo.processInfo.environment["CONFERENCE_TEST_GUEST_SCENARIO"]
+        let studio = scenario == "studio" ? StudioModel(audioControl: .noiseSuppression) : nil
+        studio?.observeNoiseSuppression(true)
+        studio?.applyProfile = { [weak studio] profile in studio?.observeNoiseSuppression(profile == .conversation) }
         let solo = scenario == "solo"
         controls = CallControls(localPreview: preview, state: nil, coordinator: nil, router: nil,
             catchUp: catchUp, chat: ChatStore(), initialDisplayMode: .all,
@@ -28,7 +31,8 @@ final class GuestCallLayoutFixture: UIViewController {
             onDisplayMode: { [weak self] mode in self?.streams.displayMode = mode },
             onFloat: {}, onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
             onMicrophoneState: { _ in }, onCameraState: { _ in },
-            usesNativeParticipants: scenario == "participants" || ProcessInfo.processInfo.isiOSAppOnMac)
+            usesNativeParticipants: scenario == "participants" || ProcessInfo.processInfo.isiOSAppOnMac,
+            studio: studio)
         let entries: [(String, String, Bool)] = solo ? [("self", "Your contact", false)] :
             [("share", "Ani’s arrangement", true), ("camera", "Aram", false)]
         for (id, name, share) in entries {
@@ -62,9 +66,9 @@ final class GuestCallLayoutFixture: UIViewController {
         controls.onPinParticipant = { [weak self] in self?.streams.setPin($0) }
         controls.frame = view.bounds
         controls.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        if scenario == "participants" {
+        if scenario == "participants" || scenario == "studio" {
             // The real SDK overlay can be hosted by a zero-sized child controller.
-            // The participant popover must anchor to the visible controls above that host.
+            // Panels must present from the visible meeting above that host.
             let host = UIViewController()
             addChild(host)
             view.addSubview(host.view)

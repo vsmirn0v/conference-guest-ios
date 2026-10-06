@@ -403,3 +403,28 @@
 "Move down" = "Переместить ниже";
 
 "Touch and hold, then drag to reorder." = "Нажмите и удерживайте, затем перетащите, чтобы изменить порядок.";
+
+/* Meeting Studio */
+"Studio" = "Студия";
+"Music" = "Музыка";
+"Appearance" = "Видео";
+"Sound" = "Звук";
+"Sound profile" = "Режим звука";
+"Camera effects" = "Видеоэффекты";
+"Use system controls for background blur, lighting and framing supported by your camera." = "Размытие фона, освещение и кадрирование доступны в системных настройках, если камера их поддерживает.";
+"Turn on video in the meeting to use camera effects." = "Включите камеру во встрече, чтобы использовать видеоэффекты.";
+"Music reduces noise suppression. Other audio processing is controlled by the meeting." = "В режиме «Музыка» уменьшается шумоподавление. Остальной обработкой звука управляет сервис встречи.";
+"Music reduces speech filtering and automatic gain changes, while keeping echo protection. Headphones give the best result." = "В режиме «Музыка» уменьшается фильтрация речи и автоматическая регулировка громкости, сохраняя защиту от эха. Для лучшего звучания используйте наушники.";
+"Your microphone stays muted. The profile is used when you unmute." = "Микрофон остаётся выключенным. Режим будет применён, когда вы его включите.";
+"Updating sound…" = "Обновление звука…";
+"Sound settings could not update. Try again." = "Не удалось изменить настройки звука. Повторите попытку.";
+"System microphone settings" = "Системные настройки микрофона";
+"System microphone mode" = "Системный режим микрофона";
+"Standard" = "Стандартный";
+"Voice Isolation" = "Изоляция голоса";
+"Wide Spectrum" = "Широкий спектр";
+"For music, choose Standard or Wide Spectrum in system microphone settings when available." = "Для музыки выберите «Стандартный» или «Широкий спектр» в системных настройках микрофона, если они доступны.";
+"Sound controls are paused while the meeting is on hold." = "Настройки звука недоступны, пока встреча на удержании.";
+"The meeting has ended." = "Встреча завершена.";
+"Off" = "Выключено";
+"Noise suppression" = "Шумоподавление";

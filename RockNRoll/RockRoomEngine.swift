@@ -28,6 +28,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private var refreshScheduled = false
     private let videoSubscriptions = VideoSubscriptionCoordinator<ObjectIdentifier>()
     private var videoPublisher = RoomVideoPublisher()
+    private var studio = StudioModel(audioControl: .fullProcessing)
+    private var studioAudio = StudioAudioUpdates()
     #if DEBUG
     private var testHoldScheduled = false
     private var directMediaForTesting = false
@@ -100,6 +102,20 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         self.microphoneIntentOn = false
         self.cameraIntentOn = false
         self.displayMode = .all
+        studio.end()
+        studioAudio.end()
+        studioAudio = StudioAudioUpdates()
+        studio = StudioModel(audioControl: .fullProcessing)
+        studio.applyProfile = { [weak self, weak room = self.room] profile in
+            guard let self, let room, self.room === room, !self.leaveRequested else { throw CancellationError() }
+            let previous = self.studioAudio.profile
+            self.studioAudio.profile = profile
+            do { try await self.applyAudioProfile(to: room) }
+            catch {
+                if self.room === room && self.studioAudio.profile == profile { self.studioAudio.profile = previous }
+                throw error
+            }
+        }
         catchUp.enter(roomKey: target.originURL.absoluteString + "/" + target.jamID)
         chat.clear()
         chat.onSend = { [weak self] in self?.sendChat($0) }
@@ -112,6 +128,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                                           catchUp: catchUp, chat: chat,
                                           invitationURL: target.invitationURL,
                                           roomIdentifier: target.jamID)
+        view.studio = studio
         view.onLeave = { [weak self] in self?.leave() }
         view.onMicrophone = { [weak self] in self?.setMicrophone($0) }
         view.onCamera = { [weak self] in self?.setCamera($0) }
@@ -291,19 +308,27 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         systemCall.setMuted(!enabled)
         guard !isHeld, let room else { return }
         Task { @MainActor [weak self] in
+            guard let self, self.room === room, !self.leaveRequested, !self.isHeld,
+                  self.microphoneIntentOn == enabled else { return }
             do {
-                _ = try await room.localParticipant.setMicrophone(enabled: enabled)
-                guard let self, self.room === room, !self.leaveRequested else { return }
+                _ = try await room.localParticipant.setMicrophone(enabled: enabled,
+                    captureOptions: StudioAudioPolicy.captureOptions(for: self.studioAudio.profile))
+                guard self.room === room, !self.leaveRequested else { return }
+                do { try await self.applyAudioProfile(to: room) }
+                catch is CancellationError { return }
+                catch { self.studio.reportUpdateFailure() }
                 self.updatePiPMicrophoneStatus()
                 self.callView?.render(room: room)
-            } catch {
-                if self?.microphoneIntentOn == enabled {
-                    self?.microphoneIntentOn = false
-                    self?.callView?.setMicrophone(false)
-                    self?.systemCall.setMuted(true)
+            } catch is CancellationError { return }
+            catch {
+                guard self.room === room, !self.leaveRequested else { return }
+                if self.microphoneIntentOn == enabled {
+                    self.microphoneIntentOn = false
+                    self.callView?.setMicrophone(false)
+                    self.systemCall.setMuted(true)
                 }
-                self?.updatePiPMicrophoneStatus()
-                self?.onMediaStatus?(L("Microphone unavailable: %@", error.localizedDescription))
+                self.updatePiPMicrophoneStatus()
+                self.onMediaStatus?(L("Microphone unavailable: %@", error.localizedDescription))
             }
         }
     }
@@ -364,8 +389,10 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         guard let room else { return }
         let publisher = videoPublisher
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            _ = try? await room.localParticipant.setMicrophone(enabled: self.microphoneIntentOn && !self.receptionPaused)
+            guard let self, self.room === room, !self.leaveRequested else { return }
+            _ = try? await room.localParticipant.setMicrophone(enabled: self.microphoneIntentOn && !self.receptionPaused,
+                captureOptions: StudioAudioPolicy.captureOptions(for: self.studioAudio.profile))
+            try? await self.applyAudioProfile(to: room)
             _ = try? await publisher.perform { options in
                 guard self.room === room, !self.leaveRequested else { throw CancellationError() }
                 return try await room.localParticipant.setCamera(enabled: self.cameraIntentOn && !self.receptionPaused,
@@ -375,6 +402,19 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             self.updatePiPMicrophoneStatus()
             self.callView?.render(room: room)
         }
+    }
+
+    private func applyAudioProfile(to room: Room) async throws {
+        guard self.room === room, !leaveRequested else { throw CancellationError() }
+        guard studio.hasSelection || studioAudio.profile != .conversation else { return }
+        guard let track = room.localParticipant.audioTracks.first(where: { $0.source == .microphone })?.track as? LocalAudioTrack else { return }
+        // This SDK call blocks until its signaling thread finishes; keep it off the UI thread.
+        try await studioAudio.apply { [weak self] profile in
+            guard self?.room === room, self?.leaveRequested == false else { throw CancellationError() }
+            let options = StudioAudioPolicy.processingOptions(for: profile)
+            _ = try await Task.detached { try track.setAudioProcessingOptions(options) }.value
+        }
+        guard self.room === room, !leaveRequested else { throw CancellationError() }
     }
 
     private func flipCamera() {
@@ -389,6 +429,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
 
     private func finish(failed: Bool) {
         guard hasJoinStarted else { return }
+        studio.end()
+        studioAudio.end()
         callView?.endFloatingVideo()
         #if DEBUG
         print("Jam engine: finishing; failed=\(failed), connected=\(hasConnected), leaving=\(leaveRequested)")

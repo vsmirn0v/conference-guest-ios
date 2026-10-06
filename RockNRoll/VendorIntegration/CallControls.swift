@@ -86,6 +86,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private let onFloatingPreferenceChanged: () -> Void
     private var floatingVideoAvailable = false
     private var refreshMoreMenu: (() -> Void)?
+    private let studio: StudioModel?
 
     var canFloatVideo: Bool {
         floatingVideoAvailable && !isHeld && displayMode != .audioOnly &&
@@ -103,7 +104,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
          onLeave: @escaping () -> Void, onScreenShare: @escaping (Bool) -> Void,
          onMicrophoneState: @escaping (Bool) -> Void,
          onCameraState: @escaping (Bool) -> Void,
-         usesNativeParticipants: Bool = ProcessInfo.processInfo.isiOSAppOnMac) {
+         usesNativeParticipants: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
+         studio: StudioModel? = nil) {
+        self.studio = studio
         self.usesNativeParticipants = usesNativeParticipants
         self.localPreview = localPreview
         self.localShareCard = LocalSharePreviewCard(model: localPreview)
@@ -402,6 +405,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.microphone.accessibilityLabel = media == .on ? L("Mute microphone") : L("Unmute microphone")
             self.microphone.largeContentTitle = self.microphone.accessibilityLabel
             self.workspace.microphoneOn = media == .on
+            self.studio?.microphoneOn = media == .on
         }.store(in: &subscriptions)
         state.$cameraState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
@@ -418,6 +422,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.camera.accessibilityLabel = media == .on ? L("Stop video") : L("Start video")
             self.camera.largeContentTitle = self.camera.accessibilityLabel
             self.workspace.cameraOn = media == .on
+            self.studio?.cameraOn = media == .on
         }.store(in: &subscriptions)
         state.$screenShareState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
@@ -639,6 +644,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
 
     func setHeld(_ held: Bool) {
+        studio?.held = held
         isHeld = held
         if held { focus.show() }
         workspace.onHold = held
@@ -901,6 +907,12 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.refreshMoreMenu?()
         }
         var actions: [UIMenuElement] = [focusAction, autoHide, float, automatic, viewMenu, fit, flip]
+        if let studio {
+            actions.insert(UIAction(title: L("Studio"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
+                guard let self else { return }
+                StudioPresentation.show(studio, from: self.moreButton)
+            }, at: 0)
+        }
         if workspace.invitationURL != nil {
             actions.insert(UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
                 [weak self] _ in guard let self else { return }

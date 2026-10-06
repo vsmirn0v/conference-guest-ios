@@ -19,6 +19,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     var onSpeaker: ((Bool) -> Void)?
     var onShare: ((Bool) -> Void)?
     var onDisplayMode: ((ConferenceDisplayMode) -> Void)?
+    var studio: StudioModel?
 
     private let focus = CallFocusController()
     private var headerView: UIStackView?
@@ -1132,6 +1133,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private func configureMoreMenu() {
         moreButton.accessibilityValue = floatingVideo?.canShow == true ? L("Floating video available") : nil
         var items: [UIMenuElement] = []
+        if let studio {
+            items.append(UIAction(title: L("Studio"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
+                guard let self else { return }
+                StudioPresentation.show(studio, from: self.moreButton)
+            })
+        }
         if workspace.invitationURL != nil {
             items.append(UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
                 [weak self] _ in guard let self else { return }
@@ -1214,6 +1221,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func setMicrophone(_ enabled: Bool) {
         isMicrophoneOn = enabled
+        studio?.microphoneOn = enabled
         workspace.microphoneOn = enabled
         view.setNeedsLayout()
         microphone.configuration?.image = UIImage(systemName: enabled ? "mic.fill" : "mic.slash.fill")
@@ -1230,6 +1238,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func setCamera(_ enabled: Bool) {
         isCameraOn = enabled
+        studio?.cameraOn = enabled
         workspace.cameraOn = enabled
         flipCamera.isEnabled = enabled
         configureMoreMenu()
@@ -1243,6 +1252,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func setHeld(_ held: Bool) {
         isHeld = held
+        studio?.held = held
         if held { focus.show() }
         workspace.onHold = held
         floatingVideo?.setSuspended(held)

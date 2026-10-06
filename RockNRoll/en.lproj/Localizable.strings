@@ -403,3 +403,28 @@
 "Move down" = "Move down";
 
 "Touch and hold, then drag to reorder." = "Touch and hold, then drag to reorder.";
+
+/* Meeting Studio */
+"Studio" = "Studio";
+"Music" = "Music";
+"Appearance" = "Appearance";
+"Sound" = "Sound";
+"Sound profile" = "Sound profile";
+"Camera effects" = "Camera effects";
+"Use system controls for background blur, lighting and framing supported by your camera." = "Use system controls for background blur, lighting and framing supported by your camera.";
+"Turn on video in the meeting to use camera effects." = "Turn on video in the meeting to use camera effects.";
+"Music reduces noise suppression. Other audio processing is controlled by the meeting." = "Music reduces noise suppression. Other audio processing is controlled by the meeting.";
+"Music reduces speech filtering and automatic gain changes, while keeping echo protection. Headphones give the best result." = "Music reduces speech filtering and automatic gain changes, while keeping echo protection. Headphones give the best result.";
+"Your microphone stays muted. The profile is used when you unmute." = "Your microphone stays muted. The profile is used when you unmute.";
+"Updating sound…" = "Updating sound…";
+"Sound settings could not update. Try again." = "Sound settings could not update. Try again.";
+"System microphone settings" = "System microphone settings";
+"System microphone mode" = "System microphone mode";
+"Standard" = "Standard";
+"Voice Isolation" = "Voice Isolation";
+"Wide Spectrum" = "Wide Spectrum";
+"For music, choose Standard or Wide Spectrum in system microphone settings when available." = "For music, choose Standard or Wide Spectrum in system microphone settings when available.";
+"Sound controls are paused while the meeting is on hold." = "Sound controls are paused while the meeting is on hold.";
+"The meeting has ended." = "The meeting has ended.";
+"Off" = "Off";
+"Noise suppression" = "Noise suppression";

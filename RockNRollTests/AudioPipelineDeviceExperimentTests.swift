@@ -1,6 +1,7 @@
 #if DEBUG
 import AVFoundation
 import AudioToolbox
+import ConferenceCore
 import LiveKit
 import XCTest
 @testable import RockNRoll
@@ -8,6 +9,71 @@ import XCTest
 /// Local engine diagnostic: no Room, network transport, file, or saved PCM.
 @MainActor
 final class AudioPipelineDeviceExperimentTests: XCTestCase {
+    func testStudioProfilesApplyToLiveSender() async throws {
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_STUDIO_AUDIO"] == "1",
+              ProcessInfo.processInfo.isiOSAppOnMac,
+              let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_OUTGOING_JAM_URL"] else {
+            throw XCTSkip("Opt-in Mac live Studio processing check")
+        }
+        let session = AVAudioSession.sharedInstance(), manager = AudioManager.shared
+        guard !manager.isEngineRunning else { throw XCTSkip("Requires an idle engine") }
+        let category = session.category, mode = session.mode, options = session.categoryOptions
+        let manual = manager.isManualRenderingMode
+        let room = Room()
+        var feed: Task<Void, Never>?
+        defer {
+            feed?.cancel()
+            try? manager.stopLocalRecording()
+            try? manager.setManualRenderingMode(manual)
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            try? session.setCategory(category, mode: mode, options: options)
+        }
+        do {
+            // A synthetic silence source exercises a real sender without opening
+            // the microphone or sending any local audio to the test room.
+            try manager.setManualRenderingMode(true)
+            let credentials = try await JamService().join(try JamTarget.parse(invitation), name: "Sound settings QA")
+            try await room.connect(url: credentials.serverURL.absoluteString, token: credentials.participantToken,
+                                   connectOptions: ConnectOptions(autoSubscribe: false))
+            let track = await LocalAudioTrack.createTrack(options: AudioCaptureOptions(), reportStatistics: true)
+            _ = try await room.localParticipant.publish(audioTrack: track, options: AudioPublishOptions(dtx: false))
+            feed = Task { @MainActor in
+                let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+                while !Task.isCancelled {
+                    let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 480)!
+                    buffer.frameLength = 480
+                    if let data = buffer.floatChannelData { memset(data[0], 0, 480 * MemoryLayout<Float>.size) }
+                    manager.mixer.capture(appAudio: buffer)
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+            }
+            var previousPackets = 0.0
+            for profile in [StudioAudioProfile.conversation, .music, .conversation] {
+                _ = try await Task.detached { try track.setAudioProcessingOptions(StudioAudioPolicy.processingOptions(for: profile)) }.value
+                try await Task.sleep(for: .seconds(2))
+                let state = manager.audioProcessingState
+                XCTAssertEqual(state.echoCancellation.requested?.isEnabled, true)
+                XCTAssertEqual(state.noiseSuppression.requested?.isEnabled, profile == .conversation)
+                XCTAssertEqual(state.autoGainControl.requested?.isEnabled, profile == .conversation)
+                if profile == .music {
+                    XCTAssertEqual(state.echoCancellation.effective, .software)
+                    XCTAssertEqual(state.noiseSuppression.effective, .disabled)
+                    XCTAssertEqual(state.autoGainControl.effective, .disabled)
+                }
+                let packets = track.statistics?.outboundRtpStream.reduce(0.0) { $0 + Double($1.packetsSent ?? 0) } ?? 0
+                XCTAssertGreaterThan(packets, previousPackets, "Audio packets stopped after a profile change")
+                previousPackets = packets
+                print("STUDIO_AUDIO,profile=\(profile.rawValue),aec=\(state.echoCancellation.effective.rawValue),noise=\(state.noiseSuppression.effective.rawValue),gain=\(state.autoGainControl.effective.rawValue)")
+            }
+            feed?.cancel()
+            await room.disconnect()
+        } catch {
+            feed?.cancel()
+            await room.disconnect()
+            throw error
+        }
+    }
+
     func testPlatformVoiceProcessingAndOpusAvailability() async throws {
         guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_AUDIO_DEVICE"] == "1" else {
             throw XCTSkip("Opt-in local audio capture diagnostic")

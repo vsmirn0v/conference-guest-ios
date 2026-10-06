@@ -128,6 +128,11 @@ extension SceneDelegate {
             model.catchUpStore.end(.anotherCall)
             let call = RockCallViewController(title: "Open rehearsal",
                 catchUp: model.catchUpStore, chat: model.chat)
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_STUDIO"] == "1" {
+                let studio = StudioModel(audioControl: .fullProcessing)
+                studio.applyProfile = { _ in }
+                call.studio = studio
+            }
             call.fixtureParticipants = [ParticipantStatus(id: "local", name: "Rock QA", isLocal: true,
                 microphoneOn: false, cameraOn: false, screenShareOn: false, isSpeaking: false,
                 videoKey: nil, shareKey: nil)]

@@ -51,6 +51,8 @@ final class NativeConferenceEngine: CallEngine {
     private var roomTitleSubscription: AnyCancellable?
     private var toastSubscription: AnyCancellable?
     private weak var activeControls: CallControls?
+    private var studio = StudioModel(audioControl: .noiseSuppression)
+    private var studioSubscription: AnyCancellable?
     var continuationHostView: UIView? { activeControls }
     private let streamViews = GuestStreamViews()
     private var offeredShare: GuestStreamViews.PinTarget?
@@ -449,6 +451,7 @@ final class NativeConferenceEngine: CallEngine {
 
     private func restoreMediaIntent(using selectedCoordinator: JazzActiveConferenceCoordinator? = nil) {
         guard let coordinator = selectedCoordinator ?? activeCoordinator else { return }
+        if studio.hasSelection { coordinator.toggleEnableNoiseSuppression(isEnabled: studio.profile == .conversation) }
         coordinator.toggleIncomingStreamsDisabled(isEnabled: displayMode != .audioOnly)
         coordinator.toggleMicrohone(isOn: microphoneIntentOn)
         coordinator.toggleCamera(isOn: cameraIntentOn)
@@ -817,6 +820,19 @@ final class NativeConferenceEngine: CallEngine {
             guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                   !self.leaveRequested else { return UIView() }
             self.activeCoordinator = coordinator
+            if !self.studio.active { self.studio = StudioModel(audioControl: .noiseSuppression) }
+            self.studio.applyProfile = { [weak self] profile in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                      !self.leaveRequested, let current = self.activeCoordinator else { throw CancellationError() }
+                current.toggleEnableNoiseSuppression(isEnabled: profile == .conversation)
+            }
+            if self.studio.hasSelection { coordinator.toggleEnableNoiseSuppression(isEnabled: self.studio.profile == .conversation) }
+            self.studioSubscription?.cancel()
+            self.studioSubscription = state.$activeConferenceSettingsState.receive(on: DispatchQueue.main)
+                .sink { [weak self] settings in
+                    guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                    self.studio.observeNoiseSuppression(settings.isNoiseSuppressionEnabled)
+                }
             // The SDK reads its name service at initialization and retains that name
             // between rooms. Update the conference profile on every new join too.
             if let name = self.nameForNextCoordinator {
@@ -874,7 +890,7 @@ final class NativeConferenceEngine: CallEngine {
                                         }, onCameraState: { [weak self] isOn in
                                             guard let self, self.sessionEpoch == epoch, !self.isSystemHeld else { return }
                                             self.cameraIntentOn = isOn
-                                        })
+                                        }, studio: self.studio)
             self.activeControls = controls
             controls.onPinParticipant = { [weak self] target in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
@@ -1017,6 +1033,8 @@ final class NativeConferenceEngine: CallEngine {
 
     private func finishSession(userEnded: Bool, event: CallEvent) {
         guard finishing == nil, hasJoinStarted else { return }
+        studio.end()
+        studioSubscription?.cancel(); studioSubscription = nil
         let epoch = sessionEpoch
         let destination = onEvent
         events.onEvent = nil
