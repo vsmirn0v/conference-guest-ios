@@ -1,5 +1,3 @@
-import Contacts
-import ContactsUI
 import ConferenceCore
 import SwiftUI
 
@@ -10,7 +8,7 @@ struct JoinView: View {
     @ObservedObject var sync: RoomSyncCoordinator
     @ObservedObject var continuation: MeetingContinuationCoordinator
     @State private var showingSavedHistory = false
-    @State private var showingContactPicker = false
+    @FocusState private var nameFocused: Bool
     @State private var showingSettings = false
     @State private var showingAllRooms = false
     @StateObject private var mediaCheck = StudioModel(audioControl: .fullProcessing, preferences: .standard)
@@ -67,23 +65,24 @@ struct JoinView: View {
                         }
                         .font(.subheadline.weight(.semibold))
                     }
-                    Button { model.showingNameEditor = true } label: {
-                        HStack {
-                            Image(systemName: "person.crop.circle")
-                            Text(model.displayName.isEmpty ? L("Add your name") : L("Joining as %@", model.displayName))
-                                .multilineTextAlignment(.leading)
-                            Spacer(minLength: 4)
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
+                    HStack(spacing: 12) {
+                        Image(systemName: "person.crop.circle").foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(L("Your name")).font(.caption).foregroundStyle(.secondary)
+                            TextField(L("Name shown to musicians"), text: $model.displayName)
+                                .accessibilityIdentifier("name.input")
+                                .textContentType(.nickname)
+                                .autocorrectionDisabled()
+                                .focused($nameFocused)
+                                .submitLabel(.go)
+                                .onSubmit { join() }
                         }
-                        .font(.subheadline)
                     }
-                    .accessibilityLabel(L("Edit your name, currently %@", model.displayName))
-                    if !model.displayName.isEmpty && !validDisplayName {
+                    if (model.isNameRequiredForJoin || !model.displayName.isEmpty) && !validDisplayName {
                         Text(L("Enter a name of up to %ld characters before joining.", model.namePolicy.maximumNameScalars))
                             .font(.footnote).foregroundStyle(.red)
                     }
-                    Button { model.join() } label: {
+                    Button { join() } label: {
                         HStack {
                             Spacer()
                             if model.isJoining { ProgressView().tint(canJoin ? .black : .primary) }
@@ -174,9 +173,9 @@ struct JoinView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingSettings = true } label: {
-                        Image(systemName: "person.crop.circle")
+                        Image(systemName: "gearshape")
                     }
-                    .accessibilityLabel(L("Profile and settings"))
+                    .accessibilityLabel(L("Settings"))
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -196,8 +195,21 @@ struct JoinView: View {
             .sheet(isPresented: Binding(get: { mediaCheck.presented }, set: { if !$0 { mediaCheck.close() } })) {
                 StudioPanel(model: mediaCheck)
             }
-            .onChange(of: model.isJoining) { if $0 { mediaCheck.close() } }
-            .onDisappear { favoriteDrag.cancel() }
+            .onChange(of: model.isJoining) {
+                if $0 { nameFocused = false; sync.endNameEditing(); mediaCheck.close() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIScene.willDeactivateNotification)) { _ in
+                nameFocused = false
+                sync.endNameEditing()
+            }
+            .onChange(of: nameFocused) { focused in
+                if focused { sync.beginNameEditing() } else { sync.endNameEditing() }
+            }
+            .onChange(of: model.isNameRequiredForJoin) { required in
+                if required { nameFocused = true }
+            }
+            .onAppear { if model.isNameRequiredForJoin { nameFocused = true } }
+            .onDisappear { favoriteDrag.cancel(); sync.endNameEditing() }
             .alert(L("Join here without moving the other device?"),
                                 isPresented: $confirmingStaleContinuation,
                                 presenting: staleContinuation) { jam in
@@ -206,7 +218,6 @@ struct JoinView: View {
             } message: { _ in
                 Text(L("The other device may still play meeting audio. Disconnect it or use headphones to avoid echo."))
             }
-            .sheet(isPresented: $model.showingNameEditor, onDismiss: model.nameEditorDismissed) { nameSheet }
             .sheet(item: $model.siteSelection) { selection in
                 MeetingWebsiteSelectionView(
                     rememberedOrigins: selection.rememberedOrigins,
@@ -264,36 +275,11 @@ struct JoinView: View {
             !model.isJoining && !model.isInConference && !model.isLeaving
     }
 
-    private var nameSheet: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField(L("Name shown to musicians"), text: $model.displayName)
-                        .textContentType(.nickname)
-                        .autocorrectionDisabled()
-                    Button(L("Choose my contact")) { showingContactPicker = true }
-                } header: {
-                    Text(L("Your name"))
-                } footer: {
-                    Text(L("This name is saved for future jams. Use up to %ld characters.", model.namePolicy.maximumNameScalars))
-                }
-            }
-            .navigationTitle(L("Your name"))
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L("Cancel")) { model.showingNameEditor = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(model.isNameRequiredForJoin ? L("Join jam") : L("Done")) { model.confirmNameEntry() }
-                        .disabled(!validDisplayName)
-                }
-            }
-            .sheet(isPresented: $showingContactPicker) {
-                ContactNamePicker(isPresented: $showingContactPicker) { model.displayName = $0 }
-            }
-        }
-        .onAppear { sync.beginNameEditing() }
-        .onDisappear { sync.endNameEditing() }
+    private func join() {
+        nameFocused = false
+        sync.endNameEditing()
+        model.join()
+        if model.isNameRequiredForJoin { nameFocused = true }
     }
 
     private var favoriteSection: some View {
@@ -390,12 +376,6 @@ struct JoinView: View {
     private var settingsSheet: some View {
         NavigationStack {
             Form {
-                Section(L("Your name")) {
-                    TextField(L("Your name"), text: $model.displayName)
-                        .textContentType(.nickname)
-                        .autocorrectionDisabled()
-                    Button(L("Choose my contact")) { showingContactPicker = true }
-                }
                 Section(L("Compatible meeting website")) {
                     TextField(L("HTTPS website address"), text: $model.guestWebsiteOrigin)
                         .textInputAutocapitalization(.never)
@@ -413,14 +393,9 @@ struct JoinView: View {
                     Link(L("Third-party notices"), destination: URL(string: "https://rock.glowsoft.ru/notices")!)
                 }
             }
-            .navigationTitle(L("Profile and settings"))
+            .navigationTitle(L("Settings"))
             .toolbar { Button(L("Done")) { showingSettings = false } }
-            .sheet(isPresented: $showingContactPicker) {
-                ContactNamePicker(isPresented: $showingContactPicker) { model.displayName = $0 }
-            }
         }
-        .onAppear { sync.beginNameEditing() }
-        .onDisappear { sync.endNameEditing() }
     }
 }
 
@@ -459,37 +434,6 @@ struct MeetingWebsiteSelectionView: View {
             .toolbar { Button(L("Cancel"), action: onCancel) }
         }
         .presentationDetents([.medium, .large])
-    }
-}
-
-private struct ContactNamePicker: UIViewControllerRepresentable {
-    @Binding var isPresented: Bool
-    let onName: (String) -> Void
-
-    func makeUIViewController(context: Context) -> CNContactPickerViewController {
-        let picker = CNContactPickerViewController()
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ controller: CNContactPickerViewController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject, CNContactPickerDelegate {
-        let parent: ContactNamePicker
-        init(_ parent: ContactNamePicker) { self.parent = parent }
-
-        func contactPicker(_ picker: CNContactPickerViewController, didSelect contact: CNContact) {
-            let name = (CNContactFormatter.string(from: contact, style: .fullName) ?? contact.nickname)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !name.isEmpty { parent.onName(String(name.prefix(80))) }
-            parent.isPresented = false
-        }
-
-        func contactPickerDidCancel(_ picker: CNContactPickerViewController) {
-            parent.isPresented = false
-        }
     }
 }
 

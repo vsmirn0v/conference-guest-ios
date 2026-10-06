@@ -19,7 +19,6 @@
 "Across your devices" = "Across your devices";
 "Active jams could not refresh. Try again when iCloud is available." = "Active jams could not refresh. Try again when iCloud is available.";
 "Active-jam sharing was reset. Enable it again to continue." = "Active-jam sharing was reset. Enable it again to continue.";
-"Add your name" = "Add your name";
 "All video" = "All video";
 "Another call" = "Another call";
 "Another website" = "Another website";
@@ -64,7 +63,6 @@
 "Chat message" = "Chat message";
 "Checking transcript availability…" = "Checking transcript availability…";
 "Choose audio output" = "Choose audio output";
-"Choose my contact" = "Choose my contact";
 "Choose the meeting website to open this link." = "Choose the meeting website to open this link.";
 "Choose the name other musicians will see." = "Choose the name other musicians will see.";
 "Choose the name to use across devices" = "Choose the name to use across devices";
@@ -105,7 +103,6 @@
 "Display: All video" = "Display: All video";
 "Done" = "Done";
 "Earlier unread messages may be incomplete after history changed." = "Earlier unread messages may be incomplete after history changed.";
-"Edit your name, currently %@" = "Edit your name, currently %@";
 "Enable audio here" = "Enable audio here";
 "Enable iCloud Sync" = "Enable iCloud Sync";
 "Enlarge local sharing preview" = "Enlarge local sharing preview";
@@ -148,7 +145,6 @@
 "Join jam" = "Join jam";
 "Join with mic and camera off" = "Join with mic and camera off";
 "Joined alongside the other device. Audio, microphone and camera are off." = "Joined alongside the other device. Audio, microphone and camera are off.";
-"Joining as %@" = "Joining as %@";
 "Joining canceled." = "Joining canceled.";
 "Joining…" = "Joining…";
 "Jump to latest ↓" = "Jump to latest ↓";
@@ -232,7 +228,6 @@
 "Preview paused to avoid repetition" = "Preview paused to avoid repetition";
 "Previously used websites" = "Previously used websites";
 "Privacy policy" = "Privacy policy";
-"Profile and settings" = "Profile and settings";
 "Quiet connection moved here. Audio, microphone and camera are off." = "Quiet connection moved here. Audio, microphone and camera are off.";
 "Recent jams" = "Recent jams";
 "Reconnecting…" = "Reconnecting…";
@@ -322,7 +317,6 @@
 "This meeting app link is incomplete or invalid." = "This meeting app link is incomplete or invalid.";
 "This meeting link names two different websites." = "This meeting link names two different websites.";
 "This message is too large to send." = "This message is too large to send.";
-"This name is saved for future jams. Use up to %ld characters." = "This name is saved for future jams. Use up to %ld characters.";
 "This phone has not detected a missed section in this jam." = "This phone has not detected a missed section in this jam.";
 "This room is saved on more than one website. Choose where to join." = "This room is saved on more than one website. Choose where to join.";
 "Transcript received" = "Transcript received";
@@ -446,3 +440,4 @@
 "Sound settings" = "Sound settings";
 "Touch and hold to configure without turning it on." = "Touch and hold to configure without turning it on.";
 "Conversation reduces noise. Music keeps more detail." = "Conversation reduces noise. Music keeps more detail.";
+"Settings" = "Settings";

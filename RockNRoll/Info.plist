@@ -48,8 +48,6 @@
 	<string>Use Bluetooth headphones and other audio devices for jam audio, including when the jam continues in the background.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Share video when you choose to turn on your camera in a jam.</string>
-	<key>NSContactsUsageDescription</key>
-	<string>Choose a contact to fill your jam name. Only the selected name is sent when you join.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Let others hear you when you turn on your microphone in a jam.</string>
 	<key>NSUserActivityTypes</key>

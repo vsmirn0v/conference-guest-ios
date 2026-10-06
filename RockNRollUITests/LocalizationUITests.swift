@@ -25,10 +25,10 @@ final class LocalizationUITests: XCTestCase {
         let app = launch()
         assertVisible(app.textFields["Ссылка-приглашение"], app: app)
         XCTAssertTrue(app.buttons["Войти в джем"].exists)
-        app.buttons["Профиль и настройки"].tap()
-        XCTAssertTrue(app.navigationBars["Профиль и настройки"].waitForExistence(timeout: 10))
-        assertVisible(app.textFields["Ваше имя"], app: app)
-        assertVisible(app.buttons["Выбрать свой контакт"], app: app)
+        assertVisible(app.textFields["Имя для музыкантов"], app: app)
+        XCTAssertFalse(app.buttons["Выбрать свой контакт"].exists)
+        app.buttons["Настройки"].tap()
+        XCTAssertTrue(app.navigationBars["Настройки"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Совместимый сайт встреч"].exists)
         attach(app, "Russian settings")
         app.navigationBars.buttons["Готово"].tap()
@@ -36,7 +36,7 @@ final class LocalizationUITests: XCTestCase {
         app.terminate()
         let english = launch(language: "en")
         XCTAssertTrue(english.textFields["Invitation link"].waitForExistence(timeout: 10))
-        XCTAssertTrue(english.buttons["Profile and settings"].exists)
+        XCTAssertTrue(english.buttons["Settings"].exists)
     }
     func testRussianConversationAndContentStayDistinctAcrossRotation() {
         let app = launch("conversation")

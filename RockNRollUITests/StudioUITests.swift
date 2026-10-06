@@ -2,6 +2,24 @@ import XCTest
 import Vision
 
 final class StudioUITests: XCTestCase {
+    func testPrejoinPreviewDismissesToJoinWithoutConnecting() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        defer { app.terminate() }
+        let check = app.buttons["studio.prejoin"]
+        XCTAssertTrue(check.waitForExistence(timeout: 10))
+        if !check.isHittable { app.swipeUp() }
+        check.tap()
+        XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
+        let status = app.descendants(matching: .any)["studio.preview-status"].firstMatch
+        XCTAssertTrue(status.label.contains("Only you"))
+        XCTAssertFalse(app.buttons["studio.start-video"].exists)
+        app.buttons["studio.done"].tap()
+        XCTAssertTrue(check.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["studio.done"].exists)
+        XCTAssertTrue(app.buttons["Join jam"].exists)
+    }
     func testGuestLongPressOpensPrivatePreviewWithoutTogglingMedia() { checkShortcuts(guest: true) }
     func testJamLongPressOpensPrivatePreviewWithoutTogglingMedia() { checkShortcuts(guest: false) }
 
@@ -99,6 +117,25 @@ final class StudioUITests: XCTestCase {
         wait(for: [canStop], timeout: 5)
         stop.tap()
         XCTAssertTrue(camera.waitForExistence(timeout: 10))
+    }
+
+    func testLiveLeavingWithCameraOnCannotStartSystemPiP() throws {
+        let app = try liveApp()
+        defer { app.terminate() }
+        app.buttons["Start video"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Stop video"].firstMatch.waitForExistence(timeout: 10))
+        let ready = expectation(for: NSPredicate(format: "value == %@", "Floating video available"),
+            evaluatedWith: app.buttons["More call options"].firstMatch)
+        wait(for: [ready], timeout: 8)
+        app.buttons["Leave"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["Join jam"].waitForExistence(timeout: 10))
+        XCUIDevice.shared.press(.home)
+        let pip = XCUIApplication(bundleIdentifier: "com.apple.springboard").windows["PIP-SBInteractionPassThroughView"]
+        let unexpected = expectation(for: NSPredicate(format: "exists == true"), evaluatedWith: pip)
+        unexpected.isInverted = true
+        wait(for: [unexpected], timeout: 3)
+        app.activate()
+        XCTAssertTrue(app.buttons["Join jam"].waitForExistence(timeout: 5))
     }
 
     func testLiveGuestSpeakerAndBackgroundPiP() throws {

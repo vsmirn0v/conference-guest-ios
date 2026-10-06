@@ -15,6 +15,12 @@
 - Include the previously committed meeting-lifetime PiP cleanup and rejection of
   late camera frames after leaving (e673023).
 
+- Remove address-book APIs, contact picker and the Contacts purpose string.
+  Edit the display name directly on the join screen; retain local persistence and
+  optional iCloud sync. The first join/native link focuses the inline name field,
+  preserving the invitation and requiring an explicit Join after entering it.
+  Commit pending name edits when focus ends, joining starts or the app backgrounds.
+
 Minimum iOS remains 16.0. All three bundles report 0.2.0 (38).
 No backend, microphone capture, recording output, model download or privacy
 permission was added. Private preview does use camera permission and the system
@@ -44,9 +50,22 @@ engine's selected camera. No new battery/thermal or remote image-quality result
 is claimed. A prior immediate weak-reference assertion depended on UIKit's
 transient autorelease pool; the ownership check now drains that pool explicitly.
 
+- Inline-name changes: 22 name, sync and localization unit checks and five home/
+  sync UI checks passed. Subsequent live guest rejoin uses the edited name without
+  restarting. Prejoin preview, Russian/English settings, background edit completion
+  and name persistence after restart passed on the small iOS 17.5 simulator.
+- Website Go tests passed. The privacy page is updated on the existing web container;
+  only rock-web was restarted, with its previous binary retained for rollback and
+  restart=always preserved. No nginx or room-engine configuration was changed.
+- Actual private-camera/effect/publication behavior was qualified on iVitalii before
+  the contact-only change. The optional real system PiP-after-Leave check could not
+  start because the phone was unavailable to Xcode; that acceptance remains pending.
+  Existing simulator PiP lifecycle checks passed.
+
 ## Delivery
 
-Beta notes: “Private video preview, easier camera and sound settings, and improved call stability.”
+Beta notes: “Private video preview, easier camera and sound settings, simpler name entry, and improved call stability.”
 
-Archive, signature validation, upload and tester-group readback are recorded below
-when delivery completes.
+The initial archive from b1a249d was superseded before uploading when contact
+access was removed. Final archive, signature validation, upload and tester-group
+readback are recorded below when delivery completes.

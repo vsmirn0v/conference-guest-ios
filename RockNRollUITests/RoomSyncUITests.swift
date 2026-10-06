@@ -54,7 +54,7 @@ final class RoomSyncUITests: XCTestCase {
     }
     func testOptionalSyncSettingsAndInitialNameChoice() {
         let app = launch("available")
-        app.buttons["Profile and settings"].tap()
+        app.buttons["Settings"].tap()
         let enabled = app.switches["Sync with iCloud"]
         XCTAssertTrue(enabled.waitForExistence(timeout: 8))
         XCTAssertEqual(enabled.value as? String, "0")
@@ -63,9 +63,6 @@ final class RoomSyncUITests: XCTestCase {
         reveal(cloudName, in: app)
         XCTAssertTrue(cloudName.waitForExistence(timeout: 10))
         cloudName.tap()
-        let name = app.textFields["Your name"]
-        reveal(name, in: app, down: true)
-        XCTAssertEqual(name.value as? String, "Ani")
         let recent = app.switches["Include recent jams"]
         reveal(recent, in: app)
         XCTAssertEqual(recent.value as? String, "1")
@@ -75,12 +72,13 @@ final class RoomSyncUITests: XCTestCase {
         reveal(enabled, in: app); toggle(enabled); XCTAssertEqual(enabled.value as? String, "0")
         XCTAssertTrue(app.staticTexts["Stored on this device"].exists)
         app.buttons["Done"].tap()
-        XCTAssertTrue(app.buttons["Edit your name, currently Ani"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.textFields["name.input"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["name.input"].value as? String, "Ani")
         attach(app, "Optional iCloud sync")
     }
     func testUnavailableCloudDoesNotBlockJoiningAndSettingsFitRotation() {
         let app = launch("unavailable")
-        app.buttons["Profile and settings"].tap()
+        app.buttons["Settings"].tap()
         let enabled = app.switches["Sync with iCloud"]
         XCTAssertTrue(enabled.waitForExistence(timeout: 8)); toggle(enabled)
         XCTAssertTrue(app.staticTexts["iCloud unavailable. Your changes stay on this device."].waitForExistence(timeout: 8))
@@ -92,12 +90,12 @@ final class RoomSyncUITests: XCTestCase {
         let settled = NSPredicate { _, _ in app.frame.width < app.frame.height && app.buttons["Done"].frame.maxX <= app.frame.width }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: settled, object: nil)], timeout: 5), .completed)
         app.buttons["Done"].tap()
-        let closed = NSPredicate { _, _ in !app.navigationBars["Profile and settings"].exists }
+        let closed = NSPredicate { _, _ in !app.navigationBars["Settings"].exists }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: closed, object: nil)], timeout: 5), .completed)
         let invite = app.textFields["Invitation link"]
         invite.tap(); invite.typeText("https://rock.glowsoft.ru/jams/test")
         XCTAssertTrue(app.buttons["Join jam"].isEnabled)
-        XCTAssertTrue(app.buttons["Edit your name, currently Aram"].exists)
+        XCTAssertEqual(app.textFields["name.input"].value as? String, "Aram")
         attach(app, "Joining remains available offline")
     }
     private func attach(_ app: XCUIApplication, _ name: String) {

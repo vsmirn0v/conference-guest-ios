@@ -19,7 +19,6 @@
 "Across your devices" = "На всех ваших устройствах";
 "Active jams could not refresh. Try again when iCloud is available." = "Не удалось обновить активные джемы. Попробуйте снова, когда iCloud станет доступен.";
 "Active-jam sharing was reset. Enable it again to continue." = "Передача активных джемов сброшена. Включите её снова, чтобы продолжить.";
-"Add your name" = "Добавьте имя";
 "All video" = "Все видео";
 "Another call" = "Другой звонок";
 "Another website" = "Другой сайт";
@@ -64,7 +63,6 @@
 "Chat message" = "Сообщение в чат";
 "Checking transcript availability…" = "Проверяем доступность расшифровки…";
 "Choose audio output" = "Выбрать аудиоустройство";
-"Choose my contact" = "Выбрать свой контакт";
 "Choose the meeting website to open this link." = "Выберите сайт встречи, чтобы открыть ссылку.";
 "Choose the name other musicians will see." = "Укажите имя, которое увидят другие музыканты.";
 "Choose the name to use across devices" = "Выберите имя для всех устройств";
@@ -105,7 +103,6 @@
 "Display: All video" = "Отображение: все видео";
 "Done" = "Готово";
 "Earlier unread messages may be incomplete after history changed." = "После изменения истории часть ранних непрочитанных сообщений может отсутствовать.";
-"Edit your name, currently %@" = "Изменить имя, сейчас %@";
 "Enable audio here" = "Включить звук здесь";
 "Enable iCloud Sync" = "Включить синхронизацию iCloud";
 "Enlarge local sharing preview" = "Увеличить предпросмотр трансляции";
@@ -148,7 +145,6 @@
 "Join jam" = "Войти в джем";
 "Join with mic and camera off" = "Войти без микрофона и камеры";
 "Joined alongside the other device. Audio, microphone and camera are off." = "Вы подключились вместе с другим устройством. Звук, микрофон и камера выключены.";
-"Joining as %@" = "Вход под именем %@";
 "Joining canceled." = "Подключение отменено.";
 "Joining…" = "Подключаемся…";
 "Jump to latest ↓" = "К последним строкам ↓";
@@ -232,7 +228,6 @@
 "Preview paused to avoid repetition" = "Предпросмотр приостановлен, чтобы избежать повтора";
 "Previously used websites" = "Ранее использованные сайты";
 "Privacy policy" = "Конфиденциальность";
-"Profile and settings" = "Профиль и настройки";
 "Quiet connection moved here. Audio, microphone and camera are off." = "Тихое подключение перенесено сюда. Звук, микрофон и камера выключены.";
 "Recent jams" = "Недавние джемы";
 "Reconnecting…" = "Восстанавливаем соединение…";
@@ -322,7 +317,6 @@
 "This meeting app link is incomplete or invalid." = "Ссылка на встречу неполная или недействительная.";
 "This meeting link names two different websites." = "В ссылке указаны два разных сайта.";
 "This message is too large to send." = "Сообщение слишком большое для отправки.";
-"This name is saved for future jams. Use up to %ld characters." = "Это имя сохранится для следующих джемов. Можно использовать до %ld символов.";
 "This phone has not detected a missed section in this jam." = "Это устройство не обнаружило пропущенных фрагментов в этом джеме.";
 "This room is saved on more than one website. Choose where to join." = "Комната сохранена на нескольких сайтах. Выберите, где подключиться.";
 "Transcript received" = "Расшифровка получена";
@@ -446,3 +440,4 @@
 "Sound settings" = "Настройки звука";
 "Touch and hold to configure without turning it on." = "Нажмите и удерживайте для настройки без включения.";
 "Conversation reduces noise. Music keeps more detail." = "Беседа уменьшает шум. Музыка сохраняет больше деталей.";
+"Settings" = "Настройки";

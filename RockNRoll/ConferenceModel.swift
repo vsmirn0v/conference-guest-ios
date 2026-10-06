@@ -31,28 +31,11 @@ final class ConferenceModel: ObservableObject {
     private(set) var connectedURL: URL?
     @Published var showSwitchConfirmation = false
     @Published var siteSelection: LinkSiteSelection?
-    @Published var showingNameEditor = false
-    private var joinAwaitingName: JoinDestination?
-    private var nameEntryConfirmed = false
+    @Published private var joinAwaitingName: JoinDestination?
     var isNameRequiredForJoin: Bool { joinAwaitingName != nil }
     var namePolicy: MeetingInputPolicy { joinAwaitingName?.inputPolicy ?? MeetingInputPolicy(maximumNameScalars: 80) }
     var validDisplayName: Bool {
         namePolicy.accepts(name: displayName)
-    }
-
-    func confirmNameEntry() {
-        guard validDisplayName else { return }
-        displayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        nameEntryConfirmed = true
-        showingNameEditor = false
-    }
-
-    func nameEditorDismissed() {
-        let target = joinAwaitingName
-        joinAwaitingName = nil
-        let confirmed = nameEntryConfirmed
-        nameEntryConfirmed = false
-        if confirmed, let target { startJoin(target) }
     }
 
     private let systemCall = SystemCallCoordinator()
@@ -286,12 +269,11 @@ final class ConferenceModel: ObservableObject {
         let name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard target.inputPolicy.accepts(name: name) else {
             joinAwaitingName = target
-            nameEntryConfirmed = false
-            showingNameEditor = true
             status = L("Choose the name other musicians will see.")
             statusIsError = false
             return
         }
+        joinAwaitingName = nil
         guard let container else {
             status = L("Jam view is unavailable.")
             statusIsError = true

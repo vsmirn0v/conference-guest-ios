@@ -7,24 +7,27 @@ final class NameEntryUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_CLEAR_NAME"] = "1"
         app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
         app.launch()
-        XCTAssertTrue(app.staticTexts["Add your name"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["name.input"].waitForExistence(timeout: 10))
         join("https://rock.glowsoft.ru/jams/test")
         let field = app.textFields["Name shown to musicians"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         XCTAssertEqual(field.value as? String, "Name shown to musicians")
-        let continueButton = app.navigationBars.buttons["Join jam"]
-        XCTAssertFalse(continueButton.isEnabled)
+        XCTAssertTrue(app.staticTexts["Choose the name other musicians will see."].exists)
+        XCTAssertFalse(app.navigationBars["Your name"].exists)
         field.tap()
         field.typeText("Ani First Join")
-        continueButton.tap()
-        assertParticipant("Ani First Join")
-        app.navigationBars["Musicians"].buttons["Done"].tap()
-        app.buttons["Leave"].tap()
-        XCTAssertTrue(app.buttons["Join jam"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Leave"].exists, "Typing must not publish or connect automatically")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertEqual(app.textFields["name.input"].value as? String, "Ani First Join")
+        let keyboardClosed = NSPredicate { _, _ in !self.app.keyboards.firstMatch.exists }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: keyboardClosed, object: nil)], timeout: 5), .completed,
+                       "Backgrounding must finish the name edit")
         app.terminate()
         app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_CLEAR_NAME")
         app.launch()
-        XCTAssertTrue(app.staticTexts["Joining as Ani First Join"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.textFields["name.input"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.textFields["name.input"].value as? String, "Ani First Join")
     }
 
     func testGuestRejoinUsesEditedNameWithoutRestart() throws {
@@ -43,16 +46,14 @@ final class NameEntryUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 10))
         name.tap()
         name.typeText("Name Before Edit")
-        app.navigationBars.buttons["Join jam"].tap()
+        app.buttons["Join jam"].tap()
         assertParticipant("Name Before Edit")
         app.buttons["Close"].tap()
         app.buttons["Leave"].tap()
         XCTAssertTrue(app.buttons["Join jam"].waitForExistence(timeout: 15))
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Edit your name")).firstMatch.tap()
         name.tap()
         name.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Name Before Edit".count))
         name.typeText("Name After Edit")
-        app.buttons["Done"].tap()
         app.buttons["Join jam"].tap()
         assertParticipant("Name After Edit")
         let evidence = XCTAttachment(screenshot: app.screenshot())
@@ -64,6 +65,21 @@ final class NameEntryUITests: XCTestCase {
         }
         app.buttons["Close"].tap()
         app.buttons["Leave"].tap()
+    }
+
+    func testNativeLinkWithNoNameFocusesInlineNameAndKeepsInvitation() {
+        app.launchEnvironment["CONFERENCE_TEST_CLEAR_NAME"] = "1"
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "jcp://jazz?code=first@meeting.example.test&psw=one"
+        app.launch()
+        let name = app.textFields["name.input"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Choose the name other musicians will see."].exists)
+        XCTAssertTrue((app.textFields["invitation.input"].value as? String ?? "").contains("meeting.example.test"))
+        XCTAssertFalse(app.buttons["Leave"].exists)
+        name.typeText("Ani Native Link")
+        XCTAssertEqual(name.value as? String, "Ani Native Link")
+        XCTAssertFalse(app.buttons["Leave"].exists)
     }
 
     private func join(_ invitation: String) {

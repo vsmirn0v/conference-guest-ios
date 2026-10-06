@@ -18,7 +18,7 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertTrue(favorite.waitForExistence(timeout: 10))
         XCTAssertTrue(favorite.frame.maxX < join.frame.minX,
                       "Saved rooms should sit beside the join form in a wide window")
-        XCTAssertTrue(app.buttons["Profile and settings"].isHittable)
+        XCTAssertTrue(app.buttons["Settings"].isHittable)
     }
 
     func testWideJamDocksConversationAndKeepsControlsVisible() throws {
@@ -71,15 +71,12 @@ final class ConferenceMediaUITests: XCTestCase {
         XCTAssertTrue(reopened.waitForExistence(timeout: 10))
     }
 
-    func testHomeIdentityRowOpensNameEditor() throws {
+    func testHomeNameIsEditableWithoutOpeningAnotherScreen() {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launch()
-        let identity = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Edit your name"))
-            .firstMatch
-        XCTAssertTrue(identity.waitForExistence(timeout: 10))
-        identity.tap()
-        XCTAssertTrue(app.textFields["Name shown to musicians"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Choose my contact"].exists)
+        XCTAssertTrue(app.textFields["name.input"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Choose my contact"].exists)
+        XCTAssertTrue(app.buttons["Join jam"].exists)
     }
 
     func testSavedJamShowsItsWebsite() {
@@ -1000,8 +997,7 @@ final class ConferenceMediaUITests: XCTestCase {
     func testStoreHomeScreenshot() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launch()
-        app.buttons["Profile and settings"].tap()
-        let name = app.textFields["Your name"]
+        let name = app.textFields["name.input"]
         XCTAssertTrue(name.waitForExistence(timeout: 15))
         name.tap()
         if let current = name.value as? String, !current.isEmpty {
@@ -1010,9 +1006,7 @@ final class ConferenceMediaUITests: XCTestCase {
         name.typeText("Musician")
         app.terminate()
         app.launch()
-        app.buttons["Profile and settings"].tap()
-        XCTAssertEqual(app.textFields["Your name"].value as? String, "Musician")
-        app.buttons["Done"].tap()
+        XCTAssertEqual(app.textFields["name.input"].value as? String, "Musician")
         let star = app.buttons["Star Open rehearsal"]
         if star.exists { star.tap() }
         attachScreenshot(of: app, named: "Rock’n’Roll home")
@@ -1021,8 +1015,7 @@ final class ConferenceMediaUITests: XCTestCase {
     func testFixtureNameDoesNotReplaceSavedProfile() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launch()
-        app.buttons["Profile and settings"].tap()
-        let name = app.textFields["Your name"]
+        let name = app.textFields["name.input"]
         XCTAssertTrue(name.waitForExistence(timeout: 15))
         name.tap()
         if let current = name.value as? String, !current.isEmpty {
@@ -1046,7 +1039,8 @@ final class ConferenceMediaUITests: XCTestCase {
         app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_NAME")
         app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_DIRECT_MEDIA")
         app.launch()
-        XCTAssertTrue(app.staticTexts["Joining as Configured Musician"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.textFields["name.input"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.textFields["name.input"].value as? String, "Configured Musician")
     }
 
     func testCommunityJamConnectsMuted() throws {
@@ -1580,12 +1574,10 @@ final class ConferenceMediaUITests: XCTestCase {
             if leave.exists { leave.tap() }
         }
 
-        app.buttons["Profile and settings"].tap()
-        let name = app.textFields["Your name"]
+        let name = app.textFields["name.input"]
         XCTAssertTrue(name.waitForExistence(timeout: 15))
         name.tap()
         name.typeText("Link QA")
-        app.buttons["Done"].tap()
         app.buttons["Join jam"].tap()
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
 

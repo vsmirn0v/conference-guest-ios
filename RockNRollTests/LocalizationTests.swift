@@ -48,22 +48,26 @@ final class LocalizationTests: XCTestCase {
     }
     func testInterpolationPreservesNamesAndEnglishFallback() throws {
         let name = "Ani %@ / Ани"
-        XCTAssertEqual(Localization.text("Joining as %@", arguments: [name], bundle: try language("ru")),
-                       "Вход под именем " + name)
-        XCTAssertEqual(Localization.text("Joining as %@", arguments: [name], bundle: try language("en")),
-                       "Joining as " + name)
+        XCTAssertEqual(Localization.text("Rejoin %@ on %@", arguments: [name, "example.test"], bundle: try language("ru")),
+                       "Снова войти в " + name + " на сайте example.test")
+        XCTAssertEqual(Localization.text("Rejoin %@ on %@", arguments: [name, "example.test"], bundle: try language("en")),
+                       "Rejoin " + name + " on example.test")
         XCTAssertEqual(Localization.text("Unknown future message", bundle: try language("ru")), "Unknown future message")
     }
     func testPermissionExplanationsAndPreviewTitlesAreLocalized() throws {
         let ru = try language("ru")
         for key in ["NSCameraUsageDescription", "NSMicrophoneUsageDescription",
-                    "NSContactsUsageDescription", "NSBluetoothAlwaysUsageDescription"] {
+                    "NSBluetoothAlwaysUsageDescription"] {
             let explanation = ru.localizedString(forKey: key, value: nil, table: "InfoPlist")
             XCTAssertNotEqual(explanation, key)
             XCTAssertTrue(explanation.unicodeScalars.contains { (0x0400...0x04FF).contains($0.value) }, key)
         }
         XCTAssertEqual(Localization.text("Entire screen", bundle: ru), "Весь экран")
         XCTAssertEqual(Localization.text("Pause sharing preview", bundle: ru), "Приостановить предпросмотр")
+    }
+
+    func testNoAddressBookPermissionIsRequested() {
+        XCTAssertNil(Bundle.main.object(forInfoDictionaryKey: "NSContactsUsageDescription"))
     }
 
     func testBroadcastExtensionsIncludeRussianResources() throws {
