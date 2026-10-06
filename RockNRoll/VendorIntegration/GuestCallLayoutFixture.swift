@@ -22,7 +22,7 @@ final class GuestCallLayoutFixture: UIViewController {
         catchUp.enter(roomKey: "guest-layout-\(UUID().uuidString)")
         let scenario = ProcessInfo.processInfo.environment["CONFERENCE_TEST_GUEST_SCENARIO"]
         let activeSpeaker = ActiveSpeakerStore()
-        let studio = scenario == "studio" ? StudioModel(audioControl: .noiseSuppression) : nil
+        let studio = scenario == "studio" ? StudioModel(audioControl: .noiseSuppression, privateCamera: StudioCameraFixture()) : nil
         studio?.observeNoiseSuppression(true)
         studio?.applyProfile = { [weak studio] profile in studio?.observeNoiseSuppression(profile == .conversation) }
         let solo = scenario == "solo"
@@ -31,7 +31,8 @@ final class GuestCallLayoutFixture: UIViewController {
             invitationURL: URL(string: "https://rock.glowsoft.ru/jams/test"), roomIdentifier: "fixture",
             onDisplayMode: { [weak self] mode in self?.streams.displayMode = mode },
             onFloat: {}, onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
-            onMicrophoneState: { _ in }, onCameraState: { _ in },
+            onMicrophoneState: { [weak self] in self?.controls.setFixtureMedia(microphone: $0) },
+            onCameraState: { [weak self] in self?.controls.setFixtureMedia(camera: $0) },
             usesNativeParticipants: scenario == "participants" || ProcessInfo.processInfo.isiOSAppOnMac,
             studio: studio, activeSpeaker: activeSpeaker)
         if scenario == "speaker" { controls.fixtureActions = SpeakerFixtureActions.make(activeSpeaker) }

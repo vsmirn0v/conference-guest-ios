@@ -429,3 +429,20 @@
 "Off" = "Выключено";
 "Noise suppression" = "Шумоподавление";
 "Speaking: %@" = "Говорит: %@";
+
+/* Private preview and direct media settings */
+"Allow camera access in Settings to preview your video." = "Разрешите доступ к камере в Настройках для предпросмотра видео.";
+"Camera preview is unavailable on this device." = "Предпросмотр камеры недоступен на этом устройстве.";
+"Waiting for your camera…" = "Ожидание камеры…";
+"Camera & sound" = "Камера и звук";
+"Check camera & sound" = "Проверить камеру и звук";
+"Nothing is sent until you start video." = "Видео не передаётся, пока вы его не включите.";
+"Live · Visible to jam" = "В эфире · Вас видно";
+"Preview · Only you" = "Предпросмотр · Только вы";
+"Closing this preview keeps video off." = "При закрытии предпросмотра видео останется выключенным.";
+"Microphone is live" = "Микрофон в эфире";
+"Muted in jam" = "Микрофон выключен";
+"Preview and camera settings" = "Предпросмотр и настройки камеры";
+"Sound settings" = "Настройки звука";
+"Touch and hold to configure without turning it on." = "Нажмите и удерживайте для настройки без включения.";
+"Conversation reduces noise. Music keeps more detail." = "Беседа уменьшает шум. Музыка сохраняет больше деталей.";

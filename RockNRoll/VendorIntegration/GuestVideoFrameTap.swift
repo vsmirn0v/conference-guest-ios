@@ -9,8 +9,8 @@ import WebRTC
 /// No SDK fields, Apple private APIs, or global call/audio state are changed.
 final class GuestVideoFrameTap: @unchecked Sendable {
     private static let lock = NSLock()
-    private static let observers = NSMapTable<UIView, GuestVideoFrameTap>(
-        keyOptions: .weakMemory, valueOptions: .weakMemory)
+    private static let observers = NSMapTable<UIView, NSHashTable<GuestVideoFrameTap>>(
+        keyOptions: .weakMemory, valueOptions: .strongMemory)
     private weak var renderer: UIView?
     private let onFrame: (RTCVideoFrame) -> Void
 
@@ -27,9 +27,9 @@ final class GuestVideoFrameTap: @unchecked Sendable {
                 original(view, selector, frame)
                 guard let frame else { return }
                 lock.lock()
-                let observer = observers.object(forKey: view)
+                let observers = observers.object(forKey: view)?.allObjects ?? []
                 lock.unlock()
-                observer?.onFrame(frame)
+                observers.forEach { $0.onFrame(frame) }
             }
             method_setImplementation(method, imp_implementationWithBlock(forwarding))
             installed = true
@@ -55,14 +55,17 @@ final class GuestVideoFrameTap: @unchecked Sendable {
         self.renderer = renderer
         self.onFrame = onFrame
         Self.lock.lock()
-        Self.observers.setObject(self, forKey: renderer)
+        let subscriptions = Self.observers.object(forKey: renderer) ?? NSHashTable(options: .weakMemory)
+        subscriptions.add(self)
+        Self.observers.setObject(subscriptions, forKey: renderer)
         Self.lock.unlock()
     }
 
     func invalidate() {
         Self.lock.lock()
-        if let renderer, Self.observers.object(forKey: renderer) === self {
-            Self.observers.removeObject(forKey: renderer)
+        if let renderer, let subscriptions = Self.observers.object(forKey: renderer) {
+            subscriptions.remove(self)
+            if subscriptions.allObjects.isEmpty { Self.observers.removeObject(forKey: renderer) }
         }
         Self.lock.unlock()
     }

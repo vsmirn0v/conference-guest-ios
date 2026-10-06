@@ -2,6 +2,105 @@ import XCTest
 import Vision
 
 final class StudioUITests: XCTestCase {
+    func testGuestLongPressOpensPrivatePreviewWithoutTogglingMedia() { checkShortcuts(guest: true) }
+    func testJamLongPressOpensPrivatePreviewWithoutTogglingMedia() { checkShortcuts(guest: false) }
+
+    private func checkShortcuts(guest: Bool) {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        if guest {
+            app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
+            app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "studio"
+        } else {
+            app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
+            app.launchEnvironment["CONFERENCE_TEST_STUDIO"] = "1"
+        }
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait; app.terminate() }
+        app.launch()
+        let mic = app.buttons["Unmute microphone"].firstMatch
+        let cam = app.buttons["Start video"].firstMatch
+        XCTAssertTrue(mic.waitForExistence(timeout: 10))
+        mic.tap()
+        let mute = app.buttons["Mute microphone"].firstMatch
+        XCTAssertTrue(mute.waitForExistence(timeout: 5)); mute.tap()
+        XCTAssertTrue(mic.waitForExistence(timeout: 5))
+        cam.tap()
+        let stop = app.buttons["Stop video"].firstMatch
+        XCTAssertTrue(stop.waitForExistence(timeout: 5)); stop.tap()
+        XCTAssertTrue(cam.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["studio.done"].exists, "Short taps opened settings")
+        mic.press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["Music"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["studio.microphone-settings"].isEnabled)
+        app.buttons["studio.done"].tap()
+        XCTAssertTrue(mic.waitForExistence(timeout: 5)); XCTAssertTrue(cam.exists)
+        cam.press(forDuration: 0.7)
+        let preview = app.descendants(matching: .any)["studio.preview-status"].firstMatch
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        XCTAssertTrue(preview.label.contains("Only you"))
+        XCTAssertTrue(app.buttons["studio.start-video"].waitForExistence(timeout: 5))
+        attach("Private preview before broadcasting")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["studio.start-video"].isHittable)
+        attach("Landscape camera inspector")
+        XCUIDevice.shared.orientation = .portrait
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(mic.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["studio.done"].exists)
+        XCTAssertTrue(cam.exists)
+        XCTAssertFalse(app.buttons["Stop video"].exists)
+        XCTAssertFalse(app.buttons["Mute microphone"].exists)
+    }
+
+    func testLivePrivateCameraEffectsAndPublishingHandoff() throws {
+        let app = try liveApp()
+        defer { endLive(app) }
+        let camera = app.buttons["Start video"].firstMatch
+        XCTAssertTrue(camera.waitForExistence(timeout: 10))
+        camera.press(forDuration: 0.7)
+        let status = app.descendants(matching: .any)["studio.preview-status"].firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.label.contains("Only you"))
+        let start = app.buttons["studio.start-video"]
+        let ready = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: start)
+        wait(for: [ready], timeout: 8)
+        let effects = app.buttons["studio.camera-effects"]
+        if !effects.isHittable { app.swipeUp() }
+        XCTAssertTrue(effects.isEnabled)
+        effects.tap()
+        let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let portrait = system.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Portrait")).firstMatch
+        XCTAssertTrue(portrait.waitForExistence(timeout: 5), "Private capture did not expose native video effects")
+        portrait.tap()
+        attach("Native effects while outgoing video is off")
+        portrait.tap() // Restore the system preference after qualification.
+        // Activating the app alone does not dismiss Apple's effects overlay.
+        // Tap its observed empty backdrop before touching the app's Start button.
+        system.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tap()
+        let closed = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: portrait)
+        wait(for: [closed], timeout: 5)
+        app.activate()
+        XCTAssertTrue(status.label.contains("Only you"))
+        attach("Private preview after native effects")
+        start.tap()
+        XCTAssertTrue(app.buttons["Stop video"].firstMatch.waitForExistence(timeout: 10))
+        app.buttons["Stop video"].firstMatch.press(forDuration: 0.7)
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.label.contains("Visible to jam"))
+        attach("Existing guest camera in settings")
+        app.buttons["studio.done"].tap()
+        let panelClosed = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["studio.done"])
+        wait(for: [panelClosed], timeout: 5)
+        let stop = app.buttons["Stop video"].firstMatch
+        let canStop = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: stop)
+        wait(for: [canStop], timeout: 5)
+        stop.tap()
+        XCTAssertTrue(camera.waitForExistence(timeout: 10))
+    }
+
     func testLiveGuestSpeakerAndBackgroundPiP() throws {
         guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_STUDIO_REMOTE_SPEAKER"] == "1" else {
             throw XCTSkip("Requires the controlled speaking browser participant")
@@ -58,6 +157,7 @@ final class StudioUITests: XCTestCase {
         let app = try liveApp()
         defer { endLive(app) }
         openStudio(app)
+        app.buttons["Sound"].firstMatch.tap()
         let music = app.buttons["Music"].firstMatch
         music.tap()
         let selected = expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: music)
@@ -122,7 +222,7 @@ final class StudioUITests: XCTestCase {
     }
     private func openStudio(_ app: XCUIApplication) {
         app.buttons["More call options"].firstMatch.tap()
-        app.buttons["Studio"].firstMatch.tap()
+        app.buttons["Camera & sound"].firstMatch.tap()
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
     }
     private func endLive(_ app: XCUIApplication) {
@@ -153,10 +253,11 @@ final class StudioUITests: XCTestCase {
         app.launch()
         let more = app.buttons[russian ? "Другие действия" : "More call options"].firstMatch
         XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
-        let studio = app.buttons[russian ? "Студия" : "Studio"].firstMatch
+        let studio = app.buttons[russian ? "Камера и звук" : "Camera & sound"].firstMatch
         XCTAssertTrue(studio.waitForExistence(timeout: 5)); studio.tap()
         let camera = app.buttons["studio.camera-effects"]
         XCTAssertTrue(camera.waitForExistence(timeout: 5)); XCTAssertFalse(camera.isEnabled)
+        app.buttons[russian ? "Звук" : "Sound"].firstMatch.tap()
         let music = app.buttons[russian ? "Музыка" : "Music"].firstMatch
         if !music.isHittable { app.swipeUp() }
         XCTAssertTrue(music.isHittable); music.tap()

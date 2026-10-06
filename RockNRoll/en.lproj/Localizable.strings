@@ -429,3 +429,20 @@
 "Off" = "Off";
 "Noise suppression" = "Noise suppression";
 "Speaking: %@" = "Speaking: %@";
+
+/* Private preview and direct media settings */
+"Allow camera access in Settings to preview your video." = "Allow camera access in Settings to preview your video.";
+"Camera preview is unavailable on this device." = "Camera preview is unavailable on this device.";
+"Waiting for your camera…" = "Waiting for your camera…";
+"Camera & sound" = "Camera & sound";
+"Check camera & sound" = "Check camera & sound";
+"Nothing is sent until you start video." = "Nothing is sent until you start video.";
+"Live · Visible to jam" = "Live · Visible to jam";
+"Preview · Only you" = "Preview · Only you";
+"Closing this preview keeps video off." = "Closing this preview keeps video off.";
+"Microphone is live" = "Microphone is live";
+"Muted in jam" = "Muted in jam";
+"Preview and camera settings" = "Preview and camera settings";
+"Sound settings" = "Sound settings";
+"Touch and hold to configure without turning it on." = "Touch and hold to configure without turning it on.";
+"Conversation reduces noise. Music keeps more detail." = "Conversation reduces noise. Music keeps more detail.";

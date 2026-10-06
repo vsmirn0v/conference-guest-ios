@@ -1,17 +1,49 @@
 # Meeting Studio
 
-Studio is available from More in both meeting views. Opening it starts no camera,
-microphone or additional processing pipeline. Appearance opens Apple's video-effect
-interface while the camera is on; Sound opens Apple's microphone-mode interface
-while the microphone is on. Capture remains under the meeting engine's ownership.
-Supported effects are selected by the system for the current camera and format.
-Simulator cannot qualify those effects and the system-settings buttons are disabled
-there. English and Russian copy, Dynamic Type and scrolling use native form layout.
+Camera & sound is the first item in More in both meeting views. Hold the microphone
+or audio-route control to open Sound; hold Video to open Camera. Short taps keep
+their mute/video/route behaviour. Secondary pointer clicks, VoiceOver actions and
+Command-comma expose the same settings. The secondary-click recognizer accepts
+pointer touches only, so it cannot swallow a touchscreen short tap.
+
+The join screen also offers an optional Check camera & sound. It neither joins a
+room nor publishes media, and it closes when joining starts. Phone portrait uses
+a sheet; landscape and wide windows use a side inspector. Native scrolling and a
+fixed bottom action keep controls available with small screens, larger text and
+English/Russian copy. Dismissal targets the settings host, never the meeting host.
+
+## Private camera preview
+
+While outgoing video is off, an AVFoundation session captures only local video.
+It has no audio input, recording/encoding output or network publication, and it
+never reconfigures the app's audio session. This front-camera preview (default
+camera on Mac) is marked Preview · Only you. Apple video effects can be opened
+against this capture before publishing, subject to platform/camera capabilities.
+Starting video explicitly releases the capture device before the meeting engine
+can acquire it. Permission failure, cancellation, tab changes, hold, backgrounding
+and leaving all invalidate pending preview work and release the device. Apple's
+effects overlay is allowed to appear without treating inactive as background.
+
+With video already on, the panel observes the existing engine stream rather than
+opening another capturer or encoder. The guest renderer tap supports independent
+weak observers, allowing the stage/PiP and the Studio preview to coexist. The
+settings observer stops on close and processes at most 15 frames per second.
+The other engine uses a VideoView attached to its existing local camera track.
+Live camera switching continues through each engine's existing control. Private
+preview is never registered as a floating-video source. Closing a private preview
+keeps video off; closing a live preview keeps the existing publication on.
+
+Sound profiles and route selection remain available while muted. Apple's native
+microphone-mode panel still requires active microphone capture; opening settings
+never starts a separate microphone or changes mute intent. Simulator fixtures
+open no capture or network. Real camera/effect behaviour is tested on Mac/iPhone.
 
 ## Sound profiles
 
-Profiles are scoped to one meeting and retained through media recovery. A new jam
-starts with normal engine defaults. System microphone settings remain user-owned;
+The chosen sound profile is saved on this device after successful application and
+restored for the next jam, including a choice made before joining. Capture intent
+is never saved: new joins still start with microphone and video off. Profiles are
+retained through media recovery. System microphone settings remain user-owned;
 Studio reads their active selection while its panel is visible. For music, the panel
 recommends Standard or Wide Spectrum when available.
 

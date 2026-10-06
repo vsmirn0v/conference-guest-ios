@@ -13,6 +13,7 @@ struct JoinView: View {
     @State private var showingContactPicker = false
     @State private var showingSettings = false
     @State private var showingAllRooms = false
+    @StateObject private var mediaCheck = StudioModel(audioControl: .fullProcessing, preferences: .standard)
     @StateObject private var favoriteDrag = FavoriteDragState()
     @State private var editingRoom: RecentRoom?
     @State private var roomAlias = ""
@@ -102,6 +103,12 @@ struct JoinView: View {
                     Label(L("Microphone and camera start off"), systemImage: "mic.slash")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    Button {
+                        mediaCheck.applyProfile = { _ in }
+                        mediaCheck.open(.camera)
+                    } label: { Label(L("Check camera & sound"), systemImage: "slider.horizontal.3") }
+                        .accessibilityIdentifier("studio.prejoin")
+                        .disabled(model.isJoining || model.isInConference || model.isLeaving)
                     if model.status != L("Enter a jam link to begin.") {
                         Text(model.status).font(.footnote)
                             .foregroundStyle(model.statusIsError ? .red : .secondary)
@@ -186,6 +193,10 @@ struct JoinView: View {
                 SavedCatchUpView(store: catchUp)
             }
             .sheet(isPresented: $showingSettings) { settingsSheet }
+            .sheet(isPresented: Binding(get: { mediaCheck.presented }, set: { if !$0 { mediaCheck.close() } })) {
+                StudioPanel(model: mediaCheck)
+            }
+            .onChange(of: model.isJoining) { if $0 { mediaCheck.close() } }
             .onDisappear { favoriteDrag.cancel() }
             .alert(L("Join here without moving the other device?"),
                                 isPresented: $confirmingStaleContinuation,

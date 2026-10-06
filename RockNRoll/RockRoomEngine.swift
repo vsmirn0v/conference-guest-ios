@@ -28,7 +28,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private var refreshScheduled = false
     private let videoSubscriptions = VideoSubscriptionCoordinator<ObjectIdentifier>()
     private var videoPublisher = RoomVideoPublisher()
-    private var studio = StudioModel(audioControl: .fullProcessing)
+    private var studio = StudioModel(audioControl: .fullProcessing, preferences: .standard)
     private var studioAudio = StudioAudioUpdates()
     #if DEBUG
     private var testHoldScheduled = false
@@ -106,7 +106,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         studio.end()
         studioAudio.end()
         studioAudio = StudioAudioUpdates()
-        studio = StudioModel(audioControl: .fullProcessing)
+        studio = StudioModel(audioControl: .fullProcessing, preferences: .standard)
+        studioAudio.profile = studio.profile
         studio.applyProfile = { [weak self, weak room = self.room] profile in
             guard let self, let room, self.room === room, !self.leaveRequested else { throw CancellationError() }
             let previous = self.studioAudio.profile
@@ -133,6 +134,14 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                                           invitationURL: target.invitationURL,
                                           roomIdentifier: target.jamID)
         view.studio = studio
+        studio.makeLivePreview = { [weak self, weak room = self.room] in
+            guard let self, let room, self.room === room, !self.leaveRequested,
+                  let track = room.localParticipant.firstCameraVideoTrack else { return nil }
+            let preview = VideoView()
+            preview.layoutMode = .fit
+            preview.track = track
+            return StudioLivePreview(view: preview, stop: { preview.track = nil })
+        }
         view.onLeave = { [weak self] in self?.leave() }
         view.onMicrophone = { [weak self] in self?.setMicrophone($0) }
         view.onCamera = { [weak self] in self?.setCamera($0) }
@@ -354,6 +363,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         let publisher = videoPublisher
         Task { @MainActor [weak self] in
             do {
+                await self?.studio.releasePrivateCamera()
                 _ = try await publisher.perform { options in
                     guard self?.room === room, self?.leaveRequested == false,
                           self?.cameraIntentOn == enabled, self?.isHeld == false else { throw CancellationError() }

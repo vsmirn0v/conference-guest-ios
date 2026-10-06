@@ -150,6 +150,11 @@ final class GuestStreamViews {
         updatePreferredVideo()
     }
 
+    func localCameraView() -> UIView? {
+        renderedTiles.values.filter { $0.model.isLocal && !$0.model.isSharingScreen && $0.model.isVideoOn }
+            .sorted(by: preferredSource).first?.video
+    }
+
     func makeView(model: JazzParticipantViewModel, video: UIView) -> UIView {
         let key = Key(participant: model.id, mode: model.displayMode, isShare: model.isSharingScreen)
         let target = PinTarget(participant: model.id, isShare: model.isSharingScreen)

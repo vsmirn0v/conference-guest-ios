@@ -10,7 +10,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     override var shouldAutorotate: Bool { true }
     override var keyCommands: [UIKeyCommand]? {
         CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
-            chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls))
+            chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls)) +
+            [UIKeyCommand(input: ",", modifierFlags: .command, action: #selector(keyOpenStudio))]
     }
     var onLeave: (() -> Void)?
     var onMicrophone: ((Bool) -> Void)?
@@ -111,6 +112,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     @objc private func keyToggleMicrophone() { microphone.sendActions(for: .touchUpInside) }
     @objc private func keyToggleCamera() { camera.sendActions(for: .touchUpInside) }
+    @objc private func keyOpenStudio() {
+        guard let studio else { return }
+        StudioPresentation.show(studio, from: moreButton)
+    }
     @objc private func keyOpenChat() { openConversation(.chat) }
     @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
     @objc private func keyFocus() { focus.toggle() }
@@ -433,6 +438,14 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             guard let self else { return }
             self.onCamera?(!self.isCameraOn)
         }, for: .touchUpInside)
+        if let studio {
+            studio.enableCamera = { [weak self] in self?.camera.sendActions(for: .touchUpInside) }
+            studio.enableMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
+            studio.flipLiveCamera = { [weak self] in self?.onFlipCamera?() }
+            StudioShortcut.install(on: microphone, pane: .sound, model: studio)
+            StudioShortcut.install(on: camera, pane: .camera, model: studio)
+            StudioShortcut.install(on: speaker, pane: .sound, model: studio)
+        }
         share.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.onShare?(!self.isSharingScreen)
@@ -1153,7 +1166,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         moreButton.accessibilityValue = floatingVideo?.canShow == true ? L("Floating video available") : nil
         var items: [UIMenuElement] = []
         if let studio {
-            items.append(UIAction(title: L("Studio"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
+            items.append(UIAction(title: L("Camera & sound"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
                 guard let self else { return }
                 StudioPresentation.show(studio, from: self.moreButton)
             })

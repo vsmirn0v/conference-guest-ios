@@ -52,7 +52,7 @@ final class NativeConferenceEngine: CallEngine {
     private var roomTitleSubscription: AnyCancellable?
     private var toastSubscription: AnyCancellable?
     private weak var activeControls: CallControls?
-    private var studio = StudioModel(audioControl: .noiseSuppression)
+    private var studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard)
     private var studioSubscription: AnyCancellable?
     private let activeSpeaker = ActiveSpeakerStore()
     private var speakerSubscription: AnyCancellable?
@@ -940,7 +940,13 @@ final class NativeConferenceEngine: CallEngine {
             guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                   !self.leaveRequested else { return UIView() }
             self.activeCoordinator = coordinator
-            if !self.studio.active { self.studio = StudioModel(audioControl: .noiseSuppression) }
+            if !self.studio.active { self.studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard) }
+            self.studio.makeLivePreview = { [weak self] in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                      !self.leaveRequested else { return nil }
+                let preview = GuestStudioPreview { [weak streams] in streams?.localCameraView() }
+                return StudioLivePreview(view: preview.view, stop: { preview.stop() })
+            }
             self.studio.applyProfile = { [weak self] profile in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                       !self.leaveRequested, let current = self.activeCoordinator else { throw CancellationError() }
@@ -1023,7 +1029,8 @@ final class NativeConferenceEngine: CallEngine {
                                             self.microphoneIntentOn = isOn
                                             self.systemCall.setMuted(!isOn)
                                         }, onCameraState: { [weak self] isOn in
-                                            guard let self, self.sessionEpoch == epoch, !self.isSystemHeld else { return }
+                                            guard let self, self.sessionEpoch == epoch,
+                                                  !isOn || !self.isSystemHeld else { return }
                                             self.cameraIntentOn = isOn
                                         }, studio: self.studio, activeSpeaker: self.activeSpeaker)
             self.activeControls = controls

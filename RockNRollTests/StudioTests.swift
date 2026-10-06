@@ -5,6 +5,155 @@ import XCTest
 
 @MainActor
 final class StudioTests: XCTestCase {
+    func testMacPrivateCameraPreviewUsesVideoOnlyAndReleasesCapture() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRIVATE_CAMERA"] == "1" else {
+            throw XCTSkip("Opt-in real Mac camera qualification")
+        }
+        let camera = PrivateCameraPreview()
+        try await camera.start()
+        let layer = try XCTUnwrap(camera.view.layer as? AVCaptureVideoPreviewLayer)
+        let session = try XCTUnwrap(layer.session)
+        XCTAssertTrue(session.isRunning)
+        XCTAssertFalse(session.automaticallyConfiguresApplicationAudioSession)
+        XCTAssertTrue(layer.isPreviewing)
+        XCTAssertEqual(session.inputs.count, 1)
+        XCTAssertTrue(session.outputs.isEmpty, "Preview must not add an encoding/recording output")
+        let input = try XCTUnwrap(session.inputs.first as? AVCaptureDeviceInput)
+        XCTAssertTrue(input.device.hasMediaType(.video))
+        XCTAssertFalse(input.device.hasMediaType(.audio))
+        await camera.stop()
+        XCTAssertFalse(session.isRunning)
+        XCTAssertTrue(session.inputs.isEmpty, "SDK camera ownership must be released before publication")
+    }
+    private final class Capture: PrivateCameraPreviewing {
+        let view = UIView()
+        var running = false
+        var starts = 0
+        var stops = 0
+        var delayedStart: CheckedContinuation<Void, Never>?
+        var delayStart = false
+        var delayedStop: CheckedContinuation<Void, Never>?
+        var delayStop = false
+        func start() async throws {
+            starts += 1
+            if delayStart { await withCheckedContinuation { delayedStart = $0 } }
+            try Task.checkCancellation()
+            running = true
+        }
+        func stop() async {
+            stops += 1
+            if delayStop { await withCheckedContinuation { delayedStop = $0 } }
+            running = false
+        }
+    }
+    private func waitUntil(_ predicate: () -> Bool) async {
+        for _ in 0..<200 {
+            if predicate() { return }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Preview state did not settle")
+    }
+
+    func testPrivatePreviewDoesNotPublishAndSoundTabReleasesCamera() async {
+        let capture = Capture()
+        let model = StudioModel(audioControl: .fullProcessing, privateCamera: capture)
+        var publications = 0
+        model.enableCamera = { publications += 1 }
+        model.open(.camera)
+        await waitUntil { model.previewRunning }
+        XCTAssertTrue(capture.running)
+        XCTAssertFalse(model.cameraOn); XCTAssertFalse(model.microphoneOn)
+        XCTAssertEqual(publications, 0)
+        model.pane = .sound
+        await waitUntil { !capture.running }
+        XCTAssertEqual(publications, 0)
+        XCTAssertNil(model.previewView)
+        model.close()
+    }
+
+    func testPublishingWaitsUntilPrivateCaptureReleasesDevice() async {
+        let capture = Capture()
+        let model = StudioModel(audioControl: .fullProcessing, privateCamera: capture)
+        var published = false
+        model.enableCamera = { XCTAssertFalse(capture.running); published = true }
+        model.open(.camera)
+        await waitUntil { model.previewRunning }
+        capture.delayStop = true
+        let publish = Task { await model.startVideo() }
+        await waitUntil { capture.delayedStop != nil }
+        XCTAssertFalse(published)
+        capture.delayStop = false
+        capture.delayedStop?.resume(); capture.delayedStop = nil
+        let didPublish = await publish.value
+        XCTAssertTrue(didPublish)
+        XCTAssertTrue(published)
+        XCTAssertFalse(model.presented)
+    }
+
+    func testDismissDuringPermissionWaitCannotStartOrPublishLate() async {
+        let capture = Capture(); capture.delayStart = true
+        let model = StudioModel(audioControl: .noiseSuppression, privateCamera: capture)
+        model.enableCamera = { XCTFail("Dismissal published video") }
+        model.open(.camera)
+        await waitUntil { capture.delayedStart != nil }
+        model.close()
+        capture.delayedStart?.resume()
+        await waitUntil { !capture.running && !model.previewLoading }
+        XCTAssertFalse(model.presented); XCTAssertNil(model.previewView)
+        XCTAssertFalse(model.cameraOn); XCTAssertFalse(model.microphoneOn)
+    }
+
+    func testLivePreviewReusesEngineAndStopsObserverWhenDismissed() async {
+        let capture = Capture()
+        let model = StudioModel(audioControl: .fullProcessing, privateCamera: capture)
+        var stopped = 0
+        let video = UIView()
+        model.makeLivePreview = { StudioLivePreview(view: video, stop: { stopped += 1 }) }
+        model.cameraOn = true
+        model.open(.camera)
+        await waitUntil { model.previewView != nil }
+        XCTAssertTrue(model.previewView === video)
+        XCTAssertEqual(capture.starts, 0)
+        model.close()
+        XCTAssertEqual(stopped, 1)
+        XCTAssertTrue(model.cameraOn)
+    }
+
+    func testBackgroundHoldAndEndReleasePrivatePreview() async {
+        let capture = Capture()
+        let model = StudioModel(audioControl: .noiseSuppression, privateCamera: capture)
+        model.open(.camera)
+        await waitUntil { capture.running }
+        model.held = true
+        await waitUntil { !capture.running }
+        model.held = false
+        await waitUntil { capture.running }
+        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        await waitUntil { !capture.running }
+        XCTAssertFalse(model.presented)
+        model.open(.camera)
+        await waitUntil { capture.running }
+        model.end()
+        await waitUntil { !capture.running }
+        XCTAssertFalse(model.active); XCTAssertFalse(model.presented)
+        let publishedAfterEnd = await model.startVideo()
+        XCTAssertFalse(publishedAfterEnd)
+    }
+
+    func testSavedSoundProfileIsDeviceLocalAndNeverSavesCaptureIntent() async {
+        let name = "StudioTests.\(UUID())"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let model = StudioModel(audioControl: .fullProcessing, preferences: defaults)
+        model.applyProfile = { _ in }
+        model.select(.music)
+        await waitUntil { !model.applying }
+        let restored = StudioModel(audioControl: .noiseSuppression, preferences: defaults)
+        XCTAssertEqual(restored.profile, .music); XCTAssertTrue(restored.hasSelection)
+        XCTAssertFalse(restored.cameraOn); XCTAssertFalse(restored.microphoneOn)
+    }
+
     func testSelectingMusicKeepsCaptureOffAndFailurePreservesSelection() async {
         let model = StudioModel(audioControl: .noiseSuppression)
         model.observeNoiseSuppression(true)

@@ -136,9 +136,11 @@ extension SceneDelegate {
                 call.fixtureActions = SpeakerFixtureActions.make(call.activeSpeaker)
             }
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_STUDIO"] == "1" {
-                let studio = StudioModel(audioControl: .fullProcessing)
+                let studio = StudioModel(audioControl: .fullProcessing, privateCamera: StudioCameraFixture())
                 studio.applyProfile = { _ in }
                 call.studio = studio
+                call.onCamera = { [weak call] in call?.setCamera($0) }
+                call.onMicrophone = { [weak call] in call?.setMicrophone($0) }
             }
             call.fixtureParticipants = [ParticipantStatus(id: "local", name: "Rock QA", isLocal: true,
                 microphoneOn: false, cameraOn: false, screenShareOn: false, isSpeaking: false,

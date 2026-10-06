@@ -7,10 +7,15 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     override var canBecomeFirstResponder: Bool { true }
     override var keyCommands: [UIKeyCommand]? {
         CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
-            chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls))
+            chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls)) +
+            [UIKeyCommand(input: ",", modifierFlags: .command, action: #selector(keyOpenStudio))]
     }
     @objc private func keyToggleMicrophone() { microphone.sendActions(for: .touchUpInside) }
     @objc private func keyToggleCamera() { camera.sendActions(for: .touchUpInside) }
+    @objc private func keyOpenStudio() {
+        guard let studio else { return }
+        StudioPresentation.show(studio, from: moreButton)
+    }
     @objc private func keyOpenChat() { catchUpButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
     @objc private func keyFocus() { focus.toggle() }
@@ -277,16 +282,28 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         }
         leave.configuration?.baseForegroundColor = .systemRed
 
-        microphone.addAction(UIAction { _ in
-            let turnOn = state?.microphoneState != .on
+        microphone.addAction(UIAction { [weak self] _ in
+            let turnOn = state.map { $0.microphoneState != .on } ?? !(self?.workspace.microphoneOn ?? false)
             onMicrophoneState(turnOn)
             coordinator?.toggleMicrohone(isOn: turnOn)
         }, for: .touchUpInside)
-        camera.addAction(UIAction { _ in
-            let turnOn = state?.cameraState != .on
-            onCameraState(turnOn)
-            coordinator?.toggleCamera(isOn: turnOn)
+        camera.addAction(UIAction { [weak self, weak studio] _ in
+            let turnOn = state.map { $0.cameraState != .on } ?? !(self?.cameraOn ?? false)
+            Task { @MainActor [weak studio] in
+                await studio?.releasePrivateCamera()
+                guard studio?.active != false, !turnOn || studio?.held != true else { return }
+                onCameraState(turnOn)
+                coordinator?.toggleCamera(isOn: turnOn)
+            }
         }, for: .touchUpInside)
+        if let studio {
+            studio.enableCamera = { [weak self] in self?.camera.sendActions(for: .touchUpInside) }
+            studio.enableMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
+            studio.flipLiveCamera = { coordinator?.switchCamera() }
+            StudioShortcut.install(on: microphone, pane: .sound, model: studio)
+            StudioShortcut.install(on: camera, pane: .camera, model: studio)
+            StudioShortcut.install(on: route, pane: .sound, model: studio)
+        }
         share.addAction(UIAction { _ in
             onScreenShare(state?.screenShareState != .on)
         }, for: .touchUpInside)
@@ -917,12 +934,6 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.refreshMoreMenu?()
         }
         var actions: [UIMenuElement] = [focusAction, autoHide, float, automatic, viewMenu, fit, flip]
-        if let studio {
-            actions.insert(UIAction(title: L("Studio"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
-                guard let self else { return }
-                StudioPresentation.show(studio, from: self.moreButton)
-            }, at: 0)
-        }
         if workspace.invitationURL != nil {
             actions.insert(UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
                 [weak self] _ in guard let self else { return }
@@ -932,11 +943,33 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 [weak self] _ in self?.workspace.copyInvitation()
             }, at: 1)
         }
+        if let studio {
+            actions.insert(UIAction(title: L("Camera & sound"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
+                guard let self else { return }
+                StudioPresentation.show(studio, from: self.moreButton)
+            }, at: 0)
+        }
         #if DEBUG
         actions = fixtureActions + actions
         #endif
         moreButton.menu = UIMenu(children: actions)
     }
+
+    #if DEBUG
+    func setFixtureMedia(camera: Bool? = nil, microphone: Bool? = nil) {
+        if let camera {
+            cameraOn = camera
+            studio?.cameraOn = camera
+            workspace.cameraOn = camera
+            self.camera.accessibilityLabel = camera ? L("Stop video") : L("Start video")
+        }
+        if let microphone {
+            studio?.microphoneOn = microphone
+            workspace.microphoneOn = microphone
+            self.microphone.accessibilityLabel = microphone ? L("Mute microphone") : L("Unmute microphone")
+        }
+    }
+    #endif
 
     private func updateDisplayBackdrops() {
         audioOnlyBackdrop.isHidden = displayMode != .audioOnly

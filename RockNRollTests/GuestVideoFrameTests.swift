@@ -33,15 +33,17 @@ final class GuestVideoFrameTests: XCTestCase {
     func testSelectedGuestTileStaysAliveUntilFloatingVideoClears() {
         let floating = GuestVideoPictureInPicture(sourceView: UIView())
         let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 320, height: 180))
-        var viewport: StreamViewport? = StreamViewport(
-            video: renderer, state: StreamViewportState(), zoomable: true,
-            name: "Share", showInfo: false, microphoneOn: false,
-            pinned: false, watermark: nil)
-        weak var retained = viewport
-        floating.select(viewport: viewport, name: "Share", isScreenShare: true)
-        viewport = nil
+        weak var retained: StreamViewport?
+        autoreleasepool {
+            let viewport = StreamViewport(video: renderer, state: StreamViewportState(), zoomable: true,
+                name: "Share", showInfo: false, microphoneOn: false, pinned: false, watermark: nil)
+            retained = viewport
+            floating.select(viewport: viewport, name: "Share", isScreenShare: true)
+        }
         XCTAssertNotNil(retained)
-        floating.clear()
+        // UIKit may keep temporary return values until the pool drains. This
+        // checks lasting ownership, independent of the test runner's pool timing.
+        autoreleasepool { floating.clear() }
         XCTAssertNil(retained)
     }
 
@@ -59,6 +61,19 @@ final class GuestVideoFrameTests: XCTestCase {
         renderer.renderFrame(frame)
         XCTAssertEqual(frames, 1)
         XCTAssertNil(GuestVideoFrameTap(view: UIView()) { _ in XCTFail("Unsupported renderer") })
+    }
+
+    func testStudioAndStageObserveSameRendererIndependently() {
+        let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        var stage = 0, studio = 0
+        let first = GuestVideoFrameTap(view: renderer) { _ in stage += 1 }
+        let second = GuestVideoFrameTap(view: renderer) { _ in studio += 1 }
+        renderer.renderFrame(makeFrame())
+        XCTAssertEqual(stage, 1); XCTAssertEqual(studio, 1)
+        second?.invalidate()
+        renderer.renderFrame(makeFrame())
+        XCTAssertEqual(stage, 2); XCTAssertEqual(studio, 1)
+        first?.invalidate()
     }
 
     func testEndedGuestVideoRejectsLateCameraSelectionAndSceneCallbacks() async {
