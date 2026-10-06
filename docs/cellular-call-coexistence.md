@@ -20,20 +20,19 @@ establishes the exact cause of the reported failure.
   state and action timeouts. Logs contain no phone numbers, room links, call UUIDs
   or media. No remote telemetry was added.
 
-## Evidence and remaining acceptance
+## Validation
 
 Seven SessionOwnershipTests passed on the iOS 27 simulator, including capability
 reports at start/connection, acknowledged hold/resume without changing the
 meeting identity or mute intent, and retired callback protection.
 Result: `/tmp/rock-callkit-coexistence27-fixed.xcresult`.
 
-This verifies app-side contracts, not real telephony. The simulator cannot prove
-that a cellular call is accepted or that competing hardware audio recovers.
-With a physical iPhone available, use a test lasting under one minute: confirm
-working meeting audio, place a short cellular call, hang up, then confirm meeting
-audio returns without a manual rejoin. If dialing still fails, inspect the
-SystemCall log for whether a hold was requested, audio was deactivated, or an
-action timed out. The configuration change is not yet physically validated.
+On 2026-10-06, the user tested the latest installed build on a physical iPhone
+and confirmed that outgoing cellular calls can now start while a meeting is
+active. This closes the reported dialing blocker for the tested build. The exact
+build number and a CallKit event trace were not supplied, so the two configuration
+changes cannot be attributed separately. This confirmation covers dialing;
+post-call meeting playback was not separately reported in this test.
 
 References:
 - https://developer.apple.com/videos/play/wwdc2016/230/
