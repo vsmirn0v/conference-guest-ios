@@ -20,6 +20,9 @@ final class GuestBroadcastLifecycleUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Share screen"].waitForExistence(timeout: 60))
         func startShare() {
             app.buttons["Share screen"].tap()
+        XCTAssertTrue(app.buttons["presenter.source"].waitForExistence(timeout: 10))
+        app.buttons["presenter.source"].tap()
+        app.buttons["Screen / other apps"].tap()
             let systemShare = system.buttons["Share Entire Screen"]
             let appShare = app.buttons["Share Entire Screen"]
             if systemShare.waitForExistence(timeout: 5) { systemShare.tap() }

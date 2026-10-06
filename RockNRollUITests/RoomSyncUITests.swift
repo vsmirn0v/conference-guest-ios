@@ -24,7 +24,9 @@ final class RoomSyncUITests: XCTestCase {
         let movedDown = NSPredicate { _, _ in warmup.frame.minY < songwriting.frame.minY }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: movedDown, object: nil)], timeout: 5), .completed)
         XCTAssertLessThan(warmup.frame.minY, songwriting.frame.minY)
-        XCTAssertFalse((app.textFields["invitation.input"].value as? String ?? "").contains("fixture.example.test"))
+        let invitation = app.textFields["invitation.input"]
+        reveal(invitation, in: app)
+        XCTAssertFalse((invitation.value as? String ?? "").contains("fixture.example.test"))
         attach(app, "Favorite order changed directly")
     }
 
@@ -43,7 +45,9 @@ final class RoomSyncUITests: XCTestCase {
         name.tap(); name.typeText("My warm-up")
         app.buttons["Save"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Rejoin My warm-up")).firstMatch.waitForExistence(timeout: 5))
-        XCTAssertFalse((app.textFields["invitation.input"].value as? String ?? "").contains("fixture.example.test"))
+        let invitation = app.textFields["invitation.input"]
+        reveal(invitation, in: app)
+        XCTAssertFalse((invitation.value as? String ?? "").contains("fixture.example.test"))
     }
     private func launch(_ mode: String, language: String = "en") -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
@@ -92,7 +96,8 @@ final class RoomSyncUITests: XCTestCase {
         app.buttons["Done"].tap()
         let closed = NSPredicate { _, _ in !app.navigationBars["Settings"].exists }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: closed, object: nil)], timeout: 5), .completed)
-        let invite = app.textFields["Invitation link"]
+        let invite = app.textFields["invitation.input"]
+        reveal(invite, in: app)
         invite.tap(); invite.typeText("https://rock.glowsoft.ru/jams/test")
         XCTAssertTrue(app.buttons["Join jam"].isEnabled)
         XCTAssertEqual(app.textFields["name.input"].value as? String, "Aram")

@@ -11,6 +11,9 @@ final class GuestPresenterSender: GuestScreenCapture {
     init(preview: LocalSharePreview, onError: @escaping (String) -> Void) {
         self.preview = preview
         upload = JazzScreenShare { error in
+            #if DEBUG
+            print("Presenter sender failed: domain=\((error as NSError).domain), code=\((error as NSError).code), message=\(error.localizedDescription)")
+            #endif
             Task { @MainActor in onError(L("Screen sharing stopped: %@", error.localizedDescription)) }
         }
     }

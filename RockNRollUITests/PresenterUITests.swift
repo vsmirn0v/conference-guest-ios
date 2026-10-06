@@ -1,6 +1,30 @@
 import XCTest
 
 final class PresenterUITests: XCTestCase {
+    func testExpandedEditorFitsLandscapeAndReturnsPreview() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
+        app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "studio"
+        defer { XCUIDevice.shared.orientation = .portrait; app.terminate() }
+        app.launch(); open(app)
+        app.buttons["presenter.expand"].tap()
+        let done = app.navigationBars["Canvas"].buttons["Done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        XCUIDevice.shared.orientation = .landscapeLeft
+        waitForHittable(done)
+        let tools = app.segmentedControls["Canvas tool"]
+        for _ in 0..<4 { if tools.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(tools.isHittable)
+        tools.buttons["Draw"].tap()
+        done.tap()
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
+        for _ in 0..<4 { if app.buttons["presenter.expand"].isHittable { break }; app.swipeDown() }
+        XCTAssertTrue(app.descendants(matching: .any)["presenter.preview"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Preview · Only you"].exists)
+    }
+
     func testPresenterStartsPrivatelyAndSurvivesSmallScreenRotation() {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]

@@ -317,8 +317,12 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 .receive(on: DispatchQueue.main).sink { [weak self] _, _ in self?.renderCameraControl() }
                 .store(in: &subscriptions)
         }
-        share.addAction(UIAction { _ in
-            onScreenShare(state?.screenShareState != .on)
+        share.addAction(UIAction { [weak self, weak studio] _ in
+            if state?.screenShareState == .on || studio?.presenter.running == true {
+                onScreenShare(false)
+            } else if let self, let studio, studio.presenter.available {
+                StudioPresentation.show(studio, from: self.share, pane: .presenter)
+            } else { onScreenShare(true) }
         }, for: .touchUpInside)
         leave.addAction(UIAction { _ in onLeave() }, for: .touchUpInside)
         for button in [microphone, camera, share, participantsButton, catchUpButton, missedButton] {
@@ -473,7 +477,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.share.configuration?.title = L("Share")
             self.share.configuration?.baseForegroundColor = isSharing ?
                 UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
-            self.share.isEnabled = media != .disabled
+            // The SDK's ReplayKit button is unavailable on Mac. Our native
+            // sharing editor remains available; the sender enforces room policy.
+            self.share.isEnabled = media != .disabled || self.studio?.presenter.available == true
             self.share.accessibilityLabel = isSharing ? L("Stop sharing screen") : L("Share screen")
             self.share.largeContentTitle = self.share.accessibilityLabel
         }.store(in: &subscriptions)

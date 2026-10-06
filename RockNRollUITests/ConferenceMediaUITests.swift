@@ -51,6 +51,7 @@ final class ConferenceMediaUITests: XCTestCase {
         let room = app.buttons.matching(
             NSPredicate(format: "label BEGINSWITH %@", "Rejoin Open rehearsal \(marker)")
         ).firstMatch
+        for _ in 0..<4 { if room.exists && room.isHittable { break }; app.swipeDown() }
         XCTAssertTrue(room.waitForExistence(timeout: 15))
         room.press(forDuration: 0.9)
         app.buttons["Rename"].tap()
@@ -87,6 +88,7 @@ final class ConferenceMediaUITests: XCTestCase {
         let website = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "meeting.example.test")
         ).firstMatch
+        for _ in 0..<4 { if website.exists && website.isHittable { break }; app.swipeDown() }
         XCTAssertTrue(website.waitForExistence(timeout: 10))
     }
 
@@ -161,10 +163,10 @@ final class ConferenceMediaUITests: XCTestCase {
         let card = app.scrollViews["Catch up sections"]
         XCTAssertTrue(card.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Transcript received"].exists)
-        for label in ["Mic off", "Cam off"] {
+        for label in ["Mic", "Cam"] {
             let controlLabel = app.staticTexts[label]
             XCTAssertTrue(controlLabel.exists)
-            XCTAssertGreaterThan(controlLabel.frame.width, 30, "Narrow \(label) label")
+            XCTAssertGreaterThan(controlLabel.frame.width, 18, "Narrow \(label) label")
             XCTAssertLessThan(controlLabel.frame.height, 25, "Wrapped \(label) label")
         }
         attachScreenshot(of: app, named: "Catch up on compact screen")
@@ -543,7 +545,9 @@ final class ConferenceMediaUITests: XCTestCase {
         let link = try XCTUnwrap(URL(string: "jcp://jazz?code=site-selection-\(UUID().uuidString)&psw=fixturepass"))
         app.open(link)
         XCTAssertTrue(app.navigationBars["Meeting website"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.textFields["https://meeting.example.org"].exists)
+        let website = app.textFields["meeting.website-input"]
+        for _ in 0..<4 { if website.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(website.isHittable)
     }
 
     func testMissingHostCanBeSelectedDuringGuestCall() throws {

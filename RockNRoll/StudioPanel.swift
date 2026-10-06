@@ -67,7 +67,7 @@ struct StudioPanel: View {
                     }.padding(.horizontal).padding(.vertical, 10).background(.regularMaterial)
                 }
             }
-            .navigationTitle(L("Camera & sound"))
+            .navigationTitle(model.pane == .presenter ? L("Share") : L("Camera & sound"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) {
                 Button(L("Done")) { model.close() }.accessibilityIdentifier("studio.done")

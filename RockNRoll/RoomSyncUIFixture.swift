@@ -7,9 +7,25 @@ import UIKit
 @MainActor
 enum RoomSyncUIFixture {
     static func makeModel() -> ConferenceModel {
-        guard ProcessInfo.processInfo.environment["CONFERENCE_TEST_SYNC_FIXTURE"] != nil else { return ConferenceModel() }
+        let environment = ProcessInfo.processInfo.environment
+        if environment["CONFERENCE_TEST_UI_FIXTURE"] == "home" {
+            let identifier = environment["CONFERENCE_TEST_FIXTURE_ROOM_ID"] ?? "home"
+            let preferences = UserDefaults(suiteName: "HomeUIFixture." + identifier)!
+            let model = ConferenceModel(history: RoomHistoryStore(storage: PersistentStorage(preferences)), preferences: preferences)
+            model.installSyncFixture(RoomSyncCoordinator(history: model.history, name: model.displayName,
+                preferences: preferences, storage: PersistentStorage(preferences, key: "sync"), transport: Cloud(available: false)))
+            return model
+        }
+        guard environment["CONFERENCE_TEST_SYNC_FIXTURE"] != nil else { return ConferenceModel() }
         return ConferenceModel(history: RoomHistoryStore(storage: Storage()),
             preferences: UserDefaults(suiteName: "SyncUIFixture")!)
+    }
+    private final class PersistentStorage: RoomHistoryStorage {
+        let preferences: UserDefaults
+        let key: String
+        init(_ preferences: UserDefaults, key: String = "history") { self.preferences = preferences; self.key = key }
+        func read() -> Data? { preferences.data(forKey: key) }
+        func write(_ data: Data) throws { preferences.set(data, forKey: key) }
     }
     private final class Storage: RoomHistoryStorage {
         var data: Data?

@@ -5,7 +5,7 @@ import Metal
 import Vision
 
 struct PresenterScene {
-    enum Layout: String, CaseIterable { case card, cutout, instrument }
+    enum Layout: String, CaseIterable { case card, cutout, instrument, beside }
     enum Backdrop: String, CaseIterable { case dark, warm, stage }
     var layout: Layout = .card
     var backdrop: Backdrop = .dark
@@ -15,6 +15,34 @@ struct PresenterScene {
     var focus = CGPoint(x: 0.5, y: 0.5)
     var speaking = false
     var cameraRotation = 0
+    var placement = PresenterPlacement()
+    var draftStroke: [CGPoint] = []
+}
+
+/// Top-left normalized geometry shared by the editor, persistence and renderer.
+/// Capture consent and media are deliberately excluded from this value.
+struct PresenterPlacement: Codable, Equatable {
+    var x: CGFloat = 0.72
+    var y: CGFloat = 0.56
+    var width: CGFloat = 0.25
+    var height: CGFloat = 0.40
+    var rect: CGRect { CGRect(x: x, y: y, width: width, height: height) }
+    mutating func clamp() {
+        width = min(0.8, max(0.12, width.isFinite ? width : 0.25))
+        height = min(0.9, max(0.12, height.isFinite ? height : 0.4))
+        x = min(1 - width, max(0, x.isFinite ? x : 0.72))
+        y = min(1 - height, max(0, y.isFinite ? y : 0.56))
+    }
+    func pixels(in size: CGSize) -> CGRect {
+        var safe = self; safe.clamp()
+        return CGRect(x: safe.x * size.width, y: (1 - safe.y - safe.height) * size.height,
+                      width: safe.width * size.width, height: safe.height * size.height)
+    }
+    mutating func resize(_ factor: CGFloat) {
+        let center = CGPoint(x: x + width / 2, y: y + height / 2)
+        width *= factor; height *= factor; clamp()
+        x = center.x - width / 2; y = center.y - height / 2; clamp()
+    }
 }
 
 /// Used by local preview and outgoing sharing. The worker owns this instance;
@@ -26,8 +54,6 @@ final class PresenterCompositor: @unchecked Sendable {
     private let context: CIContext
     private var pool: CVPixelBufferPool?
     private let segmentation = VNGeneratePersonSegmentationRequest()
-    private var cachedImage: CGImage?
-    private var fittedImage: CIImage?
     private var cachedStrokes: [[CGPoint]] = []
     private var annotation: CIImage?
     private let personMask: ((CVPixelBuffer, CGImagePropertyOrientation) throws -> CVPixelBuffer?)?
@@ -49,10 +75,13 @@ final class PresenterCompositor: @unchecked Sendable {
         ] as CFDictionary, &pool)
     }
 
-    func render(scene: PresenterScene, camera: CVPixelBuffer?, rotation: Int = 0,
+    func render(scene: PresenterScene, camera: CVPixelBuffer?, screen: CVPixelBuffer? = nil, rotation: Int = 0,
                 time: CMTime) -> CMSampleBuffer? {
         let bounds = CGRect(origin: .zero, size: size)
-        var canvas = background(scene, bounds: bounds)
+        let contentBounds = scene.layout == .beside && camera != nil ?
+            CGRect(x: 0, y: 0, width: size.width * 0.72, height: size.height) : bounds
+        var canvas = background(scene, bounds: bounds, contentBounds: contentBounds)
+        if let screen { canvas = fit(CIImage(cvPixelBuffer: screen), into: contentBounds, fill: false).composited(over: canvas) }
         if let camera {
             let rotation = (rotation + scene.cameraRotation) % 360
             var input = CIImage(cvPixelBuffer: camera)
@@ -63,28 +92,29 @@ final class PresenterCompositor: @unchecked Sendable {
             default: break
             }
             input = input.transformed(by: CGAffineTransform(translationX: -input.extent.minX, y: -input.extent.minY))
-            let card = CGRect(x: size.width * 0.72, y: size.height * 0.04,
-                              width: size.width * 0.25, height: size.height * 0.40)
+            let card = scene.placement.pixels(in: size)
             switch scene.layout {
-            case .card:
+            case .card, .beside:
+                let card = scene.layout == .beside ? CGRect(x: size.width * 0.74, y: size.height * 0.08,
+                    width: size.width * 0.24, height: size.height * 0.84) : card
                 canvas = fit(input, into: card, fill: false).composited(over: canvas)
             case .instrument:
                 let crop = Self.instrumentCrop(extent: input.extent, zoom: scene.zoom, focus: scene.focus)
-                let target = CGRect(x: size.width * 0.55, y: size.height * 0.04,
-                                    width: size.width * 0.42, height: size.height * 0.60)
+                let target = card
                 canvas = fit(input.cropped(to: crop), into: target, fill: false).composited(over: canvas)
             case .cutout:
                 // No cached mask from another person/frame. If Vision cannot protect
                 // the room, omit the entire camera card rather than send raw pixels.
                 if let person = cutout(input, pixels: camera, rotation: rotation) {
-                    let target = CGRect(x: size.width * 0.65, y: 0, width: size.width * 0.33, height: size.height * 0.72)
+                    let target = card
                     canvas = fit(person, into: target, fill: false).composited(over: canvas)
                 }
             }
         }
-        if scene.strokes != cachedStrokes {
-            cachedStrokes = scene.strokes
-            annotation = drawStrokes(scene.strokes)
+        let strokes = scene.strokes + (scene.draftStroke.isEmpty ? [] : [scene.draftStroke])
+        if strokes != cachedStrokes {
+            cachedStrokes = strokes
+            annotation = drawStrokes(strokes)
         }
         if let annotation { canvas = annotation.composited(over: canvas) }
         guard let pool else { return nil }
@@ -124,7 +154,7 @@ final class PresenterCompositor: @unchecked Sendable {
                       width: width, height: height)
     }
 
-    private func background(_ scene: PresenterScene, bounds: CGRect) -> CIImage {
+    private func background(_ scene: PresenterScene, bounds: CGRect, contentBounds: CGRect) -> CIImage {
         let base: CIColor
         switch scene.backdrop {
         case .dark: base = CIColor(red: 0.035, green: 0.04, blue: 0.055)
@@ -133,10 +163,8 @@ final class PresenterCompositor: @unchecked Sendable {
         }
         var background = CIImage(color: base).cropped(to: bounds)
         if let image = scene.image {
-            if cachedImage !== image { cachedImage = image; fittedImage = fit(CIImage(cgImage: image), into: bounds, fill: false) }
-            if let fittedImage { background = fittedImage.composited(over: background) }
+            background = fit(CIImage(cgImage: image), into: contentBounds, fill: false).composited(over: background)
         } else {
-            cachedImage = nil; fittedImage = nil
             if scene.backdrop == .stage {
                 // Deliberately reacts to speech activity, not an invented audio-level
                 // meter. This does not capture microphone PCM or alter Music mode.

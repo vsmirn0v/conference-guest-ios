@@ -130,6 +130,7 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                             output = video; sink = receiver
                             session.commitConfiguration()
                         }
+                        if session.isMultitaskingCameraAccessSupported { session.isMultitaskingCameraAccessEnabled = true }
                         if !session.isRunning { session.startRunning() }
                         guard session.isRunning else { throw PreviewError.unavailable }
                         result.resume()

@@ -1,3 +1,4 @@
+import ConferenceCore
 import AVFoundation
 import ImageIO
 import VideoToolbox
@@ -74,6 +75,42 @@ final class PresenterCompositorTests: XCTestCase {
         _ = masked.render(scene: scene, camera: camera, time: .zero)
         XCTAssertEqual(maskOrientation, .right)
     }
+    func testCameraPlacementAndLiveDrawingReachOutgoingPixels() throws {
+        let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90))
+        var scene = PresenterScene()
+        let camera = try solid(230)
+        var left: [UInt8] = [], right: [UInt8] = []
+        scene.placement.x = 0.03
+        left = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: camera, time: .zero)))
+        scene.placement.x = 0.72
+        right = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: camera, time: .zero)))
+        XCTAssertNotEqual(left, right)
+        scene.draftStroke = [CGPoint(x: 0.1, y: 0.1), CGPoint(x: 0.7, y: 0.3)]
+        let drawing = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: camera, time: .zero)))
+        XCTAssertNotEqual(right, drawing, "Pen movement is shared before the finger lifts")
+    }
+    func testLiveScreenAndSideBySidePreserveContent() throws {
+        let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90))
+        let screen = try solid(180)
+        var scene = PresenterScene()
+        let plain = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: nil, screen: screen, time: .zero)))
+        let blank = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero)))
+        XCTAssertNotEqual(plain, blank)
+        scene.layout = .beside
+        let beside = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: solid(240), screen: screen, time: .zero)))
+        XCTAssertNotEqual(beside, plain)
+    }
+    func testGeometryClampsInvalidPlacementAndPreservesResizeCenter() {
+        var place = PresenterPlacement(x: .nan, y: 2, width: .infinity, height: -2)
+        place.clamp()
+        XCTAssertTrue(CGRect(x: 0, y: 0, width: 1, height: 1).contains(place.rect))
+        place = PresenterPlacement(x: 0.3, y: 0.3, width: 0.2, height: 0.3)
+        let center = CGPoint(x: place.rect.midX, y: place.rect.midY)
+        place.resize(1.5)
+        XCTAssertEqual(place.rect.midX, center.x, accuracy: 0.0001)
+        XCTAssertEqual(place.rect.midY, center.y, accuracy: 0.0001)
+        XCTAssertEqual(place.pixels(in: CGSize(width: 160, height: 90)).maxY, (1 - place.y) * 90, accuracy: 0.001)
+    }
     func testSpeakingGlowDoesNotRecolorAnImportedSlide() throws {
         let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90))
         let canvas = try XCTUnwrap(compositor.render(scene: PresenterScene(), camera: nil, time: .zero))
@@ -94,10 +131,11 @@ final class PresenterModelTests: XCTestCase {
         var started = false, stopped = false
         var waiting: CheckedContinuation<Void, Never>?
         var delay = false
+        var onFrames: ((@escaping (CVPixelBuffer, Int) -> Void) -> Void)?
         func start() async throws {}
         func startFrames(_ frames: @escaping @MainActor (CVPixelBuffer, Int) -> Void) async throws {
             if delay { await withCheckedContinuation { waiting = $0 } }
-            started = true
+            onFrames?(frames); started = true
         }
         func stop() async { stopped = true; started = false }
     }
@@ -161,6 +199,87 @@ final class PresenterModelTests: XCTestCase {
         model.end()
         XCTAssertTrue(model.scene.strokes.isEmpty)
     }
+    private final class Screen: PresenterScreenSource {
+        var starts = 0, stopped = false
+        func start() { starts += 1 }
+        func stop() async { stopped = true }
+    }
+    private func screenSample(width: Int = 160, height: Int = 90) throws -> CMSampleBuffer {
+        var buffer: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer), kCVReturnSuccess)
+        return try XCTUnwrap(PresenterCompositor.sample(XCTUnwrap(buffer), time: CMTime(value: 1, timescale: 30)))
+    }
+    func testLiveScreenIsPrivateUntilShareAndContinuesWithoutGPUInBackground() async throws {
+        let model = PresenterModel(observeLifecycle: false)
+        var sent: [CMSampleBuffer] = []
+        model.startSharing = { _ in }; model.sendSample = { sent.append($0) }; model.stopSharing = {}
+        model.open(); await waitUntil { model.hasPreview }
+        let source = try screenSample(width: 90, height: 160)
+        model.acceptScreen(source)
+        await waitUntil { model.hasPreview && model.aspectRatio < 1 }
+        XCTAssertTrue(sent.isEmpty)
+        await model.start(); XCTAssertTrue(model.running)
+        model.setForeground(false)
+        let count = sent.count
+        model.acceptScreen(source)
+        XCTAssertTrue(model.running); XCTAssertFalse(model.hasPreview)
+        XCTAssertEqual(sent.count, count + 1)
+        XCTAssertTrue(sent.last.flatMap(CMSampleBufferGetImageBuffer) === CMSampleBufferGetImageBuffer(source),
+                      "Screen-only background path must avoid GPU work/pixel copies")
+        model.setForeground(true); await waitUntil { model.hasPreview }
+        model.end(); model.acceptScreen(source)
+        XCTAssertFalse(model.running)
+    }
+    func testSourceCancellationAndLateFramesCannotReviveOldScreen() async throws {
+        let model = PresenterModel(observeLifecycle: false)
+        let capture = Screen()
+        var receive: ((CMSampleBuffer) -> Void)?
+        var cancelled: ((String?) -> Void)?
+        model.makeScreenSource = { frame, _, _, end in receive = frame; cancelled = end; return capture }
+        model.open(); model.selectScreen()
+        await waitUntil { capture.starts == 1 }
+        cancelled?(nil)
+        await waitUntil { capture.stopped }
+        XCTAssertFalse(model.screenPicking); XCTAssertFalse(model.screenSelected)
+        receive?(try screenSample())
+        XCTAssertFalse(model.screenSelected)
+        model.end()
+    }
+    func testDragUpdatesDoNotStarvePublicationAndPlacementSurvivesRestartWithoutConsent() async {
+        let suite = "presenter-test-\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = PresenterModel(observeLifecycle: false, preferences: defaults)
+        var sends = 0
+        model.startSharing = { _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
+        model.open(); await waitUntil { model.hasPreview }; await model.start()
+        for index in 0..<30 {
+            model.scene.placement.x = CGFloat(index) / 100
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertGreaterThan(sends, 3)
+        let placement = model.scene.placement
+        model.savePlacement(); model.end()
+        let next = PresenterModel(observeLifecycle: false, preferences: defaults)
+        XCTAssertEqual(next.scene.placement, placement)
+        XCTAssertFalse(next.includeCamera); XCTAssertFalse(next.running); XCTAssertNil(next.scene.image)
+        next.end()
+    }
+    func testCameraReadinessExpiresAfterFramesStop() async throws {
+        let model = PresenterModel(observeLifecycle: false)
+        let capture = Capture()
+        var emit: ((CVPixelBuffer, Int) -> Void)?
+        capture.onFrames = { emit = $0 }
+        model.makePrivateCamera = { _ in capture }
+        model.open(); model.includeCamera = true
+        await waitUntil { emit != nil }
+        emit?(try XCTUnwrap(CMSampleBufferGetImageBuffer(screenSample())), 0)
+        XCTAssertTrue(model.hasCameraFrames)
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        XCTAssertFalse(model.hasCameraFrames)
+        model.end()
+    }
     func testSystemSelectionIsNotMisrepresentedAsAppliedCapture() {
         XCTAssertEqual(CameraEffectStatus.state(selected: true, supported: nil, active: nil), .selected)
         XCTAssertEqual(CameraEffectStatus.state(selected: true, supported: false, active: false), .unavailable)
@@ -194,5 +313,29 @@ final class PresenterModelTests: XCTestCase {
         capture.waiting?.resume(); await release.value
         XCTAssertTrue(released); XCTAssertTrue(capture.stopped); XCTAssertFalse(capture.started)
         model.end()
+    }
+}
+
+/// Opt-in live transport qualification with a manually selected safe Mac window.
+@MainActor
+final class PresenterLiveTests: XCTestCase {
+    func testMacScreenSourceStaysActive() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              let invite = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_INVITE"] else {
+            throw XCTSkip("Opt-in live Mac Presenter qualification")
+        }
+        let root = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow?.rootViewController }.first)
+        let target = try JoinTarget.parse(invite)
+        let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore())
+        try engine.configure(container: root, networkURL: target.originURL, displayName: "Presenter QA")
+        try engine.join(target: target, displayName: "Presenter QA")
+        defer { engine.leave() }
+        for _ in 0..<600 {
+            if engine.isSharingScreen { break }
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+        XCTAssertTrue(engine.isSharingScreen, "Choose a safe test window and start Presenter sharing")
+        try await Task.sleep(nanoseconds: 180_000_000_000)
+        XCTAssertTrue(engine.isSharingScreen, "The stream must survive camera/source/layout changes")
     }
 }

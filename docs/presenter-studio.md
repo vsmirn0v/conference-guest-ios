@@ -1,10 +1,10 @@
 # Presenter and native effects
 
-Presenter is a native, foreground canvas for guest meetings. Touch and hold Share,
-use its secondary-click/accessibility action, or select More → Presenter. Holding
+Presenter is a native editor for guest meetings. Tap Share, use its
+secondary-click/accessibility action, or select More → Presenter. Holding
 Video during Presenter opens its camera controls directly.
 
-Opening setup is private. **Share canvas** explicitly publishes a 1280×720 canvas
+Opening setup is private. **Start sharing** explicitly publishes the composed canvas
 through the existing public screen-share sample API. Microphone intent is unchanged.
 **Include my camera** is off when joining with camera off. Before publication it
 opens a video-only preview; during publication it controls camera inclusion. The
@@ -47,14 +47,16 @@ composition share one worker. At most one job and one latest input frame are ret
 retired results cannot reach the next room. A bounded buffer pool preserves encoder
 ownership. The same composited samples feed local preview and the sender. Color space
 and timestamps are explicit; renderer identity never depends on the active speaker.
-Camera canvases target 12 fps; camera-free canvases use a 1 fps heartbeat and render
+Camera canvases target 15 fps; camera-free static canvases use a 1 fps heartbeat and render
 edits immediately. Ordinary meetings pay no composition cost before opening Presenter.
 Publication has its own lifetime token: an SDK camera-state change or a canvas edit
 while Share starts cannot cancel the share or revive a retired meeting.
 
-Presenter stops on hold, Leave or app backgrounding. Regular ReplayKit/whole-screen
-sharing remains the option for other apps. Stopping Presenter does not end the meeting.
-Presenter does not restart automatically after background or hold. The meeting engine
+Presenter stops on hold or Leave. Image/blank canvases stop on app backgrounding;
+Mac live screens continue without app-owned camera composition or drawings.
+Regular ReplayKit/whole-screen sharing remains the option for other apps on phones.
+Stopping Presenter does not end the meeting. Stopped canvases do not restart
+automatically after background or hold. The meeting engine
 continues to preserve its existing microphone/camera intent through recovery.
 
 ## Native effect reporting
@@ -98,6 +100,54 @@ For optional live qualification, prefix the external invitation and camera flag 
 No private invitation, captured camera image or generated background is committed.
 
 Presenter is currently integrated with the guest engine. The app-owned practice-room
-engine keeps its existing screen-sharing flow. Full-desktop capture plus a camera
-overlay, broadcast-extension composition and real-time music analysis are future work,
-not claims made by this foreground image-canvas feature.
+engine keeps its existing screen-sharing flow. Broadcast-extension camera composition and real-time music analysis remain unsupported.
+The Mac live-screen path is described below.
+
+## Movable camera and live screen sources
+
+Share now opens one editor with a source menu: Screen/window, Image and Blank canvas.
+On iPhone/iPad, Screen/other apps starts the existing system broadcast and keeps its
+screen-only background behavior. Camera composition and annotations there apply to
+image/blank canvases, which stop when backgrounded. Full-display camera composition
+in a broadcast extension is not claimed: Apple's in-app camera overlay API does not
+cover other apps.
+
+Camera rectangles use normalized top-left coordinates shared by the editor and
+compositor. Drag the outlined camera region; pinch or drag its corner to resize.
+Corner presets and an adjustable size slider provide alternatives for pointer and
+VoiceOver users. Side by side reserves a camera column so content remains unobscured.
+Instrument Crop is separate from moving the layer. Layout/placement persist locally;
+images, drawings, camera consent and capture state never persist. Expand canvas opens
+a larger editor. All editor controls remain outside outgoing pixels.
+Only one editor hosts the native preview surface at a time, preventing the small
+and expanded views from stealing it from one another. The larger editor scrolls
+when its controls cannot fit in a compact landscape window.
+
+Drawing sends bounded in-progress strokes before finger lift. Image decoding runs
+off the main thread, reports failures and discards canceled/retired imports. Readiness
+expires after a half-second camera-frame gap. A private composed canvas and an
+already-live ordinary camera have separate explanatory labels.
+
+Mac live screen capture uses the system chooser and the existing public sender.
+Preview capture is private to the app until Start sharing; changing a source while
+already sharing replaces that source in the same outgoing stream. Canceling a chooser
+keeps the previous source. Source aspect ratio is retained, composition is capped at
+1920 pixels on its longest side, and screen-only frames pass through without a new
+pixel conversion. Camera composition uses at most 15 fps; screen-only delivery is
+bounded at 30 fps. One worker plus one pending newest scene prevents render starvation
+while dragging; capture/camera/room retirement still invalidates in-flight results.
+Pass-through screen and composed frames share a monotonic uptime clock. On Mac,
+the public conference coordinator prepares the SDK transport before the app-owned
+sender starts; otherwise no ReplayKit extension launch opens its socket.
+
+The macOS Presenter Overlay delegate is observed: system-composed pixels bypass the
+app camera layer. Its position is controlled by macOS. Apple documents this behavior
+in [What's new in ScreenCaptureKit](https://developer.apple.com/videos/play/wwdc2023/10136/).
+Its availability in UIKit-on-Mac requires live qualification; a system-menu hint is
+not proof that the OS exposes it on every camera or Mac.
+
+Background Mac delivery passes captured screen frames directly to the sender and
+performs no app-owned GPU composition. App camera/drawings disappear in background
+and resume on foreground. Native Presenter Overlay remains system-managed. Runtime
+multitasking-camera capability is queried before enabling the AVFoundation flag;
+that flag is not treated as permission to render with Metal in a background UIKit app.

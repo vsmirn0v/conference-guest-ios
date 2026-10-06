@@ -450,6 +450,7 @@ struct MeetingWebsiteSelectionView: View {
                 }
                 Section(L("Another website")) {
                     TextField("https://meeting.example.org", text: $website)
+                        .accessibilityIdentifier("meeting.website-input")
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)

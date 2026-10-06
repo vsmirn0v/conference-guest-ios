@@ -681,6 +681,7 @@ final class NativeConferenceEngine: CallEngine {
                     self?.activeControls?.showMediaStatus(message)
                 }
             }
+            prepareMacShareTransport()
             screenCapture?.start()
             return
         }
@@ -699,6 +700,12 @@ final class NativeConferenceEngine: CallEngine {
         } else {
             activeControls?.showMediaStatus(L("Could not prepare screen sharing. Please try again."))
         }
+    }
+
+    private func prepareMacShareTransport() {
+        // UIKit-on-Mac has no ReplayKit extension launch to open the SDK socket.
+        // The public coordinator prepares that transport for the native sender.
+        if ProcessInfo.processInfo.isiOSAppOnMac { activeCoordinator?.toggleShareScreen(isOn: true) }
     }
 
     private func stopScreenSharing() async {
@@ -963,6 +970,25 @@ final class NativeConferenceEngine: CallEngine {
                       !self.leaveRequested else { return nil }
                 return GuestPresenterCamera(source: { [weak streams] in streams?.localCameraView() }, onFrame: onFrame)
             }
+            self.studio.presenter.shareOtherApps = { [weak self] in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt, !self.leaveRequested else { return }
+                self.studio.close()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.stopScreenSharing()
+                    guard self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt, !self.leaveRequested, !self.isSystemHeld else { return }
+                    self.setScreenSharing(true)
+                }
+            }
+            #if canImport(ScreenCaptureKit)
+            if ProcessInfo.processInfo.isiOSAppOnMac, #available(iOS 27.0, *) {
+                self.studio.presenter.makeScreenSource = { [weak self] onFrame, onEffect, onSelection, onEnd in
+                    NativeGuestScreenCapture(preview: self?.localSharePreview ?? LocalSharePreview(),
+                        onFrame: onFrame, onEffect: onEffect, onSelection: onSelection, onEnd: onEnd,
+                        onError: { _ in })
+                }
+            }
+            #endif
             self.studio.presenter.startSharing = { [weak self] sample in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                       !self.leaveRequested, !self.isSystemHeld, self.screenCapture == nil,
@@ -973,6 +999,7 @@ final class NativeConferenceEngine: CallEngine {
                     self.activeControls?.showMediaStatus(message)
                 }
                 self.screenCapture = sender
+                self.prepareMacShareTransport()
                 sender.start(); sender.send(sample)
             }
             self.studio.presenter.sendSample = { [weak self] sample in
