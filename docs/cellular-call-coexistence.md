@@ -34,6 +34,13 @@ build number and a CallKit event trace were not supplied, so the two configurati
 changes cannot be attributed separately. This confirmation covers dialing;
 post-call meeting playback was not separately reported in this test.
 
+Subsequent controlled-media qualification exposed a separate post-call readiness
+gap. After correction `8f1c2d1`, the user confirmed recovery after both outgoing
+and incoming cellular calls. Received-frame traces and a final automatic hold
+check also passed. See `physical-validation-2026-10-06.md` for exact source,
+device, artifacts and remaining acceptance limits. These fixes are in the local
+0.2.0 (36) development build; they have not been uploaded as another beta.
+
 References:
 - https://developer.apple.com/videos/play/wwdc2016/230/
 - https://developer.apple.com/documentation/callkit/cxcallupdate/supportsholding

@@ -1,7 +1,8 @@
 # Physical qualification — 6 October 2026
 
-Base source: `61549a61c261b51fa8a27774384693e98ffc0938`, with the opt-in test
-extensions committed alongside this record. Device: iVitalii, iPhone 17 Pro Max,
+Qualification started at `61549a61c261b51fa8a27774384693e98ffc0938` and also
+includes CallKit capability correction `a2a3a77`. Final media fix and test source:
+`8f1c2d17307e66f7e8c456a60581b8aba868b049`. Device: iVitalii, iPhone 17 Pro Max,
 iOS 27.0.1 (24A446), connected by USB. Version remains 0.2.0 (36); no upload.
 
 ## Accepted checks
