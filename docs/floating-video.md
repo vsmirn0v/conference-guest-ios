@@ -17,7 +17,9 @@ The floating surface follows eligible remote content in the current scene:
   not alter audio-session ownership or enable background camera capture.
 
 The system owns PiP movement, resizing, close, and return controls. The app adds
-only a source caption. Shares fit inside the surface instead of being cropped.
+a source caption, the local microphone status and an independent active-speaker
+badge. These are passive labels; see [speaker presence](active-speaker-presence.md).
+Shares fit inside the surface instead of being cropped.
 The compact surface does not provide a second independent share zoom control.
 
 ## Implementation and compatibility boundary

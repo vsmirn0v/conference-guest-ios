@@ -21,6 +21,7 @@ final class GuestCallLayoutFixture: UIViewController {
         let catchUp = CatchUpStore()
         catchUp.enter(roomKey: "guest-layout-\(UUID().uuidString)")
         let scenario = ProcessInfo.processInfo.environment["CONFERENCE_TEST_GUEST_SCENARIO"]
+        let activeSpeaker = ActiveSpeakerStore()
         let studio = scenario == "studio" ? StudioModel(audioControl: .noiseSuppression) : nil
         studio?.observeNoiseSuppression(true)
         studio?.applyProfile = { [weak studio] profile in studio?.observeNoiseSuppression(profile == .conversation) }
@@ -32,7 +33,8 @@ final class GuestCallLayoutFixture: UIViewController {
             onFloat: {}, onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
             onMicrophoneState: { _ in }, onCameraState: { _ in },
             usesNativeParticipants: scenario == "participants" || ProcessInfo.processInfo.isiOSAppOnMac,
-            studio: studio)
+            studio: studio, activeSpeaker: activeSpeaker)
+        if scenario == "speaker" { controls.fixtureActions = SpeakerFixtureActions.make(activeSpeaker) }
         let entries: [(String, String, Bool)] = solo ? [("self", "Your contact", false)] :
             [("share", "Ani’s arrangement", true), ("camera", "Aram", false)]
         for (id, name, share) in entries {

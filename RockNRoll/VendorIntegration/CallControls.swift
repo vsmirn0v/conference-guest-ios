@@ -87,6 +87,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private var floatingVideoAvailable = false
     private var refreshMoreMenu: (() -> Void)?
     private let studio: StudioModel?
+    private let activeSpeaker: ActiveSpeakerStore
+    #if DEBUG
+    var fixtureActions: [UIAction] = [] { didSet { refreshMoreMenu?() } }
+    #endif
 
     var canFloatVideo: Bool {
         floatingVideoAvailable && !isHeld && displayMode != .audioOnly &&
@@ -105,8 +109,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
          onMicrophoneState: @escaping (Bool) -> Void,
          onCameraState: @escaping (Bool) -> Void,
          usesNativeParticipants: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
-         studio: StudioModel? = nil) {
+         studio: StudioModel? = nil, activeSpeaker: ActiveSpeakerStore? = nil) {
         self.studio = studio
+        self.activeSpeaker = activeSpeaker ?? ActiveSpeakerStore()
         self.usesNativeParticipants = usesNativeParticipants
         self.localPreview = localPreview
         self.localShareCard = LocalSharePreviewCard(model: localPreview)
@@ -379,6 +384,18 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             catchUpButton.heightAnchor.constraint(equalToConstant: 48), missedWidth, missedHeight
         ])
         installPresentation()
+        self.activeSpeaker.$current.sink { [weak self] speaker in
+            guard let self else { return }
+            let hidden = self.speakerLabel.isHidden
+            self.speakerLabel.text = speaker.map { L("  Speaking: %@  ", $0.title) }
+            self.speakerLabel.isHidden = speaker == nil
+            self.compactHeader.setSpeaker(speaker)
+            self.speakingParticipant = speaker?.id
+            self.updateParticipantsPanel()
+            if !self.focus.hidden && self.compactHeader.isHidden && hidden != self.speakerLabel.isHidden {
+                self.surface.setNeedsLayout()
+            }
+        }.store(in: &subscriptions)
 
         catchUp.$timeline.receive(on: DispatchQueue.main).sink { [weak self] timeline in
             guard let self else { return }
@@ -436,10 +453,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.share.accessibilityLabel = isSharing ? L("Stop sharing screen") : L("Share screen")
             self.share.largeContentTitle = self.share.accessibilityLabel
         }.store(in: &subscriptions)
-        Publishers.CombineLatest3(state.$localParticipant, state.$remoteParticipants,
-                                  state.$dominantSpeaker)
+        Publishers.CombineLatest(state.$localParticipant, state.$remoteParticipants)
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] local, remote, speaker in
+            .sink { [weak self] local, remote in
                 guard let self else { return }
                 let hasShare = local.screenSharing.isOn ||
                     remote.values.contains { $0.screenSharing.isOn }
@@ -458,18 +474,12 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                     L("%ld participants", remote.count + 1) + identifier
                 self.participantsButton.accessibilityValue = remote.values.contains { $0.screenSharing.isOn }
                     ? L("A screen is being shared") : nil
-                if let speaker, speaker.microphone.isOn {
-                    self.speakerLabel.text = L("  Speaking: %@  ", speaker.isLocal ? L("You") : (speaker.userName ?? L("Musician")))
-                    self.speakerLabel.isHidden = false
-                } else {
-                    self.speakerLabel.isHidden = true
-                }
                 if self.usesNativeParticipants {
                     self.updateParticipantRoster(([local] + Array(remote.values)).map {
                         GuestStreamViews.Participant(id: $0.id, name: $0.userName ?? L("Musician"),
                             isLocal: $0.isLocal, microphoneOn: $0.microphone.isOn,
                             cameraOn: $0.camera.isOn, sharing: $0.screenSharing.isOn)
-                    }, speaking: speaker?.microphone.isOn == true ? speaker?.id : nil)
+                    }, speaking: self.activeSpeaker.current?.id)
                 }
                 self.surface.setNeedsLayout()
             }.store(in: &subscriptions)
@@ -830,14 +840,14 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         let showsStage = !stageView.isHidden
         let pinLabel = showsStage ? stageName.map { "\(stagePinned ? L("Unpin") : L("Pin")) \($0) \(stageIsShare ? L("screen share") : L("video"))" } : nil
         let status = callStateLabel.isHidden ? nil : callStateLabel.text
-        compactHeader.update(name: status ?? (showsStage ? stageName ?? titleLabel.text ?? L("Jam") : titleLabel.text ?? L("Jam")),
+        compactHeader.update(name: status ?? (showsStage ? (stageName ?? titleLabel.text ?? L("Jam")) + (stageIsShare ? L(" · Screen") : "") : titleLabel.text ?? L("Jam")),
             navigation: navigationCount > 1 && displayMode != .audioOnly && !isWaitingForOthers,
             browsing: lastPresentation?.browsing == true, pinned: stagePinned,
             pinLabel: pinLabel,
             participantsLabel: participantsButton.accessibilityLabel,
             chatValue: unreadChatCount > 0 ? catchUpButton.accessibilityLabel : nil,
             chatCount: unreadChatCount, missedCount: missedCount, status: status,
-            speaking: speakerLabel.isHidden ? nil : speakerLabel.text, focusAvailable: showsStage)
+            speaking: activeSpeaker.current, focusAvailable: showsStage)
         navigation.isHidden = focus.hidden || geometry.compactHeader || navigationCount < 2 || stagePinned || displayMode == .audioOnly || isWaitingForOthers
         var stage = geometry.stage
         if !navigation.isHidden {
@@ -922,6 +932,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 [weak self] _ in self?.workspace.copyInvitation()
             }, at: 1)
         }
+        #if DEBUG
+        actions = fixtureActions + actions
+        #endif
         moreButton.menu = UIMenu(children: actions)
     }
 

@@ -23,9 +23,9 @@ final class GuestVideoPictureInPicture {
     var onInlineSample: ((CMSampleBuffer, Int) -> Void)?
     var canShow: Bool { hasFrame && frameTap != nil && !suspended && floating.canShow }
 
-    init(sourceView: UIView) {
+    init(sourceView: UIView, speaker: ActiveSpeakerStore? = nil) {
         self.sourceView = sourceView
-        floating = FloatingVideoController(contentView: content)
+        floating = FloatingVideoController(contentView: content, speaker: speaker)
         content.backgroundColor = .black
         content.accessibilityIdentifier = "Floating video surface"
         video.translatesAutoresizingMaskIntoConstraints = false

@@ -17,9 +17,11 @@ final class PiPMicrophoneUITests: XCTestCase {
             .windows["PIP-SBInteractionPassThroughView"]
         XCTAssertTrue(pip.waitForExistence(timeout: 5))
         assertStatus("Muted", in: pip)
+        assertStatus("Aram", in: pip)
         let calculator = XCUIApplication(bundleIdentifier: "com.apple.calculator")
         calculator.activate()
         assertStatus("Mic on", in: pip)
+        assertStatus("Ani", in: pip)
         XCTAssertTrue(pip.exists)
         XCTAssertEqual(calculator.state, .runningForeground)
         assertStatus("Mic unavailable", in: pip)

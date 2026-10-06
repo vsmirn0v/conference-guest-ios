@@ -22,6 +22,10 @@ extension SceneDelegate {
                 window.rootViewController = PiPMicrophoneFixtureViewController()
                 return true
             }
+            if fixture == "speaker-pip" {
+                window.rootViewController = SpeakerPiPFixtureViewController()
+                return true
+            }
             if fixture == "guest-call" {
                 window.rootViewController = GuestCallLayoutFixture()
                 return true
@@ -128,6 +132,9 @@ extension SceneDelegate {
             model.catchUpStore.end(.anotherCall)
             let call = RockCallViewController(title: "Open rehearsal",
                 catchUp: model.catchUpStore, chat: model.chat)
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_SPEAKER"] == "1" {
+                call.fixtureActions = SpeakerFixtureActions.make(call.activeSpeaker)
+            }
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_STUDIO"] == "1" {
                 let studio = StudioModel(audioControl: .fullProcessing)
                 studio.applyProfile = { _ in }

@@ -28,6 +28,7 @@ final class FloatingVideoContentView: UIView {
     private let badge = UIView()
     private let icon = UIImageView()
     private let label = UILabel()
+    private let speaker = ActiveSpeakerIndicator(font: .systemFont(ofSize: 11, weight: .semibold))
     private(set) var microphoneStatus: PiPMicrophoneStatus = .unavailable
 
     init(videoContent: UIView) {
@@ -49,6 +50,10 @@ final class FloatingVideoContentView: UIView {
         badge.addSubview(icon)
         badge.addSubview(label)
         addSubview(badge)
+        speaker.backgroundColor = UIColor(white: 0.08, alpha: 0.9)
+        speaker.layer.cornerRadius = 7
+        speaker.accessibilityIdentifier = "Floating active speaker"
+        addSubview(speaker)
         renderStatus()
     }
 
@@ -58,6 +63,10 @@ final class FloatingVideoContentView: UIView {
         guard status != microphoneStatus else { return }
         microphoneStatus = status
         renderStatus()
+    }
+    func setSpeaker(_ value: CallSpeaker?) {
+        speaker.setSpeaker(value)
+        setNeedsLayout()
     }
 
     private func renderStatus() {
@@ -87,12 +96,14 @@ final class FloatingVideoContentView: UIView {
         let fullWidth = (fullTitle as NSString).size(withAttributes: [.font: label.font!]).width
         // Leave most of a small PiP window clear; retain "You" to distinguish
         // the local microphone from the participant whose video is displayed.
-        label.text = fullWidth + 33 <= available * 0.72 ? fullTitle : L("You")
+        label.text = fullWidth + 33 <= available * (speaker.isHidden ? 0.72 : 0.46) ? fullTitle : L("You")
         let textSize = label.sizeThatFits(CGSize(width: available, height: 24))
         let width = min(available, ceil(textSize.width) + 33)
         let height: CGFloat = 26
-        badge.frame = CGRect(x: inset, y: max(0, bounds.height - inset - height),
+        badge.frame = CGRect(x: bounds.width - inset - width, y: max(0, bounds.height - inset - height),
                              width: width, height: height)
+        speaker.frame = CGRect(x: inset, y: badge.frame.minY,
+            width: min(speaker.intrinsicContentSize.width, max(0, available - width - 4)), height: height)
         icon.frame = CGRect(x: 7, y: 6, width: 14, height: 14)
         label.frame = CGRect(x: 26, y: 0, width: max(0, width - 33), height: height)
     }

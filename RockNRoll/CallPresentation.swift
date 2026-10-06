@@ -137,6 +137,16 @@ final class CompactCallHeader: UIView {
     let focus = UIButton(type: .system)
     private let chatBadge = UILabel()
     private let missedBadge = UILabel()
+    private let sourceLabel = UILabel()
+    private let speakerIndicator = ActiveSpeakerIndicator(font: .systemFont(ofSize: 15, weight: .medium))
+    private var sourceName = ""
+    private var callStatus: String?
+    private struct Identity: Equatable {
+        let source: String
+        let status: String?
+        let speaker: CallSpeaker?
+    }
+    private var renderedIdentity: Identity?
     private var actions: [UIButton] { [previous, automatic, nextStream, pin, participants, missed, conversation, focus] }
 
     override init(frame: CGRect) {
@@ -151,6 +161,13 @@ final class CompactCallHeader: UIView {
         details.configuration?.imagePadding = 6
         details.accessibilityIdentifier = "Meeting details"
         addSubview(details)
+        sourceLabel.font = .systemFont(ofSize: 11)
+        sourceLabel.textColor = .lightGray
+        sourceLabel.lineBreakMode = .byTruncatingTail
+        sourceLabel.isUserInteractionEnabled = false
+        sourceLabel.isAccessibilityElement = false
+        speakerIndicator.isAccessibilityElement = false
+        details.addSubview(sourceLabel); details.addSubview(speakerIndicator)
         for (button, symbol, label) in [
             (previous, "chevron.left", L("Previous stream")),
             (automatic, "arrow.triangle.2.circlepath", L("Automatic view")),
@@ -187,11 +204,11 @@ final class CompactCallHeader: UIView {
 
     func update(name: String, navigation: Bool, browsing: Bool, pinned: Bool,
                 pinLabel: String?, participantsLabel: String?, chatValue: String?,
-                chatCount: Int = 0, missedCount: Int = 0, status: String?, speaking: String? = nil, focusAvailable: Bool) {
-        details.configuration?.title = name
-        details.configuration?.baseForegroundColor = status == nil ? .white : .systemOrange
+                chatCount: Int = 0, missedCount: Int = 0, status: String?, speaking: CallSpeaker? = nil, focusAvailable: Bool) {
+        sourceName = name
+        callStatus = status
         details.accessibilityLabel = L("Jam details") + ", " + name
-        details.accessibilityValue = [status, speaking].compactMap { $0 }.joined(separator: ", ")
+        setSpeaker(speaking)
         for button in [previous, automatic, nextStream] { button.isHidden = !navigation }
         previous.isEnabled = !pinned; nextStream.isEnabled = !pinned
         automatic.isEnabled = browsing || pinned
@@ -213,11 +230,27 @@ final class CompactCallHeader: UIView {
         focus.isHidden = !focusAvailable
         setNeedsLayout()
     }
+    func setSpeaker(_ speaker: CallSpeaker?) {
+        let visible = callStatus == nil ? speaker : nil
+        let identity = Identity(source: sourceName, status: callStatus, speaker: visible)
+        guard renderedIdentity != identity else { return }
+        renderedIdentity = identity
+        sourceLabel.text = sourceName
+        sourceLabel.isHidden = visible == nil
+        speakerIndicator.setSpeaker(visible)
+        details.configuration?.title = visible == nil ? sourceName : nil
+        details.configuration?.image = visible == nil ? UIImage(systemName: "info.circle") : nil
+        details.configuration?.baseForegroundColor = callStatus == nil ? .white : .systemOrange
+        details.accessibilityValue = [callStatus, visible?.accessibilityLabel].compactMap { $0 }.joined(separator: ", ")
+        setNeedsLayout()
+    }
     override func layoutSubviews() {
         super.layoutSubviews()
         let visible = actions.filter { !$0.isHidden }
         let start = bounds.maxX - CGFloat(visible.count) * 44 - 4
         details.frame = CGRect(x: 4, y: 0, width: max(0, start - 8), height: 44)
+        sourceLabel.frame = CGRect(x: 7, y: 3, width: max(0, details.bounds.width - 14), height: 14)
+        speakerIndicator.frame = CGRect(x: 0, y: 18, width: details.bounds.width, height: 23)
         for (index, button) in visible.enumerated() {
             button.frame = CGRect(x: start + CGFloat(index) * 44, y: 0, width: 44, height: 44)
         }

@@ -4,6 +4,7 @@ import UIKit
 /// A static PiP surface: status redraws must not depend on arriving video frames.
 final class PiPMicrophoneFixtureViewController: UIViewController {
     private var floating: FloatingVideoController?
+    private let speaker = ActiveSpeakerStore()
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     override func viewDidLoad() {
@@ -14,8 +15,9 @@ final class PiPMicrophoneFixtureViewController: UIViewController {
         card.textAlignment = .center
         card.backgroundColor = UIColor(white: 0.18, alpha: 1)
         card.textColor = .white
-        floating = FloatingVideoController(contentView: card)
+        floating = FloatingVideoController(contentView: card, speaker: speaker)
         floating?.setMicrophoneStatus(.muted)
+        speaker.update(CallSpeaker(id: "aram", name: "Aram", isLocal: false))
         let start = UIButton(type: .system)
         start.setTitle("Test microphone in PiP", for: .normal)
         start.addAction(UIAction { [weak self] _ in self?.floating?.start() }, for: .touchUpInside)
@@ -33,6 +35,7 @@ final class PiPMicrophoneFixtureViewController: UIViewController {
             for (delay, status) in [(6.0, PiPMicrophoneStatus.on), (12.0, .unavailable), (18.0, .muted)] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     self?.floating?.setMicrophoneStatus(status)
+                    self?.speaker.update(status == .on ? CallSpeaker(id: "ani", name: "Ani", isLocal: false) : nil)
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 22) { [weak self] in

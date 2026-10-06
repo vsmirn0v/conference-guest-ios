@@ -69,6 +69,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                 self.audioAvailable = false
                 self.audioGate.markInterrupted()
                 self.catchUp.begin(.audioInterruption)
+                self.updatePiPMicrophoneStatus()
             } else {
                 self.recoverAudioIfReady()
             }
@@ -196,6 +197,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                 if self.hasConnected { self.catchUp.begin(.audioInterruption) }
                 self.onMediaStatus?(L("Jam audio paused by iOS"))
                 try? AudioManager.shared.setEngineAvailability(.none)
+                self.updatePiPMicrophoneStatus()
             }
         }
         systemCall.onEnded = { [weak self] _ in
@@ -226,6 +228,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                     self.recoverAudioIfReady()
                 }
                 self.callView?.setHeld(held)
+                self.updatePiPMicrophoneStatus()
             }
         }
     }
@@ -246,6 +249,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             audioGate.markInterrupted()
             onMediaStatus?(L("Audio could not resume: %@", error.localizedDescription))
         }
+        updatePiPMicrophoneStatus()
     }
 
     private func connect() {
@@ -287,9 +291,13 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private func updatePiPMicrophoneStatus() {
         guard hasConnected, !leaveRequested, !isHeld, audioAvailable,
               let room, room.connectionState == .connected else {
+            callView?.setSpeakerReceptionAvailable(false)
             callView?.setFloatingMicrophoneStatus(.unavailable)
             return
         }
+        let wasSpeakerAvailable = callView?.activeSpeaker.available == true
+        callView?.setSpeakerReceptionAvailable(true)
+        if !wasSpeakerAvailable { callView?.refreshSpeaking(room: room) }
         let microphone = room.localParticipant.audioTracks.first { $0.source == .microphone }
         let status: PiPMicrophoneStatus
         if let microphone {
@@ -485,7 +493,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     nonisolated func room(_ room: Room, didUpdateSpeakingParticipants participants: [Participant]) {
         Task { @MainActor [weak self] in
             guard let self, self.room === room, self.hasJoinStarted else { return }
-            self.callView?.refreshSpeaking(room: room)
+            self.callView?.refreshSpeaking(room: room, speakers: participants)
         }
     }
 

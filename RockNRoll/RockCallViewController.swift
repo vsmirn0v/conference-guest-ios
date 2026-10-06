@@ -20,6 +20,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     var onShare: ((Bool) -> Void)?
     var onDisplayMode: ((ConferenceDisplayMode) -> Void)?
     var studio: StudioModel?
+    let activeSpeaker = ActiveSpeakerStore()
+    private var speakerReceptionAvailable = true
 
     private let focus = CallFocusController()
     private var headerView: UIStackView?
@@ -61,6 +63,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private lazy var localShareRenderer = LocalShareTrackPreview(preview: localSharePreview)
     #if DEBUG
     var fixtureParticipants: [ParticipantStatus]?
+    var fixtureActions: [UIAction] = [] { didSet { configureMoreMenu() } }
     #endif
     private struct PinnedStream: Equatable {
         let participantID: String
@@ -232,12 +235,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         compactHeader.frame = geometry.header
         compactHeader.isHidden = focus.hidden || !geometry.compactHeader
         let pin = currentPrimaryKey.flatMap { videoTiles[$0]?.pin }
-        compactHeader.update(name: isHeld || mediaStatus != nil ? statusLabel.text ?? L("Jam") : primaryName ?? titleLabel.text ?? L("Jam"),
+        let sourceName = (primaryName ?? titleLabel.text ?? L("Jam")) +
+            (currentPrimaryKey.flatMap { streamPinTargets[$0]?.isScreenShare } == true ? L(" · Screen") : "")
+        compactHeader.update(name: isHeld || mediaStatus != nil ? statusLabel.text ?? L("Jam") : sourceName,
             navigation: orderedStreams.count > 1, browsing: browsedStream != nil, pinned: pinnedStream != nil,
             pinLabel: pin?.accessibilityLabel, participantsLabel: participantsButton.accessibilityLabel,
             chatValue: chat.unreadCount > 0 ? conversationButton.accessibilityLabel : nil,
             chatCount: chat.unreadCount, missedCount: store.timeline.unreadCount,
-            status: isHeld || mediaStatus != nil ? statusLabel.text : nil, focusAvailable: primaryZoom != nil)
+            status: isHeld || mediaStatus != nil ? statusLabel.text : nil,
+            speaking: activeSpeaker.current, focusAvailable: primaryZoom != nil)
         statusLabel.isHidden = focus.hidden || geometry.compactHeader
         statusLabel.frame = CGRect(x: geometry.header.minX, y: geometry.header.maxY - statusHeight,
             width: geometry.header.width, height: statusHeight)
@@ -302,7 +308,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         super.viewDidLoad()
         view.tintColor = .white
         view.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.085, alpha: 1)
-        floatingVideo = RockVideoPictureInPicture(sourceView: view)
+        floatingVideo = RockVideoPictureInPicture(sourceView: view, speaker: activeSpeaker)
+        activeSpeaker.$current.sink { [weak self] in self?.compactHeader.setSpeaker($0) }.store(in: &subscriptions)
         let identity = UIStackView(arrangedSubviews: [titleLabel, countLabel, routeLabel])
         identity.axis = .vertical
         identity.spacing = 2
@@ -667,6 +674,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func setConnectionRecovering(_ recovering: Bool) {
         preservingPinDuringReconnect = recovering
+        updateSpeakerAvailability()
     }
 
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
@@ -1091,9 +1099,20 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
     }
 
-    func refreshSpeaking(room: Room) {
+    func refreshSpeaking(room: Room, speakers: [Participant]? = nil) {
         participantsPanel?.update(statuses(in: room), pinnedKey: pinnedStreamKey)
-        for participant in [room.localParticipant] + Array(room.remoteParticipants.values) {
+        let participants = [room.localParticipant] + Array(room.remoteParticipants.values)
+        let voices = (speakers ?? participants).filter { participant in
+            participant.isSpeaking && participant.audioTracks.contains { !$0.isMuted } &&
+                (!(participant is LocalParticipant) || isMicrophoneOn)
+        }
+        // The speaking callback supplies the engine's order. A roster refresh
+        // keeps that choice while it remains valid rather than picking by name.
+        let speaking = speakers == nil ? voices.first { participantID($0) == activeSpeaker.current?.id } ?? voices.first : voices.first
+        activeSpeaker.update(speaking.map {
+            CallSpeaker(id: participantID($0), name: $0.name ?? L("Musician"), isLocal: $0 is LocalParticipant)
+        })
+        for participant in participants {
             let id = participantID(participant)
             if let label = speakingLabels[id] {
                 label.text = participant.isSpeaking ? L("Speaking") :
@@ -1197,6 +1216,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 self?.onFlipCamera?()
             }
         ]
+        #if DEBUG
+        items = fixtureActions + items
+        #endif
         moreButton.menu = UIMenu(children: items)
     }
 
@@ -1252,6 +1274,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func setHeld(_ held: Bool) {
         isHeld = held
+        updateSpeakerAvailability()
         studio?.held = held
         if held { focus.show() }
         workspace.onHold = held
@@ -1266,7 +1289,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func restoreFromFloatingVideo() { floatingVideo?.foregrounded() }
 
-    func endFloatingVideo() { floatingVideo?.clear(); localShareRenderer.setTrack(nil); localSharePreview.end() }
+    func endFloatingVideo() { activeSpeaker.end(); floatingVideo?.clear(); localShareRenderer.setTrack(nil); localSharePreview.end() }
+
+    func setSpeakerReceptionAvailable(_ available: Bool) {
+        speakerReceptionAvailable = available
+        updateSpeakerAvailability()
+    }
+    private func updateSpeakerAvailability() {
+        activeSpeaker.setAvailable(speakerReceptionAvailable && !isHeld && !preservingPinDuringReconnect)
+    }
 
     func showMediaStatus(_ message: String?) {
         mediaStatus = message

@@ -11,9 +11,9 @@ final class RockVideoPictureInPicture {
     private weak var sourceView: UIView?
     private var selectedTrack: VideoTrack?
 
-    init(sourceView: UIView) {
+    init(sourceView: UIView, speaker: ActiveSpeakerStore? = nil) {
         self.sourceView = sourceView
-        floating = FloatingVideoController(contentView: content)
+        floating = FloatingVideoController(contentView: content, speaker: speaker)
         content.backgroundColor = .black
         content.accessibilityIdentifier = "Floating video surface"
         video.renderMode = .sampleBuffer
@@ -48,7 +48,7 @@ final class RockVideoPictureInPicture {
             video.track = track
         }
         video.layoutMode = isScreenShare ? .fit : .fill
-        caption.text = name.isEmpty ? nil : "  \(name)  "
+        caption.text = name.isEmpty ? nil : "  \(name)\(isScreenShare ? L(" · Screen") : "")  "
         caption.isHidden = name.isEmpty
         floating.setSourceView(sourceView)
     }

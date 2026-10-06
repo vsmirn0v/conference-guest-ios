@@ -53,6 +53,9 @@ final class NativeConferenceEngine: CallEngine {
     private weak var activeControls: CallControls?
     private var studio = StudioModel(audioControl: .noiseSuppression)
     private var studioSubscription: AnyCancellable?
+    private let activeSpeaker = ActiveSpeakerStore()
+    private var speakerSubscription: AnyCancellable?
+    private var refreshSpeakerInput: (() -> Void)?
     var continuationHostView: UIView? { activeControls }
     private let streamViews = GuestStreamViews()
     private var offeredShare: GuestStreamViews.PinTarget?
@@ -116,6 +119,20 @@ final class NativeConferenceEngine: CallEngine {
         let available = isSDKActive && isNetworkAvailable && !leaveRequested &&
             !isSystemHeld && !isAudioInterrupted && !isMediaReconnecting
         floatingVideo?.setMicrophoneStatus(available ? reportedMicrophoneStatus : .unavailable)
+        let wasAvailable = activeSpeaker.available
+        activeSpeaker.setAvailable(available)
+        if available && !wasAvailable { refreshSpeakerInput?() }
+    }
+
+    private func updateSpeaker(local: JazzConferenceParticipant, remote: [String: JazzConferenceParticipant],
+                               dominant: JazzConferenceParticipant?) {
+        let member = dominant.flatMap { selected in
+            selected.id == local.id ? local : remote.values.first { $0.id == selected.id }
+        }
+        activeSpeaker.update(member.flatMap { participant in
+            participant.microphone.isOn ? CallSpeaker(id: participant.id,
+                name: participant.userName ?? L("Musician"), isLocal: participant.isLocal) : nil
+        })
     }
 
     private func resetPiPMicrophoneObservation() {
@@ -150,7 +167,7 @@ final class NativeConferenceEngine: CallEngine {
         }
         MacCallActivity.shared.retainForGraphicsResources()
         GuestVideoFrameTap.prepare()
-        floatingVideo = GuestVideoPictureInPicture(sourceView: container.view)
+        floatingVideo = GuestVideoPictureInPicture(sourceView: container.view, speaker: activeSpeaker)
         floatingVideo?.rendersSelectedViewport = false
         floatingVideo?.onAvailabilityChanged = { [weak self] available in
             self?.activeControls?.setFloatingVideoAvailable(available)
@@ -369,6 +386,7 @@ final class NativeConferenceEngine: CallEngine {
         isMediaReconnecting = true
         isSDKActive = false
         mediaConnectionConfirmed = false
+        updatePiPMicrophoneStatus()
         hasScheduledMediaRestart = false
         mediaReconnectGeneration &+= 1
         nameForNextCoordinator = identity.userName()
@@ -482,6 +500,9 @@ final class NativeConferenceEngine: CallEngine {
     func join(target: JoinTarget, displayName: String) throws {
         guard finishing == nil else { throw ProviderError.teardownInProgress }
         sessionEpoch = UUID()
+        speakerSubscription?.cancel(); speakerSubscription = nil
+        refreshSpeakerInput = nil
+        activeSpeaker.reset()
         bindEvents()
         resetPiPMicrophoneObservation()
         streamViews.reset()
@@ -847,6 +868,18 @@ final class NativeConferenceEngine: CallEngine {
             }
             coordinator.toggleIncomingStreamsDisabled(isEnabled: self.displayMode != .audioOnly)
             self.observePiPMicrophone(state: state)
+            self.refreshSpeakerInput = { [weak self, weak state] in
+                guard let self, let state, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                      self.hasJoinStarted, !self.leaveRequested else { return }
+                self.updateSpeaker(local: state.localParticipant, remote: state.remoteParticipants, dominant: state.dominantSpeaker)
+            }
+            self.speakerSubscription?.cancel()
+            self.speakerSubscription = Publishers.CombineLatest3(state.$localParticipant, state.$remoteParticipants, state.$dominantSpeaker)
+                .receive(on: DispatchQueue.main).sink { [weak self] local, remote, speaker in
+                    guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                          self.hasJoinStarted, !self.leaveRequested else { return }
+                    self.updateSpeaker(local: local, remote: remote, dominant: speaker)
+                }
             self.observeTranscript(state: state)
             self.chat?.onSend = { [weak self] message in
                 guard let self, self.sessionEpoch == epoch else { return }
@@ -890,7 +923,7 @@ final class NativeConferenceEngine: CallEngine {
                                         }, onCameraState: { [weak self] isOn in
                                             guard let self, self.sessionEpoch == epoch, !self.isSystemHeld else { return }
                                             self.cameraIntentOn = isOn
-                                        }, studio: self.studio)
+                                        }, studio: self.studio, activeSpeaker: self.activeSpeaker)
             self.activeControls = controls
             controls.onPinParticipant = { [weak self] target in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
@@ -1034,6 +1067,9 @@ final class NativeConferenceEngine: CallEngine {
     private func finishSession(userEnded: Bool, event: CallEvent) {
         guard finishing == nil, hasJoinStarted else { return }
         studio.end()
+        activeSpeaker.end()
+        speakerSubscription?.cancel(); speakerSubscription = nil
+        refreshSpeakerInput = nil
         studioSubscription?.cancel(); studioSubscription = nil
         let epoch = sessionEpoch
         let destination = onEvent

@@ -1,4 +1,5 @@
 import AVKit
+import Combine
 import UIKit
 
 /// Shared system PiP lifecycle. Each new AVKit controller gets a fresh content
@@ -7,6 +8,7 @@ import UIKit
 final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictureControllerDelegate {
     private enum Phase { case idle, starting, active, stopping }
     private let contentView: FloatingVideoContentView
+    private var speakerSubscription: AnyCancellable?
     private weak var sourceView: UIView?
     private weak var configuredSource: UIView?
     private var contentController: AVPictureInPictureVideoCallViewController?
@@ -22,9 +24,12 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         didSet { contentController?.preferredContentSize = preferredSize }
     }
 
-    init(contentView: UIView) {
+    init(contentView: UIView, speaker: ActiveSpeakerStore? = nil) {
         self.contentView = FloatingVideoContentView(videoContent: contentView)
         super.init()
+        speakerSubscription = speaker?.$current.sink { [weak contentView = self.contentView] in
+            contentView?.setSpeaker($0)
+        }
     }
 
     var canShow: Bool {
