@@ -1,6 +1,7 @@
 import AVFoundation
 import CallKit
 import Foundation
+import OSLog
 
 /// Reports only a real, user-requested conference to the system call UI.
 final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverDelegate {
@@ -12,18 +13,24 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     var onHoldChanged: ((Bool) -> Void)?
     var onFailure: ((Error) -> Void)?
 
-    private lazy var provider: CXProvider = {
+    private let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "RockNRoll", category: "SystemCall")
+    private lazy var provider = CXProvider(configuration: Self.providerConfiguration())
+
+    static func providerConfiguration() -> CXProviderConfiguration {
         let configuration = CXProviderConfiguration()
         configuration.supportsVideo = true
         configuration.includesCallsInRecents = false
         configuration.supportedHandleTypes = [.generic]
         configuration.maximumCallsPerCallGroup = 1
-        configuration.maximumCallGroups = 1
-        return CXProvider(configuration: configuration)
-    }()
+        // Retain CallKit's standard allowance for separate active/held calls.
+        // The app's callID guard still permits only one meeting of its own.
+        configuration.maximumCallGroups = 2
+        return configuration
+    }
     private lazy var controller = CXCallController()
     private let usesSystemCall: Bool
     private let transactionRequester: ((CXTransaction, @escaping (Error?) -> Void) -> Void)?
+    private let callUpdateReporter: ((UUID, CXCallUpdate) -> Void)?
     private(set) var callID: UUID?
     private var isConnected = false
     private var isMuted = true
@@ -41,8 +48,10 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         callID != nil && isAudioSessionActive && !isHeld && !hasAnotherActiveCall
     }
 
-    init(transactionRequester: ((CXTransaction, @escaping (Error?) -> Void) -> Void)? = nil) {
+    init(transactionRequester: ((CXTransaction, @escaping (Error?) -> Void) -> Void)? = nil,
+         callUpdateReporter: ((UUID, CXCallUpdate) -> Void)? = nil) {
         self.transactionRequester = transactionRequester
+        self.callUpdateReporter = callUpdateReporter
         usesSystemCall = transactionRequester != nil || !ProcessInfo.processInfo.isiOSAppOnMac
         super.init()
         if usesSystemCall && transactionRequester == nil {
@@ -54,6 +63,18 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private func request(_ transaction: CXTransaction, completion: @escaping (Error?) -> Void) {
         if let transactionRequester { transactionRequester(transaction, completion) }
         else { controller.request(transaction, completion: completion) }
+    }
+
+    private func reportCapabilities(for id: UUID, using source: CXProvider? = nil) {
+        // Handling CXSetHeldCallAction is not a declaration of hold support.
+        // Advertise it explicitly so another system call can hold this meeting.
+        let update = CXCallUpdate()
+        update.supportsHolding = true
+        update.supportsGrouping = false
+        update.supportsUngrouping = false
+        update.supportsDTMF = false
+        if let callUpdateReporter { callUpdateReporter(id, update) }
+        else if transactionRequester == nil { (source ?? provider).reportCall(with: id, updated: update) }
     }
 
     func start() {
@@ -108,7 +129,9 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         guard let callID, !isConnected else { return }
         isConnected = true
         guard usesSystemCall else { return }
-        provider.reportOutgoingCall(with: callID, connectedAt: nil)
+        reportCapabilities(for: callID)
+        if transactionRequester == nil { provider.reportOutgoingCall(with: callID, connectedAt: nil) }
+        log.notice("CallKit meeting connected; hold supported")
         setMuted(isMuted, force: true)
     }
 
@@ -193,14 +216,13 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             action.fail()
             return
         }
-        provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: nil)
+        reportCapabilities(for: action.callUUID, using: provider)
+        if transactionRequester == nil { provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: nil) }
         action.fulfill()
     }
 
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        #if DEBUG
-        print("System call: audio activated")
-        #endif
+        log.notice("CallKit audio activated")
         guard callID != nil else { return }
         isAudioSessionActive = true
         onActivated?()
@@ -237,9 +259,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             action.fail()
             return
         }
-        #if DEBUG
-        print("System call: hold changed: \(action.isOnHold)")
-        #endif
+        log.notice("CallKit hold requested: \(action.isOnHold, privacy: .public)")
         isHeld = action.isOnHold
         resumeRequested = false
         if isHeld {
@@ -260,9 +280,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
-        #if DEBUG
-        print("System call: audio deactivated")
-        #endif
+        log.notice("CallKit audio deactivated")
         guard callID != nil else { return }
         isAudioSessionActive = false
         onDeactivated?()
@@ -270,9 +288,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
 
     func callObserver(_ callObserver: CXCallObserver, callChanged call: CXCall) {
         guard let callID, call.uuid != callID else { return }
-        #if DEBUG
-        print("System call: another call changed, connected=\(call.hasConnected), ended=\(call.hasEnded)")
-        #endif
+        log.notice("Other call changed: outgoing=\(call.isOutgoing, privacy: .public), connected=\(call.hasConnected, privacy: .public), ended=\(call.hasEnded, privacy: .public)")
         if !call.hasEnded {
             if isHeld, let holdStartedAt,
                Date().timeIntervalSince(holdStartedAt) <= 3 {
@@ -280,6 +296,11 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             }
         }
         resumeIfPossible()
+    }
+
+    func provider(_ provider: CXProvider, timedOutPerforming action: CXAction) {
+        // No contact, meeting URL, call UUID or media is written to this log.
+        log.error("CallKit action timed out: \(String(describing: type(of: action)), privacy: .public)")
     }
 
     func resumeIfPossible() {

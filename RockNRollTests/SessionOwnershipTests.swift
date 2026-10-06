@@ -5,6 +5,70 @@ import JazzSDK
 
 @MainActor
 final class SessionOwnershipTests: XCTestCase {
+    // Record acknowledgments at the delegate boundary: these local actions
+    // are not attached to a system transaction.
+    private final class StartAction: CXStartCallAction {
+        var fulfilled = false
+        override func fulfill() { fulfilled = true }
+    }
+    private final class HoldAction: CXSetHeldCallAction {
+        var fulfilled = false
+        override func fulfill() { fulfilled = true }
+    }
+
+    func testMeetingAdvertisesHoldSupportAtStartAndConnection() throws {
+        var transactions: [CXTransaction] = []
+        var updates: [(UUID, CXCallUpdate)] = []
+        let calls = SystemCallCoordinator(transactionRequester: { transaction, completion in
+            transactions.append(transaction); completion(nil)
+        }, callUpdateReporter: { updates.append(($0, $1)) })
+        let configuration = SystemCallCoordinator.providerConfiguration()
+        XCTAssertEqual(configuration.maximumCallGroups, 2)
+        XCTAssertEqual(configuration.maximumCallsPerCallGroup, 1)
+        let provider = CXProvider(configuration: configuration)
+        calls.start()
+        let requested = try XCTUnwrap(transactions.first?.actions.first as? CXStartCallAction)
+        let start = StartAction(call: requested.callUUID, handle: requested.handle)
+        calls.provider(provider, perform: start)
+        XCTAssertTrue(start.fulfilled)
+        XCTAssertEqual(updates.count, 1)
+        calls.markConnected()
+        XCTAssertEqual(updates.count, 2)
+        for (id, update) in updates {
+            XCTAssertEqual(id, calls.callID)
+            XCTAssertTrue(update.supportsHolding)
+            XCTAssertFalse(update.supportsGrouping)
+            XCTAssertFalse(update.supportsUngrouping)
+            XCTAssertFalse(update.supportsDTMF)
+        }
+        let count = transactions.count
+        calls.start()
+        XCTAssertEqual(transactions.count, count, "Two system groups must not start a second meeting")
+        calls.markEnded(reason: .remoteEnded)
+    }
+
+    func testSystemHoldAndResumeKeepMeetingIdentityAndMuteIntent() throws {
+        let calls = SystemCallCoordinator(transactionRequester: { _, completion in completion(nil) })
+        var holds: [Bool] = []
+        var muteChanges = 0, ends = 0
+        calls.onHoldChanged = { holds.append($0) }
+        calls.onMuteChanged = { _ in muteChanges += 1 }
+        calls.onEnded = { _ in ends += 1 }
+        calls.start()
+        let id = try XCTUnwrap(calls.callID)
+        let provider = CXProvider(configuration: SystemCallCoordinator.providerConfiguration())
+        for held in [true, false] {
+            let action = HoldAction(call: id, onHold: held)
+            calls.provider(provider, perform: action)
+            XCTAssertTrue(action.fulfilled)
+            XCTAssertEqual(calls.callID, id)
+        }
+        XCTAssertEqual(holds, [true, false])
+        XCTAssertEqual(muteChanges, 0)
+        XCTAssertEqual(ends, 0)
+        calls.markEnded(reason: .remoteEnded)
+    }
+
     func testTimedOutHoldCallbacksCannotCompleteNewResume() async throws {
         var transactions: [CXTransaction] = []
         var completions: [(Error?) -> Void] = []
