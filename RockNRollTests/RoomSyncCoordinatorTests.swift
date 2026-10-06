@@ -4,6 +4,32 @@ import ConferenceCore
 
 @MainActor
 final class RoomSyncCoordinatorTests: XCTestCase {
+    func testCalendarFavoriteSyncsBeforeAnyVisitAndUnstarCannotCreateHistory() async {
+        let cloud = Cloud()
+        let (phone, phoneSync) = replica(cloud)
+        let (mac, macSync) = replica(cloud)
+        let url = URL(string: "https://meeting.example.test/calls/team?psw=fixture")!
+        phone.saveFavorite(url: url, title: "Planning", engine: .guest)
+        await sync(phoneSync); await sync(macSync)
+        XCTAssertEqual(mac.rooms.count, 1)
+        XCTAssertTrue(mac.rooms[0].isStarred)
+        XCTAssertNil(mac.rooms[0].lastVisit)
+        mac.setAlias("Our room", for: url)
+        await sync(macSync); await sync(phoneSync)
+        XCTAssertEqual(phone.rooms[0].displayTitle, "Our room")
+        mac.toggleStar(url)
+        await sync(macSync); await sync(phoneSync)
+        XCTAssertTrue(mac.rooms.isEmpty); XCTAssertTrue(phone.rooms.isEmpty)
+        phone.saveFavorite(url: url, title: "Daily", engine: .guest)
+        await sync(phoneSync); await sync(macSync)
+        XCTAssertNil(mac.rooms.first?.lastVisit)
+        phone.record(url: URL(string: "https://meeting.example.test/team?psw=rotated")!,
+                     title: "Server title", identifier: "team", engine: .guest)
+        await sync(phoneSync); await sync(macSync)
+        XCTAssertEqual(mac.rooms.first?.joinURL.query, "psw=rotated")
+        XCTAssertNotNil(mac.rooms.first?.lastVisit)
+        XCTAssertEqual(mac.rooms.count, 1)
+    }
     func testFavoriteOrderSyncsBothWaysWhileRecentHistoryIsExcluded() async {
         let cloud = Cloud()
         let (mac, macSync) = replica(cloud)

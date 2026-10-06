@@ -8,9 +8,15 @@ public struct RecentRoom: Codable, Equatable, Identifiable, Sendable {
     public var isStarred: Bool
     public var lastJoined: Date
     public var favoritePosition: Int64?
+    /// nil is a legacy visited room. false explicitly represents a saved-only room.
+    public var hasBeenJoined: Bool?
+    public var engine: MeetingEngineKind?
+    public var latestInvitationURL: URL?
 
     public var id: String { invitationURL.absoluteString }
     public var displayTitle: String { alias ?? title }
+    public var lastVisit: Date? { hasBeenJoined == false ? nil : lastJoined }
+    public var joinURL: URL { latestInvitationURL ?? invitationURL }
 
     public init(invitationURL: URL, title: String, identifier: String,
                 isStarred: Bool = false, lastJoined: Date) {
@@ -21,6 +27,7 @@ public struct RecentRoom: Codable, Equatable, Identifiable, Sendable {
         self.isStarred = isStarred
         self.lastJoined = lastJoined
         self.favoritePosition = nil
+        self.hasBeenJoined = nil; self.engine = nil; self.latestInvitationURL = nil
     }
 }
 
@@ -39,17 +46,47 @@ public struct RecentRooms: Codable, Equatable, Sendable {
     }
 
     public mutating func record(url: URL, title: String, identifier: String,
-                                at date: Date = Date()) {
+                                at date: Date = Date(), engine: MeetingEngineKind? = nil) {
         let cleanTitle = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
-        if let index = items.firstIndex(where: { $0.invitationURL == url }) {
+        if let index = matchingIndex(url, engine: engine) {
             items[index].lastJoined = date
+            items[index].hasBeenJoined = true
+            items[index].engine = engine ?? items[index].engine
+            if items[index].invitationURL != url { items[index].latestInvitationURL = url }
             if !cleanTitle.isEmpty { items[index].title = cleanTitle }
         } else {
             items.append(RecentRoom(invitationURL: url,
                                     title: cleanTitle.isEmpty ? identifier : cleanTitle,
                                     identifier: identifier, lastJoined: date))
+            items[items.count - 1].engine = engine
         }
         normalize()
+    }
+
+    /// Saving is a deliberate room action, never a visit. The legacy timestamp
+    /// stores the real save time for schema-1 readers; lastVisit stays nil.
+    public mutating func saveFavorite(url: URL, title: String, identifier: String,
+                                      engine: MeetingEngineKind? = nil, at date: Date = Date()) {
+        if let index = matchingIndex(url, engine: engine) {
+            if !items[index].isStarred { toggleStar(for: items[index].invitationURL) }
+            return
+        }
+        var room = RecentRoom(invitationURL: url, title: String(title.prefix(80)), identifier: identifier,
+                              lastJoined: date)
+        room.hasBeenJoined = false; room.engine = engine
+        room.alias = room.title
+        items.append(room)
+        toggleStar(for: url)
+    }
+
+    public func matching(_ url: URL, engine: MeetingEngineKind? = nil) -> RecentRoom? {
+        matchingIndex(url, engine: engine).map { items[$0] }
+    }
+
+    private func matchingIndex(_ url: URL, engine: MeetingEngineKind?) -> Int? {
+        if let index = items.firstIndex(where: { $0.invitationURL == url || $0.joinURL == url }) { return index }
+        guard let identity = MeetingRoomIdentity(url, engine: engine) else { return nil }
+        return items.firstIndex { MeetingRoomIdentity($0.joinURL, engine: $0.engine) == identity }
     }
 
     public mutating func updateTitle(for url: URL, title: String) {
@@ -124,6 +161,7 @@ public struct RecentRooms: Codable, Equatable, Sendable {
         var unstarred = 0
         items = items.filter { room in
             guard !room.isStarred else { return true }
+            guard room.lastVisit != nil else { return false }
             unstarred += 1
             return unstarred <= 10
         }

@@ -7,6 +7,7 @@ struct JoinView: View {
     @ObservedObject var history: RoomHistoryStore
     @ObservedObject var sync: RoomSyncCoordinator
     @ObservedObject var continuation: MeetingContinuationCoordinator
+    @ObservedObject var calendar: CalendarMeetingStore
     @State private var showingSavedHistory = false
     @FocusState private var nameFocused: Bool
     @State private var showingSettings = false
@@ -52,6 +53,9 @@ struct JoinView: View {
                 MeetingContinuationView(continuation: continuation,
                                         busy: model.isJoining || model.isInConference || model.isLeaving,
                                         onJoinHere: { staleContinuation = $0; confirmingStaleContinuation = true })
+                CalendarAgendaView(calendar: calendar, history: history, continuation: continuation,
+                    busy: model.isJoining || model.isInConference || model.isLeaving || continuation.moving,
+                    onJoin: model.joinCalendarMeeting, onSettings: { showingSettings = true })
                 Section(L("Join a jam")) {
                     HStack {
                         TextField(L("Invitation link"), text: $model.invite)
@@ -203,8 +207,12 @@ struct JoinView: View {
                 sync.endNameEditing()
             }
             .onChange(of: nameFocused) { focused in
+                if focused { calendar.cancelAutomaticJoin(suppress: true) }
                 if focused { sync.beginNameEditing() } else { sync.endNameEditing() }
             }
+            .onChange(of: model.invite) { _ in calendar.cancelAutomaticJoin(suppress: true) }
+            .onChange(of: showingSettings) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
+            .onChange(of: mediaCheck.presented) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
             .onChange(of: model.isNameRequiredForJoin) { required in
                 if required { nameFocused = true }
             }
@@ -224,6 +232,19 @@ struct JoinView: View {
                     onChoose: { model.chooseWebsite($0) ? nil : model.status },
                     onCancel: { model.siteSelection = nil }
                 )
+            }
+            .sheet(item: $calendar.choosingMeeting) { meeting in
+                CalendarRoomBindingView(meeting: meeting, calendar: calendar, history: history)
+            }
+            .confirmationDialog(L("Choose meeting engine"),
+                isPresented: Binding(get: { model.engineSelection != nil },
+                                     set: { if !$0 { model.dismissEngineSelection() } }),
+                titleVisibility: .visible) {
+                Button(L("Guest meeting")) { model.chooseEngine(community: false) }
+                Button(L("Community jam")) { model.chooseEngine(community: true) }
+                Button(L("Cancel"), role: .cancel) { model.dismissEngineSelection() }
+            } message: {
+                Text(L("This website supports two meeting engines. Choose how to join."))
             }
             .sheet(item: $editingRoom) { room in
                 NavigationStack {
@@ -323,7 +344,7 @@ struct JoinView: View {
                             Label(L("Rename"), systemImage: "pencil")
                         }
                         Button {
-                            UIPasteboard.general.url = room.invitationURL
+                            UIPasteboard.general.url = room.joinURL
                         } label: {
                             Label(L("Copy invitation"), systemImage: "doc.on.doc")
                         }
@@ -370,12 +391,19 @@ struct JoinView: View {
     }
 
     private func roomSubtitle(_ room: RecentRoom) -> String {
-        "\(room.identifier) · \(room.invitationURL.host() ?? L("Meeting")) · \(room.lastJoined.formatted(.relative(presentation: .named)))"
+        if let metadata = calendar.subtitle(for: room) { return metadata }
+        let visit = room.lastVisit?.formatted(.relative(presentation: .named)) ?? L("Saved · Not joined yet")
+        return "\(room.identifier) · \(room.joinURL.host() ?? L("Meeting")) · \(visit)"
     }
 
     private var settingsSheet: some View {
         NavigationStack {
             Form {
+                Section {
+                    NavigationLink { CalendarSettingsView(calendar: calendar) } label: {
+                        Label(L("Calendars"), systemImage: "calendar")
+                    }.accessibilityIdentifier("calendar.settings")
+                }
                 Section(L("Compatible meeting website")) {
                     TextField(L("HTTPS website address"), text: $model.guestWebsiteOrigin)
                         .textInputAutocapitalization(.never)

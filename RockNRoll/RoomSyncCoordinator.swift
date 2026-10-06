@@ -194,6 +194,7 @@ final class RoomSyncCoordinator: ObservableObject {
     private func localChange(_ change: RoomHistoryChange) {
         switch change {
         case .upsert(let room, let visited): state.document.upsert(room, visited: visited)
+        case .saved(let room): state.document.upsert(room, saved: true)
         case .remove(let id): state.document.remove(id)
         case .favoriteOrder(let ids): state.document.setFavoriteOrder(ids)
         }

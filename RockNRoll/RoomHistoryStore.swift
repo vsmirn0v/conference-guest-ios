@@ -10,6 +10,7 @@ protocol RoomHistoryStorage {
 
 enum RoomHistoryChange {
     case upsert(RecentRoom, visited: Bool)
+    case saved(RecentRoom)
     case remove(String)
     case favoriteOrder([String])
 }
@@ -33,17 +34,27 @@ final class RoomHistoryStore: ObservableObject {
         rooms = history.items
     }
 
-    func record(url: URL, title: String, identifier: String) {
-        history.record(url: url, title: title, identifier: identifier)
+    func record(url: URL, title: String, identifier: String, engine: MeetingEngineKind? = nil) {
+        history.record(url: url, title: title, identifier: identifier, engine: engine)
         save()
-        notify(url, visited: true)
+        if let room = matching(url, engine: engine) { notify(room.invitationURL, visited: true) }
+    }
+
+    func matching(_ url: URL, engine: MeetingEngineKind? = nil) -> RecentRoom? { history.matching(url, engine: engine) }
+
+    func saveFavorite(url: URL, title: String, engine: MeetingEngineKind? = nil) {
+        guard let target = try? JoinTarget.parse(url.absoluteString) else { return }
+        history.saveFavorite(url: url, title: title, identifier: target.roomID, engine: engine)
+        save()
+        if let room = matching(url, engine: engine) { onLocalChange?(.saved(room)) }
+        onLocalChange?(.favoriteOrder(rooms.filter(\.isStarred).map(\.id)))
     }
 
     func updateTitle(for url: URL, title: String) {
-        guard history.items.first(where: { $0.invitationURL == url })?.title != title else { return }
-        history.updateTitle(for: url, title: title)
+        guard let room = history.matching(url), room.title != title else { return }
+        history.updateTitle(for: room.invitationURL, title: title)
         save()
-        notify(url)
+        notify(room.invitationURL)
     }
 
     func setFavoriteOrder(_ ids: [String]) {
@@ -62,9 +73,11 @@ final class RoomHistoryStore: ObservableObject {
     }
 
     func toggleStar(_ url: URL) {
+        let before = history.items.first { $0.invitationURL == url }
         history.toggleStar(for: url)
         save()
-        notify(url)
+        if before?.lastVisit == nil, before?.isStarred == true { onLocalChange?(.remove(url.absoluteString)) }
+        else { notify(url) }
         onLocalChange?(.favoriteOrder(rooms.filter(\.isStarred).map(\.id)))
     }
 
@@ -80,7 +93,8 @@ final class RoomHistoryStore: ObservableObject {
         history.restore(removedRoom)
         self.removedRoom = nil
         save()
-        notify(removedRoom.invitationURL, visited: true)
+        if removedRoom.lastVisit == nil { onLocalChange?(.saved(removedRoom)) }
+        else { notify(removedRoom.invitationURL, visited: true) }
     }
 
     func setAlias(_ alias: String?, for url: URL) {

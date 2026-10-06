@@ -3,6 +3,18 @@ import XCTest
 
 @MainActor
 final class RoomHistoryStoreTests: XCTestCase {
+    func testCalendarFavoritePersistsToKeychainWithoutBecomingAVisit() {
+        let marker = UUID().uuidString
+        let url = URL(string: "https://meeting.example.test/calls/\(marker)?psw=fixture")!
+        let first = RoomHistoryStore()
+        first.saveFavorite(url: url, title: "Calendar room", engine: .guest)
+        let restored = RoomHistoryStore()
+        let room = restored.matching(url)
+        XCTAssertTrue(room?.isStarred == true)
+        XCTAssertNil(room?.lastVisit)
+        XCTAssertEqual(room?.displayTitle, "Calendar room")
+        restored.remove(url)
+    }
     func testMovingFavoritesPersistsOrderWithoutChangingRecentRooms() {
         let storage = FakeStorage(); storage.failing = false
         let store = RoomHistoryStore(storage: storage)

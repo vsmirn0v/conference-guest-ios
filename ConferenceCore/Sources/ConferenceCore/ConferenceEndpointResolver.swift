@@ -21,9 +21,14 @@ public struct ConferenceEndpointResolver {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.timeoutInterval = 10
         let (data, http) = try await BoundedHTTP.load(request, session: session, maximumBytes: 65_536)
+        return try Self.endpoint(in: data, response: http, origin: target.originURL, serviceName: serviceName)
+    }
+
+    static func endpoint(in data: Data, response http: HTTPURLResponse, origin: URL, serviceName: String) throws -> URL {
         guard http.statusCode == 200,
               http.url?.scheme?.lowercased() == "https",
-              http.url?.host?.lowercased() == target.originURL.host?.lowercased(),
+              http.url?.host?.lowercased() == origin.host?.lowercased(),
+              (http.url?.port ?? 443) == (origin.port ?? 443),
               let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let service = document[serviceName] as? [String: Any],
               let serverURL = service["serverUrl"] as? String,

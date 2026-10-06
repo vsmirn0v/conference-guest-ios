@@ -61,6 +61,20 @@ final class SameOriginRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
         }
         completionHandler(request)
     }
-    // Do not override authentication challenges: the session's trust delegate
-    // retains ownership of system and bundled certificate evaluation.
+    // bytes(for:delegate:) replaces the task delegate; server-trust challenges
+    // otherwise take default handling instead of reaching the session delegate.
+    // Forward the original policy without changing anchors or hostname checks.
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard let original = session.delegate, original !== self else {
+            completionHandler(.performDefaultHandling, nil); return
+        }
+        if let delegate = original as? URLSessionTaskDelegate,
+           delegate.responds(to: #selector(URLSessionTaskDelegate.urlSession(_:task:didReceive:completionHandler:))) {
+            delegate.urlSession?(session, task: task, didReceive: challenge, completionHandler: completionHandler)
+        } else if original.responds(to: #selector(URLSessionDelegate.urlSession(_:didReceive:completionHandler:))) {
+            original.urlSession?(session, didReceive: challenge, completionHandler: completionHandler)
+        } else { completionHandler(.performDefaultHandling, nil) }
+    }
 }

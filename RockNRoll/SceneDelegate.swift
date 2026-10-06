@@ -18,7 +18,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         #endif
         #if DEBUG
-        let model = RoomSyncUIFixture.makeModel()
+        let model = CalendarUIFixture.makeModel() ?? RoomSyncUIFixture.makeModel()
         RoomSyncUIFixture.configure(model)
         MeetingContinuationUIFixture.configure(model)
         MeetingContinuationLiveFixture.configure(model)
@@ -29,7 +29,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                                                             catchUp: model.catchUpStore,
                                                             history: model.history,
                                                             sync: model.sync,
-                                                            continuation: model.continuation))
+                                                            continuation: model.continuation,
+                                                            calendar: model.calendar))
         let controller = UIViewController()
         controller.addChild(hosting)
         controller.view.addSubview(hosting.view)
@@ -72,6 +73,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
+        conference?.calendarForegrounded()
         conference?.sync.foregrounded()
         conference?.continuation.setForeground(true)
         conference?.updateContinuationActivity()
@@ -80,6 +82,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
+        conference?.calendar.backgrounded()
         conference?.prepareToFloat()
     }
 

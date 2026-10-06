@@ -31,6 +31,7 @@ final class ConferenceModel: ObservableObject {
     private(set) var connectedURL: URL?
     @Published var showSwitchConfirmation = false
     @Published var siteSelection: LinkSiteSelection?
+    @Published var engineSelection: MeetingEngineSelection?
     @Published private var joinAwaitingName: JoinDestination?
     var isNameRequiredForJoin: Bool { joinAwaitingName != nil }
     var namePolicy: MeetingInputPolicy { joinAwaitingName?.inputPolicy ?? MeetingInputPolicy(maximumNameScalars: 80) }
@@ -43,6 +44,8 @@ final class ConferenceModel: ObservableObject {
     private lazy var engine = NativeConferenceEngine(systemCall: systemCall, catchUp: catchUpStore)
     let chat = ChatStore()
     let history: RoomHistoryStore
+    let calendar: CalendarMeetingStore
+    private var explicitCalendarEntry = false
     private var liveSessionID: UUID?
     private var liveName = ""
     private(set) var companionAudioPaused = false
@@ -72,6 +75,8 @@ final class ConferenceModel: ObservableObject {
     #endif
     private var jamEngine: RockRoomEngine?
     private let resolver = VendorEndpointResolver.make()
+    private let engineDetector: MeetingEngineDetector
+    private var engineChoiceRequest: JoinRequest?
     private let jamService: JamService
     private struct JoinRequest {
         let target: JoinDestination
@@ -88,6 +93,7 @@ final class ConferenceModel: ObservableObject {
     private var terminalEventHandled = false
     private var sessionGeneration: UInt64 = 0
     private var endpointCache: [URL: URL] = [:]
+    private var guestInvitations: [URL] { history.rooms.filter { $0.engine != .community }.map(\.joinURL) }
     private let websitePresenter = MeetingWebsitePresenter()
     private var websiteLinkAwaitingSelection: URL?
     #if DEBUG
@@ -97,11 +103,50 @@ final class ConferenceModel: ObservableObject {
     @Published var testSwitchSequenceCompleted = false
     #endif
 
-    init(jamService: JamService = JamService(), history: RoomHistoryStore? = nil, preferences: UserDefaults = .standard) {
+    init(jamService: JamService = JamService(), history: RoomHistoryStore? = nil, preferences: UserDefaults = .standard,
+         engineDetector: MeetingEngineDetector? = nil, calendar: CalendarMeetingStore? = nil) {
         self.jamService = jamService; self.history = history ?? RoomHistoryStore(); self.preferences = preferences
+        let detector = engineDetector ?? VendorEndpointResolver.makeDetector()
+        self.engineDetector = detector
+        self.calendar = calendar ?? CalendarMeetingStore(detector: detector, preferences: preferences)
         displayName = preferences.string(forKey: "savedDisplayName")
             .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? ""
         guestWebsiteOrigin = preferences.string(forKey: "guestWebsiteOrigin") ?? ""
+        self.calendar.knownOrigins = { [weak self] in
+            guard let self else { return [] }
+            var origins = Set(self.history.rooms.compactMap { (try? JoinTarget.parse($0.joinURL.absoluteString))?.originURL.absoluteString.lowercased() })
+            let site = self.guestWebsiteOrigin.hasPrefix("https://") ? self.guestWebsiteOrigin : "https://" + self.guestWebsiteOrigin
+            if let url = URL(string: site), url.host != nil { origins.insert(url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()) }
+            return origins
+        }
+        self.calendar.knownEngine = { [weak self] in self?.history.matching($0)?.engine }
+        self.calendar.canAutomaticallyJoin = { [weak self] meeting in
+            guard let self else { return false }
+            return !self.isJoining && !self.isInConference && !self.isLeaving &&
+                self.siteSelection == nil && self.engineSelection == nil &&
+                meeting.engine?.inputPolicy.accepts(name: self.displayName) == true &&
+                self.continuation.candidates.isEmpty && !self.continuation.moving
+        }
+        self.calendar.aliases = { [weak self] in
+            var aliases: [String: URL] = [:]
+            var ambiguous: Set<String> = []
+            for room in self?.history.rooms ?? [] {
+                guard let name = room.alias?.lowercased(), name.contains("."),
+                      let host = URL(string: "https://" + name)?.host, host == name else { continue }
+                if aliases[host] != nil, aliases[host] != room.joinURL { ambiguous.insert(host) }
+                aliases[host] = room.joinURL
+            }
+            for host in ambiguous { aliases.removeValue(forKey: host) }
+            return aliases
+        }
+        self.calendar.invitationNormalizer = { [weak self] url in
+            if GuestSiteLinkAdapter.handles(url), let self {
+                return try? GuestSiteLinkAdapter.invitation(from: url, websiteOrigin: self.guestWebsiteOrigin,
+                    recentInvitations: self.guestInvitations)
+            }
+            return (try? JoinTarget.parse(url.absoluteString))?.invitationURL
+        }
+        self.calendar.onAutomaticJoin = { [weak self] in self?.joinCalendarMeeting($0) }
     }
 
     private var activeEngine: (any CallEngine)? {
@@ -137,6 +182,8 @@ final class ConferenceModel: ObservableObject {
     }
 
     func receive(url: URL) {
+        explicitCalendarEntry = true
+        calendar.cancelAutomaticJoin(suppress: true)
         do {
             let target = try destination(for: url.absoluteString)
             receive(target: target, autoJoin: GuestSiteLinkAdapter.handles(url))
@@ -156,6 +203,7 @@ final class ConferenceModel: ObservableObject {
     }
 
     private func receive(target: JoinDestination, autoJoin: Bool) {
+        dismissEngineSelection()
         #if DEBUG
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_RESOLVE_ONLY"] == "1" {
             set(target: target)
@@ -188,7 +236,7 @@ final class ConferenceModel: ObservableObject {
 
     private func websiteOrigins(for error: Error) -> [URL] {
         (error as? GuestSiteLinkError)?.candidateOrigins ??
-            GuestSiteLinkAdapter.rememberedOrigins(from: history.rooms.map(\.invitationURL))
+            GuestSiteLinkAdapter.rememberedOrigins(from: guestInvitations)
     }
 
     func join() {
@@ -213,7 +261,7 @@ final class ConferenceModel: ObservableObject {
         guard let selection = siteSelection else { return false }
         do {
             let invitation = try GuestSiteLinkAdapter.invitation(from: selection.link,
-                websiteOrigin: website, recentInvitations: history.rooms.map(\.invitationURL),
+                websiteOrigin: website, recentInvitations: guestInvitations,
                 selectedWebsite: website)
             guestWebsiteOrigin = website.hasPrefix("https://") ? website : "https://\(website)"
             siteSelection = nil
@@ -237,7 +285,7 @@ final class ConferenceModel: ObservableObject {
                 do {
                     let invitation = try GuestSiteLinkAdapter.invitation(from: link,
                         websiteOrigin: website,
-                        recentInvitations: self.history.rooms.map(\.invitationURL), selectedWebsite: website)
+                        recentInvitations: self.guestInvitations, selectedWebsite: website)
                     self.guestWebsiteOrigin = website.hasPrefix("https://") ? website : "https://\(website)"
                     self.websiteLinkAwaitingSelection = nil
                     self.dismissWebsiteWindow()
@@ -258,8 +306,11 @@ final class ConferenceModel: ObservableObject {
         websitePresenter.dismiss(fallback: container?.view.window)
     }
 
-    private func startJoin(_ target: JoinDestination, nameOverride: String? = nil, quiet: Bool = false) {
+    private func startJoin(_ target: JoinDestination, nameOverride: String? = nil, quiet: Bool = false,
+                           engineWasChosen: Bool = false) {
         guard !isJoining && !isInConference && !isLeaving else { return }
+        dismissEngineSelection()
+        calendar.cancelAutomaticJoin(suppress: true)
         #if DEBUG
         let requestedName = nameOverride ?? testDisplayNameOverride ?? displayName
         testDisplayNameOverride = nil
@@ -298,7 +349,49 @@ final class ConferenceModel: ObservableObject {
         joinTask = Task { [weak self] in
             guard let self else { return }
             do {
-                switch request.target {
+                var destination = request.target
+                if case .guest(let guest) = destination, !engineWasChosen {
+                    let detection = try await engineDetector.detect(guest.invitationURL)
+                    try Task.checkCancellation()
+                    guard sessionGeneration == generation else { return }
+                    switch detection {
+                    case .verified(.guest(let endpoint)):
+                        endpointCache[guest.originURL] = endpoint
+                    case .verified(.community):
+                        destination = .jam(try JamTarget.parseCompatibleInvitation(guest.invitationURL.absoluteString))
+                    case .ambiguous:
+                        if let known = history.matching(guest.invitationURL)?.engine {
+                            if known == .community {
+                                destination = .jam(try JamTarget.parseCompatibleInvitation(guest.invitationURL.absoluteString))
+                            } else { endpointCache[guest.originURL] = try await resolver.resolve(for: guest) }
+                        } else {
+                            joinTask = nil; phase = .idle; activeRoute = nil
+                            companionAudioPaused = false; liveSessionID = nil
+                            engineChoiceRequest = request
+                            endpointCache.removeValue(forKey: guest.originURL)
+                            engineSelection = MeetingEngineSelection(invitation: guest.invitationURL)
+                            status = L("This website supports two meeting engines. Choose how to join.")
+                            return
+                        }
+                    case .unknown:
+                        // Foreground guest joins retain their existing, longer discovery
+                        // retry window. A failed short probe never proves another engine.
+                        if history.matching(guest.invitationURL)?.engine == .community {
+                            destination = .jam(try JamTarget.parseCompatibleInvitation(guest.invitationURL.absoluteString))
+                        } else { endpointCache[guest.originURL] = try await resolver.resolve(for: guest) }
+                    }
+                }
+                try Task.checkCancellation()
+                guard sessionGeneration == generation, phase == .joining else { return }
+                activeRoute = destination
+                if !destination.inputPolicy.accepts(name: request.name) {
+                    joinTask = nil; phase = .idle; activeRoute = nil
+                    companionAudioPaused = false; liveSessionID = nil
+                    joinAwaitingName = destination
+                    status = L("Choose the name other musicians will see.")
+                    return
+                }
+                switch destination {
                 case .guest(let guest):
                     let networkURL: URL
                     if let cached = endpointCache[guest.originURL] {
@@ -351,6 +444,7 @@ final class ConferenceModel: ObservableObject {
                 joinTask = nil
                 status = L("Connecting with microphone and camera off…")
             } catch {
+                await engineDetector.invalidate(target.invitationURL)
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
                 joinTask = nil
                 phase = .idle
@@ -365,6 +459,7 @@ final class ConferenceModel: ObservableObject {
     }
 
     func leave() {
+        dismissEngineSelection()
         guard !isLeaving, isJoining || isInConference else { return }
         let didStartConference = activeEngine?.hasJoinStarted == true
         phase = didStartConference ? .leaving : .idle
@@ -390,6 +485,20 @@ final class ConferenceModel: ObservableObject {
 
     func resumeSystemCallIfPossible() { activeEngine?.resumeSystemCallIfPossible() }
 
+    func chooseEngine(community: Bool) {
+        guard let selection = engineSelection, let request = engineChoiceRequest else { return }
+        dismissEngineSelection()
+        do {
+            let target: JoinDestination = community ?
+                .jam(try JamTarget.parseCompatibleInvitation(selection.invitation.absoluteString)) : request.target
+            startJoin(target, nameOverride: request.name, quiet: request.quiet, engineWasChosen: true)
+        } catch {
+            status = error.localizedDescription; statusIsError = true
+        }
+    }
+
+    func dismissEngineSelection() { engineSelection = nil; engineChoiceRequest = nil }
+
     func replaceWithPending() {
         guard let target = pendingTarget else { return }
         replacementAfterLeave = PendingInvitation(target: target, autoJoin: false)
@@ -402,15 +511,31 @@ final class ConferenceModel: ObservableObject {
     }
 
     func rejoin(_ room: RecentRoom) {
-        receive(url: room.invitationURL)
+        receive(url: calendar.preferredInvitation(for: room))
         if !isJoining && !isInConference && !isLeaving { join() }
     }
 
     func toggleStar(_ room: RecentRoom) { history.toggleStar(room.invitationURL) }
 
+    func joinCalendarMeeting(_ meeting: CalendarMeeting) {
+        guard let invitation = meeting.invitation else { calendar.choosingMeeting = meeting; return }
+        calendar.suppressAutomaticJoin(for: meeting)
+        do {
+            let target: JoinDestination = meeting.engine == .community ?
+                .jam(try JamTarget.parseCompatibleInvitation(invitation.absoluteString)) : try destination(for: invitation.absoluteString)
+            receive(target: target, autoJoin: true)
+        } catch { status = error.localizedDescription; statusIsError = true }
+    }
+
+    func calendarForegrounded() {
+        calendar.foregrounded(allowAutomaticJoin: !explicitCalendarEntry)
+        explicitCalendarEntry = false
+    }
+
     func remove(_ room: RecentRoom) { history.remove(room.invitationURL) }
     func setAlias(_ alias: String?, for room: RecentRoom) {
         history.setAlias(alias, for: room.invitationURL)
+        if calendar.enabled { calendar.refresh() }
     }
 
     private func completeReplacement() {
@@ -476,13 +601,16 @@ final class ConferenceModel: ObservableObject {
                 case .jam(let target): identifier = target.jamID
                 }
                 history.record(url: activeRoute.invitationURL,
-                               title: activeRoomTitle ?? identifier, identifier: identifier)
+                               title: activeRoomTitle ?? identifier, identifier: identifier,
+                               engine: { if case .jam = activeRoute { return .community }; return .guest }())
+                if let room = history.matching(activeRoute.invitationURL) { calendar.noteJoined(room, invitation: activeRoute.invitationURL) }
             }
         case .joining:
             break
         case .failed:
             guard isJoining || isInConference, !isLeaving else { return }
             terminalEventHandled = true
+            if let url = activeRoute?.invitationURL { Task { await engineDetector.invalidate(url) } }
             phase = .idle
             connectedURL = nil
             status = L("Disconnected from the jam.")
@@ -526,11 +654,13 @@ final class ConferenceModel: ObservableObject {
     }
 
     private func destination(for text: String) throws -> JoinDestination {
+        if let pending = joinAwaitingName,
+           pending.invitationURL.absoluteString == text.trimmingCharacters(in: .whitespacesAndNewlines) { return pending }
         let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let url = URL(string: candidate), GuestSiteLinkAdapter.handles(url) {
             let invitation = try GuestSiteLinkAdapter.invitation(from: url,
                 websiteOrigin: guestWebsiteOrigin,
-                recentInvitations: history.rooms.map(\.invitationURL))
+                recentInvitations: guestInvitations)
             return try JoinDestination.parse(invitation.absoluteString, joinLinkHost: joinLinkHost)
         }
         return try JoinDestination.parse(candidate, joinLinkHost: joinLinkHost)
@@ -618,6 +748,11 @@ struct LinkSiteSelection: Identifiable {
     let id = UUID()
     let link: URL
     let rememberedOrigins: [URL]
+}
+
+struct MeetingEngineSelection: Identifiable {
+    let id = UUID()
+    let invitation: URL
 }
 
 enum CallEvent {

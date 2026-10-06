@@ -1,3 +1,5 @@
 "NSBluetoothAlwaysUsageDescription" = "Use Bluetooth headphones and other audio devices for jam audio, including when the jam continues in the background.";
 "NSCameraUsageDescription" = "Share video when you choose to turn on your camera in a jam.";
 "NSMicrophoneUsageDescription" = "Use your microphone to speak in jams and test your sound privately before unmuting.";
+"NSCalendarsUsageDescription" = "Find meeting links and times in calendars you choose. Your calendar is never edited. Event details stay on this device; room names saved to Favorites follow your iCloud Sync choice.";
+"NSCalendarsFullAccessUsageDescription" = "Find meeting links and times in calendars you choose. Your calendar is never edited. Event details stay on this device; room names saved to Favorites follow your iCloud Sync choice.";

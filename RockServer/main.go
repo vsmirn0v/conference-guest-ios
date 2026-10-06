@@ -39,17 +39,21 @@ type server struct {
 }
 
 type jamDetails struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Community   string `json:"community"`
-	Description string `json:"description"`
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	Community    string `json:"community"`
+	Description  string `json:"description"`
+	Engine       string `json:"engine"`
+	JoinProtocol string `json:"join_protocol"`
 }
 
 var testJam = jamDetails{
-	ID:          "test",
-	Title:       "Open rehearsal",
-	Community:   "Rock’n’Roll · Yerevan",
-	Description: "A small jam room for trying live audio and video. Share the link with another musician to play together.",
+	ID:           "test",
+	Title:        "Open rehearsal",
+	Community:    "Rock’n’Roll · Yerevan",
+	Description:  "A small jam room for trying live audio and video. Share the link with another musician to play together.",
+	Engine:       "livekit",
+	JoinProtocol: "rocknroll-v1",
 }
 
 func main() {

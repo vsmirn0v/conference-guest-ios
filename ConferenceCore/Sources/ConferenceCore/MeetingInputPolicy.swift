@@ -13,8 +13,12 @@ public struct MeetingInputPolicy: Sendable {
 public extension JoinDestination {
     var inputPolicy: MeetingInputPolicy {
         switch self {
-        case .jam: MeetingInputPolicy(maximumNameScalars: 60)
-        case .guest: MeetingInputPolicy(maximumNameScalars: 80)
+        case .jam: MeetingEngineKind.community.inputPolicy
+        case .guest: MeetingEngineKind.guest.inputPolicy
         }
     }
+}
+
+public extension MeetingEngineKind {
+    var inputPolicy: MeetingInputPolicy { MeetingInputPolicy(maximumNameScalars: self == .community ? 60 : 80) }
 }

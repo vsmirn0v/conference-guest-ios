@@ -10,6 +10,20 @@ import (
 	"time"
 )
 
+func TestMetadataAdvertisesEngineWithoutIssuingCredentialsOrJoining(t *testing.T) {
+	s := &server{}
+	w := httptest.NewRecorder()
+	s.routes().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/jams/test", nil))
+	var data map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &data); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || data["engine"] != "livekit" || data["join_protocol"] != "rocknroll-v1" ||
+		data["id"] != "test" || data["participant_token"] != nil || len(s.joins) != 0 {
+		t.Fatalf("metadata is not a read-only engine contract: %v", data)
+	}
+}
+
 func TestGuestJoinIssuesOnlyRoomScopedGrant(t *testing.T) {
 	s := &server{config: configuration{key: "test-api-key-long", secret: strings.Repeat("s", 48), serverURL: "wss://rock.glowsoft.ru"}}
 	r := httptest.NewRequest(http.MethodPost, "/api/jams/test/join", strings.NewReader(`{"name":"Maya"}`))

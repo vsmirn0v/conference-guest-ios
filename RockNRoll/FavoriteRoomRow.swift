@@ -109,7 +109,7 @@ final class FavoriteRoomControl: UIView, UIDragInteractionDelegate, UIDropIntera
             var actions: [UIMenuElement] = [
                 UIAction(title: L("Rename"), image: UIImage(systemName: "pencil")) { _ in content.onRename() },
                 UIAction(title: L("Copy invitation"), image: UIImage(systemName: "doc.on.doc")) { _ in
-                    UIPasteboard.general.url = content.room.invitationURL
+                    UIPasteboard.general.url = content.room.joinURL
                 }
             ]
             if content.room.alias != nil {
