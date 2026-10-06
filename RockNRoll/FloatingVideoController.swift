@@ -37,6 +37,8 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         !isEnded && AVPictureInPictureController.isPictureInPictureSupported() && sourceView != nil && !suspended
     }
 
+    func bindMicrophoneActivity(_ activity: MicrophoneActivity) { contentView.bindMicrophoneActivity(activity) }
+
     func setMicrophoneStatus(_ status: PiPMicrophoneStatus) {
         contentView.setMicrophoneStatus(status)
     }

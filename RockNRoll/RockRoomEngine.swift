@@ -29,6 +29,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private let videoSubscriptions = VideoSubscriptionCoordinator<ObjectIdentifier>()
     private var videoPublisher = RoomVideoPublisher()
     private var studio = StudioModel(audioControl: .fullProcessing, preferences: .standard)
+    private var microphoneProbe: RoomMicrophoneProbe?
     private var studioAudio = StudioAudioUpdates()
     #if DEBUG
     private var testHoldScheduled = false
@@ -103,6 +104,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         self.microphoneIntentOn = false
         self.cameraIntentOn = false
         self.displayMode = .all
+        if let microphoneProbe { AudioManager.shared.remove(localAudioRenderer: microphoneProbe); self.microphoneProbe = nil }
         studio.end()
         studioAudio.end()
         studioAudio = StudioAudioUpdates()
@@ -134,6 +136,21 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                                           invitationURL: target.invitationURL,
                                           roomIdentifier: target.jamID)
         view.studio = studio
+        let microphoneProbe = RoomMicrophoneProbe(activity: studio.microphoneActivity)
+        self.microphoneProbe = microphoneProbe
+        AudioManager.shared.add(localAudioRenderer: microphoneProbe)
+        studio.soundCheck.verifyMuted = { [weak self, weak room = self.room] in
+            guard let self, let room, self.room === room, !self.leaveRequested, !self.isHeld,
+                  self.audioAvailable else { throw CancellationError() }
+            self.setMicrophone(false)
+            for _ in 0..<60 {
+                try Task.checkCancellation()
+                guard self.room === room, !self.leaveRequested, !self.isHeld, self.audioAvailable else { throw CancellationError() }
+                if !room.localParticipant.isMicrophoneEnabled() { return }
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+            throw SoundCheckError.mute
+        }
         studio.liveCaptureDevice = { [weak room = self.room] in
             ((room?.localParticipant.firstCameraVideoTrack as? LocalVideoTrack)?.capturer as? CameraCapturer)?.device
         }
@@ -307,6 +324,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private func updatePiPMicrophoneStatus() {
         guard hasConnected, !leaveRequested, !isHeld, audioAvailable,
               let room, room.connectionState == .connected else {
+            studio.microphoneActivity.setStatus(.unavailable)
+            studio.releasePrivateMicrophone()
             callView?.setSpeakerReceptionAvailable(false)
             callView?.setFloatingMicrophoneStatus(.unavailable)
             return
@@ -321,12 +340,14 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         } else {
             status = microphoneIntentOn ? .unavailable : .muted
         }
+        studio.microphoneActivity.setStatus(status)
         callView?.setFloatingMicrophoneStatus(status)
     }
 
     private func setMicrophone(_ enabled: Bool) {
         guard hasJoinStarted else { return }
         guard !receptionPaused else { systemCall.setMuted(true); return }
+        if enabled { studio.releasePrivateMicrophone() }
         microphoneIntentOn = enabled
         callView?.setMicrophone(enabled)
         systemCall.setMuted(!enabled)
@@ -454,6 +475,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
 
     private func finish(failed: Bool) {
         guard hasJoinStarted else { return }
+        if let microphoneProbe { AudioManager.shared.remove(localAudioRenderer: microphoneProbe); self.microphoneProbe = nil }
         studio.end()
         studioAudio.end()
         callView?.endFloatingVideo()

@@ -1,3 +1,3 @@
 "NSBluetoothAlwaysUsageDescription" = "Use Bluetooth headphones and other audio devices for jam audio, including when the jam continues in the background.";
 "NSCameraUsageDescription" = "Share video when you choose to turn on your camera in a jam.";
-"NSMicrophoneUsageDescription" = "Let others hear you when you turn on your microphone in a jam.";
+"NSMicrophoneUsageDescription" = "Use your microphone to speak in jams and test your sound privately before unmuting.";

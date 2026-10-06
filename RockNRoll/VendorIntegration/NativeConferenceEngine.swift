@@ -45,6 +45,7 @@ final class NativeConferenceEngine: CallEngine {
     private let events = EventRelay()
     private let tokenProvider = AnonymousTokenProvider()
     private var subscriptions = Set<AnyCancellable>()
+    private let microphoneProbe = GuestMicrophoneProbe()
     private var microphoneSubscription: AnyCancellable?
     private var microphoneObservationID = UUID()
     private var reportedMicrophoneStatus: PiPMicrophoneStatus = .unavailable
@@ -122,7 +123,11 @@ final class NativeConferenceEngine: CallEngine {
     private func updatePiPMicrophoneStatus() {
         let available = isSDKActive && isNetworkAvailable && !leaveRequested &&
             !isSystemHeld && !isAudioInterrupted && !isMediaReconnecting
-        floatingVideo?.setMicrophoneStatus(available ? reportedMicrophoneStatus : .unavailable)
+        let status: PiPMicrophoneStatus = available ? reportedMicrophoneStatus : .unavailable
+        studio.microphoneActivity.setStatus(status)
+        microphoneProbe.update(activity: studio.microphoneActivity)
+        if !available { studio.releasePrivateMicrophone() }
+        floatingVideo?.setMicrophoneStatus(status)
         let wasAvailable = activeSpeaker.available
         activeSpeaker.setAvailable(available)
         if available && !wasAvailable { refreshSpeakerInput?() }
@@ -174,6 +179,7 @@ final class NativeConferenceEngine: CallEngine {
         }
         MacCallActivity.shared.retainForGraphicsResources()
         GuestVideoFrameTap.prepare()
+        GuestMicrophoneProbe.prepare()
         streamViews.onPreferredVideo = { [weak self] viewport, name, isShare in
             guard let self, self.hasJoinStarted, !self.leaveRequested, self.finishing == nil else { return }
             self.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare)
@@ -308,6 +314,7 @@ final class NativeConferenceEngine: CallEngine {
             #endif
             self.activeControls?.showStageFrame(sample, rotation: rotation)
         }
+        floating.bindMicrophoneActivity(studio.microphoneActivity)
         floatingVideo = floating
         updateFloatingSuspension()
     }
@@ -357,6 +364,7 @@ final class NativeConferenceEngine: CallEngine {
         systemCall.onMuteChanged = { [weak self] muted in
             Task { @MainActor [weak self] in
                 guard let self, self.sessionEpoch == epoch else { return }
+                if !muted { self.studio.releasePrivateMicrophone() }
                 self.microphoneIntentOn = !muted
                 if !self.isSystemHeld {
                     self.activeCoordinator?.toggleMicrohone(isOn: !muted)
@@ -517,6 +525,7 @@ final class NativeConferenceEngine: CallEngine {
         guard let coordinator = selectedCoordinator ?? activeCoordinator else { return }
         if studio.hasSelection { coordinator.toggleEnableNoiseSuppression(isEnabled: studio.profile == .conversation) }
         coordinator.toggleIncomingStreamsDisabled(isEnabled: displayMode != .audioOnly)
+        if microphoneIntentOn { studio.releasePrivateMicrophone() }
         coordinator.toggleMicrohone(isOn: microphoneIntentOn)
         coordinator.toggleCamera(isOn: cameraIntentOn)
     }
@@ -981,6 +990,21 @@ final class NativeConferenceEngine: CallEngine {
                 let preview = GuestStudioPreview { [weak streams] in streams?.localCameraView() }
                 return StudioLivePreview(view: preview.view, stop: { preview.stop() })
             }
+            self.studio.soundCheck.verifyMuted = { [weak self] in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                      !self.leaveRequested, !self.isSystemHeld, !self.isAudioInterrupted,
+                      let current = self.activeCoordinator else { throw CancellationError() }
+                self.microphoneIntentOn = false; self.systemCall.setMuted(true)
+                if self.reportedMicrophoneStatus != .muted { current.toggleMicrohone(isOn: false) }
+                for _ in 0..<60 {
+                    try Task.checkCancellation()
+                    guard self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt, !self.leaveRequested,
+                          !self.isSystemHeld, !self.isAudioInterrupted else { throw CancellationError() }
+                    if self.reportedMicrophoneStatus == .muted { return }
+                    try await Task.sleep(nanoseconds: 50_000_000)
+                }
+                throw SoundCheckError.mute
+            }
             self.studio.applyProfile = { [weak self] profile in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                       !self.leaveRequested, let current = self.activeCoordinator else { throw CancellationError() }
@@ -1212,6 +1236,7 @@ final class NativeConferenceEngine: CallEngine {
     private func finishSession(userEnded: Bool, event: CallEvent) {
         guard finishing == nil, hasJoinStarted else { return }
         endFloatingVideoSession()
+        microphoneProbe.stop()
         studio.end()
         activeSpeaker.end()
         speakerSubscription?.cancel(); speakerSubscription = nil

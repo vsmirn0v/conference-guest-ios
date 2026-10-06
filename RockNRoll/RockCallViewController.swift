@@ -314,6 +314,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         view.tintColor = .white
         view.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.085, alpha: 1)
         floatingVideo = RockVideoPictureInPicture(sourceView: view, speaker: activeSpeaker)
+        if let studio { floatingVideo?.bindMicrophoneActivity(studio.microphoneActivity) }
         activeSpeaker.$current.sink { [weak self] in self?.compactHeader.setSpeaker($0) }.store(in: &subscriptions)
         let identity = UIStackView(arrangedSubviews: [titleLabel, countLabel, routeLabel])
         identity.axis = .vertical
@@ -439,6 +440,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self.onCamera?(!self.isCameraOn)
         }, for: .touchUpInside)
         if let studio {
+            MicrophoneActivityView.install(on: microphone, model: studio.microphoneActivity)
             studio.enableCamera = { [weak self] in self?.camera.sendActions(for: .touchUpInside) }
             studio.enableMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
             studio.flipLiveCamera = { [weak self] in self?.onFlipCamera?() }

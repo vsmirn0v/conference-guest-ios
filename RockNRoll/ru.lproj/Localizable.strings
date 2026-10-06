@@ -486,3 +486,27 @@
 "Uses Apple Image Playground. Availability and processing depend on system settings." = "Используется Apple Image Playground. Доступность и обработка зависят от системных настроек.";
 "Camera capture active" = "Камера работает";
 "Rotate camera" = "Повернуть изображение камеры";
+
+"Allow microphone access in Settings to test your sound." = "Разрешите доступ к микрофону в настройках, чтобы проверить звук.";
+"Input activity shows your microphone capture, not confirmation that others can hear you." = "Индикатор показывает звук с вашего микрофона. Он не подтверждает, что другие участники вас слышат.";
+"Input detected" = "Есть входящий звук";
+"Microphone input" = "Звук с микрофона";
+"Microphone input is unavailable. Check your audio device and try again." = "Микрофон недоступен. Проверьте аудиоустройство и повторите попытку.";
+"Mute and test microphone" = "Выключить микрофон в джеме и проверить";
+"Play my sample" = "Прослушать запись";
+"Playing your sample…" = "Воспроизводим запись…";
+"Preparing microphone…" = "Подготовка микрофона…";
+"Private check · Only you" = "Личная проверка · Только вы";
+"Quiet" = "Тихо";
+"Record 5 seconds" = "Записать 5 секунд";
+"Recording a 5-second sample…" = "Записываем 5 секунд…";
+"Stop private check" = "Завершить проверку";
+"Test again" = "Проверить ещё раз";
+"Test microphone" = "Проверить микрофон";
+"The meeting microphone could not be muted. Try again before testing." = "Не удалось выключить микрофон в джеме. Повторите попытку перед проверкой.";
+"The sample is kept only in memory and removed when you close this panel." = "Запись хранится только в памяти и удаляется при закрытии этой панели.";
+"Waiting for input" = "Ожидаем звук";
+"Your meeting microphone stays muted. Nothing from this check is sent to the jam." = "Микрофон в джеме остаётся выключенным. Звук проверки не передаётся участникам.";
+"This checks your input. Meeting sound processing may differ." = "Проверяем входящий звук. Обработка звука в джеме может отличаться.";
+
+"Microphone" = "Микрофон";

@@ -17,7 +17,9 @@ final class StudioModel: ObservableObject {
     @Published private(set) var active = true
     enum Pane: String, CaseIterable { case camera, sound, presenter }
     let presenter = PresenterModel()
-    @Published var pane: Pane = .camera { didSet { if pane != oldValue { refreshPreview(); refreshPresenter() } } }
+    let microphoneActivity = MicrophoneActivity()
+    let soundCheck: PrivateSoundCheck
+    @Published var pane: Pane = .camera { didSet { if pane != oldValue { refreshPreview(); refreshPresenter(); soundCheck.stop() } } }
     @Published private(set) var presented = false
     @Published private(set) var previewView: UIView?
     @Published private(set) var previewRunning = false
@@ -25,8 +27,8 @@ final class StudioModel: ObservableObject {
     @Published private(set) var previewError: String?
     @Published private(set) var startingVideo = false
     @Published var cameraOn = false { didSet { if cameraOn != oldValue { refreshPreview(); presenter.update(cameraOn: cameraOn, held: held) } } }
-    @Published var microphoneOn = false
-    @Published var held = false { didSet { if held != oldValue { refreshPreview(); presenter.update(cameraOn: cameraOn, held: held) } } }
+    @Published var microphoneOn = false { didSet { if microphoneOn { soundCheck.stop() } } }
+    @Published var held = false { didSet { if held != oldValue { soundCheck.stop(); refreshPreview(); presenter.update(cameraOn: cameraOn, held: held) } } }
     @Published private(set) var systemMicrophoneMode = L("Standard")
     @Published private(set) var cameraEffects: [CameraEffectStatus] = []
     var liveCaptureDevice: (() -> AVCaptureDevice?)?
@@ -50,8 +52,9 @@ final class StudioModel: ObservableObject {
     }
     private var change: Task<Void, Never>?
 
-    init(audioControl: AudioControl, privateCamera: PrivateCameraPreviewing? = nil, preferences: UserDefaults? = nil) {
+    init(audioControl: AudioControl, privateCamera: PrivateCameraPreviewing? = nil, preferences: UserDefaults? = nil, privateMicrophone: PrivateMicrophoneCapturing? = nil) {
         self.audioControl = audioControl
+        soundCheck = PrivateSoundCheck(capture: privateMicrophone)
         self.privateCamera = privateCamera ?? PrivateCameraPreview()
         self.preferences = preferences
         if let raw = preferences?.string(forKey: Self.profileKey), let saved = StudioAudioProfile(rawValue: raw) {
@@ -76,6 +79,7 @@ final class StudioModel: ObservableObject {
 
     func close() {
         presented = false
+        soundCheck.stop()
         refreshPreview()
         refreshPresenter()
     }
@@ -221,12 +225,21 @@ final class StudioModel: ObservableObject {
     }
 
     func showSystemSettings(_ kind: AVCaptureDevice.SystemUserInterface) {
-        guard systemSettingsAvailable, kind == .videoEffects ? (cameraOn || previewRunning || presenter.cameraDevice != nil) : microphoneOn else { return }
+        guard systemSettingsAvailable, kind == .videoEffects ? (cameraOn || previewRunning || presenter.cameraDevice != nil) : (microphoneOn || soundCheck.capturing) else { return }
         openSystemSettings(kind)
     }
 
+    func testMicrophone() {
+        guard active, presented, pane == .sound, !held else { return }
+        soundCheck.start(standalone: enableMicrophone == nil)
+    }
+
+    func releasePrivateMicrophone() { soundCheck.stop() }
+
     func end() {
         active = false
+        microphoneActivity.setStatus(.unavailable)
+        soundCheck.verifyMuted = nil
         presenter.end()
         change?.cancel(); change = nil
         applying = false

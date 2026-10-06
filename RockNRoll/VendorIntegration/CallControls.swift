@@ -286,6 +286,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
         microphone.addAction(UIAction { [weak self] _ in
             let turnOn = state.map { $0.microphoneState != .on } ?? !(self?.workspace.microphoneOn ?? false)
+            self?.studio?.releasePrivateMicrophone()
             onMicrophoneState(turnOn)
             coordinator?.toggleMicrohone(isOn: turnOn)
         }, for: .touchUpInside)
@@ -304,6 +305,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             }
         }, for: .touchUpInside)
         if let studio {
+            MicrophoneActivityView.install(on: microphone, model: studio.microphoneActivity)
             studio.enableCamera = { [weak self] in self?.camera.sendActions(for: .touchUpInside) }
             studio.enableMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
             studio.flipLiveCamera = { coordinator?.switchCamera() }
@@ -989,6 +991,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         }
         if let microphone {
             studio?.microphoneOn = microphone
+            studio?.microphoneActivity.setStatus(microphone ? .on : .muted)
             workspace.microphoneOn = microphone
             self.microphone.accessibilityLabel = microphone ? L("Mute microphone") : L("Unmute microphone")
         }

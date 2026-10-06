@@ -486,3 +486,27 @@
 "Uses Apple Image Playground. Availability and processing depend on system settings." = "Uses Apple Image Playground. Availability and processing depend on system settings.";
 "Camera capture active" = "Camera capture active";
 "Rotate camera" = "Rotate camera";
+
+"Allow microphone access in Settings to test your sound." = "Allow microphone access in Settings to test your sound.";
+"Input activity shows your microphone capture, not confirmation that others can hear you." = "Input activity shows your microphone capture, not confirmation that others can hear you.";
+"Input detected" = "Input detected";
+"Microphone input" = "Microphone input";
+"Microphone input is unavailable. Check your audio device and try again." = "Microphone input is unavailable. Check your audio device and try again.";
+"Mute and test microphone" = "Mute and test microphone";
+"Play my sample" = "Play my sample";
+"Playing your sample…" = "Playing your sample…";
+"Preparing microphone…" = "Preparing microphone…";
+"Private check · Only you" = "Private check · Only you";
+"Quiet" = "Quiet";
+"Record 5 seconds" = "Record 5 seconds";
+"Recording a 5-second sample…" = "Recording a 5-second sample…";
+"Stop private check" = "Stop private check";
+"Test again" = "Test again";
+"Test microphone" = "Test microphone";
+"The meeting microphone could not be muted. Try again before testing." = "The meeting microphone could not be muted. Try again before testing.";
+"The sample is kept only in memory and removed when you close this panel." = "The sample is kept only in memory and removed when you close this panel.";
+"Waiting for input" = "Waiting for input";
+"Your meeting microphone stays muted. Nothing from this check is sent to the jam." = "Your meeting microphone stays muted. Nothing from this check is sent to the jam.";
+"This checks your input. Meeting sound processing may differ." = "This checks your input. Meeting sound processing may differ.";
+
+"Microphone" = "Microphone";

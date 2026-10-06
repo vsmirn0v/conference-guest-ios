@@ -6,10 +6,15 @@ import UIKit
 
 struct StudioPanel: View {
     @ObservedObject var model: StudioModel
+    @ObservedObject private var soundCheck: PrivateSoundCheck
     var onDismiss: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var compact = false
     private let refresh = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    init(model: StudioModel, onDismiss: (() -> Void)? = nil) {
+        self.model = model; self.soundCheck = model.soundCheck; self.onDismiss = onDismiss
+    }
 
     var body: some View {
         NavigationStack {
@@ -52,7 +57,7 @@ struct StudioPanel: View {
                         } else if model.pane == .sound && !model.microphoneOn && model.enableMicrophone != nil {
                             Button {
                                 guard model.active, !model.held else { return }
-                                model.enableMicrophone?(); model.close()
+                                model.releasePrivateMicrophone(); model.enableMicrophone?(); model.close()
                             } label: { Text(L("Unmute microphone")).frame(maxWidth: .infinity, minHeight: 36) }
                             .buttonStyle(.borderedProminent).disabled(model.applying)
                             .accessibilityIdentifier("studio.unmute")
@@ -139,6 +144,8 @@ struct StudioPanel: View {
     }
 
     private var soundControls: some View {
+        Group {
+        SoundCheckControls(model: model, compact: compact)
         Section {
             Label(model.microphoneOn ? L("Microphone is live") : L("Muted in jam"),
                   systemImage: model.microphoneOn ? "mic.fill" : "mic.slash.fill")
@@ -167,14 +174,15 @@ struct StudioPanel: View {
                 Label(L("System microphone settings"), systemImage: "mic.badge.plus")
             }
             .accessibilityIdentifier("studio.microphone-settings")
-            .disabled(!model.systemSettingsAvailable || !model.microphoneOn)
-            if model.microphoneOn {
+            .disabled(!model.systemSettingsAvailable || !(model.microphoneOn || model.soundCheck.capturing))
+            if model.microphoneOn || model.soundCheck.capturing {
                 LabeledContent(L("System microphone mode"), value: model.systemMicrophoneMode).font(.footnote)
             }
             if model.profile == .music {
                 Text(L("For music, choose Standard or Wide Spectrum in system microphone settings when available."))
                     .font(.footnote).foregroundStyle(.secondary)
             }
+        }
         }
     }
 }

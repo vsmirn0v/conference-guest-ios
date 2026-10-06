@@ -55,6 +55,7 @@ final class RockVideoPictureInPicture {
     }
 
     func start() { floating.start() }
+    func bindMicrophoneActivity(_ activity: MicrophoneActivity) { floating.bindMicrophoneActivity(activity) }
     func setMicrophoneStatus(_ status: PiPMicrophoneStatus) { floating.setMicrophoneStatus(status) }
     func refreshPreference() { floating.refreshPreference() }
     func setSuspended(_ suspended: Bool) { floating.setSuspended(suspended) }

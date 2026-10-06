@@ -27,6 +27,7 @@ final class FloatingVideoContentView: UIView {
     private let videoContent: UIView
     private let badge = UIView()
     private let icon = UIImageView()
+    private let activityIcon = MicrophoneActivityView()
     private let label = UILabel()
     private let speaker = ActiveSpeakerIndicator(font: .systemFont(ofSize: 11, weight: .semibold))
     private(set) var microphoneStatus: PiPMicrophoneStatus = .unavailable
@@ -48,6 +49,8 @@ final class FloatingVideoContentView: UIView {
         icon.preferredSymbolConfiguration = .init(pointSize: 12, weight: .semibold)
         label.font = .systemFont(ofSize: 11, weight: .semibold)
         badge.addSubview(icon)
+        badge.addSubview(activityIcon)
+        activityIcon.isHidden = true
         badge.addSubview(label)
         addSubview(badge)
         speaker.backgroundColor = UIColor(white: 0.08, alpha: 0.9)
@@ -63,6 +66,10 @@ final class FloatingVideoContentView: UIView {
         guard status != microphoneStatus else { return }
         microphoneStatus = status
         renderStatus()
+    }
+    func bindMicrophoneActivity(_ activity: MicrophoneActivity) {
+        icon.isHidden = true; activityIcon.isHidden = false
+        activityIcon.bind(activity)
     }
     func setSpeaker(_ value: CallSpeaker?) {
         speaker.setSpeaker(value)
@@ -105,6 +112,7 @@ final class FloatingVideoContentView: UIView {
         speaker.frame = CGRect(x: inset, y: badge.frame.minY,
             width: min(speaker.intrinsicContentSize.width, max(0, available - width - 4)), height: height)
         icon.frame = CGRect(x: 7, y: 6, width: 14, height: 14)
+        activityIcon.frame = icon.frame
         label.frame = CGRect(x: 26, y: 0, width: max(0, width - 33), height: height)
     }
 }
