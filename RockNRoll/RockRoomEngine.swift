@@ -163,6 +163,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     func leave() {
         guard hasJoinStarted, !leaveRequested else { return }
         leaveRequested = true
+        callView?.endFloatingVideo()
         joinTask?.cancel()
         BroadcastManager.shared.requestStop()
         #if DEBUG

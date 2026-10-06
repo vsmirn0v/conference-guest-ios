@@ -23,9 +23,28 @@ final class PiPMicrophoneFixtureViewController: UIViewController {
         start.addAction(UIAction { [weak self] _ in self?.floating?.start() }, for: .touchUpInside)
         start.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(start)
+        let end = UIButton(type: .system)
+        end.setTitle("End test video", for: .normal)
+        end.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.floating?.end()
+            self.finishBackgroundTask()
+            // Reproduce the late source/layout callback after meeting teardown.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.floating?.setSourceView(self.view)
+                self.floating?.setSuspended(false)
+                self.floating?.foregrounded()
+                self.floating?.refreshPreference()
+            }
+        }, for: .touchUpInside)
+        end.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(end)
         NSLayoutConstraint.activate([
             start.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            start.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+            start.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            end.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            end.topAnchor.constraint(equalTo: start.bottomAnchor, constant: 16)
         ])
         floating?.onWillStart = { [weak self] in
             guard let self else { return }

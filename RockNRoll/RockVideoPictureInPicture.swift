@@ -42,6 +42,7 @@ final class RockVideoPictureInPicture {
     var canShow: Bool { floating.canShow }
 
     func show(track: VideoTrack?, name: String = "", isScreenShare: Bool = false) {
+        guard !floating.isEnded else { return }
         guard let track else { clear(); return }
         if selectedTrack !== track {
             selectedTrack = track
@@ -64,5 +65,10 @@ final class RockVideoPictureInPicture {
         video.track = nil
         selectedTrack = nil
         caption.text = nil
+    }
+
+    func end() {
+        floating.end()
+        clear()
     }
 }

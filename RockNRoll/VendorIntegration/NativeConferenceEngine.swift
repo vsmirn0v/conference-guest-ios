@@ -61,6 +61,7 @@ final class NativeConferenceEngine: CallEngine {
     private let streamViews = GuestStreamViews()
     private var offeredShare: GuestStreamViews.PinTarget?
     private var floatingVideo: GuestVideoPictureInPicture?
+    private weak var floatingSourceView: UIView?
     private var currentNotices: [InCallNotice] = []
     private var configuredNetworkURL: URL?
     private var leaveRequested = false { didSet { updatePiPMicrophoneStatus() } }
@@ -163,6 +164,7 @@ final class NativeConferenceEngine: CallEngine {
 
     func configure(container: UIViewController, networkURL: URL, displayName: String) throws {
         identity.setName(displayName)
+        floatingSourceView = container.view
         if configuredNetworkURL != nil {
             // The SDK initializes only once, but each parsed JazzRoom carries its own host.
             // Joining that room connects to its host even when the initial network differs.
@@ -170,13 +172,8 @@ final class NativeConferenceEngine: CallEngine {
         }
         MacCallActivity.shared.retainForGraphicsResources()
         GuestVideoFrameTap.prepare()
-        floatingVideo = GuestVideoPictureInPicture(sourceView: container.view, speaker: activeSpeaker)
-        floatingVideo?.rendersSelectedViewport = false
-        floatingVideo?.onAvailabilityChanged = { [weak self] available in
-            self?.activeControls?.setFloatingVideoAvailable(available)
-        }
         streamViews.onPreferredVideo = { [weak self] viewport, name, isShare in
-            guard let self else { return }
+            guard let self, self.hasJoinStarted, !self.leaveRequested, self.finishing == nil else { return }
             self.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare)
         }
         streamViews.onStagePresentation = { [weak self] presentation in
@@ -186,12 +183,6 @@ final class NativeConferenceEngine: CallEngine {
         streamViews.onShareOffer = { [weak self] name, target in
             self?.activeControls?.setShareOffer(name: name)
             self?.offeredShare = target
-        }
-        floatingVideo?.onInlineSample = { [weak self] sample, rotation in
-            #if DEBUG
-            self?.tracedIncomingFrames &+= 1
-            #endif
-            self?.activeControls?.showStageFrame(sample, rotation: rotation)
         }
         audio.onStatus = { [weak self] message in self?.onMediaStatus?(message) }
         audio.onRouteChanged = { [weak self] in
@@ -294,6 +285,34 @@ final class NativeConferenceEngine: CallEngine {
                 }
             }
             .store(in: &subscriptions)
+    }
+
+    private func beginFloatingVideoSession() {
+        endFloatingVideoSession()
+        guard let floatingSourceView else { return }
+        let epoch = sessionEpoch
+        let floating = GuestVideoPictureInPicture(sourceView: floatingSourceView, speaker: activeSpeaker)
+        floating.rendersSelectedViewport = false
+        floating.onAvailabilityChanged = { [weak self] available in
+            guard let self, self.sessionEpoch == epoch, self.hasJoinStarted,
+                  !self.leaveRequested, self.finishing == nil else { return }
+            self.activeControls?.setFloatingVideoAvailable(available)
+        }
+        floating.onInlineSample = { [weak self] sample, rotation in
+            guard let self, self.sessionEpoch == epoch, self.hasJoinStarted,
+                  !self.leaveRequested, self.finishing == nil else { return }
+            #if DEBUG
+            self.tracedIncomingFrames &+= 1
+            #endif
+            self.activeControls?.showStageFrame(sample, rotation: rotation)
+        }
+        floatingVideo = floating
+        updateFloatingSuspension()
+    }
+
+    private func endFloatingVideoSession() {
+        floatingVideo?.end()
+        floatingVideo = nil
     }
 
     private func installCallHandlers() {
@@ -579,6 +598,7 @@ final class NativeConferenceEngine: CallEngine {
         try audio.prepareForJoin()
         startNetworkMonitor()
         hasJoinStarted = true
+        beginFloatingVideoSession()
         installCallHandlers()
         #if DEBUG && targetEnvironment(simulator)
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
@@ -616,7 +636,7 @@ final class NativeConferenceEngine: CallEngine {
         guard hasJoinStarted, !leaveRequested else { return }
         leaveRequested = true
         resetPiPMicrophoneObservation()
-        floatingVideo?.clear()
+        endFloatingVideoSession()
         activeControls?.isHidden = true
         pendingRoom = nil
         let epoch = sessionEpoch
@@ -1043,7 +1063,8 @@ final class NativeConferenceEngine: CallEngine {
                 return placeholder
             },
             videoStreamsRepresentation: JazzActiveConferenceVideoStreamsRepresentation { [weak self] model, video in
-                guard self?.sessionEpoch == epoch, self?.mediaAttemptEpoch == attempt else { return UIView() }
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                      self.hasJoinStarted, !self.leaveRequested, self.finishing == nil else { return UIView() }
                 return streams.makeView(model: model, video: video)
             }
         )
@@ -1149,6 +1170,7 @@ final class NativeConferenceEngine: CallEngine {
 
     private func finishSession(userEnded: Bool, event: CallEvent) {
         guard finishing == nil, hasJoinStarted else { return }
+        endFloatingVideoSession()
         studio.end()
         activeSpeaker.end()
         speakerSubscription?.cancel(); speakerSubscription = nil
@@ -1170,7 +1192,6 @@ final class NativeConferenceEngine: CallEngine {
             guard self.sessionEpoch == epoch else { return }
             self.hasBecomeActive = false
             self.resetPiPMicrophoneObservation()
-            self.floatingVideo?.clear()
             self.streamViews.reset()
             self.isSDKActive = false
             self.isMediaReconnecting = false

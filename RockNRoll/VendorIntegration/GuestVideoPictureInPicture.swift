@@ -60,7 +60,7 @@ final class GuestVideoPictureInPicture {
             self.processor.setEnabled(self.shouldProcessFrames)
         }
         processor.onSample = { [weak self] sample, size, rotation in
-            guard let self else { return }
+            guard let self, !self.floating.isEnded, self.frameTap != nil else { return }
             if self.presenting || !self.hasFrame { self.video.enqueue(sample, rotation: rotation) }
             if !self.suspended && UIApplication.shared.applicationState != .background {
                 if self.rendersSelectedViewport { self.selectedViewport?.showCorrectedVideo(sample, rotation: rotation) }
@@ -77,11 +77,12 @@ final class GuestVideoPictureInPicture {
     }
 
     private var shouldProcessFrames: Bool {
-        frameTap != nil && !suspended &&
+        !floating.isEnded && frameTap != nil && !suspended &&
             (presenting || UIApplication.shared.applicationState != .background)
     }
 
     func select(viewport: StreamViewport?, name: String, isScreenShare: Bool) {
+        guard !floating.isEnded else { return }
         guard let viewport else { clear(); return }
         if selectedViewport !== viewport { selectedViewport?.clearCorrectedVideo() }
         selectedViewport = viewport
@@ -145,6 +146,11 @@ final class GuestVideoPictureInPicture {
         selectedRenderer = nil
         video.clear()
         onAvailabilityChanged?(false)
+    }
+
+    func end() {
+        floating.end()
+        clear()
     }
 
 }

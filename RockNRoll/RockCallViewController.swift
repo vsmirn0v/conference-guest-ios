@@ -1289,7 +1289,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func restoreFromFloatingVideo() { floatingVideo?.foregrounded() }
 
-    func endFloatingVideo() { activeSpeaker.end(); floatingVideo?.clear(); localShareRenderer.setTrack(nil); localSharePreview.end() }
+    func endFloatingVideo() { activeSpeaker.end(); floatingVideo?.end(); localShareRenderer.setTrack(nil); localSharePreview.end() }
 
     func setSpeakerReceptionAvailable(_ available: Bool) {
         speakerReceptionAvailable = available

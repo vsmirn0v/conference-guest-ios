@@ -18,6 +18,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     private var suspended = false
     private var closedWhileBackgrounded = false
     private var manualStartPending = false
+    private(set) var isEnded = false
     var onWillStart: (() -> Void)?
     var onStopped: (() -> Void)?
     var preferredSize = CGSize(width: 320, height: 180) {
@@ -33,7 +34,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     }
 
     var canShow: Bool {
-        AVPictureInPictureController.isPictureInPictureSupported() && sourceView != nil && !suspended
+        !isEnded && AVPictureInPictureController.isPictureInPictureSupported() && sourceView != nil && !suspended
     }
 
     func setMicrophoneStatus(_ status: PiPMicrophoneStatus) {
@@ -41,6 +42,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     }
 
     func setSourceView(_ view: UIView?) {
+        guard !isEnded else { return }
         sourceView = view
         guard view != nil else { tearDown(); return }
         prepare()
@@ -102,12 +104,22 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     }
 
     func foregrounded() {
+        guard !isEnded else { return }
         closedWhileBackgrounded = false
         controller?.canStartPictureInPictureAutomaticallyFromInline = FloatingVideoPreference.enabled
         if phase == .active || phase == .starting {
             phase = .stopping
             controller?.stopPictureInPicture()
         } else { prepare() }
+    }
+
+    /// A meeting's renderer cannot be rearmed by queued frames or scene callbacks.
+    func end() {
+        guard !isEnded else { return }
+        isEnded = true
+        sourceView = nil
+        tearDown()
+        speakerSubscription = nil
     }
 
     private func tearDown() {

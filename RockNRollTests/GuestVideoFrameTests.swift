@@ -61,6 +61,65 @@ final class GuestVideoFrameTests: XCTestCase {
         XCTAssertNil(GuestVideoFrameTap(view: UIView()) { _ in XCTFail("Unsupported renderer") })
     }
 
+    func testEndedGuestVideoRejectsLateCameraSelectionAndSceneCallbacks() async {
+        let source = UIView()
+        let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        let floating = GuestVideoPictureInPicture(sourceView: source)
+        var viewport: StreamViewport? = StreamViewport(video: renderer, state: StreamViewportState(),
+            zoomable: false, name: "You", showInfo: false, microphoneOn: false,
+            pinned: false, watermark: nil)
+        let firstFrame = expectation(description: "Camera frame before leaving")
+        floating.onInlineSample = { _, _ in firstFrame.fulfill() }
+        floating.select(viewport: viewport, name: "You", isScreenShare: false)
+        renderer.renderFrame(makeFrame())
+        await fulfillment(of: [firstFrame], timeout: 3)
+
+        floating.end()
+        floating.end()
+        let lateFrame = expectation(description: "Ended camera cannot publish another frame")
+        lateFrame.isInverted = true
+        floating.onInlineSample = { _, _ in lateFrame.fulfill() }
+        weak var retained = viewport
+        // A final SDK tile update can arrive after the user has left.
+        floating.select(viewport: viewport, name: "You", isScreenShare: false)
+        viewport = nil
+        XCTAssertNil(retained, "Ended PiP must not retain a late camera selection")
+        floating.setSuspended(false)
+        floating.foregrounded()
+        floating.refreshPreference()
+        floating.start()
+        renderer.renderFrame(makeFrame())
+        await fulfillment(of: [lateFrame], timeout: 0.3)
+        XCTAssertFalse(floating.canShow)
+
+        let next = GuestVideoPictureInPicture(sourceView: source)
+        let nextViewport = StreamViewport(video: renderer, state: StreamViewportState(),
+            zoomable: false, name: "Next jam", showInfo: false, microphoneOn: false,
+            pinned: false, watermark: nil)
+        let nextFrame = expectation(description: "A new meeting receives video")
+        next.onInlineSample = { _, _ in nextFrame.fulfill() }
+        next.select(viewport: nextViewport, name: "Next jam", isScreenShare: false)
+        renderer.renderFrame(makeFrame())
+        await fulfillment(of: [nextFrame], timeout: 3)
+        next.end()
+    }
+
+    func testClearingGuestVideoAllowsSelectingAnotherStreamInTheSameMeeting() async {
+        let floating = GuestVideoPictureInPicture(sourceView: UIView())
+        let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        let viewport = StreamViewport(video: renderer, state: StreamViewportState(),
+            zoomable: true, name: "Share", showInfo: false, microphoneOn: false,
+            pinned: false, watermark: nil)
+        floating.select(viewport: viewport, name: "Share", isScreenShare: true)
+        floating.clear()
+        let restored = expectation(description: "View-mode changes do not end the meeting's renderer")
+        floating.onInlineSample = { _, _ in restored.fulfill() }
+        floating.select(viewport: viewport, name: "Share", isScreenShare: true)
+        renderer.renderFrame(makeFrame())
+        await fulfillment(of: [restored], timeout: 3)
+        floating.end()
+    }
+
     func testPlanarFrameConvertsStrideAndChromaAndPreservesRotation() async {
         let processor = GuestVideoFrameProcessor()
         let delivered = expectation(description: "Converted frame")
