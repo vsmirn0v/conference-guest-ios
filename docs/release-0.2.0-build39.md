@@ -2,6 +2,12 @@
 
 ## Changes
 
+- Include the previously committed native Presenter canvas: compose a chosen
+  image with a camera inset, preview it privately and publish it in guest meetings.
+  Camera-effect status is shown with system-supported availability.
+- Include microphone activity feedback in the call/PiP microphone glyph and the
+  private Sound check: bounded local recording/replay after confirming meeting
+  mute, with automatic cleanup and no automatic unmute.
 - Add opt-in Calendar integration with explicit calendar selection, an upcoming
   agenda, a next-meeting card and calendar timing on saved/recent rooms.
 - Save a calendar room to Favorites before joining, and associate an event or
@@ -37,6 +43,10 @@ The implementation source was tested before the release-only build-number change
 - Live community and two guest-origin discoveries passed, including bundled-CA
   validation. Expired and hostname-mismatched live certificates were rejected.
 - Signed Mac Release compilation and website Go tests passed.
+- Presenter and microphone additions retain their separately documented
+  simulator/device qualification and limitations; see [Presenter Studio](presenter-studio.md)
+  and [Microphone feedback](microphone-feedback.md). These source changes precede
+  the Calendar implementation and are included in this archive.
 
 Physical iPhone Calendar behavior, actual Mac calendar-account access and a new
 live cross-device iCloud result are not claimed. New room-sync fields were checked
@@ -45,7 +55,7 @@ remains covered by the previous build's device validation.
 
 ## Delivery
 
-Beta notes: “Optional calendar meeting suggestions, saved room shortcuts, and improved connection stability.”
+Beta notes: “Optional calendar suggestions, Presenter improvements, private microphone checks, and stability fixes.”
 
 - Archive source: `0e1d04cb478e5046805de1d3e31ae9bfe7302ae4`; all three bundles report 0.2.0 (39).
 - Archive: `/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-10-07/RockNRoll-0.2.0-b39.xcarchive`.
@@ -59,8 +69,19 @@ Beta notes: “Optional calendar meeting suggestions, saved room shortcuts, and 
   absent from the Release executable. Export preserves the chosen build number.
 
 - Xcode upload succeeded on 7 October 2026 at 01:56:11 MSK. App Store Connect
-  processing and group assignments are being verified.
+  processing completed and group assignments were verified.
 
 
 - Upload completed despite the existing third-party framework dSYM warnings;
   the app’s own executable and symbols have matching UUIDs.
+
+- App Store Connect build ID: `39ab5e78-7451-4e87-95a7-17d09d634189`.
+- Beta notes saved and read back. Both existing groups were selected, with
+  Automatically notify testers enabled. Submission completed; Rock’n’Roll Internal
+  and Rock’n’Roll Public Beta both show 0.2.0 (39) **Testing**, expiring in 90 days.
+- Availability readback: 2026-10-06 23:09:27 UTC (7 October, 02:09 MSK).
+- Public invitation verified: https://testflight.apple.com/join/Hd13C9U3.
+- Local publication proof: `/tmp/rock-build39-testflight-public.png` and
+  `/tmp/rock-build39-testflight-internal.png`.
+- The archive source hash above defines this released binary. Concurrent Presenter
+  work started after the archive and remains outside build 39.
