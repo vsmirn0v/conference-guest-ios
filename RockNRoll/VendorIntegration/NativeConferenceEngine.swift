@@ -137,6 +137,8 @@ final class NativeConferenceEngine: CallEngine {
             participant.microphone.isOn ? CallSpeaker(id: participant.id,
                 name: participant.userName ?? L("Musician"), isLocal: participant.isLocal) : nil
         })
+        let speaking = member?.isLocal == true && member?.microphone.isOn == true
+        if studio.presenter.scene.speaking != speaking { studio.presenter.scene.speaking = speaking }
     }
 
     private func resetPiPMicrophoneObservation() {
@@ -658,6 +660,7 @@ final class NativeConferenceEngine: CallEngine {
         print("Guest capture requested: enabled=\(enabled), leaving=\(leaveRequested), held=\(isSystemHeld), stopping=\(screenCaptureStop != nil)")
         #endif
         guard !leaveRequested, !isSystemHeld, screenCaptureStop == nil else { return }
+        guard !enabled || !studio.presenter.running else { return }
         if !enabled {
             Task { @MainActor in await stopScreenSharing() }
             return
@@ -690,6 +693,8 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func stopScreenSharing() async {
+        studio.presenter.sharingEnded()
+        await studio.presenter.releaseCamera()
         localPreviewEpoch = UUID()
         localSharePreview.end()
         localPreviewReceiver.stop()
@@ -936,11 +941,40 @@ final class NativeConferenceEngine: CallEngine {
         let streams = streamViews
         let epoch = sessionEpoch
         let attempt = mediaAttemptEpoch
-        let overlay = JazzActiveConferenceOverlayRepresentation { [weak self] state, coordinator, router, _ in
+        let overlay = JazzActiveConferenceOverlayRepresentation { [weak self, streams = streams] state, coordinator, router, _ in
             guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                   !self.leaveRequested else { return UIView() }
             self.activeCoordinator = coordinator
             if !self.studio.active { self.studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard) }
+            self.studio.presenter.preparePrivateCamera = { [weak self] in
+                await self?.studio.releasePreviewCamera()
+            }
+            self.studio.presenter.makeCameraSource = { [weak self, weak streams] onFrame in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                      !self.leaveRequested else { return nil }
+                return GuestPresenterCamera(source: { [weak streams] in streams?.localCameraView() }, onFrame: onFrame)
+            }
+            self.studio.presenter.startSharing = { [weak self] sample in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                      !self.leaveRequested, !self.isSystemHeld, self.screenCapture == nil,
+                      self.screenCaptureStop == nil, !self.localSharePreview.active else { throw CancellationError() }
+                let sender = GuestPresenterSender(preview: self.localSharePreview) { [weak self] message in
+                    guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                    self.studio.presenter.stop()
+                    self.activeControls?.showMediaStatus(message)
+                }
+                self.screenCapture = sender
+                sender.start(); sender.send(sample)
+            }
+            self.studio.presenter.sendSample = { [weak self] sample in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                      !self.leaveRequested, !self.isSystemHeld else { return }
+                (self.screenCapture as? GuestPresenterSender)?.send(sample)
+            }
+            self.studio.presenter.stopSharing = { [weak self] in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                await self.stopScreenSharing()
+            }
             self.studio.makeLivePreview = { [weak self] in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                       !self.leaveRequested else { return nil }

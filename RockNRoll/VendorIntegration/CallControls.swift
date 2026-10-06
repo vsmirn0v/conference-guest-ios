@@ -82,6 +82,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private var hasVideo = false
     private var isWaitingForOthers = false
     private var cameraOn = false
+    private var sdkCameraOn = false
+    private var sdkCameraAvailable = true
     private var isHeld = false
     private var mediaStatus: String?
     private var missedCount = 0
@@ -288,6 +290,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             coordinator?.toggleMicrohone(isOn: turnOn)
         }, for: .touchUpInside)
         camera.addAction(UIAction { [weak self, weak studio] _ in
+            if let presenter = studio?.presenter, presenter.running {
+                presenter.includeCamera.toggle()
+                if !presenter.includeCamera { onCameraState(false) }
+                return
+            }
             let turnOn = state.map { $0.cameraState != .on } ?? !(self?.cameraOn ?? false)
             Task { @MainActor [weak studio] in
                 await studio?.releasePrivateCamera()
@@ -303,6 +310,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             StudioShortcut.install(on: microphone, pane: .sound, model: studio)
             StudioShortcut.install(on: camera, pane: .camera, model: studio)
             StudioShortcut.install(on: route, pane: .sound, model: studio)
+            StudioShortcut.install(on: share, pane: .presenter, model: studio)
+            Publishers.CombineLatest(studio.presenter.$running, studio.presenter.$includeCamera)
+                .receive(on: DispatchQueue.main).sink { [weak self] _, _ in self?.renderCameraControl() }
+                .store(in: &subscriptions)
         }
         share.addAction(UIAction { _ in
             onScreenShare(state?.screenShareState != .on)
@@ -446,17 +457,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             #if DEBUG
             print("Camera state changed: \(media)")
             #endif
-            self.camera.configuration?.image = UIImage(systemName: media == .on ? "video.fill" : "video.slash.fill")
-            self.camera.configuration?.title = L("Video")
-            self.camera.configuration?.baseForegroundColor = media == .on ?
-                UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
-            self.camera.isEnabled = media != .disabled
-            self.cameraOn = media == .on
-            self.configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
-            self.camera.accessibilityLabel = media == .on ? L("Stop video") : L("Start video")
-            self.camera.largeContentTitle = self.camera.accessibilityLabel
-            self.workspace.cameraOn = media == .on
+            self.sdkCameraOn = media == .on
+            self.sdkCameraAvailable = media != .disabled
             self.studio?.cameraOn = media == .on
+            self.renderCameraControl()
+            self.configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
         }.store(in: &subscriptions)
         state.$screenShareState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
@@ -673,10 +678,25 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     func setHeld(_ held: Bool) {
         studio?.held = held
         isHeld = held
+        renderCameraControl()
         if held { focus.show() }
         workspace.onHold = held
         refreshMoreMenu?()
         renderCallStatus()
+    }
+
+    private func renderCameraControl() {
+        let presenter = studio?.presenter
+        let usesPresenter = presenter?.running == true
+        let on = sdkCameraOn || (usesPresenter && presenter?.includeCamera == true)
+        cameraOn = on; workspace.cameraOn = on
+        camera.isEnabled = !isHeld && (sdkCameraAvailable || usesPresenter)
+        camera.configuration?.image = UIImage(systemName: on ? "video.fill" : "video.slash.fill")
+        camera.configuration?.title = L("Video")
+        camera.configuration?.baseForegroundColor = on ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
+        camera.accessibilityLabel = on ? L("Stop video") : L("Start video")
+        camera.accessibilityValue = usesPresenter ? L("Camera in Presenter") : nil
+        camera.largeContentTitle = camera.accessibilityLabel
     }
 
     func setFloatingVideoAvailable(_ available: Bool) {
@@ -908,7 +928,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             }
         })
         let flip = UIAction(title: L("Flip camera"), image: UIImage(systemName: "camera.rotate"),
-                            attributes: cameraOn ? [] : [.disabled]) { _ in coordinator?.switchCamera() }
+                            attributes: cameraOn && studio?.presenter.running != true ? [] : [.disabled]) { _ in coordinator?.switchCamera() }
         let fit = UIAction(title: L("Fit shared screen"),
                            image: UIImage(systemName: "arrow.down.right.and.arrow.up.left")) { [weak self] _ in
             self?.fitZoomedContent()
@@ -944,6 +964,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             }, at: 1)
         }
         if let studio {
+            actions.insert(UIAction(title: L("Presenter"), image: UIImage(systemName: "person.crop.rectangle")) { [weak self] _ in
+                guard let self else { return }
+                StudioPresentation.show(studio, from: self.moreButton, pane: .presenter)
+            }, at: 0)
             actions.insert(UIAction(title: L("Camera & sound"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
                 guard let self else { return }
                 StudioPresentation.show(studio, from: self.moreButton)

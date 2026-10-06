@@ -4,18 +4,41 @@ import UIKit
 @MainActor
 protocol PrivateCameraPreviewing: AnyObject {
     var view: UIView { get }
+    var device: AVCaptureDevice? { get }
     func start() async throws
+    func startFrames(_ frames: @escaping @MainActor (CVPixelBuffer, Int) -> Void) async throws
     func stop() async
+}
+
+extension PrivateCameraPreviewing {
+    var device: AVCaptureDevice? { nil }
+    func startFrames(_ frames: @escaping @MainActor (CVPixelBuffer, Int) -> Void) async throws {
+        throw CocoaError(.featureUnsupported)
+    }
 }
 
 /// Local capture only: no microphone input, encoder, publication, or PiP source.
 @MainActor
 final class PrivateCameraPreview: PrivateCameraPreviewing {
     private let capture = Capture()
+    private let position: AVCaptureDevice.Position
+    init(position: AVCaptureDevice.Position = .front) { self.position = position }
     private lazy var surface = PreviewSurface(session: capture.session)
     var view: UIView { surface }
+    var device: AVCaptureDevice? {
+        guard capture.session.isRunning else { return nil }
+        return (capture.session.inputs.first as? AVCaptureDeviceInput)?.device
+    }
 
     func start() async throws {
+        try await start(frames: nil)
+    }
+
+    func startFrames(_ frames: @escaping @MainActor (CVPixelBuffer, Int) -> Void) async throws {
+        try await start(frames: frames)
+    }
+
+    private func start(frames: (@MainActor (CVPixelBuffer, Int) -> Void)?) async throws {
         let authorized: Bool
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized: authorized = true
@@ -24,8 +47,8 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         }
         try Task.checkCancellation()
         guard authorized else { throw PreviewError.permission }
-        try await capture.start(position: .front)
-        surface.mirrored = true
+        try await capture.start(position: position, frames: frames)
+        surface.mirrored = position == .front
     }
 
     func stop() async { await capture.stop() }
@@ -44,17 +67,24 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         let session = AVCaptureSession()
         private let queue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.private-camera")
         private var input: AVCaptureDeviceInput?
+        private var output: AVCaptureVideoDataOutput?
+        private var sink: FrameSink?
+        private var rotationCoordinator: AnyObject?
+        private var rotationObservation: NSKeyValueObservation?
         init() { session.automaticallyConfiguresApplicationAudioSession = false }
 
-        func start(position: AVCaptureDevice.Position) async throws {
+        func start(position: AVCaptureDevice.Position, frames: (@MainActor (CVPixelBuffer, Int) -> Void)?) async throws {
             try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, Error>) in
                 queue.async { [self] in
                     do {
                         if input?.device.position != position {
                             let discovery = AVCaptureDevice.DiscoverySession(
                                 deviceTypes: [.builtInWideAngleCamera], mediaType: .video, position: position)
-                            // Macs may expose an unspecified-position camera.
-                            guard let device = discovery.devices.first ?? (position == .front ? AVCaptureDevice.default(for: .video) : nil)
+                            // Mac camera positions are bridged from UIKit. Respect
+                            // the system default rather than selecting a phone camera
+                            // merely because it advertises a front-facing position.
+                            let preferred = ProcessInfo.processInfo.isiOSAppOnMac ? AVCaptureDevice.default(for: .video) : discovery.devices.first
+                            guard let device = preferred ?? (position == .front ? AVCaptureDevice.default(for: .video) : nil)
                             else { throw PreviewError.unavailable }
                             let next = try AVCaptureDeviceInput(device: device)
                             session.beginConfiguration()
@@ -66,6 +96,38 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                             }
                             session.addInput(next); input = next
                             if session.canSetSessionPreset(.hd1280x720) { session.sessionPreset = .hd1280x720 }
+                            session.commitConfiguration()
+                        }
+                        if let frames, output == nil {
+                            let video = AVCaptureVideoDataOutput()
+                            video.alwaysDiscardsLateVideoFrames = true
+                            video.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+                            let receiver = FrameSink(handler: frames)
+                            session.beginConfiguration()
+                            guard session.canAddOutput(video) else { session.commitConfiguration(); throw PreviewError.unavailable }
+                            session.addOutput(video)
+                            video.setSampleBufferDelegate(receiver, queue: queue)
+                            if #available(iOS 17.0, *), let device = input?.device {
+                                // Continuity cameras can be mounted differently from
+                                // the Mac's built-in camera. Use capture-device rotation.
+                                let rotation = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+                                rotationCoordinator = rotation
+                                let angle = rotation.videoRotationAngleForHorizonLevelCapture
+                                if let connection = video.connection(with: .video), connection.isVideoRotationAngleSupported(angle) {
+                                    connection.videoRotationAngle = angle
+                                }
+                                rotationObservation = rotation.observe(\.videoRotationAngleForHorizonLevelCapture, options: [.new]) {
+                                    [weak self, weak video] rotation, _ in
+                                    let angle = rotation.videoRotationAngleForHorizonLevelCapture
+                                    self?.queue.async {
+                                        guard let connection = video?.connection(with: .video), connection.isVideoRotationAngleSupported(angle) else { return }
+                                        connection.videoRotationAngle = angle
+                                    }
+                                }
+                            } else if let connection = video.connection(with: .video), connection.isVideoOrientationSupported {
+                                connection.videoOrientation = .portrait
+                            }
+                            output = video; sink = receiver
                             session.commitConfiguration()
                         }
                         if !session.isRunning { session.startRunning() }
@@ -82,11 +144,35 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                     if session.isRunning { session.stopRunning() }
                     // Release the camera device before handing ownership to the meeting SDK.
                     session.beginConfiguration()
+                    output?.setSampleBufferDelegate(nil, queue: nil)
+                    rotationObservation = nil; rotationCoordinator = nil
+                    if let output { session.removeOutput(output) }
+                    output = nil; sink = nil
                     if let input { session.removeInput(input) }
                     input = nil
                     session.commitConfiguration()
                     result.resume()
                 }
+            }
+        }
+    }
+
+    /// Conflates camera callbacks instead of enqueueing a main-thread task/frame.
+    private final class FrameSink: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+        private let handler: @MainActor (CVPixelBuffer, Int) -> Void
+        private let lock = NSLock()
+        private var latest: CVPixelBuffer?
+        private var pending = false
+        init(handler: @escaping @MainActor (CVPixelBuffer, Int) -> Void) { self.handler = handler }
+        func captureOutput(_ output: AVCaptureOutput, didOutput sample: CMSampleBuffer, from connection: AVCaptureConnection) {
+            guard let pixels = CMSampleBufferGetImageBuffer(sample) else { return }
+            lock.lock(); latest = pixels
+            if pending { lock.unlock(); return }
+            pending = true; lock.unlock()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.lock.lock(); let frame = self.latest; self.latest = nil; self.pending = false; self.lock.unlock()
+                if let frame { self.handler(frame, 0) }
             }
         }
     }

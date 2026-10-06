@@ -95,6 +95,8 @@ to CPU/GPU/energy profiling. Sustained thermal and battery behaviour cannot be
 established within that profiling limit. Detailed evidence and boundaries are in
 `physical-validation-2026-10-06.md`.
 
-Custom background processing, presenter composition and ML denoising remain later
-stages of the approved roadmap. They require separate quality/energy qualification;
-custom guest camera effects additionally require a supported outgoing-frame hook.
+The foreground Presenter canvas now provides compositing, person cutout and image
+backgrounds through the guest screen-share API; see `presenter-studio.md` for scope
+and qualification. Custom processing of the separate SDK camera tile still needs a
+supported outgoing-frame hook. Neural denoising remains an isolated experiment in
+`Experiments/EnhancedSpeech`, pending quality, energy and echo/recovery qualification.

@@ -12,7 +12,7 @@ final class StudioShortcut: NSObject {
     static func install(on button: UIView, pane: StudioModel.Pane, model: StudioModel) {
         let shortcut = StudioShortcut { [weak button, weak model] in
             guard let button, let model else { return }
-            StudioPresentation.show(model, from: button, pane: pane)
+            StudioPresentation.show(model, from: button, pane: pane == .camera && model.presenter.running ? .presenter : pane)
         }
         objc_setAssociatedObject(button, &association, shortcut, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         let hold = UILongPressGestureRecognizer(target: shortcut, action: #selector(held(_:)))
@@ -24,7 +24,7 @@ final class StudioShortcut: NSObject {
         secondary.buttonMaskRequired = .secondary
         button.addGestureRecognizer(secondary)
         button.showsLargeContentViewer = false
-        let label = pane == .camera ? L("Preview and camera settings") : L("Sound settings")
+        let label = pane == .camera ? L("Preview and camera settings") : (pane == .presenter ? L("Presenter") : L("Sound settings"))
         button.accessibilityHint = L("Touch and hold to configure without turning it on.")
         button.accessibilityCustomActions = [UIAccessibilityCustomAction(name: label, target: shortcut, selector: #selector(open))]
     }

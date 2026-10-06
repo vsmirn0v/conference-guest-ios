@@ -134,6 +134,9 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                                           invitationURL: target.invitationURL,
                                           roomIdentifier: target.jamID)
         view.studio = studio
+        studio.liveCaptureDevice = { [weak room = self.room] in
+            ((room?.localParticipant.firstCameraVideoTrack as? LocalVideoTrack)?.capturer as? CameraCapturer)?.device
+        }
         studio.makeLivePreview = { [weak self, weak room = self.room] in
             guard let self, let room, self.room === room, !self.leaveRequested,
                   let track = room.localParticipant.firstCameraVideoTrack else { return nil }

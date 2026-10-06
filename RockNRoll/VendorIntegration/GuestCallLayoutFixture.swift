@@ -25,6 +25,9 @@ final class GuestCallLayoutFixture: UIViewController {
         let studio = scenario == "studio" ? StudioModel(audioControl: .noiseSuppression, privateCamera: StudioCameraFixture()) : nil
         studio?.observeNoiseSuppression(true)
         studio?.applyProfile = { [weak studio] profile in studio?.observeNoiseSuppression(profile == .conversation) }
+        studio?.presenter.startSharing = { _ in }
+        studio?.presenter.sendSample = { _ in }
+        studio?.presenter.stopSharing = {}
         let solo = scenario == "solo"
         controls = CallControls(localPreview: preview, state: nil, coordinator: nil, router: nil,
             catchUp: catchUp, chat: ChatStore(), initialDisplayMode: .all,

@@ -17,11 +17,16 @@ struct StudioPanel: View {
                 Picker(L("Camera & sound"), selection: $model.pane) {
                     Text(L("Camera")).tag(StudioModel.Pane.camera)
                     Text(L("Sound")).tag(StudioModel.Pane.sound)
+                    if model.presenter.available { Text(L("Presenter")).tag(StudioModel.Pane.presenter) }
                 }
                 .pickerStyle(.segmented).padding(.horizontal).padding(.bottom, 8)
                 .accessibilityIdentifier("studio.panes")
                 Form {
-                    if model.pane == .camera { cameraControls } else { soundControls }
+                    switch model.pane {
+                    case .camera: cameraControls
+                    case .sound: soundControls
+                    case .presenter: PresenterControls(model: model.presenter)
+                    }
                     if model.held || !model.active {
                         Section { Text(model.active ? L("Sound controls are paused while the meeting is on hold.") : L("The meeting has ended.")) }
                     }
@@ -30,7 +35,7 @@ struct StudioPanel: View {
             .safeAreaInset(edge: .bottom) {
                 if model.active && !model.held {
                     VStack(spacing: 8) {
-                        if model.pane == .camera && !model.cameraOn && model.enableCamera != nil {
+                        if model.pane == .camera && !model.cameraOn && !model.presenter.running && model.enableCamera != nil {
                             Text(L("Nothing is sent until you start video."))
                                 .font(.footnote).foregroundStyle(.secondary)
                             Button {
@@ -51,6 +56,8 @@ struct StudioPanel: View {
                             } label: { Text(L("Unmute microphone")).frame(maxWidth: .infinity, minHeight: 36) }
                             .buttonStyle(.borderedProminent).disabled(model.applying)
                             .accessibilityIdentifier("studio.unmute")
+                        } else if model.pane == .presenter {
+                            PresenterShareControl(model: model.presenter)
                         }
                     }.padding(.horizontal).padding(.vertical, 10).background(.regularMaterial)
                 }
@@ -72,6 +79,17 @@ struct StudioPanel: View {
 
     private var cameraControls: some View {
         Group {
+            if model.presenter.running {
+                Section {
+                    Text(L("Your camera is controlled by Presenter while the canvas is shared."))
+                    Button(L("Open Presenter")) { model.pane = .presenter }
+                    Button(L("Camera effects")) { model.showSystemSettings(.videoEffects) }
+                        .disabled(!model.systemSettingsAvailable || model.presenter.cameraDevice == nil)
+                    ForEach(model.cameraEffects.filter { $0.state != .unavailable }) { effect in
+                        LabeledContent(effect.title, value: effect.value).font(.footnote)
+                    }
+                }
+            } else {
             Section {
                 ZStack(alignment: .topLeading) {
                     Color.black
@@ -104,6 +122,9 @@ struct StudioPanel: View {
                 }
                 .accessibilityIdentifier("studio.camera-effects")
                 .disabled(!model.systemSettingsAvailable || !(model.cameraOn || model.previewRunning))
+                ForEach(model.cameraEffects.filter { $0.state != .unavailable }) { effect in
+                    LabeledContent(effect.title, value: effect.value).font(.footnote)
+                }
                 if !compact {
                     Text(L("Use system controls for background blur, lighting and framing supported by your camera."))
                         .font(.footnote).foregroundStyle(.secondary)
@@ -112,6 +133,7 @@ struct StudioPanel: View {
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                 }
+            }
             }
         }
     }
@@ -157,7 +179,7 @@ struct StudioPanel: View {
     }
 }
 
-private struct StudioPreviewSurface: UIViewRepresentable {
+struct StudioPreviewSurface: UIViewRepresentable {
     let view: UIView
     func makeUIView(context: Context) -> UIView { UIView() }
     func updateUIView(_ host: UIView, context: Context) {

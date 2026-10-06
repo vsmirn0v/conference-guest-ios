@@ -15,18 +15,21 @@ final class StudioModel: ObservableObject {
     @Published private(set) var applying = false
     @Published private(set) var error: String?
     @Published private(set) var active = true
-    enum Pane: String, CaseIterable { case camera, sound }
-    @Published var pane: Pane = .camera { didSet { if pane != oldValue { refreshPreview() } } }
+    enum Pane: String, CaseIterable { case camera, sound, presenter }
+    let presenter = PresenterModel()
+    @Published var pane: Pane = .camera { didSet { if pane != oldValue { refreshPreview(); refreshPresenter() } } }
     @Published private(set) var presented = false
     @Published private(set) var previewView: UIView?
     @Published private(set) var previewRunning = false
     @Published private(set) var previewLoading = false
     @Published private(set) var previewError: String?
     @Published private(set) var startingVideo = false
-    @Published var cameraOn = false { didSet { if cameraOn != oldValue { refreshPreview() } } }
+    @Published var cameraOn = false { didSet { if cameraOn != oldValue { refreshPreview(); presenter.update(cameraOn: cameraOn, held: held) } } }
     @Published var microphoneOn = false
-    @Published var held = false { didSet { if held != oldValue { refreshPreview() } } }
+    @Published var held = false { didSet { if held != oldValue { refreshPreview(); presenter.update(cameraOn: cameraOn, held: held) } } }
     @Published private(set) var systemMicrophoneMode = L("Standard")
+    @Published private(set) var cameraEffects: [CameraEffectStatus] = []
+    var liveCaptureDevice: (() -> AVCaptureDevice?)?
     @Published private(set) var observedNoiseSuppression: Bool?
     let audioControl: AudioControl
     private(set) var hasSelection = false
@@ -68,11 +71,17 @@ final class StudioModel: ObservableObject {
         self.pane = pane
         presented = true
         refreshPreview()
+        refreshPresenter()
     }
 
     func close() {
         presented = false
         refreshPreview()
+        refreshPresenter()
+    }
+
+    private func refreshPresenter() {
+        if presented && pane == .presenter && active { presenter.open() } else { presenter.close() }
     }
 
     private func refreshPreview() {
@@ -81,7 +90,7 @@ final class StudioModel: ObservableObject {
         previewTask?.cancel()
         livePreview?.stop(); livePreview = nil
         previewView = nil; previewRunning = false; previewError = nil
-        let wanted = presented && pane == .camera && active && !held && !startingVideo
+        let wanted = presented && pane == .camera && active && !held && !startingVideo && !presenter.running
         previewLoading = wanted
         previewTask = Task { @MainActor [weak self, privateCamera] in
             await privateCamera.stop()
@@ -93,6 +102,8 @@ final class StudioModel: ObservableObject {
                     self.previewView = self.livePreview?.view
                     if self.previewView == nil { self.previewError = L("Waiting for your camera…") }
                 } else {
+                    await self.presenter.releaseCamera()
+                    guard self.previewGeneration == generation else { return }
                     try await privateCamera.start()
                     try Task.checkCancellation()
                     guard self.previewGeneration == generation else { return }
@@ -111,6 +122,11 @@ final class StudioModel: ObservableObject {
 
     /// Every publishing entry point awaits camera release, including a short toolbar tap.
     func releasePrivateCamera() async {
+        await releasePreviewCamera()
+        await presenter.releaseCamera()
+    }
+
+    func releasePreviewCamera() async {
         previewGeneration = UUID()
         previewTask?.cancel(); previewTask = nil
         previewRunning = false; previewLoading = false; previewView = nil
@@ -192,6 +208,9 @@ final class StudioModel: ObservableObject {
     func reportUpdateFailure() { error = L("Sound settings could not update. Try again.") }
 
     func refreshSystemSelection() {
+        let device = !held && active ? (presenter.cameraDevice ?? (cameraOn ? liveCaptureDevice?() : (previewRunning ? privateCamera.device : nil))) : nil
+        let effects = CameraEffectStatus.read(device: device)
+        if effects != cameraEffects { cameraEffects = effects }
         let mode: String
         switch AVCaptureDevice.activeMicrophoneMode {
         case .voiceIsolation: mode = L("Voice Isolation")
@@ -202,16 +221,17 @@ final class StudioModel: ObservableObject {
     }
 
     func showSystemSettings(_ kind: AVCaptureDevice.SystemUserInterface) {
-        guard systemSettingsAvailable, kind == .videoEffects ? (cameraOn || previewRunning) : microphoneOn else { return }
+        guard systemSettingsAvailable, kind == .videoEffects ? (cameraOn || previewRunning || presenter.cameraDevice != nil) : microphoneOn else { return }
         openSystemSettings(kind)
     }
 
     func end() {
         active = false
+        presenter.end()
         change?.cancel(); change = nil
         applying = false
         applyProfile = nil
-        enableCamera = nil; enableMicrophone = nil; flipLiveCamera = nil; makeLivePreview = nil
+        enableCamera = nil; enableMicrophone = nil; flipLiveCamera = nil; makeLivePreview = nil; liveCaptureDevice = nil
         close()
     }
 }

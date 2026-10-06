@@ -7,7 +7,7 @@ import VideoToolbox
 @MainActor
 final class LocalSharePreview: ObservableObject {
     enum Source: String {
-        case selected = "Selected content", screen = "Entire screen", window = "Shared window", application = "Shared application"
+        case selected = "Selected content", screen = "Entire screen", window = "Shared window", application = "Shared application", presenter = "Presenter"
         var title: String { L(rawValue) }
     }
     @Published private(set) var active = false
@@ -43,6 +43,7 @@ final class LocalSharePreview: ObservableObject {
     var acceptsFrames: Bool {
         guard active, !hidden else { return false }
         if refreshRequested { return true }
+        if source == .presenter { return foreground && !paused }
         if !isMac { return !foreground }
         // The compact thumbnail shrinks recursion rather than amplifying it.
         // Enlarging a captured/unknown scene pauses the feedback loop.
@@ -85,8 +86,8 @@ final class LocalSharePreview: ObservableObject {
     }
 
     func refreshPolicy() {
-        let nowLive = active && foreground && isMac && !hidden && !paused &&
-            (!enlarged || ownSceneIsNotCaptured?() == true)
+        let nowLive = active && foreground && (isMac || source == .presenter) && !hidden && !paused &&
+            (source == .presenter || !enlarged || ownSceneIsNotCaptured?() == true)
         if live != nowLive { live = nowLive }
         let wanted = acceptsFrames
         if publishedPolicy != wanted {
@@ -104,7 +105,7 @@ final class LocalSharePreview: ObservableObject {
         // software rendering is requested. UIKit-on-Mac can be terminated during
         // suspension while that lock is open. Keep the tiny Mac preview on the
         // VideoToolbox/Core Graphics path; the outgoing stream is unchanged.
-        if isMac {
+        if isMac || source == .presenter {
             if let thumbnail = Self.macThumbnail(pixelBuffer, rotation: rotation) {
                 image = UIImage(cgImage: thumbnail)
                 refreshRequested = false
