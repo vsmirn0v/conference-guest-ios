@@ -35,8 +35,10 @@ is deferred at the user's request.
   layout checks ensure Join and both columns remain reachable.
 - A signed Mac Release build passed. Designed-for-iPad XCTest UI runner launch
   is unsupported on this Mac (-10661); that attempt is not counted as a pass.
-  The wide layout is qualified on iPad Simulator, with native Mac UI acceptance
-  pending the TestFlight installation.
+  The wide layout is qualified on iPad Simulator. After TestFlight distribution,
+  build 43 was installed and launched on the Mac; the wide saved-room library,
+  compact Join panel, full agenda and return to Home were verified with the
+  existing saved name/favorites intact.
 
 Results: `/tmp/rock-home17-input.xcresult`, `/tmp/rock-home27-input.xcresult`,
 `/tmp/rock-home-ipad-input.xcresult`, `/tmp/rock-home27-unit.xcresult`,
@@ -45,3 +47,36 @@ The latter two contain superseded failing test attempts; the selected Calendar
 and favorite/sync checks passed in them. Final Home and input results contain no
 failures. Visual inspection prompted fixes for a stretched iOS 27 Form button
 and changing TextField identity during typing; both regressions now pass.
+
+## Delivery
+
+Archive source: `e91ce42149678c71d9fe9a0ef5a852ac3152157b` (pushed to `origin/main`).
+Archive: `/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-10-07/RockNRoll-0.2.0-b43.xcarchive`.
+
+- All three bundles use 0.2.0 (43), minimum iOS 16.0, and passed strict signature
+  verification. Encryption and camera/microphone/Bluetooth/Calendar purpose keys
+  are present; Contacts access and Debug Calendar fixture markers are absent.
+- Archive executable SHA-256:
+  `fd3c68bc1034c707929e29789f91ffbbc287b29f6b1b789959044af550661ec1`.
+- Matching executable/dSYM UUID: `C4917A24-A283-3FDD-91F1-01F1BCD846DF`.
+- Local IPA SHA-256:
+  `84b3a345e33eb99b34a809a8b6cf3dc414f8524197474bb515f07a76ba5b6aa1`.
+- App and both extensions passed strict distribution signature validation with
+  team 5V64BP2H3P and get-task-allow=false; CloudKit and push are production.
+
+Upload succeeded on 2026-10-07 at 17:48 MSK (`Uploaded RockNRoll`,
+`EXPORT SUCCEEDED`). Existing third-party symbol-upload warnings did not block
+acceptance. Log: `/tmp/rock-build43-upload.log`.
+
+Processing completed and beta notes were saved. Both existing groups were
+assigned with automatic tester notification enabled. On 2026-10-07 at 17:56 MSK,
+each group's Builds page independently showed **0.2.0 (43), Testing**, expiring
+in 90 days:
+
+- Rock’n’Roll Internal (one tester).
+- Rock’n’Roll Public Beta (six testers).
+
+App Store Connect build ID: `5a430dab-044a-4291-a540-1b44557baa59`.
+Public invitation: https://testflight.apple.com/join/Hd13C9U3.
+Proof: `Marketing/TestFlight/build43-internal.png` and
+`Marketing/TestFlight/build43-public.png` (ignored, local only).
