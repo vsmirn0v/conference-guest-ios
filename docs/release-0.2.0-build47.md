@@ -24,4 +24,19 @@ Beta notes: “New meeting reactions, improved camera controls and stability fix
 
 ## Delivery
 
-Pending final checks, archive, upload and group readback.
+Final archive: `/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-10-08/RockNRoll-0.2.0-b47.xcarchive`.
+All three bundles are 0.2.0 (47), minimum iOS 16. Strict distribution signature verification passed; team 5V64BP2H3P, get-task-allow false, CloudKit Production. Camera/microphone/Bluetooth purpose strings and export-compliance declaration are present; Contacts permission is absent. Release executable contains no reaction QA controls or trace markers.
+
+Exported IPA SHA-256: `6d68a012ce560578405b42800b08120afa106ae9e66104655d069e9d6c962655`.
+Exported executable SHA-256: `4f8e197f47ddff488429dca658abd1077d357b81038a0659887b0570e41b145c`.
+Executable and app dSYM UUID: `3B5A08BE-CD28-3988-A8CB-D978B37BA875`.
+
+Upload completed successfully (`/tmp/rock-build47-upload.log`, Uploaded RockNRoll / EXPORT SUCCEEDED). Existing third-party framework missing-dSYM warnings remain; the app's executable/dSYM match.
+
+App Store Connect received 0.2.0 (47) on October 8, 2026 at 01:09 MSK. Processing completed; submitted with automatic tester notification enabled.
+
+ASC build identity: `d4eda729-fd84-4c72-b81a-29de68b2ae8f`.
+Independent group readback at 01:16 MSK confirms **Testing, Expires in 90 days** in both Rock’n’Roll Internal (one tester) and Rock’n’Roll Public Beta (six testers). Public invitation: https://testflight.apple.com/join/Hd13C9U3.
+
+Local proof images: `Marketing/TestFlight/build47-internal.png` and `Marketing/TestFlight/build47-public.png` (ignored release artifacts).
+Source implementation: `ab354de`, pushed to main. Temporary browser receiver and physical test meeting were left cleanly.
