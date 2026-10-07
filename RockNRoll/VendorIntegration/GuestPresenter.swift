@@ -46,7 +46,7 @@ final class GuestPresenterCamera: PresenterCameraSource {
             if let pixels = CMSampleBufferGetImageBuffer(sample) { onFrame(pixels, rotation) }
         }
         energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak processor] _ in
-            DispatchQueue.main.async { processor?.setFrameRate(MediaEnergyBudget.shared.previewFPS) }
+            DispatchQueue.main.async { processor?.setFrameRate(min(12, MediaEnergyBudget.shared.previewFPS)) }
         }
         observation = streams.localCameraChanges.sink { [weak self] in self?.refresh($0) }
     }

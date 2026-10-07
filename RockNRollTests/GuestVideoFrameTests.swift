@@ -63,6 +63,28 @@ final class GuestVideoFrameTests: XCTestCase {
         XCTAssertNil(GuestVideoFrameTap(view: UIView()) { _ in XCTFail("Unsupported renderer") })
     }
 
+    func testGuestPresenterKeepsExistingCadenceCapAfterBudgetObservation() async throws {
+        guard MediaEnergyBudget.shared.pressure == .normal else { throw XCTSkip("Normal-power cadence check") }
+        let streams = GuestStreamViews()
+        let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        var frames = 0
+        let camera = GuestPresenterCamera(streams: streams) { _, _ in frames += 1 }
+        streams.localCameraChanges.send(renderer)
+        let started = ProcessInfo.processInfo.systemUptime
+        for _ in 0..<70 {
+            renderer.renderFrame(makeFrame())
+            try await Task.sleep(nanoseconds: 16_666_667)
+        }
+        await camera.stop()
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
+        XCTAssertGreaterThan(frames, 0)
+        XCTAssertLessThanOrEqual(frames, Int(ceil(elapsed * 12)) + 1,
+            "A normal-power notification must not raise the SDK observer above its existing 12 fps cap")
+        let stopped = frames
+        renderer.renderFrame(makeFrame()); try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(frames, stopped)
+    }
+
     func testStudioAndStageObserveSameRendererIndependently() {
         let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
         var stage = 0, studio = 0

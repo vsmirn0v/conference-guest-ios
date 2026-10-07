@@ -56,3 +56,10 @@ Live automatic PiP and distribution readback are recorded below when complete.
 
 Whole-device battery savings remain unmeasured. There are no new backend services,
 contact access, recordings or analytics.
+
+Candidate build 44 uploaded successfully, but was superseded before group assignment
+by build 45, which preserves the guest Presenter observer's existing 12 fps cap.
+Live room automatic PiP also passed: `/tmp/rock-energy-live-pip.xcresult`.
+The real stream kept moving after the startup grace period and returned cleanly.
+Archive source: `aed046d`. IPA SHA-256:
+`5d2b60a9aa0dc453f963f4f0536283fb44523d71a04f3c49c7401cb80146629e`.
