@@ -7,6 +7,7 @@ final class PresenterUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
         app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "studio"
         defer { XCUIDevice.shared.orientation = .portrait; app.terminate() }
+        XCUIDevice.shared.orientation = .portrait
         app.launch(); open(app)
         app.buttons["presenter.expand"].tap()
         let done = app.navigationBars["Canvas"].buttons["Done"]
@@ -14,9 +15,11 @@ final class PresenterUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         waitForHittable(done)
         let tools = app.segmentedControls["presenter.expanded-tools"]
-        for _ in 0..<4 { if tools.isHittable { break }; app.swipeUp() }
-        XCTAssertTrue(tools.isHittable)
-        tools.buttons["Draw"].tap()
+        let draw = tools.buttons["Draw"]
+        let editor = app.scrollViews.containing(.segmentedControl, identifier: "presenter.expanded-tools").firstMatch
+        for _ in 0..<4 { if draw.isHittable { break }; editor.swipeUp() }
+        XCTAssertTrue(draw.isHittable)
+        draw.tap()
         done.tap()
         XCUIDevice.shared.orientation = .portrait
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
