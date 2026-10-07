@@ -13,7 +13,7 @@ final class PresenterUITests: XCTestCase {
         XCTAssertTrue(done.waitForExistence(timeout: 5))
         XCUIDevice.shared.orientation = .landscapeLeft
         waitForHittable(done)
-        let tools = app.segmentedControls["Canvas tool"]
+        let tools = app.segmentedControls["presenter.expanded-tools"]
         for _ in 0..<4 { if tools.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(tools.isHittable)
         tools.buttons["Draw"].tap()

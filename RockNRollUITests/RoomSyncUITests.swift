@@ -25,7 +25,7 @@ final class RoomSyncUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: movedDown, object: nil)], timeout: 5), .completed)
         XCTAssertLessThan(warmup.frame.minY, songwriting.frame.minY)
         let invitation = app.textFields["invitation.input"]
-        reveal(invitation, in: app)
+        reveal(invitation, in: app, down: true)
         XCTAssertFalse((invitation.value as? String ?? "").contains("fixture.example.test"))
         attach(app, "Favorite order changed directly")
     }
@@ -46,7 +46,7 @@ final class RoomSyncUITests: XCTestCase {
         app.buttons["Save"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Rejoin My warm-up")).firstMatch.waitForExistence(timeout: 5))
         let invitation = app.textFields["invitation.input"]
-        reveal(invitation, in: app)
+        reveal(invitation, in: app, down: true)
         XCTAssertFalse((invitation.value as? String ?? "").contains("fixture.example.test"))
     }
     private func launch(_ mode: String, language: String = "en") -> XCUIApplication {
@@ -97,7 +97,7 @@ final class RoomSyncUITests: XCTestCase {
         let closed = NSPredicate { _, _ in !app.navigationBars["Settings"].exists }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: closed, object: nil)], timeout: 5), .completed)
         let invite = app.textFields["invitation.input"]
-        reveal(invite, in: app)
+        reveal(invite, in: app, down: true)
         invite.tap(); invite.typeText("https://rock.glowsoft.ru/jams/test")
         XCTAssertTrue(app.buttons["Join jam"].isEnabled)
         XCTAssertEqual(app.textFields["name.input"].value as? String, "Aram")

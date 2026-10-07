@@ -51,7 +51,7 @@ final class ConferenceMediaUITests: XCTestCase {
         let room = app.buttons.matching(
             NSPredicate(format: "label BEGINSWITH %@", "Rejoin Open rehearsal \(marker)")
         ).firstMatch
-        for _ in 0..<4 { if room.exists && room.isHittable { break }; app.swipeDown() }
+        for _ in 0..<4 { if room.exists && room.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(room.waitForExistence(timeout: 15))
         room.press(forDuration: 0.9)
         app.buttons["Rename"].tap()
@@ -69,6 +69,7 @@ final class ConferenceMediaUITests: XCTestCase {
         let reopened = app.buttons.matching(
             NSPredicate(format: "label BEGINSWITH %@", "Rejoin Friday quartet \(marker)")
         ).firstMatch
+        for _ in 0..<4 { if reopened.exists && reopened.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(reopened.waitForExistence(timeout: 10))
     }
 
@@ -88,7 +89,7 @@ final class ConferenceMediaUITests: XCTestCase {
         let website = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "meeting.example.test")
         ).firstMatch
-        for _ in 0..<4 { if website.exists && website.isHittable { break }; app.swipeDown() }
+        for _ in 0..<4 { if website.exists && website.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(website.waitForExistence(timeout: 10))
     }
 

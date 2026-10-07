@@ -45,7 +45,7 @@ struct PresenterControls: View {
                                 Text(L("Move camera")).tag(Tool.move)
                                 if model.scene.layout == .instrument { Text(L("Crop")).tag(Tool.crop) }
                                 Text(L("Draw")).tag(Tool.draw)
-                            }.pickerStyle(.segmented)
+                            }.pickerStyle(.segmented).accessibilityIdentifier("presenter.expanded-tools")
                             if model.includeCamera && !model.nativeOverlay && model.scene.layout != .beside { placementControls }
                             Label(model.running ? L("Shared with jam") : L("Preview · Only you"), systemImage: model.running ? "rectangle.on.rectangle" : "lock.fill")
                                 .font(.footnote)
