@@ -202,7 +202,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     }
 
     func resumeSystemCallIfPossible() {
-        systemCall.resumeIfPossible()
+        systemCall.resumeIfPossible(afterReturningToMeeting: true)
     }
 
     func prepareToFloat() { callView?.prepareToFloat() }
@@ -211,6 +211,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     func showMediaStatus(_ message: String?) { callView?.showMediaStatus(message) }
 
     private func installCallHandlers() {
+        systemCall.onCallStateChanged = nil
         systemCall.onActivated = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.hasJoinStarted else { return }

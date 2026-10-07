@@ -11,7 +11,15 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     var onEnded: ((Bool) -> Void)?
     var onMuteChanged: ((Bool) -> Void)?
     var onHoldChanged: ((Bool) -> Void)?
+    var onCallStateChanged: (() -> Void)?
     var onFailure: ((Error) -> Void)?
+
+    struct ObservedCall {
+        let id: UUID
+        var connected: Bool
+        var held: Bool
+        var ended: Bool = false
+    }
 
     private let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "RockNRoll", category: "SystemCall")
     private lazy var provider = CXProvider(configuration: Self.providerConfiguration())
@@ -31,13 +39,14 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private let usesSystemCall: Bool
     private let transactionRequester: ((CXTransaction, @escaping (Error?) -> Void) -> Void)?
     private let callUpdateReporter: ((UUID, CXCallUpdate) -> Void)?
+    private let callSnapshot: (() -> [ObservedCall])?
+    private let activateAudioSession: () throws -> Void
     private(set) var callID: UUID?
     private var isConnected = false
     private var isMuted = true
     private var isHeld = false
-    private var heldForAnotherCall = false
-    private var holdStartedAt: Date?
-    private var resumeRequested = false
+    private var shouldResumeAfterHold = false
+    private var resumeActionID: UUID?
     private var isAudioSessionActive = false
     private(set) var transferHolding = false
     private var transferHoldCompletion: ((Error?) -> Void)?
@@ -45,13 +54,19 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private var transferHoldActionID: UUID?
 
     var canRestoreAudio: Bool {
-        callID != nil && isAudioSessionActive && !isHeld && !hasAnotherActiveCall
+        guard let callID, isAudioSessionActive, !isHeld, !transferHolding else { return false }
+        guard usesSystemCall else { return true }
+        return !observedCalls.contains { $0.id == callID ? ($0.held || $0.ended) : !$0.ended }
     }
 
     init(transactionRequester: ((CXTransaction, @escaping (Error?) -> Void) -> Void)? = nil,
-         callUpdateReporter: ((UUID, CXCallUpdate) -> Void)? = nil) {
+         callUpdateReporter: ((UUID, CXCallUpdate) -> Void)? = nil,
+         callSnapshot: (() -> [ObservedCall])? = nil,
+         activateAudioSession: @escaping () throws -> Void = { try AVAudioSession.sharedInstance().setActive(true) }) {
         self.transactionRequester = transactionRequester
         self.callUpdateReporter = callUpdateReporter
+        self.callSnapshot = callSnapshot
+        self.activateAudioSession = activateAudioSession
         usesSystemCall = transactionRequester != nil || !ProcessInfo.processInfo.isiOSAppOnMac
         super.init()
         if usesSystemCall && transactionRequester == nil {
@@ -85,9 +100,8 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         isConnected = false
         isMuted = true
         isHeld = false
-        heldForAnotherCall = false
-        holdStartedAt = nil
-        resumeRequested = false
+        shouldResumeAfterHold = false
+        resumeActionID = nil
         isAudioSessionActive = false
         transferHolding = false
         if !usesSystemCall {
@@ -183,9 +197,8 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         self.callID = nil
         isConnected = false
         isHeld = false
-        heldForAnotherCall = false
-        holdStartedAt = nil
-        resumeRequested = false
+        shouldResumeAfterHold = false
+        resumeActionID = nil
         isAudioSessionActive = false
         transferHolding = false
         finishPendingTransferHold()
@@ -201,9 +214,8 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         callID = nil
         isConnected = false
         isHeld = false
-        heldForAnotherCall = false
-        holdStartedAt = nil
-        resumeRequested = false
+        shouldResumeAfterHold = false
+        resumeActionID = nil
         isAudioSessionActive = false
         onEnded?(false)
     }
@@ -261,13 +273,11 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         }
         log.notice("CallKit hold requested: \(action.isOnHold, privacy: .public)")
         isHeld = action.isOnHold
-        resumeRequested = false
+        resumeActionID = nil
         if isHeld {
-            holdStartedAt = Date()
-            heldForAnotherCall = hasAnotherActiveCall
+            shouldResumeAfterHold = hasAnotherActiveCall
         } else {
-            heldForAnotherCall = false
-            holdStartedAt = nil
+            shouldResumeAfterHold = false
         }
         onHoldChanged?(isHeld)
         if transferHoldActionID == action.uuid {
@@ -287,40 +297,77 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     }
 
     func callObserver(_ callObserver: CXCallObserver, callChanged call: CXCall) {
-        guard let callID, call.uuid != callID else { return }
-        log.notice("Other call changed: outgoing=\(call.isOutgoing, privacy: .public), connected=\(call.hasConnected, privacy: .public), ended=\(call.hasEnded, privacy: .public)")
-        if !call.hasEnded {
-            if isHeld, let holdStartedAt,
-               Date().timeIntervalSince(holdStartedAt) <= 3 {
-                heldForAnotherCall = true
-            }
+        observedCallChanged(ObservedCall(id: call.uuid, connected: call.hasConnected,
+                                        held: call.isOnHold, ended: call.hasEnded))
+    }
+
+    func observedCallChanged(_ call: ObservedCall) {
+        guard let callID else { return }
+        // Notifications can be delayed while iOS suspends the app. Attribution
+        // depends on overlapping calls, not a three-second delivery window.
+        if call.id != callID, !call.ended, isHeld, !transferHolding {
+            shouldResumeAfterHold = true
         }
         resumeIfPossible()
+        onCallStateChanged?()
     }
 
     func provider(_ provider: CXProvider, timedOutPerforming action: CXAction) {
         // No contact, meeting URL, call UUID or media is written to this log.
         log.error("CallKit action timed out: \(String(describing: type(of: action)), privacy: .public)")
+        if action.uuid == resumeActionID {
+            resumeActionID = nil
+            onCallStateChanged?()
+        }
     }
 
-    func resumeIfPossible() {
+    func resumeIfPossible(afterReturningToMeeting: Bool = false) {
         guard usesSystemCall, !transferHolding else { return }
-        guard let callID, isHeld, heldForAnotherCall,
-              !hasAnotherActiveCall, !resumeRequested else { return }
-        resumeRequested = true
+        // Returning to the meeting is also a resume request when iOS omitted
+        // the competing call's lifecycle notifications during suspension.
+        if isHeld, hasAnotherActiveCall || afterReturningToMeeting { shouldResumeAfterHold = true }
+        guard let callID, isHeld, shouldResumeAfterHold,
+              !hasAnotherActiveCall, resumeActionID == nil else { return }
+        let action = CXSetHeldCallAction(call: callID, onHold: false)
+        resumeActionID = action.uuid
         #if DEBUG
-        print("System call: requesting resume after other call")
+        print("System call: requesting meeting resume")
         #endif
-        request(CXTransaction(action: CXSetHeldCallAction(call: callID, onHold: false))) { [weak self] error in
+        request(CXTransaction(action: action)) { [weak self] error in
             guard let error else { return }
             DispatchQueue.main.async {
-                guard self?.callID == callID else { return }
-                self?.resumeRequested = false
+                guard self?.callID == callID, self?.resumeActionID == action.uuid else { return }
+                self?.resumeActionID = nil
                 #if DEBUG
                 print("System call: resume failed: \(error.localizedDescription)")
                 #endif
             }
         }
+    }
+
+    /// A missing didActivate callback must not permanently strand an established
+    /// meeting. Current CallKit ownership and successful AVAudioSession activation
+    /// are both required; no competitor or explicit transfer hold may be overridden.
+    @discardableResult
+    func reactivateAudioIfPossible() throws -> Bool {
+        guard let callID, isConnected, !transferHolding else { return false }
+        if usesSystemCall {
+            let calls = observedCalls
+            guard calls.contains(where: { $0.id == callID && $0.connected && !$0.held && !$0.ended }),
+                  !calls.contains(where: { $0.id != callID && !$0.ended }) else { return false }
+        } else if isHeld {
+            return false // On Mac, the app owns its AVAudioSession and hold state.
+        }
+        try activateAudioSession()
+        // Reconcile a missed unhold delegate callback against the current call,
+        // only after the system actually grants activation.
+        if isHeld {
+            isHeld = false; shouldResumeAfterHold = false; resumeActionID = nil
+            onHoldChanged?(false)
+        }
+        isAudioSessionActive = true
+        onActivated?()
+        return true
     }
 
     #if DEBUG
@@ -386,6 +433,13 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private var hasAnotherActiveCall: Bool {
         guard usesSystemCall else { return false }
         guard let callID else { return false }
-        return controller.callObserver.calls.contains { $0.uuid != callID && !$0.hasEnded }
+        return observedCalls.contains { $0.id != callID && !$0.ended }
+    }
+
+    private var observedCalls: [ObservedCall] {
+        if let callSnapshot { return callSnapshot() }
+        return controller.callObserver.calls.map {
+            ObservedCall(id: $0.uuid, connected: $0.hasConnected, held: $0.isOnHold, ended: $0.hasEnded)
+        }
     }
 }

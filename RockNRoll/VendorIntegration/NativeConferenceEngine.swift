@@ -37,6 +37,7 @@ final class NativeConferenceEngine: CallEngine {
     private var screenCaptureStop: Task<Void, Never>?
     private var isSystemHeld = false { didSet { updatePiPMicrophoneStatus() } }
     private var audioGate = CallAudioRecoveryGate()
+    private var audioRecoveryTask: Task<Void, Never>?
     private var mediaRecoveryBudget = CallMediaRecoveryBudget(seconds: 12)
     private var displayMode: ConferenceDisplayMode = .all
     private var isAudioInterrupted = false { didSet { updatePiPMicrophoneStatus() } }
@@ -210,6 +211,7 @@ final class NativeConferenceEngine: CallEngine {
                 self.scheduleUnpairedInterruptionRecovery()
             } else {
                 self.recoverAudioIfReady()
+                self.scheduleUnpairedInterruptionRecovery()
             }
         }
         let settings = JazzSettings(
@@ -326,6 +328,12 @@ final class NativeConferenceEngine: CallEngine {
 
     private func installCallHandlers() {
         let epoch = sessionEpoch
+        systemCall.onCallStateChanged = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.sessionEpoch == epoch else { return }
+                self.scheduleUnpairedInterruptionRecovery()
+            }
+        }
         systemCall.onActivated = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.sessionEpoch == epoch, self.hasJoinStarted, !self.leaveRequested else { return }
@@ -353,6 +361,7 @@ final class NativeConferenceEngine: CallEngine {
                     self.catchUp.begin(.audioInterruption)
                 }
                 self.onMediaStatus?(L("Jam audio paused by iOS"))
+                self.scheduleUnpairedInterruptionRecovery()
             }
         }
         systemCall.onEnded = { [weak self] userEnded in
@@ -384,6 +393,7 @@ final class NativeConferenceEngine: CallEngine {
                     else { self.catchUp.end(.anotherCall) }
                 }
                 if held {
+                    if self.hasBecomeActive { self.needsMediaReconnect = true }
                     self.activeCoordinator?.toggleMicrohone(isOn: false)
                     self.activeCoordinator?.toggleCamera(isOn: false)
                     await self.stopScreenSharing()
@@ -395,6 +405,7 @@ final class NativeConferenceEngine: CallEngine {
                     self.startMediaAfterActivation()
                     self.completeMediaReconnectIfReady()
                     self.recoverAudioIfReady()
+                    self.scheduleUnpairedInterruptionRecovery()
                 }
             }
         }
@@ -411,7 +422,8 @@ final class NativeConferenceEngine: CallEngine {
 
     private func recoverAudioIfReady() {
         if networkRecovery.requiresRecovery { startNetworkRecoveryIfNeeded(); return }
-        guard !isMediaReconnecting, hasMediaJoinStarted, hasBecomeActive, let coordinator = activeCoordinator,
+        guard !isMediaReconnecting, hasMediaJoinStarted, hasBecomeActive, isCallAudioReady,
+              let coordinator = activeCoordinator,
               audioGate.takeRecovery() else { return }
         if needsMediaReconnect {
             beginMediaReconnect(forNetwork: false)
@@ -503,20 +515,31 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func scheduleUnpairedInterruptionRecovery() {
+        guard audioRecoveryTask == nil, hasJoinStarted, hasBecomeActive,
+              !leaveRequested, finishing == nil,
+              isAudioInterrupted || needsMediaReconnect else { return }
         let epoch = sessionEpoch
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(500))
-            guard let self, self.sessionEpoch == epoch, self.hasMediaJoinStarted, self.hasBecomeActive,
-                  self.isAudioInterrupted, !self.leaveRequested,
-                  self.systemCall.canRestoreAudio else { return }
-            do {
-                try self.audio.reactivateAfterInterruption()
-                self.recoverAudioIfReady()
-            } catch {
-                self.onMediaStatus?(L("Jam audio is paused; waiting for iOS"))
-                #if DEBUG
-                print("Guest audio reactivation failed: \(error.localizedDescription)")
-                #endif
+        audioRecoveryTask = Task { @MainActor [weak self] in
+            defer { if self?.sessionEpoch == epoch { self?.audioRecoveryTask = nil } }
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                guard let self, self.sessionEpoch == epoch, self.hasJoinStarted, self.hasBecomeActive,
+                      !self.leaveRequested, self.finishing == nil,
+                      self.isAudioInterrupted || self.needsMediaReconnect else { return }
+                // Once audio is owned again, the separate media deadline watches
+                // the SDK rebuild. Repeated activation would disturb that rebuild.
+                if self.isMediaReconnecting && self.audioGate.canUseMedia && self.isCallAudioReady { return }
+                self.systemCall.resumeIfPossible()
+                do {
+                    if try self.systemCall.reactivateAudioIfPossible() {
+                        self.traceMediaRecovery("audio-reactivated-from-current-call-state")
+                        return // onActivated drives the existing transport rebuild.
+                    }
+                } catch {
+                    // Route/activation can still be settling after a long call.
+                    // Retry while this same meeting needs recovery; never fake activation.
+                    self.traceMediaRecovery("audio-reactivation-retry")
+                }
             }
         }
     }
@@ -562,6 +585,7 @@ final class NativeConferenceEngine: CallEngine {
     func join(target: JoinTarget, displayName: String) throws {
         guard finishing == nil else { throw ProviderError.teardownInProgress }
         sessionEpoch = UUID()
+        audioRecoveryTask?.cancel(); audioRecoveryTask = nil
         speakerSubscription?.cancel(); speakerSubscription = nil
         refreshSpeakerInput = nil
         activeSpeaker.reset()
@@ -734,7 +758,8 @@ final class NativeConferenceEngine: CallEngine {
 
 
     func resumeSystemCallIfPossible() {
-        systemCall.resumeIfPossible()
+        systemCall.resumeIfPossible(afterReturningToMeeting: true)
+        scheduleUnpairedInterruptionRecovery()
     }
 
     private func updateConnectionGap() {
@@ -931,14 +956,15 @@ final class NativeConferenceEngine: CallEngine {
     private func scheduleTestHoldIfRequested() {
         guard !testHoldScheduled,
               let raw = ProcessInfo.processInfo.environment["CONFERENCE_TEST_HOLD_SECONDS"],
-              let seconds = Double(raw), (2...30).contains(seconds) else { return }
+              let seconds = Double(raw), (2...180).contains(seconds) else { return }
         testHoldScheduled = true
+        let epoch = sessionEpoch
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 3_000_000_000)
-            guard let self, self.hasJoinStarted, !self.leaveRequested else { return }
+            guard let self, self.sessionEpoch == epoch, self.hasJoinStarted, !self.leaveRequested else { return }
             self.systemCall.requestHoldForTesting(true)
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            guard self.hasJoinStarted, !self.leaveRequested else { return }
+            guard self.sessionEpoch == epoch, self.hasJoinStarted, !self.leaveRequested else { return }
             self.systemCall.requestHoldForTesting(false)
         }
     }
@@ -1273,6 +1299,7 @@ final class NativeConferenceEngine: CallEngine {
         let destination = onEvent
         events.onEvent = nil
         events.onMediaConnected = nil
+        audioRecoveryTask?.cancel(); audioRecoveryTask = nil
         networkRecoveryTask?.cancel(); networkRecoveryTask = nil
         pendingRoom = nil
         activeControls?.isHidden = true
