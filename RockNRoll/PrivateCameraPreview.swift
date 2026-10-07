@@ -22,7 +22,10 @@ extension PrivateCameraPreviewing {
 final class PrivateCameraPreview: PrivateCameraPreviewing {
     private let capture = Capture()
     private let position: AVCaptureDevice.Position
-    init(position: AVCaptureDevice.Position = .front) { self.position = position }
+    private let framesPerSecond: Double?
+    init(position: AVCaptureDevice.Position = .front, framesPerSecond: Double? = nil) {
+        self.position = position; self.framesPerSecond = framesPerSecond
+    }
     private lazy var surface = PreviewSurface(session: capture.session)
     var view: UIView { surface }
     var device: AVCaptureDevice? {
@@ -47,7 +50,7 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         }
         try Task.checkCancellation()
         guard authorized else { throw PreviewError.permission }
-        try await capture.start(position: position, frames: frames)
+        try await capture.start(position: position, frames: frames, framesPerSecond: framesPerSecond)
         surface.device = device
         surface.mirrored = position == .front
     }
@@ -79,9 +82,10 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         private var sink: FrameSink?
         private var rotationCoordinator: AnyObject?
         private var rotationObservation: NSKeyValueObservation?
+        private var originalDurations: (format: AVCaptureDevice.Format, minimum: CMTime, maximum: CMTime)?
         init() { session.automaticallyConfiguresApplicationAudioSession = false }
 
-        func start(position: AVCaptureDevice.Position, frames: (@MainActor (CVPixelBuffer, Int) -> Void)?) async throws {
+        func start(position: AVCaptureDevice.Position, frames: (@MainActor (CVPixelBuffer, Int) -> Void)?, framesPerSecond: Double?) async throws {
             try await withCheckedThrowingContinuation { (result: CheckedContinuation<Void, Error>) in
                 queue.async { [self] in
                     do {
@@ -140,6 +144,25 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                             output = video; sink = receiver
                             session.commitConfiguration()
                         }
+                        // Only Presenter-owned capture requests a fixed cadence. Keep
+                        // the selected format/system effects and clamp to its range.
+                        if frames != nil, let requested = framesPerSecond, requested.isFinite, requested > 0,
+                           let device = input?.device,
+                           let range = device.activeFormat.videoSupportedFrameRateRanges.min(by: {
+                               abs(min($0.maxFrameRate, max($0.minFrameRate, requested)) - requested) <
+                               abs(min($1.maxFrameRate, max($1.minFrameRate, requested)) - requested)
+                           }) {
+                            let rate = min(range.maxFrameRate, max(range.minFrameRate, requested))
+                            try device.lockForConfiguration()
+                            if originalDurations == nil {
+                                originalDurations = (device.activeFormat, device.activeVideoMinFrameDuration, device.activeVideoMaxFrameDuration)
+                            }
+                            let duration = CMTimeMaximum(range.minFrameDuration, CMTimeMinimum(range.maxFrameDuration,
+                                CMTime(seconds: 1 / rate, preferredTimescale: 1_000_000_000)))
+                            device.activeVideoMinFrameDuration = duration
+                            device.activeVideoMaxFrameDuration = duration
+                            device.unlockForConfiguration()
+                        }
                         if session.isMultitaskingCameraAccessSupported { session.isMultitaskingCameraAccessEnabled = true }
                         if !session.isRunning { session.startRunning() }
                         guard session.isRunning else { throw PreviewError.unavailable }
@@ -153,6 +176,17 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
             await withCheckedContinuation { result in
                 queue.async { [self] in
                     if session.isRunning { session.stopRunning() }
+                    // Restore our cadence before the SDK can reclaim the device.
+                    if let device = input?.device, let original = originalDurations,
+                       device.activeFormat === original.format {
+                        do {
+                            try device.lockForConfiguration()
+                            device.activeVideoMinFrameDuration = original.minimum
+                            device.activeVideoMaxFrameDuration = original.maximum
+                            device.unlockForConfiguration()
+                        } catch { /* Capture is stopped; cleanup must still release ownership. */ }
+                    }
+                    originalDurations = nil
                     // Release the camera device before handing ownership to the meeting SDK.
                     session.beginConfiguration()
                     output?.setSampleBufferDelegate(nil, queue: nil)

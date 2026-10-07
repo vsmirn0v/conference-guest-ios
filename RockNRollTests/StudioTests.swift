@@ -67,6 +67,40 @@ final class StudioTests: XCTestCase {
         XCTAssertFalse(session.isRunning)
         XCTAssertTrue(session.inputs.isEmpty, "SDK camera ownership must be released before publication")
     }
+    func testPresenterCameraMatchesOutputCadenceAndReleasesCapture() async throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Real capture hardware required")
+        #else
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRIVATE_CAMERA"] == "1" else {
+            throw XCTSkip("Opt-in real Presenter capture qualification")
+        }
+        let camera = PrivateCameraPreview(framesPerSecond: 15)
+        try await camera.start()
+        let originalDevice = try XCTUnwrap(camera.device)
+        let originalMinimum = originalDevice.activeVideoMinFrameDuration
+        let originalMaximum = originalDevice.activeVideoMaxFrameDuration
+        var times: [TimeInterval] = []
+        try await camera.startFrames { _, _ in times.append(ProcessInfo.processInfo.systemUptime) }
+        let layer = try XCTUnwrap(camera.view.layer as? AVCaptureVideoPreviewLayer)
+        let session = try XCTUnwrap(layer.session)
+        let device = try XCTUnwrap(camera.device)
+        XCTAssertEqual(CMTimeGetSeconds(device.activeVideoMinFrameDuration), 1.0 / 15, accuracy: 0.001)
+        XCTAssertEqual(CMTimeGetSeconds(device.activeVideoMaxFrameDuration), 1.0 / 15, accuracy: 0.001)
+        XCTAssertEqual(session.inputs.count, 1); XCTAssertEqual(session.outputs.count, 1)
+        XCTAssertFalse(session.automaticallyConfiguresApplicationAudioSession)
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+        await camera.stop()
+        XCTAssertGreaterThan(times.count, 10)
+        if let first = times.first, let last = times.last, last > first {
+            let rate = Double(times.count - 1) / (last - first)
+            print("PRESENTER_CAPTURE_FPS=\(rate)")
+            XCTAssertLessThan(rate, 17); XCTAssertGreaterThan(rate, 10)
+        }
+        XCTAssertFalse(session.isRunning); XCTAssertTrue(session.inputs.isEmpty)
+        XCTAssertEqual(device.activeVideoMinFrameDuration, originalMinimum, "Presenter must not leave the SDK camera capped")
+        XCTAssertEqual(device.activeVideoMaxFrameDuration, originalMaximum)
+        #endif
+    }
     private final class Capture: PrivateCameraPreviewing {
         let view = UIView()
         var running = false

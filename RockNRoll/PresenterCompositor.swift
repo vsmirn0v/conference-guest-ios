@@ -4,7 +4,7 @@ import ImageIO
 import Metal
 import Vision
 
-struct PresenterScene {
+struct PresenterScene: Equatable {
     enum Layout: String, CaseIterable { case card, cutout, instrument, beside }
     enum Backdrop: String, CaseIterable { case dark, warm, stage }
     var layout: Layout = .card
@@ -17,6 +17,12 @@ struct PresenterScene {
     var cameraRotation = 0
     var placement = PresenterPlacement()
     var draftStroke: [CGPoint] = []
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.layout == rhs.layout && lhs.backdrop == rhs.backdrop && lhs.image === rhs.image &&
+        lhs.strokes == rhs.strokes && lhs.draftStroke == rhs.draftStroke && lhs.zoom == rhs.zoom &&
+        lhs.focus == rhs.focus && lhs.speaking == rhs.speaking && lhs.cameraRotation == rhs.cameraRotation &&
+        lhs.placement == rhs.placement
+    }
 }
 
 /// Top-left normalized geometry shared by the editor, persistence and renderer.
@@ -56,6 +62,23 @@ final class PresenterCompositor: @unchecked Sendable {
     private let segmentation = VNGeneratePersonSegmentationRequest()
     private var cachedStrokes: [[CGPoint]] = []
     private var annotation: CIImage?
+    private var cachedDraft: [CGPoint] = []
+    private var draft: CIImage?
+    private struct BackgroundKey: Equatable {
+        let image: ObjectIdentifier?
+        let backdrop: PresenterScene.Backdrop
+        let speaking: Bool
+        let contentBounds: CGRect
+    }
+    private var backgroundKey: BackgroundKey?
+    private var cachedBackground: CIImage?
+    private var maskedCamera: CVPixelBuffer?
+    private var maskRevision: UInt64?
+    private var maskRotation = 0
+    private var cachedMask: CVPixelBuffer?
+    private(set) var segmentationCount = 0
+    private(set) var annotationRasterizations = 0
+    private(set) var backgroundBuilds = 0
     private let personMask: ((CVPixelBuffer, CGImagePropertyOrientation) throws -> CVPixelBuffer?)?
 
     init(size: CGSize = CGSize(width: 1280, height: 720), software: Bool = false,
@@ -75,15 +98,18 @@ final class PresenterCompositor: @unchecked Sendable {
         ] as CFDictionary, &pool)
     }
 
-    func render(scene: PresenterScene, camera: CVPixelBuffer?, screen: CVPixelBuffer? = nil, rotation: Int = 0,
+    func render(scene: PresenterScene, camera: CVPixelBuffer?, cameraRevision: UInt64? = nil, screen: CVPixelBuffer? = nil, rotation: Int = 0,
                 time: CMTime) -> CMSampleBuffer? {
         let bounds = CGRect(origin: .zero, size: size)
         let contentBounds = scene.layout == .beside && camera != nil ?
             CGRect(x: 0, y: 0, width: size.width * 0.72, height: size.height) : bounds
+        if camera == nil || scene.layout != .cutout {
+            maskedCamera = nil; cachedMask = nil; maskRevision = nil
+        }
         var canvas = background(scene, bounds: bounds, contentBounds: contentBounds)
         if let screen { canvas = fit(CIImage(cvPixelBuffer: screen), into: contentBounds, fill: false).composited(over: canvas) }
         if let camera {
-            let rotation = (rotation + scene.cameraRotation) % 360
+            let rotation = ((rotation + scene.cameraRotation) % 360 + 360) % 360
             var input = CIImage(cvPixelBuffer: camera)
             switch rotation {
             case 90: input = input.oriented(.right)
@@ -105,18 +131,22 @@ final class PresenterCompositor: @unchecked Sendable {
             case .cutout:
                 // No cached mask from another person/frame. If Vision cannot protect
                 // the room, omit the entire camera card rather than send raw pixels.
-                if let person = cutout(input, pixels: camera, rotation: rotation) {
+                if let person = cutout(input, pixels: camera, revision: cameraRevision, rotation: rotation) {
                     let target = card
                     canvas = fit(person, into: target, fill: false).composited(over: canvas)
                 }
             }
         }
-        let strokes = scene.strokes + (scene.draftStroke.isEmpty ? [] : [scene.draftStroke])
-        if strokes != cachedStrokes {
-            cachedStrokes = strokes
-            annotation = drawStrokes(strokes)
+        if scene.strokes != cachedStrokes {
+            cachedStrokes = scene.strokes
+            annotation = drawStrokes(scene.strokes)
+        }
+        if scene.draftStroke != cachedDraft {
+            cachedDraft = scene.draftStroke
+            draft = drawStrokes(scene.draftStroke.isEmpty ? [] : [scene.draftStroke], cropped: true)
         }
         if let annotation { canvas = annotation.composited(over: canvas) }
+        if let draft { canvas = draft.composited(over: canvas) }
         guard let pool else { return nil }
         var output: CVPixelBuffer?
         guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(nil, pool,
@@ -144,6 +174,15 @@ final class PresenterCompositor: @unchecked Sendable {
         return sample
     }
 
+    /// Share cached immutable pixels with fresh timing; no conversion or pool allocation.
+    static func retimed(_ sample: CMSampleBuffer, time: CMTime) -> CMSampleBuffer? {
+        var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: time, decodeTimeStamp: .invalid)
+        var result: CMSampleBuffer?
+        guard CMSampleBufferCreateCopyWithNewTiming(allocator: nil, sampleBuffer: sample,
+            sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleBufferOut: &result) == noErr else { return nil }
+        return result
+    }
+
     static func instrumentCrop(extent: CGRect, zoom: CGFloat, focus: CGPoint) -> CGRect {
         let scale = min(4, max(1, zoom.isFinite ? zoom : 1))
         let width = extent.width / scale, height = extent.height / scale
@@ -155,6 +194,10 @@ final class PresenterCompositor: @unchecked Sendable {
     }
 
     private func background(_ scene: PresenterScene, bounds: CGRect, contentBounds: CGRect) -> CIImage {
+        let key = BackgroundKey(image: scene.image.map(ObjectIdentifier.init), backdrop: scene.backdrop,
+            speaking: scene.image == nil && scene.backdrop == .stage && scene.speaking, contentBounds: contentBounds)
+        if key == backgroundKey, let cachedBackground { return cachedBackground }
+        backgroundBuilds += 1
         let base: CIColor
         switch scene.backdrop {
         case .dark: base = CIColor(red: 0.035, green: 0.04, blue: 0.055)
@@ -177,6 +220,9 @@ final class PresenterCompositor: @unchecked Sendable {
                 if let glow { background = glow.cropped(to: bounds).composited(over: background) }
             }
         }
+        // Reuse the immutable graph. Forcing a cached GPU intermediate adds a
+        // render pass here; keep filter fusion and the existing working precision.
+        backgroundKey = key; cachedBackground = background
         return background
     }
 
@@ -191,17 +237,22 @@ final class PresenterCompositor: @unchecked Sendable {
         return transformed.cropped(to: target)
     }
 
-    private func cutout(_ image: CIImage, pixels: CVPixelBuffer, rotation: Int) -> CIImage? {
+    private func cutout(_ image: CIImage, pixels: CVPixelBuffer, revision: UInt64?, rotation: Int) -> CIImage? {
         let orientation: CGImagePropertyOrientation
         switch rotation { case 90: orientation = .right; case 180: orientation = .down; case 270: orientation = .left; default: orientation = .up }
         do {
-            let mask: CVPixelBuffer?
-            if let personMask { mask = try personMask(pixels, orientation) }
-            else {
-                try VNImageRequestHandler(cvPixelBuffer: pixels, orientation: orientation).perform([segmentation])
-                mask = segmentation.results?.first?.pixelBuffer
+            // A revision is assigned at capture delivery, not buffer allocation:
+            // capture pools can reuse the same buffer with different person pixels.
+            if revision == nil || maskRevision != revision || maskedCamera !== pixels || maskRotation != rotation {
+                maskedCamera = pixels; maskRevision = revision; maskRotation = rotation; cachedMask = nil
+                segmentationCount += 1
+                if let personMask { cachedMask = try personMask(pixels, orientation) }
+                else {
+                    try VNImageRequestHandler(cvPixelBuffer: pixels, orientation: orientation).perform([segmentation])
+                    cachedMask = segmentation.results?.first?.pixelBuffer
+                }
             }
-            guard let mask else { return nil }
+            guard let mask = cachedMask else { return nil }
             let inputMask = CIImage(cvPixelBuffer: mask)
             let scaled = inputMask.transformed(by: CGAffineTransform(scaleX: image.extent.width / inputMask.extent.width,
                                                                       y: image.extent.height / inputMask.extent.height))
@@ -210,18 +261,39 @@ final class PresenterCompositor: @unchecked Sendable {
         } catch { return nil }
     }
 
-    private func drawStrokes(_ strokes: [[CGPoint]]) -> CIImage? {
-        guard !strokes.isEmpty, let drawing = CGContext(data: nil, width: Int(size.width), height: Int(size.height),
+    private func drawStrokes(_ strokes: [[CGPoint]], cropped: Bool = false) -> CIImage? {
+        guard !strokes.isEmpty else { return nil }
+        let width = max(3, size.width / 250)
+        var bounds = CGRect(origin: .zero, size: size)
+        if cropped {
+            // Rasterize only the live pen's occupied pixels. Integer origins keep
+            // antialiasing aligned with the full-canvas committed layer.
+            var minX = CGFloat.infinity, minY = CGFloat.infinity
+            var maxX = -CGFloat.infinity, maxY = -CGFloat.infinity
+            for stroke in strokes {
+                for point in stroke {
+                    let x = point.x * size.width, y = (1 - point.y) * size.height
+                    minX = min(minX, x); maxX = max(maxX, x)
+                    minY = min(minY, y); maxY = max(maxY, y)
+                }
+            }
+            guard minX.isFinite else { return nil }
+            bounds = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+                .insetBy(dx: -width, dy: -width).integral.intersection(bounds)
+        }
+        guard !bounds.isEmpty, let drawing = CGContext(data: nil, width: Int(bounds.width), height: Int(bounds.height),
             bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        annotationRasterizations += 1
         drawing.setStrokeColor(CGColor(red: 1, green: 0.62, blue: 0.18, alpha: 1))
-        drawing.setLineWidth(max(3, size.width / 250)); drawing.setLineCap(.round); drawing.setLineJoin(.round)
+        drawing.translateBy(x: -bounds.minX, y: -bounds.minY)
+        drawing.setLineWidth(width); drawing.setLineCap(.round); drawing.setLineJoin(.round)
         for stroke in strokes {
             guard let first = stroke.first else { continue }
             drawing.move(to: CGPoint(x: first.x * size.width, y: (1 - first.y) * size.height))
             for point in stroke.dropFirst() { drawing.addLine(to: CGPoint(x: point.x * size.width, y: (1 - point.y) * size.height)) }
             drawing.strokePath()
         }
-        return drawing.makeImage().map(CIImage.init(cgImage:))
+        return drawing.makeImage().map { CIImage(cgImage: $0).transformed(by: CGAffineTransform(translationX: bounds.minX, y: bounds.minY)) }
     }
 }

@@ -122,6 +122,90 @@ final class PresenterCompositorTests: XCTestCase {
         let speaking = try XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero))
         XCTAssertEqual(try pixels(idle), try pixels(speaking))
     }
+    func testHeartbeatRetimesWithoutCopyingOrMutatingPixels() throws {
+        let buffer = try solid(100)
+        let first = try XCTUnwrap(PresenterCompositor.sample(buffer, time: CMTime(value: 1, timescale: 1)))
+        let next = try XCTUnwrap(PresenterCompositor.retimed(first, time: CMTime(value: 2, timescale: 1)))
+        XCTAssertTrue(CMSampleBufferGetImageBuffer(next) === buffer)
+        XCTAssertEqual(CMSampleBufferGetPresentationTimeStamp(first), CMTime(value: 1, timescale: 1))
+        XCTAssertEqual(CMSampleBufferGetPresentationTimeStamp(next), CMTime(value: 2, timescale: 1))
+        XCTAssertEqual(try pixels(first), try pixels(next))
+    }
+    func testMaskReuseRequiresSameCaptureRevisionBufferAndOrientation() throws {
+        var calls = 0
+        let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90), personMask: { _, _ in calls += 1; return nil })
+        let camera = try solid(220)
+        var scene = PresenterScene(); scene.layout = .cutout
+        let blank = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero)))
+        func render(_ revision: UInt64, rotation: Int = 0) throws {
+            XCTAssertEqual(try pixels(XCTUnwrap(compositor.render(scene: scene, camera: camera,
+                cameraRevision: revision, rotation: rotation, time: .zero))), blank, "A failed mask must remain concealed")
+        }
+        try render(1); scene.placement.x = 0.1; try render(1)
+        XCTAssertEqual(calls, 1, "A scene edit must not rerun Vision on identical camera pixels")
+        try render(2); XCTAssertEqual(calls, 2, "A recycled buffer contains a new frame")
+        try render(2, rotation: 90); XCTAssertEqual(calls, 3)
+        _ = compositor.render(scene: scene, camera: nil, time: .zero)
+        try render(2, rotation: 90); XCTAssertEqual(calls, 4, "Camera retirement clears the cached mask")
+        _ = compositor.render(scene: scene, camera: try solid(230), cameraRevision: 2, rotation: 90, time: .zero)
+        XCTAssertEqual(calls, 5, "A revision alone must not match a different buffer")
+    }
+    func testSuccessfulMaskCannotBeReusedOnNewFrameAfterFailure() throws {
+        var mask: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 16, 9, kCVPixelFormatType_OneComponent8,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &mask), kCVReturnSuccess)
+        let white = try XCTUnwrap(mask)
+        CVPixelBufferLockBaseAddress(white, [])
+        memset(CVPixelBufferGetBaseAddress(white), 255, CVPixelBufferGetDataSize(white))
+        CVPixelBufferUnlockBaseAddress(white, [])
+        var calls = 0
+        let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90), personMask: { _, _ in
+            calls += 1; return calls == 1 ? white : nil
+        })
+        let camera = try solid(220)
+        var scene = PresenterScene(); scene.layout = .cutout
+        let plain = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero)))
+        let visible = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: camera, cameraRevision: 1, time: .zero)))
+        XCTAssertNotEqual(visible, plain)
+        let repeated = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: camera, cameraRevision: 1, time: .zero)))
+        XCTAssertEqual(visible, repeated); XCTAssertEqual(calls, 1)
+        let concealed = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: camera, cameraRevision: 2, time: .zero)))
+        XCTAssertEqual(concealed, plain); XCTAssertEqual(calls, 2)
+    }
+    func testCroppedDraftMatchesCommittedStrokePixelsAtCanvasEdges() throws {
+        let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90))
+        for points in [
+            [CGPoint(x: 0.01, y: 0.99), CGPoint(x: 0.99, y: 0.01)],
+            [CGPoint(x: 0.2, y: 0.4), CGPoint(x: 0.7, y: 0.4)],
+            [CGPoint(x: 0, y: 0.8), CGPoint(x: 0.4, y: 0.6), CGPoint(x: 0.3, y: 1)]
+        ] {
+            var scene = PresenterScene(); scene.backdrop = .stage; scene.draftStroke = points
+            let draft = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero)))
+            scene.draftStroke = []; scene.strokes = [points]
+            let committed = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero)))
+            XCTAssertEqual(draft, committed, "Crop origin must preserve drawing geometry and antialiasing")
+        }
+    }
+    func testBackgroundAndCommittedDrawingSurviveDraftUpdates() throws {
+        let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90))
+        var scene = PresenterScene(); scene.backdrop = .stage
+        scene.strokes = [[CGPoint(x: 0.1, y: 0.1), CGPoint(x: 0.8, y: 0.1)]]
+        _ = compositor.render(scene: scene, camera: nil, time: .zero)
+        XCTAssertEqual(compositor.backgroundBuilds, 1); XCTAssertEqual(compositor.annotationRasterizations, 1)
+        for index in 1...5 {
+            scene.draftStroke = [CGPoint(x: 0.1, y: 0.2), CGPoint(x: CGFloat(index) / 10, y: 0.4)]
+            _ = compositor.render(scene: scene, camera: nil, time: .zero)
+        }
+        XCTAssertEqual(compositor.backgroundBuilds, 1)
+        XCTAssertEqual(compositor.annotationRasterizations, 6, "Only the live stroke changes")
+        scene.speaking = true
+        _ = compositor.render(scene: scene, camera: nil, time: .zero)
+        XCTAssertEqual(compositor.backgroundBuilds, 2)
+        scene.strokes = []; scene.draftStroke = []
+        _ = compositor.render(scene: scene, camera: nil, time: .zero)
+        XCTAssertEqual(compositor.annotationRasterizations, 6)
+    }
+
 }
 
 @MainActor
@@ -160,6 +244,78 @@ final class PresenterModelTests: XCTestCase {
         XCTAssertEqual(sends, delivered)
         await model.start(); XCTAssertEqual(starts, 1)
         model.end()
+    }
+    func testPrivateStillPreviewHasNoPeriodicComposition() async throws {
+        let model = PresenterModel(observeLifecycle: false)
+        defer { model.end() }
+        model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
+        let count = model.compositionCount
+        try await Task.sleep(nanoseconds: 1_150_000_000)
+        XCTAssertEqual(model.compositionCount, count)
+        XCTAssertEqual(model.heartbeatCount, 0)
+        model.scene.speaking = true
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(model.compositionCount, count, "Speech does not change a plain backdrop")
+        model.scene.backdrop = .warm
+        await waitUntil { model.compositionCount > count }
+    }
+    func testIdleShareReusesPixelsWithFreshTimingAndNoComposition() async throws {
+        let model = PresenterModel(observeLifecycle: false)
+        defer { model.end() }
+        var samples: [CMSampleBuffer] = []
+        model.startSharing = { samples.append($0) }; model.sendSample = { samples.append($0) }; model.stopSharing = {}
+        model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
+        await model.start()
+        let count = model.compositionCount
+        await waitUntil { samples.count >= 2 }
+        XCTAssertEqual(model.compositionCount, count); XCTAssertEqual(model.heartbeatCount, 1)
+        XCTAssertTrue(CMSampleBufferGetImageBuffer(samples[0]) === CMSampleBufferGetImageBuffer(samples[1]))
+        XCTAssertGreaterThan(CMSampleBufferGetPresentationTimeStamp(samples[1]), CMSampleBufferGetPresentationTimeStamp(samples[0]))
+        model.scene.backdrop = .warm
+        await waitUntil { samples.count >= 3 }
+        XCTAssertFalse(CMSampleBufferGetImageBuffer(samples[1]) === CMSampleBufferGetImageBuffer(samples[2]))
+        model.stop(); let delivered = samples.count
+        try await Task.sleep(nanoseconds: 1_050_000_000)
+        XCTAssertEqual(samples.count, delivered, "A scheduled heartbeat must not outlive Stop")
+    }
+    func testNewCameraFramesAndRapidEditsShareOnePacingLimit() async throws {
+        let model = PresenterModel(observeLifecycle: false)
+        defer { model.end() }
+        let capture = Capture()
+        var emit: ((CVPixelBuffer, Int) -> Void)?
+        capture.onFrames = { emit = $0 }; model.makePrivateCamera = { _ in capture }
+        model.selectCanvas(); model.open(); model.includeCamera = true
+        await waitUntil { emit != nil && model.hasPreview }
+        let buffer = try XCTUnwrap(CMSampleBufferGetImageBuffer(screenSample()))
+        let before = model.compositionCount
+        for index in 0..<60 {
+            emit?(buffer, 0); model.scene.placement.x = CGFloat(index % 10) / 100
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertLessThanOrEqual(model.compositionCount - before, 9, "Frames and edits share a 15 fps ceiling")
+        let settled = model.compositionCount
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(model.compositionCount, settled, "Identical retained camera pixels must not be composited on a timer")
+        model.includeCamera = false
+        await waitUntil { capture.stopped }
+    }
+    func testStillEditRetriesWhenEncoderReleasesPoolBuffers() async throws {
+        let model = PresenterModel(observeLifecycle: false)
+        defer { model.end() }
+        var held: [CMSampleBuffer] = []
+        model.startSharing = { held.append($0) }; model.sendSample = { held.append($0) }; model.stopSharing = {}
+        model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }; await model.start()
+        model.scene.backdrop = .warm; await waitUntil { held.count == 2 }
+        model.scene.backdrop = .stage; await waitUntil { held.count == 3 }
+        let count = model.compositionCount
+        model.scene.backdrop = .dark
+        await waitUntil { model.compositionCount > count }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(held.count, 3, "Encoder-owned buffers must not be overwritten")
+        held.removeAll()
+        await waitUntil { !held.isEmpty }
+        XCTAssertTrue(model.hasPreview, "The last still edit must survive temporary buffer pressure")
     }
     func testRetiredStartCannotReviveSharing() async {
         let model = PresenterModel(observeLifecycle: false)

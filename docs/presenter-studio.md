@@ -47,8 +47,11 @@ composition share one worker. At most one job and one latest input frame are ret
 retired results cannot reach the next room. A bounded buffer pool preserves encoder
 ownership. The same composited samples feed local preview and the sender. Color space
 and timestamps are explicit; renderer identity never depends on the active speaker.
-Camera canvases target 15 fps; camera-free static canvases use a 1 fps heartbeat and render
-edits immediately. Ordinary meetings pay no composition cost before opening Presenter.
+Camera canvases target at most 15 fps; screen-only frames and camera-free edits are
+bounded at 30 fps. New capture frames and scene edits share one coalesced deadline.
+Private still previews perform no periodic composition. Idle outgoing shares reuse
+immutable cached pixels with new sample timing at 1 fps. Capture expiry has its own
+deadline, and encoder-buffer pressure retries the newest scene at a low rate. Ordinary meetings pay no composition cost before opening Presenter.
 Publication has its own lifetime token: an SDK camera-state change or a canvas edit
 while Share starts cannot cancel the share or revive a retired meeting.
 
@@ -154,3 +157,21 @@ that flag is not treated as permission to render with Metal in a background UIKi
 ## October 7 workflow update
 
 The camera preview uses the capture-device rotation coordinator on iOS 17+; the older-system fallback remains. Apple Image Playground is presented from a stable UIKit controller, capability gated, and returns generated images to the same private canvas. Current UI, Mac hardware and rendering qualification is recorded in `studio-workflow-validation-2026-10-07.md`.
+
+## October 7 efficiency update
+
+Presenter-owned video-only capture requests 15 fps within its active format's
+supported range. Normal Studio/SDK camera ownership is unaffected. Resolution stays
+at 720p and Vision stays Balanced pending further device quality/energy evidence.
+One capture revision plus buffer identity and orientation qualify mask reuse; layout
+or drawing edits can reuse a mask from identical pixels, but a new frame or failed
+mask never inherits the previous person's mask.
+
+The stable background graph and committed drawing are reused. The live pen is
+rasterized into its occupied integer-aligned region, retaining full-canvas pixel
+geometry. A forced cached GPU intermediate was tested and rejected because it added
+work; the production graph preserves Core Image fusion and working precision.
+
+Qualification and reproducible Mac measurements are in
+`../Experiments/PresenterEfficiency/README.md`. Physical camera capture passed on
+iVitalii; those short functional tests do not establish battery savings.

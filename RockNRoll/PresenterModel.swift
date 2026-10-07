@@ -26,9 +26,13 @@ final class PresenterModel: ObservableObject {
     var canCompose: Bool { source == .canvas || screenSelected }
     var onPreviewVisibilityChanged: ((Bool) -> Void)?
     /// Retained capture pixels are immutable while the worker reads them.
-    private struct CameraFrame: @unchecked Sendable { let pixels: CVPixelBuffer? }
+    private struct CameraFrame: @unchecked Sendable { let pixels: CVPixelBuffer?; let revision: UInt64? }
     @Published var scene = PresenterScene() {
         didSet {
+            var previous = oldValue
+            // Speech activity affects only the generated Stage backdrop.
+            if scene.image != nil || scene.backdrop != .stage { previous.speaking = scene.speaking }
+            guard scene != previous else { return }
             if scene.layout != oldValue.layout { savePlacement() }
             if scene.layout == .cutout && oldValue.layout != .cutout {
                 cleanTransition = true; invalidateRender()
@@ -54,14 +58,13 @@ final class PresenterModel: ObservableObject {
     private var screenStop: Task<Void, Never>?
     private var screenSample: CMSampleBuffer?
     private var screenEpoch = UUID()
-    private var screenDirty = false
     private let preferences: UserDefaults
     private var pendingRender = false
     private var canvasSize = CGSize(width: 1280, height: 720)
     private var compositorSize = CGSize.zero
     @Published var includeCamera = false { didSet { if includeCamera != oldValue { error = nil; invalidateCamera(); invalidateRender(); refresh() } } }
     var preparePrivateCamera: (() async -> Void)?
-    var makePrivateCamera: (AVCaptureDevice.Position) -> PrivateCameraPreviewing = { PrivateCameraPreview(position: $0) }
+    var makePrivateCamera: (AVCaptureDevice.Position) -> PrivateCameraPreviewing = { PrivateCameraPreview(position: $0, framesPerSecond: 15) }
     private var cameraPosition: AVCaptureDevice.Position = .front
     var canFlipCamera: Bool {
         guard !ProcessInfo.processInfo.isiOSAppOnMac else { return false }
@@ -85,6 +88,7 @@ final class PresenterModel: ObservableObject {
     private var cameraFrame: CVPixelBuffer?
     private var rotation = 0
     private var cameraTime: TimeInterval = 0
+    private var cameraRevision: UInt64 = 0
     private var busy = false
     private var epoch = UUID()
     private var shareEpoch = UUID()
@@ -97,7 +101,14 @@ final class PresenterModel: ObservableObject {
     private var foreground = true
     private var cameraEpoch = UUID()
     private var cleanTransition = false
-    private var timerInterval: TimeInterval = 0
+    private var lastRenderTime: TimeInterval = -.infinity
+    private var lastSentTime: TimeInterval = -.infinity
+    private var retryAfter: TimeInterval = 0
+    private(set) var compositionCount = 0
+    private(set) var heartbeatCount = 0
+    private var renderWanted: Bool { active && foreground && !held && (presented || running || starting) }
+    private var canRender: Bool { renderWanted && canCompose && (!screenPicking || running) && (!screenSelected || screenSample != nil) }
+    private var renderInterval: TimeInterval { includeCamera && !nativeOverlay ? 1.0 / 15 : 1.0 / 30 }
 
     init(observeLifecycle: Bool = true, preferences: UserDefaults = .standard) {
         self.preferences = preferences
@@ -175,11 +186,20 @@ final class PresenterModel: ObservableObject {
         cameraStop = Task { await previous?.value; await pending?.value; await source?.stop(); await camera?.stop() }
     }
     func releaseCamera() async { invalidateCamera(); await cameraStop?.value }
-    private func invalidateRender() { epoch = UUID(); latest = nil; hasPreview = false; preview.clear() }
+    private func invalidateRender() {
+        epoch = UUID(); latest = nil; hasPreview = false; preview.clear()
+        pendingRender = true; lastRenderTime = -.infinity; retryAfter = 0
+        timer?.invalidate(); timer = nil
+    }
+    private func acceptCamera(_ buffer: CVPixelBuffer, rotation: Int) {
+        cameraFrame = buffer; self.rotation = rotation; cameraRevision &+= 1
+        cameraTime = ProcessInfo.processInfo.systemUptime
+        if !hasCameraFrames { hasCameraFrames = true }
+        requestRender()
+    }
 
     private func refresh() {
-        let wanted = active && !held && foreground && (presented || running || starting)
-        if !wanted {
+        if !renderWanted {
             timer?.invalidate(); timer = nil
             if !(screenSelected && running && nativeOverlay && !foreground) { invalidateCamera() }
             invalidateRender()
@@ -193,9 +213,7 @@ final class PresenterModel: ObservableObject {
             let attempt = cameraEpoch
             let onFrame: @MainActor (CVPixelBuffer, Int) -> Void = { [weak self] buffer, rotation in
                 guard let self, self.cameraEpoch == attempt, self.cameraOn, !self.held else { return }
-                self.cameraFrame = buffer; self.rotation = rotation
-                self.cameraTime = ProcessInfo.processInfo.systemUptime
-                if !self.hasCameraFrames { self.hasCameraFrames = true }
+                self.acceptCamera(buffer, rotation: rotation)
             }
             if cameraOn { cameraSource = makeCameraSource?(onFrame) }
             else {
@@ -209,9 +227,7 @@ final class PresenterModel: ObservableObject {
                     do {
                         try await capture.startFrames { [weak self] buffer, rotation in
                             guard let self, self.cameraEpoch == attempt, self.includeCamera, !self.held else { return }
-                            self.cameraFrame = buffer; self.rotation = rotation
-                            self.cameraTime = ProcessInfo.processInfo.systemUptime
-                            if !self.hasCameraFrames { self.hasCameraFrames = true }
+                            self.acceptCamera(buffer, rotation: rotation)
                         }
                         guard !Task.isCancelled, self.cameraEpoch == attempt else { await capture.stop(); return }
                         self.ownedCamera = capture; self.cameraTask = nil
@@ -223,59 +239,85 @@ final class PresenterModel: ObservableObject {
                 }
             }
         }
-        let interval = includeCamera && !nativeOverlay ? 1.0 / 15 : screenSelected ? 1.0 / 30 : 1.0
-        if timer == nil || timerInterval != interval {
-            timer?.invalidate(); timerInterval = interval
-            // Still canvases need a low-rate heartbeat, not twelve GPU passes/sec.
-            timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    let ready = self.includeCamera && !self.nativeOverlay && ProcessInfo.processInfo.systemUptime - self.cameraTime < 0.5 && self.cameraFrame != nil
-                    if self.hasCameraFrames != ready { self.hasCameraFrames = ready }
-                    if !self.screenSelected || self.screenDirty || self.includeCamera && !self.nativeOverlay { self.requestRender() }
-                }
-            }
-            requestRender()
-        }
+        if latest == nil { pendingRender = true }
+        pump()
     }
-    private func requestRender() {
-        pendingRender = true
-        if !busy { render() }
+    private func requestRender() { pendingRender = true; pump() }
+
+    /// One deadline for new pixels/edits, camera expiry and sender keep-alive.
+    /// Private still previews have no idle timer or GPU work.
+    private func pump() {
+        timer?.invalidate(); timer = nil
+        guard renderWanted else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if hasCameraFrames && now - cameraTime >= 0.5 {
+            hasCameraFrames = false; cameraFrame = nil; pendingRender = true
+        }
+        if !busy && pendingRender && canRender && now >= max(lastRenderTime + renderInterval, retryAfter) {
+            render()
+        } else if !busy && running && !pendingRender && now >= lastSentTime + 1,
+                  let latest, let heartbeat = PresenterCompositor.retimed(latest,
+                    time: CMTime(seconds: now, preferredTimescale: 1_000_000_000)) {
+            lastSentTime = now; heartbeatCount += 1
+            sendSample?(heartbeat)
+        }
+        scheduleWake()
+    }
+    private func scheduleWake() {
+        guard renderWanted else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        var deadlines: [TimeInterval] = []
+        if !busy && pendingRender && canRender { deadlines.append(max(lastRenderTime + renderInterval, retryAfter)) }
+        if hasCameraFrames { deadlines.append(cameraTime + 0.5) }
+        if !busy && running && !pendingRender && latest != nil { deadlines.append(lastSentTime + 1) }
+        guard let deadline = deadlines.min() else { return }
+        timer = Timer(timeInterval: max(0.001, deadline - now), repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pump() }
+        }
+        if let timer { RunLoop.main.add(timer, forMode: .common) }
     }
     private func render() {
-        guard !busy, active, foreground, !held, presented || running || starting,
-              source == .canvas || screenSelected,
-              !screenPicking || running,
-              !screenSelected || screenSample != nil else { return }
-        if compositor == nil || compositorSize != canvasSize {
+        guard !busy, canRender else { return }
+        let settings = scene
+        let passThrough = screenSelected && (nativeOverlay || !includeCamera) && settings.strokes.isEmpty && settings.draftStroke.isEmpty
+        // A plain screen needs neither a Vision request nor a compositor pool.
+        if !passThrough && (compositor == nil || compositorSize != canvasSize) {
             let old = compositor
             compositor = PresenterCompositor(size: canvasSize); compositorSize = canvasSize
             queue.async { withExtendedLifetime(old) {} }
         }
-        guard let compositor else { return }
-        pendingRender = false; screenDirty = false; busy = true
+        let compositor = compositor
+        pendingRender = false; busy = true
         let attempt = epoch
-        let settings = scene
         let now = ProcessInfo.processInfo.systemUptime
         let clean = cleanTransition
-        let frame = CameraFrame(pixels: !clean && includeCamera && !nativeOverlay && now - cameraTime < 0.5 ? cameraFrame : nil)
-        let screen = CameraFrame(pixels: screenSelected ? screenSample.flatMap(CMSampleBufferGetImageBuffer) : nil)
-        let passThrough = screenSelected && (nativeOverlay || !includeCamera) && settings.strokes.isEmpty && settings.draftStroke.isEmpty
+        lastRenderTime = now
+        if !passThrough { compositionCount += 1 }
+        let frame = CameraFrame(pixels: !clean && includeCamera && !nativeOverlay && now - cameraTime < 0.5 ? cameraFrame : nil,
+                                revision: cameraRevision)
+        let screen = CameraFrame(pixels: screenSelected ? screenSample.flatMap(CMSampleBufferGetImageBuffer) : nil, revision: nil)
         let sourceSample = screen.pixels.flatMap { PresenterCompositor.sample($0, time: CMTime(seconds: now, preferredTimescale: 1_000_000_000)) }
         let angle = rotation
         let time = CMTime(seconds: now, preferredTimescale: 1_000_000_000)
         queue.async { [weak self] in
-            let sample = autoreleasepool { passThrough ? sourceSample : compositor.render(scene: settings, camera: frame.pixels, screen: screen.pixels, rotation: angle, time: time) }
+            let sample = autoreleasepool { passThrough ? sourceSample : compositor?.render(scene: settings, camera: frame.pixels, cameraRevision: frame.revision, screen: screen.pixels, rotation: angle, time: time) }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.busy = false
-                defer { if self.pendingRender { self.render() } }
-                guard self.epoch == attempt, self.active, self.foreground, !self.held, let sample else { return }
-                if clean { self.cleanTransition = false }
+                defer { self.pump() }
+                guard self.epoch == attempt, self.active, self.foreground, !self.held else { return }
+                guard let sample else {
+                    // Encoder-held pool buffers are temporary backpressure. Retry
+                    // the latest scene at a low rate instead of losing a still edit.
+                    self.pendingRender = true; self.retryAfter = ProcessInfo.processInfo.systemUptime + 0.25
+                    return
+                }
+                self.retryAfter = 0
+                if clean { self.cleanTransition = false; if self.cameraFrame != nil { self.pendingRender = true } }
                 self.latest = sample
                 if !self.hasPreview { self.hasPreview = true }
                 if self.presented { self.preview.enqueue(sample, rotation: 0) }
-                if self.running { self.sendSample?(sample) }
+                if self.running { self.lastSentTime = ProcessInfo.processInfo.systemUptime; self.sendSample?(sample) }
             }
         }
     }
@@ -286,9 +328,11 @@ final class PresenterModel: ObservableObject {
         let attempt = shareEpoch
         let stopSharing = self.stopSharing
         do {
-            try await startSharing(latest)
+            let time = ProcessInfo.processInfo.systemUptime
+            try await startSharing(PresenterCompositor.retimed(latest,
+                time: CMTime(seconds: time, preferredTimescale: 1_000_000_000)) ?? latest)
             guard active, foreground, !held, shareEpoch == attempt else { await stopSharing?(); return }
-            running = true
+            running = true; lastSentTime = ProcessInfo.processInfo.systemUptime
         } catch { if active && shareEpoch == attempt { self.error = error.localizedDescription } }
         guard shareEpoch == attempt else { return }
         starting = false; refresh()
@@ -339,7 +383,7 @@ final class PresenterModel: ObservableObject {
         }, { [weak self] enabled in
             guard let self, self.screenEpoch == attempt else { return }
             self.nativeOverlay = enabled; self.cameraFrame = nil; self.hasCameraFrames = false
-            self.invalidateRender(); self.refresh(); self.requestRender()
+            self.invalidateRender(); self.refresh()
         }, { [weak self] in
             guard let self, self.screenEpoch == attempt else { return }
             self.screenPicking = false
@@ -358,7 +402,7 @@ final class PresenterModel: ObservableObject {
     func acceptScreen(_ sample: CMSampleBuffer, epoch attempt: UUID? = nil) {
         guard active, !held, attempt == nil || screenEpoch == attempt,
               let pixels = CMSampleBufferGetImageBuffer(sample) else { return }
-        screenSample = sample; screenDirty = true
+        screenSample = sample
         if screenPicking { screenPicking = false }
         if !screenSelected { screenSelected = true; invalidateRender() }
         let width = CGFloat(CVPixelBufferGetWidth(pixels)), height = CGFloat(CVPixelBufferGetHeight(pixels))
@@ -370,7 +414,7 @@ final class PresenterModel: ObservableObject {
         if !foreground {
             if running, let stamped = PresenterCompositor.sample(pixels,
                 time: CMTime(seconds: ProcessInfo.processInfo.systemUptime, preferredTimescale: 1_000_000_000)) { sendSample?(stamped) }
-        } else { refresh(); if !hasPreview { requestRender() } }
+        } else { pendingRender = true; refresh() }
     }
     func selectCanvas(clearImage: Bool = false) {
         releaseScreen(); scene.draftStroke = []
