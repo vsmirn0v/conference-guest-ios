@@ -617,3 +617,24 @@
 "Apple image generation is unavailable on this device." = "Apple image generation is unavailable on this device.";
 "● REC" = "● REC";
 "Meeting is being recorded" = "Meeting is being recorded";
+
+"Home" = "Home";
+
+"Show all" = "Show all";
+
+"Later today" = "Later today";
+
+"Upcoming meetings" = "Upcoming meetings";
+
+"Other devices" = "Other devices";
+
+
+"Recently active" = "Recently active";
+
+"Calendar event is no longer available." = "Calendar event is no longer available.";
+
+"Starts in %ld min" = "Starts in %ld min";
+
+"Continue" = "Continue";
+
+"Join %@" = "Join %@";

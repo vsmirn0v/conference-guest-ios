@@ -8,9 +8,67 @@ struct CalendarAgendaView: View {
     let busy: Bool
     let onJoin: (CalendarMeeting) -> Void
     let onSettings: () -> Void
+    var home = false
+    var excluded: Set<String> = []
+    var onShowAll: () -> Void = {}
     @State private var expanded = false
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if home { homeAgenda } else { fullAgenda }
+    }
+    @ViewBuilder private var homeAgenda: some View {
+        if calendar.enabled {
+            if calendar.access == .allowed && !calendar.selected.isEmpty {
+                let rows = HomeMeetingPolicy.today(meetings: calendar.upcoming, at: calendar.now, excluding: excluded)
+                if !rows.isEmpty {
+                    Section {
+                        ForEach(expanded ? rows : Array(rows.prefix(2))) { meeting in compactRow(meeting) }
+                        if rows.count > 2 {
+                            Button(expanded ? L("Show fewer") : L("Show all")) { expanded.toggle() }
+                        }
+                    } header: { Text(L("Later today")) }
+                }
+                Section {
+                    Button { onShowAll() } label: { Label(L("See upcoming meetings"), systemImage: "calendar") }
+                        .accessibilityIdentifier("calendar.agenda")
+                }
+            } else {
+                Section {
+                    Button { onSettings() } label: { Label(L("Choose calendars"), systemImage: "calendar") }
+                }
+            }
+            if let error = calendar.error { Section { Text(error).font(.footnote).foregroundStyle(.red) } }
+        }
+    }
+    private func compactRow(_ meeting: CalendarMeeting) -> some View {
+        HStack(spacing: 4) {
+            Button {
+                if let active = continuation.candidates.first(where: { $0.isRecent(at: Date()) && MeetingRoomIdentity($0.invitation) == meeting.roomIdentity }) {
+                    continuation.begin(active)
+                } else { onJoin(meeting) }
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(meeting.title).font(.body.weight(.medium)).lineLimit(2)
+                    Text(time(meeting)).font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+            }.buttonStyle(.plain).disabled(busy)
+            .accessibilityLabel(L("Join %@", meeting.title)).accessibilityIdentifier("calendar.join." + meeting.id)
+            if let url = meeting.invitation {
+                let favorite = history.matching(url, engine: meeting.engine)
+                Button {
+                    if let favorite, favorite.isStarred { history.toggleStar(favorite.invitationURL) }
+                    else { history.saveFavorite(url: url, title: meeting.title, engine: meeting.engine) }
+                } label: { Image(systemName: favorite?.isStarred == true ? "star.fill" : "star").frame(width: 44, height: 44) }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(favorite?.isStarred == true ? L("Unstar %@", meeting.title) : L("Star %@", meeting.title))
+                .accessibilityIdentifier("calendar.star." + meeting.id)
+            }
+        }.contextMenu {
+            Button(L("Choose another room")) { calendar.choosingMeeting = meeting }
+                .accessibilityIdentifier("calendar.choose-room." + meeting.id)
+        }
+    }
+    @ViewBuilder private var fullAgenda: some View {
         if calendar.enabled {
             if let meeting = calendar.joiningMeeting, let seconds = calendar.countdown {
                 Section {

@@ -10,22 +10,28 @@ final class CalendarUITests: XCTestCase {
         if mode == "countdown" {
             XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Joining in")).firstMatch.waitForExistence(timeout: 5))
         }
-        else { XCTAssertTrue(app.buttons[mode == "engine-choice" ? "calendar.star.planning" : "calendar.star.daily"].waitForExistence(timeout: 10)) }
+        else if mode == "engine-choice" {
+            XCTAssertTrue(app.buttons["calendar.agenda"].waitForExistence(timeout: 10))
+        } else { XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 10)) }
     }
     func testStarSavesRoomAndAppliesToAnotherOccurrenceWithoutCreatingRecentHistory() {
         launch()
         app.buttons["calendar.star.daily"].tap()
         XCTAssertTrue(app.buttons["calendar.star.daily"].label.contains("Unstar"))
+        app.buttons["calendar.agenda"].tap()
+        XCTAssertTrue(app.buttons["calendar.star.planning"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["calendar.star.planning"].label.contains("Unstar"))
         XCTAssertFalse(app.staticTexts["Recent jams"].exists)
         app.buttons["calendar.star.planning"].tap()
+        app.buttons["Done"].tap()
         XCTAssertTrue(app.buttons["calendar.star.daily"].label.contains("Star"))
         XCTAssertFalse(app.staticTexts["Recent jams"].exists)
     }
     func testCalendarSelectionAndLocalBinding() {
         launch()
         app.buttons["calendar.star.daily"].tap()
-        app.buttons["calendar.choose-room.daily"].tap()
+        app.descendants(matching: .any)["home.title.daily"].firstMatch.press(forDuration: 1.2)
+        app.buttons["Choose another room"].tap()
         XCTAssertTrue(app.navigationBars["Choose room"].waitForExistence(timeout: 5))
         app.buttons["Daily rehearsal"].tap()
         XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 5))
@@ -43,7 +49,7 @@ final class CalendarUITests: XCTestCase {
     }
     func testRussianAgendaSurvivesRotationWithReachableActions() {
         launch(language: "ru")
-        XCTAssertTrue(app.staticTexts["Следующая встреча"].exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Начало через")).firstMatch.exists)
         XCTAssertEqual(app.buttons["calendar.join.daily"].label, "Войти")
         for orientation in [UIDeviceOrientation.landscapeLeft, .portrait] {
             XCUIDevice.shared.orientation = orientation

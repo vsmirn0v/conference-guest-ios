@@ -617,3 +617,24 @@
 "Apple image generation is unavailable on this device." = "Генерация изображений Apple недоступна на этом устройстве.";
 "● REC" = "● ЗАПИСЬ";
 "Meeting is being recorded" = "Встреча записывается";
+
+"Home" = "Главная";
+
+"Show all" = "Показать все";
+
+"Later today" = "Сегодня позже";
+
+"Upcoming meetings" = "Предстоящие встречи";
+
+"Other devices" = "Другие устройства";
+
+
+"Recently active" = "Недавно была активна";
+
+"Calendar event is no longer available." = "Событие календаря больше недоступно.";
+
+"Starts in %ld min" = "Начало через %ld мин";
+
+"Continue" = "Продолжить";
+
+"Join %@" = "Войти: %@";

@@ -44,7 +44,10 @@ final class MeetingContinuationUITests: XCTestCase {
         XCTAssertTrue(move.waitForExistence(timeout: 10)); XCTAssertTrue(move.isHittable)
         XCTAssertTrue(app.staticTexts["Friday quartet"].exists)
         move.tap()
-        XCTAssertTrue(app.staticTexts["Jam moved here. Microphone and camera are off."].waitForExistence(timeout: 10))
+        let moved = app.staticTexts["Jam moved here. Microphone and camera are off."]
+        reveal(moved, app); XCTAssertTrue(moved.waitForExistence(timeout: 10))
+        let devices = app.buttons["home.devices"]
+        reveal(devices, app); devices.tap()
         let stale = app.buttons["Join here"]
         reveal(stale, app)
         XCTAssertTrue(stale.exists); stale.tap()

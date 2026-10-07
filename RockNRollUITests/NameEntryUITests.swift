@@ -9,10 +9,11 @@ final class NameEntryUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.textFields["name.input"].waitForExistence(timeout: 10))
         join("https://rock.glowsoft.ru/jams/test")
-        let field = app.textFields["Name shown to musicians"]
+        let field = app.textFields["name.input"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
-        XCTAssertEqual(field.value as? String, "Name shown to musicians")
-        XCTAssertTrue(app.staticTexts["Choose the name other musicians will see."].exists)
+        XCTAssertEqual(field.value as? String, "Your name")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "First join must focus the inline name field")
+        let prompt = XCTAttachment(screenshot: app.screenshot()); prompt.name = "First join requests inline name"; prompt.lifetime = .keepAlways; add(prompt)
         XCTAssertFalse(app.navigationBars["Your name"].exists)
         field.tap()
         field.typeText("Ani First Join")
@@ -42,7 +43,7 @@ final class NameEntryUITests: XCTestCase {
         handoff.queryItems = [URLQueryItem(name: "url", value: invitation)]
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = try XCTUnwrap(handoff.url?.absoluteString)
         app.launch()
-        let name = app.textFields["Name shown to musicians"]
+        let name = app.textFields["name.input"]
         XCTAssertTrue(name.waitForExistence(timeout: 10))
         name.tap()
         name.typeText("Name Before Edit")
@@ -87,6 +88,7 @@ final class NameEntryUITests: XCTestCase {
         XCTAssertTrue(field.waitForExistence(timeout: 10))
         field.tap()
         field.typeText(invitation)
+        XCTAssertEqual(field.value as? String, invitation, "Typing must keep the complete invitation and field focus")
         app.buttons["Join jam"].tap()
     }
 

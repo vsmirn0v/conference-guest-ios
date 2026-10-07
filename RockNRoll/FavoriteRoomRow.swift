@@ -71,6 +71,7 @@ final class FavoriteRoomControl: UIView, UIDragInteractionDelegate, UIDropIntera
     func configure(_ content: FavoriteRoomRow) {
         self.content = content
         title.text = content.room.displayTitle; subtitle.text = content.subtitle
+        subtitle.isHidden = content.subtitle.isEmpty
         star.setImage(UIImage(systemName: "star.fill"), for: .normal); star.tintColor = content.tint
         join.accessibilityLabel = L("Rejoin %@ on %@", content.room.displayTitle,
                                     content.room.invitationURL.host() ?? L("meeting website"))

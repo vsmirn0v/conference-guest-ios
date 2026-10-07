@@ -263,7 +263,8 @@ final class CalendarMeetingStore: ObservableObject {
     private func scheduleBoundary() {
         boundaryTask?.cancel()
         guard foreground else { return }
-        let dates = meetings.flatMap { [$0.start.addingTimeInterval(-900), $0.start, $0.end] }.filter { $0 > now }
+        let dates = meetings.flatMap { [$0.start.addingTimeInterval(-900),
+            $0.start.addingTimeInterval(-HomeMeetingPolicy.soonInterval), $0.start, $0.end] }.filter { $0 > now }
         let delay = min(300, max(1, dates.min()?.timeIntervalSince(now) ?? 300))
         boundaryTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }

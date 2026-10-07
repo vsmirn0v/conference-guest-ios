@@ -20,12 +20,15 @@ enum CalendarUIFixture {
                         knownOrigins: ["https://meeting.example.test", "https://music.example.test"], hintedHostFragments: []))
             }
             let choice = ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] == "engine-choice"
-            let events = [event("daily", title: "Daily rehearsal", offset: 30,
-                                link: choice ? "https://music.example.test/jams/team" : "https://meeting.example.test/team?psw=fixture",
+            let mode = ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] ?? ""
+            let home = mode.hasPrefix("home")
+            let events = [event("daily", title: "Daily rehearsal", offset: mode == "home-later" ? 1200 : 30,
+                                link: choice ? "https://music.example.test/jams/team" :
+                                    mode == "home-handoff" ? "https://meeting.example.test/calls/quartet?psw=calendar" : "https://meeting.example.test/team?psw=fixture",
                                 quoted: ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] == "forwarded" ?
                                     "https://meeting.example.test/older?psw=before" : nil),
                           event("sync", title: "Sync", offset: 7200, link: nil, series: "weekly-sync"),
-                          event("planning", title: "Next day planning", offset: 86_400,
+                          event("planning", title: "Next day planning", offset: home ? 7200 : 86_400,
                                 link: "https://meeting.example.test/calls/team?psw=new"),
                           event("community", title: "Open rehearsal", offset: 90_000,
                                 link: "https://music.example.test/jams/team")]
@@ -71,6 +74,20 @@ enum CalendarUIFixture {
         let model = ConferenceModel(jamService: JamService(session: URLSession(configuration: config)),
                                history: RoomHistoryStore(storage: Storage()), preferences: preferences,
                                engineDetector: detector, calendar: calendar)
+        if mode.hasPrefix("home") {
+            let titles = ["Warm-up", "Thursday rehearsal", "Songwriting circle", "Quartet", "Arrangement", "Practice"]
+            let favorites = titles.enumerated().map { index, title in
+                RecentRoom(invitationURL: URL(string: "https://meeting.example.test/favorite\(index)")!,
+                    title: title, identifier: "favorite\(index)", isStarred: true,
+                    lastJoined: Date().addingTimeInterval(Double(-index * 60)))
+            }
+            let recent = (0..<3).map { index in
+                RecentRoom(invitationURL: URL(string: "https://meeting.example.test/recent\(index)")!,
+                    title: "Recent room \(index + 1)", identifier: "recent\(index)",
+                    lastJoined: Date().addingTimeInterval(Double(-(index + 6) * 60)))
+            }
+            model.history.applySyncedRooms(favorites + recent)
+        }
         if mode == "engine-choice" { model.invite = "https://music.example.test/jams/team" }
         return model
     }
