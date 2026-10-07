@@ -44,7 +44,17 @@ Upload succeeded on 2026-10-07 at 13:04 MSK; Xcode reported `Uploaded RockNRoll`
 and `EXPORT SUCCEEDED`. The existing third-party framework dSYM warnings did not
 block delivery; the app executable's own dSYM matches the archive.
 
-Processing and internal/public group assignment remain unverified. Safari's App
-Store Connect session expired; password AutoFill requires Touch ID on the Mac,
-so final group assignment needs sign-in restored. Upload success alone does not
-confirm tester availability.
+Processing completed. After the user restored the Safari session, the saved beta
+notes were submitted with both existing groups and automatic tester notification
+enabled. On 2026-10-07 at 13:15 MSK, each group's Builds page independently showed
+0.2.0 (42) as **Testing**, expiring in 90 days:
+
+- Rock’n’Roll Internal (one tester).
+- Rock’n’Roll Public Beta (six testers).
+
+App Store Connect build ID: `6c1e3e7b-59f4-485f-9083-1c63e051b1a4`.
+Public invitation: https://testflight.apple.com/join/Hd13C9U3.
+Local evidence: `Marketing/TestFlight/build42-internal.png` and
+`Marketing/TestFlight/build42-public.png` (ignored, not committed).
+
+The remaining physical long-call acceptance check is unchanged by publication.
