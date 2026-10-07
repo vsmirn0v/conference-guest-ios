@@ -70,4 +70,13 @@ All three app/extension bundles use 0.2.0 (40).
   archive uses development signing; App Store export applies distribution signing.
 - Xcode upload completed on 7 October 2026 at approximately 03:16 MSK. The existing
   third-party framework dSYM warnings did not prevent delivery; the app's own
-  symbols match. App Store Connect shows build 0.2.0 (40) Processing.
+  symbols match. App Store Connect processing subsequently completed.
+- App Store Connect build ID: `7092e3f4-80c5-4732-b988-f384e5c9d2d1`.
+- Beta notes saved and read back. Both existing groups were selected with
+  Automatically notify testers enabled; Submit for Review completed successfully.
+- Rock’n’Roll Internal and Rock’n’Roll Public Beta both show 0.2.0 (40) **Testing**,
+  expiring in 90 days. UI readback: 7 October 2026 at 00:33 UTC (03:33 MSK).
+- Public invitation verified: https://testflight.apple.com/join/Hd13C9U3.
+- The temporary Mac meeting, pending chooser and browser receiver were closed
+  after publication. The final combined Mac screen/camera check remains unverified
+  as described above; no active recording or camera capture was left running.
