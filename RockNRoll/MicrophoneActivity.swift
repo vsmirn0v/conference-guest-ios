@@ -82,7 +82,9 @@ final class MicrophoneActivityView: UIView {
     private let fill = CAGradientLayer()
     private let maskLayer = CALayer()
     private var observation: AnyCancellable?
-    private var model: MicrophoneActivity?
+    private var level: CGFloat = 0
+    private var status: PiPMicrophoneStatus = .muted
+    private var hasSignal = false
     private var renderedStatus: PiPMicrophoneStatus?
     init() {
         super.init(frame: .zero)
@@ -96,21 +98,25 @@ final class MicrophoneActivityView: UIView {
     }
     required init?(coder: NSCoder) { nil }
     func bind(_ model: MicrophoneActivity) {
-        self.model = model
         observation = Publishers.CombineLatest3(model.$level, model.$status, model.$hasSignal)
-            .sink { [weak self] _, _, _ in self?.render() }
+            .sink { [weak self] level, status, hasSignal in
+                // Published emits before the model stores the new value.
+                // Render the emitted snapshot, including the very first sample.
+                guard let self else { return }
+                self.level = level; self.status = status; self.hasSignal = hasSignal
+                self.render()
+            }
     }
     private func render() {
-        guard let model else { return }
-        if renderedStatus != model.status {
-            renderedStatus = model.status
-            let symbol = model.status == .on ? "mic" : model.status.symbol
+        if renderedStatus != status {
+            renderedStatus = status
+            let symbol = status == .on ? "mic" : status.symbol
             outline.image = UIImage(systemName: symbol)
-            outline.tintColor = model.status == .on ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
+            outline.tintColor = status == .on ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
         }
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        fill.isHidden = model.status != .on || !model.hasSignal
-        let h = bounds.height * model.level
+        fill.isHidden = status != .on || !hasSignal
+        let h = bounds.height * level
         fill.frame = CGRect(x: 0, y: bounds.height - h, width: bounds.width, height: h)
         maskLayer.frame = CGRect(x: 0, y: -(bounds.height - h), width: bounds.width, height: bounds.height)
         CATransaction.commit()
@@ -123,13 +129,10 @@ final class MicrophoneActivityView: UIView {
         maskLayer.contentsGravity = .resizeAspect
         render()
     }
-    static func install(on button: UIButton, model: MicrophoneActivity) {
-        guard let host = button.imageView else { return }
+    static func install(on button: AlignedCallButton, model: MicrophoneActivity) {
+        button.accessibilityIdentifier = "call.microphone"
         let glyph = MicrophoneActivityView()
         glyph.bind(model)
-        host.addSubview(glyph)
-        glyph.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([glyph.leadingAnchor.constraint(equalTo: host.leadingAnchor), glyph.trailingAnchor.constraint(equalTo: host.trailingAnchor), glyph.topAnchor.constraint(equalTo: host.topAnchor), glyph.bottomAnchor.constraint(equalTo: host.bottomAnchor)])
-        button.configuration?.imageColorTransformer = UIConfigurationColorTransformer { _ in .clear }
+        button.setSymbolContent(glyph)
     }
 }

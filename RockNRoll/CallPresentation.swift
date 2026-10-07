@@ -43,6 +43,7 @@ final class AlignedCallButton: UIButton {
     var showsCaption = true { didSet { if oldValue != showsCaption { setNeedsLayout() } } }
     private let symbolView = UIImageView()
     private let caption = UILabel()
+    private var symbolContent: UIView?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -67,6 +68,14 @@ final class AlignedCallButton: UIButton {
         if let animator { animator.addCompletion { [weak self] in self?.onMenuVisibilityChanged?(false) } }
         else { onMenuVisibilityChanged?(false) }
     }
+    /// Custom icons use the same optical slot as ordinary SF Symbols.
+    /// UIKit's imageView is deliberately hidden by this control.
+    func setSymbolContent(_ content: UIView?) {
+        symbolContent?.removeFromSuperview()
+        symbolContent = content
+        if let content { content.isUserInteractionEnabled = false; addSubview(content) }
+        setNeedsLayout()
+    }
     override var intrinsicContentSize: CGSize { CGSize(width: 44, height: 60) }
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -83,6 +92,9 @@ final class AlignedCallButton: UIButton {
         let groupHeight: CGFloat = showsCaption ? 26 + 4 + captionHeight : 26
         let top = max(2, (bounds.height - groupHeight) / 2)
         symbolView.frame = CGRect(x: bounds.midX - 13, y: top, width: 26, height: 26)
+        symbolView.isHidden = symbolContent != nil
+        symbolContent?.frame = symbolView.frame
+        symbolContent?.alpha = caption.alpha
         caption.frame = CGRect(x: 1, y: top + 30, width: max(0, bounds.width - 2), height: captionHeight)
     }
 }

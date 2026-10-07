@@ -38,6 +38,49 @@ final class MicrophoneActivityTests: XCTestCase {
         XCTAssertNotEqual(quiet.pngData(), loud.pngData(), "Mic fill must visibly change with real input level")
         let attachment = XCTAttachment(image: loud); attachment.name = "Microphone full input fill"; attachment.lifetime = .keepAlways; add(attachment)
     }
+    func testMainCallButtonShowsMicFillAcrossConfigurationUpdatesAndRotation() throws {
+        let meter = MicrophoneActivity()
+        let button = AlignedCallButton(frame: .zero)
+        var config = UIButton.Configuration.plain()
+        config.image = UIImage(systemName: "mic.fill"); config.title = "Mic"
+        config.baseForegroundColor = .white; button.configuration = config
+        MicrophoneActivityView.install(on: button, model: meter)
+        meter.setStatus(.on)
+        let toolbar = CallToolbar(items: [button] + (0..<5).map { _ in AlignedCallButton(frame: .zero) })
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 375, height: 667))
+        let host = UIViewController(); window.rootViewController = host
+        host.view.addSubview(toolbar); window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        for (size, rail) in [(CGSize(width: 359, height: 68), false), (CGSize(width: 56, height: 347), true), (CGSize(width: 359, height: 68), false)] {
+            toolbar.frame = CGRect(origin: .zero, size: size); toolbar.arrange(rail: rail, largeText: false)
+            toolbar.layoutIfNeeded(); button.layoutIfNeeded()
+            button.configuration?.image = UIImage(systemName: "mic.fill")
+            button.configuration?.baseForegroundColor = .orange
+            button.setNeedsLayout(); button.layoutIfNeeded()
+            let renderer = UIGraphicsImageRenderer(bounds: button.bounds)
+            meter.clear()
+            let quiet = renderer.image { button.layer.render(in: $0.cgContext) }
+            for _ in 0..<8 { meter.receive(rms: 1) }
+            let loud = renderer.image { button.layer.render(in: $0.cgContext) }
+            XCTAssertNotEqual(quiet.pngData(), loud.pngData(), "Visible call icon must animate after configuration updates in both layouts")
+            let attachment = XCTAttachment(image: loud); attachment.name = rail ? "Landscape call microphone fill" : "Portrait call microphone fill"; attachment.lifetime = .keepAlways; add(attachment)
+        }
+    }
+    func testGlyphShowsFirstSampleAndImmediateStatusChange() {
+        let meter = MicrophoneActivity()
+        let view = MicrophoneActivityView(); view.bind(meter)
+        view.frame = CGRect(x: 0, y: 0, width: 26, height: 26); view.layoutIfNeeded()
+        let renderer = UIGraphicsImageRenderer(bounds: view.bounds)
+        let muted = renderer.image { view.layer.render(in: $0.cgContext) }
+        meter.setStatus(.on)
+        let enabled = renderer.image { view.layer.render(in: $0.cgContext) }
+        XCTAssertNotEqual(muted.pngData(), enabled.pngData(), "Status must render even before a level sample")
+        meter.receive(rms: 1)
+        let first = renderer.image { view.layer.render(in: $0.cgContext) }
+        XCTAssertNotEqual(enabled.pngData(), first.pngData(), "The very first sample must fill the glyph")
+        meter.setStatus(.muted)
+        XCTAssertEqual(muted.pngData(), renderer.image { view.layer.render(in: $0.cgContext) }.pngData())
+    }
     func testLogScaleBoundsAndPCMDownmix() throws {
         XCTAssertEqual(MicrophoneActivity.normalized(rms: 0), 0)
         XCTAssertEqual(MicrophoneActivity.normalized(rms: 1), 1)

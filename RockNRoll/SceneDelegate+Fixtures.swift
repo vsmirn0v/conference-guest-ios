@@ -140,6 +140,9 @@ extension SceneDelegate {
                 studio.applyProfile = { _ in }
                 studio.soundCheck.verifyMuted = { [weak call] in call?.setMicrophone(false) }
                 call.studio = studio
+                if ProcessInfo.processInfo.environment["CONFERENCE_TEST_MIC_ACTIVITY"] == "1" {
+                    call.fixtureActions = MicrophoneActivityFixture(activity: studio.microphoneActivity).actions
+                }
                 call.onCamera = { [weak call] in call?.setCamera($0) }
                 call.onMicrophone = { [weak call, weak studio] in call?.setMicrophone($0); studio?.microphoneActivity.setStatus($0 ? .on : .muted) }
             }
