@@ -86,7 +86,9 @@ final class ConferenceMediaUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "home"
         app.launchEnvironment["CONFERENCE_TEST_FIXTURE_ROOM_ID"] = "domain-check"
         app.launch()
-        let website = app.staticTexts.matching(
+        // The favorite is one accessible button; its title and subtitle are
+        // deliberately read together rather than exposed as separate labels.
+        let website = app.buttons.matching(
             NSPredicate(format: "label CONTAINS %@", "meeting.example.test")
         ).firstMatch
         for _ in 0..<4 { if website.exists && website.isHittable { break }; app.swipeUp() }
