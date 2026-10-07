@@ -127,6 +127,8 @@ final class PrivateSoundCheckTests: XCTestCase {
     private final class Capture: PrivateMicrophoneCapturing {
         var running = false
         var starts = 0
+        var stops = 0
+        var onStop: (() -> Void)?
         var continuation: CheckedContinuation<Void, Never>?
         var delayed = false
         func start(standalone: Bool, onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws {
@@ -135,7 +137,7 @@ final class PrivateSoundCheckTests: XCTestCase {
             try Task.checkCancellation()
             running = true
         }
-        func stop() { running = false }
+        func stop() { running = false; stops += 1; let callback = onStop; onStop = nil; callback?() }
     }
     private func settle(_ predicate: () -> Bool) async {
         for _ in 0..<100 { if predicate() { return }; try? await Task.sleep(nanoseconds: 10_000_000) }
@@ -206,7 +208,10 @@ final class PrivateSoundCheckTests: XCTestCase {
     }
     func testRealPrivateInput() async throws {
         guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRIVATE_MIC"] == "1" else { throw XCTSkip("Opt-in real capture") }
-        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw XCTSkip("Real capture requires prior microphone permission; verify the permission prompt in the UI test") }
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            _ = await AVCaptureDevice.requestAccess(for: .audio)
+        }
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw XCTSkip("Microphone permission is required") }
         let check = PrivateSoundCheck()
         check.start(standalone: true)
         defer { check.stop() }
@@ -216,5 +221,28 @@ final class PrivateSoundCheckTests: XCTestCase {
         XCTAssertTrue(check.activity.hasSignal, "No PCM arrived")
         check.stop()
         XCTAssertEqual(check.state, .idle)
+    }
+    func testStartupRouteConfigurationDoesNotCancelPrivateCapture() async {
+        let capture = Capture(); capture.delayed = true
+        let check = PrivateSoundCheck(capture: capture)
+        check.start(standalone: true)
+        await settle { capture.continuation != nil }
+        NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil,
+            userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.routeConfigurationChange.rawValue])
+        XCTAssertEqual(check.state, .starting)
+        capture.continuation?.resume(); await settle { check.capturing }
+        check.stop(); XCTAssertFalse(capture.running)
+    }
+    func testDeactivationNotificationCannotRecursivelyStopCapture() async {
+        let capture = Capture(); let check = PrivateSoundCheck(capture: capture)
+        check.start(standalone: true); await settle { check.capturing }
+        let before = capture.stops
+        capture.onStop = {
+            NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil,
+                userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue])
+        }
+        check.stop()
+        XCTAssertEqual(capture.stops, before + 1)
+        XCTAssertEqual(check.state, .idle); XCTAssertFalse(capture.running)
     }
 }

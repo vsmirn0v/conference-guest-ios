@@ -638,3 +638,13 @@
 "Continue" = "Continue";
 
 "Join %@" = "Join %@";
+
+"Image framing" = "Image framing";
+
+"Fit entire image" = "Fit entire image";
+
+"Fill canvas" = "Fill canvas";
+
+"While this preview is active, click the green camera icon in the macOS menu bar. Choose Video Effects to change background, lighting or framing. Available effects depend on your camera." = "While this preview is active, click the green camera icon in the macOS menu bar. Choose Video Effects to change background, lighting or framing. Available effects depend on your camera.";
+
+"While your microphone or private check is active, click the microphone or camera icon in the macOS menu bar. Choose Mic Mode to select Standard, Voice Isolation or Wide Spectrum when available." = "While your microphone or private check is active, click the microphone or camera icon in the macOS menu bar. Choose Mic Mode to select Standard, Voice Isolation or Wide Spectrum when available.";

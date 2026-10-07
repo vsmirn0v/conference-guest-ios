@@ -2,6 +2,19 @@ import AVFoundation
 import Combine
 import UIKit
 
+/// The iOS system sheet is not presented by UIKit-on-Mac. macOS owns its
+/// menu-bar controls; offer actionable guidance instead of a silent button.
+enum SystemMediaSettingsHelp: String, Identifiable {
+    case camera, microphone
+    var id: String { rawValue }
+    var title: String { self == .camera ? L("Camera effects") : L("System microphone settings") }
+    var message: String {
+        self == .camera
+            ? L("While this preview is active, click the green camera icon in the macOS menu bar. Choose Video Effects to change background, lighting or framing. Available effects depend on your camera.")
+            : L("While your microphone or private check is active, click the microphone or camera icon in the macOS menu bar. Choose Mic Mode to select Standard, Voice Isolation or Wide Spectrum when available.")
+    }
+}
+
 enum StudioAudioProfile: String, CaseIterable {
     case conversation, music
     var title: String { self == .conversation ? L("Conversation") : L("Music") }
@@ -35,6 +48,7 @@ final class StudioModel: ObservableObject {
     @Published var held = false { didSet { if held != oldValue { soundCheck.stop(); refreshPreview(); presenter.update(cameraOn: cameraOn, held: held) } } }
     @Published private(set) var systemMicrophoneMode = L("Standard")
     @Published private(set) var cameraEffects: [CameraEffectStatus] = []
+    @Published var systemSettingsHelp: SystemMediaSettingsHelp?
     var liveCaptureDevice: (() -> AVCaptureDevice?)?
     @Published private(set) var observedNoiseSuppression: Bool?
     let audioControl: AudioControl
@@ -61,6 +75,7 @@ final class StudioModel: ObservableObject {
         soundCheck = PrivateSoundCheck(capture: privateMicrophone)
         self.privateCamera = privateCamera ?? PrivateCameraPreview()
         self.preferences = preferences
+        presenter.openCameraEffects = { [weak self] in self?.showSystemSettings(.videoEffects) }
         if let raw = preferences?.string(forKey: Self.profileKey), let saved = StudioAudioProfile(rawValue: raw) {
             profile = saved
             hasSelection = true
@@ -83,6 +98,7 @@ final class StudioModel: ObservableObject {
 
     func close() {
         presented = false
+        systemSettingsHelp = nil
         canvasExpanded = false
         soundCheck.stop()
         refreshPreview()
@@ -231,6 +247,10 @@ final class StudioModel: ObservableObject {
 
     func showSystemSettings(_ kind: AVCaptureDevice.SystemUserInterface) {
         guard systemSettingsAvailable, kind == .videoEffects ? (cameraOn || previewRunning || presenter.cameraDevice != nil) : (microphoneOn || soundCheck.capturing) else { return }
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            systemSettingsHelp = kind == .videoEffects ? .camera : .microphone
+            return
+        }
         openSystemSettings(kind)
     }
 

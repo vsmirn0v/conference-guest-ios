@@ -1,5 +1,7 @@
 import AVFoundation
 import Combine
+import PhotosUI
+import UniformTypeIdentifiers
 import SwiftUI
 import UIKit
 
@@ -8,11 +10,13 @@ struct StudioPanel: View {
     @ObservedObject private var soundCheck: PrivateSoundCheck
     var onDismiss: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var images: PresenterImageImport
     @State private var compact = false
     private let refresh = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     init(model: StudioModel, onDismiss: (() -> Void)? = nil) {
         self.model = model; self.soundCheck = model.soundCheck; self.onDismiss = onDismiss
+        _images = StateObject(wrappedValue: PresenterImageImport(model: model.presenter))
     }
 
     var body: some View {
@@ -41,7 +45,7 @@ struct StudioPanel: View {
                             PresenterCanvasEditor(model: model.presenter, expanded: $model.canvasExpanded)
                                 .frame(height: model.canvasExpanded ? geometry.size.height : min(300, geometry.size.height * 0.58))
                             if !model.canvasExpanded {
-                                Form { PresenterControls(model: model.presenter, recording: model.recording) }
+                                Form { PresenterControls(model: model.presenter, recording: model.recording, images: images) }
                                     .accessibilityIdentifier("studio.settings")
                             }
                         }
@@ -69,6 +73,13 @@ struct StudioPanel: View {
                     if model.canvasExpanded { model.canvasExpanded = false } else { model.close() }
                 }.accessibilityIdentifier("studio.done")
             } }
+            .alert(item: $model.systemSettingsHelp) { help in
+                Alert(title: Text(help.title), message: Text(help.message), dismissButton: .default(Text(L("OK"))))
+            }
+            .photosPicker(isPresented: $images.showPhoto, selection: $images.photo, matching: .images)
+            .fileImporter(isPresented: $images.showFile, allowedContentTypes: [.image], onCompletion: images.loadFile)
+            .onChange(of: images.photo) { images.loadPhoto($0) }
+            .onChange(of: model.presented) { if !$0 { images.cancel() } }
             .onAppear { model.refreshSystemSelection() }
             .onChange(of: model.presented) { if !$0 { if let onDismiss { onDismiss() } else { dismiss() } } }
             .onChange(of: model.audioSection) { _ in model.releasePrivateMicrophone() }

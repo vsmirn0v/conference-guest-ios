@@ -43,7 +43,7 @@ final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
     func stop() {
         if tapped { engine?.inputNode.removeTap(onBus: 0); tapped = false }
         engine?.stop(); engine = nil
-        if standalone { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation); standalone = false }
+        if standalone { standalone = false; try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
     }
 }
 
@@ -69,7 +69,6 @@ final class PrivateSoundCheck: NSObject, ObservableObject {
     private var operation: Task<Void, Never>?
     private var generation = UUID()
     private var sink: MicrophoneSampleSink?
-    private var standalone = false
     private var interruptions: [NSObjectProtocol] = []
     init(capture: PrivateMicrophoneCapturing? = nil) { self.capture = capture ?? PrivateMicrophoneCapture(); super.init()
         for name in [AVAudioSession.interruptionNotification, AVAudioSession.routeChangeNotification, AVAudioSession.mediaServicesWereResetNotification] {
@@ -79,7 +78,7 @@ final class PrivateSoundCheck: NSObject, ObservableObject {
                     if notification.name == AVAudioSession.interruptionNotification,
                        (notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue != AVAudioSession.InterruptionType.began.rawValue { return }
                     if notification.name == AVAudioSession.routeChangeNotification,
-                       (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue == AVAudioSession.RouteChangeReason.categoryChange.rawValue { return }
+                       (self.state == .starting || (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue == AVAudioSession.RouteChangeReason.categoryChange.rawValue) { return }
                     self.stop()
                 }
             })
@@ -93,7 +92,6 @@ final class PrivateSoundCheck: NSObject, ObservableObject {
         guard standalone || verifyMuted != nil else {
             state = .failed; error = SoundCheckError.mute.localizedDescription; return
         }
-        self.standalone = standalone
         state = .starting; error = nil
         let epoch = generation
         operation = Task { [weak self] in
@@ -121,8 +119,9 @@ final class PrivateSoundCheck: NSObject, ObservableObject {
     func stop() {
         generation = UUID(); operation?.cancel(); operation = nil
         sink = nil
-        capture.stop(); activity.setStatus(.muted); activity.clear()
-        if standalone { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation); standalone = false }
+        // Deactivation can synchronously deliver another route notification.
+        // Retire the state first so it cannot recursively stop this capture.
         state = .idle; error = nil
+        activity.setStatus(.muted); activity.clear(); capture.stop()
     }
 }

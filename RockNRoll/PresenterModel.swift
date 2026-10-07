@@ -44,6 +44,7 @@ final class PresenterModel: ObservableObject {
     @Published private(set) var starting = false
     @Published private(set) var stopping = false
     @Published private(set) var error: String?
+    var openCameraEffects: (() -> Void)?
     @Published private(set) var hasPreview = false
     @Published private(set) var hasCameraFrames = false
     @Published private(set) var cameraOn = false
@@ -149,7 +150,7 @@ final class PresenterModel: ObservableObject {
     func showCameraEffects() {
         #if !targetEnvironment(simulator)
         guard active, foreground, !held, includeCamera, cameraOn || cameraDevice != nil else { return }
-        AVCaptureDevice.showSystemUserInterface(.videoEffects)
+        openCameraEffects?()
         #endif
     }
     func update(cameraOn: Bool, held: Bool) {
@@ -337,6 +338,9 @@ final class PresenterModel: ObservableObject {
                 time: CMTime(seconds: time, preferredTimescale: 1_000_000_000)) ?? latest)
             guard active, foreground, !held, shareEpoch == attempt else { await stopSharing?(); return }
             running = true; lastSentTime = ProcessInfo.processInfo.systemUptime
+        } catch is CancellationError {
+            // Holds/Leave/sender replacement are lifecycle transitions, not an
+            // import failure. A valid scene remains available for another start.
         } catch { if active && shareEpoch == attempt { self.error = error.localizedDescription } }
         guard shareEpoch == attempt else { return }
         starting = false; refresh()
@@ -448,15 +452,15 @@ final class PresenterModel: ObservableObject {
             kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: true
         ] as CFDictionary)
     }
-    func loadImage(_ data: Data) async {
+    func loadImage(_ data: Data, framing: PresenterScene.ImageFraming = .fit) async {
         let result = await Task.detached(priority: .userInitiated) { DecodedImage(value: Self.decode(data)) }.value
         guard active, !Task.isCancelled else { return }
-        applyImage(result.value)
+        applyImage(result.value, framing: framing)
     }
     func importImage(_ data: Data) { applyImage(Self.decode(data)) }
-    private func applyImage(_ image: CGImage?) {
+    private func applyImage(_ image: CGImage?, framing: PresenterScene.ImageFraming = .fit) {
         guard let image else { error = L("Choose an image smaller than 25 MB."); return }
-        error = nil; selectCanvas(); scene.image = image
+        error = nil; selectCanvas(); scene.image = image; scene.imageFraming = framing
     }
     func appendAnnotation(_ points: [CGPoint]) {
         guard !points.isEmpty else { return }

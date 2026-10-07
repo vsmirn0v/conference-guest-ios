@@ -6,10 +6,7 @@ import ImagePlayground
 struct PresenterControls: View {
     @ObservedObject var model: PresenterModel
     @ObservedObject var recording: MeetingRecording
-    @State private var photo: PhotosPickerItem?
-    @State private var importTask: Task<Void, Never>?
-    @State private var showFile = false
-    @State private var showPhoto = false
+    @ObservedObject var images: PresenterImageImport
     @State private var showSource = false
     var body: some View {
         Section(L("Share source")) {
@@ -21,7 +18,7 @@ struct PresenterControls: View {
                 .confirmationDialog(L("Share source"), isPresented: $showSource, titleVisibility: .visible) {
                     Button(ProcessInfo.processInfo.isiOSAppOnMac ? L("Screen or window") : L("Screen / other apps")) { model.selectScreen() }
                         .disabled(model.screenPicking)
-                    Button(L("Choose slide or background")) { showPhoto = true }
+                    Button(L("Choose slide or background")) { images.chooseImage() }
                     Button(L("Blank canvas")) { model.selectCanvas(clearImage: true) }
                 }
             if model.source == .screen && !ProcessInfo.processInfo.isiOSAppOnMac {
@@ -60,15 +57,18 @@ struct PresenterControls: View {
             }
         }
         Section(L("Background")) {
-            Button { showFile = true } label: { Label(L("Open image file"), systemImage: "doc") }
-                .fileImporter(isPresented: $showFile, allowedContentTypes: [.image]) { result in
-                    switch result {
-                    case .success(let url): importFile(url)
-                    case .failure(let error): model.reportImportError(error.localizedDescription)
-                    }
-                }
+            Button { images.showFile = true } label: {
+                Label(L("Open image file"), systemImage: "doc").frame(maxWidth: .infinity, alignment: .leading)
+            }.buttonStyle(.borderless)
+                .accessibilityIdentifier("presenter.import-file")
             if #available(iOS 18.1, *) { AppleBackgroundControl(model: model) }
-            if model.scene.image != nil { Button(L("Remove image")) { model.scene.image = nil; photo = nil } }
+            if model.scene.image != nil {
+                Picker(L("Image framing"), selection: $model.scene.imageFraming) {
+                    Text(L("Fit entire image")).tag(PresenterScene.ImageFraming.fit)
+                    Text(L("Fill canvas")).tag(PresenterScene.ImageFraming.fill)
+                }.accessibilityIdentifier("presenter.image-framing")
+                Button(L("Remove image")) { model.scene.image = nil; images.photo = nil }
+            }
             if model.source == .canvas {
                 Picker(L("Scene"), selection: $model.scene.backdrop) {
                     Text(L("Dark")).tag(PresenterScene.Backdrop.dark)
@@ -79,26 +79,50 @@ struct PresenterControls: View {
             if let error = model.error { Text(error).foregroundStyle(.red).accessibilityIdentifier("presenter.error") }
         }
         RecordingControls(model: recording)
-        .photosPicker(isPresented: $showPhoto, selection: $photo, matching: .images)
-        .onChange(of: photo) { item in
-            importTask?.cancel()
-            importTask = Task {
-                do { if let data = try await item?.loadTransferable(type: Data.self), !Task.isCancelled { await model.loadImage(data) } }
-                catch { if !Task.isCancelled { model.reportImportError(error.localizedDescription) } }
-            }
-        }
-        .onDisappear { importTask?.cancel(); model.scene.draftStroke = [] }
+        .onDisappear { model.scene.draftStroke = [] }
     }
-    private func importFile(_ url: URL) {
-        importTask?.cancel()
-        importTask = Task {
-            do { await model.loadImage(try await Task.detached(priority: .userInitiated) {
-                let allowed = url.startAccessingSecurityScopedResource()
-                defer { if allowed { url.stopAccessingSecurityScopedResource() } }
-                return try Data(contentsOf: url, options: .mappedIfSafe)
-            }.value) } catch { if !Task.isCancelled { model.reportImportError(error.localizedDescription) } }
+}
+
+/// Pickers belong to the inspector root, not a lazily mounted Form row.
+/// Returning from the system picker cannot destroy its own import operation.
+@MainActor
+final class PresenterImageImport: ObservableObject {
+    @Published var showFile = false
+    @Published var showPhoto = false
+    @Published var photo: PhotosPickerItem?
+    private let model: PresenterModel
+    private var operation: Task<Void, Never>?
+    init(model: PresenterModel) { self.model = model }
+    func chooseImage() {
+        if ProcessInfo.processInfo.isiOSAppOnMac { showFile = true } else { showPhoto = true }
+    }
+    func loadPhoto(_ item: PhotosPickerItem?) {
+        operation?.cancel()
+        guard let item else { return }
+        operation = Task { [model] in
+            do {
+                if let data = try await item.loadTransferable(type: Data.self), !Task.isCancelled { await model.loadImage(data) }
+            } catch { if !Task.isCancelled { model.reportImportError(error.localizedDescription) } }
         }
     }
+    func loadFile(_ result: Result<URL, Error>) {
+        operation?.cancel()
+        operation = Task { [model] in
+            do {
+                let url = try result.get()
+                let data = try await Task.detached(priority: .userInitiated) {
+                    let allowed = url.startAccessingSecurityScopedResource()
+                    defer { if allowed { url.stopAccessingSecurityScopedResource() } }
+                    return try Data(contentsOf: url, options: .mappedIfSafe)
+                }.value
+                guard !Task.isCancelled else { return }
+                await model.loadImage(data)
+            } catch is CancellationError {
+            } catch let error as CocoaError where error.code == .userCancelled {
+            } catch { if !Task.isCancelled { model.reportImportError(error.localizedDescription) } }
+        }
+    }
+    func cancel() { operation?.cancel(); operation = nil }
 }
 
 struct PresenterCanvasEditor: View {
@@ -308,7 +332,7 @@ private struct AppleBackgroundButton: UIViewRepresentable {
             Task { @MainActor [model] in
                 do {
                     let data = try await Task.detached(priority: .userInitiated) { try Data(contentsOf: url, options: .mappedIfSafe) }.value
-                    await model.loadImage(data)
+                    await model.loadImage(data, framing: .fill)
                 } catch { model.reportImportError(error.localizedDescription) }
                 controller.dismiss(animated: true) { model.restorePreview() }
             }

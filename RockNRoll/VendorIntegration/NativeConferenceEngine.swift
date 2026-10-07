@@ -744,9 +744,11 @@ final class NativeConferenceEngine: CallEngine {
         if ProcessInfo.processInfo.isiOSAppOnMac { activeCoordinator?.toggleShareScreen(isOn: true) }
     }
 
-    private func stopScreenSharing() async {
-        studio.presenter.sharingEnded()
-        await studio.presenter.releaseCamera()
+    private func stopScreenSharing(retirePresenter: Bool = true) async {
+        if retirePresenter {
+            studio.presenter.sharingEnded()
+            await studio.presenter.releaseCamera()
+        }
         localPreviewEpoch = UUID()
         localSharePreview.end()
         localPreviewReceiver.stop()
@@ -1030,8 +1032,12 @@ final class NativeConferenceEngine: CallEngine {
             #endif
             self.studio.presenter.startSharing = { [weak self] sample in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
-                      !self.leaveRequested, !self.isSystemHeld, self.screenCapture == nil,
-                      self.screenCaptureStop == nil, !self.localSharePreview.active else { throw CancellationError() }
+                      !self.leaveRequested, !self.isSystemHeld else { throw CancellationError() }
+                // A previous native/broadcast sender may still be releasing its
+                // socket. Preserve the private scene while retiring that sender.
+                await self.stopScreenSharing(retirePresenter: false)
+                guard self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                      !self.leaveRequested, !self.isSystemHeld else { throw CancellationError() }
                 let sender = GuestPresenterSender(preview: self.localSharePreview) { [weak self] message in
                     guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
                     self.studio.presenter.stop()

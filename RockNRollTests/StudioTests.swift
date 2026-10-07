@@ -1,6 +1,7 @@
 import AVFoundation
 import ImagePlayground
 import LiveKit
+import VideoToolbox
 import XCTest
 @testable import RockNRoll
 
@@ -40,18 +41,11 @@ final class StudioTests: XCTestCase {
         XCTAssertTrue(session.outputs.isEmpty, "Preview must not add an encoding/recording output")
         let input = try XCTUnwrap(session.inputs.first as? AVCaptureDeviceInput)
         if #available(iOS 17.0, *) {
-            let rotation = AVCaptureDevice.RotationCoordinator(device: input.device, previewLayer: layer)
             camera.view.frame = CGRect(x: 0, y: 0, width: 320, height: 180)
+            let initial = try XCTUnwrap(layer.connection).videoRotationAngle
             camera.view.layoutIfNeeded()
             let connection = try XCTUnwrap(layer.connection)
-            let angle = rotation.videoRotationAngleForHorizonLevelPreview
-            // The UIKit-on-Mac preview connection starts with a 90-degree origin
-            // on the hardware this opt-in check qualifies. A second preview layer
-            // would compete for the session and disturb the visual check.
-            let expected = PrivateCameraPreview.connectionAngle(horizon: angle, nativeDefault: 90, isMac: true)
-            if connection.isVideoRotationAngleSupported(expected) {
-                XCTAssertEqual(connection.videoRotationAngle, expected, accuracy: 0.01)
-            }
+            XCTAssertEqual(connection.videoRotationAngle, initial, "Mac preview preserves the device connection's native orientation")
         }
         XCTAssertTrue(input.device.hasMediaType(.video))
         XCTAssertFalse(input.device.hasMediaType(.audio))
@@ -80,7 +74,9 @@ final class StudioTests: XCTestCase {
         let originalMinimum = originalDevice.activeVideoMinFrameDuration
         let originalMaximum = originalDevice.activeVideoMaxFrameDuration
         var times: [TimeInterval] = []
-        try await camera.startFrames { _, _ in times.append(ProcessInfo.processInfo.systemUptime) }
+        var lastFrame: CVPixelBuffer?
+        var lastRotation = 0
+        try await camera.startFrames { pixels, rotation in lastFrame = pixels; lastRotation = rotation; times.append(ProcessInfo.processInfo.systemUptime) }
         let layer = try XCTUnwrap(camera.view.layer as? AVCaptureVideoPreviewLayer)
         let session = try XCTUnwrap(layer.session)
         let device = try XCTUnwrap(camera.device)
@@ -89,6 +85,29 @@ final class StudioTests: XCTestCase {
         XCTAssertEqual(session.inputs.count, 1); XCTAssertEqual(session.outputs.count, 1)
         XCTAssertFalse(session.automaticallyConfiguresApplicationAudioSession)
         try await Task.sleep(nanoseconds: 2_000_000_000)
+        if let lastFrame {
+            var image: CGImage?
+            XCTAssertEqual(VTCreateCGImageFromCVPixelBuffer(lastFrame, options: nil, imageOut: &image), noErr)
+            if let image {
+                let scene = PresenterScene()
+                let compositor = PresenterCompositor(size: CGSize(width: 1280, height: 720))
+                let sample = try XCTUnwrap(compositor.render(scene: scene, camera: lastFrame, rotation: lastRotation, time: .zero))
+                var composed: CGImage?
+                XCTAssertEqual(VTCreateCGImageFromCVPixelBuffer(try XCTUnwrap(CMSampleBufferGetImageBuffer(sample)), options: nil, imageOut: &composed), noErr)
+                let attachment = XCTAttachment(image: UIImage(cgImage: composed ?? image))
+                attachment.name = "Presenter composed camera orientation"; attachment.lifetime = .keepAlways; add(attachment)
+            }
+            if #available(iOS 17.0, *), let output = session.outputs.first as? AVCaptureVideoDataOutput {
+                let rotation = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+                print("PRESENTER_CAPTURE_DEVICE=\(device.localizedName), horizon=\(rotation.videoRotationAngleForHorizonLevelCapture), output=\(output.connection(with: .video)?.videoRotationAngle ?? -1)")
+                if ProcessInfo.processInfo.isiOSAppOnMac {
+                    let previewAngle = try XCTUnwrap(layer.connection).videoRotationAngle
+                    XCTAssertEqual(lastRotation, Int(PrivateCameraPreview.connectionAngle(horizon: previewAngle - (output.connection(with: .video)?.videoRotationAngle ?? 0))))
+                    print("PRESENTER_PREVIEW_ALIGNED_ROTATION=\(lastRotation)")
+                } else { XCTAssertEqual(output.connection(with: .video)?.videoRotationAngle ?? -1,
+                    PrivateCameraPreview.connectionAngle(horizon: rotation.videoRotationAngleForHorizonLevelCapture), accuracy: 0.01) }
+            }
+        }
         await camera.stop()
         XCTAssertGreaterThan(times.count, 10)
         if let first = times.first, let last = times.last, last > first {
@@ -263,6 +282,22 @@ final class StudioTests: XCTestCase {
         await Task.yield()
         XCTAssertEqual(calls, 0)
         XCTAssertFalse(model.active)
+    }
+    func testMacSystemControlsExplainMenuBarAccessForCameraAndMicrophone() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Mac system-controls guidance") }
+        let model = StudioModel(audioControl: .noiseSuppression, privateCamera: Capture())
+        model.open(.camera); await waitUntil { model.previewRunning }
+        model.openSystemSettings = { _ in XCTFail("UIKit system sheets are not used on Mac") }
+        model.showSystemSettings(.videoEffects)
+        XCTAssertEqual(model.systemSettingsHelp, .camera)
+        model.cameraOn = true; model.presenter.includeCamera = true
+        model.systemSettingsHelp = nil; model.presenter.showCameraEffects()
+        XCTAssertEqual(model.systemSettingsHelp, .camera, "Presenter uses the same actionable controls")
+        model.microphoneOn = true
+        model.showSystemSettings(.microphoneModes)
+        XCTAssertEqual(model.systemSettingsHelp, .microphone)
+        model.close(); XCTAssertNil(model.systemSettingsHelp)
+        model.end()
     }
 
     func testRetiredAsyncResultCannotReviveStudio() async {

@@ -4,11 +4,37 @@ import XCTest
 
 @MainActor
 final class StudioWorkflowTests: XCTestCase {
-    func testDeviceHorizonAngleRespectsNativeMacConnectionOrigin() {
-        XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: 0, nativeDefault: 90, isMac: true), 90)
-        XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: 270, nativeDefault: 90, isMac: true), 0)
-        XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: 90, nativeDefault: 90, isMac: false), 90)
-        XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: 180, nativeDefault: 90, isMac: false), 180)
+    func testImageImporterUsesPlatformPickerAndLoadsImageWithoutStartingShare() async throws {
+        let model = PresenterModel(observeLifecycle: false)
+        let importer = PresenterImageImport(model: model)
+        importer.chooseImage()
+        XCTAssertEqual(importer.showFile, ProcessInfo.processInfo.isiOSAppOnMac)
+        XCTAssertEqual(importer.showPhoto, !ProcessInfo.processInfo.isiOSAppOnMac)
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 50, height: 100), format: format).image { context in
+            UIColor.orange.setFill(); context.fill(CGRect(x: 0, y: 0, width: 50, height: 100))
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("presenter-\(UUID()).png")
+        try XCTUnwrap(image.pngData()).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url); importer.cancel(); model.end() }
+        importer.loadFile(.success(url))
+        for _ in 0..<100 {
+            if model.scene.image != nil { break }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(model.scene.image?.width, 50); XCTAssertEqual(model.scene.image?.height, 100)
+        XCTAssertEqual(model.scene.imageFraming, .fit)
+        XCTAssertEqual(model.source, .canvas); XCTAssertFalse(model.running)
+        await model.loadImage(try XCTUnwrap(image.pngData()), framing: .fill)
+        XCTAssertEqual(model.scene.imageFraming, .fill)
+        XCTAssertFalse(model.includeCamera); XCTAssertFalse(model.running)
+    }
+    func testDeviceHorizonAngleIsAbsoluteOnEveryPlatform() {
+        XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: 0), 0)
+        XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: 270), 270)
+        XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: 90), 90)
+        XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: -90), 270)
+        XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: 450), 90)
     }
     func testRecordingRequestsRequireAvailabilityAndServiceConfirmation() {
         let recording = MeetingRecording()

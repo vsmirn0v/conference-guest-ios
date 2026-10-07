@@ -10,6 +10,8 @@ struct PresenterScene: Equatable {
     var layout: Layout = .card
     var backdrop: Backdrop = .dark
     var image: CGImage?
+    enum ImageFraming: String, CaseIterable { case fit, fill }
+    var imageFraming: ImageFraming = .fit
     var strokes: [[CGPoint]] = []
     var zoom: CGFloat = 1
     var focus = CGPoint(x: 0.5, y: 0.5)
@@ -18,7 +20,7 @@ struct PresenterScene: Equatable {
     var placement = PresenterPlacement()
     var draftStroke: [CGPoint] = []
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.layout == rhs.layout && lhs.backdrop == rhs.backdrop && lhs.image === rhs.image &&
+        lhs.layout == rhs.layout && lhs.backdrop == rhs.backdrop && lhs.image === rhs.image && lhs.imageFraming == rhs.imageFraming &&
         lhs.strokes == rhs.strokes && lhs.draftStroke == rhs.draftStroke && lhs.zoom == rhs.zoom &&
         lhs.focus == rhs.focus && lhs.speaking == rhs.speaking && lhs.cameraRotation == rhs.cameraRotation &&
         lhs.placement == rhs.placement
@@ -66,6 +68,7 @@ final class PresenterCompositor: @unchecked Sendable {
     private var draft: CIImage?
     private struct BackgroundKey: Equatable {
         let image: ObjectIdentifier?
+        let framing: PresenterScene.ImageFraming
         let backdrop: PresenterScene.Backdrop
         let speaking: Bool
         let contentBounds: CGRect
@@ -194,8 +197,9 @@ final class PresenterCompositor: @unchecked Sendable {
     }
 
     private func background(_ scene: PresenterScene, bounds: CGRect, contentBounds: CGRect) -> CIImage {
-        let key = BackgroundKey(image: scene.image.map(ObjectIdentifier.init), backdrop: scene.backdrop,
-            speaking: scene.image == nil && scene.backdrop == .stage && scene.speaking, contentBounds: contentBounds)
+        let imageBounds = scene.imageFraming == .fill ? bounds : contentBounds
+        let key = BackgroundKey(image: scene.image.map(ObjectIdentifier.init), framing: scene.imageFraming, backdrop: scene.backdrop,
+            speaking: scene.image == nil && scene.backdrop == .stage && scene.speaking, contentBounds: imageBounds)
         if key == backgroundKey, let cachedBackground { return cachedBackground }
         backgroundBuilds += 1
         let base: CIColor
@@ -206,7 +210,7 @@ final class PresenterCompositor: @unchecked Sendable {
         }
         var background = CIImage(color: base).cropped(to: bounds)
         if let image = scene.image {
-            background = fit(CIImage(cgImage: image), into: contentBounds, fill: false).composited(over: background)
+            background = fit(CIImage(cgImage: image), into: imageBounds, fill: scene.imageFraming == .fill).composited(over: background)
         } else {
             if scene.backdrop == .stage {
                 // Deliberately reacts to speech activity, not an invented audio-level

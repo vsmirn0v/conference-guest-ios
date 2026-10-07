@@ -2,6 +2,29 @@ import XCTest
 import ImageIO
 
 final class PresenterUITests: XCTestCase {
+    func testImagePickersPresentFromSourceAndScrolledBackgroundControls() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
+        app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "studio"
+        defer { app.terminate() }
+        app.launch(); open(app)
+        let source = app.buttons["presenter.source"]
+        if !source.isHittable { app.descendants(matching: .any)["studio.settings"].firstMatch.swipeDown() }
+        source.tap(); app.buttons["Choose slide or background"].tap()
+        let cancel = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10), "Source selection must present its image picker")
+        cancel.tap()
+        XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
+        let file = app.staticTexts["Open image file"].firstMatch
+        for _ in 0..<5 { if file.isHittable { break }; app.descendants(matching: .any)["studio.settings"].firstMatch.swipeUp() }
+        XCTAssertTrue(file.waitForExistence(timeout: 5))
+        file.tap()
+        let fileCancel = XCUIApplication(bundleIdentifier: "com.apple.DocumentManagerUICore.Service").buttons["Cancel"].firstMatch
+        XCTAssertTrue(fileCancel.waitForExistence(timeout: 30), "File picker must survive the source row scrolling out of view")
+        fileCancel.tap()
+        XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
+    }
     func testExpandedEditorFitsLandscapeAndReturnsPreview() {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
@@ -115,6 +138,18 @@ final class PresenterUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 90)
         XCTAssertTrue(app.buttons["presenter.stop"].exists)
         app.buttons["presenter.stop"].tap()
+        // Exercise the sender teardown race from the report, not just a single
+        // start. Private scene/camera intent must survive each handover.
+        for _ in 0..<2 {
+            let start = app.buttons["presenter.start"]
+            waitForHittable(start)
+            let enabled = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: start)
+            wait(for: [enabled], timeout: 10)
+            start.tap()
+            XCTAssertTrue(app.buttons["presenter.stop"].waitForExistence(timeout: 10))
+            XCTAssertFalse(app.staticTexts["presenter.error"].exists)
+            app.buttons["presenter.stop"].tap()
+        }
     }
     private func open(_ app: XCUIApplication) {
         app.buttons["More call options"].firstMatch.tap()

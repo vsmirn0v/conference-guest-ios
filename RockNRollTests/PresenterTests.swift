@@ -122,6 +122,21 @@ final class PresenterCompositorTests: XCTestCase {
         let speaking = try XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero))
         XCTAssertEqual(try pixels(idle), try pixels(speaking))
     }
+    func testSquareBackgroundFillsCanvasWhileSlidePreservesWholeImage() throws {
+        var image: CGImage?
+        XCTAssertEqual(VTCreateCGImageFromCVPixelBuffer(try solid(220, width: 90, height: 90), options: nil, imageOut: &image), noErr)
+        let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90))
+        var scene = PresenterScene(); scene.image = try XCTUnwrap(image)
+        let fit = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero)))
+        scene.imageFraming = .fill
+        let fill = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero)))
+        XCTAssertLessThan(fit[0], 30, "A fitted square slide retains margins")
+        XCTAssertGreaterThan(fill[0], 200, "Generated backgrounds cover the canvas edge")
+        XCTAssertEqual(compositor.backgroundBuilds, 2, "Framing changes must invalidate the cached background")
+        scene.layout = .beside
+        let beside = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: solid(40), time: .zero)))
+        XCTAssertGreaterThan(beside[159 * 4], 200, "A generated background also fills the camera side of the canvas")
+    }
     func testHeartbeatRetimesWithoutCopyingOrMutatingPixels() throws {
         let buffer = try solid(100)
         let first = try XCTUnwrap(PresenterCompositor.sample(buffer, time: CMTime(value: 1, timescale: 1)))
@@ -328,6 +343,18 @@ final class PresenterModelTests: XCTestCase {
         await waitUntil { continuation != nil }
         model.end(); continuation?.resume(); await task.value
         XCTAssertFalse(model.running); XCTAssertFalse(model.available); XCTAssertGreaterThan(stops, 0)
+    }
+    func testCancelledStartIsRetryableAndDoesNotExposeTechnicalError() async {
+        let model = PresenterModel(observeLifecycle: false)
+        model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
+        model.startSharing = { _ in throw CancellationError() }
+        await model.start()
+        XCTAssertFalse(model.starting); XCTAssertFalse(model.running); XCTAssertNil(model.error)
+        XCTAssertTrue(model.hasPreview)
+        model.startSharing = { _ in }; model.stopSharing = {}
+        await model.start()
+        XCTAssertTrue(model.running)
+        model.end()
     }
     func testCaptureAndSceneChangesDuringStartDoNotCancelPublication() async {
         let model = PresenterModel(observeLifecycle: false)
