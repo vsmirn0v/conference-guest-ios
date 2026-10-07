@@ -100,7 +100,14 @@ final class AlignedCallButton: UIButton {
 }
 
 final class CallToolbar: UIView {
-    private let items: [UIView]
+    private let baseItems: [UIView]
+    private var accessory: UIView?
+    private var items: [UIView] {
+        guard let accessory else { return baseItems }
+        var result = baseItems
+        result.insert(accessory, at: max(0, result.count - 2))
+        return result
+    }
     var rail = false { didSet { if oldValue != rail { setNeedsLayout() } } }
     var largeText = false { didSet { if oldValue != largeText { setNeedsLayout() } } }
     var preferredHeight: CGFloat {
@@ -108,7 +115,7 @@ final class CallToolbar: UIView {
         return largeText ? 2 * max(69, ceil(font.lineHeight) + 40) + 10 : 68
     }
     init(items: [UIView]) {
-        self.items = items
+        self.baseItems = items
         super.init(frame: .zero)
         items.forEach { $0.translatesAutoresizingMaskIntoConstraints = true; addSubview($0) }
         backgroundColor = UIColor(red: 0.12, green: 0.14, blue: 0.21, alpha: 1)
@@ -116,6 +123,12 @@ final class CallToolbar: UIView {
         accessibilityIdentifier = "Meeting toolbar"
     }
     required init?(coder: NSCoder) { nil }
+    func setAccessory(_ view: UIView?) {
+        guard accessory !== view else { return }
+        accessory?.removeFromSuperview(); accessory = view
+        if let view { view.translatesAutoresizingMaskIntoConstraints = true; addSubview(view) }
+        setNeedsLayout()
+    }
     func arrange(rail: Bool, largeText: Bool) { self.rail = rail; self.largeText = largeText }
     override func layoutSubviews() {
         super.layoutSubviews()

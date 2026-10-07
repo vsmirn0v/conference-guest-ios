@@ -666,3 +666,22 @@
 "Resize camera" = "Resize camera";
 
 "Draw tool" = "Draw";
+
+"Reactions" = "Reactions";
+"Like" = "Like";
+"Applause" = "Applause";
+"Smile" = "Smile";
+"Surprise" = "Surprise";
+"Dislike" = "Dislike";
+"Send reaction" = "Send reaction";
+"Share camera reactions" = "Share camera reactions";
+"Turn on video to use" = "Turn on video to use";
+"Unavailable with this camera" = "Unavailable with this camera";
+"Enable Reactions in system camera controls" = "Enable Reactions in system camera controls";
+"Ready" = "Ready";
+"Camera reactions paused" = "Camera reactions paused";
+"When your camera is shared, thumbs-up and thumbs-down camera effects also send the matching meeting reaction. Effects selected in system controls count too." = "When your camera is shared, thumbs-up and thumbs-down camera effects also send the matching meeting reaction. Effects selected in system controls count too.";
+"Reactions will be ready when the meeting reconnects." = "Reactions will be ready when the meeting reconnects.";
+"Reactions are unavailable in this meeting." = "Reactions are unavailable in this meeting.";
+"Meeting actions" = "Meeting actions";
+"You, %@" = "You, %@";

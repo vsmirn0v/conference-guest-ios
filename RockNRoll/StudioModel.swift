@@ -35,6 +35,7 @@ final class StudioModel: ObservableObject {
     let presenter = PresenterModel()
     let recording = MeetingRecording()
     let microphoneActivity = MicrophoneActivity()
+    var reactions: MeetingReactionsModel?
     let soundCheck: PrivateSoundCheck
     @Published var pane: Pane = .camera { didSet { if pane != oldValue { if pane != .presenter { canvasExpanded = false }; refreshPreview(); refreshPresenter(); soundCheck.stop() } } }
     @Published private(set) var presented = false

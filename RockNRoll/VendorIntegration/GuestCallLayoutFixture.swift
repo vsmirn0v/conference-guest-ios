@@ -12,6 +12,7 @@ final class GuestCallLayoutFixture: UIViewController {
     private var timer: Timer?
     private var selectedName = ""
     private var views: [String: UIView] = [:]
+    private let reactions = MeetingReactionsModel()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -22,7 +23,11 @@ final class GuestCallLayoutFixture: UIViewController {
         catchUp.enter(roomKey: "guest-layout-\(UUID().uuidString)")
         let scenario = ProcessInfo.processInfo.environment["CONFERENCE_TEST_GUEST_SCENARIO"]
         let activeSpeaker = ActiveSpeakerStore()
-        let studio = scenario == "studio" ? StudioModel(audioControl: .noiseSuppression, privateCamera: StudioCameraFixture(), privateMicrophone: StudioMicrophoneFixture()) : nil
+        let studio = ["studio", "reactions"].contains(scenario) ? StudioModel(audioControl: .noiseSuppression, privateCamera: StudioCameraFixture(), privateMicrophone: StudioMicrophoneFixture()) : nil
+        if scenario == "reactions" {
+            reactions.available = true; reactions.ready = true; studio?.reactions = reactions
+            reactions.sender = { _ in true }
+        }
         studio?.soundCheck.verifyMuted = { [weak self] in self?.controls.setFixtureMedia(microphone: false) }
         studio?.observeNoiseSuppression(true)
         studio?.applyProfile = { [weak studio] profile in studio?.observeNoiseSuppression(profile == .conversation) }
@@ -47,7 +52,8 @@ final class GuestCallLayoutFixture: UIViewController {
             onMicrophoneState: { [weak self] in self?.controls.setFixtureMedia(microphone: $0) },
             onCameraState: { [weak self] in self?.controls.setFixtureMedia(camera: $0) },
             usesNativeParticipants: scenario == "participants" || ProcessInfo.processInfo.isiOSAppOnMac,
-            studio: studio, activeSpeaker: activeSpeaker)
+            studio: studio, activeSpeaker: activeSpeaker,
+            reactions: scenario == "reactions" ? reactions : nil)
         if let studio, ProcessInfo.processInfo.environment["CONFERENCE_TEST_MIC_ACTIVITY"] == "1" {
             controls.fixtureActions = MicrophoneActivityFixture(activity: studio.microphoneActivity).actions
         }
@@ -85,7 +91,7 @@ final class GuestCallLayoutFixture: UIViewController {
         controls.onPinParticipant = { [weak self] in self?.streams.setPin($0) }
         controls.frame = view.bounds
         controls.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        if scenario == "participants" || scenario == "studio" {
+        if ["participants", "studio", "reactions"].contains(scenario) {
             // The real SDK overlay can be hosted by a zero-sized child controller.
             // Panels must present from the visible meeting above that host.
             let host = UIViewController()

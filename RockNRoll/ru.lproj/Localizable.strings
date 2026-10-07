@@ -666,3 +666,22 @@
 "Resize camera" = "Размер камеры";
 
 "Draw tool" = "Рисунок";
+
+"Reactions" = "Реакции";
+"Like" = "Нравится";
+"Applause" = "Аплодисменты";
+"Smile" = "Улыбка";
+"Surprise" = "Удивление";
+"Dislike" = "Не нравится";
+"Send reaction" = "Отправить реакцию";
+"Share camera reactions" = "Делиться реакциями камеры";
+"Turn on video to use" = "Включите видео для использования";
+"Unavailable with this camera" = "Недоступно с этой камерой";
+"Enable Reactions in system camera controls" = "Включите реакции в системных настройках камеры";
+"Ready" = "Готово";
+"Camera reactions paused" = "Реакции камеры приостановлены";
+"When your camera is shared, thumbs-up and thumbs-down camera effects also send the matching meeting reaction. Effects selected in system controls count too." = "Когда вы показываете видео, реакции камеры с большим пальцем вверх или вниз также отправляют соответствующую реакцию в джем. Это относится и к эффектам, выбранным в системных настройках.";
+"Reactions will be ready when the meeting reconnects." = "Реакции будут доступны после восстановления соединения.";
+"Reactions are unavailable in this meeting." = "Реакции недоступны в этом джеме.";
+"Meeting actions" = "Действия в джеме";
+"You, %@" = "Вы, %@";

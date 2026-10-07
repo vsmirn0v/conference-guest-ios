@@ -125,6 +125,9 @@ struct StudioPanel: View {
 
     private var cameraControls: some View {
         Group {
+            if let reactions = model.reactions, reactions.available {
+                Section(L("Reactions")) { CameraReactionSettings(model: reactions) }
+            }
             if model.presenter.running {
                 Section {
                     Text(L("Your camera is controlled by Presenter while the canvas is shared."))

@@ -8,7 +8,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     override var keyCommands: [UIKeyCommand]? {
         CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
             chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls)) +
-            [UIKeyCommand(input: ",", modifierFlags: .command, action: #selector(keyOpenStudio))]
+            [UIKeyCommand(input: ",", modifierFlags: .command, action: #selector(keyOpenStudio)),
+             UIKeyCommand(title: L("Reactions"), action: #selector(keyOpenReactions), input: "r", modifierFlags: .command.union(.shift))]
     }
     @objc private func keyToggleMicrophone() { microphone.sendActions(for: .touchUpInside) }
     @objc private func keyToggleCamera() { camera.sendActions(for: .touchUpInside) }
@@ -18,6 +19,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
     @objc private func keyOpenChat() { catchUpButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
+    @objc private func keyOpenReactions() { reactionsButton.sendActions(for: .touchUpInside) }
     @objc private func keyFocus() { focus.toggle() }
     @objc private func keyRestoreControls() { focus.show(); focus.interaction() }
     @objc private func keyFitScreen() { fitZoomedContent() }
@@ -56,6 +58,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private let missedButton = UIButton(type: .system)
     private let participantsButton = UIButton(type: .system)
     private let moreButton = AlignedCallButton(frame: .zero)
+    private let reactionsButton = AlignedCallButton(frame: .zero)
+    private let reactionContainer = UIView()
+    private var reactions: MeetingReactionsModel?
     private let titleLabel = UILabel()
     private let countLabel = UILabel()
     private let routeLabel = UILabel()
@@ -116,8 +121,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
          onMicrophoneState: @escaping (Bool) -> Void,
          onCameraState: @escaping (Bool) -> Void,
          usesNativeParticipants: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
-         studio: StudioModel? = nil, activeSpeaker: ActiveSpeakerStore? = nil) {
+         studio: StudioModel? = nil, activeSpeaker: ActiveSpeakerStore? = nil,
+         reactions: MeetingReactionsModel? = nil, reactionView: UIView? = nil) {
         self.studio = studio
+        self.reactions = reactions
         self.activeSpeaker = activeSpeaker ?? ActiveSpeakerStore()
         self.usesNativeParticipants = usesNativeParticipants
         self.localPreview = localPreview
@@ -267,7 +274,24 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         missedButton.isHidden = true
         moreButton.configuration = Self.iconConfiguration("ellipsis.circle.fill", title: L("More"))
         moreButton.accessibilityLabel = L("More call options")
+        moreButton.accessibilityIdentifier = "call.more"
         moreButton.showsMenuAsPrimaryAction = true
+        if let reactions {
+            moreButton.showsMenuAsPrimaryAction = false
+            moreButton.addAction(UIAction { [weak self, weak reactions] _ in
+                guard let self, let reactions else { return }
+                self.focus.interaction()
+                MeetingActionsController.show(model: reactions, menu: self.moreButton.menu, from: self.moreButton)
+            }, for: .touchUpInside)
+            reactionsButton.configuration = Self.iconConfiguration("face.smiling", title: L("Reactions"))
+            reactionsButton.accessibilityLabel = L("Reactions")
+            reactionsButton.accessibilityIdentifier = "call.reactions"
+            reactionsButton.addAction(UIAction { [weak self, weak reactions] _ in
+                guard let self, let reactions else { return }
+                MeetingActionsController.show(model: reactions, menu: nil,
+                    from: self.reactionsButton.window == nil ? self.moreButton : self.reactionsButton)
+            }, for: .touchUpInside)
+        }
         participantsButton.configuration = Self.iconConfiguration("person.2.fill")
         participantsButton.accessibilityLabel = L("Musicians")
         configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
@@ -420,6 +444,22 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             catchUpButton.heightAnchor.constraint(equalToConstant: 48), missedWidth, missedHeight
         ])
         installPresentation()
+        if let reactionView {
+            reactionContainer.isUserInteractionEnabled = false
+            reactionContainer.accessibilityElementsHidden = true
+            reactionContainer.clipsToBounds = true
+            reactionContainer.addSubview(reactionView)
+            reactionView.frame = reactionContainer.bounds
+            reactionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            surface.insertSubview(reactionContainer, belowSubview: header)
+        }
+        reactionsButton.isHidden = true
+        if let reactions {
+            reactions.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] in self?.layoutPresentation() }
+                .store(in: &subscriptions)
+        }
+        NotificationCenter.default.publisher(for: UIAccessibility.reduceMotionStatusDidChangeNotification)
+            .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPresentation() }.store(in: &subscriptions)
         self.activeSpeaker.$current.sink { [weak self] speaker in
             guard let self else { return }
             let hidden = self.speakerLabel.isHidden
@@ -751,9 +791,16 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
     deinit { surface.removeFromSuperview() }
 
+    func retireReactions() {
+        // Retire the hosted view before the SDK releases its UI dependencies.
+        reactionContainer.subviews.forEach { $0.removeFromSuperview() }
+        reactionContainer.removeFromSuperview()
+    }
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window == nil {
+            retireReactions()
             participantsPanel?.dismiss(animated: false)
             participantsPanel = nil
             CallStageLayout.remove(window: mountedWindow, owner: layoutOwner)
@@ -762,7 +809,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             focus.invalidate()
             return
         }
-        guard let window, let host = presentationContainer?.view else { return }
+        guard let window, let host = surfaceHost(in: window) else { return }
         if surface.superview !== host {
             CallStageLayout.remove(window: mountedWindow, owner: layoutOwner)
             mountedWindow = window
@@ -777,6 +824,18 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
     override func layoutSubviews() { super.layoutSubviews(); layoutPresentation() }
     override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); layoutPresentation() }
+
+    private func surfaceHost(in window: UIWindow) -> UIView? {
+        // Stay inside the SDK's environment while escaping zero-sized overlay
+        // hosts. All interactive controls must fit in this ancestor's bounds.
+        let visible = window.bounds.inset(by: window.safeAreaInsets)
+        var ancestor = superview
+        while let view = ancestor, view !== window {
+            if view.bounds.contains(view.convert(visible, from: window)) { return view }
+            ancestor = view.superview
+        }
+        return presentationContainer?.view
+    }
 
     private func installPresentation() {
         NSLayoutConstraint.deactivate(constraints)
@@ -875,8 +934,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
     private func layoutPresentation() {
         guard let window = mountedWindow, let toolbar, let header = headerView else { return }
+        if let host = surfaceHost(in: window), surface.superview !== host { host.addSubview(surface) }
         if let host = surface.superview { surface.frame = host.convert(window.bounds, from: window) }
         let large = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
+        let hasReactionShortcut = reactions != nil && !large && surface.bounds.width >= 700
+        toolbar.setAccessory(hasReactionShortcut ? reactionsButton : nil)
         toolbar.arrange(rail: false, largeText: large)
         let headerHeight = max(58, header.systemLayoutSizeFitting(CGSize(width: min(440, window.bounds.width - 16), height: 0),
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height)
@@ -908,6 +970,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             stage.origin.y += 48; stage.size.height = max(0, stage.height - 48)
         }
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop, stageView] { backdrop.frame = stage }
+        reactionContainer.frame = stage
+        reactionContainer.isHidden = focus.hidden || reactions?.canSend != true || UIAccessibility.isReduceMotionEnabled
+        reactionsButton.isHidden = !hasReactionShortcut || focus.hidden
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop] {
             backdrop.isAccessibilityElement = focus.hidden
             backdrop.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
@@ -932,7 +997,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
     private func configureMoreMenu(coordinator: JazzActiveConferenceCoordinator?,
                                    onChange: @escaping (ConferenceDisplayMode) -> Void) {
-        let viewMenu = UIMenu(title: L("View"), children: ConferenceDisplayMode.allCases.map { option in
+        let viewMenu = UIMenu(title: L("View"), identifier: UIMenu.Identifier("call.view-mode"), children: ConferenceDisplayMode.allCases.map { option in
             UIAction(title: option.title, image: UIImage(systemName: option.symbol),
                      state: option == displayMode ? .on : .off) { [weak self] _ in
                 guard let self else { return }

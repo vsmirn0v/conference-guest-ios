@@ -75,6 +75,7 @@ final class PresenterModel: ObservableObject {
         return positions.contains(.front) && positions.contains(.back) && !cameraOn
     }
     var cameraDevice: AVCaptureDevice? { ownedCamera?.device }
+    var cameraGeneration: UUID { cameraEpoch }
     @Published private(set) var available = false
     let preview = GuestSampleBufferView()
     var makeCameraSource: ((@escaping (CVPixelBuffer, Int) -> Void) -> PresenterCameraSource?)?

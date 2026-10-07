@@ -56,6 +56,8 @@ final class NativeConferenceEngine: CallEngine {
     private var roomTitleSubscription: AnyCancellable?
     private var toastSubscription: AnyCancellable?
     private weak var activeControls: CallControls?
+    private let reactions = MeetingReactionsModel(preferences: .standard)
+    private var reactionsAdapter: GuestReactionsAdapter?
     private var studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard)
     private var studioSubscription: AnyCancellable?
     private let activeSpeaker = ActiveSpeakerStore()
@@ -132,6 +134,7 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func updatePiPMicrophoneStatus() {
+        reactionsAdapter?.refresh()
         let available = isSDKActive && isNetworkAvailable && !leaveRequested &&
             !isSystemHeld && !isAudioInterrupted && !isMediaReconnecting
         let status: PiPMicrophoneStatus = available ? reportedMicrophoneStatus : .unavailable
@@ -191,6 +194,7 @@ final class NativeConferenceEngine: CallEngine {
         MacCallActivity.shared.retainForGraphicsResources()
         GuestVideoFrameTap.prepare()
         GuestMicrophoneProbe.prepare()
+        GuestCaptureDeviceObserver.prepare()
         streamViews.onPreferredVideo = { [weak self] viewport, name, isShare in
             guard let self, self.hasJoinStarted, !self.leaveRequested, self.finishing == nil else { return }
             self.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare)
@@ -453,6 +457,7 @@ final class NativeConferenceEngine: CallEngine {
 
     private func beginMediaReconnect(forNetwork: Bool) {
         guard hasJoinStarted, !leaveRequested, finishing == nil, !isMediaReconnecting else { return }
+        activeControls?.retireReactions()
         needsMediaReconnect = false
         reconnectingForNetwork = forNetwork
         isMediaReconnecting = true
@@ -596,6 +601,8 @@ final class NativeConferenceEngine: CallEngine {
 
     func join(target: JoinTarget, displayName: String) throws {
         guard finishing == nil else { throw ProviderError.teardownInProgress }
+        activeControls?.retireReactions()
+        reactionsAdapter?.stop(); reactionsAdapter = nil; reactions.begin()
         sessionEpoch = UUID()
         audioRecoveryTask?.cancel(); audioRecoveryTask = nil
         speakerSubscription?.cancel(); speakerSubscription = nil
@@ -681,6 +688,8 @@ final class NativeConferenceEngine: CallEngine {
 
     func leave() {
         guard hasJoinStarted, !leaveRequested else { return }
+        activeControls?.retireReactions()
+        reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil
         leaveRequested = true
         resetPiPMicrophoneObservation()
         endFloatingVideoSession()
@@ -985,7 +994,7 @@ final class NativeConferenceEngine: CallEngine {
         let streams = streamViews
         let epoch = sessionEpoch
         let attempt = mediaAttemptEpoch
-        let overlay = JazzActiveConferenceOverlayRepresentation { [weak self, streams = streams] state, coordinator, router, _ in
+        let overlay = JazzActiveConferenceOverlayRepresentation { [weak self, streams = streams] state, coordinator, router, emoji in
             guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                   !self.leaveRequested else { return UIView() }
             self.activeCoordinator = coordinator
@@ -1130,6 +1139,23 @@ final class NativeConferenceEngine: CallEngine {
                     self.onRoomTitle?(title)
                 }
             streams.observe(state)
+            self.reactionsAdapter?.stop()
+            self.reactions.begin()
+            self.studio.reactions = self.reactions
+            self.reactionsAdapter = GuestReactionsAdapter(model: self.reactions, state: state,
+                coordinator: coordinator, studio: self.studio,
+                valid: { [weak self] in
+                    guard let self else { return false }
+                    return self.sessionEpoch == epoch && self.mediaAttemptEpoch == attempt &&
+                        self.hasJoinStarted && !self.leaveRequested && self.finishing == nil
+                }, transportReady: { [weak self] in
+                    guard let self else { return false }
+                    return self.isSDKActive && self.isNetworkAvailable && !self.isMediaReconnecting &&
+                        !self.networkRecovery.requiresRecovery
+                }, cameraAllowed: { [weak self] in
+                    guard let self else { return false }
+                    return !self.isSystemHeld && !self.isAudioInterrupted && !self.isMediaReconnecting && self.mediaConnectionConfirmed
+                })
             let controls = CallControls(localPreview: self.localSharePreview, state: state, coordinator: coordinator, router: router,
                                         catchUp: self.catchUp,
                                         chat: self.chat ?? ChatStore(),
@@ -1162,8 +1188,25 @@ final class NativeConferenceEngine: CallEngine {
                                             guard let self, self.sessionEpoch == epoch,
                                                   !isOn || !self.isSystemHeld else { return }
                                             self.cameraIntentOn = isOn
-                                        }, studio: self.studio, activeSpeaker: self.activeSpeaker)
+                                        }, studio: self.studio, activeSpeaker: self.activeSpeaker,
+                                        reactions: self.reactions, reactionView: emoji)
             self.activeControls = controls
+            #if DEBUG
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_REACTIONS"] == "1" {
+                controls.fixtureActions = GuestReactionFixtureActions.make(model: self.reactions)
+                let trace = UILabel(frame: CGRect(x: 12, y: 180, width: 160, height: 24))
+                trace.textColor = .white; trace.text = "Sent reactions: 0"
+                trace.accessibilityIdentifier = "reactions.test-submitted"
+                trace.accessibilityValue = "0"
+                controls.addSubview(trace)
+                var count = 0
+                self.reactions.$submitted.compactMap { $0 }.sink { kind in
+                    count += 1; trace.text = "Sent reactions: \(count)"
+                    trace.accessibilityValue = String(count)
+                    print("Reaction qualification: submitted \(kind.rawValue)")
+                }.store(in: &self.subscriptions)
+            }
+            #endif
             controls.onPinParticipant = { [weak self] target in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                       !self.leaveRequested else { return }
@@ -1272,6 +1315,7 @@ final class NativeConferenceEngine: CallEngine {
             guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                   self.hasMediaJoinStarted, !self.leaveRequested, self.finishing == nil else { return }
             self.mediaConnectionConfirmed = true
+            self.reactionsAdapter?.refresh()
             self.traceMediaRecovery("media-connected")
             #if DEBUG
             print("Guest media connection established")
@@ -1317,6 +1361,8 @@ final class NativeConferenceEngine: CallEngine {
 
     private func finishSession(userEnded: Bool, event: CallEvent) {
         guard finishing == nil, hasJoinStarted else { return }
+        activeControls?.retireReactions()
+        reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil
         endFloatingVideoSession()
         microphoneProbe.stop()
         studio.end()
