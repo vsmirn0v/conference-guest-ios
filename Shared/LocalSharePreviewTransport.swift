@@ -9,6 +9,8 @@ struct LocalSharePreviewEndpoint: Codable {
     let port: UInt16
     let token: String
     var wantsFrames: Bool
+    var frameInterval: Double? = nil
+    var requestID: UUID? = nil
     static var url: URL? {
         guard let group = Bundle.main.object(forInfoDictionaryKey: "RTCAppGroupIdentifier") as? String else { return nil }
         return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group)?
@@ -40,7 +42,7 @@ final class LocalSharePreviewReceiver: @unchecked Sendable {
                 self.listener = listener
                 listener.stateUpdateHandler = { [weak self, weak listener] state in
                     guard let self, self.epoch == epoch, case .ready = state, let port = listener?.port else { return }
-                    self.endpoint = .init(port: port.rawValue, token: token, wantsFrames: self.wanted)
+                    self.endpoint = .init(port: port.rawValue, token: token, wantsFrames: self.wanted, frameInterval: 5, requestID: UUID())
                     self.writeEndpoint()
                     self.onReady?()
                 }
@@ -61,9 +63,10 @@ final class LocalSharePreviewReceiver: @unchecked Sendable {
 
     func setWanted(_ wanted: Bool) {
         queue.async { [weak self] in
-            guard let self, self.wanted != wanted else { return }
+            guard let self, self.wanted != wanted || wanted else { return }
             self.wanted = wanted
             self.endpoint?.wantsFrames = wanted
+            self.endpoint?.requestID = UUID()
             self.writeEndpoint()
         }
     }
@@ -112,18 +115,24 @@ final class LocalSharePreviewSender: @unchecked Sendable {
     private let lock = NSLock()
     private var lastFrame: TimeInterval = -.infinity
     private var pending = false
+    private var requestID: UUID?
+    private var lastEndpointRead: TimeInterval = -.infinity
     private lazy var context = CIContext(options: [.cacheIntermediates: false])
     private let queue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.local-preview.send")
     private var connection: NWConnection?
     func send(_ pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation = .up) {
         let now = ProcessInfo.processInfo.systemUptime
         lock.lock()
-        guard !pending, now - lastFrame >= 1 else { lock.unlock(); return }
-        lastFrame = now
+        guard !pending, now - lastEndpointRead >= 1 else { lock.unlock(); return }
+        lastEndpointRead = now
         guard let url = LocalSharePreviewEndpoint.url, let data = try? Data(contentsOf: url),
               let endpoint = try? JSONDecoder().decode(LocalSharePreviewEndpoint.self, from: data),
               endpoint.wantsFrames, endpoint.token.utf8.count == 36 else { lock.unlock(); return }
-        pending = true
+        let freshRequest = requestID != endpoint.requestID
+        requestID = endpoint.requestID
+        let interval = min(10, max(1, endpoint.frameInterval ?? 1))
+        guard freshRequest || now - lastFrame >= interval else { lock.unlock(); return }
+        lastFrame = now; pending = true
         lock.unlock()
         queue.async { [weak self] in
             guard let self else { return }

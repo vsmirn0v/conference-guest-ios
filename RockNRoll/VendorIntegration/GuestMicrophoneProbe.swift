@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import ObjectiveC
 import WebRTC
 
@@ -40,26 +41,38 @@ private enum GuestPeerRegistry {
 @MainActor
 final class GuestMicrophoneProbe {
     private var task: Task<Void, Never>?
+    private var observation: AnyCancellable?
+    private weak var observedActivity: MicrophoneActivity?
     static func prepare() { GuestPeerRegistry.prepare() }
     func update(activity: MicrophoneActivity) {
-        guard activity.status == .on else { stop(); return }
+        if observedActivity !== activity {
+            observation = nil; stop(); observedActivity = activity
+            observation = activity.$samplingNeeded.removeDuplicates().sink { [weak self, weak activity] needed in
+                guard let self, let activity else { return }
+                // Published emits before assignment; consume the emitted demand.
+                if needed { self.start(activity: activity) } else { self.stop() }
+            }
+        }
+    }
+    private func start(activity: MicrophoneActivity) {
         guard task == nil else { return }
         task = Task { [weak self, weak activity] in
             while !Task.isCancelled {
-                guard self != nil, let activity, activity.status == .on else { return }
+                guard self != nil, let activity, activity.samplingNeeded else { return }
                 let peers = GuestPeerRegistry.snapshot()
-                for peer in peers where peer.connectionState == .connected && peer.senders.contains(where: { $0.track?.kind == "audio" && $0.track?.isEnabled == true }) {
+                for peer in peers where peer.connectionState == .connected {
+                    guard let sender = peer.senders.first(where: { $0.track?.kind == "audio" && $0.track?.isEnabled == true }) else { continue }
                     let report: RTCStatisticsReport = await withCheckedContinuation { continuation in
-                        peer.statistics { continuation.resume(returning: $0) }
+                        peer.statistics(for: sender) { continuation.resume(returning: $0) }
                     }
-                    guard !Task.isCancelled, activity.status == .on else { return }
+                    guard !Task.isCancelled, activity.samplingNeeded else { return }
                     let levels = report.statistics.values.compactMap { item -> Float? in
                         guard item.type == "media-source", item.values["kind"] as? String == "audio" else { return nil }
                         return (item.values["audioLevel"] as? NSNumber)?.floatValue
                     }
                     if let rms = levels.max() { activity.receive(rms: rms) }
                 }
-                try? await Task.sleep(nanoseconds: 150_000_000)
+                try? await Task.sleep(nanoseconds: 250_000_000)
             }
         }
     }

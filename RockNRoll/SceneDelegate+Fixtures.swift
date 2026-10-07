@@ -26,6 +26,10 @@ extension SceneDelegate {
                 window.rootViewController = SpeakerPiPFixtureViewController()
                 return true
             }
+            if fixture == "room-pip-energy" {
+                window.rootViewController = RoomFloatingVideoFixture()
+                return true
+            }
             if fixture == "guest-call" {
                 window.rootViewController = GuestCallLayoutFixture()
                 return true

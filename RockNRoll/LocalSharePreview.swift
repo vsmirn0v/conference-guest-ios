@@ -24,7 +24,12 @@ final class LocalSharePreview: ObservableObject {
     var ownSceneIsNotCaptured: (() -> Bool)?
     var onCapturePolicyChanged: ((Bool) -> Void)?
     private var lastFrameTime: TimeInterval = -.infinity
-    private lazy var context = CIContext(options: [.cacheIntermediates: false])
+    private struct Frame { let pixels: CVPixelBuffer; let rotation: Int; let generation: UUID }
+    private var generation = UUID()
+    private var converting = false
+    private var pendingFrame: Frame?
+    private let worker = LocalShareThumbnailWorker()
+    var frameInterval: TimeInterval { isMac ? MediaEnergyBudget.shared.thumbnailInterval : 5 }
     private var observations: [NSObjectProtocol] = []
     let isMac: Bool
 
@@ -54,11 +59,12 @@ final class LocalSharePreview: ObservableObject {
     func togglePaused() { paused.toggle(); refreshPolicy() }
     func setEditorVisible(_ value: Bool) { editorVisible = value; refreshPolicy() }
     func setEnlarged(_ value: Bool) { enlarged = value; refreshPolicy() }
-    func refreshFrame() { refreshRequested = true; lastFrameTime = -.infinity; refreshPolicy() }
+    func refreshFrame() { refreshRequested = true; lastFrameTime = -.infinity; publishedPolicy = nil; refreshPolicy() }
 
     func begin(source: Source = .screen) {
         guard !active else { return }
         self.source = source
+        generation = UUID()
         active = true
         paused = false
         enlarged = false
@@ -70,6 +76,7 @@ final class LocalSharePreview: ObservableObject {
     }
 
     func end() {
+        generation = UUID(); pendingFrame = nil
         active = false
         image = nil
         live = false
@@ -93,6 +100,7 @@ final class LocalSharePreview: ObservableObject {
         if live != nowLive { live = nowLive }
         let wanted = acceptsFrames
         if publishedPolicy != wanted {
+            if !wanted { generation = UUID(); pendingFrame = nil }
             publishedPolicy = wanted
             onCapturePolicyChanged?(wanted)
         }
@@ -101,38 +109,28 @@ final class LocalSharePreview: ObservableObject {
     func accept(_ pixelBuffer: CVPixelBuffer, rotation: Int = 0,
                 time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         refreshPolicy()
-        guard acceptsFrames, time - lastFrameTime >= (isMac ? 0.5 : 1) else { return }
+        guard acceptsFrames, time - lastFrameTime >= frameInterval else { return }
         lastFrameTime = time
-        // Core Image opens Metal's persistent compiler-cache lock even when
-        // software rendering is requested. UIKit-on-Mac can be terminated during
-        // suspension while that lock is open. Keep the tiny Mac preview on the
-        // VideoToolbox/Core Graphics path; the outgoing stream is unchanged.
-        if isMac || source == .presenter {
-            if let thumbnail = Self.macThumbnail(pixelBuffer, rotation: rotation) {
-                image = UIImage(cgImage: thumbnail)
-                refreshRequested = false
-                refreshPolicy()
+        let frame = Frame(pixels: pixelBuffer, rotation: rotation, generation: generation)
+        if converting { pendingFrame = frame } else { convert(frame) }
+    }
+    private func convert(_ frame: Frame) {
+        converting = true
+        let useToolbox = isMac || source == .presenter
+        worker.convert(frame.pixels, rotation: frame.rotation, toolbox: useToolbox) { [weak self] thumbnail in
+            guard let self else { return }
+            self.converting = false
+            if self.generation == frame.generation, self.acceptsFrames, let thumbnail {
+                self.image = UIImage(cgImage: thumbnail)
+                self.refreshRequested = false
+                self.refreshPolicy()
             }
-            return
-        }
-        var input = CIImage(cvPixelBuffer: pixelBuffer)
-        switch rotation {
-        case 90: input = input.oriented(.right)
-        case 180: input = input.oriented(.down)
-        case 270: input = input.oriented(.left)
-        default: break
-        }
-        let extent = input.extent
-        let scale = min(1, 640 / max(extent.width, extent.height))
-        input = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        if let thumbnail = context.createCGImage(input, from: input.extent) {
-            image = UIImage(cgImage: thumbnail)
-            refreshRequested = false
-            refreshPolicy()
+            let next = self.pendingFrame; self.pendingFrame = nil
+            if let next, self.generation == next.generation, self.acceptsFrames { self.convert(next) }
         }
     }
 
-    private static func macThumbnail(_ buffer: CVPixelBuffer, rotation: Int) -> CGImage? {
+    nonisolated static func macThumbnail(_ buffer: CVPixelBuffer, rotation: Int) -> CGImage? {
         var source: CGImage?
         guard VTCreateCGImageFromCVPixelBuffer(buffer, options: nil, imageOut: &source) == noErr,
               let source else { return nil }
@@ -172,6 +170,32 @@ final class LocalSharePreview: ObservableObject {
     }
 
     deinit { observations.forEach(NotificationCenter.default.removeObserver) }
+}
+
+/// One conversion plus one newest pending frame, owned by LocalSharePreview.
+/// Keep Mac previews away from Core Image's compiler-cache lock during suspension.
+private final class LocalShareThumbnailWorker: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.thumbnail", qos: .utility)
+    private lazy var context = CIContext(options: [.cacheIntermediates: false])
+    func convert(_ pixels: CVPixelBuffer, rotation: Int, toolbox: Bool,
+                 completion: @escaping @MainActor (CGImage?) -> Void) {
+        queue.async { [self] in
+            let result: CGImage? = autoreleasepool {
+                if toolbox { return LocalSharePreview.macThumbnail(pixels, rotation: rotation) }
+                var input = CIImage(cvPixelBuffer: pixels)
+                switch rotation {
+                case 90: input = input.oriented(.right)
+                case 180: input = input.oriented(.down)
+                case 270: input = input.oriented(.left)
+                default: break
+                }
+                let scale = min(1, 640 / max(input.extent.width, input.extent.height))
+                input = input.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                return context.createCGImage(input, from: input.extent)
+            }
+            Task { @MainActor in completion(result) }
+        }
+    }
 }
 
 @MainActor

@@ -19,6 +19,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     var onFlipCamera: (() -> Void)?
     var onSpeaker: ((Bool) -> Void)?
     var onShare: ((Bool) -> Void)?
+    var onVideoDemandChanged: (() -> Void)?
+    var onFloatingChanged: ((Bool) -> Void)?
     var onDisplayMode: ((ConferenceDisplayMode) -> Void)?
     var studio: StudioModel?
     let activeSpeaker = ActiveSpeakerStore()
@@ -144,6 +146,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         layoutCall()
+        onVideoDemandChanged?()
     }
 
     private func installFocus() {
@@ -314,6 +317,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         view.tintColor = .white
         view.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.085, alpha: 1)
         floatingVideo = RockVideoPictureInPicture(sourceView: view, speaker: activeSpeaker)
+        floatingVideo?.onPresentationChanged = { [weak self] in self?.onFloatingChanged?($0) }
         if let studio { floatingVideo?.bindMicrophoneActivity(studio.microphoneActivity) }
         activeSpeaker.$current.sink { [weak self] in self?.compactHeader.setSpeaker($0) }.store(in: &subscriptions)
         let identity = UIStackView(arrangedSubviews: [titleLabel, countLabel, routeLabel])
@@ -1305,6 +1309,25 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         updateStatus()
     }
 
+    /// Stream metadata stays present when its pixels are paused, so browsing and pinning remain available.
+    func visibleVideoQualities(foreground: Bool, wantsVideo: Bool) -> [String: Bool] {
+        var result: [String: Bool] = [:]
+        for (key, tile) in videoTiles {
+            let visible = foreground && tile.tile.superview != nil &&
+                streamScroll.bounds.intersects(tile.tile.convert(tile.tile.bounds, to: streamScroll))
+            tile.video.isEnabled = visible
+            if visible { result[key] = key == currentPrimaryKey }
+        }
+        if wantsVideo, let key = currentPrimaryKey { result[key] = true }
+        // Preload adjacent camera tiles while foregrounded to keep swiping responsive.
+        if foreground, pinnedStream == nil, let key = currentPrimaryKey, let target = streamPinTargets[key], let index = orderedStreams.firstIndex(of: target) {
+            for i in [index - 1, index + 1] where orderedStreams.indices.contains(i) {
+                if let next = streamPinTargets.first(where: { $0.value == orderedStreams[i] })?.key, result[next] == nil { result[next] = false }
+            }
+        }
+        return result
+    }
+
     func prepareToFloat() {
         floatingVideo?.setSuspended(isHeld || displayMode == .audioOnly)
     }
@@ -1377,6 +1400,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        if scrollView === streamScroll { onVideoDemandChanged?() }
         rememberZoom(scrollView)
     }
     func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) { zoomVisibility.beginInteraction() }

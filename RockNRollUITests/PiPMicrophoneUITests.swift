@@ -2,6 +2,31 @@ import XCTest
 import Vision
 
 final class PiPMicrophoneUITests: XCTestCase {
+    func testRoomTrackPiPStartsMovesAndNeverReturnsAfterLeave() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("AVKit video-call PiP requires a physical iPhone")
+        #endif
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "room-pip-energy"
+        app.launchEnvironment["CONFERENCE_TEST_RESET_FLOATING_VIDEO"] = "1"
+        app.launch(); defer { app.terminate() }
+        let start = app.buttons["energy.start-pip"]
+        XCTAssertTrue(start.waitForExistence(timeout: 10))
+        Thread.sleep(forTimeInterval: 2); start.tap()
+        XCUIDevice.shared.press(.home)
+        let pip = XCUIApplication(bundleIdentifier: "com.apple.springboard").windows["PIP-SBInteractionPassThroughView"]
+        XCTAssertTrue(pip.waitForExistence(timeout: 10))
+        let first = pip.screenshot().pngRepresentation
+        Thread.sleep(forTimeInterval: 3)
+        XCTAssertNotEqual(first, pip.screenshot().pngRepresentation, "The room-track PiP must continue receiving motion")
+        app.activate()
+        let end = app.buttons["energy.end-pip"]
+        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: end); waitForExpectations(timeout: 10)
+        end.tap()
+        XCUIDevice.shared.press(.home); Thread.sleep(forTimeInterval: 2)
+        XCTAssertFalse(pip.exists, "Late frames must never revive PiP after Leave")
+    }
+
     func testEndedVideoDoesNotReturnAfterLateSourceUpdatesOrBackgrounding() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("System video-call PiP requires a physical iPhone.")
@@ -17,7 +42,9 @@ final class PiPMicrophoneUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         XCTAssertTrue(pip.waitForExistence(timeout: 5), "The baseline must have working PiP")
         app.activate()
-        app.buttons["End test video"].tap()
+        let end = app.buttons["End test video"]
+        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: end); waitForExpectations(timeout: 10)
+        end.tap()
         for manual in [false, true] {
             if manual { app.buttons["Test microphone in PiP"].tap() }
             XCUIDevice.shared.press(.home)
@@ -33,7 +60,9 @@ final class PiPMicrophoneUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         XCTAssertTrue(pip.waitForExistence(timeout: 5))
         app.activate()
-        app.buttons["End test video"].tap()
+
+        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: end); waitForExpectations(timeout: 10)
+        end.tap()
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "Ended video stays closed after scene/source updates"
         attachment.lifetime = .keepAlways

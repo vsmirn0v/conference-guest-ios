@@ -1,6 +1,7 @@
 import AVKit
 import CoreMedia
 import UIKit
+import Combine
 
 /// One decoded frame feeds the focused inline tile and floating video through
 /// sample-buffer surfaces with the same color interpretation.
@@ -15,6 +16,8 @@ final class GuestVideoPictureInPicture {
     private var frameTap: GuestVideoFrameTap?
     private var hasFrame = false
     private var presenting = false
+    private var energySubscription: AnyCancellable?
+    var onPresentationChanged: ((Bool) -> Void)? { didSet { floating.onPresentationChanged = onPresentationChanged } }
     private var suspended = false
     private var selectedViewport: StreamViewport?
     private weak var selectedRenderer: UIView?
@@ -50,14 +53,20 @@ final class GuestVideoPictureInPicture {
         floating.onWillStart = { [weak self] in
             guard let self else { return }
             self.presenting = true
-            self.processor.setFrameRate(15)
+            self.processor.setFrameRate(MediaEnergyBudget.shared.previewFPS)
             self.processor.setEnabled(true)
         }
         floating.onStopped = { [weak self] in
             guard let self else { return }
             self.presenting = false
-            self.processor.setFrameRate(30)
+            self.processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
             self.processor.setEnabled(self.shouldProcessFrames)
+        }
+        energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.processor.setFrameRate(self.presenting ? MediaEnergyBudget.shared.previewFPS : MediaEnergyBudget.shared.inlineFPS)
+            }
         }
         processor.onSample = { [weak self] sample, size, rotation in
             guard let self, !self.floating.isEnded, self.frameTap != nil else { return }
@@ -118,7 +127,7 @@ final class GuestVideoPictureInPicture {
     func refreshPreference() { floating.refreshPreference() }
     func foregrounded() {
         floating.foregrounded()
-        processor.setFrameRate(30)
+        processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
         processor.setEnabled(shouldProcessFrames)
     }
 
@@ -127,6 +136,7 @@ final class GuestVideoPictureInPicture {
     }
 
     func setSuspended(_ suspended: Bool) {
+        guard self.suspended != suspended else { return }
         self.suspended = suspended
         floating.setSuspended(suspended)
         if suspended { selectedViewport?.clearCorrectedVideo() }

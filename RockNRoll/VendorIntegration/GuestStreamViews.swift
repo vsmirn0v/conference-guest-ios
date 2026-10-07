@@ -53,6 +53,7 @@ final class GuestStreamViews {
     private(set) var browsedTarget: PinTarget?
     private var orderedTargets: [PinTarget] = []
     private(set) var selectedTarget: PinTarget?
+    let localCameraChanges = CurrentValueSubject<UIView?, Never>(nil)
     var onStagePresentation: ((Presentation) -> Void)?
     var onPreferredVideo: ((StreamViewport?, String, Bool) -> Void)?
     var onShareOffer: ((String?, PinTarget?) -> Void)?
@@ -81,6 +82,7 @@ final class GuestStreamViews {
         orderedTargets = []
         onStagePresentation?(.empty)
         renderedTiles.removeAll()
+        localCameraChanges.send(nil)
         onPreferredVideo?(nil, "", false)
         onShareOffer?(nil, nil)
     }
@@ -114,6 +116,7 @@ final class GuestStreamViews {
     func updateActiveMedia(sharing: Set<String>, cameras: Set<String>, participants active: Set<String>) {
         activeShares = sharing
         activeCameras = cameras
+        publishLocalCamera()
         activeParticipants = active
         if let pin = pinnedTarget,
            !active.contains(pin.participant) {
@@ -150,8 +153,12 @@ final class GuestStreamViews {
         updatePreferredVideo()
     }
 
+    private func publishLocalCamera() {
+        let renderer = localCameraView()
+        if renderer !== localCameraChanges.value { localCameraChanges.send(renderer) }
+    }
     func localCameraView() -> UIView? {
-        renderedTiles.values.filter { $0.model.isLocal && !$0.model.isSharingScreen && $0.model.isVideoOn }
+        renderedTiles.values.filter { $0.model.isLocal && !$0.model.isSharingScreen && $0.model.isVideoOn && (activeCameras?.contains($0.model.id) ?? true) }
             .sorted(by: preferredSource).first?.video
     }
 
@@ -185,6 +192,7 @@ final class GuestStreamViews {
                            pinned: pinnedTarget == target, onPin: onPin)
             view.setMediaActive(isActiveStream(model))
             view.accessibilityElementsHidden = onStagePresentation != nil
+            publishLocalCamera()
             updatePreferredVideo()
             return view
         }
@@ -209,6 +217,7 @@ final class GuestStreamViews {
         view.setMediaActive(isActiveStream(model))
         view.accessibilityElementsHidden = onStagePresentation != nil
         renderedTiles[key] = RenderedTile(model: model, video: video, view: view)
+        publishLocalCamera()
         view.onVisibilityChanged = { [weak self] in self?.updatePreferredVideo() }
         updatePreferredVideo()
         return view

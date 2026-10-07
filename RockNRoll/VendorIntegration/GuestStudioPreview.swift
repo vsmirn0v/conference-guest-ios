@@ -1,37 +1,39 @@
 import UIKit
+import Combine
 
 /// A second observer of the existing local SDK renderer. Capture and publishing
 /// stay under SDK ownership; observing it does not disturb stage/PiP observers.
 @MainActor
 final class GuestStudioPreview {
     let view = GuestSampleBufferView()
-    private let source: () -> UIView?
     private let processor = GuestVideoFrameProcessor()
     private var tap: GuestVideoFrameTap?
-    private var timer: Timer?
+    private var observation: AnyCancellable?
+    private var energySubscription: AnyCancellable?
 
-    init(source: @escaping () -> UIView?) {
-        self.source = source
-        processor.setFrameRate(15)
+    init(streams: GuestStreamViews) {
+        processor.setFrameRate(MediaEnergyBudget.shared.previewFPS)
         processor.setEnabled(true)
         processor.onSample = { [weak self] sample, _, rotation in
             self?.view.enqueue(sample, rotation: rotation)
         }
-        refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
+        energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak processor] _ in
+            DispatchQueue.main.async { processor?.setFrameRate(MediaEnergyBudget.shared.previewFPS) }
         }
+        observation = streams.localCameraChanges.sink { [weak self] in self?.refresh($0) }
     }
 
-    private func refresh() {
-        guard let renderer = source() else { tap?.invalidate(); tap = nil; view.clear(); return }
+    private func refresh(_ source: UIView?) {
+        guard let renderer = source else { tap?.invalidate(); tap = nil; processor.setEnabled(false); view.clear(); return }
         if tap?.matches(renderer) == true { return }
         tap?.invalidate()
-        tap = GuestVideoFrameTap(view: renderer) { [weak processor] in processor?.submit($0) }
+        let generation = processor.replaceSource()
+        processor.setEnabled(true)
+        tap = GuestVideoFrameTap(view: renderer) { [weak processor] in processor?.submit($0, source: generation) }
     }
 
     func stop() {
-        timer?.invalidate(); timer = nil
+        observation = nil; energySubscription = nil
         tap?.invalidate(); tap = nil
         processor.setEnabled(false)
         view.clear()

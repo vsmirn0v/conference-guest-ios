@@ -170,7 +170,9 @@ final class MeetingContinuationCoordinator: ObservableObject {
                 published = nil
                 hasWithdrawn = true
             }
-            let remote = try await transport.jams()
+            let sourceSession = receiver == nil ? current?.sessionID : nil
+            let snapshot = try await transport.snapshot(sourceSession: sourceSession)
+            let remote = snapshot.jams
             guard expected == revision else { return }
             if refreshFailed && !waitingForMove { show(nil) }
             refreshFailed = false
@@ -179,7 +181,7 @@ final class MeetingContinuationCoordinator: ObservableObject {
             await refreshDepartureAcknowledgement(expected: expected)
             guard expected == revision else { return }
             if let jam = current, receiver == nil,
-               let command = try await transport.transfer(sourceSession: jam.sessionID) {
+               let command = snapshot.command, command.sourceSession == jam.sessionID {
                 guard expected == revision, current?.sessionID == jam.sessionID else { return }
                 await handleSource(command, expected: expected)
             }

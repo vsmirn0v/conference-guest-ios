@@ -26,7 +26,15 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private var hasConnected = false { didSet { updatePiPMicrophoneStatus() } }
     private var displayMode: ConferenceDisplayMode = .all
     private var refreshScheduled = false
-    private let videoSubscriptions = VideoSubscriptionCoordinator<ObjectIdentifier>()
+    private struct VideoDemand: Equatable {
+        let subscribed: Bool
+        let ready: Bool
+        let enabled: Bool
+        let primary: Bool
+    }
+    private let videoDemand = MeetingVideoDemand()
+    private var videoDemandScheduled = false
+    private let videoSubscriptions = MediaConfigurationCoordinator<ObjectIdentifier, VideoDemand>()
     private var videoPublisher = RoomVideoPublisher()
     private var studio = StudioModel(audioControl: .fullProcessing, preferences: .standard)
     private var microphoneProbe: RoomMicrophoneProbe?
@@ -59,6 +67,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         videoSubscriptions.onError = { [weak self] error in
             self?.onMediaStatus?(L("Video preference could not update: %@", error.localizedDescription))
         }
+        videoDemand.onChange = { [weak self] in self?.scheduleVideoDemand() }
         audio.onStatus = { [weak self] in self?.onMediaStatus?($0) }
         audio.onRouteChanged = { [weak self] in
             guard let self else { return }
@@ -168,6 +177,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         view.onShare = { [weak self] in self?.setScreenShare($0) }
         view.onFlipCamera = { [weak self] in self?.flipCamera() }
         view.onSpeaker = { preferred in AudioManager.shared.isSpeakerOutputPreferred = preferred }
+        view.onVideoDemandChanged = { [weak self] in self?.scheduleVideoDemand() }
+        view.onFloatingChanged = { [weak self] in self?.videoDemand.setFloating($0) }
         view.onDisplayMode = { [weak self] mode in self?.setDisplayMode(mode) }
         self.callView = view
         view.setHeld(quiet)
@@ -639,8 +650,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             guard let self else { return }
             self.refreshScheduled = false
             guard self.room === room, self.hasJoinStarted else { return }
-            self.updateVideoSubscriptions(in: room)
             self.callView?.render(room: room)
+            self.updateVideoSubscriptions(in: room)
         }
     }
 
@@ -649,14 +660,31 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         if let room { updateVideoSubscriptions(in: room) }
     }
 
+    private func scheduleVideoDemand() {
+        guard !videoDemandScheduled else { return }
+        videoDemandScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.videoDemandScheduled = false
+            if let room = self.room, self.hasJoinStarted { self.updateVideoSubscriptions(in: room) }
+        }
+    }
     private func updateVideoSubscriptions(in room: Room) {
+        let visible = callView?.visibleVideoQualities(foreground: videoDemand.foreground,
+                                                     wantsVideo: videoDemand.wantsVideo) ?? [:]
         let requests = room.remoteParticipants.values.flatMap { participant in
-            participant.videoTracks.compactMap { item -> VideoSubscriptionCoordinator<ObjectIdentifier>.Request? in
+            participant.videoTracks.compactMap { item -> MediaConfigurationCoordinator<ObjectIdentifier, VideoDemand>.Request? in
                 guard let publication = item as? RemoteTrackPublication else { return nil }
-                let wanted = displayMode == .all ||
+                let subscribed = displayMode == .all ||
                     (displayMode == .screenShares && publication.source == .screenShareVideo)
-                return .init(key: ObjectIdentifier(publication), subscribed: wanted) {
-                    try await publication.set(subscribed: $0)
+                let quality = visible[publication.sid.stringValue]
+                let value = VideoDemand(subscribed: subscribed, ready: publication.track != nil, enabled: subscribed && quality != nil,
+                                        primary: quality == true || publication.source == .screenShareVideo)
+                return .init(key: ObjectIdentifier(publication), value: value) { desired in
+                    try await publication.set(subscribed: desired.subscribed)
+                    guard desired.subscribed, publication.track != nil else { return }
+                    try await publication.set(enabled: desired.enabled)
+                    if desired.enabled { try await publication.set(videoQuality: desired.primary ? .high : .low) }
                 }
             }
         }

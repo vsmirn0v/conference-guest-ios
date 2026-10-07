@@ -117,22 +117,27 @@ public struct CatchUpTimeline: Codable {
     }
 
     public mutating func upsert(_ incoming: [TranscriptSegment]) {
-        var changed = false
+        var changes: [String: TranscriptSegment] = [:]
         for segment in incoming where !segment.id.isEmpty && !segment.text.isEmpty && shouldRetain(id: segment.id, spokenAt: segment.spokenAt) {
-            if segmentsByID[segment.id] != segment {
-                segmentsByID[segment.id] = segment
-                changed = true
-            }
+            changes[segment.id] = segment
         }
-        guard changed else { return }
-        let ordered = segmentsByID.values.sorted(by: Self.precedes)
-        if ordered.count > 5_000 {
-            isTruncated = true
-            segments = Array(ordered.suffix(5_000))
-            segmentsByID = Dictionary(uniqueKeysWithValues: segments.map { ($0.id, $0) })
-        } else {
-            segments = ordered
+        changes = changes.filter { segmentsByID[$0.key] != $0.value }
+        guard !changes.isEmpty else { return }
+        let additions = changes.values.sorted(by: Self.precedes)
+        let previous = segments.filter { changes[$0.id] == nil }
+        // Merge ordered deltas instead of sorting the full retained transcript.
+        var merged: [TranscriptSegment] = []
+        merged.reserveCapacity(previous.count + additions.count)
+        var left = 0, right = 0
+        while left < previous.count && right < additions.count {
+            if Self.precedes(previous[left], additions[right]) { merged.append(previous[left]); left += 1 }
+            else { merged.append(additions[right]); right += 1 }
         }
+        merged.append(contentsOf: previous[left...]); merged.append(contentsOf: additions[right...])
+        if merged.count > 5_000 { isTruncated = true }
+        segments = Array(merged.suffix(5_000))
+        for (id, value) in changes { segmentsByID[id] = value }
+        for removed in merged.prefix(max(0, merged.count - 5_000)) { segmentsByID.removeValue(forKey: removed.id) }
     }
 
     public func transcript(during interval: MissedInterval, now: Date = Date()) -> [TranscriptSegment] {

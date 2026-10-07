@@ -22,7 +22,7 @@ final class LocalSharePreviewTests: XCTestCase {
         preview.begin()
         XCTAssertNil(preview.image, "A new share cannot show the previous room's pixels")
     }
-    func testThumbnailIsBoundedAndExtraFramesAreDropped() throws {
+    func testThumbnailIsBoundedAndExtraFramesAreDropped() async throws {
         let preview = LocalSharePreview(isMac: false, observeLifecycle: false)
         preview.begin()
         preview.setForeground(false)
@@ -30,30 +30,30 @@ final class LocalSharePreviewTests: XCTestCase {
         XCTAssertEqual(CVPixelBufferCreate(nil, 1280, 720, kCVPixelFormatType_32BGRA,
             [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer), kCVReturnSuccess)
         let pixels = try XCTUnwrap(buffer)
-        preview.accept(pixels, time: 10)
+        await accept(preview, pixels, time: 10)
         let first = try XCTUnwrap(preview.image)
         XCTAssertLessThanOrEqual(max(first.size.width, first.size.height), 640)
-        preview.accept(pixels, time: 10.2)
+        await accept(preview, pixels, time: 10.2)
         XCTAssertTrue(first === preview.image)
-        preview.accept(pixels, time: 11.2)
+        await accept(preview, pixels, time: 15.2)
         XCTAssertFalse(first === preview.image)
     }
 
-    func testMacThumbnailConversionCostStaysBounded() throws {
+    func testMacThumbnailConversionCostStaysBounded() async throws {
         let preview = LocalSharePreview(isMac: true, observeLifecycle: false)
         preview.begin()
         var buffer: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(nil, 1920, 1080, kCVPixelFormatType_32BGRA,
             [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer), kCVReturnSuccess)
         let pixels = try XCTUnwrap(buffer)
-        preview.accept(pixels, time: 1)
+        await accept(preview, pixels, time: 1)
         let start = Date()
-        for index in 0..<100 { preview.accept(pixels, time: Double(index) * 0.6 + 2) }
+        for index in 0..<100 { await accept(preview, pixels, time: Double(index) * 0.6 + 2) }
         print("PERF 1080p→640px preview average ms: \(Date().timeIntervalSince(start) * 10)")
         XCTAssertLessThanOrEqual(max(preview.image!.size.width, preview.image!.size.height), 640)
     }
 
-    func testMacConversionHandlesCameraAndCaptureFormatsAndRotation() throws {
+    func testMacConversionHandlesCameraAndCaptureFormatsAndRotation() async throws {
         for format in [kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
                        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange] {
             for rotation in [0, 90, 180, 270] {
@@ -63,7 +63,7 @@ final class LocalSharePreviewTests: XCTestCase {
                 XCTAssertEqual(CVPixelBufferCreate(nil, 1280, 720, format,
                     [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer), kCVReturnSuccess)
                 let pixels = try XCTUnwrap(buffer)
-                preview.accept(pixels, rotation: rotation, time: 1)
+                await accept(preview, pixels, rotation: rotation, time: 1)
                 let image = try XCTUnwrap(preview.image)
                 XCTAssertEqual(image.size, rotation == 90 || rotation == 270
                     ? CGSize(width: 360, height: 640) : CGSize(width: 640, height: 360))
@@ -73,7 +73,7 @@ final class LocalSharePreviewTests: XCTestCase {
         }
     }
 
-    func testMacRotatedPixelsMatchExistingRendererAndAreIndependentOfCaptureBuffer() throws {
+    func testMacRotatedPixelsMatchExistingRendererAndAreIndependentOfCaptureBuffer() async throws {
         var buffer: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(nil, 8, 4, kCVPixelFormatType_32BGRA,
             [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer), kCVReturnSuccess)
@@ -94,21 +94,33 @@ final class LocalSharePreviewTests: XCTestCase {
         for rotation in [0, 90, 180, 270] {
             let reference = LocalSharePreview(isMac: false, observeLifecycle: false)
             reference.begin(); reference.setForeground(false)
-            reference.accept(pixels, rotation: rotation, time: 1)
+            await accept(reference, pixels, rotation: rotation, time: 1)
             let mac = LocalSharePreview(isMac: true, observeLifecycle: false)
-            mac.begin(); mac.accept(pixels, rotation: rotation, time: 1)
+            mac.begin(); await accept(mac, pixels, rotation: rotation, time: 1)
             let expected = try rgba(try XCTUnwrap(reference.image?.cgImage))
             let actual = try rgba(try XCTUnwrap(mac.image?.cgImage))
             XCTAssertEqual(actual.count, expected.count)
             for (a, b) in zip(actual, expected) { XCTAssertLessThanOrEqual(abs(Int(a) - Int(b)), 2) }
         }
         let mac = LocalSharePreview(isMac: true, observeLifecycle: false)
-        mac.begin(); mac.accept(pixels, time: 1)
+        mac.begin(); await accept(mac, pixels, time: 1)
         let before = try rgba(try XCTUnwrap(mac.image?.cgImage))
         CVPixelBufferLockBaseAddress(pixels, [])
         memset(base, 0, stride * 4)
         CVPixelBufferUnlockBaseAddress(pixels, [])
         XCTAssertEqual(try rgba(try XCTUnwrap(mac.image?.cgImage)), before)
+    }
+
+    private func accept(_ preview: LocalSharePreview, _ pixels: CVPixelBuffer, rotation: Int = 0, time: TimeInterval) async {
+        let previous = preview.image
+        preview.accept(pixels, rotation: rotation, time: time)
+        // A throttled call intentionally keeps the same image.
+        if time == 10.2 { return }
+        for _ in 0..<100 {
+            if preview.image !== previous { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTFail("Preview worker did not publish a frame")
     }
 
     private func rgba(_ image: CGImage) throws -> [UInt8] {

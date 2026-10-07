@@ -10,14 +10,38 @@ final class MicrophoneActivity: ObservableObject {
     @Published private(set) var hasSignal = false
     private var lastSample: TimeInterval = 0
     private var expiry: Timer?
+    @Published private(set) var samplingNeeded = false
+    private var foreground = true
+    private var floating = false
+    private var observers: [NSObjectProtocol] = []
+
+    init(observeLifecycle: Bool = true) {
+        if observeLifecycle {
+            foreground = UIApplication.shared.applicationState != .background
+            for (name, visible) in [(UIApplication.didEnterBackgroundNotification, false),
+                                    (UIApplication.willEnterForegroundNotification, true)] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
+                    [weak self] _ in MainActor.assumeIsolated { self?.setForeground(visible) }
+                })
+            }
+        }
+    }
+    func setForeground(_ visible: Bool) { foreground = visible; updateDemand() }
+    func setFloating(_ visible: Bool) { floating = visible; updateDemand() }
+    private func updateDemand() {
+        let needed = status == .on && (foreground || floating)
+        if samplingNeeded != needed { samplingNeeded = needed }
+        if !needed { clear() }
+    }
 
     func setStatus(_ value: PiPMicrophoneStatus) {
         guard value != status else { return }
         status = value
         clear()
+        updateDemand()
     }
     func receive(rms: Float, at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
-        guard status == .on, rms.isFinite, rms >= 0, time >= lastSample else { return }
+        guard samplingNeeded, rms.isFinite, rms >= 0, time >= lastSample else { return }
         lastSample = time
         let target = CGFloat(Self.normalized(rms: rms))
         level += (target - level) * (target > level ? 0.7 : 0.3)
@@ -43,19 +67,21 @@ final class MicrophoneActivity: ObservableObject {
         guard rms.isFinite, rms > 0 else { return 0 }
         return min(1, max(0, (20 * log10(rms) + 60) / 60))
     }
-    deinit { expiry?.invalidate() }
+    deinit { expiry?.invalidate(); observers.forEach(NotificationCenter.default.removeObserver) }
 }
 
 /// Throttle at the source, so audio callbacks cannot flood the main queue.
 final class MicrophoneSampleSink: @unchecked Sendable {
     private let lock = NSLock()
     private var last: TimeInterval = 0
+    private var enabled = true
+    func setEnabled(_ value: Bool) { lock.lock(); enabled = value; lock.unlock() }
     private let deliver: @Sendable (Float) -> Void
     init(deliver: @escaping @Sendable (Float) -> Void) { self.deliver = deliver }
     func receive(_ buffer: AVAudioPCMBuffer) {
         let time = ProcessInfo.processInfo.systemUptime
         lock.lock()
-        guard time - last >= 0.08 else { lock.unlock(); return }
+        guard enabled, time - last >= 0.08 else { lock.unlock(); return }
         last = time; lock.unlock()
         let frames = Int(buffer.frameLength), channels = Int(buffer.format.channelCount)
         guard frames > 0, channels > 0 else { return }

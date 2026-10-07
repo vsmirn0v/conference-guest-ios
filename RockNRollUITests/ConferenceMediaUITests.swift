@@ -928,6 +928,7 @@ final class ConferenceMediaUITests: XCTestCase {
             throw XCTSkip("Publish a synthetic screen share and camera in the public test jam first.")
         }
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone Share QA"
         #if targetEnvironment(simulator)
@@ -1125,6 +1126,7 @@ final class ConferenceMediaUITests: XCTestCase {
             throw XCTSkip("Start the browser demo-card share before this test.")
         }
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = "https://rock.glowsoft.ru/jams/test"
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Floating QA"
         #if targetEnvironment(simulator)
@@ -1142,6 +1144,7 @@ final class ConferenceMediaUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         Thread.sleep(forTimeInterval: 3)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        Thread.sleep(forTimeInterval: 8) // Outlast the background video-demand startup grace.
         assertLiveFloatingVideo(app)
         attachScreenshot(of: springboard, named: "Jam share floating over Home")
         returnFromFloatingVideo(app)

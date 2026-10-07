@@ -1,11 +1,16 @@
 import LiveKit
+import Combine
 import UIKit
 
 /// A separate background-capable renderer leaves the in-call tile and zoom intact.
 @MainActor
 final class RockVideoPictureInPicture {
     private let content = UIView()
-    private let video = VideoView()
+    private let video = GuestSampleBufferView()
+    private var sink: RoomFloatingVideoSink?
+    private var energySubscription: AnyCancellable?
+    private var presenting = false
+    var onPresentationChanged: ((Bool) -> Void)?
     private let caption = UILabel()
     private let floating: FloatingVideoController
     private weak var sourceView: UIView?
@@ -16,8 +21,18 @@ final class RockVideoPictureInPicture {
         floating = FloatingVideoController(contentView: content, speaker: speaker)
         content.backgroundColor = .black
         content.accessibilityIdentifier = "Floating video surface"
-        video.renderMode = .sampleBuffer
-        video.layoutMode = .fit
+        floating.onPresentationChanged = { [weak self] visible in
+            guard let self else { return }
+            self.presenting = visible
+            self.sink?.setWanted(visible, fps: MediaEnergyBudget.shared.previewFPS)
+            self.onPresentationChanged?(visible)
+        }
+        energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak self] _ in
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.sink?.setWanted(self.presenting, fps: MediaEnergyBudget.shared.previewFPS)
+            }
+        }
         video.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(video)
         caption.accessibilityIdentifier = "Floating video source"
@@ -45,10 +60,17 @@ final class RockVideoPictureInPicture {
         guard !floating.isEnded else { return }
         guard let track else { clear(); return }
         if selectedTrack !== track {
+            retireSink()
             selectedTrack = track
-            video.track = track
+            let sink = RoomFloatingVideoSink { [weak self, weak track] sample, rotation in
+                guard let self, self.selectedTrack === track, !self.floating.isEnded else { return }
+                self.video.enqueue(sample, rotation: rotation)
+            }
+            self.sink = sink
+            sink.setWanted(presenting, fps: MediaEnergyBudget.shared.previewFPS)
+            track.add(videoRenderer: sink)
         }
-        video.layoutMode = isScreenShare ? .fit : .fill
+        video.contentMode = isScreenShare ? .scaleAspectFit : .scaleAspectFill
         caption.text = name.isEmpty ? nil : "  \(name)\(isScreenShare ? L(" · Screen") : "")  "
         caption.isHidden = name.isEmpty
         floating.setSourceView(sourceView)
@@ -63,9 +85,15 @@ final class RockVideoPictureInPicture {
 
     func clear() {
         floating.setSourceView(nil)
-        video.track = nil
+        retireSink()
+        video.clear()
         selectedTrack = nil
         caption.text = nil
+    }
+
+    private func retireSink() {
+        if let sink { sink.retire(); selectedTrack?.remove(videoRenderer: sink) }
+        sink = nil
     }
 
     func end() {

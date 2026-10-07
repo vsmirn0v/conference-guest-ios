@@ -39,6 +39,8 @@ final class NativeConferenceEngine: CallEngine {
     private var audioGate = CallAudioRecoveryGate()
     private var audioRecoveryTask: Task<Void, Never>?
     private var mediaRecoveryBudget = CallMediaRecoveryBudget(seconds: 12)
+    private let videoDemand = MeetingVideoDemand()
+    private var incomingVideoEnabled: Bool?
     private var displayMode: ConferenceDisplayMode = .all
     private var isAudioInterrupted = false { didSet { updatePiPMicrophoneStatus() } }
     private var microphoneIntentOn = false
@@ -115,6 +117,14 @@ final class NativeConferenceEngine: CallEngine {
         streamViews.setBackgrounded(false)
         updateFloatingSuspension()
         floatingVideo?.foregrounded()
+    }
+
+    private func updateIncomingVideoDemand() {
+        guard let coordinator = activeCoordinator else { return }
+        let enabled = displayMode != .audioOnly && videoDemand.wantsVideo
+        guard incomingVideoEnabled != enabled else { return }
+        incomingVideoEnabled = enabled
+        coordinator.toggleIncomingStreamsDisabled(isEnabled: enabled)
     }
 
     private func updateFloatingSuspension() {
@@ -317,6 +327,8 @@ final class NativeConferenceEngine: CallEngine {
             self.activeControls?.showStageFrame(sample, rotation: rotation)
         }
         floating.bindMicrophoneActivity(studio.microphoneActivity)
+        floating.onPresentationChanged = { [weak self] in self?.videoDemand.setFloating($0) }
+        videoDemand.onChange = { [weak self] in self?.updateIncomingVideoDemand() }
         floatingVideo = floating
         updateFloatingSuspension()
     }
@@ -547,7 +559,7 @@ final class NativeConferenceEngine: CallEngine {
     private func restoreMediaIntent(using selectedCoordinator: JazzActiveConferenceCoordinator? = nil) {
         guard let coordinator = selectedCoordinator ?? activeCoordinator else { return }
         if studio.hasSelection { coordinator.toggleEnableNoiseSuppression(isEnabled: studio.profile == .conversation) }
-        coordinator.toggleIncomingStreamsDisabled(isEnabled: displayMode != .audioOnly)
+        updateIncomingVideoDemand()
         if microphoneIntentOn { studio.releasePrivateMicrophone() }
         coordinator.toggleMicrohone(isOn: microphoneIntentOn)
         coordinator.toggleCamera(isOn: cameraIntentOn)
@@ -913,19 +925,7 @@ final class NativeConferenceEngine: CallEngine {
         guard let url = activeInvitationURL, let host = url.host,
               let rawPort = UInt16(exactly: url.port ?? 443),
               let port = NWEndpoint.Port(rawValue: rawPort) else { return false }
-        let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: .tcp)
-        connection.start(queue: networkQueue)
-        defer { connection.cancel() }
-        for _ in 0..<40 {
-            guard !Task.isCancelled else { return false }
-            switch connection.state {
-            case .ready: return true
-            case .failed, .cancelled: return false
-            default: break
-            }
-            try? await Task.sleep(for: .milliseconds(100))
-        }
-        return false
+        return await MeetingServiceProbe(host: host, port: port.rawValue, queue: networkQueue).run()
     }
 
     #if DEBUG
@@ -987,6 +987,8 @@ final class NativeConferenceEngine: CallEngine {
             guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                   !self.leaveRequested else { return UIView() }
             self.activeCoordinator = coordinator
+            self.incomingVideoEnabled = nil
+            self.updateIncomingVideoDemand()
             if !self.studio.active { self.studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard) }
             self.studio.presenter.preparePrivateCamera = { [weak self] in
                 await self?.studio.releasePreviewCamera()
@@ -1003,9 +1005,9 @@ final class NativeConferenceEngine: CallEngine {
                 self.activeCoordinator?.stopRecord()
             }
             self.studio.presenter.makeCameraSource = { [weak self, weak streams] onFrame in
-                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                guard let self, let streams, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                       !self.leaveRequested else { return nil }
-                return GuestPresenterCamera(source: { [weak streams] in streams?.localCameraView() }, onFrame: onFrame)
+                return GuestPresenterCamera(streams: streams, onFrame: onFrame)
             }
             self.studio.presenter.shareOtherApps = { [weak self] in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt, !self.leaveRequested else { return }
@@ -1051,7 +1053,7 @@ final class NativeConferenceEngine: CallEngine {
             self.studio.makeLivePreview = { [weak self] in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                       !self.leaveRequested else { return nil }
-                let preview = GuestStudioPreview { [weak streams] in streams?.localCameraView() }
+                let preview = GuestStudioPreview(streams: streams)
                 return StudioLivePreview(view: preview.view, stop: { preview.stop() })
             }
             self.studio.soundCheck.verifyMuted = { [weak self] in
@@ -1096,7 +1098,7 @@ final class NativeConferenceEngine: CallEngine {
                     coordinator.changeUserName(newName: name)
                 }
             }
-            coordinator.toggleIncomingStreamsDisabled(isEnabled: self.displayMode != .audioOnly)
+            self.updateIncomingVideoDemand()
             self.observePiPMicrophone(state: state)
             self.refreshSpeakerInput = { [weak self, weak state] in
                 guard let self, let state, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
@@ -1132,7 +1134,7 @@ final class NativeConferenceEngine: CallEngine {
                                             guard let self, self.sessionEpoch == epoch else { return }
                                             self.displayMode = mode
                                             self.streamViews.displayMode = mode
-                                            coordinator.toggleIncomingStreamsDisabled(isEnabled: mode != .audioOnly)
+                                            self.updateIncomingVideoDemand()
                                         },
                                         onFloat: { [weak self] in self?.floatingVideo?.start() },
                                         onFloatingPreferenceChanged: { [weak self] in

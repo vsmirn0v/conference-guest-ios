@@ -95,6 +95,7 @@ final class PresenterModel: ObservableObject {
     private var latest: CMSampleBuffer?
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
+    private var energySubscription: AnyCancellable?
     private var presented = false
     private var active = true
     private var held = false
@@ -108,10 +109,13 @@ final class PresenterModel: ObservableObject {
     private(set) var heartbeatCount = 0
     private var renderWanted: Bool { active && foreground && !held && (presented || running || starting) }
     private var canRender: Bool { renderWanted && canCompose && (!screenPicking || running) && (!screenSelected || screenSample != nil) }
-    private var renderInterval: TimeInterval { includeCamera && !nativeOverlay ? 1.0 / 15 : 1.0 / 30 }
+    private var renderInterval: TimeInterval { 1.0 / Double(includeCamera && !nativeOverlay ? MediaEnergyBudget.shared.previewFPS : MediaEnergyBudget.shared.inlineFPS) }
 
     init(observeLifecycle: Bool = true, preferences: UserDefaults = .standard) {
         self.preferences = preferences
+        energySubscription = MediaEnergyBudget.shared.$pressure.dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async { self?.pump() }
+        }
         if let data = preferences.data(forKey: "presenter.placement.v1"),
            let placement = try? JSONDecoder().decode(PresenterPlacement.self, from: data) {
             scene.placement = placement; scene.placement.clamp()

@@ -5,11 +5,16 @@ import UIKit
 final class PiPMicrophoneFixtureViewController: UIViewController {
     private var floating: FloatingVideoController?
     private let speaker = ActiveSpeakerStore()
+    private var foregroundObservation: NSObjectProtocol?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
+        foregroundObservation = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.floating?.foregrounded() }
+            }
         let card = UILabel()
         card.text = "Static shared screen"
         card.textAlignment = .center
@@ -73,5 +78,6 @@ final class PiPMicrophoneFixtureViewController: UIViewController {
         UIApplication.shared.endBackgroundTask(backgroundTask)
         backgroundTask = .invalid
     }
+    deinit { if let foregroundObservation { NotificationCenter.default.removeObserver(foregroundObservation) } }
 }
 #endif

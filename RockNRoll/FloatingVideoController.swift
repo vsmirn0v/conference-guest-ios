@@ -18,11 +18,13 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     private var suspended = false
     private var closedWhileBackgrounded = false
     private var manualStartPending = false
+    private weak var microphoneActivity: MicrophoneActivity?
+    var onPresentationChanged: ((Bool) -> Void)?
     private(set) var isEnded = false
     var onWillStart: (() -> Void)?
     var onStopped: (() -> Void)?
     var preferredSize = CGSize(width: 320, height: 180) {
-        didSet { contentController?.preferredContentSize = preferredSize }
+        didSet { if oldValue != preferredSize { contentController?.preferredContentSize = preferredSize } }
     }
 
     init(contentView: UIView, speaker: ActiveSpeakerStore? = nil) {
@@ -37,7 +39,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         !isEnded && AVPictureInPictureController.isPictureInPictureSupported() && sourceView != nil && !suspended
     }
 
-    func bindMicrophoneActivity(_ activity: MicrophoneActivity) { contentView.bindMicrophoneActivity(activity) }
+    func bindMicrophoneActivity(_ activity: MicrophoneActivity) { microphoneActivity = activity; contentView.bindMicrophoneActivity(activity) }
 
     func setMicrophoneStatus(_ status: PiPMicrophoneStatus) {
         contentView.setMicrophoneStatus(status)
@@ -100,6 +102,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     }
 
     func setSuspended(_ suspended: Bool) {
+        guard !isEnded, self.suspended != suspended else { return }
         self.suspended = suspended
         if suspended { tearDown() }
         else { prepare() }
@@ -136,12 +139,15 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         contentController = nil
         configuredSource = nil
         phase = .idle
-        if wasPresenting { onStopped?() }
+        microphoneActivity?.setFloating(false)
+        if wasPresenting { onPresentationChanged?(false); onStopped?() }
     }
 
     func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
         guard controller === self.controller else { return }
         phase = .starting
+        microphoneActivity?.setFloating(true)
+        onPresentationChanged?(true)
         onWillStart?()
     }
 
@@ -154,6 +160,8 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         guard controller === self.controller else { return }
         let userClosed = phase != .stopping && UIApplication.shared.applicationState == .background
         phase = .idle
+        microphoneActivity?.setFloating(false)
+        onPresentationChanged?(false)
         onStopped?()
         if userClosed {
             closedWhileBackgrounded = true
@@ -167,6 +175,8 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
                                     failedToStartPictureInPictureWithError error: Error) {
         guard controller === self.controller else { return }
         phase = .idle
+        microphoneActivity?.setFloating(false)
+        onPresentationChanged?(false)
         onStopped?()
     }
 

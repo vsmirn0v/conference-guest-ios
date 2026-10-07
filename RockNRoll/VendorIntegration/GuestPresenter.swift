@@ -1,6 +1,7 @@
 import JazzSDKScreenShare
 import ReplayKit
 import UIKit
+import Combine
 
 /// Public screen-share sender; no SDK camera replacement or audio hook.
 @MainActor
@@ -35,29 +36,30 @@ final class GuestPresenterSender: GuestScreenCapture {
 
 @MainActor
 final class GuestPresenterCamera: PresenterCameraSource {
-    private let source: () -> UIView?
     private let processor = GuestVideoFrameProcessor()
     private var tap: GuestVideoFrameTap?
-    private var timer: Timer?
-    init(source: @escaping () -> UIView?, onFrame: @escaping (CVPixelBuffer, Int) -> Void) {
-        self.source = source
-        processor.setFrameRate(12); processor.setEnabled(true)
+    private var observation: AnyCancellable?
+    private var energySubscription: AnyCancellable?
+    init(streams: GuestStreamViews, onFrame: @escaping (CVPixelBuffer, Int) -> Void) {
+        processor.setFrameRate(min(12, MediaEnergyBudget.shared.previewFPS)); processor.setEnabled(true)
         processor.onSample = { sample, _, rotation in
             if let pixels = CMSampleBufferGetImageBuffer(sample) { onFrame(pixels, rotation) }
         }
-        refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refresh() }
+        energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak processor] _ in
+            DispatchQueue.main.async { processor?.setFrameRate(MediaEnergyBudget.shared.previewFPS) }
         }
+        observation = streams.localCameraChanges.sink { [weak self] in self?.refresh($0) }
     }
-    private func refresh() {
-        guard let renderer = source() else { tap?.invalidate(); tap = nil; return }
+    private func refresh(_ source: UIView?) {
+        guard let renderer = source else { tap?.invalidate(); tap = nil; processor.setEnabled(false); return }
         guard tap?.matches(renderer) != true else { return }
         tap?.invalidate()
-        tap = GuestVideoFrameTap(view: renderer) { [weak processor] in processor?.submit($0) }
+        let generation = processor.replaceSource()
+        processor.setEnabled(true)
+        tap = GuestVideoFrameTap(view: renderer) { [weak processor] in processor?.submit($0, source: generation) }
     }
     func stop() async {
-        timer?.invalidate(); timer = nil; tap?.invalidate(); tap = nil
+        observation = nil; energySubscription = nil; tap?.invalidate(); tap = nil
         processor.setEnabled(false)
     }
 }

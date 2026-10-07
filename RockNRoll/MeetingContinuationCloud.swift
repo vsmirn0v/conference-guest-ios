@@ -5,6 +5,7 @@ import Foundation
 @MainActor
 protocol MeetingContinuationTransport {
     func connect(account: String) async throws
+    func snapshot(sourceSession: UUID?) async throws -> (jams: [ActiveJam], command: JamTransfer?)
     func jams() async throws -> [ActiveJam]
     func publish(_ jam: ActiveJam) async throws
     func withdraw(deviceID: String, sessionID: UUID?) async throws
@@ -15,7 +16,15 @@ protocol MeetingContinuationTransport {
     func resetConnection()
 }
 
-extension MeetingContinuationTransport { func resetConnection() {} }
+extension MeetingContinuationTransport {
+    func resetConnection() {}
+    func snapshot(sourceSession: UUID?) async throws -> (jams: [ActiveJam], command: JamTransfer?) {
+        let rooms = try await jams()
+        let command: JamTransfer?
+        if let sourceSession { command = try await transfer(sourceSession: sourceSession) } else { command = nil }
+        return (rooms, command)
+    }
+}
 
 enum ContinuationError: Error { case unavailable, conflict, expired }
 
@@ -30,6 +39,7 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
     private var account: String?
     private var generation: String?
     private var token: CKServerChangeToken?
+    private var cachedTransfers: [CKRecord.ID: JamTransfer] = [:]
     private var cachedJams: [CKRecord.ID: ActiveJam] = [:]
     private var revision = 0
     private var controlID: CKRecord.ID { .init(recordName: "SyncGeneration", zoneID: zone) }
@@ -82,10 +92,15 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
         guard control.encryptedValues["generation"] as? String == generation else { throw ContinuationError.expired }
         return control
     }
+    func snapshot(sourceSession: UUID?) async throws -> (jams: [ActiveJam], command: JamTransfer?) {
+        let rooms = try await jams()
+        let command = sourceSession.flatMap { cachedTransfers[.init(recordName: "claim-" + $0.uuidString, zoneID: zone)] }
+        return (rooms, command)
+    }
     func jams() async throws -> [ActiveJam] {
         do { return try await fetchJams() }
         catch let error as CKError where error.code == .changeTokenExpired {
-            token = nil; cachedJams = [:]
+            token = nil; cachedJams = [:]; cachedTransfers = [:]
             return try await fetchJams()
         }
     }
@@ -97,16 +112,23 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
         let operation = CKFetchRecordZoneChangesOperation(recordZoneIDs: [zone], configurationsByRecordZoneID: [zone: configuration])
         operation.fetchAllChanges = true; operation.qualityOfService = .utility
         let jams: [ActiveJam] = try await withCheckedThrowingContinuation { continuation in
-            var result = cachedJams; var failure: Error?; var nextToken: CKServerChangeToken?
+            var result = cachedJams; var transfers = cachedTransfers; var failure: Error?; var nextToken: CKServerChangeToken?
             operation.recordWasChangedBlock = { [self] id, value in
-                guard id.recordName.hasPrefix("device-") else { return }
                 do {
-                    if case .jam(let jam) = try decode(value.get()) { result[id] = jam }
-                    else { result.removeValue(forKey: id) }
+                    let record = try value.get()
+                    if id == controlID {
+                        guard record.encryptedValues["generation"] as? String == generation else { throw ContinuationError.expired }
+                        return
+                    }
+                    switch try decode(record) {
+                    case .jam(let jam): result[id] = jam
+                    case .transfer(let transfer): transfers[id] = transfer
+                    default: result.removeValue(forKey: id); transfers.removeValue(forKey: id)
+                    }
                 }
                 catch { failure = error }
             }
-            operation.recordWithIDWasDeletedBlock = { id, _ in result.removeValue(forKey: id) }
+            operation.recordWithIDWasDeletedBlock = { id, _ in result.removeValue(forKey: id); transfers.removeValue(forKey: id) }
             operation.recordZoneFetchResultBlock = { _, result in
                 switch result {
                 case .success(let value): nextToken = value.serverChangeToken
@@ -117,7 +139,7 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
                 do {
                     try value.get(); if let failure { throw failure }
                     guard expected == revision else { throw ContinuationError.unavailable }
-                    cachedJams = result; token = nextToken
+                    cachedJams = result; cachedTransfers = transfers; token = nextToken
                     continuation.resume(returning: Array(result.values))
                 }
                 catch { continuation.resume(throwing: error) }
@@ -143,7 +165,7 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
             return .vacant
         }
     }
-    func resetConnection() { revision += 1; account = nil; generation = nil; token = nil; cachedJams = [:] }
+    func resetConnection() { revision += 1; account = nil; generation = nil; token = nil; cachedJams = [:]; cachedTransfers = [:] }
     func claim(_ transfer: JamTransfer) async throws {
         _ = try await write(id: "claim-" + transfer.sourceSession.uuidString) { existing in
             if case .transfer(let previous) = existing, !previous.isTerminal, previous.expiresAt > Date() {
@@ -189,6 +211,10 @@ final class MeetingContinuationCloud: MeetingContinuationTransport {
                                                               savePolicy: .ifServerRecordUnchanged, atomically: true)
                 for value in result.saveResults.values { _ = try value.get() }
                 guard expected == revision else { throw ContinuationError.unavailable }
+                if id.hasPrefix("claim-") {
+                    if case .transfer(let value) = payload { cachedTransfers[recordID] = value }
+                    else { cachedTransfers.removeValue(forKey: recordID) }
+                }
                 return payload
             } catch let error as CKError where attempt < 2 && Self.conflict(error) { continue }
         }

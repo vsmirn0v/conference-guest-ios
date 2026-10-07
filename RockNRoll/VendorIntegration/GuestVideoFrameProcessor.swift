@@ -47,6 +47,7 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
 
     func setEnabled(_ enabled: Bool) {
         lock.lock()
+        guard self.enabled != enabled else { lock.unlock(); return }
         generation &+= 1
         self.enabled = enabled
         busy = false
