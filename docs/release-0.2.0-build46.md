@@ -33,4 +33,11 @@ Exported IPA SHA-256: `2c5a1573223cace7f4b2a34284728346cc3030c763010a72e893996f8
 Exported executable SHA-256: `e6498a2687ad0540c9be959ec7ba4db8211efedf11287ed065e10f18dcb568c0`.
 Executable and app dSYM UUID: `17415E20-9D0D-3F26-98CE-486C4C67F0E5`.
 
-Upload and TestFlight group readback are recorded after processing.
+Upload completed successfully (`/tmp/rock-build46-upload.log`, Uploaded RockNRoll / EXPORT SUCCEEDED). Existing third-party framework missing-dSYM warnings remain; the app’s executable/dSYM match.
+
+App Store Connect received 0.2.0 (46) at 21:55 MSK. Processing completed and the build was submitted with automatic tester notification enabled.
+
+ASC build identity: `f2c3daac-6087-4352-adf5-d9428b260de1`.
+Independent group readback confirms **Testing, Expires in 90 days** in both Rock’n’Roll Internal (one tester) and Rock’n’Roll Public Beta (six testers). Public invitation: https://testflight.apple.com/join/Hd13C9U3.
+
+Local proof images: `Marketing/TestFlight/build46-internal.png` and `Marketing/TestFlight/build46-public.png` (ignored release artifacts). Source implementation: `d5c78cb`, pushed to main. Temporary browser receiver and physical test meeting were left cleanly.
