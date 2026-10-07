@@ -18,6 +18,7 @@
 		07DC662E323F7A0BEF5ABD97 /* LocalizationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 014F1BB5CA2AB0F777D109C3 /* LocalizationUITests.swift */; };
 		08245B21B07D8A02CAB118A4 /* CallControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0DDC3D21920474CDC247639 /* CallControls.swift */; };
 		0ABE8A6E964F738D6B1C74B5 /* MeetingWebsitePresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7B28F52B13A50B0278FC5F1 /* MeetingWebsitePresenter.swift */; };
+		0B3817F1C60F1284D3F99EBD /* MeetingRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DE19440BEE492AE93AE4062 /* MeetingRecording.swift */; };
 		0B8DB92453A275822334C6F9 /* CallPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26E84EDB6C185E0A79E26B59 /* CallPresentation.swift */; };
 		0E9EE5795A57769858BFC5C4 /* GuestVideoFrameTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 908B7BD8621D56B596FE8550 /* GuestVideoFrameTests.swift */; };
 		0F0D0CECF418B042D6267B31 /* MicrophoneActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E00CA98C4B1068D38036062 /* MicrophoneActivity.swift */; };
@@ -122,11 +123,13 @@
 		A0D3A3026370550A166E4F2A /* RockVideoPictureInPicture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE94B4A550B25F959F5622EB /* RockVideoPictureInPicture.swift */; };
 		A0ED65C0456B8BC3BD5A2E05 /* FloatingVideoContentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C9FECFED16879ABE8E529D2 /* FloatingVideoContentTests.swift */; };
 		A48340505EAAA06923521161 /* GuestVideoFrameProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0978B250E002B9455D9AD06E /* GuestVideoFrameProcessor.swift */; };
+		A5022831F6127BB93041A81E /* AudioDevicesControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 349EB53BFC8C651449D9EC28 /* AudioDevicesControls.swift */; };
 		A6063918AFB2F56E917CC690 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 3CA9B0FEDF87494E0F7E8261 /* Localizable.strings */; };
 		A6B7066F04A854827E9466A5 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 86346ACDCB5DD9F32BC51401 /* InfoPlist.strings */; };
 		A7C8474839D3AB6B430D5452 /* PresenterUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 170C8543C40BE24465CEA135 /* PresenterUITests.swift */; };
 		A84E5AF54AB0C60B1F0F65BC /* Localizable.stringsdict in Resources */ = {isa = PBXBuildFile; fileRef = D75611CBD0EC5F3C490CFE82 /* Localizable.stringsdict */; };
 		AB028C03E1A572AB2D347562 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 93AAC86B2D4D8F6CE7FA6694 /* Localizable.strings */; };
+		ACABEC62EC7D4E097CE88FE0 /* StudioWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E177269CF747C9FD3B7987C /* StudioWorkflowTests.swift */; };
 		B134CD8859004C6BA0333EED /* ReviewRegressionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5B62747320CF4363ED7E58E /* ReviewRegressionUITests.swift */; };
 		B3193389B871F476C1298C8B /* MeetingContinuationLiveFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB07FB95B1890A01E5DEE830 /* MeetingContinuationLiveFixture.swift */; };
 		B36A039AA3E58D398A91659D /* GuestPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FA1CC8CB47E634A5B66DC6 /* GuestPresenter.swift */; };
@@ -269,6 +272,7 @@
 		2E6B97EB6CB2C3AD85CFDFBB /* PresenterModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterModel.swift; sourceTree = "<group>"; };
 		2EBD5B5CF327FC6506710905 /* AppleCalendarReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleCalendarReader.swift; sourceTree = "<group>"; };
 		33040F702F0225D226CAF319 /* RoomSyncCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncCoordinatorTests.swift; sourceTree = "<group>"; };
+		349EB53BFC8C651449D9EC28 /* AudioDevicesControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioDevicesControls.swift; sourceTree = "<group>"; };
 		36335245A0855B2E5BC15592 /* ChatStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStoreTests.swift; sourceTree = "<group>"; };
 		3A29D29FA82ED3CFD5A370CA /* PresenterControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterControls.swift; sourceTree = "<group>"; };
 		3B8565722651DABA4F828498 /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/InfoPlist.strings; sourceTree = "<group>"; };
@@ -294,6 +298,7 @@
 		4CA55617AFA3B22DCC659978 /* MeetingPresentationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingPresentationUITests.swift; sourceTree = "<group>"; };
 		4CA95D2BA745ADE7858A2DA4 /* CalendarEventKitIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventKitIntegrationTests.swift; sourceTree = "<group>"; };
 		4D2401FC45A41D25A4D8B4D5 /* Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Extension.entitlements; sourceTree = "<group>"; };
+		4E177269CF747C9FD3B7987C /* StudioWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioWorkflowTests.swift; sourceTree = "<group>"; };
 		4FFCA5602816073CDAEE4132 /* RoomSyncLiveProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncLiveProbe.swift; sourceTree = "<group>"; };
 		5127962F2CBE03E63CBB7923 /* MicrophoneActivityUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneActivityUITests.swift; sourceTree = "<group>"; };
 		54AB06E7B00CA5AC1FCCC395 /* RockNRollUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RockNRollUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -320,6 +325,7 @@
 		78D15E09F9B40733B95666CD /* ConferenceModel+Continuation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConferenceModel+Continuation.swift"; sourceTree = "<group>"; };
 		7A05CC817B412E4FA9E2EE3A /* RockRoomEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RockRoomEngine.swift; sourceTree = "<group>"; };
 		7BF7621A80A949572423961A /* RoomMediaPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMediaPolicy.swift; sourceTree = "<group>"; };
+		7DE19440BEE492AE93AE4062 /* MeetingRecording.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingRecording.swift; sourceTree = "<group>"; };
 		7E00CA98C4B1068D38036062 /* MicrophoneActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneActivity.swift; sourceTree = "<group>"; };
 		80CAAA9434F6FC3C4BA590CC /* MeetingContinuationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingContinuationView.swift; sourceTree = "<group>"; };
 		823027E72F5C2F40A2D1639B /* RoomSyncSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncSettingsView.swift; sourceTree = "<group>"; };
@@ -544,6 +550,7 @@
 				2EBD5B5CF327FC6506710905 /* AppleCalendarReader.swift */,
 				BD6CCF5106C0A518803CCA07 /* Assets.xcassets */,
 				4C049BADA8D8CC43635B8F59 /* AudioCoordinator.swift */,
+				349EB53BFC8C651449D9EC28 /* AudioDevicesControls.swift */,
 				1EB6150224E377EF7666EADF /* CalendarAgendaView.swift */,
 				0BC72C0A298109102E5FFB6B /* CalendarMeetingStore.swift */,
 				96F23CBBFE171B7447F0F77E /* CalendarUIFixture.swift */,
@@ -581,6 +588,7 @@
 				AB07FB95B1890A01E5DEE830 /* MeetingContinuationLiveFixture.swift */,
 				3E0BE2FD5BD2E955E689DD5A /* MeetingContinuationUIFixture.swift */,
 				80CAAA9434F6FC3C4BA590CC /* MeetingContinuationView.swift */,
+				7DE19440BEE492AE93AE4062 /* MeetingRecording.swift */,
 				C7B28F52B13A50B0278FC5F1 /* MeetingWebsitePresenter.swift */,
 				7E00CA98C4B1068D38036062 /* MicrophoneActivity.swift */,
 				912ED3A027AB9D2DFD1EBBC9 /* NSLayoutConstraint+Priority.swift */,
@@ -683,6 +691,7 @@
 				33040F702F0225D226CAF319 /* RoomSyncCoordinatorTests.swift */,
 				5A5389C79CA11B6343CA2427 /* SessionOwnershipTests.swift */,
 				29086C6A0CE55DDD89707C74 /* StudioTests.swift */,
+				4E177269CF747C9FD3B7987C /* StudioWorkflowTests.swift */,
 				4C4CA635B347F09002064FE5 /* VideoSubscriptionCoordinatorTests.swift */,
 				5D4E2991A548588165E9049E /* VendorIntegration */,
 			);
@@ -959,6 +968,7 @@
 				1D215FCF2BF4D33961AB1F25 /* AppDelegate.swift in Sources */,
 				D2A8C899759ADD3E2DC01383 /* AppleCalendarReader.swift in Sources */,
 				964484C8436C0EA4F90E16BD /* AudioCoordinator.swift in Sources */,
+				A5022831F6127BB93041A81E /* AudioDevicesControls.swift in Sources */,
 				C8C30546CF22D61A6FABAA6F /* CalendarAgendaView.swift in Sources */,
 				021098A432E5E62AF52413F7 /* CalendarMeetingStore.swift in Sources */,
 				E230EBD95DA8A5AE4F96DDFA /* CalendarUIFixture.swift in Sources */,
@@ -1013,6 +1023,7 @@
 				B3193389B871F476C1298C8B /* MeetingContinuationLiveFixture.swift in Sources */,
 				C1CB191C2CC80344A1C3337C /* MeetingContinuationUIFixture.swift in Sources */,
 				6B35D5B37D06B2C9FC4F0D0F /* MeetingContinuationView.swift in Sources */,
+				0B3817F1C60F1284D3F99EBD /* MeetingRecording.swift in Sources */,
 				0ABE8A6E964F738D6B1C74B5 /* MeetingWebsitePresenter.swift in Sources */,
 				0F0D0CECF418B042D6267B31 /* MicrophoneActivity.swift in Sources */,
 				21570B208BECECA604469258 /* NSLayoutConstraint+Priority.swift in Sources */,
@@ -1134,6 +1145,7 @@
 				DD76B7C3FFD74D6416883136 /* RoomSyncCoordinatorTests.swift in Sources */,
 				ED2CC8CCA7516E5980D91315 /* SessionOwnershipTests.swift in Sources */,
 				E395592EB1EB3B9027937D56 /* StudioTests.swift in Sources */,
+				ACABEC62EC7D4E097CE88FE0 /* StudioWorkflowTests.swift in Sources */,
 				63349913ADE097BA69743188 /* VideoSubscriptionCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

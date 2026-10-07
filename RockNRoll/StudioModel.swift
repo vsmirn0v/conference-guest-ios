@@ -16,10 +16,14 @@ final class StudioModel: ObservableObject {
     @Published private(set) var error: String?
     @Published private(set) var active = true
     enum Pane: String, CaseIterable { case camera, sound, presenter }
+    enum AudioSection { case sound, devices }
+    @Published var audioSection: AudioSection = .sound
+    @Published var canvasExpanded = false
     let presenter = PresenterModel()
+    let recording = MeetingRecording()
     let microphoneActivity = MicrophoneActivity()
     let soundCheck: PrivateSoundCheck
-    @Published var pane: Pane = .camera { didSet { if pane != oldValue { refreshPreview(); refreshPresenter(); soundCheck.stop() } } }
+    @Published var pane: Pane = .camera { didSet { if pane != oldValue { if pane != .presenter { canvasExpanded = false }; refreshPreview(); refreshPresenter(); soundCheck.stop() } } }
     @Published private(set) var presented = false
     @Published private(set) var previewView: UIView?
     @Published private(set) var previewRunning = false
@@ -79,6 +83,7 @@ final class StudioModel: ObservableObject {
 
     func close() {
         presented = false
+        canvasExpanded = false
         soundCheck.stop()
         refreshPreview()
         refreshPresenter()
@@ -230,7 +235,7 @@ final class StudioModel: ObservableObject {
     }
 
     func testMicrophone() {
-        guard active, presented, pane == .sound, !held else { return }
+        guard active, presented, pane == .sound, !held, !microphoneOn else { return }
         soundCheck.start(standalone: enableMicrophone == nil)
     }
 
@@ -238,6 +243,7 @@ final class StudioModel: ObservableObject {
 
     func end() {
         active = false
+        recording.end()
         microphoneActivity.setStatus(.unavailable)
         soundCheck.verifyMuted = nil
         presenter.end()

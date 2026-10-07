@@ -311,17 +311,18 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             studio.flipLiveCamera = { coordinator?.switchCamera() }
             StudioShortcut.install(on: microphone, pane: .sound, model: studio)
             StudioShortcut.install(on: camera, pane: .camera, model: studio)
-            StudioShortcut.install(on: route, pane: .sound, model: studio)
+            StudioShortcut.install(on: route, pane: .sound, model: studio, devices: true)
             StudioShortcut.install(on: share, pane: .presenter, model: studio)
             Publishers.CombineLatest(studio.presenter.$running, studio.presenter.$includeCamera)
                 .receive(on: DispatchQueue.main).sink { [weak self] _, _ in self?.renderCameraControl() }
                 .store(in: &subscriptions)
+            studio.recording.$state.receive(on: DispatchQueue.main).sink { [weak self] _ in
+                self?.renderCallStatus(); self?.refreshMoreMenu?()
+            }.store(in: &subscriptions)
         }
         share.addAction(UIAction { [weak self, weak studio] _ in
             if state?.screenShareState == .on || studio?.presenter.running == true {
                 onScreenShare(false)
-            } else if let self, let studio, studio.presenter.available {
-                StudioPresentation.show(studio, from: self.share, pane: .presenter)
             } else { onScreenShare(true) }
         }, for: .touchUpInside)
         leave.addAction(UIAction { _ in onLeave() }, for: .touchUpInside)
@@ -345,6 +346,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
         route.translatesAutoresizingMaskIntoConstraints = false
         route.accessibilityLabel = L("Audio route")
+        route.accessibilityIdentifier = "call.output"
         let picker: UIView = ProcessInfo.processInfo.isiOSAppOnMac ? MacAudioRouteButton()
             : (coordinator?.audioRoutePickerButton ?? UIButton(type: .system))
         picker.translatesAutoresizingMaskIntoConstraints = false
@@ -367,7 +369,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             routeAppearance.bottomAnchor.constraint(equalTo: route.bottomAnchor)
         ])
 
-        let bar = CallToolbar(items: [microphone, camera, route, share, moreButton, leave])
+        let bar = CallToolbar(items: [microphone, camera, share, route, moreButton, leave])
         toolbar = bar
         bar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bar)
@@ -727,7 +729,12 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
 
     private func renderCallStatus() {
-        callStateLabel.text = isHeld ? L("On hold · audio resumes after your call") : mediaStatus
+        let status = isHeld ? L("On hold · audio resumes after your call") : mediaStatus
+        let recording = studio?.recording.isRecording == true
+        let parts = [recording ? L("● REC") : nil, status].compactMap { $0 }
+        callStateLabel.text = parts.isEmpty ? nil : parts.joined(separator: " · ")
+        callStateLabel.textColor = recording ? .systemRed : .systemOrange
+        callStateLabel.accessibilityLabel = recording ? L("Meeting is being recorded") : status
         callStateLabel.isHidden = callStateLabel.text == nil
         surface.setNeedsLayout()
     }
@@ -972,6 +979,15 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             }, at: 1)
         }
         if let studio {
+            actions.insert(UIAction(title: L("Audio devices"), image: UIImage(systemName: "headphones")) { [weak self] _ in
+                guard let self else { return }
+                studio.audioSection = .devices
+                StudioPresentation.show(studio, from: self.moreButton, pane: .sound)
+            }, at: 0)
+            actions.insert(UIAction(title: studio.recording.isRecording ? L("Recording") : L("Record meeting"),
+                image: UIImage(systemName: "record.circle"), attributes: studio.recording.state == .unavailable ? [.disabled] : []) { [weak self] _ in
+                    guard let self else { return }; studio.recording.present(from: self.moreButton)
+                }, at: 0)
             actions.insert(UIAction(title: L("Presenter"), image: UIImage(systemName: "person.crop.rectangle")) { [weak self] _ in
                 guard let self else { return }
                 StudioPresentation.show(studio, from: self.moreButton, pane: .presenter)

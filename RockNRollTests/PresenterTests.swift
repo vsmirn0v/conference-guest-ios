@@ -148,7 +148,7 @@ final class PresenterModelTests: XCTestCase {
         var starts = 0, sends = 0, stops = 0
         model.startSharing = { _ in starts += 1 }
         model.sendSample = { _ in sends += 1 }; model.stopSharing = { stops += 1 }
-        model.open(); await waitUntil { model.hasPreview }
+        model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
         XCTAssertEqual(starts, 0); XCTAssertEqual(sends, 0); XCTAssertFalse(model.cameraOn)
         await model.start(); await waitUntil { sends > 0 }
         XCTAssertEqual(starts, 1); XCTAssertTrue(model.running)
@@ -167,7 +167,7 @@ final class PresenterModelTests: XCTestCase {
         var stops = 0
         model.startSharing = { _ in await withCheckedContinuation { continuation = $0 } }
         model.stopSharing = { stops += 1 }
-        model.open(); await waitUntil { model.hasPreview }
+        model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
         let task = Task { await model.start() }
         await waitUntil { continuation != nil }
         model.end(); continuation?.resume(); await task.value
@@ -179,7 +179,7 @@ final class PresenterModelTests: XCTestCase {
         var stops = 0
         model.startSharing = { _ in await withCheckedContinuation { continuation = $0 } }
         model.stopSharing = { stops += 1 }
-        model.open(); await waitUntil { model.hasPreview }
+        model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
         let task = Task { await model.start() }
         await waitUntil { continuation != nil }
         // The guest SDK changes camera state as it starts screen sharing.
@@ -214,7 +214,7 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false)
         var sent: [CMSampleBuffer] = []
         model.startSharing = { _ in }; model.sendSample = { sent.append($0) }; model.stopSharing = {}
-        model.open(); await waitUntil { model.hasPreview }
+        model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
         let source = try screenSample(width: 90, height: 160)
         model.acceptScreen(source)
         await waitUntil { model.hasPreview && model.aspectRatio < 1 }
@@ -237,7 +237,7 @@ final class PresenterModelTests: XCTestCase {
         var receive: ((CMSampleBuffer) -> Void)?
         var cancelled: ((String?) -> Void)?
         model.makeScreenSource = { frame, _, _, end in receive = frame; cancelled = end; return capture }
-        model.open(); model.selectScreen()
+        model.selectCanvas(); model.open(); model.selectScreen()
         await waitUntil { capture.starts == 1 }
         cancelled?(nil)
         await waitUntil { capture.stopped }
@@ -253,7 +253,7 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false, preferences: defaults)
         var sends = 0
         model.startSharing = { _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
-        model.open(); await waitUntil { model.hasPreview }; await model.start()
+        model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }; await model.start()
         for index in 0..<30 {
             model.scene.placement.x = CGFloat(index) / 100
             try? await Task.sleep(nanoseconds: 10_000_000)
@@ -272,7 +272,7 @@ final class PresenterModelTests: XCTestCase {
         var emit: ((CVPixelBuffer, Int) -> Void)?
         capture.onFrames = { emit = $0 }
         model.makePrivateCamera = { _ in capture }
-        model.open(); model.includeCamera = true
+        model.selectCanvas(); model.open(); model.includeCamera = true
         await waitUntil { emit != nil }
         emit?(try XCTUnwrap(CMSampleBufferGetImageBuffer(screenSample())), 0)
         XCTAssertTrue(model.hasCameraFrames)
@@ -291,7 +291,7 @@ final class PresenterModelTests: XCTestCase {
         let capture = Capture(); model.makePrivateCamera = { _ in capture }
         var prepared = false
         model.preparePrivateCamera = { prepared = true }
-        model.open(); await waitUntil { model.hasPreview }
+        model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
         XCTAssertFalse(capture.started)
         model.includeCamera = true
         await waitUntil { capture.started }
@@ -304,7 +304,7 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false)
         let capture = Capture(); capture.delay = true
         model.makePrivateCamera = { _ in capture }
-        model.open(); model.includeCamera = true
+        model.selectCanvas(); model.open(); model.includeCamera = true
         await waitUntil { capture.waiting != nil }
         var released = false
         let release = Task { await model.releaseCamera(); released = true }

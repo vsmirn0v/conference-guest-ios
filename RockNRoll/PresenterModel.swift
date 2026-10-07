@@ -15,6 +15,16 @@ protocol PresenterScreenSource: AnyObject {
 /// One compositor job and one latest camera frame. Setup is private until Share.
 @MainActor
 final class PresenterModel: ObservableObject {
+    enum Source { case screen, canvas }
+    enum Tool: String { case move, crop, draw }
+    @Published private(set) var source: Source = .screen
+    @Published var tool: Tool = .move
+    @Published private var undoStack: [[[CGPoint]]] = []
+    @Published private var redoStack: [[[CGPoint]]] = []
+    var canUndoDrawing: Bool { !undoStack.isEmpty }
+    var canRedoDrawing: Bool { !redoStack.isEmpty }
+    var canCompose: Bool { source == .canvas || screenSelected }
+    var onPreviewVisibilityChanged: ((Bool) -> Void)?
     /// Retained capture pixels are immutable while the worker reads them.
     private struct CameraFrame: @unchecked Sendable { let pixels: CVPixelBuffer? }
     @Published var scene = PresenterScene() {
@@ -107,10 +117,15 @@ final class PresenterModel: ObservableObject {
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 
     func open() {
-        if !presented && !running && cameraOn { includeCamera = true }
-        presented = true; error = nil; refresh()
+        if !presented && !running && cameraOn && canCompose { includeCamera = true }
+        presented = true; onPreviewVisibilityChanged?(true); error = nil; refresh()
     }
-    func close() { presented = false; refresh() }
+    func close() { presented = false; onPreviewVisibilityChanged?(false); refresh() }
+    func restorePreview() {
+        guard presented, active, foreground, !held else { return }
+        if let latest { preview.restore(latest, rotation: 0) }
+        else { requestRender() }
+    }
     func flipCamera() {
         guard includeCamera, canFlipCamera else { return }
         cameraPosition = cameraPosition == .front ? .back : .front
@@ -174,7 +189,7 @@ final class PresenterModel: ObservableObject {
             queue.async { withExtendedLifetime(retired) {} }
             return
         }
-        if includeCamera && !nativeOverlay && cameraSource == nil && ownedCamera == nil && cameraTask == nil {
+        if includeCamera && canCompose && !nativeOverlay && cameraSource == nil && ownedCamera == nil && cameraTask == nil {
             let attempt = cameraEpoch
             let onFrame: @MainActor (CVPixelBuffer, Int) -> Void = { [weak self] buffer, rotation in
                 guard let self, self.cameraEpoch == attempt, self.cameraOn, !self.held else { return }
@@ -229,6 +244,7 @@ final class PresenterModel: ObservableObject {
     }
     private func render() {
         guard !busy, active, foreground, !held, presented || running || starting,
+              source == .canvas || screenSelected,
               !screenPicking || running,
               !screenSelected || screenSample != nil else { return }
         if compositor == nil || compositorSize != canvasSize {
@@ -292,14 +308,23 @@ final class PresenterModel: ObservableObject {
     func sharingEnded() { shareEpoch = UUID(); running = false; starting = false; releaseScreen(); invalidateRender(); refresh() }
     func end() {
         active = false; presented = false
+        onPreviewVisibilityChanged?(false); onPreviewVisibilityChanged = nil
         stop(); refresh()
         scene = PresenterScene(); includeCamera = false
+        undoStack = []; redoStack = []
         startSharing = nil; sendSample = nil; stopSharing = nil; makeCameraSource = nil; preparePrivateCamera = nil
         makeScreenSource = nil; shareOtherApps = nil
     }
     func selectScreen() {
         guard active, !held, foreground, !screenPicking else { return }
-        guard let makeScreenSource else { shareOtherApps?(); return }
+        guard let makeScreenSource else {
+            source = .screen
+            invalidateCamera(); invalidateRender(); refresh()
+            shareOtherApps?()
+            return
+        }
+        let previousSource = source
+        source = .screen
         screenPicking = true
         if !running { invalidateRender() }
         if let screenSource { screenSource.start(); return }
@@ -317,11 +342,15 @@ final class PresenterModel: ObservableObject {
             self.invalidateRender(); self.refresh(); self.requestRender()
         }, { [weak self] in
             guard let self, self.screenEpoch == attempt else { return }
-            if self.screenSelected { self.screenPicking = false }
+            self.screenPicking = false
+            if !self.screenSelected { self.source = previousSource }
+            self.refresh(); self.requestRender()
         }, { [weak self] message in
             guard let self, self.screenEpoch == attempt else { return }
             self.error = message
-            if self.screenSelected { self.stop() } else { self.releaseScreen(); self.refresh(); self.requestRender() }
+            if self.screenSelected { self.stop() } else {
+                self.source = previousSource; self.releaseScreen(); self.refresh(); self.requestRender()
+            }
         })
         self.screenSource = source; source.start()
         }
@@ -345,6 +374,7 @@ final class PresenterModel: ObservableObject {
     }
     func selectCanvas(clearImage: Bool = false) {
         releaseScreen(); scene.draftStroke = []
+        source = .canvas
         if clearImage { scene.image = nil }
         invalidateRender(); refresh()
     }
@@ -382,7 +412,25 @@ final class PresenterModel: ObservableObject {
     }
     func appendAnnotation(_ points: [CGPoint]) {
         guard !points.isEmpty else { return }
+        saveDrawingUndo()
         if scene.strokes.count == 32 { scene.strokes.removeFirst() }
         scene.strokes.append(Array(points.prefix(512)).map { CGPoint(x: min(1, max(0, $0.x)), y: min(1, max(0, $0.y))) })
+    }
+    private func saveDrawingUndo() {
+        undoStack.append(scene.strokes)
+        if undoStack.count > 32 { undoStack.removeFirst() }
+        redoStack = []
+    }
+    func undoDrawing() {
+        guard let previous = undoStack.popLast() else { return }
+        redoStack.append(scene.strokes); scene.draftStroke = []; scene.strokes = previous
+    }
+    func redoDrawing() {
+        guard let next = redoStack.popLast() else { return }
+        undoStack.append(scene.strokes); scene.draftStroke = []; scene.strokes = next
+    }
+    func clearDrawings() {
+        guard !scene.strokes.isEmpty else { return }
+        saveDrawingUndo(); scene.draftStroke = []; scene.strokes = []
     }
 }

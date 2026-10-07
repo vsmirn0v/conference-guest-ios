@@ -29,6 +29,13 @@ final class GuestSampleBufferView: UIView {
 
     func clear() { display.flushAndRemoveImage() }
 
+    /// A static canvas has no next frame to restart display after reparenting.
+    func restore(_ sample: CMSampleBuffer, rotation: Int) {
+        layoutIfNeeded()
+        display.flush()
+        enqueue(sample, rotation: rotation)
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         CATransaction.begin()

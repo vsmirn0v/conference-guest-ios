@@ -6,9 +6,11 @@ Implemented 2026-10-07. No release or TestFlight upload is included in this chan
 
 The existing microphone glyph fills from orange to a warm light color as local input rises. Its size, label and position remain stable. The same glyph appears in the PiP **You** badge, independently of the remote speaking indicator. Silence is normal; unavailable or stale data never animates a healthy signal.
 
-Long-press Mic, or open Camera & sound → Sound → **Test microphone**. An unmuted meeting offers **Mute and test microphone**. Both adapters confirm mute before private capture starts. The check shows input level and route, records at most five seconds, and can replay that sample. Closing, changing pane, backgrounding, interruption, route change, ending the meeting, or deliberately unmuting stops the check and discards its sample. Testing never automatically unmutes.
+Long-press Mic, or open Camera & sound → Audio → Sound. Live microphones show the existing publication's input level without muting or opening another capture session. While muted, an already-authorized microphone starts a private live meter; otherwise **Test microphone** requests permission explicitly. Both adapters confirm meeting mute before private capture starts. Closing, changing pane, backgrounding, interruption, route change, ending the meeting, or deliberately unmuting stops private capture. Testing never automatically unmutes.
 
-A moving meter proves local capture only. Meeting mute/readiness and interruption state control the publication indicator; neither indicator proves another participant can hear the user. The Sound pane explains this distinction. Private recording checks the input; meeting noise/echo processing can differ.
+The forced five-second recording/playback workflow has been removed. Input levels provide immediate feedback; no microphone clips are retained. The separate Devices pane offers a brief generated speaker sound.
+
+A moving meter proves local capture only. Meeting mute/readiness and interruption state control the publication indicator; neither indicator proves another participant can hear the user. Private input monitoring can differ from meeting noise/echo processing.
 
 ## Implementation
 
@@ -17,10 +19,13 @@ A moving meter proves local capture only. Meeting mute/readiness and interruptio
 - The jam adapter observes processed PCM via LiveKit's public local audio renderer. It neither changes the processing delegate nor starts local recording to obtain a meter.
 - The guest adapter observes the pinned bundled WebRTC factory's public creation methods, forwarding their original implementations unchanged. A weak, locked registry tracks peers; enabled outgoing audio sources are sampled through public WebRTC statistics about every 150 ms. There is no replacement audio device, second capture engine for the live meter, SDK field inspection, or private Apple API. This boundary needs requalification when the vendor SDK is upgraded.
 - Private checks use a separate AVAudioEngine input tap only after confirmed meeting mute, or before joining. They do not contain room, track, encoder or network references. In an active meeting they do not change/deactivate its audio session. The engine exists only while testing; it is released when capture stops.
-- The bounded clip is mono PCM in memory, encoded as WAV for AVAudioPlayer. Capture stops before playback. No audio files, backend, transcription, or new package dependencies are introduced.
+- Private metering keeps no audio clip. Speaker check synthesizes 400 ms of mono PCM in memory for AVAudioPlayer; it never captures microphone input or changes an active meeting audio category. No audio files, backend, transcription, or package dependencies are introduced.
 - New controls and microphone permission copy are localized in English and Russian.
 
-## Validation
+## Earlier validation
+
+The results below predate the removal of timed recording. Current qualification is in `studio-workflow-validation-2026-10-07.md`.
+
 
 - iOS 27: 35 focused app checks completed with 33 passes and two opt-in hardware skips. The final microphone/check rerun completed with 11 passes and one hardware skip; all three UI scenarios passed after lifecycle/UI changes.
 - iOS 17.5 iPhone SE: guest/jam inspector checks and Russian checks passed through portrait, landscape and background dismissal. Screenshots exposed a tall landscape section; the compact layout now keeps level/record/stop actions together. Rotation checks wait for the completed transition.

@@ -92,17 +92,9 @@ final class MicrophoneActivityTests: XCTestCase {
         sink.receive(buffer)
         wait(for: [result], timeout: 1)
     }
-    func testRecordingIsBoundedAndWavIsPlayableWithoutFiles() throws {
-        let clip = SoundCheckClip()
-        let buffer = try makeBuffer(rate: 8_000, frames: 48_000, value: 0.1)
-        clip.append(buffer); XCTAssertNil(clip.finish(), "Capture without recording must not retain audio")
-        clip.begin(); clip.append(buffer); clip.append(buffer)
-        let data = try XCTUnwrap(clip.finish())
-        XCTAssertEqual(data.count, 44 + 8_000 * 5 * 2)
-        XCTAssertEqual(String(data: data.prefix(4), encoding: .ascii), "RIFF")
-        let player = try AVAudioPlayer(data: data)
-        XCTAssertEqual(player.duration, 5, accuracy: 0.001)
-        clip.clear(); XCTAssertNil(clip.finish())
+    func testSpeakerCheckIsShortAndPlayableWithoutFiles() throws {
+        let player = try AVAudioPlayer(data: SpeakerCheck.tone())
+        XCTAssertEqual(player.duration, 0.4, accuracy: 0.001)
     }
     func testPiPLevelUpdatesLeaveVideoAndBadgeGeometryIntact() throws {
         let video = UIView()
@@ -135,7 +127,6 @@ final class PrivateSoundCheckTests: XCTestCase {
     private final class Capture: PrivateMicrophoneCapturing {
         var running = false
         var starts = 0
-        var records = 0
         var continuation: CheckedContinuation<Void, Never>?
         var delayed = false
         func start(standalone: Bool, onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws {
@@ -144,8 +135,6 @@ final class PrivateSoundCheckTests: XCTestCase {
             try Task.checkCancellation()
             running = true
         }
-        func beginRecording() { records += 1 }
-        func finishRecording() -> Data? { Data([1]) }
         func stop() { running = false }
     }
     private func settle(_ predicate: () -> Bool) async {
@@ -197,13 +186,12 @@ final class PrivateSoundCheckTests: XCTestCase {
             userInfo: [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue])
         XCTAssertFalse(capture.running); XCTAssertEqual(model.soundCheck.state, .idle)
         model.testMicrophone(); await settle { capture.running }
-        model.soundCheck.record()
         NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil,
             userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue])
         XCTAssertFalse(capture.running); XCTAssertEqual(model.soundCheck.state, .idle)
         model.end()
     }
-    func testMuteFailureDoesNotCaptureAndBackgroundClearsRecording() async {
+    func testMuteFailureDoesNotCaptureAndBackgroundStopsMeter() async {
         let capture = Capture()
         let model = StudioModel(audioControl: .noiseSuppression, privateMicrophone: capture)
         model.soundCheck.verifyMuted = { throw SoundCheckError.mute }
@@ -212,8 +200,6 @@ final class PrivateSoundCheckTests: XCTestCase {
         XCTAssertEqual(capture.starts, 0)
         model.soundCheck.verifyMuted = nil; model.testMicrophone()
         await settle { capture.running }
-        model.soundCheck.record()
-        XCTAssertEqual(capture.records, 1)
         NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
         XCTAssertFalse(capture.running); XCTAssertEqual(model.soundCheck.state, .idle)
         model.end()
@@ -228,11 +214,7 @@ final class PrivateSoundCheckTests: XCTestCase {
         XCTAssertEqual(check.state, .listening, check.error ?? "")
         try await Task.sleep(nanoseconds: 1_000_000_000)
         XCTAssertTrue(check.activity.hasSignal, "No PCM arrived")
-        check.record()
-        try await Task.sleep(nanoseconds: 5_200_000_000)
-        XCTAssertEqual(check.state, .sampleReady, check.error ?? "")
-        check.play(); XCTAssertEqual(check.state, .playing, check.error ?? "")
-        try await Task.sleep(nanoseconds: 5_200_000_000)
-        XCTAssertEqual(check.state, .sampleReady)
+        check.stop()
+        XCTAssertEqual(check.state, .idle)
     }
 }

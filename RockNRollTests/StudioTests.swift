@@ -1,10 +1,29 @@
 import AVFoundation
+import ImagePlayground
 import LiveKit
 import XCTest
 @testable import RockNRoll
 
 @MainActor
 final class StudioTests: XCTestCase {
+    func testMacStudioManualQualificationWindow() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              ProcessInfo.processInfo.environment["ROCKNROLL_TEST_STUDIO_MANUAL"] == "1" else {
+            throw XCTSkip("Opt-in Mac Studio presentation qualification")
+        }
+        let model = StudioModel(audioControl: .noiseSuppression)
+        model.presenter.startSharing = { _ in }
+        model.presenter.stopSharing = {}
+        model.presenter.selectCanvas()
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows).first { $0.isKeyWindow })
+        let host = try XCTUnwrap(window.rootViewController)
+        StudioPresentation.show(model, from: host.view, pane: .presenter)
+        if #available(iOS 18.1, *) { NSLog("STUDIO_IMAGE_PLAYGROUND_AVAILABLE=%@", String(ImagePlaygroundViewController.isAvailable)) }
+        try await Task.sleep(nanoseconds: 120_000_000_000)
+        XCTAssertNotNil(host.presentedViewController)
+        model.end(); host.dismiss(animated: false)
+    }
     func testMacPrivateCameraPreviewUsesVideoOnlyAndReleasesCapture() async throws {
         guard ProcessInfo.processInfo.isiOSAppOnMac,
               ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRIVATE_CAMERA"] == "1" else {
@@ -20,8 +39,30 @@ final class StudioTests: XCTestCase {
         XCTAssertEqual(session.inputs.count, 1)
         XCTAssertTrue(session.outputs.isEmpty, "Preview must not add an encoding/recording output")
         let input = try XCTUnwrap(session.inputs.first as? AVCaptureDeviceInput)
+        if #available(iOS 17.0, *) {
+            let rotation = AVCaptureDevice.RotationCoordinator(device: input.device, previewLayer: layer)
+            camera.view.frame = CGRect(x: 0, y: 0, width: 320, height: 180)
+            camera.view.layoutIfNeeded()
+            let connection = try XCTUnwrap(layer.connection)
+            let angle = rotation.videoRotationAngleForHorizonLevelPreview
+            // The UIKit-on-Mac preview connection starts with a 90-degree origin
+            // on the hardware this opt-in check qualifies. A second preview layer
+            // would compete for the session and disturb the visual check.
+            let expected = PrivateCameraPreview.connectionAngle(horizon: angle, nativeDefault: 90, isMac: true)
+            if connection.isVideoRotationAngleSupported(expected) {
+                XCTAssertEqual(connection.videoRotationAngle, expected, accuracy: 0.01)
+            }
+        }
         XCTAssertTrue(input.device.hasMediaType(.video))
         XCTAssertFalse(input.device.hasMediaType(.audio))
+        if #available(iOS 17.0, *), ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAMERA_WINDOW"] == "1" {
+            let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).first { $0.isKeyWindow })
+            let host = try XCTUnwrap(window.rootViewController)
+            let model = StudioModel(audioControl: .noiseSuppression, privateCamera: camera)
+            StudioPresentation.show(model, from: host.view)
+            try await Task.sleep(nanoseconds: 60_000_000_000)
+            model.end(); host.dismiss(animated: false)
+        }
         await camera.stop()
         XCTAssertFalse(session.isRunning)
         XCTAssertTrue(session.inputs.isEmpty, "SDK camera ownership must be released before publication")

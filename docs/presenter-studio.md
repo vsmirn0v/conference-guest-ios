@@ -105,7 +105,7 @@ The Mac live-screen path is described below.
 
 ## Movable camera and live screen sources
 
-Share now opens one editor with a source menu: Screen/window, Image and Blank canvas.
+Tap Share directly opens the system screen chooser; tap again while sharing to stop. Hold/right-click Share to open Presenter with a source menu: Screen/window, Image and Blank canvas. Screen is the initial source; camera is off.
 On iPhone/iPad, Screen/other apps starts the existing system broadcast and keeps its
 screen-only background behavior. Camera composition and annotations there apply to
 image/blank canvases, which stop when backgrounded. Full-display camera composition
@@ -114,16 +114,13 @@ cover other apps.
 
 Camera rectangles use normalized top-left coordinates shared by the editor and
 compositor. Drag the outlined camera region; pinch or drag its corner to resize.
-Corner presets and an adjustable size slider provide alternatives for pointer and
-VoiceOver users. Side by side reserves a camera column so content remains unobscured.
+A compact camera-layout menu contains corner presets, size steps and rotation as alternatives for pointer and VoiceOver users. Duplicate size sliders are removed. Side by side reserves a camera column so content remains unobscured.
 Instrument Crop is separate from moving the layer. Layout/placement persist locally;
 images, drawings, camera consent and capture state never persist. Expand canvas opens
 a larger editor. The compositor does not draw editor controls into its output.
 Sharing an entire display can still include the app's window as captured content;
 choose a separate window for a clean presentation while editing the canvas.
-Only one editor hosts the native preview surface at a time, preventing the small
-and expanded views from stealing it from one another. The larger editor scrolls
-when its controls cannot fit in a compact landscape window.
+One mounted editor hosts the native preview surface. Expand resizes that editor and hides settings, instead of creating a second host. Its drawing toolbar provides Undo, Redo and undoable Clear. The regular settings remain in a separate scrollable area, with a fixed Share action. Opening Presenter also suspends the meeting local-share thumbnail conversion while outgoing sharing continues.
 
 Drawing sends bounded in-progress strokes before finger lift. Image decoding runs
 off the main thread, reports failures and discards canceled/retired imports. Readiness
@@ -153,3 +150,7 @@ performs no app-owned GPU composition. App camera/drawings disappear in backgrou
 and resume on foreground. Native Presenter Overlay remains system-managed. Runtime
 multitasking-camera capability is queried before enabling the AVFoundation flag;
 that flag is not treated as permission to render with Metal in a background UIKit app.
+
+## October 7 workflow update
+
+The camera preview uses the capture-device rotation coordinator on iOS 17+; the older-system fallback remains. Apple Image Playground is presented from a stable UIKit controller, capability gated, and returns generated images to the same private canvas. Current UI, Mac hardware and rendering qualification is recorded in `studio-workflow-validation-2026-10-07.md`.

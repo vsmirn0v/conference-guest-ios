@@ -1,4 +1,5 @@
 import XCTest
+import ImageIO
 
 final class PresenterUITests: XCTestCase {
     func testExpandedEditorFitsLandscapeAndReturnsPreview() {
@@ -6,6 +7,7 @@ final class PresenterUITests: XCTestCase {
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
         app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "studio"
+        app.launchEnvironment["CONFERENCE_TEST_PRESENTER_WARM"] = "1"
         defer { XCUIDevice.shared.orientation = .portrait; app.terminate() }
         XCUIDevice.shared.orientation = .portrait
         app.launch(); open(app)
@@ -13,19 +15,33 @@ final class PresenterUITests: XCTestCase {
         let done = app.navigationBars["Canvas"].buttons["Done"]
         XCTAssertTrue(done.waitForExistence(timeout: 5))
         XCUIDevice.shared.orientation = .landscapeLeft
+        waitForOrientation(app, landscape: true)
         waitForHittable(done)
         let tools = app.segmentedControls["presenter.expanded-tools"]
         let draw = tools.buttons["Draw"]
-        let editor = app.scrollViews.containing(.segmentedControl, identifier: "presenter.expanded-tools").firstMatch
-        for _ in 0..<4 { if draw.isHittable { break }; editor.swipeUp() }
         XCTAssertTrue(draw.isHittable)
         draw.tap()
+        XCTAssertTrue(app.buttons["presenter.clear"].isHittable)
+        let canvas = app.descendants(matching: .any)["presenter.preview"].firstMatch
+        assertCanvasPixels(canvas)
+        canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.3)).press(forDuration: 0.05,
+            thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.6)))
+        XCTAssertTrue(app.buttons["presenter.undo"].isEnabled)
+        app.buttons["presenter.clear"].tap()
+        XCTAssertTrue(app.buttons["presenter.undo"].isEnabled)
+        app.buttons["presenter.undo"].tap()
         done.tap()
         XCUIDevice.shared.orientation = .portrait
+        waitForOrientation(app, landscape: false)
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
-        for _ in 0..<4 { if app.buttons["presenter.expand"].isHittable { break }; app.swipeDown() }
+        for _ in 0..<4 { if app.buttons["presenter.expand"].isHittable { break }; app.descendants(matching: .any)["studio.settings"].firstMatch.swipeDown() }
         XCTAssertTrue(app.descendants(matching: .any)["presenter.preview"].firstMatch.exists)
         XCTAssertTrue(app.staticTexts["Preview · Only you"].exists)
+        assertCanvasPixels(app.descendants(matching: .any)["presenter.preview"].firstMatch)
+        app.buttons["presenter.expand"].tap()
+        assertCanvasPixels(app.descendants(matching: .any)["presenter.preview"].firstMatch)
+        app.buttons["studio.done"].tap()
+        assertCanvasPixels(app.descendants(matching: .any)["presenter.preview"].firstMatch)
     }
 
     func testPresenterStartsPrivatelyAndSurvivesSmallScreenRotation() {
@@ -81,14 +97,14 @@ final class PresenterUITests: XCTestCase {
         }
         // A warm canvas distinguishes outgoing composition from a black idle tile.
         let scene = app.descendants(matching: .any)["presenter.scene"].firstMatch
-        for _ in 0..<4 { if scene.isHittable { break }; app.swipeUp() }
+        for _ in 0..<4 { if scene.isHittable { break }; app.descendants(matching: .any)["studio.settings"].firstMatch.swipeUp() }
         scene.tap()
         app.buttons["Warm"].tap()
         app.buttons["presenter.start"].tap()
         XCTAssertTrue(app.buttons["presenter.stop"].waitForExistence(timeout: 10))
         for _ in 0..<4 {
             if app.switches["presenter.camera"].isHittable { break }
-            app.swipeDown()
+            app.descendants(matching: .any)["studio.settings"].firstMatch.swipeDown()
         }
         if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_CAMERA"] == "1" {
             XCTAssertEqual(app.switches["presenter.camera"].value as? String, "1", app.debugDescription)
@@ -104,6 +120,43 @@ final class PresenterUITests: XCTestCase {
         app.buttons["More call options"].firstMatch.tap()
         app.buttons["Presenter"].firstMatch.tap()
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
+        let source = app.buttons["presenter.source"]
+        waitForHittable(source); source.tap()
+        XCTAssertTrue(app.buttons["Blank canvas"].waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["Blank canvas"].tap()
+    }
+    private func assertCanvasPixels(_ canvas: XCUIElement) {
+        XCTAssertTrue(canvas.waitForExistence(timeout: 5))
+        let visible = expectation(for: NSPredicate { _, _ in
+            let png = canvas.screenshot().pngRepresentation
+            guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return false }
+            let width = 32, height = 32
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            return pixels.withUnsafeMutableBytes { raw in
+                guard let context = CGContext(data: raw.baseAddress, width: width, height: height,
+                    bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+                context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+                let bytes = raw.bindMemory(to: UInt8.self)
+                let bright = stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] > 25 && bytes[$0 + 1] > 8 }.count
+                return bright > width * height / 3
+            }
+        }, evaluatedWith: canvas)
+        let result = XCTWaiter.wait(for: [visible], timeout: 5)
+        if result != .completed {
+            let crop = XCTAttachment(screenshot: canvas.screenshot())
+            crop.name = "Canvas pixel crop"; crop.lifetime = .keepAlways; add(crop)
+            let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            capture.name = "Canvas rendering failure"; capture.lifetime = .keepAlways; add(capture)
+        }
+        XCTAssertEqual(result, .completed)
+    }
+    private func waitForOrientation(_ app: XCUIApplication, landscape: Bool) {
+        let expectation = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            landscape ? app.frame.width > app.frame.height : app.frame.height > app.frame.width
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed)
     }
     private func waitForHittable(_ element: XCUIElement) {
         let expectation = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: element)

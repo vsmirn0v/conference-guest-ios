@@ -446,7 +446,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             studio.flipLiveCamera = { [weak self] in self?.onFlipCamera?() }
             StudioShortcut.install(on: microphone, pane: .sound, model: studio)
             StudioShortcut.install(on: camera, pane: .camera, model: studio)
-            StudioShortcut.install(on: speaker, pane: .sound, model: studio)
+            StudioShortcut.install(on: speaker, pane: .sound, model: studio, devices: true)
         }
         share.addAction(UIAction { [weak self] _ in
             guard let self else { return }
@@ -489,6 +489,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         workspace.leave = { [weak self] in leave.sendActions(for: .touchUpInside); self?.workspace.onHold = false }
 
         let audioControl = UIView()
+        audioControl.accessibilityIdentifier = "call.output"
         routePicker.translatesAutoresizingMaskIntoConstraints = false
         audioControl.addSubview(routePicker)
         let audioTitle = UILabel()
@@ -519,6 +520,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             audioAppearance.bottomAnchor.constraint(equalTo: audioControl.bottomAnchor)
         ])
         audioControl.accessibilityLabel = L("Audio output")
+        if let studio { StudioShortcut.install(on: audioControl, pane: .sound, model: studio, devices: true) }
         let shareControl = UIView()
         for item in [share, sharePicker, shareTitle] {
             item.translatesAutoresizingMaskIntoConstraints = false
@@ -550,7 +552,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             broadcastAppearance.topAnchor.constraint(equalTo: shareControl.topAnchor),
             broadcastAppearance.bottomAnchor.constraint(equalTo: shareControl.bottomAnchor)
         ])
-        let bar = CallToolbar(items: [microphone, camera, audioControl, shareControl, moreButton, leave])
+        let bar = CallToolbar(items: [microphone, camera, shareControl, audioControl, moreButton, leave])
         toolbar = bar
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.textColor = .lightGray
@@ -1168,6 +1170,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         moreButton.accessibilityValue = floatingVideo?.canShow == true ? L("Floating video available") : nil
         var items: [UIMenuElement] = []
         if let studio {
+            items.append(UIAction(title: L("Audio devices"), image: UIImage(systemName: "headphones")) { [weak self] _ in
+                guard let self else { return }
+                studio.audioSection = .devices
+                StudioPresentation.show(studio, from: self.moreButton, pane: .sound)
+            })
             items.append(UIAction(title: L("Camera & sound"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
                 guard let self else { return }
                 StudioPresentation.show(studio, from: self.moreButton)

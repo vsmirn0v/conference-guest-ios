@@ -1,7 +1,7 @@
 # Meeting Studio
 
-Camera & sound is the first item in More in both meeting views. Hold the microphone
-or audio-route control to open Sound; hold Video to open Camera. Short taps keep
+Camera & sound is the first item in More in both meeting views. Hold Mic to open Audio → Sound, Output to open Audio → Devices, and Video to open Video.
+Tap Share for the system screen chooser; hold it for Presenter. Short taps keep
 their mute/video/route behaviour. Secondary pointer clicks, VoiceOver actions and
 Command-comma expose the same settings. The secondary-click recognizer accepts
 pointer touches only, so it cannot swallow a touchscreen short tap.
@@ -35,7 +35,7 @@ keeps video off; closing a live preview keeps the existing publication on.
 
 Sound profiles and route selection remain available while muted. Apple's native
 microphone-mode panel still requires active microphone capture; opening settings
-never starts a separate microphone or changes mute intent. Simulator fixtures
+never changes mute intent. An authorized muted input can be metered privately, with explicit permission needed otherwise. Simulator fixtures
 open no capture or network. Real camera/effect behaviour is tested on Mac/iPhone.
 
 ## Sound profiles
@@ -100,3 +100,11 @@ backgrounds through the guest screen-share API; see `presenter-studio.md` for sc
 and qualification. Custom processing of the separate SDK camera tile still needs a
 supported outgoing-frame hook. Neural denoising remains an isolated experiment in
 `Experiments/EnhancedSpeech`, pending quality, energy and echo/recovery qualification.
+
+## Device settings and recording
+
+Audio has Sound and Devices sections. Mac uses the existing independent system-default input/output selectors. On iPhone/iPad, input selection uses `AVAudioSession.setPreferredInput` and output uses the native route picker. Bluetooth call routes can couple input/output. The panel explains that system headphone Audio Sharing depends on the active call route; no custom dual-headset engine is introduced. Speaker check generates a short local tone. Device settings never publish microphone/camera automatically.
+
+Guest recording uses public coordinator start/stop operations and observed service state. Availability and successful start are separate. Start requires a disclosure confirmation, and REC appears only after service confirmation. A timed-out request reports the missing confirmation. Recording belongs to the meeting service; organizers manage access/download on its site. Leave does not stop a room-wide recording for other participants. The practice engine has no recording backend.
+
+Current qualification is in `studio-workflow-validation-2026-10-07.md`.

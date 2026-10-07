@@ -1,5 +1,4 @@
 import AVFoundation
-import AVKit
 import Combine
 import SwiftUI
 import UIKit
@@ -19,25 +18,69 @@ struct StudioPanel: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                if !model.canvasExpanded {
                 Picker(L("Camera & sound"), selection: $model.pane) {
-                    Text(L("Camera")).tag(StudioModel.Pane.camera)
-                    Text(L("Sound")).tag(StudioModel.Pane.sound)
+                    Text(L("Audio")).tag(StudioModel.Pane.sound)
+                    Text(L("Video")).tag(StudioModel.Pane.camera)
                     if model.presenter.available { Text(L("Presenter")).tag(StudioModel.Pane.presenter) }
                 }
                 .pickerStyle(.segmented).padding(.horizontal).padding(.bottom, 8)
                 .accessibilityIdentifier("studio.panes")
+                }
+                if model.pane == .sound {
+                    Picker(L("Audio settings"), selection: $model.audioSection) {
+                        Text(L("Sound")).tag(StudioModel.AudioSection.sound)
+                        Text(L("Devices")).tag(StudioModel.AudioSection.devices)
+                    }.pickerStyle(.segmented).padding(.horizontal).accessibilityIdentifier("studio.audio-sections")
+                }
+                if model.pane == .presenter {
+                    // Keep one native surface mounted when expanding the canvas.
+                    // Reparenting it between Form and a second host loses display.
+                    GeometryReader { geometry in
+                        VStack(spacing: 0) {
+                            PresenterCanvasEditor(model: model.presenter, expanded: $model.canvasExpanded)
+                                .frame(height: model.canvasExpanded ? geometry.size.height : min(300, geometry.size.height * 0.58))
+                            if !model.canvasExpanded {
+                                Form { PresenterControls(model: model.presenter, recording: model.recording) }
+                                    .accessibilityIdentifier("studio.settings")
+                            }
+                        }
+                    }
+                } else {
                 Form {
                     switch model.pane {
                     case .camera: cameraControls
-                    case .sound: soundControls
-                    case .presenter: PresenterControls(model: model.presenter)
+                    case .sound:
+                        if model.audioSection == .devices { AudioDevicesControls(studio: model).disabled(model.held || !model.active) }
+                        else { soundControls }
+                    case .presenter: EmptyView()
                     }
                     if model.held || !model.active {
                         Section { Text(model.active ? L("Sound controls are paused while the meeting is on hold.") : L("The meeting has ended.")) }
                     }
+                }.accessibilityIdentifier("studio.settings")
                 }
+                footer
             }
-            .safeAreaInset(edge: .bottom) {
+            .navigationTitle(model.canvasExpanded ? L("Canvas") : model.pane == .presenter ? L("Share") : L("Camera & sound"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) {
+                Button(L("Done")) {
+                    if model.canvasExpanded { model.canvasExpanded = false } else { model.close() }
+                }.accessibilityIdentifier("studio.done")
+            } }
+            .onAppear { model.refreshSystemSelection() }
+            .onChange(of: model.presented) { if !$0 { if let onDismiss { onDismiss() } else { dismiss() } } }
+            .onChange(of: model.audioSection) { _ in model.releasePrivateMicrophone() }
+            .onReceive(refresh) { _ in model.refreshSystemSelection() }
+            .background(GeometryReader { size in
+                Color.clear.onAppear { compact = size.size.height < 500 }
+                    .onChange(of: size.size) { compact = $0.height < 500 }
+            })
+        }.tint(Color(red: 1, green: 0.60, blue: 0.33))
+    }
+
+    @ViewBuilder private var footer: some View {
                 if model.active && !model.held {
                     VStack(spacing: 8) {
                         if model.pane == .camera && !model.cameraOn && !model.presenter.running && model.enableCamera != nil {
@@ -66,20 +109,6 @@ struct StudioPanel: View {
                         }
                     }.padding(.horizontal).padding(.vertical, 10).background(.regularMaterial)
                 }
-            }
-            .navigationTitle(model.pane == .presenter ? L("Share") : L("Camera & sound"))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) {
-                Button(L("Done")) { model.close() }.accessibilityIdentifier("studio.done")
-            } }
-            .onAppear { model.refreshSystemSelection() }
-            .onChange(of: model.presented) { if !$0 { if let onDismiss { onDismiss() } else { dismiss() } } }
-            .onReceive(refresh) { _ in model.refreshSystemSelection() }
-            .background(GeometryReader { size in
-                Color.clear.onAppear { compact = size.size.height < 500 }
-                    .onChange(of: size.size) { compact = $0.height < 500 }
-            })
-        }.tint(Color(red: 1, green: 0.60, blue: 0.33))
     }
 
     private var cameraControls: some View {
@@ -154,10 +183,8 @@ struct StudioPanel: View {
             }
             .pickerStyle(.segmented).accessibilityIdentifier("studio.sound-profile")
             .disabled(!model.active || model.held || model.applying || model.applyProfile == nil)
-            HStack {
+            Button { model.audioSection = .devices } label: {
                 Label(L("Audio devices"), systemImage: "headphones")
-                Spacer()
-                StudioAudioRouteControl().frame(width: 44, height: 44)
             }
             Text(compact ? L("Conversation reduces noise. Music keeps more detail.") : model.audioExplanation)
                 .font(.footnote).foregroundStyle(.secondary)
@@ -189,37 +216,46 @@ struct StudioPanel: View {
 
 struct StudioPreviewSurface: UIViewRepresentable {
     let view: UIView
-    func makeUIView(context: Context) -> UIView { UIView() }
+    var onAttach: (() -> Void)? = nil
+    func makeUIView(context: Context) -> UIView { StudioPreviewHost() }
     func updateUIView(_ host: UIView, context: Context) {
+        (host as? StudioPreviewHost)?.onAttach = onAttach
         if view.superview !== host {
             host.subviews.forEach { $0.removeFromSuperview() }
             host.addSubview(view)
             view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         }
-        view.frame = host.bounds
+        host.setNeedsLayout()
     }
+    static func dismantleUIView(_ host: UIView, coordinator: ()) { host.subviews.forEach { $0.removeFromSuperview() } }
 }
 
-private struct StudioAudioRouteControl: UIViewRepresentable {
-    func makeUIView(context: Context) -> UIView {
-        if ProcessInfo.processInfo.isiOSAppOnMac { return MacAudioRouteButton() }
-        let picker = AVRoutePickerView()
-        picker.tintColor = UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1)
-        picker.accessibilityLabel = L("Choose audio output")
-        return picker
+private final class StudioPreviewHost: UIView {
+    var onAttach: (() -> Void)?
+    private var size = CGSize.zero
+    override func didMoveToWindow() { super.didMoveToWindow(); size = .zero; setNeedsLayout() }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        subviews.forEach { $0.frame = bounds; $0.setNeedsLayout() }
+        if window != nil, bounds.width > 0, bounds.height > 0, size != bounds.size {
+            size = bounds.size; onAttach?()
+        }
     }
-    func updateUIView(_ view: UIView, context: Context) {}
 }
 
 @MainActor
 private final class StudioHostingController: UIHostingController<StudioPanel>, UIViewControllerTransitioningDelegate {
     private let model: StudioModel
+    private var subscription: AnyCancellable?
     init(model: StudioModel) {
         self.model = model
         super.init(rootView: StudioPanel(model: model))
         rootView = StudioPanel(model: model, onDismiss: { [weak self] in self?.dismiss(animated: true) })
         modalPresentationStyle = .custom
         transitioningDelegate = self
+        subscription = model.$canvasExpanded.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.presentationController?.containerView?.setNeedsLayout() }
+        }
     }
     @MainActor required dynamic init?(coder: NSCoder) { nil }
     override func viewDidDisappear(_ animated: Bool) {
@@ -227,7 +263,7 @@ private final class StudioHostingController: UIHostingController<StudioPanel>, U
         if isBeingDismissed || presentingViewController == nil { model.close() }
     }
     func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
-        StudioSheet(presentedViewController: presented, presenting: presenting)
+        StudioSheet(presentedViewController: presented, presenting: presenting, model: model)
     }
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
         StudioTransition(presenting: true)
@@ -259,8 +295,14 @@ private final class StudioTransition: NSObject, UIViewControllerAnimatedTransiti
 
 private final class StudioSheet: UIPresentationController {
     private let dim = UIView()
+    private let model: StudioModel
+    init(presentedViewController: UIViewController, presenting: UIViewController?, model: StudioModel) {
+        self.model = model
+        super.init(presentedViewController: presentedViewController, presenting: presenting)
+    }
     override var frameOfPresentedViewInContainerView: CGRect {
         guard let bounds = containerView?.bounds else { return .zero }
+        if model.canvasExpanded { return bounds }
         let side = bounds.width > bounds.height && bounds.width >= 600
         if side {
             let width = min(400, bounds.width * 0.48)

@@ -4,16 +4,13 @@ import Combine
 @MainActor
 protocol PrivateMicrophoneCapturing: AnyObject {
     func start(standalone: Bool, onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws
-    func beginRecording()
-    func finishRecording() -> Data?
     func stop()
 }
 
-/// No tracks, encoder, room or network references. The bounded clip stays in RAM.
+/// Local metering only. No tracks, encoder, recording buffers or network references.
 @MainActor
 final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
     private var engine: AVAudioEngine?
-    private let clip = SoundCheckClip()
     private var tapped = false
     private var standalone = false
     func start(standalone: Bool, onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws {
@@ -37,19 +34,15 @@ final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0, format.commonFormat == .pcmFormatFloat32 else { throw SoundCheckError.input }
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [clip] buffer, _ in
-            clip.append(buffer)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
             onBuffer(buffer)
         }
         tapped = true
         do { try engine.start() } catch { stop(); throw error }
     }
-    func beginRecording() { clip.begin() }
-    func finishRecording() -> Data? { clip.finish() }
     func stop() {
         if tapped { engine?.inputNode.removeTap(onBus: 0); tapped = false }
         engine?.stop(); engine = nil
-        clip.clear()
         if standalone { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation); standalone = false }
     }
 }
@@ -65,48 +58,9 @@ enum SoundCheckError: LocalizedError {
     }
 }
 
-/// Downmix a maximum of five seconds. No unbounded buffers or audio files.
-final class SoundCheckClip: @unchecked Sendable {
-    private let lock = NSLock()
-    private var samples: [Int16] = []
-    private var rate: Double = 0
-    private var recording = false
-    func begin() { lock.lock(); defer { lock.unlock() }; samples.removeAll(keepingCapacity: true); rate = 0; recording = true }
-    func append(_ buffer: AVAudioPCMBuffer) {
-        lock.lock(); defer { lock.unlock() }
-        guard recording, let data = buffer.floatChannelData, !buffer.format.isInterleaved,
-              buffer.format.sampleRate <= 192_000, buffer.format.sampleRate > 0 else { return }
-        if rate == 0 { rate = buffer.format.sampleRate; samples.reserveCapacity(Int(rate * 5)) }
-        guard rate == buffer.format.sampleRate else { recording = false; return }
-        let count = min(Int(buffer.frameLength), Int(rate * 5) - samples.count)
-        let channels = Int(buffer.format.channelCount)
-        guard channels > 0, count > 0 else { return }
-        for i in 0..<count {
-            var value: Float = 0
-            for c in 0..<channels { value += data[c][i] }
-            value /= Float(channels)
-            samples.append(value.isFinite ? Int16(max(-32768, min(32767, value * 32767))) : 0)
-        }
-    }
-    func finish() -> Data? {
-        lock.lock(); defer { lock.unlock() }
-        recording = false
-        guard !samples.isEmpty else { return nil }
-        var result = Data()
-        func word<T: FixedWidthInteger>(_ value: T) { var little = value.littleEndian; withUnsafeBytes(of: &little) { result.append(contentsOf: $0) } }
-        result.append(contentsOf: "RIFF".utf8); word(UInt32(36 + samples.count * 2)); result.append(contentsOf: "WAVEfmt ".utf8)
-        word(UInt32(16)); word(UInt16(1)); word(UInt16(1)); word(UInt32(rate)); word(UInt32(rate) * 2)
-        word(UInt16(2)); word(UInt16(16)); result.append(contentsOf: "data".utf8); word(UInt32(samples.count * 2))
-        samples.withUnsafeBytes { result.append(contentsOf: $0) }
-        samples.removeAll(keepingCapacity: false)
-        return result
-    }
-    func clear() { lock.lock(); defer { lock.unlock() }; recording = false; samples.removeAll(keepingCapacity: false); rate = 0 }
-}
-
 @MainActor
-final class PrivateSoundCheck: NSObject, ObservableObject, AVAudioPlayerDelegate {
-    enum State: Equatable { case idle, starting, listening, recording, sampleReady, playing, failed }
+final class PrivateSoundCheck: NSObject, ObservableObject {
+    enum State: Equatable { case idle, starting, listening, failed }
     @Published private(set) var state: State = .idle
     @Published private(set) var error: String?
     let activity = MicrophoneActivity()
@@ -114,8 +68,6 @@ final class PrivateSoundCheck: NSObject, ObservableObject, AVAudioPlayerDelegate
     private let capture: PrivateMicrophoneCapturing
     private var operation: Task<Void, Never>?
     private var generation = UUID()
-    private var sample: Data?
-    private var player: AVAudioPlayer?
     private var sink: MicrophoneSampleSink?
     private var standalone = false
     private var interruptions: [NSObjectProtocol] = []
@@ -134,7 +86,7 @@ final class PrivateSoundCheck: NSObject, ObservableObject, AVAudioPlayerDelegate
         }
     }
     deinit { interruptions.forEach { NotificationCenter.default.removeObserver($0) } }
-    var capturing: Bool { state == .listening || state == .recording }
+    var capturing: Bool { state == .listening }
     var running: Bool { capturing || state == .starting }
     func start(standalone: Bool) {
         stop()
@@ -166,35 +118,9 @@ final class PrivateSoundCheck: NSObject, ObservableObject, AVAudioPlayerDelegate
             }
         }
     }
-    func record() {
-        guard state == .listening else { return }
-        capture.beginRecording(); state = .recording
-        let epoch = generation
-        operation = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard !Task.isCancelled, let self, self.generation == epoch else { return }
-            self.sample = self.capture.finishRecording()
-            self.capture.stop(); self.sink = nil; self.activity.setStatus(.muted)
-            self.state = self.sample == nil ? .failed : .sampleReady
-            if self.sample == nil { self.error = SoundCheckError.input.localizedDescription }
-        }
-    }
-    func play() {
-        guard state == .sampleReady, let sample else { return }
-        do {
-            // Recording has stopped before playback. Never monitor the mic live.
-            try AVAudioSession.sharedInstance().setActive(true)
-            player = try AVAudioPlayer(data: sample); player?.delegate = self
-            guard player?.play() == true else { throw SoundCheckError.input }
-            state = .playing
-        } catch { self.error = error.localizedDescription; state = .failed }
-    }
-    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor [weak self] in guard self?.player === player else { return }; self?.player = nil; self?.state = .sampleReady }
-    }
     func stop() {
         generation = UUID(); operation?.cancel(); operation = nil
-        player?.stop(); player = nil; sample = nil; sink = nil
+        sink = nil
         capture.stop(); activity.setStatus(.muted); activity.clear()
         if standalone { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation); standalone = false }
         state = .idle; error = nil

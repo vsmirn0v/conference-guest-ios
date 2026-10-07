@@ -991,6 +991,17 @@ final class NativeConferenceEngine: CallEngine {
             self.studio.presenter.preparePrivateCamera = { [weak self] in
                 await self?.studio.releasePreviewCamera()
             }
+            self.studio.presenter.onPreviewVisibilityChanged = { [weak self] visible in
+                self?.localSharePreview.setEditorVisible(visible)
+            }
+            self.studio.recording.start = { [weak self] in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt, !self.leaveRequested else { return }
+                self.activeCoordinator?.startRecord()
+            }
+            self.studio.recording.stop = { [weak self] in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt, !self.leaveRequested else { return }
+                self.activeCoordinator?.stopRecord()
+            }
             self.studio.presenter.makeCameraSource = { [weak self, weak streams] onFrame in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                       !self.leaveRequested else { return nil }
@@ -1207,6 +1218,16 @@ final class NativeConferenceEngine: CallEngine {
             .sink { [weak self] canView, menu, canChat in
                 guard let self, self.sessionEpoch == epoch else { return }
                 self.catchUp.observe(messages: [], canView: canView, enabled: menu.asrState.isOn)
+                let record: MeetingRecording.State
+                switch menu.serverRecordState {
+                case .available: record = .available
+                case .loading: record = .starting
+                case .recording: record = .recording
+                case .stopping: record = .stopping
+                case .unavailable: record = .unavailable
+                @unknown default: record = .unavailable
+                }
+                self.studio.recording.observe(record)
                 if self.chat?.canSend != canChat { self.chat?.canSend = canChat }
             }
         transcriptSubscription = state.$messages.removeDuplicates().receive(on: DispatchQueue.main)

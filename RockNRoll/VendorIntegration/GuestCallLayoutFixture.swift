@@ -29,6 +29,9 @@ final class GuestCallLayoutFixture: UIViewController {
         studio?.presenter.startSharing = { _ in }
         studio?.presenter.sendSample = { _ in }
         studio?.presenter.stopSharing = {}
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_PRESENTER_WARM"] == "1" {
+            studio?.presenter.scene.backdrop = .warm
+        }
         let solo = scenario == "solo"
         controls = CallControls(localPreview: preview, state: nil, coordinator: nil, router: nil,
             catchUp: catchUp, chat: ChatStore(), initialDisplayMode: .all,

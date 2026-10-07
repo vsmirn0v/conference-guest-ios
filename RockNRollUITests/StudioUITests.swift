@@ -48,9 +48,18 @@ final class StudioUITests: XCTestCase {
         XCTAssertTrue(stop.waitForExistence(timeout: 5)); stop.tap()
         XCTAssertTrue(cam.waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["studio.done"].exists, "Short taps opened settings")
+        let output = app.descendants(matching: .any)["call.output"].firstMatch
+        XCTAssertTrue(output.exists)
+        output.press(forDuration: 0.7)
+        XCTAssertTrue(app.segmentedControls["studio.audio-sections"].buttons["Devices"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.segmentedControls["studio.audio-sections"].buttons["Devices"].isSelected)
+        XCTAssertTrue(app.descendants(matching: .any)["studio.output-device"].firstMatch.exists)
+        app.buttons["studio.done"].tap()
         mic.press(forDuration: 0.7)
         XCTAssertTrue(app.buttons["Music"].firstMatch.waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["studio.microphone-settings"].isEnabled)
+        let settings = app.buttons["studio.microphone-settings"]
+        for _ in 0..<3 { if settings.exists { break }; app.swipeUp() }
+        XCTAssertFalse(settings.isEnabled)
         app.buttons["studio.done"].tap()
         XCTAssertTrue(mic.waitForExistence(timeout: 5)); XCTAssertTrue(cam.exists)
         cam.press(forDuration: 0.7)
@@ -194,7 +203,7 @@ final class StudioUITests: XCTestCase {
         let app = try liveApp()
         defer { endLive(app) }
         openStudio(app)
-        app.buttons["Sound"].firstMatch.tap()
+        app.buttons["Audio"].firstMatch.tap()
         let music = app.buttons["Music"].firstMatch
         music.tap()
         let selected = expectation(for: NSPredicate(format: "selected == true"), evaluatedWith: music)
@@ -294,7 +303,7 @@ final class StudioUITests: XCTestCase {
         XCTAssertTrue(studio.waitForExistence(timeout: 5)); studio.tap()
         let camera = app.buttons["studio.camera-effects"]
         XCTAssertTrue(camera.waitForExistence(timeout: 5)); XCTAssertFalse(camera.isEnabled)
-        app.buttons[russian ? "Звук" : "Sound"].firstMatch.tap()
+        app.buttons[russian ? "Звук" : "Audio"].firstMatch.tap()
         let music = app.buttons[russian ? "Музыка" : "Music"].firstMatch
         if !music.isHittable { app.swipeUp() }
         XCTAssertTrue(music.isHittable); music.tap()

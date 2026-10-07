@@ -17,8 +17,6 @@ final class StudioCameraFixture: PrivateCameraPreviewing {
 @MainActor
 final class StudioMicrophoneFixture: PrivateMicrophoneCapturing {
     func start(standalone: Bool, onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws { try Task.checkCancellation() }
-    func beginRecording() {}
-    func finishRecording() -> Data? { nil }
     func stop() {}
 }
 /// Deterministic input for visible-toolbar screenshot checks. No capture/network.

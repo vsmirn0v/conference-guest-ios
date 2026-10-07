@@ -48,10 +48,18 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         try Task.checkCancellation()
         guard authorized else { throw PreviewError.permission }
         try await capture.start(position: position, frames: frames)
+        surface.device = device
         surface.mirrored = position == .front
     }
 
     func stop() async { await capture.stop() }
+
+    /// UIKit-on-Mac uses the connection's native default as its rotation origin.
+    /// Device horizon angles are absolute on iOS and relative to that origin on Mac.
+    nonisolated static func connectionAngle(horizon: CGFloat, nativeDefault: CGFloat, isMac: Bool) -> CGFloat {
+        let angle = horizon + (isMac ? nativeDefault : 0)
+        return (angle.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
+    }
 
     private enum PreviewError: LocalizedError {
         case permission, unavailable
@@ -112,13 +120,15 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                                 // the Mac's built-in camera. Use capture-device rotation.
                                 let rotation = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
                                 rotationCoordinator = rotation
-                                let angle = rotation.videoRotationAngleForHorizonLevelCapture
+                                let nativeDefault = video.connection(with: .video)?.videoRotationAngle ?? 0
+                                let isMac = ProcessInfo.processInfo.isiOSAppOnMac
+                                let angle = PrivateCameraPreview.connectionAngle(horizon: rotation.videoRotationAngleForHorizonLevelCapture, nativeDefault: nativeDefault, isMac: isMac)
                                 if let connection = video.connection(with: .video), connection.isVideoRotationAngleSupported(angle) {
                                     connection.videoRotationAngle = angle
                                 }
                                 rotationObservation = rotation.observe(\.videoRotationAngleForHorizonLevelCapture, options: [.new]) {
                                     [weak self, weak video] rotation, _ in
-                                    let angle = rotation.videoRotationAngleForHorizonLevelCapture
+                                    let angle = PrivateCameraPreview.connectionAngle(horizon: rotation.videoRotationAngleForHorizonLevelCapture, nativeDefault: nativeDefault, isMac: isMac)
                                     self?.queue.async {
                                         guard let connection = video?.connection(with: .video), connection.isVideoRotationAngleSupported(angle) else { return }
                                         connection.videoRotationAngle = angle
@@ -181,6 +191,10 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
     private final class PreviewSurface: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
         private var preview: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+        var device: AVCaptureDevice? { didSet { configureRotation() } }
+        private var rotationCoordinator: AnyObject?
+        private var rotationObservation: NSKeyValueObservation?
+        private var nativeDefaultRotation: CGFloat = 0
         var mirrored = true { didSet { setNeedsLayout() } }
         init(session: AVCaptureSession) {
             super.init(frame: .zero)
@@ -189,15 +203,35 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
             preview.videoGravity = .resizeAspect
         }
         required init?(coder: NSCoder) { nil }
+        private func configureRotation() {
+            rotationObservation = nil; rotationCoordinator = nil
+            if #available(iOS 17.0, *), let device {
+                nativeDefaultRotation = preview.connection?.videoRotationAngle ?? 0
+                let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: preview)
+                rotationCoordinator = coordinator
+                rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.initial, .new]) {
+                    [weak self] _, _ in Task { @MainActor in self?.setNeedsLayout() }
+                }
+            }
+            setNeedsLayout()
+        }
         override func layoutSubviews() {
             super.layoutSubviews()
             guard let connection = preview.connection else { return }
-            if connection.isVideoOrientationSupported {
+            if #available(iOS 17.0, *), let coordinator = rotationCoordinator as? AVCaptureDevice.RotationCoordinator {
+                let angle = PrivateCameraPreview.connectionAngle(horizon: coordinator.videoRotationAngleForHorizonLevelPreview,
+                    nativeDefault: nativeDefaultRotation, isMac: ProcessInfo.processInfo.isiOSAppOnMac)
+                if connection.isVideoRotationAngleSupported(angle) { connection.videoRotationAngle = angle }
+            } else if connection.isVideoOrientationSupported {
+                if ProcessInfo.processInfo.isiOSAppOnMac {
+                    connection.videoOrientation = .landscapeRight
+                } else {
                 switch window?.windowScene?.interfaceOrientation {
                 case .landscapeLeft: connection.videoOrientation = .landscapeLeft
                 case .landscapeRight: connection.videoOrientation = .landscapeRight
                 case .portraitUpsideDown: connection.videoOrientation = .portraitUpsideDown
                 default: connection.videoOrientation = .portrait
+                }
                 }
             }
             if connection.isVideoMirroringSupported {

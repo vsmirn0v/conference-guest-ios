@@ -9,9 +9,10 @@ final class StudioShortcut: NSObject {
     private let show: () -> Void
     private init(show: @escaping () -> Void) { self.show = show }
 
-    static func install(on button: UIView, pane: StudioModel.Pane, model: StudioModel) {
+    static func install(on button: UIView, pane: StudioModel.Pane, model: StudioModel, devices: Bool = false) {
         let shortcut = StudioShortcut { [weak button, weak model] in
             guard let button, let model else { return }
+            model.audioSection = devices ? .devices : .sound
             StudioPresentation.show(model, from: button, pane: pane == .camera && model.presenter.running ? .presenter : pane)
         }
         objc_setAssociatedObject(button, &association, shortcut, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
@@ -24,7 +25,7 @@ final class StudioShortcut: NSObject {
         secondary.buttonMaskRequired = .secondary
         button.addGestureRecognizer(secondary)
         button.showsLargeContentViewer = false
-        let label = pane == .camera ? L("Preview and camera settings") : (pane == .presenter ? L("Presenter") : L("Sound settings"))
+        let label = devices ? L("Audio devices") : pane == .camera ? L("Preview and camera settings") : (pane == .presenter ? L("Presenter") : L("Sound settings"))
         button.accessibilityHint = L("Touch and hold to configure without turning it on.")
         button.accessibilityCustomActions = [UIAccessibilityCustomAction(name: label, target: shortcut, selector: #selector(open))]
     }

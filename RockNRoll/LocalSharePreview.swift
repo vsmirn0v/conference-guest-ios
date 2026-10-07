@@ -17,6 +17,7 @@ final class LocalSharePreview: ObservableObject {
     @Published var hidden = false
     @Published private(set) var paused = false
     private var enlarged = false
+    private var editorVisible = false
     private var refreshRequested = false
     private var publishedPolicy: Bool?
     private(set) var foreground = true
@@ -41,7 +42,7 @@ final class LocalSharePreview: ObservableObject {
     }
 
     var acceptsFrames: Bool {
-        guard active, !hidden else { return false }
+        guard active, !hidden, !editorVisible else { return false }
         if refreshRequested { return true }
         if source == .presenter { return foreground && !paused }
         if !isMac { return !foreground }
@@ -51,6 +52,7 @@ final class LocalSharePreview: ObservableObject {
     }
 
     func togglePaused() { paused.toggle(); refreshPolicy() }
+    func setEditorVisible(_ value: Bool) { editorVisible = value; refreshPolicy() }
     func setEnlarged(_ value: Bool) { enlarged = value; refreshPolicy() }
     func refreshFrame() { refreshRequested = true; lastFrameTime = -.infinity; refreshPolicy() }
 
@@ -86,7 +88,7 @@ final class LocalSharePreview: ObservableObject {
     }
 
     func refreshPolicy() {
-        let nowLive = active && foreground && (isMac || source == .presenter) && !hidden && !paused &&
+        let nowLive = active && foreground && (isMac || source == .presenter) && !hidden && !paused && !editorVisible &&
             (source == .presenter || !enlarged || ownSceneIsNotCaptured?() == true)
         if live != nowLive { live = nowLive }
         let wanted = acceptsFrames
