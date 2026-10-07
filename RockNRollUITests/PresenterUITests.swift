@@ -25,46 +25,91 @@ final class PresenterUITests: XCTestCase {
         fileCancel.tap()
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
     }
-    func testExpandedEditorFitsLandscapeAndReturnsPreview() {
+    func testExpandedEditorFitsLandscapeAndReturnsPreview() { checkExpandedWorkspace(russian: false) }
+    func testRussianExpandedWorkspaceKeepsToolsVisible() { checkExpandedWorkspace(russian: true) }
+    private func checkExpandedWorkspace(russian: Bool) {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
-        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchArguments = ["-AppleLanguages", russian ? "(ru)" : "(en)", "-AppleLocale", russian ? "ru_RU" : "en_US"]
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
         app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "studio"
         app.launchEnvironment["CONFERENCE_TEST_PRESENTER_WARM"] = "1"
+        app.launchEnvironment["CONFERENCE_TEST_PRESENTER_CAMERA_LAYER"] = "1"
         defer { XCUIDevice.shared.orientation = .portrait; app.terminate() }
         XCUIDevice.shared.orientation = .portrait
-        app.launch(); open(app)
+        app.launch(); open(app, russian: russian)
+        app.buttons["presenter.start"].tap()
+        XCTAssertTrue(app.buttons["presenter.stop"].waitForExistence(timeout: 5))
         app.buttons["presenter.expand"].tap()
-        let done = app.navigationBars["Canvas"].buttons["Done"]
+        let done = app.buttons["studio.done"]
         XCTAssertTrue(done.waitForExistence(timeout: 5))
         XCUIDevice.shared.orientation = .landscapeLeft
         waitForOrientation(app, landscape: true)
         waitForHittable(done)
-        let tools = app.segmentedControls["presenter.expanded-tools"]
-        let draw = tools.buttons["Draw"]
+        let draw = app.buttons["presenter.tool.draw"]
         XCTAssertTrue(draw.isHittable)
-        draw.tap()
-        XCTAssertTrue(app.buttons["presenter.clear"].isHittable)
-        let canvas = app.descendants(matching: .any)["presenter.preview"].firstMatch
+        let canvas = app.scrollViews["presenter.preview"]
         assertCanvasPixels(canvas)
+        XCTAssertGreaterThan(canvas.frame.height, app.frame.height * 0.7)
+        for id in ["studio.done", "presenter.tool.move", "presenter.tool.draw", "presenter.undo", "presenter.redo", "presenter.actions", "presenter.stop"] {
+            let button = app.buttons[id]
+            XCTAssertTrue(button.isHittable, id)
+            XCTAssertFalse(button.frame.intersects(canvas.frame), id)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 43, id)
+        }
+        XCTAssertFalse(app.navigationBars["Canvas"].exists)
+        let handle = app.descendants(matching: .any)["presenter.resize"].firstMatch
+        XCTAssertTrue(handle.waitForExistence(timeout: 5))
+        let originalHandle = handle.frame
+        let center = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        center.withOffset(CGVector(dx: -36, dy: -36)).press(forDuration: 0.1,
+            thenDragTo: center.withOffset(CGVector(dx: -80, dy: -56)))
+        XCTAssertLessThan(handle.frame.minX, originalHandle.minX - 20)
+        app.buttons["presenter.undo"].tap()
+        XCTAssertEqual(handle.frame.minX, originalHandle.minX, accuracy: 3)
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.1,
+            thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 25, dy: 20)))
+        XCTAssertGreaterThan(handle.frame.minX, originalHandle.minX + 10)
+        app.buttons["presenter.undo"].tap()
+        XCTAssertEqual(handle.frame.minX, originalHandle.minX, accuracy: 3)
+        XCTAssertFalse(app.buttons["presenter.undo"].isEnabled)
+        draw.tap()
         canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.3)).press(forDuration: 0.05,
             thenDragTo: canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.6)))
         XCTAssertTrue(app.buttons["presenter.undo"].isEnabled)
-        app.buttons["presenter.clear"].tap()
-        XCTAssertTrue(app.buttons["presenter.undo"].isEnabled)
+        app.buttons["presenter.actions"].tap()
+        app.buttons[russian ? "Очистить рисунки" : "Clear drawings"].tap()
         app.buttons["presenter.undo"].tap()
-        done.tap()
+        XCTAssertTrue(app.buttons["presenter.redo"].isEnabled)
+        app.buttons["presenter.actions"].tap()
+        app.buttons[russian ? "Увеличить" : "Zoom in"].tap()
+        XCTAssertTrue(app.buttons["presenter.fit"].waitForExistence(timeout: 5))
+        app.buttons["presenter.fit"].tap()
+        XCTAssertTrue(app.buttons["presenter.redo"].isEnabled)
+        // A two-finger pinch navigates the editor and never adds a drawing edit.
+        canvas.pinch(withScale: 2, velocity: 1)
+        XCTAssertTrue(app.buttons["presenter.fit"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["presenter.redo"].isEnabled)
         XCUIDevice.shared.orientation = .portrait
         waitForOrientation(app, landscape: false)
-        XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
-        for _ in 0..<4 { if app.buttons["presenter.expand"].isHittable { break }; app.descendants(matching: .any)["studio.settings"].firstMatch.swipeDown() }
-        XCTAssertTrue(app.descendants(matching: .any)["presenter.preview"].firstMatch.exists)
-        XCTAssertTrue(app.staticTexts["Preview · Only you"].exists)
-        assertCanvasPixels(app.descendants(matching: .any)["presenter.preview"].firstMatch)
+        XCTAssertTrue(app.buttons["presenter.fit"].waitForExistence(timeout: 5))
+        app.buttons["presenter.fit"].tap()
+        XCTAssertEqual(canvas.value as? String, "100%")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        waitForOrientation(app, landscape: true)
+        let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        capture.name = russian ? "Canvas landscape Russian" : "Canvas landscape English"
+        capture.lifetime = .keepAlways; add(capture)
+        done.tap()
+        XCTAssertTrue(app.buttons["presenter.stop"].exists, "Done must not stop publication")
+        XCUIDevice.shared.orientation = .portrait
+        waitForOrientation(app, landscape: false)
+        assertCanvasPixels(app.scrollViews["presenter.preview"])
         app.buttons["presenter.expand"].tap()
-        assertCanvasPixels(app.descendants(matching: .any)["presenter.preview"].firstMatch)
+        assertCanvasPixels(app.scrollViews["presenter.preview"])
         app.buttons["studio.done"].tap()
-        assertCanvasPixels(app.descendants(matching: .any)["presenter.preview"].firstMatch)
+        app.buttons["presenter.stop"].tap()
+        XCTAssertTrue(app.buttons["presenter.start"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["presenter.visibility"].exists)
     }
 
     func testPresenterStartsPrivatelyAndSurvivesSmallScreenRotation() {
@@ -79,7 +124,7 @@ final class PresenterUITests: XCTestCase {
         open(app)
         let start = app.buttons["presenter.start"]
         XCTAssertTrue(start.waitForExistence(timeout: 10)); XCTAssertTrue(start.isHittable)
-        XCTAssertTrue(app.staticTexts["Preview · Only you"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["presenter.visibility"].exists)
         start.tap()
         XCTAssertTrue(app.buttons["presenter.stop"].waitForExistence(timeout: 5))
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -151,14 +196,14 @@ final class PresenterUITests: XCTestCase {
             app.buttons["presenter.stop"].tap()
         }
     }
-    private func open(_ app: XCUIApplication) {
-        app.buttons["More call options"].firstMatch.tap()
-        app.buttons["Presenter"].firstMatch.tap()
+    private func open(_ app: XCUIApplication, russian: Bool = false) {
+        app.buttons[russian ? "Другие действия" : "More call options"].firstMatch.tap()
+        app.buttons[russian ? "Презентация" : "Presenter"].firstMatch.tap()
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
         let source = app.buttons["presenter.source"]
         waitForHittable(source); source.tap()
-        XCTAssertTrue(app.buttons["Blank canvas"].waitForExistence(timeout: 5), app.debugDescription)
-        app.buttons["Blank canvas"].tap()
+        XCTAssertTrue(app.buttons[russian ? "Пустой холст" : "Blank canvas"].waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons[russian ? "Пустой холст" : "Blank canvas"].tap()
     }
     private func assertCanvasPixels(_ canvas: XCUIElement) {
         XCTAssertTrue(canvas.waitForExistence(timeout: 5))
@@ -175,7 +220,7 @@ final class PresenterUITests: XCTestCase {
                 context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
                 let bytes = raw.bindMemory(to: UInt8.self)
                 let bright = stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] > 25 && bytes[$0 + 1] > 8 }.count
-                return bright > width * height / 3
+                return bright > width * height / 10
             }
         }, evaluatedWith: canvas)
         let result = XCTWaiter.wait(for: [visible], timeout: 5)

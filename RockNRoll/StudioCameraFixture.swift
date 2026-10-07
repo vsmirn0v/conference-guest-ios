@@ -12,6 +12,20 @@ final class StudioCameraFixture: PrivateCameraPreviewing {
         return view
     }()
     func start() async throws { try Task.checkCancellation() }
+    func startFrames(_ onFrame: @escaping @MainActor (CVPixelBuffer, Int) -> Void) async throws {
+        try Task.checkCancellation()
+        var pixels: CVPixelBuffer?
+        guard CVPixelBufferCreate(nil, 160, 120, kCVPixelFormatType_32BGRA,
+                                  [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels) == kCVReturnSuccess,
+              let pixels else { return }
+        CVPixelBufferLockBaseAddress(pixels, [])
+        if let base = CVPixelBufferGetBaseAddress(pixels) {
+            base.assumingMemoryBound(to: UInt32.self).initialize(repeating: 0xFF5856D6,
+                count: CVPixelBufferGetBytesPerRow(pixels) * CVPixelBufferGetHeight(pixels) / 4)
+        }
+        CVPixelBufferUnlockBaseAddress(pixels, [])
+        onFrame(pixels, 0)
+    }
     func stop() async {}
 }
 @MainActor

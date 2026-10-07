@@ -32,6 +32,12 @@ final class GuestCallLayoutFixture: UIViewController {
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_PRESENTER_WARM"] == "1" {
             studio?.presenter.scene.backdrop = .warm
         }
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_PRESENTER_CAMERA_LAYER"] == "1" {
+            studio?.presenter.makePrivateCamera = { _ in StudioCameraFixture() }
+            studio?.presenter.scene.placement = PresenterPlacement()
+            studio?.presenter.scene.layout = .card
+            studio?.presenter.includeCamera = true
+        }
         let solo = scenario == "solo"
         controls = CallControls(localPreview: preview, state: nil, coordinator: nil, router: nil,
             catchUp: catchUp, chat: ChatStore(), initialDisplayMode: .all,

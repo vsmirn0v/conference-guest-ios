@@ -79,12 +79,12 @@ final class StudioWorkflowTests: XCTestCase {
         let line = [CGPoint(x: 0.1, y: 0.2), CGPoint(x: 0.8, y: 0.7)]
         model.appendAnnotation(line); model.clearDrawings()
         XCTAssertTrue(model.scene.strokes.isEmpty)
-        model.undoDrawing(); XCTAssertEqual(model.scene.strokes, [line])
-        model.redoDrawing(); XCTAssertTrue(model.scene.strokes.isEmpty)
-        model.undoDrawing(); model.undoDrawing()
+        model.undoCanvasEdit(); XCTAssertEqual(model.scene.strokes, [line])
+        model.redoCanvasEdit(); XCTAssertTrue(model.scene.strokes.isEmpty)
+        model.undoCanvasEdit(); model.undoCanvasEdit()
         XCTAssertTrue(model.scene.strokes.isEmpty)
-        model.appendAnnotation(line); XCTAssertFalse(model.canRedoDrawing)
-        model.end(); XCTAssertFalse(model.canUndoDrawing)
+        model.appendAnnotation(line); XCTAssertFalse(model.canRedoEdit)
+        model.end(); XCTAssertFalse(model.canUndoEdit)
     }
     func testWholeScreenSelectionDisablesCanvasCompositionBeforeSystemHandoff() {
         let model = PresenterModel(observeLifecycle: false)

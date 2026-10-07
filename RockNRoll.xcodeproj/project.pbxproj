@@ -69,6 +69,7 @@
 		4E9CEF409581FF1D8C106F0B /* StudioAudioPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE377E3F013CC98891447FFA /* StudioAudioPolicy.swift */; };
 		4F5F7BA8926964B140724425 /* CallWorkspaceControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = D038E6F267254FD6855BF371 /* CallWorkspaceControls.swift */; };
 		4F7D5CD26D51A11CF067FCBB /* DisplayNameTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 438B77B82846C21E6041F25D /* DisplayNameTests.swift */; };
+		50E60FFCC6F459823946DC26 /* PresenterCanvasEdit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A4D6E3541BB8DE1BF8A5762 /* PresenterCanvasEdit.swift */; };
 		5158F4013404FEE1CF765E97 /* LocalShareTrackPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = B250867C7C5E99F4614C22AC /* LocalShareTrackPreview.swift */; };
 		51BCF010D44BD48C794D74EA /* NativeConferenceEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = C31A479481AE9C597DD3B4A1 /* NativeConferenceEngine.swift */; };
 		544E96D769100F2FFC63B7EE /* MeetingContinuationCloud.swift in Sources */ = {isa = PBXBuildFile; fileRef = D88EF24A02F9D32A5154827C /* MeetingContinuationCloud.swift */; };
@@ -97,6 +98,7 @@
 		7715492FDE15C262A39D2B74 /* ConferenceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65570B6D840AF2D71932D313 /* ConferenceModel.swift */; };
 		772D6857C9D1ADD26D37C906 /* FloatingVideoContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1567DFCAF9DFADA92D9DECFF /* FloatingVideoContentView.swift */; };
 		78971867C7199811A6A89C22 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = F2AC2A05DFF407FD96CD3930 /* InfoPlist.strings */; };
+		7B64C3E70A699389A9055A95 /* PresenterCanvasTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB369290564963B920E5DB8A /* PresenterCanvasTests.swift */; };
 		7CE9DD1C0D26F8BFD632134E /* GuestScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = B756DA6C961B8D0289A606EE /* GuestScreenCapture.swift */; };
 		7E12467922DF5F5C89E54D31 /* GuestBroadcast.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3CCCF54E4D96F10DF8446D48 /* GuestBroadcast.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		7ECAE69B4571F80DBEE4733F /* GuestBroadcastStop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70BDFD0E30DDEF30801600B2 /* GuestBroadcastStop.swift */; };
@@ -106,6 +108,7 @@
 		854816A56F9A823805D6270C /* GuestStreamSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC9017A1D53B2ADECBD4A7AC /* GuestStreamSelectionTests.swift */; };
 		85F19E196333A086D2BB5E7A /* MediaEnergyBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C215D2AA424631377314EE /* MediaEnergyBudget.swift */; };
 		864D8CEB2EF1F12219F2AEC7 /* SceneDelegate+Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = C22ED977A6A00525FC0E8F35 /* SceneDelegate+Fixtures.swift */; };
+		86E6EE6B86ED978255A59478 /* PresenterCanvasEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08CD8AFDAE2DD223386B8D65 /* PresenterCanvasEditor.swift */; };
 		874E54A0C9EDF053C688FC85 /* JoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D74813F24B6D41F4DE4FD6C /* JoinView.swift */; };
 		88D5A969729A522616DB9AC1 /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = AB6F15C1E25726E56A54D099 /* LiveKit */; };
 		890C09AE7B3441DF9E70D1DD /* CallKeyboardCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4262C6D2F0644094F1F6D2A /* CallKeyboardCommands.swift */; };
@@ -182,6 +185,7 @@
 		EB7D743E004A98ACB0768CD4 /* CalendarMeetingStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 270229F164B19B6D1CDB3C4A /* CalendarMeetingStoreTests.swift */; };
 		EBFB29EAF0E158D02A7D994A /* LocalSharePreviewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4091D6233BEB5241015750C /* LocalSharePreviewTests.swift */; };
 		ECB1DF9730064526359FD8D8 /* GuestSiteLinkAdapterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F7A8F59787FB9FB78206745 /* GuestSiteLinkAdapterTests.swift */; };
+		ECDBBD06F6509CB4A7048813 /* PresenterCanvasSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = C71B358AE41225B8517B374A /* PresenterCanvasSurface.swift */; };
 		ED01B9897B6498D41959E5DE /* CloudRoomTransportLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 137E5631A28C4071CF574A68 /* CloudRoomTransportLiveTests.swift */; };
 		ED2CC8CCA7516E5980D91315 /* SessionOwnershipTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A5389C79CA11B6343CA2427 /* SessionOwnershipTests.swift */; };
 		EF1B7F865B1FD6B946C4D13D /* MeetingContinuationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A54A60C9AC3CB1C954536BF5 /* MeetingContinuationUITests.swift */; };
@@ -247,6 +251,7 @@
 		0541024059C20CE20308E021 /* MeetingContinuationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingContinuationCoordinatorTests.swift; sourceTree = "<group>"; };
 		0749D2146BB11184D76828DA /* RoomHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomHistoryStore.swift; sourceTree = "<group>"; };
 		08841EF21263FF97C33C034C /* StudioCameraFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioCameraFixture.swift; sourceTree = "<group>"; };
+		08CD8AFDAE2DD223386B8D65 /* PresenterCanvasEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterCanvasEditor.swift; sourceTree = "<group>"; };
 		0978B250E002B9455D9AD06E /* GuestVideoFrameProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestVideoFrameProcessor.swift; sourceTree = "<group>"; };
 		098634B8B5BFC9FD4D81E240 /* Localization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Localization.swift; sourceTree = "<group>"; };
 		0BC72C0A298109102E5FFB6B /* CalendarMeetingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarMeetingStore.swift; sourceTree = "<group>"; };
@@ -264,6 +269,7 @@
 		16722E5FE635885822227AA7 /* MacAudioDevicesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacAudioDevicesTests.swift; sourceTree = "<group>"; };
 		170C8543C40BE24465CEA135 /* PresenterUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterUITests.swift; sourceTree = "<group>"; };
 		1741E6D891EBA9FB108E4AE0 /* GuestCallLayoutFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestCallLayoutFixture.swift; sourceTree = "<group>"; };
+		1A4D6E3541BB8DE1BF8A5762 /* PresenterCanvasEdit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterCanvasEdit.swift; sourceTree = "<group>"; };
 		1B9ECF9F921A9F6DA982577C /* StudioUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioUITests.swift; sourceTree = "<group>"; };
 		1BF0C685736838C7E66914CF /* CatchUpText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpText.swift; sourceTree = "<group>"; };
 		1C92B7DCA1D0DAE96D97B915 /* RoomMicrophoneProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMicrophoneProbe.swift; sourceTree = "<group>"; };
@@ -379,6 +385,7 @@
 		B308E6CF88B25C5E9B51E130 /* LocalShareTrackPreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalShareTrackPreviewTests.swift; sourceTree = "<group>"; };
 		B756DA6C961B8D0289A606EE /* GuestScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestScreenCapture.swift; sourceTree = "<group>"; };
 		B9CD858D9C42BF13EBDB3F9C /* AdditionalRootTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdditionalRootTrust.swift; sourceTree = "<group>"; };
+		BB369290564963B920E5DB8A /* PresenterCanvasTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterCanvasTests.swift; sourceTree = "<group>"; };
 		BB8E0EEDC3368BC36F144A68 /* Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Extension.entitlements; sourceTree = "<group>"; };
 		BB9F78F51F928A3AE8E2561B /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/Localizable.strings; sourceTree = "<group>"; };
 		BC70A659C3664635B495E542 /* LocalSharePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSharePreview.swift; sourceTree = "<group>"; };
@@ -391,6 +398,7 @@
 		C31A479481AE9C597DD3B4A1 /* NativeConferenceEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeConferenceEngine.swift; sourceTree = "<group>"; };
 		C4091D6233BEB5241015750C /* LocalSharePreviewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSharePreviewTests.swift; sourceTree = "<group>"; };
 		C4262C6D2F0644094F1F6D2A /* CallKeyboardCommands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKeyboardCommands.swift; sourceTree = "<group>"; };
+		C71B358AE41225B8517B374A /* PresenterCanvasSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterCanvasSurface.swift; sourceTree = "<group>"; };
 		C7B28F52B13A50B0278FC5F1 /* MeetingWebsitePresenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingWebsitePresenter.swift; sourceTree = "<group>"; };
 		C9ECBC97504D70EFB9B2E28C /* JamServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JamServiceTests.swift; sourceTree = "<group>"; };
 		CB1170E4D6D09329D8F325D5 /* RockNRollTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RockNRollTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -617,6 +625,9 @@
 				1049DF58B45F6CD3D75C38B3 /* OutgoingRoomExperiment.swift */,
 				F426462734DBEBAED52073DA /* ParticipantPanelViewController.swift */,
 				DFC5FF27962DB299A6203745 /* PiPMicrophoneFixtureViewController.swift */,
+				1A4D6E3541BB8DE1BF8A5762 /* PresenterCanvasEdit.swift */,
+				08CD8AFDAE2DD223386B8D65 /* PresenterCanvasEditor.swift */,
+				C71B358AE41225B8517B374A /* PresenterCanvasSurface.swift */,
 				48415EFA954EFA597244FCCB /* PresenterCompositor.swift */,
 				3A29D29FA82ED3CFD5A370CA /* PresenterControls.swift */,
 				2E6B97EB6CB2C3AD85CFDFBB /* PresenterModel.swift */,
@@ -711,6 +722,7 @@
 				91D329B93E8CC018B62B0B41 /* NormalizationDeviceExperimentTests.swift */,
 				86A4407E202F9667E3FAD11D /* OutgoingMediaExperimentTests.swift */,
 				8EE31B7E83BA253BE1AD08B4 /* OutgoingMediaLiveTests.swift */,
+				BB369290564963B920E5DB8A /* PresenterCanvasTests.swift */,
 				BCE88312DF5C01F8D16E5BFD /* PresenterTests.swift */,
 				1167BF2406C1BD98F1732473 /* RoomHistoryStoreTests.swift */,
 				64E5E3314F0E275BAD71BC0B /* RoomMediaPolicyTests.swift */,
@@ -1063,6 +1075,9 @@
 				01DA0B5770F5559D5AFAF33A /* OutgoingShareExperiment.swift in Sources */,
 				98CD9CB2AEB2F788DC8CB4AE /* ParticipantPanelViewController.swift in Sources */,
 				5657B4B4BF4A614B1784F6B2 /* PiPMicrophoneFixtureViewController.swift in Sources */,
+				50E60FFCC6F459823946DC26 /* PresenterCanvasEdit.swift in Sources */,
+				86E6EE6B86ED978255A59478 /* PresenterCanvasEditor.swift in Sources */,
+				ECDBBD06F6509CB4A7048813 /* PresenterCanvasSurface.swift in Sources */,
 				0FC5F096386EE375F9DED70E /* PresenterCompositor.swift in Sources */,
 				1AE0D70DC18235E52CFE2EEE /* PresenterControls.swift in Sources */,
 				BBA7ACCB17434AB12B11BDBA /* PresenterModel.swift in Sources */,
@@ -1175,6 +1190,7 @@
 				3B052FCA1D23D627E1CF1043 /* NormalizationDeviceExperimentTests.swift in Sources */,
 				E6D3FD1ABE16896F34EB1C5B /* OutgoingMediaExperimentTests.swift in Sources */,
 				1757927E6A4BAF69164DAF70 /* OutgoingMediaLiveTests.swift in Sources */,
+				7B64C3E70A699389A9055A95 /* PresenterCanvasTests.swift in Sources */,
 				CA5CB9E2EB51134F04428E25 /* PresenterTests.swift in Sources */,
 				B7CD6BF98C916A53E12F28A6 /* RoomHistoryStoreTests.swift in Sources */,
 				3506EE7FF946AD19F4E3CB1E /* RoomMediaPolicyTests.swift in Sources */,

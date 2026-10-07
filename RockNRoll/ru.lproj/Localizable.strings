@@ -648,3 +648,21 @@
 "While this preview is active, click the green camera icon in the macOS menu bar. Choose Video Effects to change background, lighting or framing. Available effects depend on your camera." = "Пока предпросмотр активен, нажмите зелёный значок камеры в строке меню macOS. Выберите видеоэффекты, чтобы изменить фон, освещение или кадрирование. Доступные эффекты зависят от камеры.";
 
 "While your microphone or private check is active, click the microphone or camera icon in the macOS menu bar. Choose Mic Mode to select Standard, Voice Isolation or Wide Spectrum when available." = "Пока микрофон или приватная проверка активны, нажмите значок микрофона или камеры в строке меню macOS. Выберите режим микрофона: стандартный, изоляцию голоса или широкий спектр, если они доступны.";
+
+"Only you" = "Только вы";
+
+"Live" = "В эфире";
+
+"Move" = "Камера";
+
+"Canvas actions" = "Действия с холстом";
+
+"Increase crop zoom" = "Увеличить кадрирование";
+
+"Decrease crop zoom" = "Уменьшить кадрирование";
+
+"Pinch to zoom the workspace. Use two fingers to pan." = "Сведите или разведите пальцы для масштаба холста. Перемещайте его двумя пальцами.";
+
+"Resize camera" = "Размер камеры";
+
+"Draw tool" = "Рисунок";

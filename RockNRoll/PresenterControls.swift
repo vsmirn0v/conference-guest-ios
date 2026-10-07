@@ -125,144 +125,6 @@ final class PresenterImageImport: ObservableObject {
     func cancel() { operation?.cancel(); operation = nil }
 }
 
-struct PresenterCanvasEditor: View {
-    @ObservedObject var model: PresenterModel
-    @Binding var expanded: Bool
-    @State private var dragOrigin: PresenterPlacement?
-    @State private var pinchOrigin: PresenterPlacement?
-    var body: some View {
-        VStack(spacing: 8) {
-            Label(model.running ? L("Shared with jam") : L("Preview · Only you"), systemImage: model.running ? "rectangle.on.rectangle" : "lock.fill")
-                .font(.caption)
-            if model.source == .screen && !model.screenSelected {
-                Button { model.selectScreen() } label: {
-                    Label(L("Choose screen"), systemImage: "rectangle.on.rectangle")
-                        .frame(maxWidth: .infinity, minHeight: expanded ? 180 : 100)
-                }.accessibilityIdentifier("presenter.choose-screen")
-            } else {
-                GeometryReader { geometry in
-                    let width = min(geometry.size.width, geometry.size.height * model.aspectRatio)
-                    preview.frame(width: width, height: width / model.aspectRatio)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }.frame(minHeight: expanded ? 0 : 130)
-            }
-            tools
-        }.padding(expanded ? 8 : 0)
-    }
-    private var tools: some View {
-        VStack(spacing: 0) {
-        HStack(spacing: 4) {
-            Picker(L("Canvas tool"), selection: $model.tool) {
-                Text(L("Move camera")).tag(PresenterModel.Tool.move)
-                if model.scene.layout == .instrument { Text(L("Crop")).tag(PresenterModel.Tool.crop) }
-                Text(L("Draw")).tag(PresenterModel.Tool.draw)
-            }.pickerStyle(.segmented).disabled(!model.canCompose)
-                .accessibilityIdentifier(expanded ? "presenter.expanded-tools" : "presenter.tools")
-            if model.includeCamera && !model.nativeOverlay {
-                Menu {
-                    Picker(L("Camera layout"), selection: $model.scene.layout) {
-                        Text(L("Camera card")).tag(PresenterScene.Layout.card)
-                        Text(L("Person cutout")).tag(PresenterScene.Layout.cutout)
-                        Text(L("Instrument close-up")).tag(PresenterScene.Layout.instrument)
-                        Text(L("Side by side")).tag(PresenterScene.Layout.beside)
-                    }
-                    Button(L("Increase camera size")) { model.scene.placement.resize(1.1); model.savePlacement() }
-                    Button(L("Decrease camera size")) { model.scene.placement.resize(0.9); model.savePlacement() }
-                    Button(L("Top left")) { place(right: false, bottom: false) }
-                    Button(L("Top right")) { place(right: true, bottom: false) }
-                    Button(L("Bottom left")) { place(right: false, bottom: true) }
-                    Button(L("Bottom right")) { place(right: true, bottom: true) }
-                    Button(L("Rotate camera")) { model.scene.cameraRotation = (model.scene.cameraRotation + 90) % 360 }
-                    Button(L("Automatic camera orientation")) { model.scene.cameraRotation = 0 }
-                } label: { Image(systemName: "person.crop.rectangle").frame(width: 44, height: 44) }
-                    .accessibilityLabel(L("Camera layout")).accessibilityIdentifier("presenter.layout")
-            }
-            Button { expanded.toggle() } label: {
-                Image(systemName: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                    .frame(width: 44, height: 44)
-            }.accessibilityLabel(expanded ? L("Fit canvas") : L("Expand canvas")).accessibilityIdentifier("presenter.expand")
-        }
-        if model.tool == .draw || !model.scene.strokes.isEmpty || model.canRedoDrawing {
-            HStack {
-                Button { model.undoDrawing() } label: { Label(L("Undo"), systemImage: "arrow.uturn.backward") }
-                    .disabled(!model.canUndoDrawing).accessibilityIdentifier("presenter.undo")
-                Spacer(minLength: 0)
-                Button { model.redoDrawing() } label: { Label(L("Redo"), systemImage: "arrow.uturn.forward") }
-                    .disabled(!model.canRedoDrawing).accessibilityIdentifier("presenter.redo")
-                Spacer(minLength: 0)
-                Button { model.clearDrawings() } label: { Label(L("Clear"), systemImage: "trash") }
-                    .disabled(model.scene.strokes.isEmpty).accessibilityIdentifier("presenter.clear")
-            }.font(.subheadline).frame(minHeight: 44)
-        }
-        }
-    }
-    private var preview: some View {
-        ZStack {
-            StudioPreviewSurface(view: model.preview, onAttach: { [weak model] in model?.restorePreview() })
-            GeometryReader { geometry in
-                if model.tool == .draw || model.tool == .crop {
-                    Color.clear.contentShape(Rectangle()).gesture(DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            let point = CGPoint(x: min(1, max(0, value.location.x / max(1, geometry.size.width))),
-                                                y: min(1, max(0, value.location.y / max(1, geometry.size.height))))
-                            if model.tool == .draw {
-                                if model.scene.draftStroke.count < 512 { model.scene.draftStroke.append(point) }
-                            } else { model.scene.focus = point }
-                        }
-                        .onEnded { _ in
-                            if model.tool == .draw {
-                                let draft = model.scene.draftStroke; model.scene.draftStroke = []; model.appendAnnotation(draft)
-                            }
-                        })
-                } else if model.includeCamera && !model.nativeOverlay && model.scene.layout != .beside {
-                    let place = model.scene.placement
-                    RoundedRectangle(cornerRadius: 8).strokeBorder(.orange, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-                        .background(.clear).contentShape(Rectangle())
-                        .frame(width: place.width * geometry.size.width, height: place.height * geometry.size.height)
-                        .overlay(alignment: .bottomTrailing) {
-                            Image(systemName: "arrow.up.left.and.arrow.down.right").font(.caption).padding(8)
-                                .background(.orange, in: Circle()).foregroundStyle(.black)
-                                .gesture(DragGesture(minimumDistance: 1).onChanged { value in
-                                    if dragOrigin == nil { dragOrigin = place }
-                                    if var origin = dragOrigin {
-                                        let factor = max(0.2, 1 + value.translation.width / max(1, origin.width * geometry.size.width))
-                                        origin.width *= factor; origin.height *= factor; origin.clamp()
-                                        model.scene.placement = origin
-                                    }
-                                }.onEnded { _ in dragOrigin = nil; model.savePlacement() })
-                        }
-                        .position(x: (place.x + place.width / 2) * geometry.size.width,
-                                  y: (place.y + place.height / 2) * geometry.size.height)
-                        .gesture(DragGesture(minimumDistance: 3).onChanged { value in
-                            if dragOrigin == nil { dragOrigin = place }
-                            if var origin = dragOrigin {
-                                origin.x += value.translation.width / max(1, geometry.size.width)
-                                origin.y += value.translation.height / max(1, geometry.size.height)
-                                origin.clamp(); model.scene.placement = origin
-                            }
-                        }.onEnded { _ in dragOrigin = nil; model.savePlacement() })
-                        .simultaneousGesture(MagnificationGesture().onChanged { value in
-                            if pinchOrigin == nil { pinchOrigin = place }
-                            if var origin = pinchOrigin { origin.resize(value); model.scene.placement = origin }
-                        }.onEnded { _ in pinchOrigin = nil; model.savePlacement() })
-                        .accessibilityLabel(L("Move camera"))
-                        .accessibilityHint(L("Drag to move. Pinch or drag the corner to resize."))
-                        .accessibilityAdjustableAction { direction in
-                            model.scene.placement.resize(direction == .increment ? 1.1 : 0.9); model.savePlacement()
-                        }.accessibilityIdentifier("presenter.camera-layer")
-                }
-            }
-            if !model.hasPreview { ProgressView().tint(.white) }
-        }.aspectRatio(model.aspectRatio, contentMode: .fit).background(.black)
-            .clipShape(RoundedRectangle(cornerRadius: 12)).accessibilityIdentifier("presenter.preview")
-    }
-    private func place(right: Bool, bottom: Bool) {
-        model.scene.placement.x = right ? 0.97 - model.scene.placement.width : 0.03
-        model.scene.placement.y = bottom ? 0.96 - model.scene.placement.height : 0.04
-        model.savePlacement()
-    }
-}
-
 struct RecordingControls: View {
     @ObservedObject var model: MeetingRecording
     @State private var confirm = false
@@ -345,18 +207,23 @@ private struct AppleBackgroundButton: UIViewRepresentable {
 
 struct PresenterShareControl: View {
     @ObservedObject var model: PresenterModel
+    var compact = false
+    private var title: String {
+        model.running ? L("Stop sharing") : model.source == .screen && !model.screenSelected ? L("Choose screen") : L("Start sharing")
+    }
     var body: some View {
         Button {
             if model.running { model.stop() } else if model.source == .screen && !model.screenSelected { model.selectScreen() } else { Task { await model.start() } }
         } label: {
             HStack {
                 if model.starting || model.stopping { ProgressView() }
-                Label(model.running ? L("Stop sharing") : model.source == .screen && !model.screenSelected ? L("Choose screen") : L("Start sharing"),
+                Label(compact ? (model.running ? L("Stop") : L("Share")) : title,
                       systemImage: model.running ? "stop.circle" : "rectangle.on.rectangle")
             }.frame(maxWidth: .infinity, minHeight: 36)
         }.buttonStyle(.borderedProminent)
             .tint(model.running ? .red : .orange)
             .disabled(!model.available || (!model.running && ((!model.hasPreview && model.source != .screen) || model.screenPicking)) || model.starting || model.stopping)
+            .accessibilityLabel(title)
             .accessibilityIdentifier(model.running ? "presenter.stop" : "presenter.start")
     }
 }

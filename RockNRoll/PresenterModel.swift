@@ -19,10 +19,11 @@ final class PresenterModel: ObservableObject {
     enum Tool: String { case move, crop, draw }
     @Published private(set) var source: Source = .screen
     @Published var tool: Tool = .move
-    @Published private var undoStack: [[[CGPoint]]] = []
-    @Published private var redoStack: [[[CGPoint]]] = []
-    var canUndoDrawing: Bool { !undoStack.isEmpty }
-    var canRedoDrawing: Bool { !redoStack.isEmpty }
+    @Published private var undoStack: [PresenterCanvasEdit] = []
+    @Published private var redoStack: [PresenterCanvasEdit] = []
+    private var pendingEdit: PresenterCanvasEdit?
+    var canUndoEdit: Bool { !undoStack.isEmpty }
+    var canRedoEdit: Bool { !redoStack.isEmpty }
     var canCompose: Bool { source == .canvas || screenSelected }
     var onPreviewVisibilityChanged: ((Bool) -> Void)?
     /// Retained capture pixels are immutable while the worker reads them.
@@ -363,7 +364,7 @@ final class PresenterModel: ObservableObject {
         onPreviewVisibilityChanged?(false); onPreviewVisibilityChanged = nil
         stop(); refresh()
         scene = PresenterScene(); includeCamera = false
-        undoStack = []; redoStack = []
+        undoStack = []; redoStack = []; pendingEdit = nil
         startSharing = nil; sendSample = nil; stopSharing = nil; makeCameraSource = nil; preparePrivateCamera = nil
         makeScreenSource = nil; shareOtherApps = nil
     }
@@ -464,25 +465,38 @@ final class PresenterModel: ObservableObject {
     }
     func appendAnnotation(_ points: [CGPoint]) {
         guard !points.isEmpty else { return }
-        saveDrawingUndo()
-        if scene.strokes.count == 32 { scene.strokes.removeFirst() }
-        scene.strokes.append(Array(points.prefix(512)).map { CGPoint(x: min(1, max(0, $0.x)), y: min(1, max(0, $0.y))) })
+        editCanvas {
+            if $0.strokes.count == 32 { $0.strokes.removeFirst() }
+            $0.strokes.append(Array(points.prefix(512)).map { CGPoint(x: min(1, max(0, $0.x)), y: min(1, max(0, $0.y))) })
+        }
     }
-    private func saveDrawingUndo() {
-        undoStack.append(scene.strokes)
+    func beginCanvasEdit() { if pendingEdit == nil { pendingEdit = PresenterCanvasEdit(scene) } }
+    func commitCanvasEdit() {
+        guard let previous = pendingEdit else { return }
+        pendingEdit = nil
+        guard previous != PresenterCanvasEdit(scene) else { return }
+        undoStack.append(previous)
         if undoStack.count > 32 { undoStack.removeFirst() }
         redoStack = []
+        if previous.placement != scene.placement || previous.layout != scene.layout { savePlacement() }
     }
-    func undoDrawing() {
+    func cancelCanvasEdit() {
+        if let pendingEdit { pendingEdit.restore(into: &scene) }
+        pendingEdit = nil; scene.draftStroke = []
+    }
+    func editCanvas(_ edit: (inout PresenterScene) -> Void) {
+        beginCanvasEdit(); edit(&scene); commitCanvasEdit()
+    }
+    func undoCanvasEdit() {
         guard let previous = undoStack.popLast() else { return }
-        redoStack.append(scene.strokes); scene.draftStroke = []; scene.strokes = previous
+        redoStack.append(PresenterCanvasEdit(scene)); previous.restore(into: &scene); savePlacement()
     }
-    func redoDrawing() {
+    func redoCanvasEdit() {
         guard let next = redoStack.popLast() else { return }
-        undoStack.append(scene.strokes); scene.draftStroke = []; scene.strokes = next
+        undoStack.append(PresenterCanvasEdit(scene)); next.restore(into: &scene); savePlacement()
     }
     func clearDrawings() {
         guard !scene.strokes.isEmpty else { return }
-        saveDrawingUndo(); scene.draftStroke = []; scene.strokes = []
+        editCanvas { $0.draftStroke = []; $0.strokes = [] }
     }
 }

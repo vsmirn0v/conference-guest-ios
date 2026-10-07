@@ -42,7 +42,7 @@ struct StudioPanel: View {
                     // Reparenting it between Form and a second host loses display.
                     GeometryReader { geometry in
                         VStack(spacing: 0) {
-                            PresenterCanvasEditor(model: model.presenter, expanded: $model.canvasExpanded)
+                            PresenterCanvasEditor(model: model.presenter, expanded: $model.canvasExpanded, canShare: model.active && !model.held)
                                 .frame(height: model.canvasExpanded ? geometry.size.height : min(300, geometry.size.height * 0.58))
                             if !model.canvasExpanded {
                                 Form { PresenterControls(model: model.presenter, recording: model.recording, images: images) }
@@ -64,10 +64,11 @@ struct StudioPanel: View {
                     }
                 }.accessibilityIdentifier("studio.settings")
                 }
-                footer
+                if !model.canvasExpanded { footer }
             }
             .navigationTitle(model.canvasExpanded ? L("Canvas") : model.pane == .presenter ? L("Share") : L("Camera & sound"))
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar(model.canvasExpanded ? .hidden : .visible, for: .navigationBar)
             .toolbar { ToolbarItem(placement: .confirmationAction) {
                 Button(L("Done")) {
                     if model.canvasExpanded { model.canvasExpanded = false } else { model.close() }
