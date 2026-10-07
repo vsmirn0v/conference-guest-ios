@@ -75,6 +75,7 @@ final class FavoriteRoomControl: UIView, UIDragInteractionDelegate, UIDropIntera
         star.setImage(UIImage(systemName: "star.fill"), for: .normal); star.tintColor = content.tint
         join.accessibilityLabel = L("Rejoin %@ on %@", content.room.displayTitle,
                                     content.room.invitationURL.host() ?? L("meeting website"))
+        join.accessibilityValue = content.subtitle
         join.accessibilityIdentifier = "favorite.order.\(content.room.id)"
         star.accessibilityLabel = L("Unstar %@", content.room.displayTitle)
         star.isUserInteractionEnabled = content.drag.session == nil

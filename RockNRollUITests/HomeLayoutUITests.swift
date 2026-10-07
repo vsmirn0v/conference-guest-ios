@@ -45,6 +45,23 @@ final class HomeLayoutUITests: XCTestCase {
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["studio.preview-status"].firstMatch.label.contains("Only you"))
     }
+    func testFavoritesKeepCalendarAndRoomDetailsInBothLanguages() {
+        for language in ["en", "ru"] {
+            launch("home-details", language: language)
+            let calendarRoom = favorites.element(boundBy: 0)
+            let savedRoom = favorites.element(boundBy: 1)
+            let calendarDetail = calendarRoom.value as? String ?? ""
+            let savedDetail = savedRoom.value as? String ?? ""
+            XCTAssertTrue(calendarDetail.contains("Daily rehearsal"), "Calendar title must remain visible in favorites")
+            XCTAssertTrue(calendarDetail.contains(String(Calendar.current.component(.year, from: Date()))),
+                          "Calendar date must remain visible in favorites")
+            XCTAssertTrue(savedDetail.contains("favorite1 · meeting.example.test"))
+            XCTAssertTrue(savedDetail.contains(language == "en" ? "Saved" : "Сохранено"))
+            XCTAssertTrue(calendarRoom.isHittable); XCTAssertTrue(savedRoom.isHittable)
+            attach("Favorites with details · " + language)
+            app.terminate()
+        }
+    }
     func testLaterMeetingDoesNotTakeTopSlotAndTomorrowIsInAgenda() {
         launch("home-later")
         XCTAssertFalse(app.descendants(matching: .any)["home.title.daily"].exists)

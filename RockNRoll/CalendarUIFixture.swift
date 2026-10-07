@@ -77,9 +77,12 @@ enum CalendarUIFixture {
         if mode.hasPrefix("home") {
             let titles = ["Warm-up", "Thursday rehearsal", "Songwriting circle", "Quartet", "Arrangement", "Practice"]
             let favorites = titles.enumerated().map { index, title in
-                RecentRoom(invitationURL: URL(string: "https://meeting.example.test/favorite\(index)")!,
+                var room = RecentRoom(invitationURL: URL(string: mode == "home-details" && index == 0 ?
+                    "https://meeting.example.test/team?psw=fixture" : "https://meeting.example.test/favorite\(index)")!,
                     title: title, identifier: "favorite\(index)", isStarred: true,
                     lastJoined: Date().addingTimeInterval(Double(-index * 60)))
+                if mode == "home-details" && index == 1 { room.hasBeenJoined = false }
+                return room
             }
             let recent = (0..<3).map { index in
                 RecentRoom(invitationURL: URL(string: "https://meeting.example.test/recent\(index)")!,

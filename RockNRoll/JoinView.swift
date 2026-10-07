@@ -392,16 +392,6 @@ struct JoinView: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L("Done")) { showingDevices = false } } }
         }
     }
-    private func favoriteSubtitle(_ room: RecentRoom) -> String {
-        if let identity = MeetingRoomIdentity(room.joinURL, engine: room.engine),
-           let meeting = calendar.upcoming.first(where: { $0.roomIdentity == identity &&
-               !$0.allDay && $0.start <= homeNow.addingTimeInterval(HomeMeetingPolicy.soonInterval) }) {
-            return HomeMeetingCard.timing(meeting, at: homeNow)
-        }
-        return favorites.filter { $0.displayTitle.localizedCaseInsensitiveCompare(room.displayTitle) == .orderedSame }.count > 1 ?
-            "\(room.joinURL.host() ?? "") · \(room.identifier)" : ""
-    }
-
     private var validDisplayName: Bool {
         model.validDisplayName
     }
@@ -422,7 +412,7 @@ struct JoinView: View {
         Section {
             let rooms = favoriteDrag.displayedRooms(favorites)
             ForEach(wide || showingAllFavorites ? rooms : Array(rooms.prefix(3))) { room in
-                FavoriteRoomRow(room: room, subtitle: favoriteSubtitle(room), tint: UIColor(linkAccent),
+                FavoriteRoomRow(room: room, subtitle: roomSubtitle(room), tint: UIColor(linkAccent),
                     history: history, drag: favoriteDrag,
                     onJoin: { model.rejoin(room) }, onRename: { startRename(room) },
                     onStar: { model.toggleStar(room) }, onOriginalName: { model.setAlias(nil, for: room) })
