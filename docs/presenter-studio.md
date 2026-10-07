@@ -118,7 +118,9 @@ Corner presets and an adjustable size slider provide alternatives for pointer an
 VoiceOver users. Side by side reserves a camera column so content remains unobscured.
 Instrument Crop is separate from moving the layer. Layout/placement persist locally;
 images, drawings, camera consent and capture state never persist. Expand canvas opens
-a larger editor. All editor controls remain outside outgoing pixels.
+a larger editor. The compositor does not draw editor controls into its output.
+Sharing an entire display can still include the app's window as captured content;
+choose a separate window for a clean presentation while editing the canvas.
 Only one editor hosts the native preview surface at a time, preventing the small
 and expanded views from stealing it from one another. The larger editor scrolls
 when its controls cannot fit in a compact landscape window.
