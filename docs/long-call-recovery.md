@@ -38,7 +38,7 @@ path retains app-owned AVAudioSession behavior.
   notification delivery, activation failure/retry, explicit Handoff hold,
   foreground recovery, and resume-transaction timeout identity.
 - The repeated blocked checks use simulated CallKit snapshots, not a physical
-  90-second phone call. The same 16 checks passed on iOS 17.5. Signed Release validation is pending.
+  90-second phone call. The same 16 checks passed on iOS 17.5. Signed Release archive/export validation passed.
 
 ## Remaining acceptance
 
