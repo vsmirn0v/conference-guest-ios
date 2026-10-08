@@ -60,6 +60,22 @@ final class AudioCoordinator {
         publishStatus()
     }
 
+    /// Video-chat mode implies a speaker default. Clearing a port override alone
+    /// cannot select the receiver, so choose the matching communication mode too.
+    func selectBuiltInOutput(speaker: Bool) throws {
+        let session = AVAudioSession.sharedInstance()
+        var options = session.categoryOptions
+        if !speaker { options.remove(.defaultToSpeaker) }
+        let mode: AVAudioSession.Mode = [.voiceChat, .videoChat].contains(session.mode)
+            ? (speaker ? .videoChat : .voiceChat) : session.mode
+        try session.setCategory(session.category, mode: mode, options: options)
+        if let input = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+            try session.setPreferredInput(input)
+        }
+        try session.overrideOutputAudioPort(speaker ? .speaker : .none)
+        onRouteChanged?()
+    }
+
     /// The SDK changes the shared session after join; restore coexistence without
     /// replacing its selected voice-chat mode or route options.
     func ensureMixing() {

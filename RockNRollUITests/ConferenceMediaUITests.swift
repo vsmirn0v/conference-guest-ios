@@ -1434,9 +1434,10 @@ final class ConferenceMediaUITests: XCTestCase {
         }
         func verifyMovingVideo() -> Bool {
             let pin = app.buttons["Pin \(remote) video"]
+            let nativeShare = app.buttons["Pin \(remote) screen"]
             let waiting = app.staticTexts["Waiting for \(remote)'s video…"]
             let rendered = XCTNSPredicateExpectation(
-                predicate: NSPredicate { _, _ in pin.exists && !waiting.exists }, object: nil)
+                predicate: NSPredicate { _, _ in (pin.exists || nativeShare.exists) && !waiting.exists }, object: nil)
             guard XCTWaiter.wait(for: [rendered], timeout: 30) == .completed else {
                 XCTFail("No remote video frames arrived.")
                 return false
@@ -1450,18 +1451,25 @@ final class ConferenceMediaUITests: XCTestCase {
                                   height: CGFloat(image.height) * 0.25)
                 return image.cropping(to: rect)?.dataProvider?.data as Data?
             }
-            let before = picture()
-            Thread.sleep(forTimeInterval: 2)
-            let after = picture()
-            XCTAssertNotNil(before)
-            XCTAssertNotNil(after)
-            XCTAssertNotEqual(before, after, "The remote picture must advance, not retain a stale frame.")
-            return before != nil && after != nil && before != after
+            let deadline = Date().addingTimeInterval(30)
+            var before = picture(), changes = 0
+            while Date() < deadline {
+                Thread.sleep(forTimeInterval: 2)
+                let after = picture()
+                if (pin.exists || nativeShare.exists), let before, let after, before != after {
+                    changes += 1
+                    if changes == 2 { return true }
+                }
+                before = after
+            }
+            XCTFail("The remote picture must advance, not retain a stale frame.")
+            return false
         }
         guard verifyMovingVideo() else { return }
         attachScreenshot(of: app, named: "Real outage baseline")
 
         let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        settings.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         func settingsRoot() {
             // Relaunch Settings: activation can leave its suspended AX server unavailable
             // during an outage, even while XCTest remains connected over USB.

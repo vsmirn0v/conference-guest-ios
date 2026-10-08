@@ -44,6 +44,7 @@ final class TelemostCallEngine: CallEngine {
     private var microphoneIntent = false
     private var audioProfile: StudioAudioProfile = .conversation
     private var cameraIntent = false
+    private var cameraPosition: AVCaptureDevice.Position = .front
     private var quiet = false
     private var held = false
     private var helloAccepted = false
@@ -102,12 +103,16 @@ final class TelemostCallEngine: CallEngine {
             chat: chat, invitationURL: target.invitationURL, roomIdentifier: target.roomID)
         view.supportsChat = true; view.supportsSharing = true; view.studio = studio
         view.usesNativeShareControl = GuestScreenCaptureFactory.isAvailable
+        view.sharingAvailable = false
         view.onShare = { [weak self] in self?.setScreenSharing($0) }
         view.onLeave = { [weak self] in self?.leave() }
         view.onMicrophone = { [weak self] in self?.setMicrophone($0) }
         view.onCamera = { [weak self] in self?.setCamera($0) }
         view.onFlipCamera = { [weak self] in self?.flipCamera() }
-        view.onSpeaker = { enabled in try? AVAudioSession.sharedInstance().overrideOutputAudioPort(enabled ? .speaker : .none) }
+        view.onSpeaker = { [weak self] enabled in
+            do { try self?.audio.selectBuiltInOutput(speaker: enabled) }
+            catch { self?.onMediaStatus?(error.localizedDescription) }
+        }
         view.onDisplayMode = { [weak self] mode in
             guard let self else { return }; self.displayMode = mode
             Task { try? await self.updateSlots() }
@@ -163,6 +168,7 @@ final class TelemostCallEngine: CallEngine {
         } }
         systemCall.onHoldChanged = { [weak self] value in Task { @MainActor in
             guard let self else { return }; self.held = value
+            self.view?.sharingAvailable = self.connected && !value && !self.quiet
             self.view?.setHeld(value || self.quiet); self.studio.held = value || self.quiet
             if value { self.pauseAudio(); await self.stopScreenSharing(); self.catchUp.begin(.anotherCall) }
             else { self.catchUp.end(.anotherCall); self.restoreAudio() }
@@ -223,7 +229,7 @@ final class TelemostCallEngine: CallEngine {
                 let factory = try TelemostPeer.makeFactory()
                 self.factory = factory
                 let subscriber = TelemostPeer(target: "SUBSCRIBER", factory: factory, ice: bootstrap.iceServers)
-                let publisher = TelemostPeer(target: "PUBLISHER", factory: factory, ice: bootstrap.iceServers)
+                let publisher = TelemostPeer(target: "PUBLISHER", factory: factory, ice: bootstrap.iceServers, cameraPosition: cameraPosition)
                 self.subscriber = subscriber; self.publisher = publisher
                 for peer in [subscriber, publisher] {
                     peer.onCandidate = { [weak self] candidate in Task { @MainActor in
@@ -328,6 +334,7 @@ final class TelemostCallEngine: CallEngine {
             [.connected, .completed].contains(subscriber.connection.iceConnectionState),
             [.connected, .completed].contains(publisher.connection.iceConnectionState) else { return }
         connected = true; retries = 0; connectionDeadline?.cancel()
+        view?.sharingAvailable = !held && !quiet
         systemCall.markConnected(); view?.setConnectionRecovering(false); onMediaStatus?(nil)
         catchUp.end(.connection); onEvent?(.active); refresh()
     }
@@ -428,7 +435,12 @@ final class TelemostCallEngine: CallEngine {
         let generation = epoch
         Task { [weak self] in
             guard let self, let publisher else { return }
-            do { try await publisher.flipCamera(); if epoch == generation { refresh() } }
+            do {
+                try await publisher.flipCamera()
+                guard epoch == generation else { return }
+                if let position = publisher.captureDevice?.position { cameraPosition = position }
+                refresh()
+            }
             catch { if epoch == generation { onMediaStatus?(error.localizedDescription) } }
         }
     }
@@ -512,6 +524,7 @@ final class TelemostCallEngine: CallEngine {
         }
         if retries >= 5 { Task { await finish(failed: true) }; return }
         retries += 1; epoch = UUID(); connected = false; helloAccepted = false; serverReady = false
+        view?.sharingAvailable = false
         connectionTask?.cancel(); connectionTask = nil; mediaTask?.cancel(); mediaTask = nil; completeAnswer(CancellationError())
         connectionDeadline?.cancel(); catchUp.begin(.connection); onEvent?(.connecting)
         view?.setConnectionRecovering(true); onMediaStatus?(L("Restoring meeting media…"))
@@ -573,6 +586,12 @@ final class TelemostCallEngine: CallEngine {
         view?.setHeld(held); scheduleMedia(); if !held { restoreAudio() }
     }
     #if DEBUG
+    func setSendingForTesting(microphone: Bool, camera: Bool) {
+        setMicrophone(microphone); setCamera(camera)
+    }
+    func flipCameraForTesting() { flipCamera() }
+    func selectSpeakerForTesting(_ enabled: Bool) throws { try audio.selectBuiltInOutput(speaker: enabled) }
+    var cameraPositionForTesting: AVCaptureDevice.Position? { publisher?.captureDevice?.position }
     struct ReceiveEvidence {
         var videoFrames = 0.0
         var audioDuration = 0.0

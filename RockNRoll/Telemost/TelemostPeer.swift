@@ -44,14 +44,14 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
     private var sharingTransceiver: LKRTCRtpTransceiver?
     private(set) var videoTrack: LKRTCVideoTrack?
     private var camera: LKRTCCameraVideoCapturer?
-    private var cameraPosition: AVCaptureDevice.Position = .front
+    private var cameraPosition: AVCaptureDevice.Position
     private(set) var captureDevice: AVCaptureDevice?
     private var audioTrack: LKRTCAudioTrack?
     private var audioProfile: StudioAudioProfile?
     @MainActor private var closed = false
 
-    init(target: String, factory: LKRTCPeerConnectionFactory, ice: [[String: Any]]) {
-        self.target = target; self.factory = factory
+    init(target: String, factory: LKRTCPeerConnectionFactory, ice: [[String: Any]], cameraPosition: AVCaptureDevice.Position = .front) {
+        self.target = target; self.factory = factory; self.cameraPosition = cameraPosition
         super.init(); sequence = target == "PUBLISHER" ? 1 : 0
         let configuration = LKRTCConfiguration(); configuration.sdpSemantics = .unifiedPlan
         configuration.iceServers = Self.servers(ice)

@@ -105,6 +105,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     var supportsChat = true
     var supportsSharing = true
     var usesNativeShareControl = false
+    var sharingAvailable = true {
+        didSet {
+            share.isEnabled = sharingAvailable || isSharingScreen
+            sharePicker.isUserInteractionEnabled = sharingAvailable
+        }
+    }
     var sharePreview: LocalSharePreview { localSharePreview }
     private var displayMode: ConferenceDisplayMode = .all
     private var isMicrophoneOn = false
@@ -1233,6 +1239,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             return
         }
         isSharingScreen = enabled
+        share.isEnabled = sharingAvailable || enabled
         if usesNativeShareControl || ProcessInfo.processInfo.isiOSAppOnMac {
             share.isHidden = false
             sharePicker.isHidden = true

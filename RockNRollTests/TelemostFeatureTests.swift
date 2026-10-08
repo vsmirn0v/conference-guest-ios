@@ -74,7 +74,8 @@ final class TelemostFeatureTests: XCTestCase {
         defer { engine.leave() }
         try await wait { active || ended }; XCTAssertFalse(ended)
         print("Native chat QA: media connected")
-        try await wait { chat.unavailableReason?.hasPrefix("Read-only") == true || ended }
+        let readOnly = L("Read-only chat. This meeting service requires sign-in to send messages.")
+        try await wait { chat.unavailableReason == readOnly || ended }
         XCTAssertFalse(chat.canSend); XCTAssertFalse(ended)
         print("Native chat QA: reader ready, messages \(chat.items.count)")
         if let expected = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CHAT_TEXT"] {
@@ -109,11 +110,12 @@ final class TelemostFeatureTests: XCTestCase {
         let store = ChatStore(), reader = TelemostChat(store: store)
         reader.start(invitation: target.invitationURL, roomID: bootstrap.roomID)
         defer { reader.stop() }
-        try await wait { store.unavailableReason?.hasPrefix("Read-only") == true }
+        let readOnly = L("Read-only chat. This meeting service requires sign-in to send messages.")
+        try await wait { store.unavailableReason == readOnly }
         let deadline = Date().addingTimeInterval(75)
         while Date() < deadline {
             try await Task.sleep(for: .seconds(1))
-            XCTAssertTrue(store.unavailableReason?.hasPrefix("Read-only") == true)
+            XCTAssertEqual(store.unavailableReason, readOnly)
         }
         if let expected = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CHAT_TEXT"] {
             XCTAssertTrue(store.items.contains { $0.text == expected })

@@ -7,6 +7,7 @@ final class TelemostProbe {
     private var socket: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
+    private var statisticsTask: Task<Void, Never>?
     private let audio = SyntheticAudio()
     private lazy var factory: LKRTCPeerConnectionFactory = {
         let encoder = LKRTCDefaultVideoEncoderFactory()
@@ -68,6 +69,16 @@ final class TelemostProbe {
         ])
         pingTask = Task { [weak self] in
             while !Task.isCancelled { try? await Task.sleep(nanoseconds: 5_000_000_000); if !Task.isCancelled { try? await self?.send("ping", [:]) } }
+        }
+        if let raw = ProcessInfo.processInfo.environment["TELEMOST_TEST_STATS_SECONDS"],
+           let seconds = UInt64(raw), (2...60).contains(seconds) {
+            statisticsTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    do { try await Task.sleep(nanoseconds: seconds * 1_000_000_000) } catch { return }
+                    guard let self, !Task.isCancelled else { return }
+                    await self.subscriber?.stats(); await self.publisher?.stats(); self.audio.report()
+                }
+            }
         }
         try await Task.sleep(nanoseconds: duration * 1_000_000_000)
         await peer.stats()
@@ -136,6 +147,7 @@ final class TelemostProbe {
     }
     func stop() async {
         pingTask?.cancel(); receiveTask?.cancel()
+        statisticsTask?.cancel(); statisticsTask = nil
         subscriber?.close(); subscriber = nil
         publisher?.close(); publisher = nil
         let closing = socket
@@ -160,7 +172,7 @@ struct ProbeMain {
         }
         let probe = TelemostProbe()
         var status: Int32 = 0
-        do { try await probe.run(invitation: invitation, name: args.count > 3 ? args[3] : "Rock Native QA", duration: min(120, UInt64(args.count > 2 ? args[2] : "20") ?? 20), publish: args.contains("--publish") || args.contains("--share"), sharing: args.contains("--share"), preferH264: args.contains("--h264"), expectMedia: args.contains("--expect-media")) }
+        do { try await probe.run(invitation: invitation, name: args.count > 3 ? args[3] : "Rock Native QA", duration: min(600, UInt64(args.count > 2 ? args[2] : "20") ?? 20), publish: args.contains("--publish") || args.contains("--share"), sharing: args.contains("--share"), preferH264: args.contains("--h264"), expectMedia: args.contains("--expect-media")) }
         catch { probeLog("failed", ["error": String(describing: error)]); status = 1 }
         await probe.stop()
         if status != 0 { exit(status) }

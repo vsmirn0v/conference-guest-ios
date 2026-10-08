@@ -6,6 +6,65 @@ import XCTest
 
 @MainActor
 final class TelemostTests: XCTestCase {
+    func testPhysicalCameraMicrophoneAndRoutes() async throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Requires physical capture and audio routes")
+        #else
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_TELEMOST_INVITE"] else { throw XCTSkip("Disposable room required") }
+        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized,
+              AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw XCTSkip("Physical camera/microphone permission must already be granted") }
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first { $0.isKeyWindow })
+        let previous = window.rootViewController, idle = UIApplication.shared.isIdleTimerDisabled
+        UIApplication.shared.isIdleTimerDisabled = true
+        let container = UIViewController(); window.rootViewController = container
+        defer { window.rootViewController = previous; UIApplication.shared.isIdleTimerDisabled = idle }
+        let engine = TelemostCallEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), chat: ChatStore())
+        var active = false, ended = false, readyCount = 0
+        engine.onEvent = { event in switch event { case .active: active = true; readyCount += 1; case .left, .failed: ended = true; default: break } }
+        try engine.join(target: TelemostTarget.parse(invitation), name: "Native Physical Camera QA", container: container, quiet: false)
+        defer { engine.leave() }
+        try await wait { active || ended }; XCTAssertFalse(ended)
+        engine.setSendingForTesting(microphone: true, camera: true)
+        let deadline = Date().addingTimeInterval(20)
+        var sent = await engine.sentScreenFramesForTesting()
+        while sent < 15, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(200)); sent = await engine.sentScreenFramesForTesting()
+        }
+        XCTAssertGreaterThanOrEqual(sent, 15, "Physical camera must encode real frames")
+        engine.flipCameraForTesting(); try await Task.sleep(for: .seconds(4))
+        let afterFlip = await engine.sentScreenFramesForTesting()
+        XCTAssertGreaterThan(afterFlip, sent, "Camera must continue after lens switch")
+        let session = AVAudioSession.sharedInstance()
+        try engine.selectSpeakerForTesting(false); try await Task.sleep(for: .seconds(2))
+        print("Physical native route after receiver selection: \(session.currentRoute.outputs.map { $0.portType.rawValue })")
+        XCTAssertEqual(session.currentRoute.outputs.first?.portType, .builtInReceiver)
+        try engine.selectSpeakerForTesting(true); try await Task.sleep(for: .seconds(2))
+        XCTAssertEqual(session.currentRoute.outputs.first?.portType, .builtInSpeaker)
+        XCTAssertFalse(ended)
+        let position = try XCTUnwrap(engine.cameraPositionForTesting)
+        XCTAssertEqual(position, .back)
+        let beforeHold = readyCount
+        try await engine.setTransferHeld(true, restoreSending: true)
+        try await Task.sleep(for: .seconds(4))
+        try await engine.setTransferHeld(false, restoreSending: true)
+        try await wait { readyCount > beforeHold || ended }; XCTAssertFalse(ended)
+        let media = await waitForMedia(engine)
+        XCTAssertGreaterThan(media.audioEnergy, 0)
+        XCTAssertGreaterThanOrEqual(media.videoFrames, 10)
+        try await wait { engine.cameraPositionForTesting != nil || ended }
+        XCTAssertEqual(engine.cameraPositionForTesting, position, "Recovery must preserve the selected lens")
+        let beforeRecovery = readyCount
+        engine.interruptForTesting()
+        try await wait { readyCount > beforeRecovery || ended }; XCTAssertFalse(ended)
+        let recovered = await waitForMedia(engine)
+        XCTAssertGreaterThanOrEqual(recovered.videoFrames, 10)
+        XCTAssertGreaterThan(recovered.audioEnergy, 0)
+        try await wait { engine.cameraPositionForTesting != nil || ended }
+        XCTAssertEqual(engine.cameraPositionForTesting, position, "Transport recovery must preserve the selected lens")
+        engine.setSendingForTesting(microphone: false, camera: false)
+        engine.leave(); try await wait { ended }
+        #endif
+    }
     func testLiveNativeMediaAndRecovery() async throws {
         guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_TELEMOST_INVITE"] else {
             throw XCTSkip("Opt-in live Telemost media check requires a disposable room and synthetic source.")
@@ -34,8 +93,23 @@ final class TelemostTests: XCTestCase {
             let sustained = await engine.receiveEvidenceForTesting()
             XCTAssertGreaterThan(sustained.videoFrames, evidence.videoFrames)
             XCTAssertGreaterThan(sustained.audioDuration, evidence.audioDuration)
+            #if !targetEnvironment(simulator)
+            let readyBeforeHold = readyCount
+            try await engine.setTransferHeld(true, restoreSending: true)
+            try await wait { !rtcAudio.isAudioEnabled && !call.canRestoreAudio }
+            XCTAssertFalse(ended, "System hold must keep the meeting alive")
+            try await Task.sleep(for: .seconds(4))
+            try await engine.setTransferHeld(false, restoreSending: true)
+            try await wait { call.canRestoreAudio && readyCount > readyBeforeHold || ended }
+            XCTAssertFalse(ended)
+            evidence = await waitForMedia(engine)
+            XCTAssertGreaterThanOrEqual(evidence.videoFrames, 10, "Presentation must resume after CallKit hold")
+            XCTAssertGreaterThan(evidence.audioEnergy, 0, "Decoded audio must resume after CallKit hold")
+            print("Physical native media: CallKit hold/resume restored audio and video")
+            #endif
+            let readyBeforeRecovery = readyCount
             engine.interruptForTesting()
-            try await wait { readyCount >= 2 || ended }
+            try await wait { readyCount > readyBeforeRecovery || ended }
             XCTAssertFalse(ended)
             evidence = await waitForMedia(engine)
             XCTAssertGreaterThan(evidence.videoFrames, 0)
