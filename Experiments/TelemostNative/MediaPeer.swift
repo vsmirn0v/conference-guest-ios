@@ -224,6 +224,7 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
             probeLog("rtc-stats", summary)
         }
         probeLog("render-summary", ["target": target, "frames": receivedFrames])
+        probeLog("hardware-vp9", ["decoders": NativeVideoDecoderFactory.evidenceForTesting])
         return report.statistics.values.filter { $0.type == "outbound-rtp" && $0.values["kind"] as? String == "video" }
             .reduce(0) { $0 + (($1.values["framesEncoded"] as? NSNumber)?.intValue ?? 0) }
     }

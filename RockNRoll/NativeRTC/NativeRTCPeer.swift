@@ -13,9 +13,10 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         guard sslInitialized else { throw NativeRTCError.invalidResponse }
         let encoder = LKRTCDefaultVideoEncoderFactory()
         if let codec = LKRTCDefaultVideoEncoderFactory.supportedCodecs().first(where: { $0.name == "H264" }) { encoder.preferredCodec = codec }
-        return LKRTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: LKRTCDefaultVideoDecoderFactory())
+        return LKRTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: NativeVideoDecoderFactory())
     }
     static func makeFactory() throws -> LKRTCPeerConnectionFactory { try sharedFactory.get() }
+    deinit { if let decoderObservation { NotificationCenter.default.removeObserver(decoderObservation) } }
     let target: String
     let factory: LKRTCPeerConnectionFactory
     private(set) var connection: LKRTCPeerConnection!
@@ -23,6 +24,8 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     private var candidateHandler: (([String: Any]) -> Void)?
     private var trackHandler: ((String, LKRTCVideoTrack) -> Void)?
     private var stateHandler: ((LKRTCIceConnectionState) -> Void)?
+    var onDecoderFallback: (() -> Void)?
+    private var decoderObservation: NSObjectProtocol?
     // Delegate callbacks arrive on WebRTC threads while teardown clears the
     // handlers on the main actor. Snapshot the closures under the same lock.
     var onCandidate: (([String: Any]) -> Void)? {
@@ -56,6 +59,12 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     init(target: String, factory: LKRTCPeerConnectionFactory, ice: [[String: Any]], cameraPosition: AVCaptureDevice.Position = .front, topology: Topology = .split) {
         self.target = target; self.factory = factory; self.cameraPosition = cameraPosition; self.topology = topology
         super.init(); sequence = target == "PUBLISHER" ? 1 : 0
+        let decoderGeneration = NativeVideoDecoderPolicy.shared.snapshot.generation
+        decoderObservation = NotificationCenter.default.addObserver(forName: NativeVideoDecoderPolicy.fallbackNotification,
+            object: NativeVideoDecoderPolicy.shared, queue: .main) { [weak self] notification in
+                guard notification.userInfo?["generation"] as? UUID == decoderGeneration else { return }
+                self?.onDecoderFallback?()
+            }
         let configuration = LKRTCConfiguration(); configuration.sdpSemantics = .unifiedPlan
         configuration.iceServers = Self.servers(ice)
         connection = factory.peerConnection(with: configuration,
@@ -240,6 +249,8 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         try await setCamera(false); try await setCamera(true)
     }
     @MainActor func close() async {
+        if let decoderObservation { NotificationCenter.default.removeObserver(decoderObservation) }
+        decoderObservation = nil; onDecoderFallback = nil
         closed = true
         setSharing(nil)
         onCandidate = nil; onTrack = nil; onState = nil

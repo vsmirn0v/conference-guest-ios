@@ -2,6 +2,11 @@
 
 ## Result
 
+This records the baseline investigation before the receiving factory changed.
+The subsequent [VP9 hardware implementation and validation](validation-2026-10-09-vp9-hardware.md)
+enables supported VP9 receiving through VideoToolbox. Outgoing codec negotiation
+and the findings about publishing below remain unchanged.
+
 The app currently sends Telemost camera and screen-sharing video through software
 VP8/libvpx. Its H.264 preference does not enable hardware encoding: the anonymous
 Goloom publisher answer in the authorized test room removes H.264. The separate

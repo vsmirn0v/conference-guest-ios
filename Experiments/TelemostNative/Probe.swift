@@ -13,7 +13,7 @@ final class TelemostProbe {
         let encoder = LKRTCDefaultVideoEncoderFactory()
         if codecPolicy != .serverDefault, let codec = LKRTCDefaultVideoEncoderFactory.supportedCodecs().first(where: { $0.name == "H264" }) { encoder.preferredCodec = codec }
         return LKRTCPeerConnectionFactory(encoderFactory: codecPolicy == .hevcOnly ? HEVCEncoderFactory() : encoder,
-            decoderFactory: codecPolicy == .hevcOnly ? HEVCDecoderFactory() : LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
+            decoderFactory: codecPolicy == .hevcOnly ? HEVCDecoderFactory() : (CommandLine.arguments.contains("--hardware-vp9") ? NativeVideoDecoderFactory() : LKRTCDefaultVideoDecoderFactory()), audioDevice: audio)
     }()
     private var subscriber: MediaPeer?
     private var ready = false
@@ -27,6 +27,7 @@ final class TelemostProbe {
 
     func run(invitation: URL, name: String, duration: UInt64, publish: Bool = false, sharing: Bool = false, codecPolicy: CodecPolicy = .serverDefault, expectMedia: Bool = false) async throws {
         self.sharing = sharing
+        NativeVideoDecoderPolicy.shared.beginCall()
         self.codecPolicy = codecPolicy
         probeLog("codec-policy", ["value": codecPolicy.rawValue, "sharing": sharing])
         self.name = name
@@ -188,7 +189,7 @@ struct ProbeMain {
             await loopbackHEVC(); return
         }
         guard args.count >= 2, let invitation = URL(string: args[1]) else {
-            print("Usage: TelemostProbe <invitation> [seconds] [name] [--publish|--share] [--h264|--h264-only|--h264-level31|--vp9-only|--hevc-only] [--expect-media]"); return
+            print("Usage: TelemostProbe <invitation> [seconds] [name] [--publish|--share] [--h264|--h264-only|--h264-level31|--vp9-only|--hevc-only] [--hardware-vp9] [--expect-media]"); return
         }
         let probe = TelemostProbe()
         var status: Int32 = 0

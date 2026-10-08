@@ -61,6 +61,7 @@ Additional experimental switches:
 - `--h264-only`: disable fallback to isolate the server's H.264 acceptance.
 - `--h264-level31`: diagnostic H.264-only offer with its level capped at 3.1. Store the same SDP locally and send it to the server; preserve profile and packetization mode. This is not a production codec policy.
 - `--vp9-only`: test the actual VP9 encoder/decoder path.
+- `--hardware-vp9`: use the app's receiving factory. Hardware-capable devices decode VP9 profile 0 through VideoToolbox; other codecs/devices retain the existing decoder. `hardware-vp9` events report directly verified hardware sessions and delivered frames. The executable has no reconnect controller, so a failed hardware session stops decoding; the app handles that notification through its existing software recovery path.
 - `--hevc-only`: opt into the bundled HEVC encoder/decoder through separate experimental factories. This does not affect the app's shared factory.
 - `--loopback-hevc`: a 15-second local HEVC encode/decode check without joining a service. Distinguishes binary/platform capability from provider acceptance.
 - `TELEMOST_TEST_CODEC_CONFIG=1`: offer the web client's initialization-time video configuration and active-codec capability, to test whether the server accepts that mode. The tested server closed this experimental connection with code 4003.
@@ -68,6 +69,7 @@ Additional experimental switches:
 Logs intentionally omit invitation URLs, room IDs, credentials, complete SDP and ICE addresses. Logs include SDP codec fields, aggregate media statistics and protocol event types. Bootstrap credentials stay in process memory. Downloaded vendor bundles and live credentials are not part of this directory.
 
 The follow-up physical results, VP9/HEVC checks, and next optimization candidates are in [Telemost codec investigation](../../docs/telemost-codecs-2026-10-09.md).
+The implemented receiving path, exact-pixel checks and physical fallback qualification are in [VP9 hardware decoding validation](../../docs/validation-2026-10-09-vp9-hardware.md).
 
 ## Original boundary before app integration
 

@@ -144,6 +144,7 @@ final class TrueConfCallEngine: CallEngine {
     }
     func join(target: TrueConfTarget, name: String, container: UIViewController, quiet: Bool, title: String? = nil) throws {
         guard !hasJoinStarted else { return }
+        NativeVideoDecoderPolicy.shared.beginCall()
         self.target = target; self.name = name; self.quiet = quiet
         catchUp.enter(roomKey: target.invitationURL.absoluteString)
         catchUp.observe(messages: [], canView: false, enabled: false)
@@ -347,6 +348,9 @@ final class TrueConfCallEngine: CallEngine {
             peer.onState = { [weak self] state in Task { @MainActor in
                 guard let self, self.epoch == generation else { return }
                 if state == .failed || state == .disconnected { self.recover() } else { self.markConnectedIfReady() }
+            } }
+            peer.onDecoderFallback = { [weak self] in Task { @MainActor in
+                guard let self, self.epoch == generation else { return }; self.recover()
             } }
             peer.onTrack = { [weak self] _, track in Task { @MainActor in
                 guard let self, self.epoch == generation, self.receiveTrack?.isEqual(track) != true else { return }

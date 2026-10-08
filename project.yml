@@ -115,6 +115,7 @@ targets:
     platform: iOS
     sources:
       - path: RockNRollTests
+      - path: Experiments/VP9Hardware/FixtureSupport.swift
     dependencies:
       - target: RockNRoll
       - package: JazzSDK

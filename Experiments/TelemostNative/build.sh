@@ -12,11 +12,14 @@ case "$platform" in
 esac
 mkdir -p "$output_dir"
 framework_dir="$framework_root/$slice"
-xcrun --sdk "$sdk" swiftc -swift-version 5 -parse-as-library -O \
+xcrun --sdk "$sdk" swiftc -swift-version 5 -D DEBUG -parse-as-library -O \
   -sdk "$(xcrun --sdk "$sdk" --show-sdk-path)" -target "$target" \
   -F "$framework_dir" -framework LiveKitWebRTC -Xlinker -rpath -Xlinker "$framework_dir" \
   "$experiment_dir/Bootstrap.swift" "$experiment_dir/MediaPeer.swift" \
   "$experiment_dir/SyntheticAudio.swift" "$experiment_dir/Probe.swift" \
+  "$experiment_dir/../../RockNRoll/NativeRTC/VP9VideoFormat.swift" \
+  "$experiment_dir/../../RockNRoll/NativeRTC/VP9HardwareDecoder.swift" \
+  "$experiment_dir/../../RockNRoll/NativeRTC/NativeVideoDecoderFactory.swift" \
   -o "$output_dir/TelemostProbe-$platform"
 if [[ "$platform" == macos ]]; then
   xcrun swiftc -swift-version 5 -parse-as-library \

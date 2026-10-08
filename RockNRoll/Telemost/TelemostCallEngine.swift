@@ -141,6 +141,7 @@ final class TelemostCallEngine: CallEngine {
     }
     func join(target: TelemostTarget, name: String, container: UIViewController, quiet: Bool, title: String? = nil) throws {
         guard !hasJoinStarted else { return }
+        NativeVideoDecoderPolicy.shared.beginCall()
         self.target = target; self.name = name; self.quiet = quiet
         catchUp.enter(roomKey: target.invitationURL.absoluteString)
         catchUp.observe(messages: [], canView: false, enabled: false)
@@ -307,6 +308,9 @@ final class TelemostCallEngine: CallEngine {
                 subscriber.onTrack = { [weak self] mid, track in Task { @MainActor in
                     guard let self, self.epoch == generation, self.tracks[mid]?.isEqual(track) != true else { return }
                     self.tracks[mid] = track; self.refresh()
+                } }
+                subscriber.onDecoderFallback = { [weak self] in Task { @MainActor in
+                    guard let self, self.epoch == generation else { return }; self.recover()
                 } }
                 let transport = TelemostTransport(server: bootstrap.serverURL, session: session); self.transport = transport
                 transport.onMessage = { [weak self] kind, body in
