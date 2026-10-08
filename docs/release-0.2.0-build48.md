@@ -10,6 +10,13 @@ Implementation fix: `5090697`.
 - Final two-choice suite on iOS 17.5 iPhone SE: six model tests and three UI
   checks pass, with three expected opt-in/wide-layout skips.
   `/tmp/rock-reactions-two17-b48.xcresult`.
+- iOS 27: six model tests, both language/rotation checks and the wide shortcut
+  pass in `/tmp/rock-reactions-two27-b48.xcresult`. Its live pixel check captured
+  a system rotation mid-animation and failed cropping; this attempt is excluded.
+  Waiting for screenshot/window orientation to match fixes the test timing.
+  The live check then passes on both targets:
+  `/tmp/rock-reactions-two27-settled-b48.xcresult` and
+  `/tmp/rock-reactions-two17-settled-b48.xcresult`.
 - Live idle-room, English/Russian palette rotation, existing View controls and
   reaction model checks pass on iOS 27 and iOS 17.5. See
   `reaction-picker-regression-2026-10-08.md` for the result bundles.

@@ -91,10 +91,25 @@ final class MeetingReactionsUITests: XCTestCase {
                                        file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertFalse(app.buttons["reactions.send.like"].exists, file: file, line: line)
         XCTAssertTrue(invitation.isHittable, file: file, line: line)
-        let frame = invitation.frame
-        let screenshot = XCUIScreen.main.screenshot()
+        var screenshot = XCUIScreen.main.screenshot()
+        let deadline = Date().addingTimeInterval(6)
+        func matchesWindow(_ image: UIImage) -> Bool {
+            let size = app.frame.size
+            return abs(image.size.width - size.width) < 1 && abs(image.size.height - size.height) < 1
+        }
+        // XCTest can report idle while the system is still rotating the
+        // presentation. Never crop a portrait screenshot using landscape AX frames.
+        while !matchesWindow(screenshot.image) && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.2)
+            screenshot = XCUIScreen.main.screenshot()
+        }
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = "Idle guest stage"; attachment.lifetime = .keepAlways; add(attachment)
+        guard matchesWindow(screenshot.image) else {
+            XCTFail("Screenshot orientation did not settle to match the window", file: file, line: line)
+            return
+        }
+        let frame = invitation.frame
         let band = CGRect(x: app.frame.minX + 8, y: frame.midY - 22,
                           width: max(0, frame.minX - app.frame.minX - 20), height: 44)
         let right = CGRect(x: frame.maxX + 12, y: band.minY,
