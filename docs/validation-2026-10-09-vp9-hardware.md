@@ -42,6 +42,7 @@ frame counters/forced failure are Debug-only and add no Release telemetry.
 | iVitalii live recovery | Initial hardware, forced transport recovery, simulated call hold/resume, then forced decoder failure → actual VP9/libvpx playback pass in 29.874 seconds; microphone remains off, no ended event |
 | iVitalii system PiP | VP9 screen sharing stays visibly changing after 75 seconds in the background; receiver/speaker changes and PiP removal after Leave pass (129.764-second functional test) |
 | iOS 17.5 simulator | 34 focused native-engine/decoder tests: 0 failures, 12 expected physical/live-test skips |
+| iOS 27 simulator, final sources | Same 34 tests: 0 failures, 12 expected physical/live-test skips |
 | Signed Release, generic iOS | Build succeeds with minimum OS 16.0; newer hardware-selection symbols are weak-linked and availability-guarded |
 
 The hardware-session query is the acceleration proof. The bundled SDK's generic
@@ -87,7 +88,7 @@ repeated into a temporary file and matched the committed fixture byte for byte.
 Local logs: `/tmp/rock-vp9-pixels-final.log`,
 `/tmp/rock-vp9-mac-receiver.log`, `/tmp/rock-vp9-phone-test.log`,
 `/tmp/rock-vp9-phone-recovery-test.log`, `/tmp/rock-vp9-sim17-test.log`,
-and `/tmp/rock-vp9-release-build2.log`.
+`/tmp/rock-vp9-sim27-test3.log`, and `/tmp/rock-vp9-release-final.log`.
 The physical recovery result is
 `/Users/v.smirnov/Library/Developer/Xcode/DerivedData/RockNRoll-frxcdywwlqagzfctzzoklveolbjz/Logs/Test/Test-RockNRoll-2026.10.09_00-42-33-+0300.xcresult`.
 Xcode's post-test diagnostic collector reported a `devicectl` lookup error after
@@ -97,6 +98,10 @@ The PiP result is `/tmp/rock-vp9-phone-pip-test.log` and
 Its independent publisher continued sending VP9 after the passing UI check,
 then reported socket error 57 at the end of its 240-second window and closed both
 peers. That separate source exit is not an additional passing transport test.
+The fresh simulator cache initially failed the existing SDK resource-copy lookup;
+linking its `SourcePackages` to the resolved package cache corrected it. A later
+compile overlapped an unrelated SDK-test hook edit and used a stale app/test
+interface. Rebuilding the affected module produced the passing final run above.
 
 ## Primary implementation references
 
