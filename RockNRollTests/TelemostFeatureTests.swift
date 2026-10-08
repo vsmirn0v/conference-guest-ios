@@ -100,6 +100,25 @@ final class TelemostFeatureTests: XCTestCase {
         await engine.stopSharingForTesting(); XCTAssertFalse(engine.isSharingScreen)
         engine.leave(); try await wait { ended }; XCTAssertFalse(engine.hasJoinStarted)
     }
+    func testLiveChatStaysConnectedBeyondOneMinute() async throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_TELEMOST_INVITE"] else { throw XCTSkip("Disposable Telemost room required") }
+        let target = try TelemostTarget.parse(invitation)
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let bootstrap = try await TelemostBootstrap.load(target, name: "Native Chat Lifecycle QA", session: session)
+        let store = ChatStore(), reader = TelemostChat(store: store)
+        reader.start(invitation: target.invitationURL, roomID: bootstrap.roomID)
+        defer { reader.stop() }
+        try await wait { store.unavailableReason?.hasPrefix("Read-only") == true }
+        let deadline = Date().addingTimeInterval(75)
+        while Date() < deadline {
+            try await Task.sleep(for: .seconds(1))
+            XCTAssertTrue(store.unavailableReason?.hasPrefix("Read-only") == true)
+        }
+        if let expected = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CHAT_TEXT"] {
+            XCTAssertTrue(store.items.contains { $0.text == expected })
+        }
+    }
     private func wait(_ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(30)
         while !condition(), Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }

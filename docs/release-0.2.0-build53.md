@@ -21,6 +21,9 @@ encoding and clean departure. Logs: `/tmp/rock53-real-chat-test.log` and
 17.5 (`/tmp/rock53-ios17-chat.log`). The native join/chat/presentation test also
 passed with no synthetic remote publisher and all other participants muted
 (`/tmp/rock53-muted-room-test.log`).
+An independent native chat connection stayed read-only and retained the browser
+message for 75 seconds after readiness; the 78.5-second live lifecycle test passed
+(`/tmp/rock53-chat-lifecycle.log`).
 
 The anonymous provider denies chat writes and exposes no live caption feed. The
 app explains these limits. Actual Telemost system capture, background/PiP, audio
@@ -44,4 +47,12 @@ declarations passed, and test-only markers are absent from the app executable.
 
 Upload uses the same signed archive. Exported IPA identity does not imply identical
 transport-package bytes. Logs: `/tmp/rock-build53-{archive,export,upload}.log`.
-Testing-group readbacks are recorded after verified publication.
+Upload succeeded; App Store Connect marked processing Complete. The same six
+pre-existing missing third-party dSYM warnings remain; the app's matching dSYM
+was verified above. Neutral testing notes were saved and the build was submitted
+to the existing internal (one tester) and public (six testers) groups.
+At 19:36–19:37 MSK on 8 October 2026, both existing groups showed build 0.2.0 (53)
+as **Testing — Expires in 90 days**: Internal (one tester, 44 builds) and Public Beta
+(six testers, 41 builds). Build 52 is absent from both groups. Local proof captures:
+`Marketing/TestFlight/build53-internal.png` and `Marketing/TestFlight/build53-public.png`.
+Public invitation: https://testflight.apple.com/join/Hd13C9U3.

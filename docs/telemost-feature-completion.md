@@ -76,6 +76,9 @@ connections, tracks, credentials and capture still end with their call.
 - The corrected chat wire/history checks also passed on iOS 17.5. A separate
   muted-room check joined, loaded chat and published presentation without a
   synthetic remote publisher.
+- A separate live native chat lifecycle check remained ready, read-only and
+  retained the browser message for 75 seconds after initialization (78.5-second
+  test); it required no audio/video session.
 - iVitalii was unavailable. Physical Telemost microphone/camera, ReplayKit/system
   chooser, audio routes, background/PiP and cellular/FaceTime recovery remain pending.
 
