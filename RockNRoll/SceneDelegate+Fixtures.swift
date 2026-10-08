@@ -143,12 +143,16 @@ extension SceneDelegate {
                 let studio = StudioModel(audioControl: .fullProcessing, privateCamera: StudioCameraFixture(), privateMicrophone: StudioMicrophoneFixture())
                 studio.applyProfile = { _ in }
                 studio.soundCheck.verifyMuted = { [weak call] in call?.setMicrophone(false) }
+                studio.presenter.startSharing = { _ in }
+                studio.presenter.sendSample = { _ in }
+                studio.presenter.stopSharing = {}
                 call.studio = studio
                 if ProcessInfo.processInfo.environment["CONFERENCE_TEST_MIC_ACTIVITY"] == "1" {
                     call.fixtureActions = MicrophoneActivityFixture(activity: studio.microphoneActivity).actions
                 }
                 call.onCamera = { [weak call] in call?.setCamera($0) }
                 call.onMicrophone = { [weak call, weak studio] in call?.setMicrophone($0); studio?.microphoneActivity.setStatus($0 ? .on : .muted) }
+                call.onShare = { [weak call] in call?.setSharing($0) }
             }
             call.fixtureParticipants = [ParticipantStatus(id: "local", name: "Rock QA", isLocal: true,
                 microphoneOn: false, cameraOn: false, screenShareOn: false, isSpeaking: false,

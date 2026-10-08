@@ -9,7 +9,7 @@ final class StudioShortcut: NSObject {
     private let show: () -> Void
     private init(show: @escaping () -> Void) { self.show = show }
 
-    static func install(on button: UIView, pane: StudioModel.Pane, model: StudioModel, devices: Bool = false) {
+    static func install(on button: UIView, pane: StudioModel.Pane, model: StudioModel, devices: Bool = false, accessibilityTargets: [UIView]? = nil) {
         let shortcut = StudioShortcut { [weak button, weak model] in
             guard let button, let model else { return }
             model.audioSection = devices ? .devices : .sound
@@ -24,10 +24,12 @@ final class StudioShortcut: NSObject {
         secondary.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
         secondary.buttonMaskRequired = .secondary
         button.addGestureRecognizer(secondary)
-        button.showsLargeContentViewer = false
         let label = devices ? L("Audio devices") : pane == .camera ? L("Preview and camera settings") : (pane == .presenter ? L("Presenter") : L("Sound settings"))
-        button.accessibilityHint = L("Touch and hold to configure without turning it on.")
-        button.accessibilityCustomActions = [UIAccessibilityCustomAction(name: label, target: shortcut, selector: #selector(open))]
+        for target in accessibilityTargets ?? [button] {
+            target.showsLargeContentViewer = false
+            target.accessibilityHint = L("Touch and hold to configure without turning it on.")
+            target.accessibilityCustomActions = [UIAccessibilityCustomAction(name: label, target: shortcut, selector: #selector(open))]
+        }
     }
 
     @objc private func held(_ gesture: UILongPressGestureRecognizer) {

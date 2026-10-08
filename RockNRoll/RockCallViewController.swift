@@ -546,6 +546,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             item.translatesAutoresizingMaskIntoConstraints = false
             shareControl.addSubview(item)
         }
+        if let studio, studio.presenter.available {
+            // The container also receives holds on the system broadcast button.
+            StudioShortcut.install(on: shareControl, pane: .presenter, model: studio,
+                accessibilityTargets: [share, sharePicker])
+        }
         NSLayoutConstraint.activate([
             share.leadingAnchor.constraint(equalTo: shareControl.leadingAnchor),
             share.trailingAnchor.constraint(equalTo: shareControl.trailingAnchor),

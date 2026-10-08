@@ -22,6 +22,60 @@ final class StudioUITests: XCTestCase {
     }
     func testGuestLongPressOpensPrivatePreviewWithoutTogglingMedia() { checkShortcuts(guest: true) }
     func testJamLongPressOpensPrivatePreviewWithoutTogglingMedia() { checkShortcuts(guest: false) }
+    func testNativeShareLongPressOpensPresenterWithoutStartingCapture() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
+        app.launchEnvironment["CONFERENCE_TEST_STUDIO"] = "1"
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait; app.terminate() }
+        app.launch()
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            let share = app.buttons["Share screen"].firstMatch
+            XCTAssertTrue(share.waitForExistence(timeout: 10))
+            share.press(forDuration: 0.7)
+            let presenter = app.segmentedControls["studio.panes"].buttons["Presenter"]
+            XCTAssertTrue(presenter.waitForExistence(timeout: 5)); XCTAssertTrue(presenter.isSelected)
+            XCTAssertFalse(app.buttons["Stop sharing screen"].exists, "Holding Share must not start capture")
+            attach("Share hold opens private Presenter")
+            app.buttons["studio.done"].tap()
+            XCTAssertTrue(app.buttons["Unmute microphone"].firstMatch.exists)
+            XCTAssertTrue(app.buttons["Start video"].firstMatch.exists)
+        }
+        if #available(iOS 27.0, *) {
+            app.buttons["Share screen"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["Stop sharing screen"].waitForExistence(timeout: 5), "Short tap must retain the sharing action")
+            app.buttons["Stop sharing screen"].tap()
+            XCTAssertTrue(app.buttons["Share screen"].waitForExistence(timeout: 5))
+        }
+    }
+    func testLiveNativeShareLongPressOpensPresenter() throws {
+        continueAfterFailure = false
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_TELEMOST_INVITE"] else { throw XCTSkip("Disposable Telemost room required") }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Share Shortcut QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
+        app.launch()
+        defer {
+            if app.buttons["studio.done"].exists { app.buttons["studio.done"].tap() }
+            if app.buttons["Leave"].exists { app.buttons["Leave"].tap() }
+            app.terminate()
+        }
+        let share = app.buttons["Share screen"].firstMatch
+        XCTAssertTrue(share.waitForExistence(timeout: 30))
+        let ready = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: share)
+        wait(for: [ready], timeout: 20)
+        share.press(forDuration: 0.7)
+        let presenter = app.segmentedControls["studio.panes"].buttons["Presenter"]
+        XCTAssertTrue(presenter.waitForExistence(timeout: 5)); XCTAssertTrue(presenter.isSelected)
+        XCTAssertFalse(app.buttons["Stop sharing screen"].exists)
+        attach("Live Telemost Share hold opens Presenter")
+    }
 
     private func checkShortcuts(guest: Bool) {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
