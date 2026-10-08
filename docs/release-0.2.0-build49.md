@@ -39,4 +39,38 @@ Beta notes: “Improved meeting previews and fixed microphone status display.”
 
 ## Delivery
 
-Pending signed archive, upload and TestFlight group verification.
+Source: `7903413`, pushed to main.
+
+Signed archive:
+`/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-10-08/RockNRoll-0.2.0-b49.xcarchive`.
+Export: `/tmp/rock-build49-export/RockNRoll.ipa`.
+
+Archive and exported strict signature verification pass. The signed app uses
+team 5V64BP2H3P, get-task-allow false and iCloud environment Production. The
+provisioning profile permits both environments; the actual signed entitlement
+selects Production. Required camera/microphone/Bluetooth strings and the export
+compliance declaration are present. Contacts permission and calendar QA fixture
+markers are absent. Executable and app dSYM UUID match:
+`50DD9EBF-BC2C-3AEF-879E-1C4631565A05`.
+
+Qualified export IPA SHA-256:
+`c17a858835d0a53efbd3eda348a4a97d8ea7e023bb66d4d89f4f2f228326fe1d`.
+Exported executable SHA-256:
+`222305fa95a06a86359a55fb1592b3131947ca77c4adaa406ac545ee9a3d2c22`.
+The upload uses Xcode's export/upload of the same archive, rather than uploading
+the separately exported IPA bytes.
+
+Xcode reports Uploaded RockNRoll / EXPORT SUCCEEDED in
+`/tmp/rock-build49-upload.log`. Existing third-party missing-dSYM warnings remain;
+the app's own dSYM matches its executable.
+
+At 11:06 MSK on October 8, 2026, separate group readbacks confirm **Testing,
+Expires in 90 days** for 0.2.0 (49) in Rock’n’Roll Internal (one tester) and
+Rock’n’Roll Public Beta (six testers). Public submission used the beta notes above
+with automatic tester notification enabled. The existing public invitation is
+https://testflight.apple.com/join/Hd13C9U3.
+
+Local publication proof: `Marketing/TestFlight/build49-internal.png` and
+`Marketing/TestFlight/build49-public.png`. Calendar and meter render captures are
+also saved under that ignored directory; none are tracked in Git. Test simulators
+were shut down after the runs.
