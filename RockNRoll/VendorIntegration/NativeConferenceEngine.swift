@@ -457,7 +457,6 @@ final class NativeConferenceEngine: CallEngine {
 
     private func beginMediaReconnect(forNetwork: Bool) {
         guard hasJoinStarted, !leaveRequested, finishing == nil, !isMediaReconnecting else { return }
-        activeControls?.retireReactions()
         needsMediaReconnect = false
         reconnectingForNetwork = forNetwork
         isMediaReconnecting = true
@@ -601,7 +600,6 @@ final class NativeConferenceEngine: CallEngine {
 
     func join(target: JoinTarget, displayName: String) throws {
         guard finishing == nil else { throw ProviderError.teardownInProgress }
-        activeControls?.retireReactions()
         reactionsAdapter?.stop(); reactionsAdapter = nil; reactions.begin()
         sessionEpoch = UUID()
         audioRecoveryTask?.cancel(); audioRecoveryTask = nil
@@ -688,7 +686,6 @@ final class NativeConferenceEngine: CallEngine {
 
     func leave() {
         guard hasJoinStarted, !leaveRequested else { return }
-        activeControls?.retireReactions()
         reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil
         leaveRequested = true
         resetPiPMicrophoneObservation()
@@ -994,7 +991,9 @@ final class NativeConferenceEngine: CallEngine {
         let streams = streamViews
         let epoch = sessionEpoch
         let attempt = mediaAttemptEpoch
-        let overlay = JazzActiveConferenceOverlayRepresentation { [weak self, streams = streams] state, coordinator, router, emoji in
+        // The SDK's fourth view is a persistent reaction picker, not a receive
+        // overlay. Our explicit palette sends through the coordinator instead.
+        let overlay = JazzActiveConferenceOverlayRepresentation { [weak self, streams = streams] state, coordinator, router, _ in
             guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                   !self.leaveRequested else { return UIView() }
             self.activeCoordinator = coordinator
@@ -1189,7 +1188,7 @@ final class NativeConferenceEngine: CallEngine {
                                                   !isOn || !self.isSystemHeld else { return }
                                             self.cameraIntentOn = isOn
                                         }, studio: self.studio, activeSpeaker: self.activeSpeaker,
-                                        reactions: self.reactions, reactionView: emoji)
+                                        reactions: self.reactions)
             self.activeControls = controls
             #if DEBUG
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_REACTIONS"] == "1" {
@@ -1361,7 +1360,6 @@ final class NativeConferenceEngine: CallEngine {
 
     private func finishSession(userEnded: Bool, event: CallEvent) {
         guard finishing == nil, hasJoinStarted else { return }
-        activeControls?.retireReactions()
         reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil
         endFloatingVideoSession()
         microphoneProbe.stop()

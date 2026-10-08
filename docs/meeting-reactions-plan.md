@@ -19,10 +19,10 @@ the exposed availability signal, and qualify its behavior with restricted rooms;
 it is not an independently documented server permission contract.
 
 The SDK also passes an emoji `UIView` to its custom conference overlay builder.
-The previous builder discarded that fourth argument, and the controls did not call
-the reaction sender. Mounting that supplied view is the first candidate for
-displaying incoming reactions. Its layout, accessibility and echo behavior need
-live qualification. The public event listener exposes no structured incoming
+Live qualification on October 8 found that this view displays a persistent
+five-option picker. It is not a passive incoming-reaction overlay and must not
+be mounted over the stage. Our explicit palette calls the coordinator instead.
+The public event listener exposes no structured incoming
 reaction event with sender, identifier and timestamp; a custom remote-reaction
 feed cannot be promised from the current interface.
 
@@ -145,22 +145,17 @@ recognition](https://support.zoom.com/hc/pb/article?id=zm_kb&sysparm_article=KB0
 
 ## Incoming reactions and focused viewing
 
-Use the SDK-provided emoji view once per active conference overlay. It must be
-non-interactive, avoid the controls and participant names, and remain independent
-of the video renderer, active speaker, pinch/zoom transform and aspect-ratio layout.
-Never recreate a video surface because a reaction arrives.
+Leave the opaque SDK picker unmounted. Its permanent choices obscure the idle
+invitation and shared content even with interaction disabled. Manual sending and
+camera forwarding remain independent of that view; do not inspect private
+subviews to extract an undocumented receive layer.
 
-Qualify the view's supported sizing before choosing its final placement. Prefer
-a bounded area at the trailing edge of the stage. Do not promise custom sender
-badges, exact animation durations or grouping that the SDK cannot expose. Avoid
-private subview inspection or animation interception to achieve them.
-
-Hide decorative meeting-reaction overlays while controls are hidden for focused
-screen viewing, in PiP, and during Reduce Motion if the opaque SDK animation
-cannot honor that preference. Do not replay accumulated decorations on return.
+A custom incoming overlay remains deferred until the SDK exposes a supported
+receive API. Any future overlay must avoid controls and participant names, honor
+Reduce Motion, and leave video, active-speaker and zoom state unchanged. Hide
+decorations in focused viewing and PiP; do not replay them on return.
 Camera effects already rendered into a participant's video remain part of those
-frames. Sending and accessible local feedback continue to work independently of
-the decorative receive layer.
+frames. Sending and accessible local feedback continue to work independently.
 
 ## Implementation structure
 
@@ -172,7 +167,7 @@ Keep the feature small and capability-driven:
   preference, send throttling and honest submitted feedback. Inject its clock
   and sender for deterministic tests; retain no conversation history.
 - `VendorIntegration/GuestReactionsAdapter`: the only mapping to provider enum
-  values, current coordinator and SDK emoji view. Observe availability and guard
+  values and current coordinator. Observe availability and guard
   every send with both session and media-attempt generations.
 - `CameraReactionObserver`: KVO on an explicitly supplied active device. Report
   starts and availability changes; release observations on source changes.
@@ -213,12 +208,12 @@ camera session, vision model, video-frame copy, encoder or polling loop.
 
 1. **Qualify the SDK and camera boundary.** In a disposable guest room, send all
    five enum values and verify each in an independent browser participant. Test
-   camera/microphone off, restricted roles, the provided receive view and local
+   camera/microphone off, restricted roles, the provided picker and local
    echo. On Mac, then iPhone, prove the capture observer obtains the same actual
    camera and emits one Apple event per effect through camera switch/restart.
    Check that unrelated capture and private preview cannot emit meeting reactions.
-2. **Build manual sending and receiving.** Add the neutral model, provider adapter,
-   availability updates, session guards and the SDK receive view. Establish the
+2. **Build manual sending.** Add the neutral model, provider adapter,
+   availability updates and session guards. Establish the
    sender's no-receipt semantics and prevent offline/reconnect replay.
 3. **Add the adaptive controls.** Put the strip at the top of compact More, expose
    the same palette directly in wide layouts, preserve existing meeting actions,
@@ -241,7 +236,7 @@ fallback experiment requiring its own precision and energy evidence.
 | Environment | Required evidence |
 | --- | --- |
 | Unit tests | Exact enum mapping; unsupported Apple effects ignored; repeated/extended/overlapping effects; invalid timestamps; initial observation; bounded dedupe; shared rate limiting; stale room/media/camera callbacks; no queued sends; no private-preview publication |
-| Simulator | Production palette with an injected sender; small iPhone portrait → landscape → portrait; iPad/wide layout; English/Russian; Dynamic Type; VoiceOver actions; keyboard dismissal; focus mode; receive layer does not intercept pinch/pan or cover controls |
+| Simulator | Production palette with an injected sender; small iPhone portrait → landscape → portrait; iPad/wide layout; English/Russian; Dynamic Type; VoiceOver actions; keyboard dismissal; focus mode; live idle guest stage has no floating picker before or after opening the palette and rotating |
 | Mac guest room | Independent receiver verifies five manual kinds and two automatic mappings; device identity; system-triggered effects; video off; Presenter private/shared transitions; external/Continuity camera when available; no renderer color or zoom reset |
 | Physical iPhone | Real gesture recognition with the SDK camera; system setting off/on; camera flip; hold/cellular-call recovery; background/PiP/foreground; rapid room switch; permission changes; no reaction from private preview or a removed Presenter camera layer |
 | Performance | Comparable camera-on runs with forwarding off/on; no additional frame processing or persistent timer; bounded memory and no observer growth after switches; CPU/GPU/energy profiling runs limited to one minute as requested |

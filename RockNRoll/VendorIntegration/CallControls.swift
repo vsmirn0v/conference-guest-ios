@@ -59,7 +59,6 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private let participantsButton = UIButton(type: .system)
     private let moreButton = AlignedCallButton(frame: .zero)
     private let reactionsButton = AlignedCallButton(frame: .zero)
-    private let reactionContainer = UIView()
     private var reactions: MeetingReactionsModel?
     private let titleLabel = UILabel()
     private let countLabel = UILabel()
@@ -122,7 +121,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
          onCameraState: @escaping (Bool) -> Void,
          usesNativeParticipants: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
          studio: StudioModel? = nil, activeSpeaker: ActiveSpeakerStore? = nil,
-         reactions: MeetingReactionsModel? = nil, reactionView: UIView? = nil) {
+         reactions: MeetingReactionsModel? = nil) {
         self.studio = studio
         self.reactions = reactions
         self.activeSpeaker = activeSpeaker ?? ActiveSpeakerStore()
@@ -444,22 +443,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             catchUpButton.heightAnchor.constraint(equalToConstant: 48), missedWidth, missedHeight
         ])
         installPresentation()
-        if let reactionView {
-            reactionContainer.isUserInteractionEnabled = false
-            reactionContainer.accessibilityElementsHidden = true
-            reactionContainer.clipsToBounds = true
-            reactionContainer.addSubview(reactionView)
-            reactionView.frame = reactionContainer.bounds
-            reactionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            surface.insertSubview(reactionContainer, belowSubview: header)
-        }
         reactionsButton.isHidden = true
         if let reactions {
             reactions.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] in self?.layoutPresentation() }
                 .store(in: &subscriptions)
         }
-        NotificationCenter.default.publisher(for: UIAccessibility.reduceMotionStatusDidChangeNotification)
-            .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.layoutPresentation() }.store(in: &subscriptions)
         self.activeSpeaker.$current.sink { [weak self] speaker in
             guard let self else { return }
             let hidden = self.speakerLabel.isHidden
@@ -791,16 +779,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
     deinit { surface.removeFromSuperview() }
 
-    func retireReactions() {
-        // Retire the hosted view before the SDK releases its UI dependencies.
-        reactionContainer.subviews.forEach { $0.removeFromSuperview() }
-        reactionContainer.removeFromSuperview()
-    }
-
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window == nil {
-            retireReactions()
             participantsPanel?.dismiss(animated: false)
             participantsPanel = nil
             CallStageLayout.remove(window: mountedWindow, owner: layoutOwner)
@@ -970,8 +951,6 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             stage.origin.y += 48; stage.size.height = max(0, stage.height - 48)
         }
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop, stageView] { backdrop.frame = stage }
-        reactionContainer.frame = stage
-        reactionContainer.isHidden = focus.hidden || reactions?.canSend != true || UIAccessibility.isReduceMotionEnabled
         reactionsButton.isHidden = !hasReactionShortcut || focus.hidden
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop] {
             backdrop.isAccessibilityElement = focus.hidden
