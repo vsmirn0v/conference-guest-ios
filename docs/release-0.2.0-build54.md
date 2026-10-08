@@ -49,7 +49,16 @@ IPA hash does not imply identical transport-package bytes.
 
 ## Delivery
 
-Upload succeeded on 9 October 2026. App Store Connect has read back build 54 as
-Processing. Group assignment will be recorded here after processing completes.
+Upload succeeded on 9 October 2026; App Store Connect marked processing Complete.
+The neutral testing notes were saved and both existing groups were assigned, with
+automatic tester notification enabled. Authenticated readback confirmed:
+
+- Rock’n’Roll Internal: **0.2.0 (54) — Testing, expires in 90 days**; one tester,
+  45 group builds.
+- Rock’n’Roll Public Beta: **0.2.0 (54) — Testing, expires in 90 days**; six testers,
+  42 group builds.
+
+Public invitation: https://testflight.apple.com/join/Hd13C9U3.
+
 The same pre-existing missing third-party dSYM warnings remain; the app's matching
 dSYM was verified. Logs: `/tmp/rock-build54-{archive,export,upload}.log`.

@@ -52,4 +52,5 @@ Redacted app measurements are retained in [app-results.json](../Experiments/True
 - Native Mac protocol interoperability was established by the standalone experiment. That is separate from app-runtime qualification; the app's Mac system chooser and audio/PiP behavior have not been exercised for this engine.
 - WebRTC emitted a codec-name casing warning for bundled `rtx`/`RTX` on renegotiation. Tested media still flowed; arbitrary SDP rewriting has not been added.
 
-No TestFlight build was published as part of this integration task.
+Delivered in [TestFlight 0.2.0 (54)](release-0.2.0-build54.md), verified available
+to both the existing internal and public groups on 9 October 2026.
