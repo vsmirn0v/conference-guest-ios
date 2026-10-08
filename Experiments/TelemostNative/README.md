@@ -52,14 +52,22 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun simctl spawn "$si
 
 The Mac build also runs 16 protocol boundary checks: invitation parsing, correct URL/query encoding, anonymous headers, response shape, unsupported/waiting-room responses, endpoint validation, malformed and oversized payloads.
 
-`--expect-media` requires connected ICE, at least ten decoded video frames and non-silent decoded PCM. Signaling rejection, transport failure, or missing expected media returns a nonzero status. RTP counters alone are not proof of usable audio/video. Each run is bounded to at most 120 seconds; allow the first simulator process launch to complete before starting the sender if the simulator is cold.
+`--expect-media` requires connected ICE, at least ten decoded video frames and non-silent decoded PCM. Publishers additionally require at least ten encoded frames, so an answer rejecting the video section fails even if ICE connects. Signaling rejection, transport failure, or missing expected media returns a nonzero status. RTP counters alone are not proof of usable audio/video. Each run is bounded to at most 600 seconds; keep physical profiling runs under one minute. Allow the first simulator process launch to complete before starting the sender if the simulator is cold.
 
 Additional experimental switches:
 
 - `--share`: publish the synthetic pattern as `DISPLAY_VIDEO` rather than camera video. This tests stream semantics, not ReplayKit or macOS screen capture.
 - `--h264`: prefer H.264 in the encoder factory and publisher transceiver. **This does not guarantee H.264 negotiation or hardware encoding.** The tested offer still negotiated VP8/libvpx; codec configuration needs further investigation. Verify the emitted codec and implementation statistics.
+- `--h264-only`: disable fallback to isolate the server's H.264 acceptance.
+- `--h264-level31`: diagnostic H.264-only offer with its level capped at 3.1. Store the same SDP locally and send it to the server; preserve profile and packetization mode. This is not a production codec policy.
+- `--vp9-only`: test the actual VP9 encoder/decoder path.
+- `--hevc-only`: opt into the bundled HEVC encoder/decoder through separate experimental factories. This does not affect the app's shared factory.
+- `--loopback-hevc`: a 15-second local HEVC encode/decode check without joining a service. Distinguishes binary/platform capability from provider acceptance.
+- `TELEMOST_TEST_CODEC_CONFIG=1`: offer the web client's initialization-time video configuration and active-codec capability, to test whether the server accepts that mode. The tested server closed this experimental connection with code 4003.
 
-Logs intentionally omit invitation URLs, room IDs, credentials, SDP and ICE addresses. Logs include aggregate media statistics and protocol event types. Bootstrap credentials stay in process memory. Downloaded vendor bundles and live credentials are not part of this directory.
+Logs intentionally omit invitation URLs, room IDs, credentials, complete SDP and ICE addresses. Logs include SDP codec fields, aggregate media statistics and protocol event types. Bootstrap credentials stay in process memory. Downloaded vendor bundles and live credentials are not part of this directory.
+
+The follow-up physical results, VP9/HEVC checks, and next optimization candidates are in [Telemost codec investigation](../../docs/telemost-codecs-2026-10-09.md).
 
 ## Original boundary before app integration
 

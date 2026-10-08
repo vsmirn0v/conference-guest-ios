@@ -1,11 +1,81 @@
 import AVFoundation
 import ConferenceCore
 import LiveKitWebRTC
+import VideoToolbox
 import XCTest
 @testable import RockNRoll
 
 @MainActor
 final class TelemostTests: XCTestCase {
+    func testPhysicalVideoToolboxCapabilities() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Hardware capability query requires a physical device")
+        #else
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_TELEMOST_INVITE"] != nil else { throw XCTSkip("Opt-in hardware experiment") }
+        if #available(iOS 26.2, *) { VTRegisterSupplementalVideoDecoderIfAvailable(kCMVideoCodecType_VP9) }
+        var list: CFArray?
+        XCTAssertEqual(VTCopyVideoEncoderList(nil, &list), noErr)
+        let encoders = (list as? [[String: Any]] ?? []).map { entry in
+            entry.filter { ["CodecType", "CodecName", "EncoderName", "IsHardwareAccelerated"].contains($0.key) }
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "encoders": encoders,
+            "h264HWDecode": VTIsHardwareDecodeSupported(kCMVideoCodecType_H264),
+            "hevcHWDecode": VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC),
+            "vp9HWDecode": VTIsHardwareDecodeSupported(kCMVideoCodecType_VP9)
+        ], options: .sortedKeys)
+        print("TELEMOST_VT_CAPABILITIES " + String(decoding: data, as: UTF8.self))
+        #endif
+    }
+    func testPhysicalCodecEvidence() async throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Hardware codec qualification requires a physical device")
+        #else
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_TELEMOST_INVITE"] else { throw XCTSkip("Disposable room required") }
+        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { throw XCTSkip("Camera permission required") }
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first { $0.isKeyWindow })
+        let previous = window.rootViewController, idle = UIApplication.shared.isIdleTimerDisabled
+        UIApplication.shared.isIdleTimerDisabled = true
+        let container = UIViewController(); window.rootViewController = container
+        defer { window.rootViewController = previous; UIApplication.shared.isIdleTimerDisabled = idle }
+        let engine = TelemostCallEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), chat: ChatStore())
+        var active = false, ended = false
+        engine.onEvent = { event in switch event { case .active: active = true; case .left, .failed: ended = true; default: break } }
+        try engine.join(target: TelemostTarget.parse(invitation), name: "Phone Codec QA", container: container, quiet: false)
+        defer { engine.leave() }
+        // Connection timeout 25s + camera 8s + share 8s: keep this hardware
+        // experiment comfortably within the user's one-minute profiling cap.
+        let deadline = Date().addingTimeInterval(25)
+        while !active && !ended && Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertTrue(active); XCTAssertFalse(ended)
+        guard active && !ended else { return }
+        engine.setSendingForTesting(microphone: false, camera: true)
+        try await Task.sleep(for: .seconds(8))
+        func report(_ stage: String, _ evidence: [[String: Any]]) throws {
+            let data = try JSONSerialization.data(withJSONObject: ["stage": stage, "streams": evidence], options: .sortedKeys)
+            print("TELEMOST_CODEC " + String(decoding: data, as: UTF8.self))
+        }
+        let camera = await engine.codecEvidenceForTesting()
+        try report("camera", camera)
+        XCTAssertTrue(camera.contains { $0["type"] as? String == "outbound-rtp" && (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 10 })
+        try engine.startSharingForTesting()
+        for n in 1...80 {
+            var pixels: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, 640, 360, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+            let buffer = try XCTUnwrap(pixels)
+            CVPixelBufferLockBaseAddress(buffer, [])
+            memset(CVPixelBufferGetBaseAddress(buffer), n % 2 == 0 ? 64 : 200, CVPixelBufferGetBytesPerRow(buffer) * 360)
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            engine.sendScreenForTesting(buffer, timestamp: Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000))
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        let sharing = await engine.codecEvidenceForTesting()
+        try report("camera-and-share", sharing)
+        XCTAssertGreaterThanOrEqual(sharing.filter { $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" && (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 10 }.count, 2)
+        XCTAssertFalse(ended)
+        await engine.stopSharingForTesting()
+        #endif
+    }
     func testPhysicalCameraMicrophoneAndRoutes() async throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("Requires physical capture and audio routes")

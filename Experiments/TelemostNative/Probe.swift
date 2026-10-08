@@ -11,22 +11,24 @@ final class TelemostProbe {
     private let audio = SyntheticAudio()
     private lazy var factory: LKRTCPeerConnectionFactory = {
         let encoder = LKRTCDefaultVideoEncoderFactory()
-        if preferH264, let codec = LKRTCDefaultVideoEncoderFactory.supportedCodecs().first(where: { $0.name == "H264" }) { encoder.preferredCodec = codec }
-        return LKRTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
+        if codecPolicy != .serverDefault, let codec = LKRTCDefaultVideoEncoderFactory.supportedCodecs().first(where: { $0.name == "H264" }) { encoder.preferredCodec = codec }
+        return LKRTCPeerConnectionFactory(encoderFactory: codecPolicy == .hevcOnly ? HEVCEncoderFactory() : encoder,
+            decoderFactory: codecPolicy == .hevcOnly ? HEVCDecoderFactory() : LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
     }()
     private var subscriber: MediaPeer?
     private var ready = false
     private var publisher: MediaPeer?
     private var sharing = false
-    private var preferH264 = false
+    private var codecPolicy = CodecPolicy.serverDefault
     private var failure: Error?
     private var name = ""
     private var slotsRequested = false
     private var pending: [String: String] = [:]
 
-    func run(invitation: URL, name: String, duration: UInt64, publish: Bool = false, sharing: Bool = false, preferH264: Bool = false, expectMedia: Bool = false) async throws {
+    func run(invitation: URL, name: String, duration: UInt64, publish: Bool = false, sharing: Bool = false, codecPolicy: CodecPolicy = .serverDefault, expectMedia: Bool = false) async throws {
         self.sharing = sharing
-        self.preferH264 = preferH264
+        self.codecPolicy = codecPolicy
+        probeLog("codec-policy", ["value": codecPolicy.rawValue, "sharing": sharing])
         self.name = name
         let connection = try await TelemostConnection.fetch(invitation: invitation, name: name)
         probeLog("bootstrap", ["engine": "GOLOOM", "authenticatedAccount": false])
@@ -50,7 +52,7 @@ final class TelemostProbe {
                 } catch { if !Task.isCancelled { self?.failure = error; probeLog("socket-error", ["error": String(describing: error), "closeCode": socket.closeCode.rawValue, "reason": socket.closeReason.map { String(decoding: $0, as: UTF8.self) } ?? ""]) }; break }
             }
         }
-        let capabilities: [String: [String]] = [
+        var capabilities: [String: [String]] = [
             "offerAnswerMode": ["SEPARATE"], "initialSubscriberOffer": ["ON_HELLO"],
             "slotsMode": ["FROM_CONTROLLER"], "simulcastMode": ["DISABLED"],
             "selfVadStatus": ["FROM_SERVER"], "dataChannelSharing": ["TO_RTP"],
@@ -58,6 +60,10 @@ final class TelemostProbe {
             "keepDefaultDevicesModes": ["FALSE"],
             "subscriberDtlsPassiveMode": ["SUBSCRIBER_DTLS_PASSIVE_MODE_DISABLED"]
         ]
+        if ProcessInfo.processInfo.environment["TELEMOST_TEST_CODEC_CONFIG"] == "1" {
+            capabilities["videoEncoderConfig"] = ["ONLY_INIT_CONFIG"]
+            capabilities["setActiveCodecsMode"] = ["SET_ACTIVE_CODECS_MODE_VIDEO_ONLY"]
+        }
         try await send("hello", [
             "participantMeta": ["name": name, "role": "SPEAKER", "description": "Native transport experiment", "sendAudio": false, "sendVideo": false],
             "participantAttributes": ["name": name, "role": "SPEAKER", "description": "Native transport experiment"],
@@ -82,10 +88,11 @@ final class TelemostProbe {
         }
         try await Task.sleep(nanoseconds: duration * 1_000_000_000)
         await peer.stats()
-        await publisher?.stats()
+        let encodedFrames = await publisher?.stats()
         audio.report()
         if let failure { throw failure }
         guard ready, peer.isConnected, publisher?.isConnected != false else { throw ProbeError.mediaNotConnected }
+        if publish && (encodedFrames ?? 0) < 10 { throw ProbeError.expectedMediaMissing }
         if expectMedia && (peer.receivedFrames < 10 || audio.receivedRMS < 0.001) { throw ProbeError.expectedMediaMissing }
         probeLog("finished", ["serverHello": ready, "iceConnected": true, "seconds": duration, "expectedMediaVerified": expectMedia])
     }
@@ -120,8 +127,18 @@ final class TelemostProbe {
                 // The server waits for this ACK before accepting later requests.
                 try await send("ack", ["status": ["code": "OK"]], uid: uid)
                 probeLog("negotiated", ["capabilities": object["capabilitiesAnswer"] ?? [:], "ping": object["pingPongConfiguration"] ?? [:]])
+                var codecConfig: [String: Any] = [:]
+                for key in ["codecsConfiguration", "activeCodecs"] {
+                    if let config = object[key] { codecConfig[key] = config }
+                }
+                if let config = object["configurations"] as? [String: Any] {
+                    for key in ["videoCodecConfiguration", "videoCodecConfigurations"] {
+                        if let value = config[key] { codecConfig[key] = value }
+                    }
+                }
+                probeLog("server-codec-config", codecConfig)
                 if let publisher {
-                    let offer = try await publisher.publishPattern(sharing: sharing, preferH264: preferH264)
+                    let offer = try await publisher.publishPattern(sharing: sharing, codecPolicy: codecPolicy)
                     try await send("publisherSdpOffer", offer)
                     try await send("updateMe", ["participantMeta": ["name": name, "role": "SPEAKER", "sendAudio": true, "sendVideo": !sharing], "participantAttributes": ["name": name, "role": "SPEAKER"], "sendAudio": true, "sendVideo": !sharing, "sendSharing": sharing])
                 }
@@ -167,14 +184,35 @@ final class TelemostProbe {
 struct ProbeMain {
     @MainActor static func main() async {
         let args = CommandLine.arguments
+        if args.contains("--loopback-hevc") {
+            await loopbackHEVC(); return
+        }
         guard args.count >= 2, let invitation = URL(string: args[1]) else {
-            print("Usage: TelemostProbe <invitation> [seconds] [name] [--publish|--share] [--h264] [--expect-media]"); return
+            print("Usage: TelemostProbe <invitation> [seconds] [name] [--publish|--share] [--h264|--h264-only|--h264-level31|--vp9-only|--hevc-only] [--expect-media]"); return
         }
         let probe = TelemostProbe()
         var status: Int32 = 0
-        do { try await probe.run(invitation: invitation, name: args.count > 3 ? args[3] : "Rock Native QA", duration: min(600, UInt64(args.count > 2 ? args[2] : "20") ?? 20), publish: args.contains("--publish") || args.contains("--share"), sharing: args.contains("--share"), preferH264: args.contains("--h264"), expectMedia: args.contains("--expect-media")) }
+        let policy: CodecPolicy = args.contains("--hevc-only") ? .hevcOnly : (args.contains("--vp9-only") ? .vp9Only : (args.contains("--h264-level31") ? .h264Level31 : (args.contains("--h264-only") ? .h264Only : (args.contains("--h264") ? .preferH264 : .serverDefault))))
+        do { try await probe.run(invitation: invitation, name: args.count > 3 ? args[3] : "Rock Native QA", duration: min(600, UInt64(args.count > 2 ? args[2] : "20") ?? 20), publish: args.contains("--publish") || args.contains("--share"), sharing: args.contains("--share"), codecPolicy: policy, expectMedia: args.contains("--expect-media")) }
         catch { probeLog("failed", ["error": String(describing: error)]); status = 1 }
         await probe.stop()
         if status != 0 { exit(status) }
+    }
+    @MainActor static func loopbackHEVC() async {
+        _ = LKRTCInitializeSSL()
+        let audio = SyntheticAudio()
+        let factory = LKRTCPeerConnectionFactory(encoderFactory: HEVCEncoderFactory(), decoderFactory: HEVCDecoderFactory(), audioDevice: audio)
+        let sender = MediaPeer(target: "PUBLISHER", ice: [], factory: factory)
+        let receiver = MediaPeer(target: "SUBSCRIBER", ice: [], factory: factory)
+        sender.sendCandidate = { value in Task { try? await receiver.candidate(value) } }
+        receiver.sendCandidate = { value in Task { try? await sender.candidate(value) } }
+        defer { sender.close(); receiver.close() }
+        do {
+            try await sender.acceptAnswer(receiver.answer(sender.publishPattern(sharing: true, codecPolicy: .hevcOnly)))
+            try await Task.sleep(nanoseconds: 15_000_000_000)
+            let encoded = await sender.stats(); await receiver.stats()
+            guard encoded >= 10, receiver.receivedFrames >= 10 else { throw ProbeError.expectedMediaMissing }
+            probeLog("loopback-verified", ["codec": "H265", "encoded": encoded, "decoded": receiver.receivedFrames])
+        } catch { probeLog("loopback-failed", ["error": String(describing: error)]); exit(1) }
     }
 }

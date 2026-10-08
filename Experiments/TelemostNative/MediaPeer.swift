@@ -2,6 +2,69 @@ import Foundation
 import CoreVideo
 import LiveKitWebRTC
 
+enum CodecPolicy: String {
+    case serverDefault, preferH264, h264Only, h264Level31, vp9Only, hevcOnly
+}
+
+let experimentalHEVC = LKRTCVideoCodecInfo(name: "H265", parameters: ["profile-id": "1", "tier-flag": "0", "level-id": "93", "tx-mode": "SRST"])
+final class HEVCEncoderFactory: NSObject, LKRTCVideoEncoderFactory {
+    private let base = LKRTCDefaultVideoEncoderFactory()
+    func supportedCodecs() -> [LKRTCVideoCodecInfo] { [experimentalHEVC] + base.supportedCodecs() }
+    func createEncoder(_ info: LKRTCVideoCodecInfo) -> (any LKRTCVideoEncoder)? {
+        info.name == "H265" ? LKRTCVideoEncoderH265(codecInfo: info) : base.createEncoder(info)
+    }
+}
+final class HEVCDecoderFactory: NSObject, LKRTCVideoDecoderFactory {
+    private let base = LKRTCDefaultVideoDecoderFactory()
+    func supportedCodecs() -> [LKRTCVideoCodecInfo] { [experimentalHEVC] + base.supportedCodecs() }
+    func createDecoder(_ info: LKRTCVideoCodecInfo) -> (any LKRTCVideoDecoder)? {
+        info.name == "H265" ? LKRTCVideoDecoderH265() : base.createDecoder(info)
+    }
+}
+
+/// Diagnostic only. Preserve the profile and packetization mode while capping
+/// its level. Store exactly this description locally before transmitting it.
+func cappedH264Level(_ sdp: String) -> String {
+    sdp.components(separatedBy: "\r\n").map { line in
+        guard line.hasPrefix("a=fmtp:"), let separator = line.firstIndex(of: " ") else { return line }
+        let parameters = line[line.index(after: separator)...].split(separator: ";").map { parameter -> String in
+            let fields = parameter.split(separator: "=", maxSplits: 1)
+            guard fields.count == 2, fields[0].trimmingCharacters(in: .whitespaces) == "profile-level-id",
+                  fields[1].count == 6, let level = Int(fields[1].suffix(2), radix: 16), level > 31 else { return String(parameter) }
+            return String(fields[0]) + "=" + fields[1].prefix(4) + "1f"
+        }
+        return String(line[...separator]) + parameters.joined(separator: ";")
+    }.joined(separator: "\r\n")
+}
+
+// Log only SDP's formal codec fields, never ICE credentials or addresses.
+func logCodecs(_ sdp: String, target: String, phase: String) {
+    var video = false, mid = "", payloads: [String] = []
+    var maps: [String: String] = [:], parameters: [String: String] = [:]
+    func flush() {
+        guard video else { return }
+        probeLog("sdp-codecs", ["target": target, "phase": phase, "mid": mid,
+            "codecs": payloads.compactMap { payload -> [String: String]? in
+                guard let map = maps[payload] else { return nil }
+                return ["payload": payload, "codec": map, "parameters": parameters[payload] ?? ""]
+            }])
+    }
+    for line in sdp.components(separatedBy: .newlines) {
+        if line.hasPrefix("m=") {
+            flush(); video = line.hasPrefix("m=video "); mid = ""; maps = [:]; parameters = [:]
+            payloads = line.split(separator: " ").dropFirst(3).map(String.init)
+        } else if video, line.hasPrefix("a=mid:") {
+            mid = String(line.dropFirst(6))
+        } else if video, line.hasPrefix("a=rtpmap:") || line.hasPrefix("a=fmtp:") {
+            let fields = line.split(separator: " ", maxSplits: 1)
+            guard fields.count == 2, let payload = fields[0].split(separator: ":").last else { continue }
+            if line.hasPrefix("a=rtpmap:") { maps[String(payload)] = String(fields[1]) }
+            else { parameters[String(payload)] = String(fields[1]) }
+        }
+    }
+    flush()
+}
+
 final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer, @unchecked Sendable {
     let target: String
     let factory: LKRTCPeerConnectionFactory
@@ -47,8 +110,9 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
         guard connection.setConfiguration(configuration) else { throw ProbeError.invalidPayload }
     }
 
-    func answer(_ offer: [String: Any]) async throws -> [String: Any] {
+    @MainActor func answer(_ offer: [String: Any]) async throws -> [String: Any] {
         guard let sdp = offer["sdp"] as? String else { throw ProbeError.invalidPayload }
+        logCodecs(sdp, target: target, phase: "remote-offer")
         sequence = (offer["pcSeq"] as? Int) ?? 0
         try await setRemote(.init(type: .offer, sdp: sdp))
         let answer: LKRTCSessionDescription = try await withCheckedThrowingContinuation { continuation in
@@ -59,6 +123,7 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
             }
         }
         try await setLocal(answer)
+        logCodecs(answer.sdp, target: target, phase: "local-answer")
         for candidate in remoteCandidates { try await add(candidate) }; remoteCandidates = []
         return ["sdp": answer.sdp, "pcSeq": sequence]
     }
@@ -69,7 +134,7 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
             }
         }
     }
-    func publishPattern(sharing: Bool, preferH264: Bool) async throws -> [String: Any] {
+    func publishPattern(sharing: Bool, codecPolicy: CodecPolicy) async throws -> [String: Any] {
         let audioSettings = LKRTCRtpTransceiverInit(); audioSettings.direction = .sendOnly
         let audioSource = factory.audioSource(with: LKRTCMediaConstraints(mandatoryConstraints: ["googEchoCancellation": "false", "googNoiseSuppression": "false", "googAutoGainControl": "false"], optionalConstraints: nil))
         let audioTrack = factory.audioTrack(with: audioSource, trackId: "synthetic-audio")
@@ -79,19 +144,23 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
         let track = factory.videoTrack(with: source, trackId: "synthetic-video")
         let settings = LKRTCRtpTransceiverInit(); settings.direction = .sendOnly
         guard let transceiver = connection.addTransceiver(with: track, init: settings) else { throw ProbeError.invalidPayload }
-        if preferH264 {
+        if codecPolicy != .serverDefault {
             let codecs = factory.rtpSenderCapabilities(forKind: "video").codecs
-            let preferred = codecs.filter { $0.name == "H264" } + codecs.filter { $0.name != "H264" }
+            let name = codecPolicy == .vp9Only ? "VP9" : (codecPolicy == .hevcOnly ? "H265" : "H264")
+            let preferred = codecs.filter { $0.name == name } +
+                (codecPolicy == .preferH264 ? codecs.filter { $0.name != "H264" } : [])
             try transceiver.setCodecPreferences(preferred, error: ())
         }
-        let offer: LKRTCSessionDescription = try await withCheckedThrowingContinuation { continuation in
+        var offer: LKRTCSessionDescription = try await withCheckedThrowingContinuation { continuation in
             connection.offer(for: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)) { value, error in
                 if let error { continuation.resume(throwing: error) }
                 else if let value { continuation.resume(returning: value) }
                 else { continuation.resume(throwing: ProbeError.invalidPayload) }
             }
         }
+        if codecPolicy == .h264Level31 { offer = LKRTCSessionDescription(type: .offer, sdp: cappedH264Level(offer.sdp)) }
         try await setLocal(offer)
+        logCodecs(offer.sdp, target: target, phase: "local-offer")
         let capturer = LKRTCVideoCapturer(delegate: source)
         syntheticTask = Task {
             var count = 0
@@ -119,8 +188,9 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
         }
         return ["sdp": offer.sdp, "pcSeq": sequence, "tracks": [["mid": audioTransceiver.mid, "transceiverMid": audioTransceiver.mid, "kind": "AUDIO", "priority": 0, "label": "Synthetic tone", "codecs": [:], "groupId": 1, "description": ""], ["mid": transceiver.mid, "transceiverMid": transceiver.mid, "kind": sharing ? "DISPLAY_VIDEO" : "VIDEO", "priority": 0, "label": "Synthetic native pattern", "codecs": [:], "groupId": sharing ? 2 : 1, "description": ""]]]
     }
-    func acceptAnswer(_ value: [String: Any]) async throws {
+    @MainActor func acceptAnswer(_ value: [String: Any]) async throws {
         guard let sdp = value["sdp"] as? String else { throw ProbeError.invalidPayload }
+        logCodecs(sdp, target: target, phase: "remote-answer")
         try await setRemote(.init(type: .answer, sdp: sdp))
         for candidate in remoteCandidates { try await add(candidate) }; remoteCandidates = []
     }
@@ -131,7 +201,7 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
             }
         }
     }
-    func candidate(_ value: [String: Any]) async throws {
+    @MainActor func candidate(_ value: [String: Any]) async throws {
         guard let sdp = value["candidate"] as? String else { return }
         let candidate = LKRTCIceCandidate(sdp: sdp, sdpMLineIndex: Int32(value["sdpMlineIndex"] as? Int ?? 0), sdpMid: value["sdpMid"] as? String)
         if connection.remoteDescription == nil { remoteCandidates.append(candidate) } else { try await add(candidate) }
@@ -143,17 +213,19 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
             }
         }
     }
-    func stats() async {
+    @discardableResult func stats() async -> Int {
         let report: LKRTCStatisticsReport = await withCheckedContinuation { continuation in
             connection.statistics { continuation.resume(returning: $0) }
         }
         for stat in report.statistics.values where ["inbound-rtp", "outbound-rtp", "codec"].contains(stat.type) {
-            let keys = ["kind", "bytesReceived", "bytesSent", "packetsReceived", "packetsSent", "framesDecoded", "framesEncoded", "totalAudioEnergy", "mimeType", "codecId", "decoderImplementation", "encoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder"]
-            var summary: [String: Any] = ["target": target, "type": stat.type]
+            let keys = ["kind", "mid", "bytesReceived", "bytesSent", "packetsReceived", "packetsSent", "framesDecoded", "framesEncoded", "totalAudioEnergy", "mimeType", "codecId", "sdpFmtpLine", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "qualityLimitationReason", "decoderImplementation", "encoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder"]
+            var summary: [String: Any] = ["target": target, "type": stat.type, "id": stat.id]
             for key in keys { if let value = stat.values[key] { summary[key] = value } }
             probeLog("rtc-stats", summary)
         }
         probeLog("render-summary", ["target": target, "frames": receivedFrames])
+        return report.statistics.values.filter { $0.type == "outbound-rtp" && $0.values["kind"] as? String == "video" }
+            .reduce(0) { $0 + (($1.values["framesEncoded"] as? NSNumber)?.intValue ?? 0) }
     }
     func close() {
         syntheticTask?.cancel(); syntheticTask = nil

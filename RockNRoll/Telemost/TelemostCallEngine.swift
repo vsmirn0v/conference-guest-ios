@@ -693,6 +693,28 @@ final class TelemostCallEngine: CallEngine {
         return report.statistics.values.filter { $0.type == "outbound-rtp" && $0.values["kind"] as? String == "video" }
             .reduce(0) { $0 + (($1.values["framesEncoded"] as? NSNumber)?.intValue ?? 0) }
     }
+    func codecEvidenceForTesting() async -> [[String: Any]] {
+        var evidence: [[String: Any]] = []
+        for peer in [publisher, subscriber].compactMap({ $0 }) {
+            let report: LKRTCStatisticsReport = await withCheckedContinuation { completion in
+                peer.connection.statistics { completion.resume(returning: $0) }
+            }
+            for entry in report.statistics.values where ["outbound-rtp", "inbound-rtp"].contains(entry.type) {
+                var fields: [String: Any] = ["target": peer.target, "type": entry.type]
+                for key in ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder"] {
+                    if let value = entry.values[key] { fields[key] = value }
+                }
+                if let codecID = entry.values["codecId"] as? String, let codec = report.statistics[codecID] {
+                    for key in ["mimeType", "sdpFmtpLine"] { if let value = codec.values[key] { fields[key] = value } }
+                }
+                if let mid = entry.values["mid"] as? String {
+                    fields["track"] = peer.connection.transceivers.first { $0.mid == mid }?.sender.track?.trackId
+                }
+                evidence.append(fields)
+            }
+        }
+        return evidence
+    }
     func interruptForTesting() { transport?.interruptForTesting() }
     func receiveEvidenceForTesting() async -> ReceiveEvidence {
         guard let subscriber else { return .init() }
