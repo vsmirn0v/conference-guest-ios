@@ -73,6 +73,9 @@ connections, tracks, credentials and capture still end with their call.
   reading an existing browser message. A separate live check received a new message
   sent from the browser after the native reader was ready, then encoded outgoing
   presentation and left cleanly.
+- The corrected chat wire/history checks also passed on iOS 17.5. A separate
+  muted-room check joined, loaded chat and published presentation without a
+  synthetic remote publisher.
 - iVitalii was unavailable. Physical Telemost microphone/camera, ReplayKit/system
   chooser, audio routes, background/PiP and cellular/FaceTime recovery remain pending.
 
