@@ -1,4 +1,6 @@
 import AVFoundation
+import Combine
+import LiveKit
 import ConferenceCore
 import LiveKitWebRTC
 import Network
@@ -19,6 +21,12 @@ final class TelemostCallEngine: CallEngine {
     private var bootstrap: TelemostBootstrap?
     private var factory: LKRTCPeerConnectionFactory?
     private var transport: TelemostTransport?
+    private lazy var meetingChat = TelemostChat(store: chat)
+    private var screenSender: TelemostScreenSender?
+    private var sharingTask: Task<Void, Never>?
+    private var sharingGeneration = UUID()
+    private var sharingActive = false
+    private var broadcastObservation: AnyCancellable?
     private var subscriber: TelemostPeer?
     private var publisher: TelemostPeer?
     private var tracks: [String: LKRTCVideoTrack] = [:]
@@ -54,7 +62,7 @@ final class TelemostCallEngine: CallEngine {
     private var cameraRequest = UUID()
     private var microphoneRequest = UUID()
     private(set) var hasJoinStarted = false
-    var isSharingScreen: Bool { false }
+    var isSharingScreen: Bool { sharingActive }
     var continuationHostView: UIView? { view?.viewIfLoaded }
 
     init(systemCall: SystemCallCoordinator, catchUp: CatchUpStore, chat: ChatStore) {
@@ -83,14 +91,18 @@ final class TelemostCallEngine: CallEngine {
         catchUp.enter(roomKey: target.invitationURL.absoluteString)
         catchUp.observe(messages: [], canView: false, enabled: false)
         chat.clear()
+        catchUp.transcriptUnavailableReason = L("This meeting service does not provide live transcripts to anonymous guests.")
         audioProfile = studio.profile
         try audio.prepareForJoin()
+        factory = try TelemostPeer.makeFactory()
         let rtcAudio = LKRTCAudioSession.sharedInstance()
         previousManualAudio = rtcAudio.useManualAudio; previousAudioEnabled = rtcAudio.isAudioEnabled
         rtcAudio.useManualAudio = true; rtcAudio.isAudioEnabled = false
         let view = RockCallViewController(title: title ?? L("Jam %@", target.roomID), catchUp: catchUp,
             chat: chat, invitationURL: target.invitationURL, roomIdentifier: target.roomID)
-        view.supportsChat = false; view.supportsSharing = false; view.studio = studio
+        view.supportsChat = true; view.supportsSharing = true; view.studio = studio
+        view.usesNativeShareControl = GuestScreenCaptureFactory.isAvailable
+        view.onShare = { [weak self] in self?.setScreenSharing($0) }
         view.onLeave = { [weak self] in self?.leave() }
         view.onMicrophone = { [weak self] in self?.setMicrophone($0) }
         view.onCamera = { [weak self] in self?.setCamera($0) }
@@ -105,6 +117,13 @@ final class TelemostCallEngine: CallEngine {
         view.loadViewIfNeeded(); view.setSharing(false); view.setHeld(quiet); view.setAudioRouteName(audio.outputName)
         refresh(); container.present(view, animated: false)
         installSystemCall()
+        if !GuestScreenCaptureFactory.isAvailable {
+            broadcastObservation = BroadcastManager.shared.isBroadcastingPublisher.receive(on: DispatchQueue.main)
+                .sink { [weak self] active in
+                    guard let self, self.hasJoinStarted, !self.leaving else { return }
+                    self.setScreenSharing(active, broadcast: true)
+                }
+        }
         let center = NotificationCenter.default
         for notification in [UIApplication.didBecomeActiveNotification, UIApplication.didEnterBackgroundNotification] {
             observers.append(center.addObserver(forName: notification, object: nil, queue: .main) { [weak self] _ in
@@ -145,7 +164,7 @@ final class TelemostCallEngine: CallEngine {
         systemCall.onHoldChanged = { [weak self] value in Task { @MainActor in
             guard let self else { return }; self.held = value
             self.view?.setHeld(value || self.quiet); self.studio.held = value || self.quiet
-            if value { self.pauseAudio(); self.catchUp.begin(.anotherCall) }
+            if value { self.pauseAudio(); await self.stopScreenSharing(); self.catchUp.begin(.anotherCall) }
             else { self.catchUp.end(.anotherCall); self.restoreAudio() }
             self.scheduleMedia()
         } }
@@ -189,7 +208,9 @@ final class TelemostCallEngine: CallEngine {
         onEvent?(.connecting)
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = nil; config.urlCredentialStorage = nil; config.urlCache = nil
-        config.httpShouldSetCookies = false; config.timeoutIntervalForResource = 20
+        // A finite resource timeout also terminates an established WebSocket.
+        // HTTP requests and connection/ACK deadlines are bounded independently.
+        config.httpShouldSetCookies = false
         let session = URLSession(configuration: config)
         connectionTask = Task { [weak self] in
             guard let self else { return }
@@ -197,6 +218,8 @@ final class TelemostCallEngine: CallEngine {
                 let bootstrap = try await TelemostBootstrap.load(target, name: name, session: session)
                 try Task.checkCancellation(); guard epoch == generation, !leaving else { session.invalidateAndCancel(); return }
                 self.bootstrap = bootstrap
+                if bootstrap.chatAllowed { meetingChat.start(invitation: target.invitationURL, roomID: bootstrap.roomID) }
+                else { chat.isReadOnly = true; chat.unavailableReason = L("The host has disabled meeting chat.") }
                 let factory = try TelemostPeer.makeFactory()
                 self.factory = factory
                 let subscriber = TelemostPeer(target: "SUBSCRIBER", factory: factory, ice: bootstrap.iceServers)
@@ -353,7 +376,7 @@ final class TelemostCallEngine: CallEngine {
                     let sendingAudio = microphone && microphoneIntent && !held && !quiet
                     let sendingVideo = camera && cameraIntent && !held && !quiet && UIApplication.shared.applicationState == .active
                     try await transport.request("updateMe", ["participantMeta": ["name": name, "role": "SPEAKER", "sendAudio": sendingAudio, "sendVideo": sendingVideo],
-                        "participantAttributes": ["name": name, "role": "SPEAKER"], "sendAudio": sendingAudio, "sendVideo": sendingVideo, "sendSharing": false])
+                        "participantAttributes": ["name": name, "role": "SPEAKER"], "sendAudio": sendingAudio, "sendVideo": sendingVideo, "sendSharing": sharingActive])
                     view?.setMicrophone(sendingAudio); view?.setCamera(sendingVideo)
                     if !cameraFailed && !held && !quiet { onMediaStatus?(nil) }
                     view?.setFloatingMicrophoneStatus(held || quiet ? .unavailable : (sendingAudio ? .on : .muted))
@@ -409,6 +432,46 @@ final class TelemostCallEngine: CallEngine {
             catch { if epoch == generation { onMediaStatus?(error.localizedDescription) } }
         }
     }
+    private func setScreenSharing(_ enabled: Bool, broadcast: Bool = false) {
+        guard hasJoinStarted, !leaving else { return }
+        if !enabled {
+            sharingGeneration = UUID(); sharingTask?.cancel()
+            sharingTask = Task { [weak self] in await self?.stopScreenSharing() }
+            return
+        }
+        guard !held, !quiet, connected, screenSender == nil, let factory, let view else {
+            if broadcast { BroadcastManager.shared.requestStop() }
+            return
+        }
+        let attempt = UUID(); sharingGeneration = attempt
+        let sender = TelemostScreenSender(factory: factory, preview: view.sharePreview,
+            onFirstFrame: { [weak self] in
+                guard let self, self.sharingGeneration == attempt, self.hasJoinStarted, !self.leaving else { return }
+                self.sharingActive = true; self.publisher?.setSharing(self.screenSender?.track)
+                self.view?.setSharing(true); self.scheduleMedia(); self.refresh()
+            }, onEnd: { [weak self] message in
+                guard let self, self.sharingGeneration == attempt else { return }
+                if let message { self.onMediaStatus?(message) }
+                self.setScreenSharing(false)
+            })
+        screenSender = sender
+        sharingTask = Task { [weak self] in
+            do { try await sender.start(broadcast: broadcast) }
+            catch {
+                guard let self, self.sharingGeneration == attempt else { await sender.stop(); return }
+                await self.stopScreenSharing()
+                if !(error is CancellationError) { self.onMediaStatus?(L("Screen sharing unavailable: %@", error.localizedDescription)) }
+            }
+        }
+    }
+    private func stopScreenSharing() async {
+        sharingGeneration = UUID(); sharingTask?.cancel(); sharingTask = nil
+        let sender = screenSender; screenSender = nil
+        sharingActive = false; publisher?.setSharing(nil); view?.setSharing(false)
+        BroadcastManager.shared.requestStop()
+        await sender?.stop()
+        if hasJoinStarted, !leaving, serverReady { scheduleMedia(); refresh() }
+    }
     private func updateVisibleVideo() {
         _ = view?.visibleVideoQualities(foreground: UIApplication.shared.applicationState == .active, wantsVideo: false)
     }
@@ -438,7 +501,7 @@ final class TelemostCallEngine: CallEngine {
         items.sort { $0.id < $1.id }
         let localVideo = publisher?.videoTrack.map { CallVideoStream(id: localID + ".camera", source: .camera, track: .native($0)) }
         items.insert(.init(id: localID, name: name, isLocal: true, microphoneOn: microphoneIntent && !held && !quiet,
-            cameraOn: localVideo != nil, screenShareOn: false, isSpeaking: speaking.contains(localID), videoTracks: localVideo.map { [$0] } ?? []), at: 0)
+            cameraOn: localVideo != nil, screenShareOn: sharingActive, isSpeaking: speaking.contains(localID), videoTracks: localVideo.map { [$0] } ?? []), at: 0)
         let snapshot = CallMediaSnapshot(participants: items)
         if speakingOnly { view?.refreshSpeaking(snapshot: snapshot) } else { view?.render(snapshot: snapshot) }
     }
@@ -462,6 +525,8 @@ final class TelemostCallEngine: CallEngine {
         }
     }
     private func closeTransport() async {
+        meetingChat.stop()
+        await stopScreenSharing()
         let oldTransport = transport, oldSubscriber = subscriber, oldPublisher = publisher
         transport = nil; subscriber = nil; publisher = nil; factory = nil; bootstrap = nil
         tracks.removeAll(); slots.removeAll(); descriptions.removeAll(); speaking.removeAll(); slotKey = 0
@@ -479,6 +544,7 @@ final class TelemostCallEngine: CallEngine {
         hasJoinStarted = false; leaving = true; epoch = UUID()
         connectionTask?.cancel(); recoveryTask?.cancel(); mediaTask?.cancel(); connectionDeadline?.cancel(); completeAnswer(CancellationError())
         pathMonitor?.cancel(); pathMonitor = nil; observers.forEach(NotificationCenter.default.removeObserver); observers = []
+        broadcastObservation = nil
         view?.endFloatingVideo(); studio.end(); chat.clear(); pauseAudio()
         await closeTransport()
         LKRTCAudioSession.sharedInstance().isAudioEnabled = previousAudioEnabled
@@ -512,6 +578,24 @@ final class TelemostCallEngine: CallEngine {
         var audioDuration = 0.0
         var audioEnergy = 0.0
     }
+    func startSharingForTesting() throws {
+        guard let factory, let view, connected else { throw TelemostError.disconnected }
+        let attempt = UUID(); sharingGeneration = attempt
+        let sender = TelemostScreenSender(factory: factory, preview: view.sharePreview, onFirstFrame: { [weak self] in
+            guard let self, self.sharingGeneration == attempt else { return }
+            self.sharingActive = true; self.publisher?.setSharing(self.screenSender?.track)
+            self.scheduleMedia(); self.refresh()
+        }, onEnd: { _ in })
+        screenSender = sender
+    }
+    func sendScreenForTesting(_ pixels: CVPixelBuffer, timestamp: Int64) { screenSender?.receiveForTesting(pixels, timestamp: timestamp) }
+    func stopSharingForTesting() async { await stopScreenSharing() }
+    func sentScreenFramesForTesting() async -> Int {
+        guard let publisher else { return 0 }
+        let report = await withCheckedContinuation { completion in publisher.connection.statistics { completion.resume(returning: $0) } }
+        return report.statistics.values.filter { $0.type == "outbound-rtp" && $0.values["kind"] as? String == "video" }
+            .reduce(0) { $0 + (($1.values["framesEncoded"] as? NSNumber)?.intValue ?? 0) }
+    }
     func interruptForTesting() { transport?.interruptForTesting() }
     func receiveEvidenceForTesting() async -> ReceiveEvidence {
         guard let subscriber else { return .init() }
@@ -523,6 +607,7 @@ final class TelemostCallEngine: CallEngine {
             evidence.videoFrames += (entry.values["framesDecoded"] as? NSNumber)?.doubleValue ?? 0
             evidence.audioDuration += (entry.values["totalSamplesDuration"] as? NSNumber)?.doubleValue ?? 0
             evidence.audioEnergy += (entry.values["totalAudioEnergy"] as? NSNumber)?.doubleValue ?? 0
+
         }
         return evidence
     }

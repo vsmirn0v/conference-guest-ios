@@ -104,6 +104,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private var displayedSnapshot: CallMediaSnapshot?
     var supportsChat = true
     var supportsSharing = true
+    var usesNativeShareControl = false
+    var sharePreview: LocalSharePreview { localSharePreview }
     private var displayMode: ConferenceDisplayMode = .all
     private var isMicrophoneOn = false
     private var isCameraOn = false
@@ -358,7 +360,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         configure(microphone, symbol: "mic.slash.fill", label: L("Unmute microphone"), title: L("Mic off"))
         configure(camera, symbol: "video.slash.fill", label: L("Start video"), title: L("Cam off"))
         configure(share, symbol: "rectangle.on.rectangle", label: L("Share screen"), title: L("Share"))
-        if #available(iOS 27.0, *) {
+        if usesNativeShareControl || ProcessInfo.processInfo.isiOSAppOnMac {
+            share.isHidden = false
+            sharePicker.isHidden = true
+            shareTitle.isHidden = true
+        } else if #available(iOS 27.0, *) {
             share.isHidden = false
             sharePicker.isHidden = true
             shareTitle.isHidden = true
@@ -454,7 +460,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             StudioShortcut.install(on: camera, pane: .camera, model: studio)
             StudioShortcut.install(on: speaker, pane: .sound, model: studio, devices: true)
         }
-        share.isHidden = !supportsSharing
+        if !supportsSharing { share.isHidden = true; sharePicker.isHidden = true }
         conversationButton.isHidden = !supportsChat
         share.addAction(UIAction { [weak self] _ in
             guard let self else { return }
@@ -1227,7 +1233,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             return
         }
         isSharingScreen = enabled
-        if #available(iOS 27.0, *) {
+        if usesNativeShareControl || ProcessInfo.processInfo.isiOSAppOnMac {
+            share.isHidden = false
+            sharePicker.isHidden = true
+            shareTitle.isHidden = true
+        } else if #available(iOS 27.0, *) {
             share.isHidden = false
             sharePicker.isHidden = true
             shareTitle.isHidden = true

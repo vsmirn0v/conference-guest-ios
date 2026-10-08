@@ -28,6 +28,12 @@ final class TelemostTests: XCTestCase {
             XCTAssertGreaterThan(evidence.videoFrames, 0)
             XCTAssertGreaterThan(evidence.audioDuration, 0)
             XCTAssertGreaterThan(evidence.audioEnergy, 0)
+            // The former resource deadline silently killed healthy sockets at 20s.
+            try await Task.sleep(for: .seconds(23))
+            XCTAssertEqual(readyCount, 1, "A healthy established socket must not reconnect on a resource timer")
+            let sustained = await engine.receiveEvidenceForTesting()
+            XCTAssertGreaterThan(sustained.videoFrames, evidence.videoFrames)
+            XCTAssertGreaterThan(sustained.audioDuration, evidence.audioDuration)
             engine.interruptForTesting()
             try await wait { readyCount >= 2 || ended }
             XCTAssertFalse(ended)

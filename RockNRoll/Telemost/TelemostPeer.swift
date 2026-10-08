@@ -4,12 +4,15 @@ import LiveKitWebRTC
 
 final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sendable {
     private static let sslInitialized = LKRTCInitializeSSL()
-    static func makeFactory() throws -> LKRTCPeerConnectionFactory {
+    // The default RTC audio device is process-wide. Retain one factory so
+    // retiring an old connection cannot tear it down under a new call.
+    private static let sharedFactory: Result<LKRTCPeerConnectionFactory, Error> = Result {
         guard sslInitialized else { throw TelemostError.invalidResponse }
         let encoder = LKRTCDefaultVideoEncoderFactory()
         if let codec = LKRTCDefaultVideoEncoderFactory.supportedCodecs().first(where: { $0.name == "H264" }) { encoder.preferredCodec = codec }
         return LKRTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: LKRTCDefaultVideoDecoderFactory())
     }
+    static func makeFactory() throws -> LKRTCPeerConnectionFactory { try sharedFactory.get() }
     let target: String
     let factory: LKRTCPeerConnectionFactory
     private(set) var connection: LKRTCPeerConnection!
@@ -38,6 +41,7 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
     private var localDescriptionAcknowledged = false
     private var audioTransceiver: LKRTCRtpTransceiver?
     private var videoTransceiver: LKRTCRtpTransceiver?
+    private var sharingTransceiver: LKRTCRtpTransceiver?
     private(set) var videoTrack: LKRTCVideoTrack?
     private var camera: LKRTCCameraVideoCapturer?
     private var cameraPosition: AVCaptureDevice.Position = .front
@@ -99,7 +103,7 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
             tracks.append(["mid": transceiver.mid, "transceiverMid": transceiver.mid, "kind": kind,
                 "priority": 0, "label": kind, "codecs": [:], "groupId": 1, "description": ""])
         }
-        append(audioTransceiver, kind: "AUDIO"); append(videoTransceiver, kind: "VIDEO")
+        append(audioTransceiver, kind: "AUDIO"); append(videoTransceiver, kind: "VIDEO"); append(sharingTransceiver, kind: "DISPLAY_VIDEO")
         return ["sdp": offer.sdp, "pcSeq": sequence, "tracks": tracks]
     }
     func accept(_ answer: [String: Any]) async throws {
@@ -146,6 +150,13 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
     func localSDPSent() {
         lock.lock(); localDescriptionAcknowledged = true; let waiting = localCandidates; localCandidates.removeAll(); lock.unlock()
         for candidate in waiting { onCandidate?(candidate) }
+    }
+    @MainActor func setSharing(_ track: LKRTCVideoTrack?) {
+        if sharingTransceiver == nil, track != nil {
+            let settings = LKRTCRtpTransceiverInit(); settings.direction = .sendOnly
+            sharingTransceiver = connection.addTransceiver(of: .video, init: settings)
+        }
+        sharingTransceiver?.sender.track = track
     }
     @MainActor func setMicrophone(_ enabled: Bool, profile: StudioAudioProfile) {
         if !enabled { audioTransceiver?.sender.track = nil; audioTrack = nil; return }
@@ -202,6 +213,7 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
     }
     @MainActor func close() async {
         closed = true
+        setSharing(nil)
         onCandidate = nil; onTrack = nil; onState = nil
         try? await setCamera(false); setMicrophone(false, profile: .conversation); connection.close()
     }

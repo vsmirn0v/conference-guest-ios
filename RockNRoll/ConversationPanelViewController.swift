@@ -33,6 +33,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private let sendButton = UIButton(type: .system)
     private let hint = UILabel()
     private let footer = UIStackView()
+    private let composerRow = UIStackView()
     private let callStrip = UIStackView()
     private let micButton = UIButton(type: .system)
     private let cameraButton = UIButton(type: .system)
@@ -136,7 +137,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         chat.$items.receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.renderMessages($0) }
             .store(in: &subscriptions)
-        chat.$canSend.receive(on: DispatchQueue.main)
+        Publishers.CombineLatest(chat.$canSend, chat.$unavailableReason).receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateComposer() }
             .store(in: &subscriptions)
         chat.$unreadCoverageIsLimited.removeDuplicates()
@@ -370,13 +371,14 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         sendButton.addAction(UIAction { [weak self] _ in self?.sendMessage() }, for: .touchUpInside)
         sendButton.widthAnchor.constraint(equalToConstant: 48).isActive = true
         sendButton.heightAnchor.constraint(equalToConstant: 48).isActive = true
-        let row = UIStackView(arrangedSubviews: [composer, sendButton])
+        let row = composerRow
+        row.addArrangedSubview(composer); row.addArrangedSubview(sendButton)
         row.axis = .horizontal
         row.alignment = .bottom
         row.spacing = 8
         hint.font = .preferredFont(forTextStyle: .caption1)
         hint.textColor = .lightGray
-        hint.numberOfLines = 2
+        hint.numberOfLines = 0
         footer.axis = .vertical
         footer.spacing = 4
         footer.addArrangedSubview(hint)
@@ -618,7 +620,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             renderedTranscriptSegments = segments
         } else {
             renderedTranscriptSegments = nil
-            let message = CatchUpText.live(timeline: timeline, canView: canViewTranscript,
+            let message = catchUp.transcriptUnavailableReason ?? CatchUpText.live(timeline: timeline, canView: canViewTranscript,
                                            enabled: transcriptionEnabled)
             if transcript.text != message { transcript.text = message }
         }
@@ -696,7 +698,8 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         sendButton.isEnabled = chat.canSend && RoomChatPacket.accepts(text: clean)
         retryButtons.values.forEach { $0.isEnabled = chat.canSend }
         composer.isEditable = chat.canSend
-        if !chat.canSend { hint.text = L("Chat isn't available right now.") }
+        composerRow.isHidden = chat.isReadOnly
+        if !chat.canSend { hint.text = chat.unavailableReason ?? L("Chat isn't available right now.") }
         else if count > 2_000 { hint.text = L("%ld characters over the limit", count - 2_000) }
         else if count > 0 && !RoomChatPacket.accepts(text: clean) { hint.text = L("This message is too large to send.") }
         else if count >= 1_800 { hint.text = L("%ld/2,000 characters", count) }

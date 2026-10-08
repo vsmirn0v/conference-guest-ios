@@ -71,6 +71,14 @@ final class TelemostUITests: XCTestCase {
             if mode == "Audio only" { XCTAssertFalse(share.exists) }
             else { XCTAssertTrue(share.waitForExistence(timeout: 10)) }
         }
+        XCTAssertTrue(app.buttons["Share screen"].exists)
+        app.buttons["Chat"].tap()
+        let reason = app.staticTexts["Read-only chat. This meeting service requires sign-in to send messages."]
+        XCTAssertTrue(reason.waitForExistence(timeout: 12))
+        XCTAssertFalse(app.buttons["Send chat message"].isHittable)
+        app.segmentedControls["Conversation mode"].buttons["Live text"].tap()
+        XCTAssertTrue(app.textViews["Jam transcript"].value as? String == "This meeting service does not provide live transcripts to anonymous guests.")
+        app.buttons["Close conversation"].tap()
         app.buttons["Leave"].tap()
         XCTAssertTrue(app.buttons["Join jam"].waitForExistence(timeout: 10))
     }

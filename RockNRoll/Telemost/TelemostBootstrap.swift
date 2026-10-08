@@ -40,6 +40,7 @@ struct TelemostBootstrap {
     let serverURL: URL
     let serviceName: String
     let iceServers: [[String: Any]]
+    let chatAllowed: Bool
     static func load(_ target: TelemostTarget, name: String, session: URLSession) async throws -> Self {
         let invitation = target.invitationURL.absoluteString.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!
         var components = URLComponents(string: "https://cloud-api.yandex.ru/telemost_front/v2/telemost/conferences/\(invitation)/connection")!
@@ -66,6 +67,7 @@ struct TelemostBootstrap {
             url.scheme == "wss", url.host?.hasSuffix(".yandex.net") == true, url.user == nil, url.password == nil,
             let service = config["service_name"] as? String, !service.isEmpty else { throw TelemostError.invalidResponse }
         return .init(roomID: room, participantID: peer, credentials: credentials, serverURL: url,
-                     serviceName: service, iceServers: config["ice_servers"] as? [[String: Any]] ?? [])
+                     serviceName: service, iceServers: config["ice_servers"] as? [[String: Any]] ?? [],
+                     chatAllowed: (object["conference_state"] as? [String: Any])?["chat_allowed"] as? Bool ?? false)
     }
 }

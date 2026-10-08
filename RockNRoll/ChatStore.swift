@@ -19,6 +19,8 @@ enum ChatDelivery: Equatable {
 final class ChatStore: ObservableObject {
     @Published private(set) var items: [ChatEntry] = []
     @Published var canSend = false
+    @Published var unavailableReason: String?
+    var isReadOnly = false
     @Published var draft = ""
     @Published private(set) var unreadCount = 0
     private var seenMessageIDs = Set<String>()
@@ -121,6 +123,8 @@ final class ChatStore: ObservableObject {
         draft = ""
         unreadCount = 0
         canSend = false
+        unavailableReason = nil
+        isReadOnly = false
         onSend = nil
         onRetry = nil
     }

@@ -10,7 +10,7 @@ Telemost HTTPS invitations now route to a separate native engine. It uses anonym
 - Renew anonymous credentials and rebuild both peer connections after a transport failure or network change. Bound retries and acknowledgment timeouts; cancel old generations before a replacement starts.
 - Integrate with existing CallKit/audio ownership. Pause local camera capture in background; keep the user's camera intent for foreground restoration. After a competing call, reconnect the native media sessions rather than assume a surviving participant list proves usable media.
 - End PiP, capture, peer connections and signaling before reporting departure. Accept host removal/end as terminal events rather than automatically rejoining.
-- Explicitly report unsupported protocol, admission or sign-in requirements. Chat, provider captions and outgoing screen sharing are not implemented for this engine; the corresponding actions are unavailable.
+- Explicitly report unsupported protocol, admission or sign-in requirements. Native chat reading and outgoing screen sharing are now implemented; anonymous chat sending and live captions remain unavailable from the service. See [feature completion](telemost-feature-completion.md) for behavior and qualification.
 
 The screen-only view filters camera tiles locally. Audio-only requests the SFU's video shutdown. The current receive layout is bounded to eight video slots; adaptive, tile-specific SFU subscriptions remain a possible optimization.
 

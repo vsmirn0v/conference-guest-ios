@@ -7,6 +7,7 @@ import Foundation
 final class CatchUpStore: ObservableObject {
     @Published private(set) var timeline = CatchUpTimeline()
     @Published private(set) var canViewTranscript: Bool?
+    @Published var transcriptUnavailableReason: String?
     @Published private(set) var transcriptionEnabled = false
     @Published private(set) var persistenceWarning: String?
 
@@ -43,6 +44,7 @@ final class CatchUpStore: ObservableObject {
     }
 
     func enter(roomKey: String) {
+        transcriptUnavailableReason = nil
         guard self.roomKey != roomKey else { return }
         self.roomKey = roomKey
         sessionID = UUID().uuidString

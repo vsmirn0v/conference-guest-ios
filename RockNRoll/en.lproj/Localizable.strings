@@ -697,3 +697,13 @@
 
 "View transcript" = "View transcript";
 "Screen sharing is unavailable on this Mac." = "Screen sharing is unavailable on this Mac.";
+
+"Connecting to meeting chat…" = "Connecting to meeting chat…";
+
+"Read-only chat. This meeting service requires sign-in to send messages." = "Read-only chat. This meeting service requires sign-in to send messages.";
+
+"Meeting chat is unavailable. Audio and video can continue." = "Meeting chat is unavailable. Audio and video can continue.";
+
+"The host has disabled meeting chat." = "The host has disabled meeting chat.";
+
+"This meeting service does not provide live transcripts to anonymous guests." = "This meeting service does not provide live transcripts to anonymous guests.";

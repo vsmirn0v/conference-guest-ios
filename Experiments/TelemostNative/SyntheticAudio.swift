@@ -21,6 +21,16 @@ final class SyntheticAudio: NSObject, LKRTCAudioDevice, @unchecked Sendable {
     private var worker: Thread?
     private let lock = NSLock()
     private var stopped = false
+    private let recordedFixture: [Int16]
+    override init() {
+        if let path = ProcessInfo.processInfo.environment["TELEMOST_TEST_PCM"],
+           let data = try? Data(contentsOf: URL(fileURLWithPath: path)), !data.isEmpty, data.count <= 20_000_000, data.count % 2 == 0 {
+            recordedFixture = data.withUnsafeBytes { bytes in
+                (0..<(bytes.count / 2)).map { bytes.loadUnaligned(fromByteOffset: $0 * 2, as: Int16.self).littleEndian }
+            }
+        } else { recordedFixture = [] }
+        super.init()
+    }
     private var sampleCount = 0
     private var sumSquares = 0.0
 
@@ -61,7 +71,9 @@ final class SyntheticAudio: NSObject, LKRTCAudioDevice, @unchecked Sendable {
             var flags = AudioUnitRenderActionFlags()
             var timestamp = AudioTimeStamp(); timestamp.mSampleTime = Double(sampleIndex); timestamp.mFlags = .sampleTimeValid
             if record {
-                for i in input.indices { input[i] = Int16(3_000 * sin(Double(sampleIndex + i) * 2 * .pi * 440 / 48_000)) }
+                for i in input.indices {
+                    input[i] = recordedFixture.isEmpty ? Int16(3_000 * sin(Double(sampleIndex + i) * 2 * .pi * 440 / 48_000)) : recordedFixture[(sampleIndex + i) % recordedFixture.count]
+                }
                 input.withUnsafeMutableBytes { bytes in
                     var list = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(mNumberChannels: 1, mDataByteSize: 960, mData: bytes.baseAddress))
                     _ = delegate?.deliverRecordedData(&flags, &timestamp, 0, 480, &list, nil, nil)

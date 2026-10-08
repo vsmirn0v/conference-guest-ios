@@ -707,3 +707,13 @@
 "This meeting has ended." = "Эта встреча завершена.";
 "The camera is unavailable. Audio can continue." = "Камера недоступна. Аудио продолжает работать.";
 "Restoring meeting media…" = "Восстанавливаем аудио и видео встречи…";
+
+"Connecting to meeting chat…" = "Подключение к чату встречи…";
+
+"Read-only chat. This meeting service requires sign-in to send messages." = "Чат доступен только для чтения. Для отправки сообщений сервис требует вход в аккаунт.";
+
+"Meeting chat is unavailable. Audio and video can continue." = "Чат встречи недоступен. Аудио и видео продолжают работать.";
+
+"The host has disabled meeting chat." = "Организатор отключил чат встречи.";
+
+"This meeting service does not provide live transcripts to anonymous guests." = "Этот сервис не предоставляет гостям расшифровку в реальном времени.";
