@@ -58,4 +58,11 @@ Xcode reports Uploaded RockNRoll / EXPORT SUCCEEDED in
 warnings remain; the app's own dSYM is verified. App Store Connect received
 0.2.0 (51) on October 8 at 1:27 PM MSK and shows Processing.
 
-TestFlight group readbacks are recorded after publication.
+At 13:34 MSK, separate group readbacks confirm **Testing, Expires in 90 days**
+for 0.2.0 (51) in Rock’n’Roll Internal (one tester) and Rock’n’Roll Public Beta
+(six testers). Automatic public tester notification is enabled. The public invite
+remains https://testflight.apple.com/join/Hd13C9U3.
+
+Proof: ignored local `Marketing/TestFlight/build51-internal.png` and
+`Marketing/TestFlight/build51-public.png`. This task's index watcher was stopped;
+no physical device or personal meeting was used. No test scheme overrides remain.
