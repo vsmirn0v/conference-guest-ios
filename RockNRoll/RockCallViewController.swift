@@ -112,6 +112,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
     }
     var sharePreview: LocalSharePreview { localSharePreview }
+    func setRoomTitle(_ title: String) { titleLabel.text = title; view.setNeedsLayout() }
+    #if DEBUG
+    var snapshotForTesting: CallMediaSnapshot? { displayedSnapshot }
+    #endif
     private var displayMode: ConferenceDisplayMode = .all
     private var isMicrophoneOn = false
     private var isCameraOn = false

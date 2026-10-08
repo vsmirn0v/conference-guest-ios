@@ -1,0 +1,21 @@
+{
+  "checkedAt": "2026-10-08T16:15:04Z",
+  "service": "TrueConf Online",
+  "nativeFoundationBootstrap": "passed",
+  "guestAccountRequired": false,
+  "guestAdmissionHTTPStatus": 200,
+  "requestedDisplayNamesApplied": {
+    "latin": true,
+    "cyrillic": true
+  },
+  "temporaryNativeCredentialsReturned": true,
+  "credentialsPersistedInEvidence": false,
+  "advertisedClientKeys": [
+    "installed",
+    "launcher"
+  ],
+  "browserURLAdvertised": false,
+  "browserStandardPathHTTPStatus": 404,
+  "mediaConnectionEstablished": false,
+  "qualification": "This records admission and browser capability discovery only. It does not establish SDK entitlement, native signaling, audio, video, chat, screen sharing, or background operation."
+}

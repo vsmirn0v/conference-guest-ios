@@ -6,7 +6,7 @@ import LiveKitWebRTC
 /// Captures with the existing system chooser/ReplayKit extension. LiveKit is
 /// used only for its public capture transport, never to join a second meeting.
 @MainActor
-final class TelemostScreenSender {
+final class NativeScreenSender {
     let track: LKRTCVideoTrack
     private let source: LKRTCVideoSource
     private let sink: Sink

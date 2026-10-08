@@ -4,6 +4,7 @@ public enum MeetingEngineEvidence: Equatable, Sendable {
     case guest(endpoint: URL)
     case community
     case telemost
+    case trueconf
 }
 
 public enum MeetingEngineDetection: Equatable, Sendable {
@@ -47,8 +48,9 @@ public actor MeetingEngineDetector {
         if (try? TelemostTarget.parse(invitation.absoluteString)) != nil { return .verified(.telemost) }
         let guest = try JoinTarget.parse(invitation.absoluteString)
         let community = try? JamTarget.parseCompatibleInvitation(invitation.absoluteString)
+        let trueconf = try? TrueConfTarget.parse(invitation.absoluteString)
         // Community evidence is room-specific; guest-only results are origin-specific.
-        let key = community?.invitationURL ?? guest.originURL
+        let key = community?.invitationURL ?? trueconf?.invitationURL ?? guest.originURL
         if let cached = cache[key], cached.expires > now() { return cached.evidence }
 
         let session = self.session, timeout = self.timeout, serviceName = self.serviceName
@@ -56,12 +58,13 @@ public actor MeetingEngineDetector {
                                                                           session: session, timeout: timeout)
         async let communityEvidence: MeetingEngineEvidence? = Self.probeCommunity(community,
                                                                     session: session, timeout: timeout)
-        let proofs = await [guestEvidence, communityEvidence].compactMap { $0 }
+        async let trueconfEvidence: MeetingEngineEvidence? = Self.probeTrueConf(trueconf, session: session, timeout: timeout)
+        let proofs = await [guestEvidence, communityEvidence, trueconfEvidence].compactMap { $0 }
         try Task.checkCancellation()
         let result: MeetingEngineDetection
         switch proofs.count {
         case 1: result = .verified(proofs[0])
-        case 2: result = .ambiguous
+        case 2...: result = .ambiguous
         default: result = .unknown
         }
         if case .verified = result, lifetime > 0 {
@@ -90,6 +93,16 @@ public actor MeetingEngineDetector {
             let endpoint = try ConferenceEndpointResolver.endpoint(in: data, response: response,
                                                        origin: target.originURL, serviceName: serviceName)
             return .guest(endpoint: endpoint)
+        } catch { return nil }
+    }
+
+    private static func probeTrueConf(_ target: TrueConfTarget?, session: URLSession,
+                                     timeout: TimeInterval) async -> MeetingEngineEvidence? {
+        guard let target else { return nil }
+        do {
+            let (data, response) = try await load(target.descriptionURL, session: session,
+                                                timeout: timeout, maximumBytes: 65_536)
+            return response.statusCode == 200 && target.supportsBrowser(in: data) ? .trueconf : nil
         } catch { return nil }
     }
 

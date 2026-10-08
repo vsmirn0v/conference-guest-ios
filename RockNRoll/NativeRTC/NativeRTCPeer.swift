@@ -3,12 +3,14 @@ import Combine
 import Foundation
 import LiveKitWebRTC
 
-final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sendable {
+final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sendable {
+    enum Topology { case split, composite }
+    private let topology: Topology
     private static let sslInitialized = LKRTCInitializeSSL()
     // The default RTC audio device is process-wide. Retain one factory so
     // retiring an old connection cannot tear it down under a new call.
     private static let sharedFactory: Result<LKRTCPeerConnectionFactory, Error> = Result {
-        guard sslInitialized else { throw TelemostError.invalidResponse }
+        guard sslInitialized else { throw NativeRTCError.invalidResponse }
         let encoder = LKRTCDefaultVideoEncoderFactory()
         if let codec = LKRTCDefaultVideoEncoderFactory.supportedCodecs().first(where: { $0.name == "H264" }) { encoder.preferredCodec = codec }
         return LKRTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: LKRTCDefaultVideoDecoderFactory())
@@ -51,21 +53,25 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
     private var audioProfile: StudioAudioProfile?
     @MainActor private var closed = false
 
-    init(target: String, factory: LKRTCPeerConnectionFactory, ice: [[String: Any]], cameraPosition: AVCaptureDevice.Position = .front) {
-        self.target = target; self.factory = factory; self.cameraPosition = cameraPosition
+    init(target: String, factory: LKRTCPeerConnectionFactory, ice: [[String: Any]], cameraPosition: AVCaptureDevice.Position = .front, topology: Topology = .split) {
+        self.target = target; self.factory = factory; self.cameraPosition = cameraPosition; self.topology = topology
         super.init(); sequence = target == "PUBLISHER" ? 1 : 0
         let configuration = LKRTCConfiguration(); configuration.sdpSemantics = .unifiedPlan
         configuration.iceServers = Self.servers(ice)
         connection = factory.peerConnection(with: configuration,
             constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
-        if target == "PUBLISHER" {
-            let settings = LKRTCRtpTransceiverInit(); settings.direction = .sendOnly
-            audioTransceiver = connection.addTransceiver(of: .audio, init: settings)
-            videoTransceiver = connection.addTransceiver(of: .video, init: settings)
-            // Preserve other codecs as fallbacks when the SFU declines H.264.
-            let codecs = factory.rtpSenderCapabilities(forKind: "video").codecs
-            try? videoTransceiver?.setCodecPreferences(codecs.filter { $0.name == "H264" } + codecs.filter { $0.name != "H264" }, error: ())
-        }
+        if target == "PUBLISHER" { enablePublishing() }
+    }
+    /// A composite server supplies its receive offer first. Add outbound
+    /// transceivers only after answering it to preserve the remote MID order.
+    func enablePublishing() {
+        guard audioTransceiver == nil else { return }
+        let settings = LKRTCRtpTransceiverInit(); settings.direction = .sendOnly
+        audioTransceiver = connection.addTransceiver(of: .audio, init: settings)
+        videoTransceiver = connection.addTransceiver(of: .video, init: settings)
+        // Preserve other codecs as fallbacks when the server declines H.264.
+        let codecs = factory.rtpSenderCapabilities(forKind: "video").codecs
+        try? videoTransceiver?.setCodecPreferences(codecs.filter { $0.name == "H264" } + codecs.filter { $0.name != "H264" }, error: ())
     }
     private static func servers(_ values: [[String: Any]]) -> [LKRTCIceServer] {
         values.compactMap { value in
@@ -77,12 +83,13 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
     func configure(_ value: [String: Any]) throws {
         guard let servers = value["iceServers"] as? [[String: Any]] else { return }
         let config = connection.configuration; config.iceServers = Self.servers(servers)
-        guard connection.setConfiguration(config) else { throw TelemostError.invalidResponse }
+        guard connection.setConfiguration(config) else { throw NativeRTCError.invalidResponse }
     }
     func answer(_ offer: [String: Any]) async throws -> [String: Any] {
         lock.lock(); localDescriptionAcknowledged = false; lock.unlock()
-        guard let sdp = offer["sdp"] as? String, let seq = offer["pcSeq"] as? Int else { throw TelemostError.invalidResponse }
-        guard seq == sequence || connection.remoteDescription == nil else { throw TelemostError.disconnected }
+        guard let sdp = offer["sdp"] as? String,
+              let seq = (offer["pcSeq"] as? Int) ?? (topology == .composite ? 0 : nil) else { throw NativeRTCError.invalidResponse }
+        guard seq == sequence || connection.remoteDescription == nil else { throw NativeRTCError.disconnected }
         sequence = seq
         try await setDescription(.init(type: .offer, sdp: sdp), local: false)
         // WebRTC exposes fresh Objective-C wrappers when enumerating transceivers;
@@ -108,7 +115,8 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
         return ["sdp": offer.sdp, "pcSeq": sequence, "tracks": tracks]
     }
     func accept(_ answer: [String: Any]) async throws {
-        guard let sdp = answer["sdp"] as? String, answer["pcSeq"] as? Int == sequence else { throw TelemostError.invalidResponse }
+        guard let sdp = answer["sdp"] as? String,
+              topology == .composite || answer["pcSeq"] as? Int == sequence else { throw NativeRTCError.invalidResponse }
         try await setDescription(.init(type: .answer, sdp: sdp), local: false)
         try await flushCandidates()
     }
@@ -117,7 +125,7 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
             let callback: @Sendable (LKRTCSessionDescription?, Error?) -> Void = { value, error in
                 if let error { completion.resume(throwing: error) }
                 else if let value { completion.resume(returning: value) }
-                else { completion.resume(throwing: TelemostError.invalidResponse) }
+                else { completion.resume(throwing: NativeRTCError.invalidResponse) }
             }
             let constraints = LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
             if offer { connection.offer(for: constraints, completionHandler: callback) }
@@ -132,11 +140,11 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
         }
     }
     func addCandidate(_ value: [String: Any]) async throws {
-        guard value["pcSeq"] as? Int == sequence, let sdp = value["candidate"] as? String,
+        guard topology == .composite || value["pcSeq"] as? Int == sequence, let sdp = value["candidate"] as? String,
               let index = value["sdpMlineIndex"] as? Int, index >= 0, index <= 64 else { return }
         let candidate = LKRTCIceCandidate(sdp: sdp, sdpMLineIndex: Int32(index), sdpMid: value["sdpMid"] as? String)
         if connection.remoteDescription == nil {
-            guard candidates.count < 64 else { throw TelemostError.invalidResponse }; candidates.append(candidate)
+            guard candidates.count < 64 else { throw NativeRTCError.invalidResponse }; candidates.append(candidate)
         } else { try await add(candidate) }
     }
     private func add(_ candidate: LKRTCIceCandidate) async throws {
@@ -152,7 +160,15 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
         lock.lock(); localDescriptionAcknowledged = true; let waiting = localCandidates; localCandidates.removeAll(); lock.unlock()
         for candidate in waiting { onCandidate?(candidate) }
     }
+    private var presentationTrack: LKRTCVideoTrack?
+    private func updateVideoSender() {
+        if topology == .composite { videoTransceiver?.sender.track = presentationTrack ?? videoTrack }
+        else { videoTransceiver?.sender.track = videoTrack }
+    }
     @MainActor func setSharing(_ track: LKRTCVideoTrack?) {
+        if topology == .composite {
+            presentationTrack = track; updateVideoSender(); return
+        }
         if sharingTransceiver == nil, track != nil {
             let settings = LKRTCRtpTransceiverInit(); settings.direction = .sendOnly
             sharingTransceiver = connection.addTransceiver(of: .video, init: settings)
@@ -185,19 +201,19 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
         guard !closed || !enabled else { throw CancellationError() }
         guard enabled != (camera != nil) else { return }
         if !enabled {
-            videoTransceiver?.sender.track = nil; videoTrack = nil; captureDevice = nil
+            videoTrack = nil; updateVideoSender(); captureDevice = nil
             let old = camera; camera = nil
             if let old { await withCheckedContinuation { completion in old.stopCapture { completion.resume() } } }
             return
         }
-        guard let device = LKRTCCameraVideoCapturer.captureDevices().first(where: { $0.position == cameraPosition }) ?? LKRTCCameraVideoCapturer.captureDevices().first else { throw TelemostError.invalidResponse }
+        guard let device = LKRTCCameraVideoCapturer.captureDevices().first(where: { $0.position == cameraPosition }) ?? LKRTCCameraVideoCapturer.captureDevices().first else { throw NativeRTCError.invalidResponse }
         let formats = LKRTCCameraVideoCapturer.supportedFormats(for: device)
         guard let format = formats.filter({
             let d = CMVideoFormatDescriptionGetDimensions($0.formatDescription); return d.width <= 1280 && d.height <= 720
         }).max(by: {
             let a = CMVideoFormatDescriptionGetDimensions($0.formatDescription), b = CMVideoFormatDescriptionGetDimensions($1.formatDescription)
             return a.width * a.height < b.width * b.height
-        }) ?? formats.first else { throw TelemostError.invalidResponse }
+        }) ?? formats.first else { throw NativeRTCError.invalidResponse }
         let source = factory.videoSource()
         let capturer = LKRTCCameraVideoCapturer(delegate: source)
         camera = capturer; captureDevice = device
@@ -216,7 +232,7 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
             throw CancellationError()
         }
         videoTrack = factory.videoTrack(with: source, trackId: "camera")
-        videoTransceiver?.sender.track = videoTrack
+        updateVideoSender()
     }
     @MainActor func flipCamera() async throws {
         guard camera != nil else { return }
@@ -257,7 +273,7 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
 /// Observe publisher input stats without a second capturer. Demand comes from
 /// the meeting/PiP meter; a retired request cannot revive its signal.
 @MainActor
-final class TelemostMicrophoneProbe {
+final class NativeMicrophoneProbe {
     private var task: Task<Void, Never>?
     private var observation: AnyCancellable?
     init(activity: MicrophoneActivity, measure: @escaping @MainActor () async -> Float?) {

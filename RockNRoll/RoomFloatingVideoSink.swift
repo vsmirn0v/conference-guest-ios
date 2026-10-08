@@ -46,6 +46,9 @@ final class RoomFloatingVideoSink: NSObject, VideoRenderer, LKRTCVideoRenderer, 
         guard let frame else { return }
         submit(rotation: frame.rotation.rawValue) { [weak self] in self?.nativeConverter.convert(frame) }
     }
+    func renderComposite(_ frame: LKRTCVideoFrame, region: CGRect) {
+        submit(rotation: frame.rotation.rawValue) { [weak self] in self?.nativeConverter.convert(frame, region: region) }
+    }
     private func submit(rotation: Int, pixels: @escaping () -> CVPixelBuffer?) {
         let time = ProcessInfo.processInfo.systemUptime
         lock.lock()

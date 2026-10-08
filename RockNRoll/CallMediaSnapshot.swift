@@ -6,15 +6,16 @@ enum CallVideoKind { case camera, screenShareVideo }
 enum CallVideoSource {
     case room(VideoTrack)
     case native(LKRTCVideoTrack)
+    case composite(CompositeVideoSource)
     var identity: ObjectIdentifier {
-        switch self { case .room(let track): ObjectIdentifier(track); case .native(let track): ObjectIdentifier(track) }
+        switch self { case .room(let track): ObjectIdentifier(track); case .native(let track): ObjectIdentifier(track); case .composite(let source): ObjectIdentifier(source) }
     }
     var roomTrack: VideoTrack? { if case .room(let track) = self { track } else { nil } }
     func add(_ sink: RoomFloatingVideoSink) {
-        switch self { case .room(let track): track.add(videoRenderer: sink); case .native(let track): track.add(sink) }
+        switch self { case .room(let track): track.add(videoRenderer: sink); case .native(let track): track.add(sink); case .composite(let source): source.add(sink) }
     }
     func remove(_ sink: RoomFloatingVideoSink) {
-        switch self { case .room(let track): track.remove(videoRenderer: sink); case .native(let track): track.remove(sink) }
+        switch self { case .room(let track): track.remove(videoRenderer: sink); case .native(let track): track.remove(sink); case .composite(let source): source.remove(sink) }
     }
 }
 

@@ -9,7 +9,7 @@ final class TelemostFeatureTests: XCTestCase {
         let activity = MicrophoneActivity(observeLifecycle: false)
         var calls = 0
         var pending: CheckedContinuation<Float?, Never>?
-        let probe = TelemostMicrophoneProbe(activity: activity) {
+        let probe = NativeMicrophoneProbe(activity: activity) {
             calls += 1
             if calls == 1 { return 0.05 }
             return await withCheckedContinuation { pending = $0 }
@@ -44,7 +44,7 @@ final class TelemostFeatureTests: XCTestCase {
     func testComposedScreenUsesTheSameSenderAndRetiresDelivery() async throws {
         var first = 0
         let preview = LocalSharePreview()
-        let sender = TelemostScreenSender(factory: try TelemostPeer.makeFactory(), preview: preview, onFirstFrame: { first += 1 }, onEnd: { _ in })
+        let sender = NativeScreenSender(factory: try NativeRTCPeer.makeFactory(), preview: preview, onFirstFrame: { first += 1 }, onEnd: { _ in })
         try sender.startComposed()
         XCTAssertTrue(sender.composed); XCTAssertTrue(preview.active)
         let sample = try XCTUnwrap(PresenterCompositor(size: CGSize(width: 160, height: 90)).render(scene: PresenterScene(), camera: nil, time: CMTime(seconds: 1, preferredTimescale: 600)))
@@ -171,9 +171,9 @@ final class TelemostFeatureTests: XCTestCase {
         store.unavailableReason = "Read only"; store.clear(); XCTAssertNil(store.unavailableReason)
     }
     func testSeparatePresentationTransceiverAndStop() async throws {
-        let factory = try TelemostPeer.makeFactory()
-        let publisher = TelemostPeer(target: "PUBLISHER", factory: factory, ice: [])
-        let receiver = TelemostPeer(target: "SUBSCRIBER", factory: factory, ice: [])
+        let factory = try NativeRTCPeer.makeFactory()
+        let publisher = NativeRTCPeer(target: "PUBLISHER", factory: factory, ice: [])
+        let receiver = NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: [])
         let track = factory.videoTrack(with: factory.videoSource(forScreenCast: true), trackId: "screen")
         publisher.setSharing(track)
         let offer = try await publisher.offer()
@@ -187,7 +187,7 @@ final class TelemostFeatureTests: XCTestCase {
     }
     func testScreenSenderRejectsFramesAfterStop() async throws {
         var first = 0
-        let sender = TelemostScreenSender(factory: try TelemostPeer.makeFactory(), preview: LocalSharePreview(), onFirstFrame: { first += 1 }, onEnd: { _ in })
+        let sender = NativeScreenSender(factory: try NativeRTCPeer.makeFactory(), preview: LocalSharePreview(), onFirstFrame: { first += 1 }, onEnd: { _ in })
         var pixel: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(nil, 640, 360, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixel), kCVReturnSuccess)
         let pixels = try XCTUnwrap(pixel)

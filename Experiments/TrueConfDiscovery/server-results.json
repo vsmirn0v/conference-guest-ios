@@ -1,0 +1,30 @@
+{
+  "checkedAt": "2026-10-08T16:53:50Z",
+  "service": "TrueConf Server",
+  "serverVersion": "5.5.5.10009",
+  "referenceMacClientVersion": "8.5.5",
+  "guestAccountRequired": false,
+  "nativeSDKUsed": false,
+  "browserEmbedded": false,
+  "credentialsPersisted": false,
+  "physicalCaptureUsed": false,
+  "browserMediaConnectedWithOneParticipant": true,
+  "nativeReceive": {"seconds": 25, "renderedFrames": 686, "width": 1920, "height": 1080},
+  "nativePublish": {
+    "seconds": 40, "videoCodec": "VP8", "audioCodec": "Opus",
+    "videoFramesEncoded": 365, "videoBytesSent": 3100865, "audioBytesSent": 313906,
+    "independentBrowserVisuallyConfirmed": true
+  },
+  "independentNativeReceiver": {
+    "seconds": 20, "renderedFrames": 488, "decodedPCMSamples": 977760,
+    "decodedPCMRMS": 0.05975451873045691, "totalAudioEnergy": 0.15201506941353174
+  },
+  "syntheticPresentation": {
+    "seconds": 35, "serverVideoType": 2, "outgoingFramesEncoded": 319,
+    "browserPresentationEnlarged": true, "actualScreenCaptureTested": false
+  },
+  "receiveTopology": {"video": "server composite", "audio": "server mix"},
+  "productionIntegrated": false,
+  "trueConfOnlineMediaSupported": false,
+  "remaining": ["typed production adapter", "layout controls", "chat", "hardware codec qualification", "actual capture", "iOS lifecycle and recovery", "server version compatibility"]
+}

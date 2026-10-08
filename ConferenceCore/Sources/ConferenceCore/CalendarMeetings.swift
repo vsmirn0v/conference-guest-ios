@@ -1,11 +1,11 @@
 import Foundation
 
-public enum MeetingEngineKind: String, Codable, Sendable { case guest, community, telemost }
+public enum MeetingEngineKind: String, Codable, Sendable { case guest, community, telemost, trueconf }
 
 public extension MeetingEngineKind {
-    /// Older clients must still decode the shared history/cloud schema. Formal
-    /// Telemost invitations identify their engine without a persisted hint.
-    var persistenceHint: Self? { self == .telemost ? nil : self }
+    /// Older clients must still decode the shared history/cloud schema. Retain
+    /// invitations for newer engines and discover their capability on rejoin.
+    var persistenceHint: Self? { self == .telemost || self == .trueconf ? nil : self }
 }
 
 /// Stable room matching independent of invitation passwords and guest path variants.
@@ -106,6 +106,7 @@ public enum CalendarLinkDiscovery {
         func accept(_ candidate: URL) -> URL? {
             guard seen.insert(candidate).inserted else { return nil }
             if (try? TelemostTarget.parse(candidate.absoluteString)) != nil { return candidate }
+            if (try? TrueConfTarget.parse(candidate.absoluteString)) != nil { return candidate }
             if let scheme = candidate.scheme?.lowercased(), nativeSchemes.contains(scheme) { return candidate }
             if let host = candidate.host?.lowercased(), let bound = aliases[host],
                candidate.path.isEmpty || candidate.path == "/", candidate.query == nil { return bound }

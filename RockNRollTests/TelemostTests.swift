@@ -169,7 +169,7 @@ final class TelemostTests: XCTestCase {
         XCTAssertFalse(TelemostError.requestFailed(403).isRetryable)
     }
     func testRealSDPMapsReceivedTrackToItsMid() async throws {
-        let factory = try TelemostPeer.makeFactory()
+        let factory = try NativeRTCPeer.makeFactory()
         let config = LKRTCConfiguration(); config.sdpSemantics = .unifiedPlan
         let sender = try XCTUnwrap(factory.peerConnection(with: config, constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: nil))
         defer { sender.close() }
@@ -183,7 +183,7 @@ final class TelemostTests: XCTestCase {
         }
         let received = expectation(description: "MID available after remote SDP")
         received.assertForOverFulfill = false
-        let receiver = TelemostPeer(target: "SUBSCRIBER", factory: factory, ice: [])
+        let receiver = NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: [])
         receiver.onTrack = { mid, video in
             XCTAssertFalse(mid.isEmpty); XCTAssertEqual(video.kind, "video"); received.fulfill()
         }

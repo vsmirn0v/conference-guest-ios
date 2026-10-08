@@ -16,6 +16,7 @@ public extension JoinDestination {
         case .jam: MeetingEngineKind.community.inputPolicy
         case .guest: MeetingEngineKind.guest.inputPolicy
         case .telemost: MeetingEngineKind.telemost.inputPolicy
+        case .trueconf: MeetingEngineKind.trueconf.inputPolicy
         }
     }
 }

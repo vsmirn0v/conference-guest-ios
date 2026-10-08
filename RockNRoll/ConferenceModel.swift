@@ -75,6 +75,7 @@ final class ConferenceModel: ObservableObject {
     #endif
     private var jamEngine: RockRoomEngine?
     private var telemostEngine: TelemostCallEngine?
+    private var trueconfEngine: TrueConfCallEngine?
     private let resolver = VendorEndpointResolver.make()
     private let engineDetector: MeetingEngineDetector
     private var engineChoiceRequest: JoinRequest?
@@ -157,6 +158,7 @@ final class ConferenceModel: ObservableObject {
         case .guest: engine
         case .jam: jamEngine
         case .telemost: telemostEngine
+        case .trueconf: trueconfEngine
         case nil: nil
         }
     }
@@ -365,6 +367,8 @@ final class ConferenceModel: ObservableObject {
                         destination = .jam(try JamTarget.parseCompatibleInvitation(guest.invitationURL.absoluteString))
                     case .verified(.telemost):
                         destination = .telemost(try TelemostTarget.parse(guest.invitationURL.absoluteString))
+                    case .verified(.trueconf):
+                        destination = .trueconf(try TrueConfTarget.parse(guest.invitationURL.absoluteString))
                     case .ambiguous:
                         if let known = history.matching(guest.invitationURL)?.engine {
                             if known == .community {
@@ -458,6 +462,27 @@ final class ConferenceModel: ObservableObject {
                         guard let self, self.sessionGeneration == generation else { return }
                         self.mediaStatus = self.isJoining || self.isInConference ? message : nil
                         selected?.showMediaStatus(message)
+                    }
+                    activeRoomTitle = history.matching(target.invitationURL)?.displayTitle ?? L("Jam %@", target.roomID)
+                    macCallActivity.retainForGraphicsResources()
+                    try selected.join(target: target, name: request.name, container: container, quiet: request.quiet, title: activeRoomTitle)
+                case .trueconf(let target):
+                    let selected = TrueConfCallEngine(systemCall: systemCall, catchUp: catchUpStore, chat: chat)
+                    trueconfEngine = selected
+                    selected.onEvent = { [weak self] event in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        let failure = self.mediaStatus
+                        self.handle(event: event)
+                        if case .failed = event, let failure { self.status = failure }
+                    }
+                    selected.onMediaStatus = { [weak self, weak selected] message in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        self.mediaStatus = self.isJoining || self.isInConference ? message : nil
+                        selected?.showMediaStatus(message)
+                    }
+                    selected.onRoomTitle = { [weak self] title in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        self.setActiveRoomTitle(title)
                     }
                     activeRoomTitle = history.matching(target.invitationURL)?.displayTitle ?? L("Jam %@", target.roomID)
                     macCallActivity.retainForGraphicsResources()
@@ -688,6 +713,7 @@ final class ConferenceModel: ObservableObject {
     private func releaseJamEngineIfSelected() {
         if case .jam = activeRoute { jamEngine = nil }
         if case .telemost = activeRoute { telemostEngine = nil }
+        if case .trueconf = activeRoute { trueconfEngine = nil }
     }
 
     private func setActiveRoomTitle(_ title: String) {

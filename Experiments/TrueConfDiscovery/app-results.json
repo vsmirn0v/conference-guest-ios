@@ -1,0 +1,38 @@
+{
+  "checkedAt": "2026-10-08T20:21:04Z",
+  "service": "TrueConf Server",
+  "serverVersion": "5.5.5.10009",
+  "productionIntegrated": true,
+  "browserEmbedded": false,
+  "credentialsPersisted": false,
+  "coreTests": {"completed": 95, "failures": 0},
+  "simulatorRegressionTests": {"completed": 34, "skipped": 8, "failures": 0},
+  "simulatorLiveUI": {"runtime": "17.5", "passed": true},
+  "physicalDevice": {
+    "runtime": "27.0",
+    "realMicrophonePeak": 0.18824930191040037,
+    "floatingInputSamplingPassed": true,
+    "systemPiPIncomingPresentationVisible": true,
+    "systemPiPMicrophoneBadgeVisible": true,
+    "noPiPAfterLeave": true,
+    "mediaRecovery": {
+      "seconds": 21.478,
+      "initial": {"decodedVideoFrames": 12, "audioEnergy": 0.007921013053125186},
+      "afterCallKitHold": {"decodedVideoFrames": 12, "audioEnergy": 0.014972916590132522},
+      "afterSocketRecovery": {"decodedVideoFrames": 13, "audioEnergy": 0.0028268211853936156},
+      "presenterFramesEncoded": 3,
+      "independentParticipantObservedPresentationType": true,
+      "actualCompetingPhoneCallTested": false
+    }
+  },
+  "trueConfOnlineMediaSupported": false,
+  "remainingQualification": [
+    "remote speaking and chat",
+    "actual OS screen capture against this server",
+    "camera quality and hardware codec selection",
+    "real cellular or FaceTime interruption",
+    "physical network outage",
+    "long background endurance and energy",
+    "other server versions and restricted admission"
+  ]
+}

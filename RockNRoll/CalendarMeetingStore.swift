@@ -143,6 +143,7 @@ final class CalendarMeetingStore: ObservableObject {
                             case .verified(.guest): kind = .guest
                             case .verified(.community): kind = .community
                             case .verified(.telemost): kind = .telemost
+                            case .verified(.trueconf): kind = .trueconf
                             case .ambiguous:
                                 kind = knownEngine(url)
                                 unresolvedConflict = unresolvedConflict || kind == nil
@@ -177,6 +178,7 @@ final class CalendarMeetingStore: ObservableObject {
         }
     }
     private func probeKey(_ url: URL) -> URL {
+        if (try? TrueConfTarget.parse(url.absoluteString)) != nil { return url }
         if (try? JamTarget.parseCompatibleInvitation(url.absoluteString)) != nil { return url }
         return (try? JoinTarget.parse(url.absoluteString))?.originURL ?? url
     }

@@ -4,12 +4,14 @@ public enum JoinDestination: Equatable, Sendable {
     case jam(JamTarget)
     case guest(JoinTarget)
     case telemost(TelemostTarget)
+    case trueconf(TrueConfTarget)
 
     public var invitationURL: URL {
         switch self {
         case .jam(let target): target.invitationURL
         case .guest(let target): target.invitationURL
         case .telemost(let target): target.invitationURL
+        case .trueconf(let target): target.invitationURL
         }
     }
 
@@ -51,10 +53,10 @@ public enum JoinDestination: Equatable, Sendable {
 
 public extension JoinDestination {
     var engineKind: MeetingEngineKind {
-        switch self { case .jam: .community; case .guest: .guest; case .telemost: .telemost }
+        switch self { case .jam: .community; case .guest: .guest; case .telemost: .telemost; case .trueconf: .trueconf }
     }
     var roomIdentifier: String {
-        switch self { case .jam(let target): target.jamID; case .guest(let target): target.roomID; case .telemost(let target): target.roomID }
+        switch self { case .jam(let target): target.jamID; case .guest(let target): target.roomID; case .telemost(let target): target.roomID; case .trueconf(let target): target.roomID }
     }
 }
 

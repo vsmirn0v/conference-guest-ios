@@ -7,33 +7,35 @@ import Network
 import UIKit
 
 @MainActor
-final class TelemostCallEngine: CallEngine {
+final class TrueConfCallEngine: CallEngine {
     var onEvent: ((CallEvent) -> Void)?
     var onMediaStatus: ((String?) -> Void)?
+    var onRoomTitle: ((String) -> Void)?
     private let systemCall: SystemCallCoordinator
     private let catchUp: CatchUpStore
     private let chat: ChatStore
     private let audio = AudioCoordinator()
     private let studio = StudioModel(audioControl: .fullProcessing, preferences: .standard)
     private var microphoneProbe: NativeMicrophoneProbe?
+    private var activityObservation: AnyCancellable?
     private var view: RockCallViewController?
-    private var target: TelemostTarget?
+    private var target: TrueConfTarget?
     private var name = ""
-    private var bootstrap: TelemostBootstrap?
+    private var bootstrap: TrueConfBootstrap?
     private var factory: LKRTCPeerConnectionFactory?
-    private var transport: TelemostTransport?
-    private lazy var meetingChat = TelemostChat(store: chat)
+    private var transport: TrueConfTransport?
     private var screenSender: NativeScreenSender?
     private var sharingTask: Task<Void, Never>?
     private var sharingGeneration = UUID()
     private var sharingActive = false
     private var broadcastObservation: AnyCancellable?
-    private var subscriber: NativeRTCPeer?
     private var publisher: NativeRTCPeer?
-    private var tracks: [String: LKRTCVideoTrack] = [:]
-    private var descriptions: [String: [String: Any]] = [:]
-    private var slots: [[String: Any]] = []
-    private var speaking: Set<String> = []
+    private var roster = TrueConfRoster()
+    private var regions: [String: CGRect] = [:]
+    private var streams: [String: CompositeVideoSource] = [:]
+    private var cid = "", localID = "", streamID = ""
+    private var receiveTrack: LKRTCVideoTrack?
+    private var mediaAccepted = false
     private var epoch = UUID()
     private var connectionTask: Task<Void, Never>?
     private var mediaTask: Task<Void, Never>?
@@ -48,12 +50,10 @@ final class TelemostCallEngine: CallEngine {
     private var cameraPosition: AVCaptureDevice.Position = .front
     private var quiet = false
     private var held = false
-    private var helloAccepted = false
     private var serverReady = false
     private var connected = false
     private var leaving = false
     private var retries = 0
-    private var slotKey = 0
     private var displayMode: ConferenceDisplayMode = .all
     private var observers: [NSObjectProtocol] = []
     private var pathMonitor: NWPathMonitor?
@@ -88,6 +88,9 @@ final class TelemostCallEngine: CallEngine {
         }
         microphoneProbe = NativeMicrophoneProbe(activity: studio.microphoneActivity) { [weak self] in
             await self?.publisher?.microphoneLevel()
+        }
+        activityObservation = studio.microphoneActivity.$level.removeDuplicates().sink { [weak self] _ in
+            self?.refresh(speakingOnly: true)
         }
         studio.soundCheck.verifyMuted = { [weak self] in
             guard let self, self.connected, !self.leaving, !self.held, !self.quiet,
@@ -139,12 +142,13 @@ final class TelemostCallEngine: CallEngine {
         }
         studio.presenter.stopSharing = { [weak self] in await self?.stopScreenSharing() }
     }
-    func join(target: TelemostTarget, name: String, container: UIViewController, quiet: Bool, title: String? = nil) throws {
+    func join(target: TrueConfTarget, name: String, container: UIViewController, quiet: Bool, title: String? = nil) throws {
         guard !hasJoinStarted else { return }
         self.target = target; self.name = name; self.quiet = quiet
         catchUp.enter(roomKey: target.invitationURL.absoluteString)
         catchUp.observe(messages: [], canView: false, enabled: false)
         chat.clear()
+        chat.isReadOnly = true; chat.unavailableReason = L("This meeting service does not provide live transcripts to anonymous guests.")
         catchUp.transcriptUnavailableReason = L("This meeting service does not provide live transcripts to anonymous guests.")
         audioProfile = studio.profile
         try audio.prepareForJoin()
@@ -154,7 +158,7 @@ final class TelemostCallEngine: CallEngine {
         rtcAudio.useManualAudio = true; rtcAudio.isAudioEnabled = false
         let view = RockCallViewController(title: title ?? L("Jam %@", target.roomID), catchUp: catchUp,
             chat: chat, invitationURL: target.invitationURL, roomIdentifier: target.roomID)
-        view.supportsChat = true; view.supportsSharing = true; view.studio = studio
+        view.supportsChat = false; view.supportsSharing = true; view.studio = studio
         view.usesNativeShareControl = GuestScreenCaptureFactory.isAvailable
         view.sharingAvailable = false
         view.onShare = { [weak self] in self?.setScreenSharing($0) }
@@ -168,7 +172,7 @@ final class TelemostCallEngine: CallEngine {
         }
         view.onDisplayMode = { [weak self] mode in
             guard let self else { return }; self.displayMode = mode
-            Task { try? await self.updateSlots() }
+            self.refresh()
         }
         view.onVideoDemandChanged = { [weak self] in self?.updateVisibleVideo() }
         self.view = view; hasJoinStarted = true
@@ -198,7 +202,7 @@ final class TelemostCallEngine: CallEngine {
                 if let old = self.pathSignature, old != signature, self.connected { self.recover() }
             }
         }
-        monitor.start(queue: DispatchQueue(label: "dev.vsmirn0v.conferenceguest.telemost-path"))
+        monitor.start(queue: DispatchQueue(label: "dev.vsmirn0v.conferenceguest.trueconf-path"))
         #if DEBUG && targetEnvironment(simulator)
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
             try AVAudioSession.sharedInstance().setActive(true)
@@ -267,7 +271,7 @@ final class TelemostCallEngine: CallEngine {
     }
     private func updateMicrophoneStatus() {
         let available = hasJoinStarted && connected && !held && !quiet && LKRTCAudioSession.sharedInstance().isAudioEnabled
-        let status: PiPMicrophoneStatus = available ? (studio.microphoneOn ? .on : .muted) : .unavailable
+        let status: PiPMicrophoneStatus = available ? (publisher?.microphoneSending == true ? .on : .muted) : .unavailable
         studio.microphoneActivity.setStatus(status)
         view?.setFloatingMicrophoneStatus(status)
     }
@@ -276,131 +280,123 @@ final class TelemostCallEngine: CallEngine {
         let generation = epoch
         onEvent?(.connecting)
         let config = URLSessionConfiguration.ephemeral
-        config.httpCookieStorage = nil; config.urlCredentialStorage = nil; config.urlCache = nil
-        // A finite resource timeout also terminates an established WebSocket.
-        // HTTP requests and connection/ACK deadlines are bounded independently.
-        config.httpShouldSetCookies = false
-        let session = URLSession(configuration: config)
+        config.httpCookieStorage = nil; config.urlCredentialStorage = nil; config.urlCache = nil; config.httpShouldSetCookies = false
+        let session = URLSession(configuration: config, delegate: AdditionalRootTrust(), delegateQueue: nil)
         connectionTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let bootstrap = try await TelemostBootstrap.load(target, name: name, session: session)
+                let bootstrap = try await TrueConfBootstrap.load(target, name: name, session: session)
                 try Task.checkCancellation(); guard epoch == generation, !leaving else { session.invalidateAndCancel(); return }
                 self.bootstrap = bootstrap
-                if bootstrap.chatAllowed { meetingChat.start(invitation: target.invitationURL, roomID: bootstrap.roomID) }
-                else { chat.isReadOnly = true; chat.unavailableReason = L("The host has disabled meeting chat.") }
-                let factory = try NativeRTCPeer.makeFactory()
-                self.factory = factory
-                let subscriber = NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: bootstrap.iceServers)
-                let publisher = NativeRTCPeer(target: "PUBLISHER", factory: factory, ice: bootstrap.iceServers, cameraPosition: cameraPosition)
-                self.subscriber = subscriber; self.publisher = publisher
-                for peer in [subscriber, publisher] {
-                    peer.onCandidate = { [weak self] candidate in Task { @MainActor in
-                        guard let self, self.epoch == generation else { return }
-                        do { try await self.transport?.request("webrtcIceCandidate", candidate) } catch { if !Task.isCancelled { self.recover(error) } }
-                    } }
-                    peer.onState = { [weak self] state in Task { @MainActor in
-                        guard let self, self.epoch == generation else { return }
-                        if state == .failed || state == .disconnected { self.recover() } else { self.markConnectedIfReady() }
-                    } }
-                }
-                subscriber.onTrack = { [weak self] mid, track in Task { @MainActor in
-                    guard let self, self.epoch == generation, self.tracks[mid]?.isEqual(track) != true else { return }
-                    self.tracks[mid] = track; self.refresh()
-                } }
-                let transport = TelemostTransport(server: bootstrap.serverURL, session: session); self.transport = transport
-                transport.onMessage = { [weak self] kind, body in
-                    guard let self, self.epoch == generation else { return }; try await self.receive(kind, body)
+                self.factory = try NativeRTCPeer.makeFactory()
+                let transport = TrueConfTransport(server: bootstrap.socketURL, session: session); self.transport = transport
+                transport.onMessage = { [weak self] event in
+                    guard let self, self.epoch == generation else { return }; try await self.receive(event)
                 }
                 transport.onFailure = { [weak self] error in guard let self, self.epoch == generation else { return }; self.recover(error) }
                 transport.start()
-                try await transport.request("hello", hello(bootstrap))
+                try await transport.send(["method": "ping"])
+                try await transport.send(["method": "loginUser", "AppID": UUID().uuidString.replacingOccurrences(of: "-", with: ""),
+                    "login": bootstrap.login, "credentials": bootstrap.credential, "credentialsType": 3, "chatV2Enabled": false,
+                    "browser": "RockNRoll Native", "appLang": "en", "appVersion": "5.1.0", "appName": "RockNRoll Native"])
                 guard epoch == generation else { return }
-                helloAccepted = true; connectionTask = nil; markConnectedIfReady()
+                connectionTask = nil
                 connectionDeadline = Task { [weak self] in
-                    do { try await Task.sleep(for: .seconds(20)) } catch { return }
-                    guard let self, self.epoch == generation, !self.connected else { return }; self.recover(TelemostError.timedOut)
+                    do { try await Task.sleep(for: .seconds(25)) } catch { return }
+                    guard let self, self.epoch == generation, !self.connected else { return }; self.recover(TrueConfError.timedOut)
                 }
             } catch {
                 session.invalidateAndCancel()
                 guard epoch == generation, !Task.isCancelled else { return }
-                connectionTask = nil
-                recover(error)
+                connectionTask = nil; recover(error)
             }
         }
     }
-    private func hello(_ value: TelemostBootstrap) -> [String: Any] {
-        let meta: [String: Any] = ["name": name, "role": "SPEAKER", "sendAudio": false, "sendVideo": false]
-        return ["participantMeta": meta, "participantAttributes": ["name": name, "role": "SPEAKER"],
-            "participantId": value.participantID, "roomId": value.roomID, "serviceName": value.serviceName,
-            "credentials": value.credentials, "sendAudio": false, "sendVideo": false, "sendSharing": false,
-            "disablePublisher": false, "disableSubscriber": false, "disableSubscriberAudio": quiet,
-            "sdkInitializationId": UUID().uuidString,
-            "sdkInfo": ["implementation": "native", "version": "1", "userAgent": "RockNRoll", "hwConcurrency": ProcessInfo.processInfo.processorCount],
-            "capabilitiesOffer": ["offerAnswerMode": ["SEPARATE"], "initialSubscriberOffer": ["ON_HELLO"],
-                "slotsMode": ["FROM_CONTROLLER"], "simulcastMode": ["DISABLED"], "selfVadStatus": ["FROM_SERVER"],
-                "dataChannelSharing": ["TO_RTP"], "videoEncoderConfig": ["NO_CONFIG"],
-                "subscriberDtlsPassiveMode": ["SUBSCRIBER_DTLS_PASSIVE_MODE_DISABLED"]]]
-    }
-    private func receive(_ kind: String, _ body: [String: Any]) async throws {
-        switch kind {
-        case "serverHello":
-            if let config = body["rtcConfiguration"] as? [String: Any] { try subscriber?.configure(config); try publisher?.configure(config) }
-            serverReady = true; scheduleMedia()
-        case "subscriberSdpOffer":
-            guard let subscriber, let transport else { throw TelemostError.disconnected }
-            try await transport.request("subscriberSdpAnswer", try await subscriber.answer(body))
-            subscriber.localSDPSent()
-            try await updateSlots()
-        case "publisherSdpAnswer":
-            do { try await publisher?.accept(body); completeAnswer(); markConnectedIfReady() }
-            catch { completeAnswer(error); throw error }
-        case "webrtcIceCandidate":
-            if body["target"] as? String == "SUBSCRIBER" { try await subscriber?.addCandidate(body) }
-            else if body["target"] as? String == "PUBLISHER" { try await publisher?.addCandidate(body) }
-        case "updateDescription", "upsertDescription":
-            if kind == "updateDescription" { descriptions.removeAll() }
-            for description in (body["description"] as? [[String: Any]] ?? []).prefix(1000) {
-                guard let id = description["id"] as? String, !id.isEmpty else { continue }; descriptions[id] = description
+    private func receive(_ event: [String: Any]) async throws {
+        guard let method = event["method"] as? String, let transport else { throw TrueConfError.disconnected }
+        switch method {
+        case "loginResponse":
+            guard event["result"] as? Int == 0 else { throw TrueConfError.rejected }
+            guard let cid = event["CID"] as? String, !cid.isEmpty, let id = event["trueconfId"] as? String, !id.isEmpty,
+                  let target else { throw TrueConfError.invalidResponse }
+            self.cid = cid; localID = id; transport.cid = cid
+            try await transport.send(["method": "join", "conferenceId": target.roomID, "Password": "", "simulcastSupported": true])
+        case "conferenceStateChange":
+            guard let conference = event["conference"] as? [String: Any] else { throw TrueConfError.invalidResponse }
+            let message = conference["message"] as? String
+            if message == "deleteConference" { throw TrueConfError.ended }
+            guard message == "joinResponse", streamID.isEmpty,
+                  let stream = conference["streamConferenceId"] as? String, !stream.isEmpty else { return }
+            streamID = stream
+            if let title = conference["topic"] as? String, !title.isEmpty {
+                let title = String(title.prefix(256)); view?.setRoomTitle(title); onRoomTitle?(title)
             }
-            refresh()
-        case "removeDescription":
-            for id in body["descriptionId"] as? [String] ?? [] { descriptions.removeValue(forKey: id) }
-            refresh()
-        case "slotsConfig":
-            // The SFU may publish autonomous slot updates with key 0 (including
-            // a new share) independently of our latest layout request.
-            if let key = body["key"] as? Int, key != 0, key < slotKey { return }
-            slots = body["slots"] as? [[String: Any]] ?? []
-            speaking = Set(slots.compactMap { slot -> String? in
-                guard slot["vad"] as? Bool == true else { return nil }
-                let owner = (slot["participantVideoByMid"] ?? slot["participantScreenSharingByMid"] ?? slot["participant"]) as? [String: Any]
-                return owner?["participantId"] as? String
-            }); refresh()
-        case "vadActivity":
-            if let id = bootstrap?.participantID {
-                if body["active"] as? Bool == true { speaking.insert(id) } else { speaking.remove(id) }
-                refresh(speakingOnly: true)
+            try await transport.send(["method": "getIceConfig", "streamConferenceId": stream])
+        case "getIceConfig":
+            guard publisher == nil, !streamID.isEmpty, let values = event["iceServers"] as? [[String: Any]], let factory else { return }
+            let peer = NativeRTCPeer(target: "COMPOSITE", factory: factory,
+                ice: try TrueConfICE.decode(values, cid: cid, stream: streamID), cameraPosition: cameraPosition, topology: .composite)
+            publisher = peer
+            let generation = epoch
+            peer.onCandidate = { [weak self] candidate in Task { @MainActor in
+                guard let self, self.epoch == generation else { return }
+                do { try await self.sendMedia(["type": "candidate", "candidate": candidate["candidate"] ?? "",
+                    "sdpMLineIndex": candidate["sdpMlineIndex"] ?? 0, "sdpMid": candidate["sdpMid"] ?? "0"]) }
+                catch { if !Task.isCancelled { self.recover(error) } }
+            } }
+            peer.onState = { [weak self] state in Task { @MainActor in
+                guard let self, self.epoch == generation else { return }
+                if state == .failed || state == .disconnected { self.recover() } else { self.markConnectedIfReady() }
+            } }
+            peer.onTrack = { [weak self] _, track in Task { @MainActor in
+                guard let self, self.epoch == generation, self.receiveTrack?.isEqual(track) != true else { return }
+                self.receiveTrack = track; self.streams.removeAll(); self.refresh()
+            } }
+            try await transport.send(["method": "connectMedia", "streamConferenceId": streamID, "type": 1])
+            try await transport.send(["method": "DeviceStatus", "value": 262148])
+        case "connectMedia":
+            guard event["result"] as? Bool == true else { throw TrueConfError.rejected }
+            mediaAccepted = true; markConnectedIfReady()
+        case "webrtc":
+            guard let type = event["type"] as? String, let peer = publisher else { return }
+            switch type {
+            case "offer":
+                let answer = try await peer.answer(event)
+                try await sendMedia(["type": "answer", "sdp": answer["sdp"] ?? "", "browser": "RockNRoll Native"])
+                peer.localSDPSent(); peer.enablePublishing(); serverReady = true
+                try await transport.send(["method": "ManageLayout", "func": "Get"])
+                scheduleMedia()
+            case "answer":
+                do { try await peer.accept(event); completeAnswer(); markConnectedIfReady() }
+                catch { completeAnswer(error); throw error }
+            case "candidate":
+                var candidate = event; candidate["sdpMlineIndex"] = event["sdpMLineIndex"]
+                try await peer.addCandidate(candidate)
+            case "layout": regions = try TrueConfRoster.regions(event); refresh()
+            default: break
             }
+        case "SendPartsList": try roster.apply(event); refresh()
+        case "DeviceStatus": roster.updateDevices(event); refresh()
+        case "setDeviceState":
+            if event["Mute"] as? Bool == true {
+                if event["Type"] as? String == "microphone" { setMicrophone(false) }
+                if event["Type"] as? String == "camera" { setCamera(false) }
+            }
+        case "stopContentSharing": await stopScreenSharing()
         default: break
         }
     }
-    private func updateSlots() async throws {
-        guard serverReady, let transport else { return }
-        slotKey += 1
-        try await transport.request("setSlots", ["key": slotKey, "audioSlotsCount": 0,
-            "slots": Array(repeating: ["width": 1280, "height": 720], count: 8),
-            "gridConfig": [:], "withSelfView": false, "shutdownAllVideo": displayMode == .audioOnly])
+    private func sendMedia(_ fields: [String: Any]) async throws {
+        guard let transport else { throw TrueConfError.disconnected }
+        try await transport.send(fields.merging(["method": "webrtc", "my_peer_id": localID, "conf_id": streamID]) { _, value in value })
     }
     private func markConnectedIfReady() {
-        guard !connected, helloAccepted, let subscriber, let publisher,
-            [.connected, .completed].contains(subscriber.connection.iceConnectionState),
+        guard !connected, mediaAccepted, serverReady, let publisher,
             [.connected, .completed].contains(publisher.connection.iceConnectionState) else { return }
         connected = true; retries = 0; connectionDeadline?.cancel()
         view?.sharingAvailable = !held && !quiet
         systemCall.markConnected(); view?.setConnectionRecovering(false); onMediaStatus?(nil)
-        catchUp.end(.connection); onEvent?(.active); refresh()
-        updateMicrophoneStatus()
+        catchUp.end(.connection); onEvent?(.active); refresh(); updateMicrophoneStatus()
     }
     private func scheduleMedia() {
         mediaDirty = true
@@ -413,9 +409,8 @@ final class TelemostCallEngine: CallEngine {
                 mediaDirty = false
                 guard let publisher, let transport else { return }
                 do {
-                    let microphone = microphoneIntent && !held && !quiet
+                    let microphone = microphoneIntent && !held && !quiet && canUseCallAudio
                     var camera = cameraIntent && !held && !quiet && UIApplication.shared.applicationState == .active
-                    var cameraFailed = false
                     if camera { await studio.releasePrivateCamera() }
                     publisher.setMicrophone(microphone, profile: audioProfile)
                     do { try await publisher.setCamera(camera) }
@@ -423,10 +418,7 @@ final class TelemostCallEngine: CallEngine {
                         guard !Task.isCancelled, epoch == generation else { return }
                         camera = false
                         if error is CancellationError { mediaDirty = true }
-                        else {
-                            cameraFailed = true; cameraIntent = false; view?.setCamera(false)
-                            onMediaStatus?(TelemostError.cameraUnavailable.localizedDescription)
-                        }
+                        else { cameraIntent = false; view?.setCamera(false); onMediaStatus?(L("The camera is unavailable. Audio can continue.")) }
                     }
                     guard epoch == generation, !leaving else { return }
                     if camera && (!cameraIntent || held || quiet || UIApplication.shared.applicationState != .active) {
@@ -436,22 +428,19 @@ final class TelemostCallEngine: CallEngine {
                     try await withCheckedThrowingContinuation { (completion: CheckedContinuation<Void, Error>) in
                         answerCompletion = completion
                         answerTimeout = Task { [weak self] in
-                            do { try await Task.sleep(for: .seconds(10)) } catch { return }; self?.completeAnswer(TelemostError.timedOut)
+                            do { try await Task.sleep(for: .seconds(10)) } catch { return }; self?.completeAnswer(TrueConfError.timedOut)
                         }
                         Task { [weak self] in
-                            do { try await transport.request("publisherSdpOffer", offer); publisher.localSDPSent() }
+                            do { try await self?.sendMedia(["type": "offer", "sdp": offer["sdp"] ?? "", "browser": "RockNRoll Native"]); publisher.localSDPSent() }
                             catch { guard let self, self.epoch == generation else { return }; self.completeAnswer(error) }
                         }
                     }
                     guard epoch == generation, !leaving else { return }
-                    let sendingAudio = microphone && microphoneIntent && !held && !quiet
-                    let sendingVideo = camera && cameraIntent && !held && !quiet && UIApplication.shared.applicationState == .active
-                    try await transport.request("updateMe", ["participantMeta": ["name": name, "role": "SPEAKER", "sendAudio": sendingAudio, "sendVideo": sendingVideo],
-                        "participantAttributes": ["name": name, "role": "SPEAKER"], "sendAudio": sendingAudio, "sendVideo": sendingVideo, "sendSharing": sharingActive])
-                    view?.setMicrophone(sendingAudio); view?.setCamera(sendingVideo)
-                    if !cameraFailed && !held && !quiet { onMediaStatus?(nil) }
-                    updateMicrophoneStatus()
-                    refresh(); markConnectedIfReady()
+                    let audioOn = microphone && microphoneIntent && !held && !quiet
+                    let videoOn = (camera && cameraIntent && !held && !quiet) || sharingActive
+                    try await transport.send(["method": "VideoSourceType", "Type": sharingActive ? 2 : 0, "Conference": streamID])
+                    try await transport.send(["method": "DeviceStatus", "value": (videoOn ? 0 : 4 << 16) | (audioOn ? 0 : 4)])
+                    view?.setMicrophone(audioOn); view?.setCamera(camera); updateMicrophoneStatus(); refresh(); markConnectedIfReady()
                 } catch {
                     guard !Task.isCancelled, epoch == generation else { return }
                     onMediaStatus?(error.localizedDescription); recover(error); return
@@ -562,42 +551,38 @@ final class TelemostCallEngine: CallEngine {
         _ = view?.visibleVideoQualities(foreground: UIApplication.shared.applicationState == .active, wantsVideo: false)
     }
     private func refresh(speakingOnly: Bool = false) {
-        guard let localID = bootstrap?.participantID else {
-            view?.render(snapshot: .init(participants: [.init(id: "local", name: name, isLocal: true, microphoneOn: false, cameraOn: false, screenShareOn: false, isSpeaking: false, videoTracks: [])])); return
-        }
-        var items: [CallParticipant] = descriptions.values.filter { $0["hideFromParticipantsList"] as? Bool != true }.compactMap { value in
-            guard let id = value["id"] as? String else { return nil }
-            let meta = value["meta"] as? [String: Any] ?? [:]
-            let microphone = meta["sendAudio"] as? Bool ?? value["sendAudio"] as? Bool ?? false
-            let camera = meta["sendVideo"] as? Bool ?? value["sendVideo"] as? Bool ?? false
-            var streams: [CallVideoStream] = []
-            for slot in slots {
-                for (key, kind) in [("participantVideoByMid", CallVideoKind.camera), ("participantScreenSharingByMid", .screenShareVideo)] {
-                    guard let owner = slot[key] as? [String: Any], owner["participantId"] as? String == id,
-                        let mid = owner["mid"] as? String, let track = tracks[mid], kind != .camera || camera else { continue }
-                    let key = id + (kind == .camera ? ".camera" : ".share")
-                    if !streams.contains(where: { $0.id == key }) { streams.append(.init(id: key, source: kind, track: .native(track))) }
-                }
+        var items: [CallParticipant] = []
+        if let receiveTrack {
+            for (id, rectangle) in regions {
+                if let existing = streams[id] { existing.update(rectangle) }
+                else { streams[id] = CompositeVideoSource(track: receiveTrack, rectangle: rectangle) }
             }
-            return .init(id: id, name: String((meta["name"] as? String ?? L("Musician")).prefix(256)), isLocal: id == localID,
-                microphoneOn: microphone, cameraOn: camera, screenShareOn: streams.contains { $0.source == .screenShareVideo },
-                isSpeaking: speaking.contains(id), videoTracks: streams)
         }
-        items.removeAll { $0.isLocal }
-        items.sort { $0.id < $1.id }
+        streams = streams.filter { regions[$0.key] != nil }
+        for person in roster.participants.values.sorted(by: { $0.id < $1.id }) where person.id != localID {
+            var videos: [CallVideoStream] = []
+            if let stream = streams[person.id], person.cameraOn || person.screenShareOn {
+                videos = [.init(id: person.id + (person.screenShareOn ? ".share" : ".camera"),
+                    source: person.screenShareOn ? .screenShareVideo : .camera, track: .composite(stream))]
+            }
+            items.append(.init(id: person.id, name: person.name, isLocal: false, microphoneOn: person.microphoneOn,
+                cameraOn: person.cameraOn, screenShareOn: person.screenShareOn, isSpeaking: false, videoTracks: videos))
+        }
         let localVideo = publisher?.videoTrack.map { CallVideoStream(id: localID + ".camera", source: .camera, track: .native($0)) }
-        items.insert(.init(id: localID, name: name, isLocal: true, microphoneOn: microphoneIntent && !held && !quiet,
-            cameraOn: localVideo != nil, screenShareOn: sharingActive, isSpeaking: speaking.contains(localID), videoTracks: localVideo.map { [$0] } ?? []), at: 0)
+        items.insert(.init(id: localID.isEmpty ? "local" : localID, name: name, isLocal: true,
+            microphoneOn: publisher?.microphoneSending == true && !held && !quiet, cameraOn: localVideo != nil,
+            screenShareOn: sharingActive, isSpeaking: studio.microphoneActivity.status == .on && studio.microphoneActivity.level > 0.1,
+            videoTracks: localVideo.map { [$0] } ?? []), at: 0)
         let snapshot = CallMediaSnapshot(participants: items)
         if speakingOnly { view?.refreshSpeaking(snapshot: snapshot) } else { view?.render(snapshot: snapshot) }
     }
     private func recover(_ error: Error? = nil) {
         guard hasJoinStarted, !leaving, recoveryTask == nil else { return }
-        if let error = error as? TelemostError, !error.isRetryable {
+        if let error = error as? TrueConfError, !error.isRetryable {
             onMediaStatus?(error.localizedDescription); Task { await finish(failed: true) }; return
         }
         if retries >= 5 { Task { await finish(failed: true) }; return }
-        retries += 1; epoch = UUID(); connected = false; helloAccepted = false; serverReady = false
+        retries += 1; epoch = UUID(); connected = false; mediaAccepted = false; serverReady = false
         updateMicrophoneStatus()
         view?.sharingAvailable = false
         connectionTask?.cancel(); connectionTask = nil; mediaTask?.cancel(); mediaTask = nil; completeAnswer(CancellationError())
@@ -613,12 +598,11 @@ final class TelemostCallEngine: CallEngine {
         }
     }
     private func closeTransport() async {
-        meetingChat.stop()
         await stopScreenSharing()
-        let oldTransport = transport, oldSubscriber = subscriber, oldPublisher = publisher
-        transport = nil; subscriber = nil; publisher = nil; factory = nil; bootstrap = nil
-        tracks.removeAll(); slots.removeAll(); descriptions.removeAll(); speaking.removeAll(); slotKey = 0
-        await oldSubscriber?.close(); await oldPublisher?.close(); await oldTransport?.close()
+        let oldTransport = transport, oldPublisher = publisher
+        transport = nil; publisher = nil; factory = nil; bootstrap = nil
+        receiveTrack = nil; regions.removeAll(); streams.removeAll(); roster = .init(); cid = ""; localID = ""; streamID = ""
+        await oldPublisher?.close(); await oldTransport?.close(room: target?.roomID)
     }
     func leave() {
         guard hasJoinStarted, !leaving else { return }
@@ -664,49 +648,22 @@ final class TelemostCallEngine: CallEngine {
     #if DEBUG
     var studioForTesting: StudioModel { studio }
     var microphoneSendingForTesting: Bool { publisher?.microphoneSending == true }
-    func setSendingForTesting(microphone: Bool, camera: Bool) {
-        setMicrophone(microphone); setCamera(camera)
-    }
-    func flipCameraForTesting() { flipCamera() }
-    func selectSpeakerForTesting(_ enabled: Bool) throws { try audio.selectBuiltInOutput(speaker: enabled) }
-    var cameraPositionForTesting: AVCaptureDevice.Position? { publisher?.captureDevice?.position }
-    struct ReceiveEvidence {
-        var videoFrames = 0.0
-        var audioDuration = 0.0
-        var audioEnergy = 0.0
-    }
-    func startSharingForTesting() throws {
-        guard let factory, let view, connected else { throw TelemostError.disconnected }
-        let attempt = UUID(); sharingGeneration = attempt
-        let sender = NativeScreenSender(factory: factory, preview: view.sharePreview, onFirstFrame: { [weak self] in
-            guard let self, self.sharingGeneration == attempt else { return }
-            self.sharingActive = true; self.publisher?.setSharing(self.screenSender?.track)
-            self.scheduleMedia(); self.refresh()
-        }, onEnd: { _ in })
-        screenSender = sender
-    }
-    func sendScreenForTesting(_ pixels: CVPixelBuffer, timestamp: Int64) { screenSender?.receiveForTesting(pixels, timestamp: timestamp) }
-    func stopSharingForTesting() async { await stopScreenSharing() }
+    var snapshotForTesting: CallMediaSnapshot? { view?.snapshotForTesting }
+    func setSendingForTesting(microphone: Bool, camera: Bool) { setMicrophone(microphone); setCamera(camera) }
+    func interruptForTesting() { transport?.interruptForTesting() }
     func sentScreenFramesForTesting() async -> Int {
         guard let publisher else { return 0 }
-        let report = await withCheckedContinuation { completion in publisher.connection.statistics { completion.resume(returning: $0) } }
+        let report: LKRTCStatisticsReport = await withCheckedContinuation { completion in publisher.connection.statistics { completion.resume(returning: $0) } }
         return report.statistics.values.filter { $0.type == "outbound-rtp" && $0.values["kind"] as? String == "video" }
             .reduce(0) { $0 + (($1.values["framesEncoded"] as? NSNumber)?.intValue ?? 0) }
     }
-    func interruptForTesting() { transport?.interruptForTesting() }
-    func receiveEvidenceForTesting() async -> ReceiveEvidence {
-        guard let subscriber else { return .init() }
-        let report: LKRTCStatisticsReport = await withCheckedContinuation { completion in
-            subscriber.connection.statistics { completion.resume(returning: $0) }
-        }
-        var evidence = ReceiveEvidence()
-        for entry in report.statistics.values where entry.type == "inbound-rtp" {
-            evidence.videoFrames += (entry.values["framesDecoded"] as? NSNumber)?.doubleValue ?? 0
-            evidence.audioDuration += (entry.values["totalSamplesDuration"] as? NSNumber)?.doubleValue ?? 0
-            evidence.audioEnergy += (entry.values["totalAudioEnergy"] as? NSNumber)?.doubleValue ?? 0
-
-        }
-        return evidence
+    func receiveEvidenceForTesting() async -> (frames: Double, duration: Double, energy: Double) {
+        guard let publisher else { return (0, 0, 0) }
+        let report: LKRTCStatisticsReport = await withCheckedContinuation { completion in publisher.connection.statistics { completion.resume(returning: $0) } }
+        let incoming = report.statistics.values.filter { $0.type == "inbound-rtp" }
+        return (incoming.reduce(0) { $0 + (($1.values["framesDecoded"] as? NSNumber)?.doubleValue ?? 0) },
+            incoming.reduce(0) { $0 + (($1.values["totalSamplesDuration"] as? NSNumber)?.doubleValue ?? 0) },
+            incoming.reduce(0) { $0 + (($1.values["totalAudioEnergy"] as? NSNumber)?.doubleValue ?? 0) })
     }
     #endif
 }
