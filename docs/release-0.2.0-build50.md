@@ -43,5 +43,41 @@ Beta notes: “Improved in-meeting notifications and control layouts.”
 
 ## Delivery
 
-Pending final simulator result, signed archive/export audit and TestFlight group
-assignment. Upload success alone is not publication.
+Source: `eed2f33`, pushed to main.
+
+Signed archive:
+`/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-10-08/RockNRoll-0.2.0-b50.xcarchive`.
+Export: `/tmp/rock-build50-export/RockNRoll.ipa`.
+
+Archive and exported strict signature verification pass. Actual signed
+entitlements select team 5V64BP2H3P, get-task-allow false and Production iCloud.
+All three bundle versions and minimum OS checks pass. Required camera/microphone/
+Bluetooth explanations and export compliance are present; Contacts permission and
+notice QA markers are absent. App executable and dSYM UUID match:
+`49BD13B0-9E3D-380C-A9A7-A7DB07E618B9`.
+
+Qualified export IPA SHA-256:
+`d01d00e544a2c74048b0f8b9b0c6f6c98f3014d586242325c8114fcd22133f88`.
+Exported executable SHA-256:
+`87a2fc8a9edd47b2c6fbb83b7129f23e8408ba4043480d864c99d2370109f498`.
+Upload uses Xcode's export/upload of the same archive rather than the separately
+exported IPA bytes.
+
+Xcode reports Uploaded RockNRoll / EXPORT SUCCEEDED in
+`/tmp/rock-build50-upload.log`. Existing third-party missing-dSYM warnings remain;
+the app's own dSYM is verified. App Store Connect received build 50 on October 8 at 12:41 PM MSK.
+
+At 13:05 MSK, separate group readbacks confirm **Testing, Expires in 90 days**
+for 0.2.0 (50) in Rock’n’Roll Internal (one tester) and Rock’n’Roll Public Beta
+(six testers). Automatic public tester notification is enabled. The public invite
+remains https://testflight.apple.com/join/Hd13C9U3.
+
+Proof: ignored local `Marketing/TestFlight/build50-internal.png` and
+`Marketing/TestFlight/build50-public.png`. The final Mac capture-render check also
+passed with complete before/after-expiry header renders:
+`/tmp/rock50-live-mac-capture.xcresult`. Test scheme environment overrides were
+restored. Test simulators and this task's index watcher were stopped.
+
+The macOS screen-capture compatibility prototype from the separate
+`Rock'n'Roll video2` thread was not in the archived source and is not included in
+build 50. That thread is finishing qualification; macOS 26.2 remains unverified.
