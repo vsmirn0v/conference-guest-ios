@@ -33,4 +33,12 @@ empty guest invitation and select
 Simulator qualification uses the existing Debug-only direct-media harness because
 CallKit activation is unsupported there. Physical gesture recognition is not
 requalified by these checks. Build 47's TestFlight delivery record is preserved;
-this fix has not been uploaded as a new beta.
+the follow-up release is tracked in `release-0.2.0-build48.md`.
+
+Independent-client qualification additionally verifies manual reactions through
+the real guest engine. The receiver must inspect actual visible content, not
+just signal receipt: applause, laughter and surprise arrived as empty, zero-size
+legacy elements. Build 48 offers only the qualified thumbs up/down choices.
+The new opt-in sender scenario uses
+`TEST_RUNNER_ROCKNROLL_TEST_REACTIONS_REMOTE_INVITE`; count and selected-kind
+assertions must be accompanied by observation on a separate connected client.

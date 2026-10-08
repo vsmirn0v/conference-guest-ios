@@ -20,7 +20,7 @@ private struct ReactionPalette: View {
     let select: (MeetingReaction) -> Void
     var body: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 44), spacing: 4),
-                                 count: sizeCategory.isAccessibilityCategory ? 2 : 5), spacing: 12) {
+                                 count: min(MeetingReaction.allCases.count, sizeCategory.isAccessibilityCategory ? 2 : 5)), spacing: 12) {
             ForEach(MeetingReaction.allCases, id: \.self) { kind in
                 Button { select(kind) } label: {
                     VStack(spacing: 6) {

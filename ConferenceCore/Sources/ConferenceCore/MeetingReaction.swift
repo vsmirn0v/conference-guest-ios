@@ -1,7 +1,8 @@
 import Foundation
 
 public enum MeetingReaction: String, CaseIterable, Codable, Sendable {
-    case like, applause, smile, surprise, dislike
+    // Extend only after verifying both delivery and rendering on other clients.
+    case like, dislike
 }
 
 /// A reaction is transient: throttle it now rather than queueing it for later.

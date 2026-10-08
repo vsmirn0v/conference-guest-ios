@@ -14,7 +14,7 @@ final class MeetingReactionsTests: XCTestCase {
         XCTAssertEqual(model.cameraStatus, .off)
         XCTAssertTrue(model.send(.like)); XCTAssertEqual(sent, [.like])
         model.ready = false
-        XCTAssertFalse(model.send(.applause)); model.ready = true
+        XCTAssertFalse(model.send(.dislike)); model.ready = true
         XCTAssertEqual(sent, [.like], "Recovery replayed an old reaction")
     }
     func testPrivatePreviewOptInCannotSendWithoutPublishedCameraReadiness() {

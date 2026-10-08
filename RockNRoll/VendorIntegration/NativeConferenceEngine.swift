@@ -1202,6 +1202,7 @@ final class NativeConferenceEngine: CallEngine {
                 self.reactions.$submitted.compactMap { $0 }.sink { kind in
                     count += 1; trace.text = "Sent reactions: \(count)"
                     trace.accessibilityValue = String(count)
+                    trace.accessibilityLabel = kind.rawValue
                     print("Reaction qualification: submitted \(kind.rawValue)")
                 }.store(in: &self.subscriptions)
             }

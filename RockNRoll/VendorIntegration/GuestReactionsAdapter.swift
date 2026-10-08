@@ -28,8 +28,7 @@ final class GuestReactionsAdapter {
         model.sender = { [weak self] kind in
             guard let self, self.valid(), self.transportReady(), self.state.isToggleReactionsVisible else { return false }
             let reaction: JazzConferenceReaction
-            switch kind { case .like: reaction = .like; case .applause: reaction = .applause
-            case .smile: reaction = .smile; case .surprise: reaction = .surprise; case .dislike: reaction = .dislike }
+            switch kind { case .like: reaction = .like; case .dislike: reaction = .dislike }
             coordinator.sendReaction(reaction: reaction)
             return true
         }

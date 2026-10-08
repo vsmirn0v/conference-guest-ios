@@ -1,7 +1,9 @@
 # Meeting reactions and camera gesture forwarding
 
 Design specification and implementation plan, 7 October 2026. Status: implemented for build 47; validation and delivery are recorded in
-`release-0.2.0-build47.md`.
+`release-0.2.0-build47.md`. Build 48 fixes the persistent picker and limits the
+palette to the two reactions visibly qualified on the current web client;
+see `release-0.2.0-build48.md`.
 
 Add quick manual meeting reactions and an optional bridge from Apple's camera
 reactions to matching meeting reactions. Manual reactions work with the microphone
@@ -25,6 +27,12 @@ be mounted over the stage. Our explicit palette calls the coordinator instead.
 The public event listener exposes no structured incoming
 reaction event with sender, identifier and timestamp; a custom remote-reaction
 feed cannot be promised from the current interface.
+
+Independent-client qualification on October 8 confirmed visible thumbs up/down.
+The other three SDK signals arrived in the web client's legacy bubbling layer
+but produced empty, zero-size elements. The user approved shipping only the two
+qualified choices. Adding more requires testing actual rendering, not just
+submission counts or the existence of received DOM nodes.
 
 Apple's `AVCaptureDevice.reactionEffectsInProgress` is key-value observable on
 iOS 17 and later. Each effect has a type and capture timestamp. Events include
@@ -55,8 +63,8 @@ existing meeting actions. Choosing a reaction is two taps from the meeting.
 Existing Mic, Video and Share long-press shortcuts remain the quick Studio entry
 points; reactions do not take over those gestures.
 
-The strip uses a stable order: **👍 Like · 👏 Applause · 🙂 Smile · 😮 Surprise ·
-👎 Dislike**. Each target is at least 44 points, has a localized accessibility
+The strip uses a stable order: **👍 Like · 👎 Dislike**.
+Each target is at least 44 points, has a localized accessibility
 label, and supports pointer focus. Keep Dislike at the opposite end from Like.
 On narrow screens with large text, wrap to a grid rather than shrinking labels
 or hit areas. Selection dismisses the panel and provides a brief local response.
@@ -100,7 +108,7 @@ gesture setting, or publishes a private preview.
 | Thumbs down | Dislike | Forward once when the effect starts |
 | Hearts | No exact equivalent | Keep the existing video effect only |
 | Balloons, confetti, fireworks, rain, lasers | No exact equivalent | Keep the existing video effect only |
-| No Apple effect for applause, smile or surprise | Available manually | Do not invent a gesture mapping |
+| No Apple effect for applause, smile or surprise | Deferred pending client compatibility | Do not invent a gesture mapping |
 
 The application does not interpret facial expressions or guess intent. In
 particular, hearts must not silently become Like, or rain become Dislike. The

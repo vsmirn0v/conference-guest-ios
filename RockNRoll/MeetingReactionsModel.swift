@@ -4,12 +4,10 @@ import Foundation
 
 extension MeetingReaction {
     var emoji: String {
-        switch self { case .like: return "👍"; case .applause: return "👏"; case .smile: return "🙂"
-        case .surprise: return "😮"; case .dislike: return "👎" }
+        switch self { case .like: return "👍"; case .dislike: return "👎" }
     }
     var title: String {
-        switch self { case .like: return L("Like"); case .applause: return L("Applause")
-        case .smile: return L("Smile"); case .surprise: return L("Surprise"); case .dislike: return L("Dislike") }
+        switch self { case .like: return L("Like"); case .dislike: return L("Dislike") }
     }
 }
 
