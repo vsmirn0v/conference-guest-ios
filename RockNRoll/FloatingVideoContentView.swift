@@ -77,7 +77,11 @@ final class FloatingVideoContentView: UIView {
     }
 
     private func renderStatus() {
-        icon.image = UIImage(systemName: microphoneStatus.symbol)
+        // An unavailable microphone is still a microphone. Keep its disabled
+        // glyph in PiP; the label/accessibility value explains availability.
+        let glyphStatus: PiPMicrophoneStatus = microphoneStatus == .unavailable ? .muted : microphoneStatus
+        icon.image = UIImage(systemName: glyphStatus.symbol)
+        activityIcon.setPresentationStatus(glyphStatus)
         let color: UIColor
         switch microphoneStatus {
         case .muted: color = .white

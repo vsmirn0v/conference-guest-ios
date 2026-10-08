@@ -112,6 +112,7 @@ final class MicrophoneActivityView: UIView {
     private var status: PiPMicrophoneStatus = .muted
     private var hasSignal = false
     private var renderedStatus: PiPMicrophoneStatus?
+    private var presentationStatus: PiPMicrophoneStatus?
     init() {
         super.init(frame: .zero)
         isUserInteractionEnabled = false
@@ -133,15 +134,22 @@ final class MicrophoneActivityView: UIView {
                 self.render()
             }
     }
+    /// A composite badge supplies its own status so its text and glyph cannot
+    /// disagree while the shared sampling model is stopping or recovering.
+    func setPresentationStatus(_ status: PiPMicrophoneStatus) {
+        presentationStatus = status
+        render()
+    }
     private func render() {
-        if renderedStatus != status {
-            renderedStatus = status
-            let symbol = status == .on ? "mic" : status.symbol
+        let displayedStatus = presentationStatus ?? status
+        if renderedStatus != displayedStatus {
+            renderedStatus = displayedStatus
+            let symbol = displayedStatus == .on ? "mic" : displayedStatus.symbol
             outline.image = UIImage(systemName: symbol)
-            outline.tintColor = status == .on ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
+            outline.tintColor = displayedStatus == .on ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
         }
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        fill.isHidden = status != .on || !hasSignal
+        fill.isHidden = displayedStatus != .on || status != .on || !hasSignal
         let h = bounds.height * level
         fill.frame = CGRect(x: 0, y: bounds.height - h, width: bounds.width, height: h)
         maskLayer.frame = CGRect(x: 0, y: -(bounds.height - h), width: bounds.width, height: bounds.height)

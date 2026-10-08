@@ -20,18 +20,31 @@ struct HomeMeetingCard: View {
         }
     }
     private var title: String {
-        history.matching(item.invitation, engine: item.id.engine)?.alias ?? meeting?.title ?? item.handoff?.title ?? item.calendar?.title ?? ""
+        meeting?.title ?? history.matching(item.invitation, engine: item.id.engine)?.alias ?? item.handoff?.title ?? item.calendar?.title ?? ""
+    }
+    private var roomAlias: String? {
+        history.matching(item.invitation, engine: item.id.engine)?.alias.flatMap { $0 == title ? nil : $0 }
     }
     private var action: String {
         if let source { return source.isSharingScreen ? L("Move here and stop sharing") : L("Continue") }
         return item.handoff != nil ? L("Join here") : L("Join")
     }
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) { description.frame(minWidth: 100, maxWidth: .infinity, alignment: .leading); actions }
-            VStack(alignment: .leading, spacing: 4) {
-                description
-                HStack { joinButton; Spacer(minLength: 0); starButton }
+        VStack(alignment: .leading, spacing: 5) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { description.frame(minWidth: 100, maxWidth: .infinity, alignment: .leading); actions }
+                VStack(alignment: .leading, spacing: 4) {
+                    description
+                    HStack { joinButton; Spacer(minLength: 0); starButton }
+                }
+            }
+            if let meeting {
+                Text(CalendarMeetingPresentation.timeRange(meeting)).font(.subheadline).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("home.schedule." + meeting.id)
+                Text([roomAlias, meeting.calendarTitle].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("home.calendar." + meeting.id)
             }
         }
         .padding(.vertical, 2)
@@ -60,7 +73,7 @@ struct HomeMeetingCard: View {
             } else {
                 Text(L("Calendar event is no longer available.")).font(.caption).foregroundStyle(.secondary)
             }
-            Text(title).font(.body.weight(.semibold)).lineLimit(2)
+            Text(title).font(.body.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("home.title." + (item.calendar?.id ?? item.handoff?.deviceID ?? ""))
             if meeting?.tentative == true { Text(L("Tentative")).font(.caption).foregroundStyle(.secondary) }
         }
@@ -94,6 +107,22 @@ struct HomeMeetingCard: View {
     static func timing(_ meeting: CalendarMeeting, at now: Date) -> String {
         meeting.isScheduledNow(now) ? L("Scheduled now") :
             L("Starts in %ld min", max(1, Int(ceil(meeting.start.timeIntervalSince(now) / 60))))
+    }
+}
+
+enum CalendarMeetingPresentation {
+    static func timeRange(_ meeting: CalendarMeeting) -> String {
+        let start = meeting.start.formatted(date: .abbreviated, time: meeting.allDay ? .omitted : .shortened)
+        if meeting.allDay { return start + " · " + L("All day") }
+        let end = meeting.end.formatted(date: Calendar.current.isDate(meeting.start, inSameDayAs: meeting.end) ? .omitted : .abbreviated,
+                                        time: .shortened)
+        return start + " – " + end
+    }
+    static func subtitle(_ meeting: CalendarMeeting, at now: Date, roomTitle: String) -> String {
+        let timing = meeting.isScheduledNow(now) ? L("Scheduled now") : L("Upcoming")
+        return ([timing + " · " + timeRange(meeting)] +
+                (meeting.title == roomTitle ? [] : [meeting.title]) +
+                (meeting.calendarTitle.isEmpty ? [] : [meeting.calendarTitle])).joined(separator: "\n")
     }
 }
 

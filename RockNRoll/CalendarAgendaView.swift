@@ -48,8 +48,10 @@ struct CalendarAgendaView: View {
                 } else { onJoin(meeting) }
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(meeting.title).font(.body.weight(.medium)).lineLimit(2)
+                    Text(meeting.title).font(.body.weight(.medium)).fixedSize(horizontal: false, vertical: true)
                     Text(time(meeting)).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(meeting.calendarTitle).font(.caption).foregroundStyle(.secondary)
                 }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain).disabled(busy)
             .accessibilityLabel(L("Join %@", meeting.title)).accessibilityIdentifier("calendar.join." + meeting.id)
@@ -162,8 +164,7 @@ struct CalendarAgendaView: View {
         }.padding(.vertical, prominent ? 4 : 0)
     }
     private func time(_ meeting: CalendarMeeting) -> String {
-        if meeting.allDay { return meeting.start.formatted(date: .abbreviated, time: .omitted) + " · " + L("All day") }
-        return meeting.start.formatted(date: .abbreviated, time: .shortened) + " – " + meeting.end.formatted(date: .omitted, time: .shortened)
+        CalendarMeetingPresentation.timeRange(meeting)
     }
 }
 

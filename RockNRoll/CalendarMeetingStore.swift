@@ -214,7 +214,7 @@ final class CalendarMeetingStore: ObservableObject {
     func subtitle(for room: RecentRoom) -> String? {
         guard enabled, access == .allowed, let key = MeetingRoomIdentity(room.joinURL, engine: room.engine) else { return nil }
         if let meeting = upcoming.first(where: { $0.roomIdentity == key }) {
-            return L("Next: %@ · %@", meeting.start.formatted(date: .abbreviated, time: .shortened), meeting.title)
+            return CalendarMeetingPresentation.subtitle(meeting, at: now, roomTitle: room.displayTitle)
         }
         if let visit = state.visits[room.id] {
             return L("Scheduled: %@ · %@", visit.start.formatted(date: .abbreviated, time: .shortened), visit.title)

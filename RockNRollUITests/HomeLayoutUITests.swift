@@ -62,6 +62,30 @@ final class HomeLayoutUITests: XCTestCase {
             app.terminate()
         }
     }
+    func testExpandedMeetingPreviewKeepsEventTimeCalendarAndFavoriteAlias() {
+        for language in ["en", "ru"] {
+            for mode in ["home-preview", "home-preview-current"] {
+                launch(mode, language: language)
+                let title = app.descendants(matching: .any)["home.title.daily"].firstMatch
+                XCTAssertTrue(title.label.contains("Rehearsal and arrangements for the upcoming community concert"))
+                let schedule = app.staticTexts["home.schedule.daily"]
+                XCTAssertTrue(schedule.isHittable)
+                XCTAssertTrue(schedule.label.contains(" – "), "Both start and end times must be visible")
+                XCTAssertTrue(app.staticTexts["home.calendar.daily"].label.contains("Work"))
+                XCTAssertTrue(app.staticTexts["home.calendar.daily"].label.contains("Our rehearsal room"))
+                if mode == "home-preview-current" {
+                    XCTAssertTrue(title.label.contains(language == "en" ? "Scheduled now" : "По расписанию сейчас"))
+                }
+                attach("Expanded meeting preview · " + language + " · " + mode)
+                let favorite = favorites.element(boundBy: 0)
+                reveal(favorite)
+                XCTAssertTrue((favorite.value as? String ?? "").contains("community concert"))
+                XCTAssertTrue((favorite.value as? String ?? "").contains(" – "))
+                attach("Favorite event preview · " + language + " · " + mode)
+                app.terminate()
+            }
+        }
+    }
     func testLaterMeetingDoesNotTakeTopSlotAndTomorrowIsInAgenda() {
         launch("home-later")
         XCTAssertFalse(app.descendants(matching: .any)["home.title.daily"].exists)

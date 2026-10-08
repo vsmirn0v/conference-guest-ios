@@ -37,6 +37,22 @@ final class CalendarMeetingStoreTests: XCTestCase {
               start: Date().addingTimeInterval(offset), end: Date().addingTimeInterval(3600),
               links: links ? [URL(string: "https://meeting.example.test/calls/team?psw=fixture")!] : [])
     }
+    func testMeetingPreviewShowsRangeAndCalendarWithoutReplacingFavoriteAlias() {
+        let meeting = event(offset: -60)
+        let now = Date()
+        let preview = CalendarMeetingPresentation.subtitle(meeting, at: now, roomTitle: "Our room")
+        XCTAssertTrue(preview.contains(L("Scheduled now")))
+        XCTAssertTrue(preview.contains(meeting.title))
+        XCTAssertTrue(preview.contains(meeting.calendarTitle))
+        XCTAssertTrue(preview.contains(" – "))
+        let upcoming = CalendarMeetingPresentation.subtitle(meeting, at: meeting.start.addingTimeInterval(-60), roomTitle: meeting.title)
+        XCTAssertTrue(upcoming.contains(L("Upcoming")))
+        XCTAssertFalse(upcoming.contains(meeting.title), "Matching event and room titles should not repeat")
+        let overnight = CalendarMeeting(id: meeting.id, seriesID: meeting.seriesID, calendarID: meeting.calendarID,
+            calendarTitle: meeting.calendarTitle, title: meeting.title, start: meeting.start,
+            end: meeting.start.addingTimeInterval(86_400))
+        XCTAssertTrue(CalendarMeetingPresentation.timeRange(overnight).contains(overnight.end.formatted(date: .abbreviated, time: .shortened)))
+    }
     private func make(_ reader: Reader, storage: RoomHistoryStorage = RoomSyncCoordinatorTests.Storage()) -> (CalendarMeetingStore, UserDefaults) {
         let preferences = UserDefaults(suiteName: "CalendarTests-" + UUID().uuidString)!
         preferences.set(true, forKey: "calendarMeetings.enabled")

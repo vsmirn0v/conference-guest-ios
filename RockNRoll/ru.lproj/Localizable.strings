@@ -524,6 +524,7 @@
 "Joining in %ld seconds with mic and camera off" = "Подключение через %ld с, микрофон и камера выключены";
 "Join now" = "Подключиться сейчас";
 "Scheduled now" = "По расписанию сейчас";
+"Upcoming" = "Предстоящая встреча";
 "Next meeting" = "Следующая встреча";
 "Choose calendars" = "Выбрать календари";
 "Checking calendar…" = "Проверяем календарь…";

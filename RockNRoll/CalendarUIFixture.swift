@@ -22,7 +22,9 @@ enum CalendarUIFixture {
             let choice = ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] == "engine-choice"
             let mode = ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] ?? ""
             let home = mode.hasPrefix("home")
-            let events = [event("daily", title: "Daily rehearsal", offset: mode == "home-later" ? 1200 : 30,
+            let preview = mode.hasPrefix("home-preview")
+            let events = [event("daily", title: preview ? "Rehearsal and arrangements for the upcoming community concert" : "Daily rehearsal",
+                                offset: mode == "home-later" ? 1200 : mode == "home-preview-current" ? -300 : 30,
                                 link: choice ? "https://music.example.test/jams/team" :
                                     mode == "home-handoff" ? "https://meeting.example.test/calls/quartet?psw=calendar" : "https://meeting.example.test/team?psw=fixture",
                                 quoted: ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] == "forwarded" ?
@@ -77,11 +79,12 @@ enum CalendarUIFixture {
         if mode.hasPrefix("home") {
             let titles = ["Warm-up", "Thursday rehearsal", "Songwriting circle", "Quartet", "Arrangement", "Practice"]
             let favorites = titles.enumerated().map { index, title in
-                var room = RecentRoom(invitationURL: URL(string: mode == "home-details" && index == 0 ?
+                var room = RecentRoom(invitationURL: URL(string: (mode == "home-details" || mode.hasPrefix("home-preview")) && index == 0 ?
                     "https://meeting.example.test/team?psw=fixture" : "https://meeting.example.test/favorite\(index)")!,
                     title: title, identifier: "favorite\(index)", isStarred: true,
                     lastJoined: Date().addingTimeInterval(Double(-index * 60)))
                 if mode == "home-details" && index == 1 { room.hasBeenJoined = false }
+                if mode.hasPrefix("home-preview") && index == 0 { room.alias = "Our rehearsal room" }
                 return room
             }
             let recent = (0..<3).map { index in

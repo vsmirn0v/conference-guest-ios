@@ -42,7 +42,7 @@ final class FavoriteRoomControl: UIView, UIDragInteractionDelegate, UIDropIntera
         title.font = UIFont(descriptor: descriptor, size: 0)
         subtitle.font = .preferredFont(forTextStyle: .caption1)
         subtitle.adjustsFontForContentSizeCategory = true; subtitle.textColor = .secondaryLabel
-        subtitle.lineBreakMode = .byTruncatingTail
+        subtitle.numberOfLines = 0
         let text = UIStackView(arrangedSubviews: [title, subtitle])
         text.axis = .vertical; text.spacing = 3; text.isUserInteractionEnabled = false
         join.addSubview(text)
