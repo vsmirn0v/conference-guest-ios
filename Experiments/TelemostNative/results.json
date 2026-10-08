@@ -1,0 +1,491 @@
+{
+  "date": "2026-10-08",
+  "scope": "isolated native transport, synthetic sources, no main app integration",
+  "web_client_version": "212.6.0",
+  "webrtc_version": "150.7871.2",
+  "protocol_boundary_checks_passed": 16,
+  "builds": [
+    "macOS arm64",
+    "iOS 16 minimum arm64 simulator binary; exercised on iOS 27 runtime"
+  ],
+  "runs": {
+    "mac_camera_sender": [
+      {
+        "authenticatedAccount": false,
+        "engine": "GOLOOM",
+        "event": "bootstrap",
+        "time": "2026-10-08T11:09:38Z"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "audio/opus",
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:10:24Z",
+        "type": "codec"
+      },
+      {
+        "bytesReceived": 92444,
+        "codecId": "CITvideo_AA1_111_minptime=10;useinbandfec=1",
+        "event": "rtc-stats",
+        "kind": "audio",
+        "packetsReceived": 2101,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:10:24Z",
+        "totalAudioEnergy": 4.093412553697892e-08,
+        "type": "inbound-rtp"
+      },
+      {
+        "event": "render-summary",
+        "frames": 0,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:10:24Z"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "video/VP8",
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:10:24Z",
+        "type": "codec"
+      },
+      {
+        "bytesSent": 179927,
+        "codecId": "COT01_111_minptime=10;useinbandfec=1",
+        "event": "rtc-stats",
+        "kind": "audio",
+        "packetsSent": 2223,
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:10:24Z",
+        "type": "outbound-rtp"
+      },
+      {
+        "bytesSent": 3562685,
+        "codecId": "COT01_100",
+        "encoderImplementation": "libvpx",
+        "event": "rtc-stats",
+        "framesEncoded": 418,
+        "kind": "video",
+        "packetsSent": 3259,
+        "powerEfficientEncoder": false,
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:10:24Z",
+        "type": "outbound-rtp"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "audio/opus",
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:10:24Z",
+        "type": "codec"
+      },
+      {
+        "event": "render-summary",
+        "frames": 0,
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:10:24Z"
+      },
+      {
+        "event": "decoded-pcm",
+        "rms": 2.0348526397543447e-06,
+        "samples": 2151840,
+        "time": "2026-10-08T11:10:24Z"
+      },
+      {
+        "event": "finished",
+        "seconds": 45,
+        "serverHello": true,
+        "time": "2026-10-08T11:10:24Z"
+      }
+    ],
+    "mac_camera_receiver": [
+      {
+        "authenticatedAccount": false,
+        "engine": "GOLOOM",
+        "event": "bootstrap",
+        "time": "2026-10-08T11:09:39Z"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "video/VP8",
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:10:09Z",
+        "type": "codec"
+      },
+      {
+        "bytesReceived": 166565,
+        "codecId": "CITvideo_AA1_111_minptime=10;useinbandfec=1",
+        "event": "rtc-stats",
+        "kind": "audio",
+        "packetsReceived": 1389,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:10:09Z",
+        "totalAudioEnergy": 0.24168351697668783,
+        "type": "inbound-rtp"
+      },
+      {
+        "bytesReceived": 2220637,
+        "codecId": "CITvideo_AA1_96",
+        "decoderImplementation": "libvpx",
+        "event": "rtc-stats",
+        "framesDecoded": 225,
+        "kind": "video",
+        "packetsReceived": 2043,
+        "powerEfficientDecoder": false,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:10:09Z",
+        "type": "inbound-rtp"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "audio/opus",
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:10:09Z",
+        "type": "codec"
+      },
+      {
+        "event": "render-summary",
+        "frames": 225,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:10:09Z"
+      },
+      {
+        "event": "decoded-pcm",
+        "rms": 0.06146073710467745,
+        "samples": 1433760,
+        "time": "2026-10-08T11:10:09Z"
+      },
+      {
+        "event": "finished",
+        "seconds": 30,
+        "serverHello": true,
+        "time": "2026-10-08T11:10:09Z"
+      }
+    ],
+    "mac_display_video_sender": [
+      {
+        "authenticatedAccount": false,
+        "engine": "GOLOOM",
+        "event": "bootstrap",
+        "time": "2026-10-08T11:19:07Z"
+      },
+      {
+        "bytesReceived": 155848,
+        "codecId": "CITvideo_AA1_111_minptime=10;useinbandfec=1",
+        "event": "rtc-stats",
+        "kind": "audio",
+        "packetsReceived": 3542,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:20:24Z",
+        "totalAudioEnergy": 6.890344953870346e-08,
+        "type": "inbound-rtp"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "audio/opus",
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:20:24Z",
+        "type": "codec"
+      },
+      {
+        "event": "render-summary",
+        "frames": 0,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:20:24Z"
+      },
+      {
+        "bytesSent": 300875,
+        "codecId": "COT01_111_minptime=10;useinbandfec=1",
+        "event": "rtc-stats",
+        "kind": "audio",
+        "packetsSent": 3716,
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:20:24Z",
+        "type": "outbound-rtp"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "audio/opus",
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:20:24Z",
+        "type": "codec"
+      },
+      {
+        "bytesSent": 5861815,
+        "codecId": "COT01_100",
+        "encoderImplementation": "libvpx",
+        "event": "rtc-stats",
+        "framesEncoded": 703,
+        "kind": "video",
+        "packetsSent": 5351,
+        "powerEfficientEncoder": false,
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:20:24Z",
+        "type": "outbound-rtp"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "video/VP8",
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:20:24Z",
+        "type": "codec"
+      },
+      {
+        "event": "render-summary",
+        "frames": 0,
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:20:24Z"
+      },
+      {
+        "event": "decoded-pcm",
+        "rms": 2.0442533171998333e-06,
+        "samples": 3588480,
+        "time": "2026-10-08T11:20:24Z"
+      },
+      {
+        "event": "finished",
+        "expectedMediaVerified": false,
+        "iceConnected": true,
+        "seconds": 75,
+        "serverHello": true,
+        "time": "2026-10-08T11:20:24Z"
+      }
+    ],
+    "ios27_display_video_receiver": [
+      {
+        "authenticatedAccount": false,
+        "engine": "GOLOOM",
+        "event": "bootstrap",
+        "time": "2026-10-08T11:19:15Z"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "audio/opus",
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:19:54Z",
+        "type": "codec"
+      },
+      {
+        "bytesReceived": 194625,
+        "codecId": "CITvideo_AA1_111_minptime=10;useinbandfec=1",
+        "event": "rtc-stats",
+        "kind": "audio",
+        "packetsReceived": 1622,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:19:54Z",
+        "totalAudioEnergy": 0.2987368700288021,
+        "type": "inbound-rtp"
+      },
+      {
+        "bytesReceived": 2698491,
+        "codecId": "CITvideo_AA1_96",
+        "decoderImplementation": "libvpx",
+        "event": "rtc-stats",
+        "framesDecoded": 287,
+        "kind": "video",
+        "packetsReceived": 2452,
+        "powerEfficientDecoder": false,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:19:54Z",
+        "type": "inbound-rtp"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "video/VP8",
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:19:54Z",
+        "type": "codec"
+      },
+      {
+        "event": "render-summary",
+        "frames": 287,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:19:54Z"
+      },
+      {
+        "event": "decoded-pcm",
+        "rms": 0.06087632210300575,
+        "samples": 1744320,
+        "time": "2026-10-08T11:19:54Z"
+      },
+      {
+        "event": "finished",
+        "expectedMediaVerified": true,
+        "iceConnected": true,
+        "seconds": 35,
+        "serverHello": true,
+        "time": "2026-10-08T11:19:54Z"
+      }
+    ],
+    "ios27_camera_sender_h264_preferred": [
+      {
+        "authenticatedAccount": false,
+        "engine": "GOLOOM",
+        "event": "bootstrap",
+        "time": "2026-10-08T11:23:31Z"
+      },
+      {
+        "bytesReceived": 102696,
+        "codecId": "CITvideo_AA1_111_minptime=10;useinbandfec=1",
+        "event": "rtc-stats",
+        "kind": "audio",
+        "packetsReceived": 2334,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:24:22Z",
+        "totalAudioEnergy": 4.571210196484595e-08,
+        "type": "inbound-rtp"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "audio/opus",
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:24:22Z",
+        "type": "codec"
+      },
+      {
+        "event": "render-summary",
+        "frames": 0,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:24:22Z"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "video/VP8",
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:24:22Z",
+        "type": "codec"
+      },
+      {
+        "bytesSent": 4744191,
+        "codecId": "COT01_100",
+        "encoderImplementation": "libvpx",
+        "event": "rtc-stats",
+        "framesEncoded": 461,
+        "kind": "video",
+        "packetsSent": 4299,
+        "powerEfficientEncoder": false,
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:24:22Z",
+        "type": "outbound-rtp"
+      },
+      {
+        "bytesSent": 179629,
+        "codecId": "COT01_111_minptime=10;useinbandfec=1",
+        "event": "rtc-stats",
+        "kind": "audio",
+        "packetsSent": 2476,
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:24:22Z",
+        "type": "outbound-rtp"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "audio/opus",
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:24:22Z",
+        "type": "codec"
+      },
+      {
+        "event": "render-summary",
+        "frames": 0,
+        "target": "PUBLISHER",
+        "time": "2026-10-08T11:24:22Z"
+      },
+      {
+        "event": "decoded-pcm",
+        "rms": 2.0393419371444184e-06,
+        "samples": 2388480,
+        "time": "2026-10-08T11:24:22Z"
+      },
+      {
+        "event": "finished",
+        "expectedMediaVerified": false,
+        "iceConnected": true,
+        "seconds": 50,
+        "serverHello": true,
+        "time": "2026-10-08T11:24:22Z"
+      }
+    ],
+    "mac_receiver_from_ios": [
+      {
+        "authenticatedAccount": false,
+        "engine": "GOLOOM",
+        "event": "bootstrap",
+        "time": "2026-10-08T11:23:28Z"
+      },
+      {
+        "bytesReceived": 184043,
+        "codecId": "CITvideo_AA1_111_minptime=10;useinbandfec=1",
+        "event": "rtc-stats",
+        "kind": "audio",
+        "packetsReceived": 1563,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:24:04Z",
+        "totalAudioEnergy": 0.2722272095272079,
+        "type": "inbound-rtp"
+      },
+      {
+        "bytesReceived": 3377436,
+        "codecId": "CITvideo_AA1_96",
+        "decoderImplementation": "libvpx",
+        "event": "rtc-stats",
+        "framesDecoded": 292,
+        "kind": "video",
+        "packetsReceived": 3072,
+        "powerEfficientDecoder": false,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:24:04Z",
+        "type": "inbound-rtp"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "audio/opus",
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:24:04Z",
+        "type": "codec"
+      },
+      {
+        "event": "rtc-stats",
+        "mimeType": "video/VP8",
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:24:04Z",
+        "type": "codec"
+      },
+      {
+        "event": "render-summary",
+        "frames": 292,
+        "target": "SUBSCRIBER",
+        "time": "2026-10-08T11:24:04Z"
+      },
+      {
+        "event": "decoded-pcm",
+        "rms": 0.058963775443674545,
+        "samples": 1669920,
+        "time": "2026-10-08T11:24:04Z"
+      },
+      {
+        "event": "finished",
+        "expectedMediaVerified": true,
+        "iceConnected": true,
+        "seconds": 35,
+        "serverHello": true,
+        "time": "2026-10-08T11:24:04Z"
+      }
+    ]
+  },
+  "limitations": [
+    "Synthetic PCM was decoded and measured, not a physical microphone/speaker quality check.",
+    "H264 preference still negotiated VP8/libvpx; hardware video encoding is unverified.",
+    "The first cold simulator attempt started after its source had left; expected-media gate correctly failed. The repeat with overlapping participants passed.",
+    "DISPLAY_VIDEO publication and native reception do not establish full browser presentation UX or ReplayKit capture.",
+    "No production reconnection, waiting-room/auth flow, chat/captions, physical iPhone background/call interruption or energy qualification."
+  ],
+  "cleanup": {
+    "transport": {
+      "code": 1000,
+      "completed": true,
+      "event": "socket-closed",
+      "time": "2026-10-08T11:26:35Z"
+    },
+    "browser_readback": "Fresh cleanup-test participant absent after process exit",
+    "generators_and_probe_processes_remaining": 0
+  }
+}

@@ -47,6 +47,7 @@ public struct RecentRooms: Codable, Equatable, Sendable {
 
     public mutating func record(url: URL, title: String, identifier: String,
                                 at date: Date = Date(), engine: MeetingEngineKind? = nil) {
+        let engine = engine?.persistenceHint
         let cleanTitle = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
         if let index = matchingIndex(url, engine: engine) {
             items[index].lastJoined = date
@@ -67,6 +68,7 @@ public struct RecentRooms: Codable, Equatable, Sendable {
     /// stores the real save time for schema-1 readers; lastVisit stays nil.
     public mutating func saveFavorite(url: URL, title: String, identifier: String,
                                       engine: MeetingEngineKind? = nil, at date: Date = Date()) {
+        let engine = engine?.persistenceHint
         if let index = matchingIndex(url, engine: engine) {
             if !items[index].isStarred { toggleStar(for: items[index].invitationURL) }
             return
@@ -141,6 +143,7 @@ public struct RecentRooms: Codable, Equatable, Sendable {
     }
 
     private mutating func normalize() {
+        for index in items.indices { items[index].engine = items[index].engine?.persistenceHint }
         items.sort {
             if $0.isStarred != $1.isStarred { return $0.isStarred }
             if $0.isStarred {

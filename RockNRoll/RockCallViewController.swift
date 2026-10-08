@@ -75,7 +75,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private struct VideoTile {
         let tile: UIView
         let zoom: UIScrollView
-        let video: VideoView
+        let video: CallVideoView
         let name: UILabel
         let pin: UIButton
         var heightConstraint: NSLayoutConstraint?
@@ -101,7 +101,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let store: CatchUpStore
     private let chat: ChatStore
     private let workspace = CallWorkspaceControls()
-    private weak var displayedRoom: Room?
+    private var displayedSnapshot: CallMediaSnapshot?
+    var supportsChat = true
+    var supportsSharing = true
     private var displayMode: ConferenceDisplayMode = .all
     private var isMicrophoneOn = false
     private var isCameraOn = false
@@ -251,7 +253,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             chatValue: chat.unreadCount > 0 ? conversationButton.accessibilityLabel : nil,
             chatCount: chat.unreadCount, missedCount: store.timeline.unreadCount,
             status: isHeld || mediaStatus != nil ? statusLabel.text : nil,
-            speaking: activeSpeaker.current, focusAvailable: primaryZoom != nil)
+            speaking: activeSpeaker.current, focusAvailable: primaryZoom != nil, chatAvailable: supportsChat)
         statusLabel.isHidden = focus.hidden || geometry.compactHeader
         statusLabel.frame = CGRect(x: geometry.header.minX, y: geometry.header.maxY - statusHeight,
             width: geometry.header.width, height: statusHeight)
@@ -288,11 +290,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         browse(gesture.direction == .left ? 1 : -1)
     }
     private func browse(_ step: Int) {
-        guard let room = displayedRoom, orderedStreams.count > 1, pinnedStream == nil else { return }
+        guard let snapshot = displayedSnapshot, orderedStreams.count > 1, pinnedStream == nil else { return }
         let selected = browsedStream ?? currentPrimaryKey.flatMap { streamPinTargets[$0] }
         let index = orderedStreams.firstIndex { $0 == selected } ?? 0
         browsedStream = orderedStreams[(index + step + orderedStreams.count) % orderedStreams.count]
-        render(room: room)
+        render(snapshot: snapshot)
         focus.interaction()
     }
     @objc private func doubleTappedStage(_ gesture: UITapGestureRecognizer) {
@@ -452,6 +454,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             StudioShortcut.install(on: camera, pane: .camera, model: studio)
             StudioShortcut.install(on: speaker, pane: .sound, model: studio, devices: true)
         }
+        share.isHidden = !supportsSharing
+        conversationButton.isHidden = !supportsChat
         share.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.onShare?(!self.isSharingScreen)
@@ -470,10 +474,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         participantsButton.addAction(UIAction { [weak self] _ in
             guard let self, self.presentedViewController == nil else { return }
             #if DEBUG
-            let statuses = self.displayedRoom.map(self.statuses(in:)) ?? self.fixtureParticipants ?? []
+            let statuses = self.displayedSnapshot?.participants.map(\.status) ?? self.fixtureParticipants ?? []
             #else
-            guard let room = self.displayedRoom else { return }
-            let statuses = self.statuses(in: room)
+            guard let snapshot = self.displayedSnapshot else { return }
+            let statuses = snapshot.participants.map(\.status)
             #endif
             let panel = ParticipantPanelViewController()
             panel.onPin = { [weak self] key in
@@ -556,7 +560,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             broadcastAppearance.topAnchor.constraint(equalTo: shareControl.topAnchor),
             broadcastAppearance.bottomAnchor.constraint(equalTo: shareControl.bottomAnchor)
         ])
-        let bar = CallToolbar(items: [microphone, camera, shareControl, audioControl, moreButton, leave])
+        let bar = CallToolbar(items: [microphone, camera] + (supportsSharing ? [shareControl] : []) + [audioControl, moreButton, leave])
         toolbar = bar
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.textColor = .lightGray
@@ -638,11 +642,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     private func openConversation(_ selected: ConversationMode) {
+        guard supportsChat || selected != .chat else { return }
         guard presentedViewController == nil else { return }
         if view.bounds.width >= 700 {
             if dockedConversation != nil { return }
             let panel = ConversationPanelViewController(catchUp: store, chat: chat,
-                initialMode: selected, call: workspace, docked: true)
+                initialMode: selected, call: workspace, docked: true, chatAvailable: supportsChat)
             panel.onClose = { [weak self] in self?.closeDockedConversation() }
             addChild(panel)
             conversationHost.addSubview(panel.view)
@@ -660,7 +665,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             return
         }
         present(ConversationPanelViewController(catchUp: store, chat: chat,
-                                                initialMode: selected, call: workspace),
+                                                initialMode: selected, call: workspace, chatAvailable: supportsChat),
                 animated: true)
     }
 
@@ -690,7 +695,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     private func setPin(_ target: PinnedStream?) {
         pinnedStream = target
-        if let room = displayedRoom { render(room: room) }
+        if let snapshot = displayedSnapshot { render(snapshot: snapshot) }
     }
 
     func setConnectionRecovering(_ recovering: Bool) {
@@ -723,21 +728,16 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
     }
 
-    func render(room: Room) {
-        displayedRoom = room
-        let participants: [Participant] = [room.localParticipant] + room.remoteParticipants.values.sorted {
-            ($0.identity?.stringValue ?? "") < ($1.identity?.stringValue ?? "")
-        }
-        let localTrack = room.localParticipant.videoTracks.first {
-            $0.source == .screenShareVideo && !$0.isMuted
-        }?.track as? VideoTrack
-        localShareRenderer.setTrack(localTrack)
-        let sharing = room.localParticipant.videoTracks.contains {
-            $0.source == .screenShareVideo && !$0.isMuted
-        }
+    func render(room: Room) { render(snapshot: CallMediaSnapshot(room: room)) }
+
+    func render(snapshot: CallMediaSnapshot) {
+        displayedSnapshot = snapshot
+        let participants = snapshot.participants
+        localShareRenderer.setTrack(snapshot.localShare?.roomTrack)
+        let sharing = participants.first { $0.isLocal }?.screenShareOn ?? false
         if isSharingScreen != sharing { setSharing(sharing) }
         if let pin = pinnedStream {
-            if let owner = participants.first(where: { participantID($0) == pin.participantID }) {
+            if let owner = participants.first(where: { $0.id == pin.participantID }) {
                 if pin.isScreenShare && !owner.videoTracks.contains(where: { $0.source == .screenShareVideo }) {
                     pinnedStream = nil
                 }
@@ -746,59 +746,59 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             }
         }
         pinnedStreamKey = pinnedStream.flatMap { pin in
-            participants.first(where: { participantID($0) == pin.participantID })?
+            participants.first(where: { $0.id == pin.participantID })?
                 .videoTracks.first(where: { ($0.source == .screenShareVideo) == pin.isScreenShare &&
-                    !$0.isMuted && $0.track is VideoTrack })?.sid.stringValue
+                    !$0.isMuted })?.id
         }
         let identifier = workspace.roomIdentifier.map { " · \($0)" } ?? ""
-        countLabel.text = room.remoteParticipants.isEmpty ? L("Only you here%@", identifier) :
+        countLabel.text = snapshot.remoteParticipants.isEmpty ? L("Only you here%@", identifier) :
             L("%ld musicians", participants.count) + identifier
         participantsButton.isEnabled = true
         participantsButton.accessibilityLabel = L("Musicians, %ld", participants.count)
-        participantsPanel?.update(statuses(in: room), pinnedKey: pinnedStreamKey)
+        participantsPanel?.update(participants.map(\.status), pinnedKey: pinnedStreamKey)
         tiles.arrangedSubviews.forEach { $0.removeFromSuperview() }
         speakingLabels.removeAll()
         speakingTiles.removeAll()
-        var streams: [(Participant, TrackPublication, VideoTrack)] = []
+        var streams: [(CallParticipant, CallVideoStream, CallVideoSource)] = []
         for participant in participants {
             let publications = participant.videoTracks.filter {
-                !$0.isMuted && $0.track is VideoTrack &&
-                    !(participant === room.localParticipant && $0.source == .screenShareVideo)
+                !$0.isMuted &&
+                    !(participant.isLocal && $0.source == .screenShareVideo)
             }
                 .filter { displayMode == .all ||
                     (displayMode == .screenShares && $0.source == .screenShareVideo) }
             if displayMode == .audioOnly ||
-                (displayMode == .all && publications.isEmpty && !room.remoteParticipants.isEmpty) {
+                (displayMode == .all && publications.isEmpty && !snapshot.remoteParticipants.isEmpty) {
                 tiles.addArrangedSubview(audioTile(for: participant))
             }
             for publication in publications where displayMode != .audioOnly {
-                guard let track = publication.track as? VideoTrack else { continue }
+                let track = publication.track
                 streams.append((participant, publication, track))
             }
         }
-        let activeKeys = Set(streams.map { $0.1.sid.stringValue })
+        let activeKeys = Set(streams.map { $0.1.id })
         videoTiles = videoTiles.filter { activeKeys.contains($0.key) }
         streamPinTargets = Dictionary(uniqueKeysWithValues: streams.map { stream in
-            (stream.1.sid.stringValue, PinnedStream(participantID: participantID(stream.0),
+            (stream.1.id, PinnedStream(participantID: stream.0.id,
                                                     isScreenShare: stream.1.source == .screenShareVideo))
         })
-        if !streams.contains(where: { $0.0 === room.localParticipant && $0.1.source != .screenShareVideo }) {
+        if !streams.contains(where: { $0.0.isLocal && $0.1.source != .screenShareVideo }) {
             NSLayoutConstraint.deactivate(flipCameraConstraints)
             flipCameraConstraints.removeAll()
             flipCamera.removeFromSuperview()
         }
         let pausedCameraPin = displayMode == .all && pinnedStream != nil &&
             pinnedStream?.isScreenShare == false && pinnedStreamKey == nil
-        orderedStreams = streams.map { PinnedStream(participantID: participantID($0.0), isScreenShare: $0.1.source == .screenShareVideo) }
+        orderedStreams = streams.map { PinnedStream(participantID: $0.0.id, isScreenShare: $0.1.source == .screenShareVideo) }
         if let browsedStream, !orderedStreams.contains(browsedStream) { self.browsedStream = nil }
         let primary = pausedCameraPin ? nil :
-            streams.first { $0.1.sid.stringValue == pinnedStreamKey } ??
-            streams.first { streamPinTargets[$0.1.sid.stringValue] == browsedStream && browsedStream != nil } ??
+            streams.first { $0.1.id == pinnedStreamKey } ??
+            streams.first { streamPinTargets[$0.1.id] == browsedStream && browsedStream != nil } ??
             streams.first { $0.1.source == .screenShareVideo } ??
-            streams.first { $0.0 is RemoteParticipant } ?? streams.first
+            streams.first { !$0.0.isLocal } ?? streams.first
         if let pin = pinnedStream, !pin.isScreenShare,
            let share = streams.first(where: { $0.1.source == .screenShareVideo }),
-           let offer = streamPinTargets[share.1.sid.stringValue], offer != pin,
+           let offer = streamPinTargets[share.1.id], offer != pin,
            displayMode == .all {
             offeredShare = offer
             shareOffer.configuration?.title = L("%@ is sharing · View", share.0.name ?? L("Musician"))
@@ -809,7 +809,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             shareOffer.isHidden = true
         }
         if pausedCameraPin, let pin = pinnedStream,
-           let owner = participants.first(where: { participantID($0) == pin.participantID }) {
+           let owner = participants.first(where: { $0.id == pin.participantID }) {
             let placeholder = baseTile()
             let name = UILabel()
             name.text = L("%@ · Camera off · Pinned", owner.name ?? L("Musician"))
@@ -845,16 +845,16 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 let tile = videoTile(for: stream.0, publication: stream.1,
                                      track: stream.2, primary: false)
                 tiles.addArrangedSubview(tile)
-                setVideoTileHeight(for: stream.1.sid.stringValue, primary: false,
+                setVideoTileHeight(for: stream.1.id, primary: false,
                                    isShare: stream.1.source == .screenShareVideo)
             }
         } else if let primary {
-            let primaryKey = primary.1.sid.stringValue
+            let primaryKey = primary.1.id
             zoomControls.isHidden = primary.1.source != .screenShareVideo
             zoomVisibility.setAvailable(primary.1.source == .screenShareVideo)
             primaryName = primary.0.name ?? L("Musician")
             fitButton.isHidden = (videoTiles[primaryKey]?.zoom.zoomScale ?? 1) <= 1.01
-            floatingVideo?.show(track: primary.0 is RemoteParticipant ? primary.2 : nil,
+            floatingVideo?.show(source: !primary.0.isLocal ? primary.2 : nil,
                                 name: primary.0.name ?? L("Musician"),
                                 isScreenShare: primary.1.source == .screenShareVideo)
             // The selected stream fills the available viewing area. Other streams remain below it.
@@ -862,11 +862,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                                         track: primary.2, primary: true)
             tiles.insertArrangedSubview(primaryTile, at: 0)
             setVideoTileHeight(for: primaryKey, primary: true, isShare: primary.1.source == .screenShareVideo)
-            for stream in streams where stream.1.sid != primary.1.sid && pinnedStream == nil {
+            for stream in streams where stream.1.id != primary.1.id && pinnedStream == nil {
                 let tile = videoTile(for: stream.0, publication: stream.1,
                                      track: stream.2, primary: false)
                 tiles.addArrangedSubview(tile)
-                setVideoTileHeight(for: stream.1.sid.stringValue, primary: false,
+                setVideoTileHeight(for: stream.1.id, primary: false,
                                    isShare: stream.1.source == .screenShareVideo)
             }
             if currentPrimaryKey != primaryKey { streamScroll.setContentOffset(.zero, animated: false) }
@@ -889,12 +889,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             tiles.addArrangedSubview(empty)
             empty.heightAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
         }
-        if room.remoteParticipants.isEmpty && streams.isEmpty && displayMode == .all {
+        if snapshot.remoteParticipants.isEmpty && streams.isEmpty && displayMode == .all {
             let waiting = waitingRoomView()
             tiles.addArrangedSubview(waiting)
             waiting.heightAnchor.constraint(equalTo: streamScroll.frameLayoutGuide.heightAnchor).isActive = true
         }
-        refreshSpeaking(room: room)
+        refreshSpeaking(snapshot: snapshot)
         configureMoreMenu()
         view.setNeedsLayout()
     }
@@ -942,17 +942,17 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         return view
     }
 
-    private func audioTile(for participant: Participant) -> UIView {
+    private func audioTile(for participant: CallParticipant) -> UIView {
         let tile = baseTile()
         let name = UILabel()
         name.text = participant.name ?? L("Musician")
         name.textColor = .white
         name.font = .systemFont(ofSize: 16, weight: .semibold)
         let state = UILabel()
-        state.text = participant.audioTracks.contains { !$0.isMuted } ? L("Microphone on") : L("Microphone off")
+        state.text = participant.microphoneOn ? L("Microphone on") : L("Microphone off")
         state.textColor = .lightGray
         state.font = .preferredFont(forTextStyle: .caption1)
-        let id = participantID(participant)
+        let id = participant.id
         speakingLabels[id] = state
         speakingTiles[id, default: []].append(tile)
         let column = UIStackView(arrangedSubviews: [name, state])
@@ -969,15 +969,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         return tile
     }
 
-    private func videoTile(for participant: Participant, publication: TrackPublication,
-                           track: VideoTrack, primary: Bool) -> UIView {
+    private func videoTile(for participant: CallParticipant, publication: CallVideoStream,
+                           track: CallVideoSource, primary: Bool) -> UIView {
         let isShare = publication.source == .screenShareVideo
-        let key = publication.sid.stringValue
+        let key = publication.id
         if var cached = videoTiles[key] {
             configureVideoTile(&cached, participant: participant, track: track,
                                isShare: isShare, primary: primary, key: key)
             videoTiles[key] = cached
-            speakingTiles[participantID(participant), default: []].append(cached.tile)
+            speakingTiles[participant.id, default: []].append(cached.tile)
             return cached.tile
         }
         let tile = baseTile()
@@ -998,9 +998,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         zoom.accessibilityLabel = isShare ? L("Pinch to zoom screen share") : L("Video stream")
         zoom.accessibilityValue = "100%"
         zoom.translatesAutoresizingMaskIntoConstraints = false
-        let video = VideoView()
+        let video = CallVideoView()
         // Use the same color-managed renderer as the floating video surface.
-        video.renderMode = .sampleBuffer
         video.layoutMode = isShare ? .fit : .fill
         video.track = track
         video.translatesAutoresizingMaskIntoConstraints = false
@@ -1024,7 +1023,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             L("Pin %@ %@", participant.name ?? L("Musician"), isShare ? L("screen") : L("video"))
         pin.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            let target = PinnedStream(participantID: self.participantID(participant),
+            let target = PinnedStream(participantID: participant.id,
                                       isScreenShare: isShare)
             self.setPin(self.pinnedStream == target ? nil : target)
         }, for: .touchUpInside)
@@ -1033,7 +1032,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         pin.largeContentTitle = pin.accessibilityLabel
         pin.translatesAutoresizingMaskIntoConstraints = false
         tile.addSubview(pin)
-        speakingTiles[participantID(participant), default: []].append(tile)
+        speakingTiles[participant.id, default: []].append(tile)
         NSLayoutConstraint.activate([
             zoom.leadingAnchor.constraint(equalTo: tile.leadingAnchor),
             zoom.trailingAnchor.constraint(equalTo: tile.trailingAnchor),
@@ -1060,9 +1059,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         return tile
     }
 
-    private func configureVideoTile(_ entry: inout VideoTile, participant: Participant,
-                                    track: VideoTrack, isShare: Bool, primary: Bool, key: String) {
-        if entry.video.track !== track { entry.video.track = track }
+    private func configureVideoTile(_ entry: inout VideoTile, participant: CallParticipant,
+                                    track: CallVideoSource, isShare: Bool, primary: Bool, key: String) {
+        if entry.video.track?.identity != track.identity { entry.video.track = track }
         entry.video.layoutMode = isShare ? .fit : .fill
         entry.name.text = "  \(participant.name ?? L("Musician")) · \(isShare ? L("Screen") : L("Video")) · \(pinnedStreamKey == key ? L("Pinned") : L("Auto"))  "
         entry.pin.configuration?.image = UIImage(systemName: pinnedStreamKey == key ? "pin.fill" : "pin")
@@ -1071,7 +1070,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             : L("Pin %@ %@", participant.name ?? L("Musician"), isShare ? L("screen") : L("video"))
         entry.pin.largeContentTitle = entry.pin.accessibilityLabel
         if primary { primaryZoom = entry.zoom }
-        if participant === displayedRoom?.localParticipant && !isShare {
+        if participant.isLocal && !isShare {
             if flipCamera.superview !== entry.tile {
                 NSLayoutConstraint.deactivate(flipCameraConstraints)
                 flipCamera.translatesAutoresizingMaskIntoConstraints = false
@@ -1098,49 +1097,23 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         videoTiles[key] = entry
     }
 
-    private func participantID(_ participant: Participant) -> String {
-        participant.identity?.stringValue ?? participant.sid?.stringValue ?? "local"
-    }
-
-    private func statuses(in room: Room) -> [ParticipantStatus] {
-        let participants: [Participant] = [room.localParticipant] + room.remoteParticipants.values.sorted {
-            ($0.name ?? "") < ($1.name ?? "")
-        }
-        return participants.map { participant in
-            let videos = participant.videoTracks.filter { !$0.isMuted }
-            return ParticipantStatus(id: participantID(participant),
-                name: participant.name ?? L("Musician"), isLocal: participant === room.localParticipant,
-                microphoneOn: participant.audioTracks.contains { !$0.isMuted },
-                cameraOn: videos.contains { $0.source != .screenShareVideo },
-                screenShareOn: videos.contains { $0.source == .screenShareVideo },
-                isSpeaking: participant.isSpeaking,
-                videoKey: videos.first { $0.source != .screenShareVideo && $0.track is VideoTrack }?.sid.stringValue,
-                shareKey: participant === room.localParticipant ? nil :
-                    videos.first { $0.source == .screenShareVideo && $0.track is VideoTrack }?.sid.stringValue)
-        }
-    }
-
     func refreshSpeaking(room: Room, speakers: [Participant]? = nil) {
-        participantsPanel?.update(statuses(in: room), pinnedKey: pinnedStreamKey)
-        let participants = [room.localParticipant] + Array(room.remoteParticipants.values)
-        let voices = (speakers ?? participants).filter { participant in
-            participant.isSpeaking && participant.audioTracks.contains { !$0.isMuted } &&
-                (!(participant is LocalParticipant) || isMicrophoneOn)
-        }
-        // The speaking callback supplies the engine's order. A roster refresh
-        // keeps that choice while it remains valid rather than picking by name.
-        let speaking = speakers == nil ? voices.first { participantID($0) == activeSpeaker.current?.id } ?? voices.first : voices.first
-        activeSpeaker.update(speaking.map {
-            CallSpeaker(id: participantID($0), name: $0.name ?? L("Musician"), isLocal: $0 is LocalParticipant)
-        })
-        for participant in participants {
-            let id = participantID(participant)
-            if let label = speakingLabels[id] {
-                label.text = participant.isSpeaking ? L("Speaking") :
-                    (participant.audioTracks.contains { !$0.isMuted } ? L("Microphone on") : L("Microphone off"))
+        refreshSpeaking(snapshot: CallMediaSnapshot(room: room), speakerOrder: speakers?.map { $0.identity?.stringValue ?? $0.sid?.stringValue ?? "local" })
+    }
+
+    func refreshSpeaking(snapshot: CallMediaSnapshot, speakerOrder: [String]? = nil) {
+        displayedSnapshot = snapshot
+        participantsPanel?.update(snapshot.participants.map(\.status), pinnedKey: pinnedStreamKey)
+        let voices = snapshot.participants.filter { $0.isSpeaking && $0.microphoneOn && (!$0.isLocal || isMicrophoneOn) }
+        let speaking = speakerOrder.flatMap { order in order.compactMap { id in voices.first { $0.id == id } }.first } ??
+            voices.first { $0.id == activeSpeaker.current?.id } ?? voices.first
+        activeSpeaker.update(speaking.map { CallSpeaker(id: $0.id, name: $0.name ?? L("Musician"), isLocal: $0.isLocal) })
+        for participant in snapshot.participants {
+            if let label = speakingLabels[participant.id] {
+                label.text = participant.isSpeaking ? L("Speaking") : (participant.microphoneOn ? L("Microphone on") : L("Microphone off"))
                 label.textColor = participant.isSpeaking ? .systemGreen : .lightGray
             }
-            for tile in speakingTiles[id] ?? [] {
+            for tile in speakingTiles[participant.id] ?? [] {
                 tile.layer.borderWidth = participant.isSpeaking ? 3 : 0
                 tile.layer.borderColor = UIColor.systemGreen.cgColor
             }
@@ -1164,7 +1137,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 self.displayModeButton.configuration?.image = UIImage(systemName: option.symbol)
                 self.displayModeButton.accessibilityLabel = L("Display: %@", option.title)
                 self.configureModeMenu()
-                if let room = self.displayedRoom { self.render(room: room) }
+                if let snapshot = self.displayedSnapshot { self.render(snapshot: snapshot) }
                 self.onDisplayMode?(option)
             }
         })
@@ -1225,7 +1198,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                     guard let self else { return }
                     self.displayMode = option
                     self.configureMoreMenu()
-                    if let room = self.displayedRoom { self.render(room: room) }
+                    if let snapshot = self.displayedSnapshot { self.render(snapshot: snapshot) }
                     self.onDisplayMode?(option)
                 }
             }),
@@ -1249,6 +1222,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     func setSharing(_ enabled: Bool) {
+        guard supportsSharing else {
+            share.isHidden = true; sharePicker.isHidden = true; shareTitle.isHidden = true; broadcastAppearance.isHidden = true
+            return
+        }
         isSharingScreen = enabled
         if #available(iOS 27.0, *) {
             share.isHidden = false
@@ -1386,7 +1363,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-        scrollView === streamScroll ? nil : scrollView.subviews.first { $0 is VideoView }
+        scrollView === streamScroll ? nil : scrollView.subviews.first { $0 is CallVideoView }
     }
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {

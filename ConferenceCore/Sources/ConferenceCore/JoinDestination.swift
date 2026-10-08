@@ -3,11 +3,13 @@ import Foundation
 public enum JoinDestination: Equatable, Sendable {
     case jam(JamTarget)
     case guest(JoinTarget)
+    case telemost(TelemostTarget)
 
     public var invitationURL: URL {
         switch self {
         case .jam(let target): target.invitationURL
         case .guest(let target): target.invitationURL
+        case .telemost(let target): target.invitationURL
         }
     }
 
@@ -37,10 +39,22 @@ public enum JoinDestination: Equatable, Sendable {
             }
             return try parse(nested, joinLinkHost: nil)
         }
+        if let host = components.host?.lowercased(), TelemostTarget.hosts.contains(host) {
+            return .telemost(try TelemostTarget.parse(candidate))
+        }
         if components.host?.lowercased() == "rock.glowsoft.ru" {
             return .jam(try JamTarget.parse(candidate))
         }
         return .guest(try JoinTarget.parse(candidate, joinLinkHost: joinLinkHost))
+    }
+}
+
+public extension JoinDestination {
+    var engineKind: MeetingEngineKind {
+        switch self { case .jam: .community; case .guest: .guest; case .telemost: .telemost }
+    }
+    var roomIdentifier: String {
+        switch self { case .jam(let target): target.jamID; case .guest(let target): target.roomID; case .telemost(let target): target.roomID }
     }
 }
 

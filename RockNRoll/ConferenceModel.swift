@@ -74,6 +74,7 @@ final class ConferenceModel: ObservableObject {
     func installContinuationFixture(_ coordinator: MeetingContinuationCoordinator) { continuation = coordinator }
     #endif
     private var jamEngine: RockRoomEngine?
+    private var telemostEngine: TelemostCallEngine?
     private let resolver = VendorEndpointResolver.make()
     private let engineDetector: MeetingEngineDetector
     private var engineChoiceRequest: JoinRequest?
@@ -93,7 +94,9 @@ final class ConferenceModel: ObservableObject {
     private var terminalEventHandled = false
     private var sessionGeneration: UInt64 = 0
     private var endpointCache: [URL: URL] = [:]
-    private var guestInvitations: [URL] { history.rooms.filter { $0.engine != .community }.map(\.joinURL) }
+    private var guestInvitations: [URL] {
+        history.rooms.filter { $0.engine != .community && (try? TelemostTarget.parse($0.joinURL.absoluteString)) == nil }.map(\.joinURL)
+    }
     private let websitePresenter = MeetingWebsitePresenter()
     private var websiteLinkAwaitingSelection: URL?
     #if DEBUG
@@ -153,6 +156,7 @@ final class ConferenceModel: ObservableObject {
         switch activeRoute {
         case .guest: engine
         case .jam: jamEngine
+        case .telemost: telemostEngine
         case nil: nil
         }
     }
@@ -359,6 +363,8 @@ final class ConferenceModel: ObservableObject {
                         endpointCache[guest.originURL] = endpoint
                     case .verified(.community):
                         destination = .jam(try JamTarget.parseCompatibleInvitation(guest.invitationURL.absoluteString))
+                    case .verified(.telemost):
+                        destination = .telemost(try TelemostTarget.parse(guest.invitationURL.absoluteString))
                     case .ambiguous:
                         if let known = history.matching(guest.invitationURL)?.engine {
                             if known == .community {
@@ -439,6 +445,23 @@ final class ConferenceModel: ObservableObject {
                     }
                     macCallActivity.retainForGraphicsResources()
                     try selected.join(target: jam, credentials: credentials, container: container, quiet: request.quiet)
+                case .telemost(let target):
+                    let selected = TelemostCallEngine(systemCall: systemCall, catchUp: catchUpStore, chat: chat)
+                    telemostEngine = selected
+                    selected.onEvent = { [weak self] event in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        let failure = self.mediaStatus
+                        self.handle(event: event)
+                        if case .failed = event, let failure { self.status = failure }
+                    }
+                    selected.onMediaStatus = { [weak self, weak selected] message in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        self.mediaStatus = self.isJoining || self.isInConference ? message : nil
+                        selected?.showMediaStatus(message)
+                    }
+                    activeRoomTitle = history.matching(target.invitationURL)?.displayTitle ?? L("Jam %@", target.roomID)
+                    macCallActivity.retainForGraphicsResources()
+                    try selected.join(target: target, name: request.name, container: container, quiet: request.quiet, title: activeRoomTitle)
                 }
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
                 joinTask = nil
@@ -595,14 +618,10 @@ final class ConferenceModel: ObservableObject {
             refreshContinuationBanner()
             statusIsError = false
             if let activeRoute {
-                let identifier: String
-                switch activeRoute {
-                case .guest(let target): identifier = target.roomID
-                case .jam(let target): identifier = target.jamID
-                }
+                let identifier = activeRoute.roomIdentifier
                 history.record(url: activeRoute.invitationURL,
                                title: activeRoomTitle ?? identifier, identifier: identifier,
-                               engine: { if case .jam = activeRoute { return .community }; return .guest }())
+                               engine: activeRoute.engineKind)
                 if let room = history.matching(activeRoute.invitationURL) { calendar.noteJoined(room, invitation: activeRoute.invitationURL) }
             }
         case .joining:
@@ -668,6 +687,7 @@ final class ConferenceModel: ObservableObject {
 
     private func releaseJamEngineIfSelected() {
         if case .jam = activeRoute { jamEngine = nil }
+        if case .telemost = activeRoute { telemostEngine = nil }
     }
 
     private func setActiveRoomTitle(_ title: String) {

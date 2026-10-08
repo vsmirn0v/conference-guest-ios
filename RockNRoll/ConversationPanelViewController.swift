@@ -58,14 +58,15 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     init(catchUp: CatchUpStore, chat: ChatStore,
          initialMode: ConversationMode = .chat, call: CallWorkspaceControls? = nil,
-         docked: Bool = false) {
+         docked: Bool = false, chatAvailable: Bool = true) {
         self.catchUp = catchUp
         self.chat = chat
         self.call = call
         self.docked = docked
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .overFullScreen
-        mode.selectedSegmentIndex = initialMode.rawValue
+        mode.setEnabled(chatAvailable, forSegmentAt: ConversationMode.chat.rawValue)
+        mode.selectedSegmentIndex = (!chatAvailable && initialMode == .chat ? ConversationMode.catchUp : initialMode).rawValue
     }
 
     required init?(coder: NSCoder) { nil }

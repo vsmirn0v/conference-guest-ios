@@ -2,9 +2,10 @@ import LiveKit
 
 /// Prefer the platform H.264 encoder and avoid encoding unused simulcast layers.
 /// Capture, top-layer bitrate, audio and background policy retain SDK defaults.
+/// A single bidirectional peer avoids racing the jam's two transport startups.
 enum RoomMediaPolicy {
     static var options: RoomOptions {
-        RoomOptions(defaultVideoPublishOptions: videoOptions(preferredCodec: .h264), dynacast: true)
+        RoomOptions(defaultVideoPublishOptions: videoOptions(preferredCodec: .h264), dynacast: true, singlePeerConnection: true)
     }
 
     static func videoOptions(preferredCodec: VideoCodec?) -> VideoPublishOptions {

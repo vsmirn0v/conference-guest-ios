@@ -45,7 +45,7 @@ public struct SyncedRoom: Codable, Equatable, Sendable {
         favoritePosition = room.favoritePosition.map { .init($0, version: version) }
         lastJoined = .init(room.lastJoined, version: version); exists = .init(true, version: version)
         hasBeenJoined = room.hasBeenJoined.map { .init($0, version: version) }
-        engine = room.engine.map { .init($0, version: version) }
+        engine = room.engine?.persistenceHint.map { .init($0, version: version) }
         latestInvitationURL = room.latestInvitationURL.map { .init($0, version: version) }
     }
     public var room: RecentRoom {
@@ -139,7 +139,7 @@ public struct RoomSyncDocument: Codable, Equatable, Sendable {
             existing.starred = .init(room.isStarred, version: version)
             if let position = room.favoritePosition { existing.favoritePosition = .init(position, version: version) }
         }
-        if let engine = room.engine, engine != existing.engine?.value { existing.engine = .init(engine, version: version) }
+        if let engine = room.engine?.persistenceHint, engine != existing.engine?.value { existing.engine = .init(engine, version: version) }
         if let url = room.latestInvitationURL, url != existing.latestInvitationURL?.value {
             existing.latestInvitationURL = .init(url, version: version)
         }

@@ -3,6 +3,7 @@ import Foundation
 public enum MeetingEngineEvidence: Equatable, Sendable {
     case guest(endpoint: URL)
     case community
+    case telemost
 }
 
 public enum MeetingEngineDetection: Equatable, Sendable {
@@ -43,6 +44,7 @@ public actor MeetingEngineDetector {
 
     public func detect(_ invitation: URL) async throws -> MeetingEngineDetection {
         try Task.checkCancellation()
+        if (try? TelemostTarget.parse(invitation.absoluteString)) != nil { return .verified(.telemost) }
         let guest = try JoinTarget.parse(invitation.absoluteString)
         let community = try? JamTarget.parseCompatibleInvitation(invitation.absoluteString)
         // Community evidence is room-specific; guest-only results are origin-specific.

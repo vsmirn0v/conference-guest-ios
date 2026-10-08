@@ -697,3 +697,13 @@
 
 "View transcript" = "Посмотреть расшифровку";
 "Screen sharing is unavailable on this Mac." = "Трансляция экрана недоступна на этом Mac.";
+"This meeting requires host admission or signing in on its website." = "Для этой встречи нужно разрешение организатора или вход на её сайте.";
+"The meeting service could not connect (%ld)." = "Не удалось подключиться к сервису встреч (%ld).";
+"This meeting uses a connection protocol this app does not support yet." = "Приложение пока не поддерживает протокол подключения этой встречи.";
+"The meeting connection timed out. Check your network and try again." = "Время подключения к встрече истекло. Проверьте сеть и повторите попытку.";
+"The meeting service declined this connection." = "Сервис встреч отклонил подключение.";
+"Could not connect to the meeting. Check the invitation and your network." = "Не удалось подключиться к встрече. Проверьте приглашение и сеть.";
+"The host removed you from this meeting." = "Организатор удалил вас из встречи.";
+"This meeting has ended." = "Эта встреча завершена.";
+"The camera is unavailable. Audio can continue." = "Камера недоступна. Аудио продолжает работать.";
+"Restoring meeting media…" = "Восстанавливаем аудио и видео встречи…";

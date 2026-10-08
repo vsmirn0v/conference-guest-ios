@@ -142,6 +142,7 @@ final class CalendarMeetingStore: ObservableObject {
                             switch proofs[probeKey(url)] ?? .unknown {
                             case .verified(.guest): kind = .guest
                             case .verified(.community): kind = .community
+                            case .verified(.telemost): kind = .telemost
                             case .ambiguous:
                                 kind = knownEngine(url)
                                 unresolvedConflict = unresolvedConflict || kind == nil

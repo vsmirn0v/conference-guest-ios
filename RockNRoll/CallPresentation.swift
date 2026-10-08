@@ -247,7 +247,8 @@ final class CompactCallHeader: UIView {
     func update(name: String, navigation: Bool, browsing: Bool, pinned: Bool,
                 pinLabel: String?, participantsLabel: String?, chatValue: String?,
                 chatCount: Int = 0, missedCount: Int = 0, status: String?, speaking: CallSpeaker? = nil, focusAvailable: Bool,
-                privacySymbol: String? = nil, privacyDescription: String? = nil, disclosureOnly: Bool = false) {
+                privacySymbol: String? = nil, privacyDescription: String? = nil, disclosureOnly: Bool = false,
+                chatAvailable: Bool = true) {
         sourceName = name
         callStatus = status
         self.privacySymbol = privacySymbol; self.privacyDescription = privacyDescription
@@ -266,6 +267,7 @@ final class CompactCallHeader: UIView {
         conversation.configuration?.image = UIImage(systemName: chatValue == nil ? "bubble.left" : "bubble.left.fill")
         conversation.configuration?.baseForegroundColor = chatValue == nil ? .white : .systemOrange
         conversation.accessibilityValue = chatValue
+        conversation.isHidden = !chatAvailable
         chatBadge.text = chatCount > 99 ? "99+" : String(chatCount)
         chatBadge.isHidden = chatCount == 0
         missed.isHidden = missedCount == 0

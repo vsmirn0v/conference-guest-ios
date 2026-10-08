@@ -4,10 +4,11 @@ import XCTest
 
 @MainActor
 final class RoomMediaPolicyTests: XCTestCase {
-    func testProductionUsesQualifiedHardwareProfileWithoutChangingOtherMediaPolicy() {
+    func testProductionUsesQualifiedHardwareProfileAndSinglePeerTransport() {
         let options = RoomMediaPolicy.options, baseline = RoomOptions()
         let video = options.defaultVideoPublishOptions
         XCTAssertTrue(options.dynacast)
+        XCTAssertTrue(options.singlePeerConnection)
         XCTAssertTrue(video.simulcast)
         XCTAssertEqual(video.preferredCodec, .h264)
         XCTAssertEqual(video.simulcastLayers, [VideoParameters(dimensions: .h180_169,

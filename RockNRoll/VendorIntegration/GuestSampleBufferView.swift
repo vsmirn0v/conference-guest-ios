@@ -4,6 +4,9 @@ import UIKit
 final class GuestSampleBufferView: UIView {
     private let display = AVSampleBufferDisplayLayer()
     private var rotation = 0
+    override var contentMode: UIView.ContentMode {
+        didSet { display.videoGravity = contentMode == .scaleAspectFill ? .resizeAspectFill : .resizeAspect }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)

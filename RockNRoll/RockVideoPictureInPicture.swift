@@ -14,7 +14,7 @@ final class RockVideoPictureInPicture {
     private let caption = UILabel()
     private let floating: FloatingVideoController
     private weak var sourceView: UIView?
-    private var selectedTrack: VideoTrack?
+    private var selectedSource: CallVideoSource?
 
     init(sourceView: UIView, speaker: ActiveSpeakerStore? = nil) {
         self.sourceView = sourceView
@@ -57,18 +57,23 @@ final class RockVideoPictureInPicture {
     var canShow: Bool { floating.canShow }
 
     func show(track: VideoTrack?, name: String = "", isScreenShare: Bool = false) {
+        show(source: track.map { .room($0) }, name: name, isScreenShare: isScreenShare)
+    }
+
+    func show(source: CallVideoSource?, name: String = "", isScreenShare: Bool = false) {
         guard !floating.isEnded else { return }
-        guard let track else { clear(); return }
-        if selectedTrack !== track {
+        guard let source else { clear(); return }
+        if selectedSource?.identity != source.identity {
             retireSink()
-            selectedTrack = track
-            let sink = RoomFloatingVideoSink { [weak self, weak track] sample, rotation in
-                guard let self, self.selectedTrack === track, !self.floating.isEnded else { return }
+            selectedSource = source
+            let identity = source.identity
+            let sink = RoomFloatingVideoSink { [weak self] sample, rotation in
+                guard let self, self.selectedSource?.identity == identity, !self.floating.isEnded else { return }
                 self.video.enqueue(sample, rotation: rotation)
             }
             self.sink = sink
             sink.setWanted(presenting, fps: MediaEnergyBudget.shared.previewFPS)
-            track.add(videoRenderer: sink)
+            source.add(sink)
         }
         video.contentMode = isScreenShare ? .scaleAspectFit : .scaleAspectFill
         caption.text = name.isEmpty ? nil : "  \(name)\(isScreenShare ? L(" · Screen") : "")  "
@@ -87,12 +92,12 @@ final class RockVideoPictureInPicture {
         floating.setSourceView(nil)
         retireSink()
         video.clear()
-        selectedTrack = nil
+        selectedSource = nil
         caption.text = nil
     }
 
     private func retireSink() {
-        if let sink { sink.retire(); selectedTrack?.remove(videoRenderer: sink) }
+        if let sink { sink.retire(); selectedSource?.remove(sink) }
         sink = nil
     }
 
