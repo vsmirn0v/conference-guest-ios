@@ -61,6 +61,7 @@ enum TelemostChatWire {
             .sorted { $0.sentAt < $1.sentAt }
     }
     static func entry(_ body: [String: Any], chatID: String, ownID: String) -> ChatEntry? {
+        let body = body["ServerMessage"] as? [String: Any] ?? body
         guard let client = body["ClientMessage"] as? [String: Any], let plain = client["Plain"] as? [String: Any],
             plain["ChatId"] as? String == chatID,
             let text = (plain["Text"] as? [String: Any])?["MessageText"] as? String, !text.isEmpty, text.utf8.count <= 64_000,
@@ -70,5 +71,9 @@ enum TelemostChatWire {
         let guid = (info["From"] as? [String: Any])?["Guid"] as? String ?? ""
         return .init(id: String(timestamp.int64Value), sender: String((sender["DisplayName"] as? String ?? L("Participant")).prefix(256)),
             text: text, sentAt: Date(timeIntervalSince1970: timestamp.doubleValue / 1_000_000), isOwn: guid == ownID)
+    }
+    static func messageChatID(_ body: [String: Any]) -> String? {
+        let message = body["ServerMessage"] as? [String: Any] ?? body
+        return ((message["ClientMessage"] as? [String: Any])?["Plain"] as? [String: Any])?["ChatId"] as? String
     }
 }

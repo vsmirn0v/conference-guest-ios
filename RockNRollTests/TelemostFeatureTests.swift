@@ -19,11 +19,15 @@ final class TelemostFeatureTests: XCTestCase {
         XCTAssertThrowsError(try TelemostChatWire.request(id: 65536, method: "history", body: [:]))
     }
     func testChatHistoryScopesMessagesAndPreservesTimestampIdentity() throws {
-        let body: [String: Any] = ["Chats": [["ChatId": chatID, "Messages": [message(), message(timestamp: 1_799_000_000_000_000)]],
+        let wrapped: [String: Any] = ["ServerMessage": message(), "Meta": ["Origin": 39]]
+        let body: [String: Any] = ["Chats": [["ChatId": chatID, "Messages": [wrapped, message(timestamp: 1_799_000_000_000_000)]],
                                                 ["ChatId": "other", "Messages": [message(chat: "other")]]]]
         let entries = TelemostChatWire.entries(body, chatID: chatID, ownID: "guest")
         XCTAssertEqual(entries.count, 2); XCTAssertTrue(entries.allSatisfy(\.isOwn))
         XCTAssertLessThan(entries[0].sentAt, entries[1].sentAt)
+        XCTAssertEqual(TelemostChatWire.messageChatID(wrapped), chatID)
+        XCTAssertEqual(TelemostChatWire.messageChatID(message()), chatID)
+        XCTAssertNil(TelemostChatWire.messageChatID(["Meta": [:]]))
         XCTAssertNil(TelemostChatWire.entry(message(chat: "other"), chatID: chatID, ownID: "guest"))
         XCTAssertNil(TelemostChatWire.entry(message(deleted: true), chatID: chatID, ownID: "guest"))
         let store = ChatStore(); store.replace(entries); let count = store.unreadCount
@@ -69,8 +73,14 @@ final class TelemostFeatureTests: XCTestCase {
         try engine.join(target: TelemostTarget.parse(invitation), name: "Native Presentation QA", container: container, quiet: false)
         defer { engine.leave() }
         try await wait { active || ended }; XCTAssertFalse(ended)
+        print("Native chat QA: media connected")
         try await wait { chat.unavailableReason?.hasPrefix("Read-only") == true || ended }
         XCTAssertFalse(chat.canSend); XCTAssertFalse(ended)
+        print("Native chat QA: reader ready, messages \(chat.items.count)")
+        if let expected = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CHAT_TEXT"] {
+            try await wait { chat.items.contains { $0.text == expected } }
+            XCTAssertFalse(chat.items.first { $0.text == expected }?.isOwn ?? true)
+        }
         try engine.startSharingForTesting()
         var pixel: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(nil, 640, 360, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixel), kCVReturnSuccess)

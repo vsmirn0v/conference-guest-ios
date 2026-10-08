@@ -116,7 +116,7 @@ final class TelemostChat {
                 case .data(let data):
                     let packet = try TelemostChatWire.decode(data)
                     if packet.type == 3 {
-                        if ((packet.body["ClientMessage"] as? [String: Any])?["Plain"] as? [String: Any])?["ChatId"] as? String == chatID {
+                        if TelemostChatWire.messageChatID(packet.body) == chatID {
                             refreshHistory(attempt)
                         }
                     } else if let id = packet.requestID {

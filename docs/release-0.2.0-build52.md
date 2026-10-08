@@ -23,5 +23,6 @@ Implementation and acceptance limits: [native feature completion](telemost-featu
 
 ## Delivery
 
-Archive/export/upload and internal/public testing readbacks are recorded below
-when complete. A source commit is not a publication claim.
+Archive, distribution export and upload succeeded from source `80fe18f`.
+The final browser-message acceptance check found a missing chat envelope in the
+parser. This build was not assigned to testing groups; build 53 supersedes it.

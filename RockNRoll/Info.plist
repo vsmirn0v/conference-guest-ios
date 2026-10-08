@@ -32,7 +32,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>52</string>
+	<string>53</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>JoinLinkHost</key>
@@ -46,12 +46,12 @@
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Use Bluetooth headphones and other audio devices for jam audio, including when the jam continues in the background.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Share video when you choose to turn on your camera in a jam.</string>
-	<key>NSCalendarsUsageDescription</key>
-	<string>Find meeting links and times in calendars you choose. Your calendar is never edited. Event details stay on this device; room names saved to Favorites follow your iCloud Sync choice.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Find meeting links and times in calendars you choose. Your calendar is never edited. Event details stay on this device; room names saved to Favorites follow your iCloud Sync choice.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Find meeting links and times in calendars you choose. Your calendar is never edited. Event details stay on this device; room names saved to Favorites follow your iCloud Sync choice.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Share video when you choose to turn on your camera in a jam.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Use your microphone to speak in jams and test your sound privately before unmuting.</string>
 	<key>NSUserActivityTypes</key>

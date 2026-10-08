@@ -18,7 +18,8 @@ capture and reject late frames; sharing does not restart without consent.
 
 Chat establishes fresh ephemeral anonymous service cookies, gets a guest identity,
 joins the meeting's chat and receives Xiva messages. It reads at most 200 messages
-from a bounded snapshot. Chat pushes coalesce history updates, including edits and
+from a bounded snapshot. Provider `ServerMessage` envelopes are unwrapped for both
+history and pushes. Chat pushes coalesce history updates, including edits and
 deletions; stable timestamps preserve identity and unread cursors. Credentials stay
 in memory, request/packet/queue sizes are bounded, and departure cancels readers
 and requests. A chat failure leaves audio/video running. Network recovery renews
@@ -66,6 +67,12 @@ connections, tracks, credentials and capture still end with their call.
 - Fourteen iOS 17.5 checks passed for chat parsing/store, presentation negotiation
   and retirement, and preview policy. This runtime uses the broadcast capture route;
   simulator checks do not qualify the actual ReplayKit extension.
+- A final browser-to-app check caught a missing `ServerMessage` envelope in the
+  history parser. Build 52 was uploaded but not assigned to testers. Build 53 fixes
+  both history and push matching; five focused app checks passed again, including
+  reading an existing browser message. A separate live check received a new message
+  sent from the browser after the native reader was ready, then encoded outgoing
+  presentation and left cleanly.
 - iVitalii was unavailable. Physical Telemost microphone/camera, ReplayKit/system
   chooser, audio routes, background/PiP and cellular/FaceTime recovery remain pending.
 
