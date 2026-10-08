@@ -37,10 +37,16 @@ final class CallWorkspaceControls: ObservableObject {
         }
     }
 
-    func showDetails(from view: UIView, presenter: UIViewController?, title: String, lines: [String]) {
+    func showDetails(from view: UIView, presenter: UIViewController?, title: String, lines: [String],
+                     actions: [(String, () -> Void)] = []) {
         guard let presenter, presenter.presentedViewController == nil else { return }
         let sheet = UIAlertController(title: title, message: lines.filter { !$0.isEmpty }.joined(separator: "\n"),
                                       preferredStyle: .actionSheet)
+        for (title, action) in actions {
+            sheet.addAction(UIAlertAction(title: title, style: .default) { [weak sheet] _ in
+                sheet?.dismiss(animated: true, completion: action)
+            })
+        }
         if invitationURL != nil {
             sheet.addAction(UIAlertAction(title: L("Invite musicians"), style: .default) { [weak self, weak view, weak sheet] _ in
                 // Present the system share sheet after the details sheet has finished closing.

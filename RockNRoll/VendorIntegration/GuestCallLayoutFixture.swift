@@ -12,6 +12,7 @@ final class GuestCallLayoutFixture: UIViewController {
     private var timer: Timer?
     private var selectedName = ""
     private var views: [String: UIView] = [:]
+    private let meetingStatus = MeetingHeaderStatus()
     private let reactions = MeetingReactionsModel()
 
     override func viewDidLoad() {
@@ -43,6 +44,7 @@ final class GuestCallLayoutFixture: UIViewController {
             studio?.presenter.scene.layout = .card
             studio?.presenter.includeCamera = true
         }
+        if scenario == "notices" { catchUp.observe(messages: [], canView: true, enabled: true) }
         let solo = scenario == "solo"
         controls = CallControls(localPreview: preview, state: nil, coordinator: nil, router: nil,
             catchUp: catchUp, chat: ChatStore(), initialDisplayMode: .all,
@@ -53,11 +55,29 @@ final class GuestCallLayoutFixture: UIViewController {
             onCameraState: { [weak self] in self?.controls.setFixtureMedia(camera: $0) },
             usesNativeParticipants: scenario == "participants" || ProcessInfo.processInfo.isiOSAppOnMac,
             studio: studio, activeSpeaker: activeSpeaker,
-            reactions: scenario == "reactions" ? reactions : nil)
+            reactions: scenario == "reactions" ? reactions : nil, meetingStatus: meetingStatus)
         if let studio, ProcessInfo.processInfo.environment["CONFERENCE_TEST_MIC_ACTIVITY"] == "1" {
             controls.fixtureActions = MicrophoneActivityFixture(activity: studio.microphoneActivity).actions
         }
         if scenario == "speaker" { controls.fixtureActions = SpeakerFixtureActions.make(activeSpeaker) }
+        if scenario == "notices" {
+            meetingStatus.updatePrivacy(transcribing: true, recording: false)
+            controls.showNotices([InCallNotice(title: L("The organizer is transcribing this meeting."), actionTitle: nil, action: nil)])
+            controls.fixtureActions = [
+                UIAction(title: "Routine notice in focus") { [weak self] _ in
+                    self?.scheduleStatus { self?.meetingStatus.updateNotices([InCallNotice(title: "Link copied", actionTitle: nil, action: nil)]) }
+                },
+                UIAction(title: "Recording in focus") { [weak self] _ in
+                    self?.scheduleStatus { self?.meetingStatus.updatePrivacy(transcribing: true, recording: true) }
+                },
+                UIAction(title: "Provider action") { [weak self] _ in
+                    self?.meetingStatus.updateNotices([InCallNotice(title: "Please confirm", actionTitle: "Continue", action: {
+                        self?.meetingStatus.updateNotices([])
+                        self?.controls.showMediaStatus("Action completed")
+                    })])
+                }
+            ]
+        }
         let entries: [(String, String, Bool)] = solo ? [("self", "Your contact", false)] :
             [("share", "Ani’s arrangement", true), ("camera", "Aram", false)]
         for (id, name, share) in entries {
@@ -91,7 +111,7 @@ final class GuestCallLayoutFixture: UIViewController {
         controls.onPinParticipant = { [weak self] in self?.streams.setPin($0) }
         controls.frame = view.bounds
         controls.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        if ["participants", "studio", "reactions"].contains(scenario) {
+        if ["participants", "studio", "reactions", "notices"].contains(scenario) {
             // The real SDK overlay can be hosted by a zero-sized child controller.
             // Panels must present from the visible meeting above that host.
             let host = UIViewController()
@@ -132,6 +152,10 @@ final class GuestCallLayoutFixture: UIViewController {
                 timeStampNs: Int64(Date().timeIntervalSince1970 * 1_000_000_000)))
         }
         streams.refreshSelection()
+    }
+    private func scheduleStatus(_ action: @escaping () -> Void) {
+        // Give the test time to close the menu and hide controls first.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: action)
     }
     deinit { timer?.invalidate(); processor.setEnabled(false) }
 }

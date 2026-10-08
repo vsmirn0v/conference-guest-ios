@@ -9,10 +9,18 @@ struct CallPresentationGeometry {
     let compactHeader: Bool
 
     init(bounds: CGRect, insets: UIEdgeInsets, headerHeight: CGFloat,
-         toolbarHeight: CGFloat = 68, hidden: Bool, largeText: Bool = false, allowsRail: Bool = true) {
+         toolbarHeight: CGFloat = 68, hidden: Bool, largeText: Bool = false, allowsRail: Bool = true,
+         statusOnly: Bool = false) {
         let safe = bounds.inset(by: insets).insetBy(dx: 8, dy: 4)
         rail = allowsRail && safe.width > safe.height && safe.height < 480 && safe.height >= 284
-        compactHeader = rail && !largeText
+        compactHeader = (rail && !largeText) || statusOnly
+        if statusOnly && hidden {
+            header = CGRect(x: safe.minX, y: safe.minY, width: safe.width, height: 44)
+            toolbar = .zero
+            stage = CGRect(x: safe.minX, y: header.maxY + 6, width: safe.width,
+                           height: max(0, safe.maxY - header.maxY - 6))
+            return
+        }
         if hidden {
             header = .zero; toolbar = .zero; stage = safe
             return
@@ -163,13 +171,18 @@ final class CompactCallHeader: UIView {
     private let chatBadge = UILabel()
     private let missedBadge = UILabel()
     private let sourceLabel = UILabel()
+    private let privacyIcon = UIImageView()
     private let speakerIndicator = ActiveSpeakerIndicator(font: .systemFont(ofSize: 15, weight: .medium))
     private var sourceName = ""
     private var callStatus: String?
+    private var privacySymbol: String?
+    private var privacyDescription: String?
     private struct Identity: Equatable {
         let source: String
         let status: String?
         let speaker: CallSpeaker?
+        let privacySymbol: String?
+        let privacyDescription: String?
     }
     private var renderedIdentity: Identity?
     private var actions: [UIButton] { [previous, automatic, nextStream, pin, participants, missed, conversation, focus] }
@@ -193,6 +206,10 @@ final class CompactCallHeader: UIView {
         sourceLabel.isAccessibilityElement = false
         speakerIndicator.isAccessibilityElement = false
         details.addSubview(sourceLabel); details.addSubview(speakerIndicator)
+        privacyIcon.contentMode = .scaleAspectFit
+        privacyIcon.isUserInteractionEnabled = false
+        privacyIcon.isAccessibilityElement = false
+        details.addSubview(privacyIcon)
         for (button, symbol, label) in [
             (previous, "chevron.left", L("Previous stream")),
             (automatic, "arrow.triangle.2.circlepath", L("Automatic view")),
@@ -229,11 +246,14 @@ final class CompactCallHeader: UIView {
 
     func update(name: String, navigation: Bool, browsing: Bool, pinned: Bool,
                 pinLabel: String?, participantsLabel: String?, chatValue: String?,
-                chatCount: Int = 0, missedCount: Int = 0, status: String?, speaking: CallSpeaker? = nil, focusAvailable: Bool) {
+                chatCount: Int = 0, missedCount: Int = 0, status: String?, speaking: CallSpeaker? = nil, focusAvailable: Bool,
+                privacySymbol: String? = nil, privacyDescription: String? = nil, disclosureOnly: Bool = false) {
         sourceName = name
         callStatus = status
+        self.privacySymbol = privacySymbol; self.privacyDescription = privacyDescription
         details.accessibilityLabel = L("Jam details") + ", " + name
         setSpeaker(speaking)
+        actions.forEach { $0.isHidden = false }
         for button in [previous, automatic, nextStream] { button.isHidden = !navigation }
         previous.isEnabled = !pinned; nextStream.isEnabled = !pinned
         automatic.isEnabled = browsing || pinned
@@ -253,20 +273,24 @@ final class CompactCallHeader: UIView {
         missed.accessibilityLabel = L("Catch up, %ld missed sections", missedCount)
         missedBadge.text = missedCount > 99 ? "99+" : String(missedCount)
         focus.isHidden = !focusAvailable
+        if disclosureOnly { actions.forEach { $0.isHidden = true } }
         setNeedsLayout()
     }
     func setSpeaker(_ speaker: CallSpeaker?) {
         let visible = callStatus == nil ? speaker : nil
-        let identity = Identity(source: sourceName, status: callStatus, speaker: visible)
+        let identity = Identity(source: sourceName, status: callStatus, speaker: visible, privacySymbol: privacySymbol, privacyDescription: privacyDescription)
         guard renderedIdentity != identity else { return }
         renderedIdentity = identity
         sourceLabel.text = sourceName
         sourceLabel.isHidden = visible == nil
         speakerIndicator.setSpeaker(visible)
         details.configuration?.title = visible == nil ? sourceName : nil
-        details.configuration?.image = visible == nil ? UIImage(systemName: "info.circle") : nil
+        details.configuration?.image = visible == nil ? UIImage(systemName: privacySymbol ?? "info.circle") : nil
+        privacyIcon.image = privacySymbol.flatMap { UIImage(systemName: $0) }
+        privacyIcon.tintColor = privacySymbol == "record.circle" ? .systemRed : .systemOrange
+        privacyIcon.isHidden = visible == nil || privacySymbol == nil
         details.configuration?.baseForegroundColor = callStatus == nil ? .white : .systemOrange
-        details.accessibilityValue = [callStatus, visible?.accessibilityLabel].compactMap { $0 }.joined(separator: ", ")
+        details.accessibilityValue = [callStatus, privacyDescription, visible?.accessibilityLabel].compactMap { $0 }.joined(separator: ", ")
         setNeedsLayout()
     }
     override func layoutSubviews() {
@@ -274,7 +298,9 @@ final class CompactCallHeader: UIView {
         let visible = actions.filter { !$0.isHidden }
         let start = bounds.maxX - CGFloat(visible.count) * 44 - 4
         details.frame = CGRect(x: 4, y: 0, width: max(0, start - 8), height: 44)
-        sourceLabel.frame = CGRect(x: 7, y: 3, width: max(0, details.bounds.width - 14), height: 14)
+        let inset: CGFloat = privacyIcon.isHidden ? 7 : 24
+        sourceLabel.frame = CGRect(x: inset, y: 3, width: max(0, details.bounds.width - inset - 7), height: 14)
+        privacyIcon.frame = CGRect(x: 7, y: 3, width: 13, height: 14)
         speakerIndicator.frame = CGRect(x: 0, y: 18, width: details.bounds.width, height: 23)
         for (index, button) in visible.enumerated() {
             button.frame = CGRect(x: start + CGFloat(index) * 44, y: 0, width: 44, height: 44)

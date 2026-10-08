@@ -13,6 +13,74 @@ final class MeetingPresentationUITests: XCTestCase {
         return app
     }
 
+    func testInlinePrivacyNoticeNeverCoversNavigationAndOpensTranscript() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for language in ["en", "ru"] {
+            let app = launch(language, scenario: "notices")
+            let viewport = app.scrollViews["Shared screen viewport"]
+            XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+            for orientation: UIDeviceOrientation in [.portrait, .landscapeLeft, .portrait] {
+                XCUIDevice.shared.orientation = orientation
+                let landscape = orientation == .landscapeLeft
+                let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    (app.windows.firstMatch.frame.width > app.windows.firstMatch.frame.height) == landscape
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed)
+                XCTAssertFalse(app.otherElements["Top meeting notices"].exists)
+                let header = landscape ? app.otherElements["Compact meeting header"] : app.buttons["Meeting status"]
+                let next = app.buttons[language == "ru" ? "Следующий поток" : "Next stream"]
+                XCTAssertTrue(next.isHittable)
+                XCTAssertFalse(header.frame.intersects(viewport.frame))
+                if !landscape { XCTAssertFalse(header.frame.intersects(next.frame)) }
+                assertControls(app, language: language)
+                let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+                attachment.name = "Inline privacy \(language) \(orientation.rawValue)"
+                attachment.lifetime = .keepAlways; add(attachment)
+            }
+            app.buttons["Meeting status"].tap()
+            let transcript = app.buttons[language == "ru" ? "Посмотреть расшифровку" : "View transcript"]
+            XCTAssertTrue(transcript.waitForExistence(timeout: 5))
+            transcript.tap()
+            XCTAssertTrue(app.segmentedControls["Conversation mode"].waitForExistence(timeout: 5))
+            app.buttons[language == "ru" ? "Закрыть беседу" : "Close conversation"].tap()
+            app.buttons[language == "ru" ? "Другие действия" : "More call options"].tap()
+            app.buttons["Provider action"].tap()
+            app.buttons["Meeting status"].tap()
+            app.buttons["Continue"].tap()
+            let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                app.buttons["Meeting status"].label.contains("Action completed")
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 5), .completed)
+            app.terminate()
+        }
+    }
+    func testFocusRoutineNoticeStaysHiddenAndPrivacyUsesOnlyCompactHeader() throws {
+        let app = launch(scenario: "notices")
+        let viewport = app.scrollViews["Shared screen viewport"]
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+        Thread.sleep(forTimeInterval: 4)
+        app.buttons["More call options"].tap(); app.buttons["Routine notice in focus"].tap()
+        app.buttons["Hide controls"].tap()
+        Thread.sleep(forTimeInterval: 4)
+        XCTAssertFalse(app.buttons["Leave"].exists)
+        XCTAssertFalse(app.otherElements["Compact meeting header"].exists)
+        viewport.tap()
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 5))
+        viewport.pinch(withScale: 2, velocity: 1)
+        let zoom = try XCTUnwrap(viewport.value as? String)
+        app.buttons["More call options"].tap(); app.buttons["Recording in focus"].tap()
+        app.buttons["Hide controls"].tap()
+        let header = app.otherElements["Compact meeting header"]
+        XCTAssertTrue(header.waitForExistence(timeout: 5))
+        XCTAssertEqual(header.frame.height, 44)
+        XCTAssertFalse(app.buttons["Leave"].exists)
+        XCTAssertFalse(header.frame.intersects(viewport.frame))
+        XCTAssertEqual(viewport.value as? String, zoom)
+        let expired = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !header.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [expired], timeout: 6), .completed)
+        XCTAssertEqual(viewport.value as? String, zoom)
+    }
+
     func testCompactSDKLayoutAllowsButtonsAndSwipeNavigation() {
         let app = launch(scenario: "compact")
         defer { XCUIDevice.shared.orientation = .portrait }

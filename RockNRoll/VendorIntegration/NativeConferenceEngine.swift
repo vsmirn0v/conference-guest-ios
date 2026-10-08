@@ -68,7 +68,7 @@ final class NativeConferenceEngine: CallEngine {
     private var offeredShare: GuestStreamViews.PinTarget?
     private var floatingVideo: GuestVideoPictureInPicture?
     private weak var floatingSourceView: UIView?
-    private var currentNotices: [InCallNotice] = []
+    private let meetingStatus = MeetingHeaderStatus()
     private var configuredNetworkURL: URL?
     private var leaveRequested = false { didSet { updatePiPMicrophoneStatus() } }
     private var hasBecomeActive = false
@@ -614,7 +614,7 @@ final class NativeConferenceEngine: CallEngine {
         activeInvitationURL = target.invitationURL
         activeRoomIdentifier = target.roomID
         chat?.clear()
-        currentNotices = []
+        meetingStatus.reset()
         identity.setName(displayName)
         let room = try resolve(target)
         nameUpdateGeneration &+= 1
@@ -1188,7 +1188,7 @@ final class NativeConferenceEngine: CallEngine {
                                                   !isOn || !self.isSystemHeld else { return }
                                             self.cameraIntentOn = isOn
                                         }, studio: self.studio, activeSpeaker: self.activeSpeaker,
-                                        reactions: self.reactions)
+                                        reactions: self.reactions, meetingStatus: self.meetingStatus)
             self.activeControls = controls
             #if DEBUG
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_REACTIONS"] == "1" {
@@ -1222,7 +1222,6 @@ final class NativeConferenceEngine: CallEngine {
             streams.refreshSelection()
             controls.setFloatingVideoAvailable(self.floatingVideo?.canShow == true)
             controls.setAudioRouteName(self.audio.outputName)
-            controls.showNotices(self.currentNotices)
             self.completeMediaReconnectIfReady()
             self.updateNetworkRecoveryStatus()
             return controls
@@ -1251,14 +1250,13 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func showToasts(_ toasts: [JazzToast]) {
-        currentNotices = toasts.map { toast in
+        meetingStatus.updateNotices(toasts.map { toast in
             InCallNotice(title: toast.title,
                          actionTitle: toast.button?.title,
                          action: toast.button.map { button in
                              { button.action(UUID()) }
                          })
-        }
-        activeControls?.showNotices(currentNotices)
+        })
     }
 
     private func observeTranscript(state: JazzActiveConferenceState) {
@@ -1279,6 +1277,8 @@ final class NativeConferenceEngine: CallEngine {
                 @unknown default: record = .unavailable
                 }
                 self.studio.recording.observe(record)
+                self.meetingStatus.updatePrivacy(transcribing: menu.asrState.isOn,
+                    recording: record == .recording || record == .stopping)
                 if self.chat?.canSend != canChat { self.chat?.canSend = canChat }
             }
         transcriptSubscription = state.$messages.removeDuplicates().receive(on: DispatchQueue.main)
@@ -1400,7 +1400,7 @@ final class NativeConferenceEngine: CallEngine {
             self.toastSubscription?.cancel(); self.toastSubscription = nil
             self.roomTitleSubscription?.cancel(); self.roomTitleSubscription = nil
             self.transcriptSubscription?.cancel(); self.accessSubscription?.cancel()
-            self.currentNotices = []
+            self.meetingStatus.reset()
             self.activeControls = nil
             self.systemCall.markEnded(reason: .remoteEnded)
             self.hasJoinStarted = false

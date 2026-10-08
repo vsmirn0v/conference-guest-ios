@@ -686,3 +686,13 @@
 "Reactions are unavailable in this meeting." = "Реакции недоступны в этом джеме.";
 "Meeting actions" = "Действия в джеме";
 "You, %@" = "Вы, %@";
+
+"Transcription on" = "Расшифровка включена";
+
+"The organizer is transcribing this meeting." = "Организатор расшифровывает встречу.";
+
+"Recent notices" = "Последние уведомления";
+
+"Meeting details" = "Сведения о встрече";
+
+"View transcript" = "Посмотреть расшифровку";

@@ -196,10 +196,7 @@ extension SceneDelegate {
                 catchUp: model.catchUpStore, chat: model.chat), animated: false)
             return true
         }
-        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_LAYOUT_FIXTURE"] == "notice" {
-            controller.present(NoticeLayoutFixtureViewController(), animated: false)
-            return true
-        }
+
         if let raw = ProcessInfo.processInfo.environment["CONFERENCE_TEST_INVITE"],
            let url = URL(string: raw) {
             model.testDisplayNameOverride = ProcessInfo.processInfo.environment["CONFERENCE_TEST_NAME"]

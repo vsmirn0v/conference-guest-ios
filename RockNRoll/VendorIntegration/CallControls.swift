@@ -80,7 +80,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private var stageActive = false
     private var stageHasFrame = false
     var onViewShare: (() -> Void)?
-    private let notices = TopNoticeView()
+    private let meetingStatus: MeetingHeaderStatus
+    private var headerStatus = MeetingHeaderStatus.Snapshot()
+    private let privacyIndicator = UIImageView()
+    private weak var transcriptStore: CatchUpStore?
+    private var onViewTranscript: (() -> Void)?
     private var displayMode: ConferenceDisplayMode = .all
     private var hasScreenShare = false
     private var hasVideo = false
@@ -121,7 +125,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
          onCameraState: @escaping (Bool) -> Void,
          usesNativeParticipants: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
          studio: StudioModel? = nil, activeSpeaker: ActiveSpeakerStore? = nil,
-         reactions: MeetingReactionsModel? = nil) {
+         reactions: MeetingReactionsModel? = nil, meetingStatus: MeetingHeaderStatus? = nil) {
+        self.meetingStatus = meetingStatus ?? MeetingHeaderStatus()
         self.studio = studio
         self.reactions = reactions
         self.activeSpeaker = activeSpeaker ?? ActiveSpeakerStore()
@@ -410,7 +415,18 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         callStateLabel.font = .preferredFont(forTextStyle: .caption2)
         callStateLabel.textColor = .systemOrange
         callStateLabel.isHidden = true
-        let identity = UIStackView(arrangedSubviews: [titleLabel, countLabel, routeLabel, callStateLabel])
+        privacyIndicator.contentMode = .scaleAspectFit
+        privacyIndicator.isHidden = true
+        privacyIndicator.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        privacyIndicator.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        let titleRow = UIStackView(arrangedSubviews: [titleLabel, privacyIndicator])
+        titleRow.spacing = 6; titleRow.alignment = .center
+        let identity = UIStackView(arrangedSubviews: [titleRow, countLabel, routeLabel, callStateLabel])
+        identity.isUserInteractionEnabled = true
+        identity.isAccessibilityElement = true
+        identity.accessibilityTraits = .button
+        identity.accessibilityIdentifier = "Meeting status"
+        identity.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openMeetingDetails)))
         identity.axis = .vertical
         identity.spacing = 1
         let header = UIStackView(arrangedSubviews: [identity, participantsButton,
@@ -425,8 +441,6 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         header.layer.cornerRadius = 12
         header.translatesAutoresizingMaskIntoConstraints = false
         addSubview(header)
-        notices.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(notices)
         speakerLabel.font = .preferredFont(forTextStyle: .subheadline)
         speakerLabel.textColor = .systemGreen
         speakerLabel.backgroundColor = UIColor.black.withAlphaComponent(0.7)
@@ -443,6 +457,17 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             catchUpButton.heightAnchor.constraint(equalToConstant: 48), missedWidth, missedHeight
         ])
         installPresentation()
+        transcriptStore = catchUp
+        onViewTranscript = { [weak self, weak catchUp, weak chat] in
+            guard let self, let catchUp, let chat, catchUp.canViewTranscript == true else { return }
+            self.openConversation(catchUp: catchUp, chat: chat, selected: .liveText)
+        }
+        self.meetingStatus.$snapshot.receive(on: DispatchQueue.main).sink { [weak self] value in
+            guard let self else { return }
+            self.headerStatus = value
+            if value.actionTitle != nil { self.focus.show() }
+            self.renderHeaderStatus()
+        }.store(in: &subscriptions)
         reactionsButton.isHidden = true
         if let reactions {
             reactions.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] in self?.layoutPresentation() }
@@ -637,9 +662,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
     private func openConversation(catchUp: CatchUpStore, chat: ChatStore,
                                   selected: ConversationMode) {
-        var responder: UIResponder? = self
-        while let current = responder, !(current is UIViewController) { responder = current.next }
-        guard let presenter = responder as? UIViewController,
+        guard let presenter = presentationContainer,
               presenter.presentedViewController == nil else { return }
         presenter.present(ConversationPanelViewController(catchUp: catchUp, chat: chat,
                                                            initialMode: selected, call: workspace),
@@ -708,9 +731,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
 
     func showNotices(_ items: [InCallNotice]) {
-        notices.show(items)
-        if !items.isEmpty { focus.show() }
-        layoutPresentation()
+        meetingStatus.updateNotices(items)
     }
 
     func setHeld(_ held: Bool) {
@@ -751,20 +772,45 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
 
     func setAudioRouteName(_ name: String) {
-        routeLabel.text = L("Audio · %@", name)
         workspace.routeName = name
         route.accessibilityValue = name
+        renderHeaderStatus()
     }
 
     private func renderCallStatus() {
         let status = isHeld ? L("On hold · audio resumes after your call") : mediaStatus
-        let recording = studio?.recording.isRecording == true
-        let parts = [recording ? L("● REC") : nil, status].compactMap { $0 }
-        callStateLabel.text = parts.isEmpty ? nil : parts.joined(separator: " · ")
-        callStateLabel.textColor = recording ? .systemRed : .systemOrange
-        callStateLabel.accessibilityLabel = recording ? L("Meeting is being recorded") : status
-        callStateLabel.isHidden = callStateLabel.text == nil
+        callStateLabel.text = status
+        callStateLabel.accessibilityLabel = status
+        callStateLabel.isHidden = status == nil
         surface.setNeedsLayout()
+    }
+
+    private func renderHeaderStatus() {
+        routeLabel.text = headerStatus.noticeTitle ?? L("Audio · %@", workspace.routeName)
+        routeLabel.textColor = headerStatus.actionTitle == nil ? .lightGray : .systemOrange
+        privacyIndicator.image = headerStatus.privacySymbol.flatMap { UIImage(systemName: $0) }
+        privacyIndicator.tintColor = headerStatus.recording ? .systemRed : .systemOrange
+        privacyIndicator.isHidden = headerStatus.privacySymbol == nil
+        surface.setNeedsLayout()
+    }
+
+    @objc private func openMeetingDetails() {
+        showMeetingDetails(from: headerView ?? self)
+    }
+    private func showMeetingDetails(from source: UIView) {
+        var lines = [countLabel.text, L("Audio · %@", workspace.routeName),
+            callStateLabel.isHidden ? nil : callStateLabel.text].compactMap { $0 }
+        lines += headerStatus.privacyDetails
+        if let title = headerStatus.noticeTitle, !lines.contains(title) { lines.append(title) }
+        let recent = meetingStatus.recentMessages.filter { !lines.contains($0) }
+        if !recent.isEmpty { lines += [L("Recent notices")] + recent }
+        var actions = meetingStatus.activeActions.compactMap { item -> (String, () -> Void)? in
+            guard let title = item.actionTitle, let action = item.action else { return nil }
+            return (title, action)
+        }
+        if headerStatus.transcribing, transcriptStore?.canViewTranscript == true, let onViewTranscript { actions.insert((L("View transcript"), onViewTranscript), at: 0) }
+        workspace.showDetails(from: source, presenter: presentationContainer,
+            title: titleLabel.text ?? L("Jam"), lines: lines, actions: actions)
     }
 
     private func updateChatBadge() {
@@ -836,7 +882,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         focus.onChange = { [weak self] _ in self?.layoutPresentation() }
         focus.canHide = { [weak self] in
             guard let self else { return false }
-            return !self.isHeld && self.mediaStatus == nil && self.notices.subviews.isEmpty &&
+            return !self.isHeld && self.mediaStatus == nil && self.meetingStatus.activeActions.isEmpty &&
                 self.presentationContainer?.presentedViewController == nil
         }
         focusButton.configuration = .tinted()
@@ -874,11 +920,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         compactHeader.pin.addAction(UIAction { [weak self] _ in self?.onPinStage?(); self?.focus.interaction() }, for: .touchUpInside)
         compactHeader.details.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            self.workspace.showDetails(from: self.compactHeader.details, presenter: self.presentationContainer,
-                title: self.titleLabel.text ?? L("Jam"),
-                lines: [self.countLabel.text, self.routeLabel.text,
-                        self.callStateLabel.isHidden ? nil : self.callStateLabel.text,
-                        self.speakerLabel.isHidden ? nil : self.speakerLabel.text].compactMap { $0 })
+            self.showMeetingDetails(from: self.compactHeader.details)
         }, for: .touchUpInside)
         moreButton.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
     }
@@ -923,26 +965,35 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         toolbar.arrange(rail: false, largeText: large)
         let headerHeight = max(58, header.systemLayoutSizeFitting(CGSize(width: min(440, window.bounds.width - 16), height: 0),
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height)
+        let statusOnly = focus.hidden && headerStatus.announcingPrivacy
         let geometry = CallPresentationGeometry(bounds: surface.bounds, insets: window.safeAreaInsets,
-            headerHeight: headerHeight, toolbarHeight: toolbar.preferredHeight, hidden: focus.hidden, largeText: large)
+            headerHeight: headerHeight, toolbarHeight: toolbar.preferredHeight, hidden: focus.hidden, largeText: large, statusOnly: statusOnly)
         toolbar.arrange(rail: geometry.rail, largeText: large)
         automaticView.configuration?.title = large ? nil : L("Auto")
         automaticView.configuration?.image = large ? UIImage(systemName: "arrow.triangle.2.circlepath") : nil
         header.frame = geometry.header; toolbar.frame = geometry.toolbar
         header.isHidden = focus.hidden || geometry.compactHeader; toolbar.isHidden = focus.hidden
         compactHeader.frame = geometry.header
-        compactHeader.isHidden = focus.hidden || !geometry.compactHeader
+        compactHeader.isHidden = (focus.hidden && !statusOnly) || !geometry.compactHeader
         let showsStage = !stageView.isHidden
         let pinLabel = showsStage ? stageName.map { "\(stagePinned ? L("Unpin") : L("Pin")) \($0) \(stageIsShare ? L("screen share") : L("video"))" } : nil
         let status = callStateLabel.isHidden ? nil : callStateLabel.text
-        compactHeader.update(name: status ?? (showsStage ? (stageName ?? titleLabel.text ?? L("Jam")) + (stageIsShare ? L(" · Screen") : "") : titleLabel.text ?? L("Jam")),
+        compactHeader.update(name: status ?? headerStatus.noticeTitle ?? (statusOnly ? headerStatus.privacySummary : nil) ?? (showsStage ? (stageName ?? titleLabel.text ?? L("Jam")) + (stageIsShare ? L(" · Screen") : "") : titleLabel.text ?? L("Jam")),
             navigation: navigationCount > 1 && displayMode != .audioOnly && !isWaitingForOthers,
             browsing: lastPresentation?.browsing == true, pinned: stagePinned,
             pinLabel: pinLabel,
             participantsLabel: participantsButton.accessibilityLabel,
             chatValue: unreadChatCount > 0 ? catchUpButton.accessibilityLabel : nil,
             chatCount: unreadChatCount, missedCount: missedCount, status: status,
-            speaking: activeSpeaker.current, focusAvailable: showsStage)
+            speaking: statusOnly || headerStatus.noticeTitle != nil ? nil : activeSpeaker.current, focusAvailable: showsStage,
+            privacySymbol: headerStatus.privacySymbol,
+            privacyDescription: headerStatus.privacyDetails.joined(separator: " · "), disclosureOnly: statusOnly)
+        if let identity = header.arrangedSubviews.first {
+            identity.accessibilityLabel = [titleLabel.text, countLabel.text, routeLabel.text,
+                callStateLabel.isHidden ? nil : callStateLabel.text].compactMap { $0 }.joined(separator: ", ")
+            identity.accessibilityValue = headerStatus.privacyDetails.joined(separator: " · ")
+            identity.accessibilityHint = L("Meeting details")
+        }
         navigation.isHidden = focus.hidden || geometry.compactHeader || navigationCount < 2 || stagePinned || displayMode == .audioOnly || isWaitingForOthers
         var stage = geometry.stage
         if !navigation.isHidden {
@@ -956,8 +1007,6 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             backdrop.isAccessibilityElement = focus.hidden
             backdrop.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
         }
-        notices.frame = CGRect(x: geometry.header.minX, y: geometry.header.maxY + 4,
-            width: geometry.header.width, height: notices.systemLayoutSizeFitting(CGSize(width: geometry.header.width, height: 0)).height)
         focusButton.isHidden = focus.hidden || stageView.isHidden || geometry.compactHeader
         focusButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44)
         localShareCard.alpha = focus.hidden ? 0 : 1
@@ -1012,7 +1061,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.focus.automaticallyHides.toggle()
             self.refreshMoreMenu?()
         }
-        var actions: [UIMenuElement] = [focusAction, autoHide, float, automatic, viewMenu, fit, flip]
+        let details = UIAction(title: L("Meeting details"), image: UIImage(systemName: "info.circle")) { [weak self] _ in
+            guard let self else { return }; self.showMeetingDetails(from: self.moreButton)
+        }
+        var actions: [UIMenuElement] = [details, focusAction, autoHide, float, automatic, viewMenu, fit, flip]
         if workspace.invitationURL != nil {
             actions.insert(UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
                 [weak self] _ in guard let self else { return }
@@ -1114,85 +1166,3 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         return configuration
     }
 }
-
-struct InCallNotice {
-    let title: String
-    let actionTitle: String?
-    let action: (() -> Void)?
-}
-
-final class TopNoticeView: UIStackView {
-    init() {
-        super.init(frame: .zero)
-        axis = .vertical
-        spacing = 8
-        isHidden = true
-        accessibilityIdentifier = "Top meeting notices"
-    }
-
-    required init(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    func show(_ items: [InCallNotice]) {
-        arrangedSubviews.forEach { view in
-            removeArrangedSubview(view)
-            view.removeFromSuperview()
-        }
-        for item in items.suffix(2) {
-            let row = UIStackView()
-            row.axis = .horizontal
-            row.alignment = .center
-            row.spacing = 10
-            row.isLayoutMarginsRelativeArrangement = true
-            row.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 10, leading: 14,
-                                                                   bottom: 10, trailing: 14)
-            row.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.97)
-            row.layer.cornerRadius = 14
-            row.layer.masksToBounds = true
-            let label = UILabel()
-            label.text = item.title
-            label.font = .preferredFont(forTextStyle: .subheadline)
-            label.textColor = .label
-            label.numberOfLines = 3
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            row.addArrangedSubview(label)
-            if let title = item.actionTitle, let action = item.action {
-                let button = UIButton(type: .system)
-                button.setTitle(title, for: .normal)
-                button.titleLabel?.font = .preferredFont(forTextStyle: .subheadline)
-                button.addAction(UIAction { _ in action() }, for: .touchUpInside)
-                row.addArrangedSubview(button)
-            }
-            addArrangedSubview(row)
-        }
-        isHidden = arrangedSubviews.isEmpty
-    }
-}
-
-#if DEBUG
-final class NoticeLayoutFixtureViewController: UIViewController {
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .black
-        let notice = TopNoticeView()
-        notice.show([InCallNotice(title: L("Meeting transcript is on"), actionTitle: nil, action: nil)])
-        notice.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(notice)
-        let controls = UIButton(type: .system)
-        controls.setTitle("Fixture controls", for: .normal)
-        controls.backgroundColor = .secondarySystemBackground
-        controls.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(controls)
-        NSLayoutConstraint.activate([
-            notice.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            notice.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
-            notice.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
-            notice.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-            notice.widthAnchor.constraint(lessThanOrEqualToConstant: 440),
-            controls.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 6),
-            controls.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -6),
-            controls.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -4),
-            controls.heightAnchor.constraint(equalToConstant: 54),
-        ])
-    }
-}
-#endif

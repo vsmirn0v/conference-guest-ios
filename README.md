@@ -10,7 +10,7 @@ Guest invitations accept both `https://<host>/calls/<room>?psw=…` and `https:/
 
 The app saves the chosen display name and a device-only list of ten recent jams plus any starred jams. New installs show “Musician” and can fill the name from a contact selected by the user. The in-call conversation panel switches between chat and available transcript lines. Both meeting engines offer all video, screen shares, and audio-only views. In guest rooms, the screen-share view uses the SDK's shared-screen focus and covers camera-only playback when no share is live; it does not change the meeting's camera policy. Compatible websites can hand off `jcp` or `jazz` links. An embedded invitation, `host` parameter, or domain-qualified room ID selects the meeting website automatically; otherwise an exact saved invitation or the website chosen in Settings is used. If neither identifies the website, the app asks the user to choose one. Guest rooms on different websites can be joined in sequence without restarting the app.
 
-Meeting notices appear at the top of the call view, clear of the bottom controls.
+Meeting notices appear inline in the header and expire after four seconds. Recording/transcription indicators remain available in Meeting details, with provider actions and transcript access when permitted. Routine notices preserve focus mode.
 
 When multitasking, native Picture in Picture keeps the selected remote screen
 share or video visible. The More menu offers manual floating video and a saved
