@@ -19,8 +19,11 @@ final class GuestPresenterSender: GuestScreenCapture {
         }
     }
     func start() {
+        start(source: .presenter)
+    }
+    func start(source: LocalSharePreview.Source) {
         guard !started else { return }
-        started = true; preview.begin(source: .presenter)
+        started = true; preview.begin(source: source)
         upload?.broadcastStarted(withSetupInfo: nil)
     }
     func send(_ sample: CMSampleBuffer) {

@@ -44,6 +44,7 @@ targets:
         INFOPLIST_FILE: RockNRoll/Info.plist
         CODE_SIGN_ENTITLEMENTS: RockNRoll/App.entitlements
         SWIFT_VERSION: "5.0"
+        SWIFT_OBJC_BRIDGING_HEADER: RockNRoll/BridgingHeader.h
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 5V64BP2H3P

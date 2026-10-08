@@ -717,9 +717,9 @@ final class NativeConferenceEngine: CallEngine {
             return
         }
         #if canImport(ScreenCaptureKit)
-        if #available(iOS 27.0, *) {
+        if GuestScreenCaptureFactory.isAvailable {
             if screenCapture == nil {
-                screenCapture = NativeGuestScreenCapture(preview: localSharePreview) { [weak self] message in
+                screenCapture = GuestScreenCaptureFactory.make(preview: localSharePreview) { [weak self] message in
                     self?.activeControls?.showMediaStatus(message)
                 }
             }
@@ -729,7 +729,7 @@ final class NativeConferenceEngine: CallEngine {
         }
         #endif
         if ProcessInfo.processInfo.isiOSAppOnMac {
-            activeControls?.showMediaStatus(L("Screen sharing requires macOS 27 or later."))
+            activeControls?.showMediaStatus(L("Screen sharing is unavailable on this Mac."))
         } else if GuestBroadcastStop.prepare() {
             let epoch = UUID()
             localPreviewEpoch = epoch
@@ -1030,9 +1030,9 @@ final class NativeConferenceEngine: CallEngine {
                 }
             }
             #if canImport(ScreenCaptureKit)
-            if ProcessInfo.processInfo.isiOSAppOnMac, #available(iOS 27.0, *) {
+            if ProcessInfo.processInfo.isiOSAppOnMac, GuestScreenCaptureFactory.isAvailable {
                 self.studio.presenter.makeScreenSource = { [weak self] onFrame, onEffect, onSelection, onEnd in
-                    NativeGuestScreenCapture(preview: self?.localSharePreview ?? LocalSharePreview(),
+                    GuestScreenCaptureFactory.make(preview: self?.localSharePreview ?? LocalSharePreview(),
                         onFrame: onFrame, onEffect: onEffect, onSelection: onSelection, onEnd: onEnd,
                         onError: { _ in })
                 }
