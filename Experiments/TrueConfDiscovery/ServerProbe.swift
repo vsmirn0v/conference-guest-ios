@@ -21,14 +21,18 @@ final class ServerProbe {
     private var publish = false
     private var sharing = false
     private var didPublish = false
+    private var codecPolicy = CodecPolicy.serverDefault
+    private var preferReceiveH264 = false
     private lazy var factory = LKRTCPeerConnectionFactory(
-        encoderFactory: LKRTCDefaultVideoEncoderFactory(),
-        decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio
+        encoderFactory: codecPolicy == .hevcOnly ? HEVCEncoderFactory() : ServerEncoderFactory(),
+        decoderFactory: codecPolicy == .hevcOnly ? HEVCDecoderFactory() : ServerDecoderFactory(), audioDevice: audio
     )
 
-    func run(invitation: URL, name: String, seconds: UInt64, publish: Bool, sharing: Bool) async throws {
+    func run(invitation: URL, name: String, seconds: UInt64, publish: Bool, sharing: Bool, codecPolicy: CodecPolicy, preferReceiveH264: Bool) async throws {
         self.publish = publish
         self.sharing = sharing
+        self.codecPolicy = codecPolicy
+        self.preferReceiveH264 = preferReceiveH264
         LKRTCInitializeSSL()
         let connection = try await ServerConnection.fetch(invitation, name: name)
         self.connection = connection
@@ -73,8 +77,9 @@ final class ServerProbe {
             try await Task.sleep(nanoseconds: 1_000_000_000)
             if let failure { throw failure }
         }
-        await peer?.stats()
+        let encoded = await peer?.stats() ?? 0
         audio.report()
+        guard !publish || encoded > 10 else { throw ProbeError.mediaNotConnected }
         guard connectedMedia, let peer, peer.isConnected, peer.receivedFrames > 10 else {
             throw ProbeError.mediaNotConnected
         }
@@ -126,6 +131,13 @@ final class ServerProbe {
             guard let type = object["type"] as? String, let peer else { return }
             if type == "offer" {
                 sentSDP = false
+                if preferReceiveH264, let sdp = object["sdp"] as? String {
+                    try await peer.setRemote(.init(type: .offer, sdp: sdp))
+                    let codecs = factory.rtpReceiverCapabilities(forKind: "video").codecs
+                    for transceiver in peer.connection.transceivers where transceiver.mediaType == .video {
+                        try transceiver.setCodecPreferences(codecs.filter { $0.name == "H264" } + codecs.filter { $0.name != "H264" }, error: ())
+                    }
+                }
                 let answer = try await peer.answer(object)
                 try await sendMedia(["type": "answer", "sdp": answer["sdp"] ?? "", "browser": "RockNRoll Native Probe"])
                 sentSDP = true
@@ -136,7 +148,7 @@ final class ServerProbe {
                 if publish && !didPublish {
                     didPublish = true
                     sentSDP = false
-                    let offer = try await peer.publishPattern(sharing: false, preferH264: false)
+                    let offer = try await peer.publishPattern(sharing: false, codecPolicy: codecPolicy)
                     try await sendMedia(["type": "offer", "sdp": offer["sdp"] ?? "", "browser": "RockNRoll Native Probe"])
                     sentSDP = true
                     let queued = pendingCandidates
@@ -214,7 +226,7 @@ enum ServerProbeMain {
     @MainActor static func main() async {
         let args = CommandLine.arguments
         guard args.count >= 2, let invitation = URL(string: args[1]) else {
-            print("Usage: TrueConfServerProbe <HTTPS invitation> [seconds, max 60] [test name] [--publish|--share]")
+            print("Usage: TrueConfServerProbe <HTTPS invitation> [seconds, max 60] [test name] [--publish|--share] [--h264|--h264-only|--hevc-only]")
             exit(2)
         }
         let probe = ServerProbe()
@@ -223,7 +235,9 @@ enum ServerProbeMain {
             try await probe.run(invitation: invitation, name: args.count > 3 ? args[3] : "Rock Native Probe",
                                 seconds: min(60, max(5, UInt64(args.count > 2 ? args[2] : "25") ?? 25)),
                                 publish: args.contains("--publish") || args.contains("--share"),
-                                sharing: args.contains("--share"))
+                                sharing: args.contains("--share"),
+                                codecPolicy: args.contains("--hevc-only") ? .hevcOnly : (args.contains("--h264-only") ? .h264Only : (args.contains("--h264") ? .preferH264 : .serverDefault)),
+                                preferReceiveH264: args.contains("--receive-h264"))
         } catch { probeLog("failed", ["error": String(describing: error)]); code = 1 }
         await probe.stop()
         exit(code)

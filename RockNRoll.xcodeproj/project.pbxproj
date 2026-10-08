@@ -28,6 +28,7 @@
 		0E9EE5795A57769858BFC5C4 /* GuestVideoFrameTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 908B7BD8621D56B596FE8550 /* GuestVideoFrameTests.swift */; };
 		0F0D0CECF418B042D6267B31 /* MicrophoneActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E00CA98C4B1068D38036062 /* MicrophoneActivity.swift */; };
 		0F1E328D1D17EB3FBC4BBB80 /* RockRoomEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A05CC817B412E4FA9E2EE3A /* RockRoomEngine.swift */; };
+		0F5DE7D269EC34B10CC5111A /* NativeH264Codec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F521295299B028252BFF92D /* NativeH264Codec.swift */; };
 		0FC5F096386EE375F9DED70E /* PresenterCompositor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48415EFA954EFA597244FCCB /* PresenterCompositor.swift */; };
 		1757927E6A4BAF69164DAF70 /* OutgoingMediaLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EE31B7E83BA253BE1AD08B4 /* OutgoingMediaLiveTests.swift */; };
 		1A7BA73BF660F9BA8EB59A12 /* MeetingActionsPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8CD56A3FCF389EEAC237654 /* MeetingActionsPanel.swift */; };
@@ -322,6 +323,7 @@
 		1CE7740CA4FFBA32B49D81D2 /* RockBroadcast.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = RockBroadcast.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		1EB6150224E377EF7666EADF /* CalendarAgendaView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarAgendaView.swift; sourceTree = "<group>"; };
 		1EDD989FDAE55ECAD8F48D9E /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		1F521295299B028252BFF92D /* NativeH264Codec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeH264Codec.swift; sourceTree = "<group>"; };
 		1F555A01AAF051D8CA13BA31 /* GuestReactionFixtureActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestReactionFixtureActions.swift; sourceTree = "<group>"; };
 		1FC786FE646EE28859FE43C9 /* MicrophoneActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneActivityTests.swift; sourceTree = "<group>"; };
 		1FD8E984581FF54078639C01 /* MeetingContinuationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingContinuationCoordinator.swift; sourceTree = "<group>"; };
@@ -926,6 +928,7 @@
 			isa = PBXGroup;
 			children = (
 				B0F147F9054614E0ED80B168 /* CompositeVideoSource.swift */,
+				1F521295299B028252BFF92D /* NativeH264Codec.swift */,
 				2AB141E6A892C3C89E85CDDF /* NativeRTCError.swift */,
 				4A211F5228D4E2A2C7354A92 /* NativeRTCPeer.swift */,
 				1A5345E4BCE3205566821E30 /* NativeScreenSender.swift */,
@@ -1267,6 +1270,7 @@
 				0F0D0CECF418B042D6267B31 /* MicrophoneActivity.swift in Sources */,
 				21570B208BECECA604469258 /* NSLayoutConstraint+Priority.swift in Sources */,
 				51BCF010D44BD48C794D74EA /* NativeConferenceEngine.swift in Sources */,
+				0F5DE7D269EC34B10CC5111A /* NativeH264Codec.swift in Sources */,
 				D329CBF5AC5560CB8BF6DCE0 /* NativeRTCError.swift in Sources */,
 				D5E80A211A52A79A54C6CC9C /* NativeRTCPeer.swift in Sources */,
 				4D31747DA8AECBE564577A16 /* NativeScreenSender.swift in Sources */,

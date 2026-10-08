@@ -13,7 +13,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         guard sslInitialized else { throw NativeRTCError.invalidResponse }
         let encoder = LKRTCDefaultVideoEncoderFactory()
         if let codec = LKRTCDefaultVideoEncoderFactory.supportedCodecs().first(where: { $0.name == "H264" }) { encoder.preferredCodec = codec }
-        return LKRTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: NativeVideoDecoderFactory())
+        return LKRTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: NativeH264DecoderFactory(base: NativeVideoDecoderFactory()))
     }
     static func makeFactory() throws -> LKRTCPeerConnectionFactory { try sharedFactory.get() }
     deinit { if let decoderObservation { NotificationCenter.default.removeObserver(decoderObservation) } }
@@ -79,8 +79,11 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         audioTransceiver = connection.addTransceiver(of: .audio, init: settings)
         videoTransceiver = connection.addTransceiver(of: .video, init: settings)
         // Preserve other codecs as fallbacks when the server declines H.264.
+        preferPublishingH264(videoTransceiver)
+    }
+    private func preferPublishingH264(_ transceiver: LKRTCRtpTransceiver?) {
         let codecs = factory.rtpSenderCapabilities(forKind: "video").codecs
-        try? videoTransceiver?.setCodecPreferences(codecs.filter { $0.name == "H264" } + codecs.filter { $0.name != "H264" }, error: ())
+        try? transceiver?.setCodecPreferences(codecs.filter { $0.name == "H264" } + codecs.filter { $0.name != "H264" }, error: ())
     }
     private static func servers(_ values: [[String: Any]]) -> [LKRTCIceServer] {
         values.compactMap { value in
@@ -101,6 +104,12 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         guard seq == sequence || connection.remoteDescription == nil else { throw NativeRTCError.disconnected }
         sequence = seq
         try await setDescription(.init(type: .offer, sdp: sdp), local: false)
+        if topology == .composite, NativeH264Codec.hardwareDecodingAvailable {
+            let codecs = factory.rtpReceiverCapabilities(forKind: "video").codecs
+            for transceiver in connection.transceivers where transceiver.mediaType == .video && transceiver.direction != .sendOnly {
+                try transceiver.setCodecPreferences(codecs.filter { $0.name == "H264" } + codecs.filter { $0.name != "H264" }, error: ())
+            }
+        }
         // WebRTC exposes fresh Objective-C wrappers when enumerating transceivers;
         // receiver object identity is therefore not a reliable way to find its MID.
         for transceiver in connection.transceivers { reportTrack(transceiver) }
@@ -181,6 +190,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         if sharingTransceiver == nil, track != nil {
             let settings = LKRTCRtpTransceiverInit(); settings.direction = .sendOnly
             sharingTransceiver = connection.addTransceiver(of: .video, init: settings)
+            preferPublishingH264(sharingTransceiver)
         }
         sharingTransceiver?.sender.track = track
     }

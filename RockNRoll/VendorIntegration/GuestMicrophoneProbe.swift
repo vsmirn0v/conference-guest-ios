@@ -44,6 +44,31 @@ final class GuestMicrophoneProbe {
     private var observation: AnyCancellable?
     private weak var observedActivity: MicrophoneActivity?
     static func prepare() { GuestPeerRegistry.prepare() }
+    #if DEBUG
+    /// One-shot qualification only: never poll codec diagnostics in a release.
+    static func codecEvidenceForTesting() async -> [[String: Any]] {
+        var evidence: [[String: Any]] = []
+        for peer in GuestPeerRegistry.snapshot() where peer.connectionState == .connected {
+            let report: RTCStatisticsReport = await withCheckedContinuation { completion in
+                peer.statistics { completion.resume(returning: $0) }
+            }
+            for entry in report.statistics.values where ["inbound-rtp", "outbound-rtp"].contains(entry.type) {
+                var row: [String: Any] = ["id": entry.id, "type": entry.type]
+                let sender = (entry.values["mid"] as? String).flatMap { mid in peer.transceivers.first { $0.mid == mid }?.sender }
+                if entry.type == "outbound-rtp", let sender {
+                    row["negotiatedCodecs"] = sender.parameters.codecs.map { ["name": $0.name, "parameters": $0.parameters] }
+                }
+                let keys = ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "bytesSent", "bytesReceived", "totalAudioEnergy"]
+                for key in keys { row[key] = entry.values[key] }
+                if let codecID = entry.values["codecId"] as? String, let codec = report.statistics[codecID] {
+                    row["mimeType"] = codec.values["mimeType"]; row["sdpFmtpLine"] = codec.values["sdpFmtpLine"]
+                }
+                evidence.append(row)
+            }
+        }
+        return evidence
+    }
+    #endif
     func update(activity: MicrophoneActivity) {
         if observedActivity !== activity {
             observation = nil; stop(); observedActivity = activity

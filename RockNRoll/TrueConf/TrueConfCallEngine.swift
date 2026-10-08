@@ -651,6 +651,16 @@ final class TrueConfCallEngine: CallEngine {
     }
     #if DEBUG
     var studioForTesting: StudioModel { studio }
+    func codecEvidenceForTesting() async -> [[String: Any]] {
+        guard let publisher else { return [] }
+        let report: LKRTCStatisticsReport = await withCheckedContinuation { completion in publisher.connection.statistics { completion.resume(returning: $0) } }
+        return report.statistics.values.filter { ["inbound-rtp", "outbound-rtp"].contains($0.type) }.map { entry in
+            var row: [String: Any] = ["id": entry.id, "type": entry.type]
+            for key in ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "totalAudioEnergy"] { row[key] = entry.values[key] }
+            if let id = entry.values["codecId"] as? String, let codec = report.statistics[id] { row["mimeType"] = codec.values["mimeType"]; row["sdpFmtpLine"] = codec.values["sdpFmtpLine"] }
+            return row
+        }
+    }
     var microphoneSendingForTesting: Bool { publisher?.microphoneSending == true }
     var snapshotForTesting: CallMediaSnapshot? { view?.snapshotForTesting }
     func setSendingForTesting(microphone: Bool, camera: Bool) { setMicrophone(microphone); setCamera(camera) }

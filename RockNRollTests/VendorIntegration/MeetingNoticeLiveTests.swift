@@ -5,6 +5,61 @@ import XCTest
 
 @MainActor
 final class MeetingNoticeLiveTests: XCTestCase {
+    func testLiveCodecEvidence() async throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_CODEC_INVITE"] else {
+            throw XCTSkip("Opt-in authorized codec check")
+        }
+        let target = try JoinTarget.parse(invitation)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = try XCTUnwrap(scene.windows.first)
+        let original = window.rootViewController, idle = UIApplication.shared.isIdleTimerDisabled
+        let container = UIViewController(); window.rootViewController = container; window.makeKeyAndVisible()
+        UIApplication.shared.isIdleTimerDisabled = true
+        let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore())
+        var active = false, ended = false
+        engine.onEvent = { event in switch event { case .active: active = true; case .left, .failed: ended = true; default: break } }
+        defer { engine.leave(); window.rootViewController = original; UIApplication.shared.isIdleTimerDisabled = idle }
+        let endpoint = try await VendorEndpointResolver.make().resolve(for: target)
+        try engine.configure(container: container, networkURL: endpoint, displayName: "Codec QA")
+        try engine.join(target: target, displayName: "Codec QA")
+        let deadline = Date().addingTimeInterval(25)
+        while !active && !ended && Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertTrue(active); XCTAssertFalse(ended)
+        guard active && !ended else { return }
+        let camera = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == L("Start video") })
+        camera.sendActions(for: .touchUpInside)
+        try await Task.sleep(for: .seconds(8))
+        let evidence = await GuestMicrophoneProbe.codecEvidenceForTesting()
+        let initialFrames = evidence.reduce(into: [String: Int]()) { counts, row in
+            if let id = row["id"] as? String, row["type"] as? String == "outbound-rtp" { counts[id] = (row["framesEncoded"] as? NSNumber)?.intValue ?? 0 }
+        }
+        let data = try JSONSerialization.data(withJSONObject: evidence, options: .sortedKeys)
+        print("GUEST_CODEC " + String(decoding: data, as: UTF8.self))
+        XCTAssertTrue(evidence.contains { $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" && (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 10 })
+        XCTAssertFalse(ended)
+        camera.sendActions(for: .touchUpInside)
+        let studio = engine.studioForTesting
+        studio.presenter.selectCanvas(); studio.open(.presenter)
+        let previewDeadline = Date().addingTimeInterval(4)
+        while !studio.presenter.hasPreview && Date() < previewDeadline { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertTrue(studio.presenter.hasPreview)
+        await studio.presenter.start()
+        let shareDeadline = Date().addingTimeInterval(8)
+        while !studio.presenter.running && Date() < shareDeadline { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertTrue(studio.presenter.running)
+        for index in 0..<24 {
+            studio.presenter.appendAnnotation([CGPoint(x: 0.1, y: Double(index) / 30), CGPoint(x: 0.8, y: Double(index) / 30)])
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        let presenting = await GuestMicrophoneProbe.codecEvidenceForTesting()
+        print("GUEST_PRESENTER_CODEC " + String(decoding: try JSONSerialization.data(withJSONObject: presenting, options: .sortedKeys), as: UTF8.self))
+        XCTAssertTrue(presenting.contains {
+            $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" &&
+            (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > (initialFrames[$0["id"] as? String ?? ""] ?? 0) + 10
+        }, "Presenter must encode fresh frames, not just retain camera counters")
+        XCTAssertFalse(ended)
+        await studio.presenter.stop()
+    }
     func testHeaderInRequestedFavorite() async throws {
         guard let requested = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_NOTICE_FAVORITE"] else {
             throw XCTSkip("Opt-in live favorite meeting check.")

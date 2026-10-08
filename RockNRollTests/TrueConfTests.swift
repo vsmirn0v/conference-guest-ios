@@ -6,6 +6,67 @@ import XCTest
 
 @MainActor
 final class TrueConfTests: XCTestCase {
+    func testH264FactoryPreservesDefaultsAndMatchesBaselineServer() {
+        let decoder = NativeH264DecoderFactory()
+        let original = LKRTCDefaultVideoDecoderFactory().supportedCodecs()
+        XCTAssertEqual(decoder.supportedCodecs().count, original.count + 1)
+        for codec in original { XCTAssertTrue(decoder.supportedCodecs().contains { $0.name == codec.name && $0.parameters == codec.parameters }) }
+        XCTAssertNotNil(decoder.createDecoder(NativeH264Codec.baseline))
+        let once = NativeH264Codec.supported(addingTo: original)
+        XCTAssertEqual(NativeH264Codec.supported(addingTo: once).count, once.count)
+        XCTAssertFalse(NativeH264Codec.isBaseline(.init(name: "VP8")))
+        #if targetEnvironment(simulator)
+        XCTAssertFalse(NativeH264Codec.hardwareDecodingAvailable)
+        #endif
+    }
+    func testPhysicalCodecEvidenceAndRecovery() async throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Hardware codec qualification requires a physical device")
+        #endif
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_TRUECONF_INVITE"] else { throw XCTSkip("Authorized room required") }
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first { $0.isKeyWindow })
+        let previous = window.rootViewController, idle = UIApplication.shared.isIdleTimerDisabled
+        let container = UIViewController(); window.rootViewController = container; UIApplication.shared.isIdleTimerDisabled = true
+        defer { window.rootViewController = previous; UIApplication.shared.isIdleTimerDisabled = idle }
+        let engine = TrueConfCallEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), chat: ChatStore())
+        var active = 0, ended = false
+        engine.onEvent = { event in switch event { case .active: active += 1; case .left, .failed: ended = true; default: break } }
+        try engine.join(target: TrueConfTarget.parse(invitation), name: "Hardware Codec QA", container: container, quiet: false)
+        defer { engine.leave() }
+        try await wait { active > 0 || ended }; XCTAssertFalse(ended)
+        guard !ended else { return }
+        engine.setSendingForTesting(microphone: false, camera: true)
+        try await Task.sleep(for: .seconds(8))
+        let first = await engine.codecEvidenceForTesting()
+        let initialFrames = first.reduce(into: [String: Int]()) { counts, row in
+            if let id = row["id"] as? String, row["type"] as? String == "outbound-rtp" { counts[id] = (row["framesEncoded"] as? NSNumber)?.intValue ?? 0 }
+        }
+        print("TRUECONF_CODEC " + String(decoding: try JSONSerialization.data(withJSONObject: first, options: .sortedKeys), as: UTF8.self))
+        XCTAssertTrue(first.contains { $0["type"] as? String == "inbound-rtp" && $0["mimeType"] as? String == "video/H264" && $0["decoderImplementation"] as? String == "VideoToolbox" && (($0["framesDecoded"] as? NSNumber)?.intValue ?? 0) > 10 })
+        XCTAssertTrue(first.contains { $0["type"] as? String == "outbound-rtp" && (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 10 })
+        engine.setSendingForTesting(microphone: false, camera: false)
+        let studio = engine.studioForTesting
+        studio.presenter.selectCanvas(); studio.open(.presenter)
+        try await wait { studio.presenter.hasPreview }
+        await studio.presenter.start(); try await wait { studio.presenter.running }
+        for index in 0..<20 {
+            studio.presenter.appendAnnotation([CGPoint(x: 0.1, y: Double(index) / 25), CGPoint(x: 0.8, y: Double(index) / 25)])
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        let presenting = await engine.codecEvidenceForTesting()
+        print("TRUECONF_PRESENTER_CODEC " + String(decoding: try JSONSerialization.data(withJSONObject: presenting, options: .sortedKeys), as: UTF8.self))
+        XCTAssertTrue(presenting.contains {
+            $0["type"] as? String == "outbound-rtp" &&
+            (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > (initialFrames[$0["id"] as? String ?? ""] ?? 0) + 10
+        }, "Presenter must encode fresh frames after camera stops")
+        await studio.presenter.stop()
+        let before = active; engine.interruptForTesting(); try await wait { active > before || ended }; XCTAssertFalse(ended)
+        try await Task.sleep(for: .seconds(4))
+        let recovered = await engine.codecEvidenceForTesting()
+        print("TRUECONF_CODEC_RECOVERED " + String(decoding: try JSONSerialization.data(withJSONObject: recovered, options: .sortedKeys), as: UTF8.self))
+        XCTAssertTrue(recovered.contains { $0["type"] as? String == "inbound-rtp" && $0["mimeType"] as? String == "video/H264" && (($0["framesDecoded"] as? NSNumber)?.intValue ?? 0) > 10 })
+        XCTAssertFalse(ended)
+    }
     func testBootstrapRejectsWrongOriginRoomAndDuplicateCredentials() throws {
         let target = try TrueConfTarget.parse("https://server.test/c/test")
         func data(_ url: String) throws -> Data { try JSONSerialization.data(withJSONObject: ["clients": [["type": "web", "platform": "webrtc", "web_url": url]]]) }

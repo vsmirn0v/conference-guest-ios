@@ -83,6 +83,7 @@ final class NativeConferenceEngine: CallEngine {
     private var activeInvitationURL: URL?
     private var activeRoomIdentifier: String?
     #if DEBUG
+    var studioForTesting: StudioModel { studio }
     private var testHoldScheduled = false
     private var testNetworkRecoveryScheduled = false
     private var recoveryTraceStarted = false
