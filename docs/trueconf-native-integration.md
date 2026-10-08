@@ -33,9 +33,9 @@ Server layout rectangles contain **left/top/right/bottom**, not width/height. `C
 | iVitalii, iOS 27: real microphone | Source level reached 0.188; valid sampling continued with floating demand; mute cleared the meter |
 | iVitalii: system PiP | Actual SpringBoard PiP displayed the incoming presentation and microphone-on badge; Leave prevented stale PiP from returning |
 | iVitalii: native media/hold/Presenter | Fresh decoded video and non-silent audio verified after both CallKit hold/resume and socket recovery; at least 3 encoded Presenter frames and clean teardown passed (21.5 seconds) |
-| Signed builds | Simulator and physical-device test builds passed |
+| Signed builds | Simulator and physical-device test builds, plus Mac Release build, passed; Release bundle signature verified |
 
-Local reproduction evidence includes `/tmp/rock-trueconf-core-final.log`, `/tmp/rock-trueconf-unit-final.log`, `/tmp/rock-trueconf-live-test3.log`, `/tmp/rock-trueconf-ui-test.log`, `/tmp/rock-trueconf-microphone-test3.log`, `/tmp/rock-trueconf-pip-test.log` and `/tmp/rock-trueconf-physical-media-final.log`. These paths are machine-local, not durable release artifacts.
+Local reproduction evidence includes `/tmp/rock-trueconf-core-final.log`, `/tmp/rock-trueconf-unit-final.log`, `/tmp/rock-trueconf-live-test3.log`, `/tmp/rock-trueconf-ui-test.log`, `/tmp/rock-trueconf-microphone-test3.log`, `/tmp/rock-trueconf-pip-test.log`, `/tmp/rock-trueconf-physical-media-final.log` and `/tmp/rock-trueconf-mac-release.log`. These paths are machine-local, not durable release artifacts.
 
 The opt-in tests require `ROCKNROLL_TEST_TRUECONF_INVITE`; the UI tests use the app's existing launch fixtures. With xcodebuild, prefix the environment variable with `TEST_RUNNER_`. Run the authorized synthetic sender from `Experiments/TrueConfDiscovery` alongside the live receiver. Ordinary unit runs skip room/device-dependent checks.
 
