@@ -429,6 +429,18 @@ final class PresenterModelTests: XCTestCase {
         XCTAssertFalse(model.screenSelected)
         model.end()
     }
+    func testScreenPreparationCannotStartCaptureAfterSourceChanges() async {
+        let model = PresenterModel(observeLifecycle: false), capture = Screen()
+        var prepared: CheckedContinuation<Void, Never>?
+        model.prepareScreenSource = { await withCheckedContinuation { prepared = $0 } }
+        model.makeScreenSource = { _, _, _, _ in capture }
+        model.selectCanvas(); model.open(); model.selectScreen()
+        await waitUntil { prepared != nil }
+        model.selectCanvas()
+        prepared?.resume(); await Task.yield(); await Task.yield()
+        XCTAssertEqual(capture.starts, 0); XCTAssertFalse(model.screenPicking)
+        model.end()
+    }
     func testDragUpdatesDoNotStarvePublicationAndPlacementSurvivesRestartWithoutConsent() async {
         let suite = "presenter-test-\(UUID())"
         let defaults = UserDefaults(suiteName: suite)!

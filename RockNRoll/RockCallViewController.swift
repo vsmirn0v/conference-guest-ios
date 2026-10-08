@@ -1168,6 +1168,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 guard let self else { return }
                 StudioPresentation.show(studio, from: self.moreButton)
             })
+            if studio.presenter.available {
+                items.append(UIAction(title: L("Presenter"), image: UIImage(systemName: "person.crop.rectangle")) { [weak self] _ in
+                    guard let self else { return }
+                    StudioPresentation.show(studio, from: self.moreButton, pane: .presenter)
+                })
+            }
         }
         if workspace.invitationURL != nil {
             items.append(UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {

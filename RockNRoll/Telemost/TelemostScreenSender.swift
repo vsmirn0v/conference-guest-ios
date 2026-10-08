@@ -14,6 +14,7 @@ final class TelemostScreenSender {
     private var capture: GuestScreenCapture?
     private var broadcastTrack: LocalVideoTrack?
     private var closed = false
+    private(set) var composed = false
     private var stopping: Task<Void, Never>?
     private let onEnd: (String?) -> Void
     init(factory: LKRTCPeerConnectionFactory, preview: LocalSharePreview,
@@ -48,6 +49,12 @@ final class TelemostScreenSender {
         stopping = Task { await capture?.stop(); try? await track?.stop() }
         await stopping?.value; stopping = nil
     }
+    func startComposed() throws {
+        guard !closed else { throw CancellationError() }
+        composed = true
+        preview.begin(source: .presenter)
+    }
+    func send(_ sample: CMSampleBuffer) { sink.receive(sample) }
     #if DEBUG
     func receiveForTesting(_ pixels: CVPixelBuffer, timestamp: Int64) {
         sink.render(frame: VideoFrame(dimensions: Dimensions(width: Int32(CVPixelBufferGetWidth(pixels)), height: Int32(CVPixelBufferGetHeight(pixels))), rotation: ._0,

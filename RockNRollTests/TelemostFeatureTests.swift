@@ -5,6 +5,142 @@ import XCTest
 
 @MainActor
 final class TelemostFeatureTests: XCTestCase {
+    func testNativeInputMeterFollowsDemandAndRejectsRetiredSamples() async throws {
+        let activity = MicrophoneActivity(observeLifecycle: false)
+        var calls = 0
+        var pending: CheckedContinuation<Float?, Never>?
+        let probe = TelemostMicrophoneProbe(activity: activity) {
+            calls += 1
+            if calls == 1 { return 0.05 }
+            return await withCheckedContinuation { pending = $0 }
+        }
+        XCTAssertEqual(calls, 0)
+        activity.setStatus(.on)
+        try await wait { activity.hasSignal }
+        XCTAssertGreaterThan(activity.level, 0)
+        try await wait { pending != nil }
+        activity.setForeground(false)
+        XCTAssertFalse(activity.samplingNeeded); XCTAssertFalse(activity.hasSignal)
+        pending?.resume(returning: 1); pending = nil
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(activity.level, 0); XCTAssertFalse(activity.hasSignal)
+        activity.setFloating(true)
+        try await wait { pending != nil }
+        activity.setStatus(.muted)
+        pending?.resume(returning: 1); pending = nil
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(activity.level, 0); XCTAssertFalse(activity.hasSignal)
+        withExtendedLifetime(probe) {}
+    }
+    func testStudioContractsExistAndPrivateCheckRejectsAnUnconnectedCall() async throws {
+        let engine = TelemostCallEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), chat: ChatStore())
+        let studio = engine.studioForTesting
+        XCTAssertTrue(studio.presenter.available)
+        XCTAssertNotNil(studio.soundCheck.verifyMuted)
+        do { try await studio.soundCheck.verifyMuted?(); XCTFail("No active audio session must not start private capture") }
+        catch is CancellationError {}
+        studio.end()
+    }
+    func testComposedScreenUsesTheSameSenderAndRetiresDelivery() async throws {
+        var first = 0
+        let preview = LocalSharePreview()
+        let sender = TelemostScreenSender(factory: try TelemostPeer.makeFactory(), preview: preview, onFirstFrame: { first += 1 }, onEnd: { _ in })
+        try sender.startComposed()
+        XCTAssertTrue(sender.composed); XCTAssertTrue(preview.active)
+        let sample = try XCTUnwrap(PresenterCompositor(size: CGSize(width: 160, height: 90)).render(scene: PresenterScene(), camera: nil, time: CMTime(seconds: 1, preferredTimescale: 600)))
+        sender.send(sample)
+        try await wait { first == 1 }
+        await sender.stop()
+        sender.send(sample)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(first, 1); XCTAssertFalse(preview.active)
+        XCTAssertThrowsError(try sender.startComposed())
+    }
+    func testLivePresenterPublishesAndStopsAcrossHold() async throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_TELEMOST_INVITE"] else { throw XCTSkip("Disposable Telemost room required") }
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first { $0.isKeyWindow })
+        let previous = window.rootViewController, container = UIViewController(); window.rootViewController = container
+        defer { window.rootViewController = previous }
+        let engine = TelemostCallEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), chat: ChatStore())
+        var active = false, ended = false
+        engine.onEvent = { event in switch event { case .active: active = true; case .left, .failed: ended = true; default: break } }
+        try engine.join(target: TelemostTarget.parse(invitation), name: "Native Presenter QA", container: container, quiet: false)
+        defer { engine.leave() }
+        try await wait { active || ended }; XCTAssertFalse(ended)
+        let studio = engine.studioForTesting
+        print("TELEMOST_PRESENTER connected")
+        studio.presenter.selectCanvas(); studio.open(.presenter)
+        try await wait { studio.presenter.hasPreview }
+        await studio.presenter.start()
+        try await wait { engine.isSharingScreen || ended }
+        XCTAssertTrue(studio.presenter.running); XCTAssertFalse(ended)
+        var sent = await engine.sentScreenFramesForTesting()
+        let deadline = Date().addingTimeInterval(12)
+        while sent < 3, Date() < deadline { try await Task.sleep(for: .milliseconds(200)); sent = await engine.sentScreenFramesForTesting() }
+        XCTAssertGreaterThanOrEqual(sent, 3, "Presenter frames must enter the real conference encoder")
+        print("TELEMOST_PRESENTER sent=\(sent)")
+        #if targetEnvironment(simulator)
+        // Direct simulator media bypasses CallKit. Exercise the shared Studio
+        // hold teardown here; qualify the real CallKit action on the device.
+        studio.held = true
+        #else
+        try await engine.setTransferHeld(true, restoreSending: true)
+        #endif
+        try await wait { !engine.isSharingScreen && !studio.presenter.running }
+        #if targetEnvironment(simulator)
+        studio.held = false
+        #else
+        try await engine.setTransferHeld(false, restoreSending: true)
+        #endif
+        XCTAssertFalse(studio.presenter.running, "Call resume must not restart capture without consent")
+        engine.leave(); try await wait { ended }
+        XCTAssertFalse(studio.presenter.available)
+    }
+    func testLiveMicrophoneMeterAndPrivateSoundCheck() async throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Real microphone and shared audio session require a physical device")
+        #endif
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_TELEMOST_INVITE"] else { throw XCTSkip("Disposable Telemost room required") }
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first { $0.isKeyWindow })
+        let previous = window.rootViewController, container = UIViewController(); window.rootViewController = container
+        defer { window.rootViewController = previous }
+        let engine = TelemostCallEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), chat: ChatStore())
+        var active = false, ended = false
+        engine.onEvent = { event in switch event { case .active: active = true; case .left, .failed: ended = true; default: break } }
+        try engine.join(target: TelemostTarget.parse(invitation), name: "Native Microphone QA", container: container, quiet: false)
+        defer { engine.leave() }
+        try await wait { active || ended }; XCTAssertFalse(ended)
+        let studio = engine.studioForTesting
+        studio.open(.sound); studio.testMicrophone()
+        try await wait { studio.soundCheck.state == .listening || studio.soundCheck.state == .failed }
+        XCTAssertEqual(studio.soundCheck.state, .listening, studio.soundCheck.error ?? "")
+        try await wait { studio.soundCheck.activity.hasSignal }
+        XCTAssertFalse(engine.microphoneSendingForTesting, "Private preview must never publish microphone input")
+        print("TELEMOST_PRIVATE_METER level=\(studio.soundCheck.activity.level)")
+        studio.close(); XCTAssertEqual(studio.soundCheck.state, .idle)
+        engine.setSendingForTesting(microphone: true, camera: false)
+        try await wait { studio.microphoneActivity.status == .on && studio.microphoneActivity.hasSignal }
+        XCTAssertTrue(engine.microphoneSendingForTesting)
+        // The first report can precede actual microphone capture. Observe a
+        // full window rather than asserting a single startup/silence sample.
+        var peak = studio.microphoneActivity.level
+        for _ in 0..<32 {
+            try await Task.sleep(for: .milliseconds(250))
+            peak = max(peak, studio.microphoneActivity.level)
+        }
+        XCTAssertGreaterThan(peak, 0, "Requires an audible sound near the test device")
+        print("TELEMOST_LIVE_METER level=\(studio.microphoneActivity.level)")
+        print("TELEMOST_LIVE_METER peak=\(peak)")
+        studio.microphoneActivity.setFloating(true); studio.microphoneActivity.setForeground(false)
+        studio.microphoneActivity.clear()
+        try await wait { studio.microphoneActivity.hasSignal }
+        print("TELEMOST_FLOATING_METER level=\(studio.microphoneActivity.level)")
+        studio.microphoneActivity.setForeground(true); studio.microphoneActivity.setFloating(false)
+        engine.setSendingForTesting(microphone: false, camera: false)
+        XCTAssertEqual(studio.microphoneActivity.status, .muted)
+        XCTAssertFalse(studio.microphoneActivity.hasSignal)
+        engine.leave(); try await wait { ended }
+    }
     private let chatID = "0/22/test"
     private func message(chat: String = "0/22/test", timestamp: Double = 1_800_000_000_000_000, deleted: Bool = false) -> [String: Any] {
         ["ClientMessage": ["Plain": ["ChatId": chat, "PayloadId": "stable-id", "Text": ["MessageText": "Native QA"]]],

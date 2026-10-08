@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 import LiveKitWebRTC
 
@@ -169,6 +170,17 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
         }
         audioTransceiver?.sender.track = audioTrack
     }
+    @MainActor func microphoneLevel() async -> Float? {
+        guard !closed, let sender = audioTransceiver?.sender, sender.track?.isEnabled == true else { return nil }
+        let report: LKRTCStatisticsReport = await withCheckedContinuation { completion in
+            connection.statistics(for: sender) { completion.resume(returning: $0) }
+        }
+        return report.statistics.values.compactMap { entry -> Float? in
+            guard entry.type == "media-source", entry.values["kind"] as? String == "audio" else { return nil }
+            return (entry.values["audioLevel"] as? NSNumber)?.floatValue
+        }.max()
+    }
+    @MainActor var microphoneSending: Bool { audioTransceiver?.sender.track?.isEnabled == true }
     @MainActor func setCamera(_ enabled: Bool) async throws {
         guard !closed || !enabled else { throw CancellationError() }
         guard enabled != (camera != nil) else { return }
@@ -240,4 +252,28 @@ final class TelemostPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Send
         guard !transceiver.mid.isEmpty, let video = transceiver.receiver.track as? LKRTCVideoTrack else { return }
         onTrack?(transceiver.mid, video)
     }
+}
+
+/// Observe publisher input stats without a second capturer. Demand comes from
+/// the meeting/PiP meter; a retired request cannot revive its signal.
+@MainActor
+final class TelemostMicrophoneProbe {
+    private var task: Task<Void, Never>?
+    private var observation: AnyCancellable?
+    init(activity: MicrophoneActivity, measure: @escaping @MainActor () async -> Float?) {
+        observation = activity.$samplingNeeded.removeDuplicates().sink { [weak self, weak activity] needed in
+            guard let self else { return }
+            self.task?.cancel(); self.task = nil
+            guard needed else { return }
+            self.task = Task { [weak activity] in
+                while !Task.isCancelled {
+                    let level = await measure()
+                    guard !Task.isCancelled, let activity, activity.samplingNeeded else { return }
+                    if let level { activity.receive(rms: level) }
+                    do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return }
+                }
+            }
+        }
+    }
+    deinit { task?.cancel() }
 }

@@ -3,6 +3,23 @@ import LiveKitWebRTC
 import Foundation
 import CoreMedia
 
+/// Presenter consumes the live camera track, including its system effects.
+/// The bounded converter owns no camera or encoder.
+@MainActor
+final class TrackPresenterCamera: PresenterCameraSource {
+    private let source: CallVideoSource
+    private let sink: RoomFloatingVideoSink
+    init(source: CallVideoSource, onFrame: @escaping (CVPixelBuffer, Int) -> Void) {
+        self.source = source
+        sink = RoomFloatingVideoSink { sample, rotation in
+            if let pixels = CMSampleBufferGetImageBuffer(sample) { onFrame(pixels, rotation) }
+        }
+        sink.setWanted(true, fps: 15)
+        source.add(sink)
+    }
+    func stop() { sink.retire(); source.remove(sink) }
+}
+
 /// Prime one AVKit frame, then process only while PiP is starting/visible.
 /// Observing a track never creates another capturer or encoder.
 final class RoomFloatingVideoSink: NSObject, VideoRenderer, LKRTCVideoRenderer, @unchecked Sendable {

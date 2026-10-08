@@ -55,6 +55,7 @@ final class PresenterModel: ObservableObject {
     @Published private(set) var aspectRatio: CGFloat = 16 / 9
     @Published private(set) var cameraHiddenInBackground = false
     var makeScreenSource: ((@escaping (CMSampleBuffer) -> Void, @escaping (Bool) -> Void, @escaping () -> Void, @escaping (String?) -> Void) -> PresenterScreenSource)?
+    var prepareScreenSource: (() async -> Void)?
     var shareOtherApps: (() -> Void)?
     private var screenSource: PresenterScreenSource?
     private var screenStop: Task<Void, Never>?
@@ -164,6 +165,10 @@ final class PresenterModel: ObservableObject {
             if held { stop() }
             refresh()
         }
+    }
+    func liveCameraChanged() {
+        guard cameraOn else { return }
+        invalidateCamera(); invalidateRender(); refresh()
     }
     func setForeground(_ value: Bool) {
         foreground = value
@@ -367,7 +372,7 @@ final class PresenterModel: ObservableObject {
         scene = PresenterScene(); includeCamera = false
         undoStack = []; redoStack = []; pendingEdit = nil
         startSharing = nil; sendSample = nil; stopSharing = nil; makeCameraSource = nil; preparePrivateCamera = nil
-        makeScreenSource = nil; shareOtherApps = nil
+        makeScreenSource = nil; prepareScreenSource = nil; shareOtherApps = nil
     }
     func selectScreen() {
         guard active, !held, foreground, !screenPicking else { return }
@@ -388,6 +393,8 @@ final class PresenterModel: ObservableObject {
         Task { [weak self] in
         await previousStop?.value
         guard let self, self.active, self.screenEpoch == attempt, !self.held else { return }
+        await self.prepareScreenSource?()
+        guard self.active, self.screenEpoch == attempt, !self.held else { return }
         let source = makeScreenSource({ [weak self] sample in
             self?.acceptScreen(sample, epoch: attempt)
         }, { [weak self] enabled in
@@ -440,6 +447,7 @@ final class PresenterModel: ObservableObject {
         let previous = screenStop
         if let retired { screenStop = Task { await previous?.value; await retired.stop() } }
     }
+    func waitForScreenStop() async { await screenStop?.value }
     func savePlacement() {
         guard active else { return }
         if let data = try? JSONEncoder().encode(scene.placement) { preferences.set(data, forKey: "presenter.placement.v1") }

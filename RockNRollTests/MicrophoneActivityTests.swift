@@ -178,6 +178,15 @@ final class PrivateSoundCheckTests: XCTestCase {
         check.start(standalone: false)
         XCTAssertEqual(check.state, .failed); XCTAssertEqual(capture.starts, 0)
     }
+    func testUnavailableMeetingCancelsWithoutLeavingSoundCheckStarting() async {
+        let capture = Capture()
+        let check = PrivateSoundCheck(capture: capture)
+        check.verifyMuted = { throw CancellationError() }
+        check.start(standalone: false)
+        await settle { check.state == .idle }
+        XCTAssertFalse(check.running); XCTAssertEqual(capture.starts, 0)
+        XCTAssertNil(check.error)
+    }
     func testPrivateCheckAwaitsMuteNeverPublishesAndStopsOnUnmute() async {
         let capture = Capture()
         let model = StudioModel(audioControl: .noiseSuppression, privateMicrophone: capture)

@@ -1,6 +1,33 @@
 import XCTest
 
 final class TelemostUITests: XCTestCase {
+    func testPhysicalFloatingMicrophoneStatus() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Requires a physical microphone and system PiP")
+        #else
+        let app = try physicalApp()
+        defer {
+            app.activate()
+            if app.buttons["Mute microphone"].exists { app.buttons["Mute microphone"].tap() }
+            if app.buttons["Leave"].exists { app.buttons["Leave"].tap() }
+        }
+        XCTAssertTrue(app.buttons["Unmute microphone"].waitForExistence(timeout: 30))
+        app.buttons["Unmute microphone"].tap()
+        XCTAssertTrue(app.buttons["Mute microphone"].waitForExistence(timeout: 8))
+        let available = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Floating video available"), object: app.buttons["More call options"])
+        XCTAssertEqual(XCTWaiter.wait(for: [available], timeout: 20), .completed)
+        app.buttons["More call options"].tap(); app.buttons["Show floating video"].tap()
+        XCUIDevice.shared.press(.home)
+        let pip = XCUIApplication(bundleIdentifier: "com.apple.springboard").windows["PIP-SBInteractionPassThroughView"]
+        XCTAssertTrue(pip.waitForExistence(timeout: 8))
+        sleep(3)
+        let attachment = XCTAttachment(screenshot: pip.screenshot())
+        attachment.name = "Telemost PiP with live microphone activity"; attachment.lifetime = .keepAlways; add(attachment)
+        XCTAssertTrue(pip.exists)
+        app.activate()
+        XCTAssertTrue(app.buttons["Mute microphone"].waitForExistence(timeout: 8))
+        #endif
+    }
     func testPhysicalBackgroundPiPRoutesAndCleanup() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("Requires system PiP and physical audio routes")

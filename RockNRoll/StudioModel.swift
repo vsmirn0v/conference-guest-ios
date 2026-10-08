@@ -175,6 +175,7 @@ final class StudioModel: ObservableObject {
         guard active, !held, cameraOn else { return }
         flipLiveCamera?()
     }
+    func liveCameraChanged() { refreshPreview(); presenter.liveCameraChanged() }
 
     #if DEBUG
     /// Direct-launch physical checks must not depend on XCTest keeping the app alive.

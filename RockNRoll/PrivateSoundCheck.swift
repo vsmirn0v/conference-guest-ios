@@ -109,6 +109,8 @@ final class PrivateSoundCheck: NSObject, ObservableObject {
                 guard self.generation == epoch else { return }
                 self.activity.setStatus(.on); self.state = .listening
             } catch is CancellationError {
+                guard self.generation == epoch else { return }
+                self.stop()
             } catch {
                 guard self.generation == epoch else { return }
                 self.capture.stop(); self.activity.setStatus(.unavailable)
