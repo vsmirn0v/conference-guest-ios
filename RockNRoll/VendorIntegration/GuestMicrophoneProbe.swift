@@ -44,6 +44,16 @@ final class GuestMicrophoneProbe {
     private var observation: AnyCancellable?
     private weak var observedActivity: MicrophoneActivity?
     static func prepare() { GuestPeerRegistry.prepare() }
+    enum PublicationState { case retired, paused, publishing }
+    static func publicationState(trackID: String) -> PublicationState {
+        for peer in GuestPeerRegistry.snapshot() where peer.connectionState != .closed {
+            if let sender = peer.senders.first(where: { $0.track?.trackId == trackID }) {
+                return peer.connectionState == .connected && sender.track?.isEnabled == true &&
+                    sender.parameters.encodings.contains { $0.isActive } ? .publishing : .paused
+            }
+        }
+        return .retired
+    }
     /// A bounded publication watchdog, independent of the microphone meter.
     /// Nil means the track has stopped, so it must not trigger recovery.
     static func publicationWorks(trackID: String) async -> Bool? {
@@ -58,6 +68,35 @@ final class GuestMicrophoneProbe {
             return report.statistics.values.contains {
                 $0.type == "outbound-rtp" && (($0.values["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 0
             }
+        }
+        return nil
+    }
+    static func publicationProgress(trackID: String) async -> VideoPublicationHealth.Sample? {
+        for peer in GuestPeerRegistry.snapshot() where peer.connectionState == .connected {
+            guard let sender = peer.senders.first(where: { $0.track?.trackId == trackID && $0.track?.isEnabled == true }),
+                  sender.parameters.encodings.contains(where: { $0.isActive }) else { continue }
+            let report: RTCStatisticsReport = await withCheckedContinuation { completion in
+                peer.statistics { completion.resume(returning: $0) }
+            }
+            guard peer.connectionState == .connected, sender.track?.trackId == trackID,
+                  sender.track?.isEnabled == true, sender.parameters.encodings.contains(where: { $0.isActive }),
+                  let mid = peer.transceivers.first(where: { $0.sender.senderId == sender.senderId })?.mid else { return nil }
+            let activeRIDs = Set(sender.parameters.encodings.filter(\.isActive).compactMap(\.rid))
+            let outbound = report.statistics.values.filter {
+                $0.type == "outbound-rtp" && $0.values["mid"] as? String == mid && $0.values["kind"] as? String == "video" &&
+                $0.values["framesEncoded"] is NSNumber &&
+                (($0.values["rid"] as? String).map { activeRIDs.contains($0) } ?? true)
+            }
+            let sources = Set(outbound.compactMap { $0.values["mediaSourceId"] as? String })
+            guard !outbound.isEmpty, sources.count == 1, let sourceID = sources.first else { return nil }
+            // Raw camera progress continues if a stuck encoder retains every
+            // native pool buffer; downstream media-source frames then stop.
+            let raw = GuestCaptureDeviceObserver.rawCaptureProgress(trackID: trackID)
+            guard let captured = raw?.frames ?? (report.statistics[sourceID]?.values["frames"] as? NSNumber)?.int64Value else { return nil }
+            let input = raw.map { "raw-\($0.generation)" } ?? "media-source"
+            return .init(stream: outbound.map(\.id).sorted().joined(separator: ",") + "/" + input, captured: captured,
+                         encoded: outbound.reduce(0) { $0 + (($1.values["framesEncoded"] as? NSNumber)?.int64Value ?? 0) },
+                         bandwidthLimited: outbound.contains { $0.values["qualityLimitationReason"] as? String == "bandwidth" })
         }
         return nil
     }

@@ -1,0 +1,88 @@
+{
+  "camera_sensor": {
+    "raw_size": [
+      1920,
+      1080
+    ],
+    "raw_format": "420v",
+    "color": [
+      "BT.709",
+      "BT.709",
+      "BT.709"
+    ],
+    "horizon_capture_degrees": 0,
+    "physical_connection_degrees": 0,
+    "sdk_rotation_before_fix": 90,
+    "corrected_rotation": 0
+  },
+  "mac_synthetic_rtp": {
+    "frames_decoded": 150,
+    "received_size": [
+      320,
+      240
+    ],
+    "rotation": 0,
+    "color": [
+      "BT.709",
+      "BT.709",
+      "BT.709"
+    ],
+    "encoder": "VideoToolbox",
+    "power_efficient_encoder": true,
+    "native_inputs": 150,
+    "known_color_inputs": 150
+  },
+  "mac_real_camera_rtp": {
+    "frames_decoded": 182,
+    "received_size": [
+      320,
+      180
+    ],
+    "rotation": 0,
+    "color": [
+      "BT.709",
+      "BT.709",
+      "BT.709"
+    ],
+    "encoder": "VideoToolbox",
+    "power_efficient_encoder": true,
+    "native_inputs": 182,
+    "known_color_inputs": 182
+  },
+  "iphone_sustained": {
+    "duration_seconds": 136.602,
+    "sampling_rounds": 12,
+    "encoded_before_hold": 1748,
+    "encoded_after_hold": 2008,
+    "received_browser_size": [
+      1080,
+      1920
+    ],
+    "encoder": "VideoToolbox",
+    "power_efficient_encoder": true,
+    "last_fps": 30,
+    "native_format": "420v",
+    "post_hold_native_inputs": 2009,
+    "post_hold_known_color_inputs": 2009,
+    "raw_rotated_plane_checks": 3,
+    "plane_mismatches": 0
+  },
+  "simulator": {
+    "tests": 33,
+    "expected_skips": 2,
+    "failures": 0
+  },
+  "acceptance_limits": [
+    "Original sporadic freeze not reproduced; controlled lost encoder output recovered automatically with fresh VP8 frames.",
+    "Apple gesture recognition is processed upstream of RTC; upright-hand recognition still needs a manual check.",
+    "No end-to-end battery savings measured."
+  ],
+  "iphone_stall_recovery": {
+    "duration_seconds": 38.503,
+    "injected": "H264 encoder output callbacks withheld",
+    "raw_capture_binding_verified": true,
+    "recovered_codec": "VP8",
+    "fresh_frames_after_recovery": ">20",
+    "meeting_ended": false
+  }
+}

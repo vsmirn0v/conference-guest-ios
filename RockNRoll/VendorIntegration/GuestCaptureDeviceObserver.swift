@@ -12,12 +12,18 @@ enum GuestCaptureDeviceObserver {
     private static let capturers = NSHashTable<RTCCameraVideoCapturer>.weakObjects()
     private static var sessions: [ObjectIdentifier: NSKeyValueObservation] = [:]
     private static var sources: [ObjectIdentifier: Source] = [:]
+    private static var frameDelegates: [ObjectIdentifier: GuestCameraFrameDelegate] = [:]
+    static func rawCaptureProgress(trackID: String) -> GuestCameraFrameDelegate.Progress? {
+        lock.lock(); let proxies = Array(frameDelegates.values); lock.unlock()
+        let matches = proxies.compactMap { $0.progress(trackID: trackID) }
+        return matches.count == 1 ? matches[0] : nil
+    }
     struct Source { let device: AVCaptureDevice; let generation: UUID; let requestedFPS: Int }
     private static var fpsLimit = 30
     private static var energySubscription: AnyCancellable?
     private static let configurationQueue = DispatchQueue(label: "dev.vsmirn0v.capture-energy")
     @MainActor static func prepare() {
-        _ = installed
+        GuestCameraTrackBinding.prepare(); _ = installed
         guard energySubscription == nil else { return }
         energySubscription = MediaEnergyBudget.shared.$pressure.removeDuplicates().sink { pressure in
             let limit = pressure == .normal ? 30 : pressure == .constrained ? 15 : 10
@@ -49,9 +55,19 @@ enum GuestCaptureDeviceObserver {
     }
 
     private static func register(_ capturer: RTCCameraVideoCapturer, device: AVCaptureDevice, requestedFPS: Int) {
+        let key = ObjectIdentifier(capturer)
+        // Instance-scoped native frame forwarding preserves visual orientation.
+        let downstream = (capturer.delegate as? GuestCameraFrameDelegate)?.originalDelegate ?? capturer.delegate
+        if let downstream {
+            lock.lock(); let previous = frameDelegates.removeValue(forKey: key); lock.unlock()
+            previous?.deactivate()
+            let proxy = GuestCameraFrameDelegate(camera: capturer, device: device,
+                                                 downstream: downstream)
+            lock.lock(); frameDelegates[key] = proxy; lock.unlock()
+            capturer.delegate = proxy
+        }
         lock.lock()
         capturers.add(capturer)
-        let key = ObjectIdentifier(capturer)
         sources[key] = Source(device: device, generation: UUID(), requestedFPS: requestedFPS)
         if sessions[key] == nil {
             sessions[key] = capturer.captureSession.observe(\.isRunning, options: [.new]) { _, _ in notify() }
@@ -60,17 +76,21 @@ enum GuestCaptureDeviceObserver {
         let alive = Set(capturers.allObjects.map(ObjectIdentifier.init))
         sessions = sessions.filter { alive.contains($0.key) }
         sources = sources.filter { alive.contains($0.key) }
+        frameDelegates = frameDelegates.filter { alive.contains($0.key) }
         lock.unlock()
         notify()
     }
     private static func notify() {
         DispatchQueue.main.async { NotificationCenter.default.post(name: changed, object: nil) }
     }
-    private static func unregister(_ capturer: RTCCameraVideoCapturer) {
+    private static func unregister(_ capturer: RTCCameraVideoCapturer) -> GuestCameraFrameDelegate? {
         lock.lock(); capturers.remove(capturer)
+        let proxy = frameDelegates.removeValue(forKey: ObjectIdentifier(capturer))
         sessions.removeValue(forKey: ObjectIdentifier(capturer)); sources.removeValue(forKey: ObjectIdentifier(capturer))
         lock.unlock()
+        proxy?.deactivate()
         notify()
+        return proxy
     }
     static func currentDevice() -> AVCaptureDevice? {
         currentSource()?.device
@@ -104,8 +124,9 @@ enum GuestCaptureDeviceObserver {
             typealias Stop = @convention(c) (RTCCameraVideoCapturer, Selector, StopCompletion?) -> Void
             let stopOriginal = unsafeBitCast(method_getImplementation(stopMethod), to: Stop.self)
             let stopForward: @convention(block) (RTCCameraVideoCapturer, StopCompletion?) -> Void = { capturer, completion in
-                unregister(capturer)
-                stopOriginal(capturer, stopSelector, completion)
+                let proxy = unregister(capturer)
+                let stopped: StopCompletion = { proxy?.restore(); completion?() }
+                stopOriginal(capturer, stopSelector, stopped)
             }
             method_setImplementation(stopMethod, imp_implementationWithBlock(stopForward))
         }

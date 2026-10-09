@@ -17,6 +17,7 @@ final class NativeConferenceEngine: CallEngine {
     private var sessionEpoch = UUID()
     private var codecFallbackObserver: NSObjectProtocol?
     private var codecChecks: [String: Task<Void, Never>] = [:]
+    private var codecCheckTokens: [String: UUID] = [:]
     #if DEBUG
     private var decoderExperimentToken: UUID?
     #endif
@@ -89,6 +90,7 @@ final class NativeConferenceEngine: CallEngine {
     private var activeRoomIdentifier: String?
     #if DEBUG
     var studioForTesting: StudioModel { studio }
+    var codecCheckTrackIDsForTesting: [String] { codecChecks.keys.sorted() }
     func codecFallbackForTesting() { GuestPublishingCodecPolicy.shared.disable(generation: sessionEpoch) }
     private var testHoldScheduled = false
     private var testNetworkRecoveryScheduled = false
@@ -200,6 +202,7 @@ final class NativeConferenceEngine: CallEngine {
 
     func configure(container: UIViewController, networkURL: URL, displayName: String) throws {
         GuestPublishingCodecPolicy.prepare()
+        GuestH264ColorEncoder.prepare()
         identity.setName(displayName)
         floatingSourceView = container.view
         if configuredNetworkURL != nil {
@@ -473,7 +476,7 @@ final class NativeConferenceEngine: CallEngine {
 
     private func beginMediaReconnect(forNetwork: Bool) {
         guard hasJoinStarted, !leaveRequested, finishing == nil, !isMediaReconnecting else { return }
-        codecChecks.values.forEach { $0.cancel() }; codecChecks.removeAll()
+        codecChecks.values.forEach { $0.cancel() }; codecChecks.removeAll(); codecCheckTokens.removeAll()
         needsMediaReconnect = false
         reconnectingForNetwork = forNetwork
         isMediaReconnecting = true
@@ -631,18 +634,57 @@ final class NativeConferenceEngine: CallEngine {
                 guard let self, self.sessionEpoch == generation, !self.leaveRequested else { return }
                 self.codecChecks[trackID]?.cancel()
                 let attempt = self.mediaAttemptEpoch
-                self.codecChecks[trackID] = Task { @MainActor [weak self] in
-                    do { try await Task.sleep(for: .seconds(8)) } catch { return }
-                    guard let self, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,
-                          !self.leaveRequested, !self.isSystemHeld, !self.isAudioInterrupted, !self.isMediaReconnecting,
-                          UIApplication.shared.applicationState != .background else { return }
+                self.monitorCodecPublication(generation: generation, attempt: attempt, trackID: trackID)
+            }
+        }
+    }
+    private var canCheckVideoPublication: Bool {
+        !isSystemHeld && !isAudioInterrupted && !isMediaReconnecting &&
+            UIApplication.shared.applicationState != .background && isNetworkAvailable
+    }
+    private func finishCodecCheck(trackID: String, token: UUID) {
+        guard codecCheckTokens[trackID] == token else { return }
+        codecChecks.removeValue(forKey: trackID); codecCheckTokens.removeValue(forKey: trackID)
+    }
+    private func monitorCodecPublication(generation: UUID, attempt: UUID, trackID: String) {
+        let token = UUID(); codecCheckTokens[trackID] = token
+        codecChecks[trackID] = Task { @MainActor [weak self] in
+            defer { self?.finishCodecCheck(trackID: trackID, token: token) }
+            var health = VideoPublicationHealth()
+            var first = true, startupCheckPending = true
+            while !Task.isCancelled {
+                // No engine is retained across the polling interval.
+                do { try await Task.sleep(for: .seconds(first ? 8 : 4)) } catch { return }
+                first = false
+                guard let self, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,
+                      !self.leaveRequested else { return }
+                guard self.canCheckVideoPublication else {
+                    health.reset(); continue
+                }
+                switch GuestMicrophoneProbe.publicationState(trackID: trackID) {
+                case .retired: return
+                case .paused: health.reset(); continue
+                case .publishing: break
+                }
+                if startupCheckPending {
                     let works = await GuestMicrophoneProbe.publicationWorks(trackID: trackID)
                     guard !Task.isCancelled, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,
-                          !self.leaveRequested, !self.isSystemHeld, !self.isAudioInterrupted, !self.isMediaReconnecting,
-                          UIApplication.shared.applicationState != .background else { return }
-                    self.codecChecks.removeValue(forKey: trackID)
-                    if works == false { GuestPublishingCodecPolicy.shared.disable(generation: generation) }
+                          !self.leaveRequested else { return }
+                    guard self.canCheckVideoPublication else { health.reset(); continue }
+                    startupCheckPending = false
+                    if works == false { GuestPublishingCodecPolicy.shared.disable(generation: generation); return }
                 }
+                let sample = await GuestMicrophoneProbe.publicationProgress(trackID: trackID)
+                guard !Task.isCancelled, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,
+                      !self.leaveRequested else { return }
+                if !self.canCheckVideoPublication {
+                    health.reset()
+                } else if let sample {
+                    if health.stalled(sample, at: ProcessInfo.processInfo.systemUptime) {
+                        GuestPublishingCodecPolicy.shared.disable(generation: generation)
+                        return
+                    }
+                } else { health.reset() }
             }
         }
     }
@@ -652,7 +694,7 @@ final class NativeConferenceEngine: CallEngine {
         decoderExperimentToken = nil
         #endif
         GuestPublishingCodecPolicy.shared.end(generation: sessionEpoch)
-        codecChecks.values.forEach { $0.cancel() }; codecChecks.removeAll()
+        codecChecks.values.forEach { $0.cancel() }; codecChecks.removeAll(); codecCheckTokens.removeAll()
         if let codecFallbackObserver { NotificationCenter.default.removeObserver(codecFallbackObserver) }
         codecFallbackObserver = nil
     }
