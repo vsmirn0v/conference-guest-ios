@@ -2,8 +2,10 @@
 set -euo pipefail
 experiment_dir="$(cd "$(dirname "$0")" && pwd)"
 source_dir="${1:?Pass the patched source directory}"
+source_dir="$(cd "$source_dir" && pwd)"
 prefix_patch="${2:-$source_dir/../apple_prefix.patch}"
-[[ "$(git -C "$source_dir" rev-parse HEAD)" == ba469aa2093ba950066258ca0a59a6fbd1295582 ]] || { echo "Source revision mismatch" >&2; exit 1; }
+source_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$experiment_dir/build-lock.json")"
+[[ "$(git -C "$source_dir" rev-parse HEAD)" == "$source_sha" ]] || { echo "Source revision mismatch" >&2; exit 1; }
 verification_dir="$(mktemp -d /tmp/rock-hybrid-verify.XXXXXX)"
 trap 'rm -rf "$verification_dir"' EXIT
 # A separate index proves the cumulative patch state without altering source,

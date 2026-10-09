@@ -1,9 +1,9 @@
 # VP9 native hybrid patch
 
 `0001-vp9-native-hybrid.patch` applies to webrtc-sdk/webrtc commit
-`ba469aa2093ba950066258ca0a59a6fbd1295582`, the source named by
-[LiveKitWebRTC 150.7871.02](https://github.com/livekit/webrtc-xcframework/releases/tag/150.7871.02)
-and [webrtc-build 66ed9c7](https://github.com/webrtc-sdk/webrtc-build/commit/66ed9c7b07b2ad6ad624df0317e408dca562f91b).
+`0385653a83f21acf3c916466d4088b29fe2f160b`, the source named by
+[LiveKitWebRTC 150.7871.03](https://github.com/livekit/webrtc-xcframework/releases/tag/150.7871.03)
+and [webrtc-build c8cf9f9](https://github.com/webrtc-sdk/webrtc-build/commit/c8cf9f952fc073b16501e23d97ac484df7cc8096).
 It is not a patch for the opaque guest SDK WebRTC binary.
 
 Apply `0002-vp9-builder-concurrency-and-mac-api-tests.patch` after `0001`.

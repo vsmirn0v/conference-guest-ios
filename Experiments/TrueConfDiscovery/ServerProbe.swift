@@ -226,14 +226,14 @@ enum ServerProbeMain {
     @MainActor static func main() async {
         let args = CommandLine.arguments
         guard args.count >= 2, let invitation = URL(string: args[1]) else {
-            print("Usage: TrueConfServerProbe <HTTPS invitation> [seconds, max 60] [test name] [--publish|--share] [--h264|--h264-only|--hevc-only]")
+            print("Usage: TrueConfServerProbe <HTTPS invitation> [seconds, max 600] [test name] [--publish|--share] [--h264|--h264-only|--hevc-only]")
             exit(2)
         }
         let probe = ServerProbe()
         var code: Int32 = 0
         do {
             try await probe.run(invitation: invitation, name: args.count > 3 ? args[3] : "Rock Native Probe",
-                                seconds: min(60, max(5, UInt64(args.count > 2 ? args[2] : "25") ?? 25)),
+                                seconds: min(600, max(5, UInt64(args.count > 2 ? args[2] : "25") ?? 25)),
                                 publish: args.contains("--publish") || args.contains("--share"),
                                 sharing: args.contains("--share"),
                                 codecPolicy: args.contains("--hevc-only") ? .hevcOnly : (args.contains("--h264-only") ? .h264Only : (args.contains("--h264") ? .preferH264 : .serverDefault)),
