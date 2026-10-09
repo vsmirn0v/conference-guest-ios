@@ -70,15 +70,16 @@ limited where those symbols are unavailable.
 App Store Connect marks processing Complete. Build ID:
 `bfd26cd6-e634-4b54-b837-c109c2491a12`.
 
-Authenticated readback on 9 October 2026 confirms both existing groups are
-assigned: Rock’n’Roll Internal (one tester) and Rock’n’Roll Public Beta (six
-testers). The Public Beta group's Builds tab shows **0.2.0 (58) — Testing,
-expires in 90 days**; the group has 45 builds. The separate Internal status
-readback is pending because concurrent Safari interaction interrupted it.
+Authenticated readback on 9 October 2026 confirms both existing groups show
+**0.2.0 (58) — Testing, expires in 90 days**:
+
+- Rock’n’Roll Internal: one tester, 48 group builds.
+- Rock’n’Roll Public Beta: six testers, 45 group builds.
 
 Testing notes are saved, and automatic tester notification is enabled. Public
 invitation: https://testflight.apple.com/join/Hd13C9U3.
 
 Local logs and identity: `.build/release58/{archive-retry,export,upload}.log` and
-`.build/release58/artifact-identity.json`. Generated delivery artifacts remain
-local and ignored.
+`.build/release58/artifact-identity.json`. Availability screenshots:
+`.build/release58/testflight-{internal,public}.png`. Generated delivery artifacts
+remain local and ignored.
