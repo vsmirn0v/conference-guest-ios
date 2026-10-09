@@ -1,14 +1,16 @@
+#if DEBUG
+import CoreMedia
 import CoreVideo
 import Foundation
-import LiveKitWebRTC
+import WebRTC
 
 /// Synchronous, hardware-only VP9 decoding on WebRTC's decoder thread. No
 /// outstanding decode callbacks survive release or a format/session change.
-final class VP9HardwareDecoder: NSObject, LKRTCVideoDecoder {
+final class GuestVP9HardwareDecoder: NSObject, RTCVideoDecoder {
     static var available: Bool { VideoToolboxVP9Session.available }
     private let lock = NSRecursiveLock()
     private let onFailure: () -> Void
-    private var callback: ((LKRTCVideoFrame) -> Void)?
+    private var callback: ((RTCVideoFrame) -> Void)?
     private let core = VideoToolboxVP9Session()
     private var started = false
     private var failed = false
@@ -27,7 +29,7 @@ final class VP9HardwareDecoder: NSObject, LKRTCVideoDecoder {
 
     init(onFailure: @escaping () -> Void) { self.onFailure = onFailure }
     func implementationName() -> String { "VideoToolbox VP9" }
-    func setCallback(_ callback: @escaping (LKRTCVideoFrame) -> Void) {
+    func setCallback(_ callback: @escaping (RTCVideoFrame) -> Void) {
         lock.lock(); self.callback = callback; lock.unlock()
     }
     func startDecode(withNumberOfCores numberOfCores: Int32) -> Int {
@@ -39,7 +41,7 @@ final class VP9HardwareDecoder: NSObject, LKRTCVideoDecoder {
         started = false; callback = nil; core.retire(); return 0
     }
 
-    func decode(_ image: LKRTCEncodedImage, missingFrames: Bool, codecSpecificInfo info: (any LKRTCCodecSpecificInfo)?, renderTimeMs: Int64) -> Int {
+    func decode(_ image: RTCEncodedImage, missingFrames: Bool, codecSpecificInfo info: (any RTCCodecSpecificInfo)?, renderTimeMs: Int64) -> Int {
         lock.lock()
         guard started, !failed, !image.buffer.isEmpty, image.buffer.count <= 16_777_216 else { lock.unlock(); return -1 }
         let pixels: CVPixelBuffer?
@@ -49,8 +51,8 @@ final class VP9HardwareDecoder: NSObject, LKRTCVideoDecoder {
         case let .frame(buffer): pixels = buffer
         }
         let callback = self.callback
-        let output = pixels.map { buffer -> LKRTCVideoFrame in
-            let frame = LKRTCVideoFrame(buffer: LKRTCCVPixelBuffer(pixelBuffer: buffer), rotation: image.rotation,
+        let output = pixels.map { buffer -> RTCVideoFrame in
+            let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: image.rotation,
                 timeStampNs: image.captureTimeMs * 1_000_000)
             frame.timeStamp = Int32(bitPattern: image.timeStamp); return frame
         }
@@ -70,3 +72,4 @@ final class VP9HardwareDecoder: NSObject, LKRTCVideoDecoder {
         failed = true; core.retire(); lock.unlock(); onFailure(); return -1
     }
 }
+#endif

@@ -17,6 +17,9 @@ final class NativeConferenceEngine: CallEngine {
     private var sessionEpoch = UUID()
     private var codecFallbackObserver: NSObjectProtocol?
     private var codecChecks: [String: Task<Void, Never>] = [:]
+    #if DEBUG
+    private var decoderExperimentToken: UUID?
+    #endif
     private var finishing: Task<Void, Never>?
     private var accessSubscription: AnyCancellable?
     private var nameUpdateGeneration: UInt64 = 0
@@ -107,6 +110,9 @@ final class NativeConferenceEngine: CallEngine {
         self.catchUp = catchUp
     }
     deinit {
+        #if DEBUG
+        VideoDecoderFactoryExperiment.shared.end(token: decoderExperimentToken)
+        #endif
         codecChecks.values.forEach { $0.cancel() }
         if let codecFallbackObserver { NotificationCenter.default.removeObserver(codecFallbackObserver) }
         GuestPublishingCodecPolicy.shared.end(generation: sessionEpoch)
@@ -641,6 +647,10 @@ final class NativeConferenceEngine: CallEngine {
         }
     }
     private func endCodecPolicy() {
+        #if DEBUG
+        VideoDecoderFactoryExperiment.shared.end(token: decoderExperimentToken)
+        decoderExperimentToken = nil
+        #endif
         GuestPublishingCodecPolicy.shared.end(generation: sessionEpoch)
         codecChecks.values.forEach { $0.cancel() }; codecChecks.removeAll()
         if let codecFallbackObserver { NotificationCenter.default.removeObserver(codecFallbackObserver) }
@@ -698,6 +708,22 @@ final class NativeConferenceEngine: CallEngine {
         try audio.prepareForJoin()
         startNetworkMonitor()
         hasJoinStarted = true
+        #if DEBUG
+        let decoderEpoch = sessionEpoch
+        decoderExperimentToken = VideoDecoderFactoryExperiment.shared.begin(scope: .guest) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.sessionEpoch == decoderEpoch, !self.leaveRequested else { return }
+                let attempt = self.mediaAttemptEpoch, deadline = Date().addingTimeInterval(20)
+                while self.sessionEpoch == decoderEpoch, self.mediaAttemptEpoch == attempt, !self.leaveRequested,
+                      (!self.hasBecomeActive || self.isSystemHeld || self.isAudioInterrupted || self.isMediaReconnecting), Date() < deadline {
+                    do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                }
+                guard self.sessionEpoch == decoderEpoch, self.mediaAttemptEpoch == attempt, !self.leaveRequested,
+                      self.hasBecomeActive, !self.isSystemHeld, !self.isAudioInterrupted, !self.isMediaReconnecting else { return }
+                self.beginMediaReconnect(forNetwork: false)
+            }
+        }
+        #endif
         GuestPublishingCodecPolicy.shared.begin(generation: sessionEpoch, roomID: target.roomID)
         installCodecRecovery()
         beginFloatingVideoSession()

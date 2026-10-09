@@ -39,6 +39,9 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
         #endif
     }
     static func prepare() {
+        #if DEBUG
+        print("GUEST_CODEC_CAPABILITY hardwareH264=\(hardwareH264Available) mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
+        #endif
         _ = GuestSignalCodecBridge.install(outgoing: { socket, data in shared.outgoing(socket: socket as UUID, data: data) },
             incoming: { socket, data in shared.incoming(socket: socket as UUID, data: data) })
     }
@@ -81,6 +84,16 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
             seen.append(socket); sockets[socket] = Socket(generation: generation, room: room)
             if seen.count > 128 { sockets.removeValue(forKey: seen.removeFirst()) }
         }
+        #if DEBUG
+        if let request = payload["addTrackRequest"] as? [String: Any], request["type"] as? String == "VIDEO" {
+            let offered = request["simulcastCodecs"] as? [[String: Any]] ?? []
+            let qualified = sockets[socket].map { $0.generation == generation } ?? false
+            let h264 = sockets[socket]?.codecs.contains("video/h264") ?? false
+            let formats = offered.compactMap { $0["codec"] as? String }
+            let matchingCID = offered.first?["cid"] as? String == request["cid"] as? String
+            print("GUEST_CODEC_REQUEST hardware=\(hardwareH264) socket=\(qualified) h264=\(h264) formats=\(formats) matchingCID=\(matchingCID)")
+        }
+        #endif
         guard hardwareH264, let state = sockets[socket], state.generation == generation,
               state.codecs.contains("video/h264"), json["roomId"] as? String == state.room,
               json["event"] as? String == "media-in",

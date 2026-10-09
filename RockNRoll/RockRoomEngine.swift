@@ -43,6 +43,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private var testHoldScheduled = false
     private var directMediaForTesting = false
     private let outgoingMonitor = OutgoingRoomMonitor()
+    private var decoderExperimentToken: UUID?
     #endif
     private(set) var hasJoinStarted = false
     private var receptionPaused = false
@@ -103,6 +104,20 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         self.leaveRequested = false
         self.hasConnected = false
         #if DEBUG
+        let decoderRoom = self.room
+        decoderExperimentToken = VideoDecoderFactoryExperiment.shared.begin(scope: .jam) { [weak self, weak decoderRoom] in
+            Task { @MainActor [weak self, weak decoderRoom] in
+                let deadline = Date().addingTimeInterval(20)
+                while let self, let decoderRoom, self.room === decoderRoom, !self.leaveRequested,
+                      (!self.hasConnected || self.isHeld || decoderRoom.connectionState != .connected), Date() < deadline {
+                    do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+                }
+                guard let self, let decoderRoom, self.room === decoderRoom, self.hasConnected, !self.isHeld,
+                      decoderRoom.connectionState == .connected, !self.leaveRequested else { return }
+                do { try await decoderRoom.debug_simulate(scenario: .fullReconnect) }
+                catch { self.onMediaStatus?(L("Video preference could not update: %@", error.localizedDescription)) }
+            }
+        }
         self.testHoldScheduled = false
         self.directMediaForTesting = false
         #endif
@@ -487,6 +502,10 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
 
     private func finish(failed: Bool) {
         guard hasJoinStarted else { return }
+        #if DEBUG
+        VideoDecoderFactoryExperiment.shared.end(token: decoderExperimentToken)
+        decoderExperimentToken = nil
+        #endif
         if let microphoneProbe { AudioManager.shared.remove(localAudioRenderer: microphoneProbe); self.microphoneProbe = nil }
         studio.end()
         studioAudio.end()

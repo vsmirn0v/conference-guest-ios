@@ -18,6 +18,7 @@ xcrun --sdk "$sdk" swiftc -swift-version 5 -D DEBUG -parse-as-library -O \
   "$experiment_dir/Bootstrap.swift" "$experiment_dir/MediaPeer.swift" \
   "$experiment_dir/SyntheticAudio.swift" "$experiment_dir/Probe.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/VP9VideoFormat.swift" \
+  "$experiment_dir/../../RockNRoll/NativeRTC/VideoToolboxVP9Session.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/VP9HardwareDecoder.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/NativeVideoDecoderFactory.swift" \
   -o "$output_dir/TelemostProbe-$platform"

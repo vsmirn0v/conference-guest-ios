@@ -10,6 +10,7 @@ xcrun --sdk macosx swiftc -swift-version 5 -D DEBUG -parse-as-library -O \
   -sdk "$(xcrun --sdk macosx --show-sdk-path)" -target arm64-apple-macos12.0 \
   -F "$framework_dir" -framework LiveKitWebRTC -Xlinker -rpath -Xlinker "$framework_dir" \
   "$experiment_dir/../../RockNRoll/NativeRTC/VP9VideoFormat.swift" \
+  "$experiment_dir/../../RockNRoll/NativeRTC/VideoToolboxVP9Session.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/VP9HardwareDecoder.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/NativeVideoDecoderFactory.swift" \
   "$experiment_dir/FixtureSupport.swift" "$experiment_dir/Check.swift" \
