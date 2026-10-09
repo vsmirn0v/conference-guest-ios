@@ -1,4 +1,4 @@
-# Qualified codec and capture policy — build 55
+# Qualified codec and capture policy — build 56
 
 ## Source behavior
 
@@ -13,6 +13,9 @@ changing audio or shrinking sharing content. A publication failure disables the
 override for the current call, then uses existing media recovery. New calls get
 a fresh qualification scope. Normal sending uses qualified hardware H.264 as the
 compatibility choice; VP9 sending and HEVC remain unqualified for these servers.
+The watchdog checks only active senders on connected peers in the current media
+attempt. Hold, interruption, background suspension and retired peers cannot
+disable the hardware override.
 
 Native hardware VP9 receiving (`dcd0d07`, followed by `71a18c7`) and the Presenter
 shortcut (`c2aa525`) are ancestors of this release. The other codec chat has
@@ -42,6 +45,16 @@ sharing codec preferences from `fec2315` are also included.
 - Final tightened protocol guard: five scope/parser tests and the physical
   camera/Presenter test pass again; camera and Presenter still select hardware
   H.264. Cadence tests also pass on the phone.
+- The final watchdog changes pass the 12-test iOS 27 scope/cadence/energy suite.
+  On iVitalii, interrupting before the eight-second watchdog retains hardware
+  H.264 after recovery. Reacquired controls stop the recovered camera before
+  Presenter verification: 81 fresh 1280×720 H.264 frames at 15 fps through
+  VideoToolbox, with `powerEfficientEncoder=true`.
+- The physical system sharing lifecycle test passes (70.565 seconds):
+  start → stop → restart → Home Screen → return, preview controls and Leave.
+  No stop picker or delayed capture failure appears after Leave. The independent
+  browser renders the real phone screen and decodes H.264 using VideoToolbox;
+  sampled counters advance 420 → 435 → 450 at 496×1080, 15 fps.
 
 ## Limits
 
@@ -54,6 +67,10 @@ provisioned build remained at the dynamic-loader entry before XCTest connected.
 The app's code did not execute in that attempt. Mac live guest publishing remains
 unverified; previous standalone native Mac decoder qualification is separate.
 
-The new system screen-picker lifecycle check was blocked before testing by iOS
-UI automation approval. Presenter verifies the same SDK screen upload/encoder
-path; the existing system picker UI itself is unchanged.
+The system screen-picker fixture now selects English and uses the current
+direct Share action, replacing its obsolete Presenter-first assumption.
+
+## Delivery
+
+Build 55 uploaded but remains Ready to Submit, without tester group assignment.
+Build 56 replaces that candidate with the interruption-safe publication watchdog.

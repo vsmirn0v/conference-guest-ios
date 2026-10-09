@@ -13,6 +13,7 @@ final class GuestBroadcastLifecycleUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Capture Lifecycle QA"
         app.launch()
@@ -20,9 +21,6 @@ final class GuestBroadcastLifecycleUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Share screen"].waitForExistence(timeout: 60))
         func startShare() {
             app.buttons["Share screen"].tap()
-        XCTAssertTrue(app.buttons["presenter.source"].waitForExistence(timeout: 10))
-        app.buttons["presenter.source"].tap()
-        app.buttons["Screen / other apps"].tap()
             let systemShare = system.buttons["Share Entire Screen"]
             let appShare = app.buttons["Share Entire Screen"]
             if systemShare.waitForExistence(timeout: 5) { systemShare.tap() }

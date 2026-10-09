@@ -467,6 +467,7 @@ final class NativeConferenceEngine: CallEngine {
 
     private func beginMediaReconnect(forNetwork: Bool) {
         guard hasJoinStarted, !leaveRequested, finishing == nil, !isMediaReconnecting else { return }
+        codecChecks.values.forEach { $0.cancel() }; codecChecks.removeAll()
         needsMediaReconnect = false
         reconnectingForNetwork = forNetwork
         isMediaReconnecting = true
@@ -623,11 +624,16 @@ final class NativeConferenceEngine: CallEngine {
             Task { @MainActor [weak self] in
                 guard let self, self.sessionEpoch == generation, !self.leaveRequested else { return }
                 self.codecChecks[trackID]?.cancel()
+                let attempt = self.mediaAttemptEpoch
                 self.codecChecks[trackID] = Task { @MainActor [weak self] in
                     do { try await Task.sleep(for: .seconds(8)) } catch { return }
-                    guard let self, self.sessionEpoch == generation, !self.leaveRequested else { return }
+                    guard let self, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,
+                          !self.leaveRequested, !self.isSystemHeld, !self.isAudioInterrupted, !self.isMediaReconnecting,
+                          UIApplication.shared.applicationState != .background else { return }
                     let works = await GuestMicrophoneProbe.publicationWorks(trackID: trackID)
-                    guard !Task.isCancelled, self.sessionEpoch == generation, !self.leaveRequested else { return }
+                    guard !Task.isCancelled, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,
+                          !self.leaveRequested, !self.isSystemHeld, !self.isAudioInterrupted, !self.isMediaReconnecting,
+                          UIApplication.shared.applicationState != .background else { return }
                     self.codecChecks.removeValue(forKey: trackID)
                     if works == false { GuestPublishingCodecPolicy.shared.disable(generation: generation) }
                 }

@@ -47,13 +47,14 @@ final class GuestMicrophoneProbe {
     /// A bounded publication watchdog, independent of the microphone meter.
     /// Nil means the track has stopped, so it must not trigger recovery.
     static func publicationWorks(trackID: String) async -> Bool? {
-        for peer in GuestPeerRegistry.snapshot() {
+        for peer in GuestPeerRegistry.snapshot() where peer.connectionState == .connected {
             guard let sender = peer.senders.first(where: { $0.track?.trackId == trackID && $0.track?.isEnabled == true }) else { continue }
-            guard peer.connectionState == .connected else { return false }
+            guard sender.parameters.encodings.contains(where: { $0.isActive }) else { return nil }
             let report: RTCStatisticsReport = await withCheckedContinuation { completion in
                 peer.statistics(for: sender) { completion.resume(returning: $0) }
             }
-            guard sender.track?.trackId == trackID, sender.track?.isEnabled == true else { return nil }
+            guard peer.connectionState == .connected, sender.track?.trackId == trackID, sender.track?.isEnabled == true,
+                  sender.parameters.encodings.contains(where: { $0.isActive }) else { return nil }
             return report.statistics.values.contains {
                 $0.type == "outbound-rtp" && (($0.values["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 0
             }

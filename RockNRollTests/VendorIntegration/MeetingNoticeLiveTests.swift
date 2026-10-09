@@ -30,7 +30,13 @@ final class MeetingNoticeLiveTests: XCTestCase {
         guard active && !ended else { return }
         let camera = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == L("Start video") })
         camera.sendActions(for: .touchUpInside)
-        try await Task.sleep(for: .seconds(8))
+        if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_EARLY_HOLD"] == "1" {
+            // Interrupt before the eight-second publisher watchdog expires.
+            // A retired/suspended sender must never disable a working codec.
+            try await Task.sleep(for: .seconds(2)); systemCall.requestHoldForTesting(true)
+            try await Task.sleep(for: .seconds(2)); systemCall.requestHoldForTesting(false)
+            try await Task.sleep(for: .seconds(12))
+        } else { try await Task.sleep(for: .seconds(8)) }
         let evidence = await GuestMicrophoneProbe.codecEvidenceForTesting()
         let initialFrames = evidence.reduce(into: [String: Int]()) { counts, row in
             if let id = row["id"] as? String, row["type"] as? String == "outbound-rtp" { counts[id] = (row["framesEncoded"] as? NSNumber)?.intValue ?? 0 }
@@ -54,7 +60,9 @@ final class MeetingNoticeLiveTests: XCTestCase {
             XCTAssertTrue(constrained.contains { $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" &&
                 (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > (initialFrames[$0["id"] as? String ?? ""] ?? 0) + 10 })
         }
-        camera.sendActions(for: .touchUpInside)
+        // Recovery replaces the controls; reacquire the current camera button.
+        let stopCamera = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == L("Stop video") })
+        stopCamera.sendActions(for: .touchUpInside)
         let studio = engine.studioForTesting
         studio.presenter.selectCanvas(); studio.open(.presenter)
         let previewDeadline = Date().addingTimeInterval(4)
@@ -72,16 +80,19 @@ final class MeetingNoticeLiveTests: XCTestCase {
         print("GUEST_PRESENTER_CODEC " + String(decoding: try JSONSerialization.data(withJSONObject: presenting, options: .sortedKeys), as: UTF8.self))
         XCTAssertTrue(presenting.contains {
             $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" &&
+            ($0["frameWidth"] as? NSNumber)?.intValue == 1280 && ($0["frameHeight"] as? NSNumber)?.intValue == 720 &&
             (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > (initialFrames[$0["id"] as? String ?? ""] ?? 0) + 10
         }, "Presenter must encode fresh frames, not just retain camera counters")
         XCTAssertFalse(ended)
         await studio.presenter.stop()
         if hardware {
             XCTAssertTrue(presenting.contains { $0["mimeType"] as? String == "video/H264" && $0["powerEfficientEncoder"] as? Bool == true &&
+                ($0["frameWidth"] as? NSNumber)?.intValue == 1280 && ($0["frameHeight"] as? NSNumber)?.intValue == 720 &&
                 (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > (initialFrames[$0["id"] as? String ?? ""] ?? 0) + 10 })
         }
         if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_RECOVERY"] == "1" {
-            camera.sendActions(for: .touchUpInside)
+            let resumeCamera = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == L("Start video") })
+            resumeCamera.sendActions(for: .touchUpInside)
             try await Task.sleep(for: .seconds(3))
             systemCall.requestHoldForTesting(true)
             try await Task.sleep(for: .seconds(2))
