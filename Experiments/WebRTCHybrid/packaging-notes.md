@@ -44,6 +44,8 @@ the same file is also placed inside every framework slice so it accompanies
 normal framework embedding. Check the final app/archive to verify retention.
 Notices intentionally include each slice's complete list rather than dropping
 duplicate text that might differ between platforms.
+The pinned privacy manifest is validated at each framework's standard resource
+location, including correction of GN's nested macOS resource path.
 
 Only macOS ARM64, iOS-device ARM64, and iOS-simulator ARM64 are packaged. Intel,
 Catalyst, tvOS, and visionOS are not supplied. Packaging checks slice metadata

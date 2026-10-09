@@ -265,6 +265,14 @@ with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) a
         resource_dir = framework / "Resources" if item["SupportedPlatform"] == "macos" else framework
         if not resource_dir.exists():
             resource_dir.mkdir()
+        privacy = resource_dir / "PrivacyInfo.xcprivacy"
+        if not privacy.exists():
+            # GN can nest the macOS manifest under a second Versions/A.
+            manifests = list(framework.rglob("PrivacyInfo.xcprivacy"))
+            if len(manifests) != 1:
+                raise RuntimeError(f"Expected one privacy manifest in {framework}")
+            manifests[0].replace(privacy)
+        plistlib.loads(privacy.read_bytes())
         shutil.copy2(notice_path, resource_dir / notice_path.name)
     shutil.copytree(supporting, xcframework / "Supporting", symlinks=True)
     inventory(xcframework)  # Reject escaping/broken symlinks before distribution.
