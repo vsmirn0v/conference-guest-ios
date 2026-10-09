@@ -14,7 +14,10 @@ final class LocalizationTests: XCTestCase {
     func testRussianCatalogCoversEnglishCopyAndFormatArguments() throws {
         let english = try catalog(language("en"), "strings") as! [String: String]
         let russian = try catalog(language("ru"), "strings") as! [String: String]
-        XCTAssertEqual(Set(english.keys), Set(russian.keys))
+        XCTAssertTrue(Set(english.keys).subtracting(russian.keys).isEmpty,
+                      "Missing Russian keys: \(Set(english.keys).subtracting(russian.keys).sorted())")
+        XCTAssertTrue(Set(russian.keys).subtracting(english.keys).isEmpty,
+                      "Missing English keys: \(Set(russian.keys).subtracting(english.keys).sorted())")
         let format = try NSRegularExpression(pattern: #"%(?:\d+\$)?(?:@|ld|lld|d)"#)
         func placeholders(_ value: String) -> [String] {
             let source = value as NSString

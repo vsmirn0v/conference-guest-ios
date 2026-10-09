@@ -122,8 +122,10 @@ final class SessionOwnershipTests: XCTestCase {
         var snapshot: [SystemCallCoordinator.ObservedCall] = []
         var actions: [CXAction] = []
         var activations = 0
-        let calls = SystemCallCoordinator(transactionRequester: { tx, done in actions += tx.actions; done(nil) },
-            callSnapshot: { snapshot }, activateAudioSession: { activations += 1 })
+        let calls = SystemCallCoordinator(transactionRequester: { tx, done in
+            XCTAssertTrue(Thread.isMainThread, "Transfer state and CallKit callbacks share the main actor")
+            actions += tx.actions; done(nil)
+        }, callSnapshot: { snapshot }, activateAudioSession: { activations += 1 })
         calls.start(); calls.markConnected()
         let id = try XCTUnwrap(calls.callID)
         snapshot = [.init(id: id, connected: true, held: false)]

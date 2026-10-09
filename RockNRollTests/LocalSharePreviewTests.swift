@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import RockNRoll
 
@@ -33,7 +34,7 @@ final class LocalSharePreviewTests: XCTestCase {
         await accept(preview, pixels, time: 10)
         let first = try XCTUnwrap(preview.image)
         XCTAssertLessThanOrEqual(max(first.size.width, first.size.height), 640)
-        await accept(preview, pixels, time: 10.2)
+        await accept(preview, pixels, time: 10.2, expectsFrame: false)
         XCTAssertTrue(first === preview.image)
         await accept(preview, pixels, time: 15.2)
         XCTAssertFalse(first === preview.image)
@@ -111,16 +112,16 @@ final class LocalSharePreviewTests: XCTestCase {
         XCTAssertEqual(try rgba(try XCTUnwrap(mac.image?.cgImage)), before)
     }
 
-    private func accept(_ preview: LocalSharePreview, _ pixels: CVPixelBuffer, rotation: Int = 0, time: TimeInterval) async {
+    private func accept(_ preview: LocalSharePreview, _ pixels: CVPixelBuffer, rotation: Int = 0,
+                        time: TimeInterval, expectsFrame: Bool = true) async {
+        guard expectsFrame else { preview.accept(pixels, rotation: rotation, time: time); return }
         let previous = preview.image
+        let ready = expectation(description: "Preview worker publishes a new frame")
+        let publication = preview.$image.dropFirst().first { $0 != nil && $0 !== previous }
+            .sink { _ in ready.fulfill() }
+        defer { publication.cancel() }
         preview.accept(pixels, rotation: rotation, time: time)
-        // A throttled call intentionally keeps the same image.
-        if time == 10.2 { return }
-        for _ in 0..<100 {
-            if preview.image !== previous { return }
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-        XCTFail("Preview worker did not publish a frame")
+        await fulfillment(of: [ready], timeout: 5)
     }
 
     private func rgba(_ image: CGImage) throws -> [UInt8] {

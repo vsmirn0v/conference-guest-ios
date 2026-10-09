@@ -707,3 +707,15 @@
 "The host has disabled meeting chat." = "The host has disabled meeting chat.";
 
 "This meeting service does not provide live transcripts to anonymous guests." = "This meeting service does not provide live transcripts to anonymous guests.";
+
+/* Connection and recovery messages. */
+"Could not connect to the meeting. Check the invitation and your network." = "Could not connect to the meeting. Check the invitation and your network.";
+"Restoring meeting media…" = "Restoring meeting media…";
+"The camera is unavailable. Audio can continue." = "The camera is unavailable. Audio can continue.";
+"The host removed you from this meeting." = "The host removed you from this meeting.";
+"The meeting connection timed out. Check your network and try again." = "The meeting connection timed out. Check your network and try again.";
+"The meeting service could not connect (%ld)." = "The meeting service could not connect (%ld).";
+"The meeting service declined this connection." = "The meeting service declined this connection.";
+"This meeting has ended." = "This meeting has ended.";
+"This meeting requires host admission or signing in on its website." = "This meeting requires host admission or signing in on its website.";
+"This meeting uses a connection protocol this app does not support yet." = "This meeting uses a connection protocol this app does not support yet.";

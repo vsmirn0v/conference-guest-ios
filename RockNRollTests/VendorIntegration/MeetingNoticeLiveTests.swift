@@ -91,6 +91,11 @@ final class MeetingNoticeLiveTests: XCTestCase {
                 (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > (initialFrames[$0["id"] as? String ?? ""] ?? 0) + 10 })
         }
         if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_RECOVERY"] == "1" {
+            // Presenter state changes schedule a controls refresh on the main
+            // queue. Wait for the camera's ordinary role before interacting.
+            let controlDeadline = Date().addingTimeInterval(5)
+            while !descendants(window).contains(where: { ($0 as? UIButton)?.accessibilityLabel == L("Start video") }),
+                  Date() < controlDeadline { try await Task.sleep(for: .milliseconds(50)) }
             let resumeCamera = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == L("Start video") })
             resumeCamera.sendActions(for: .touchUpInside)
             try await Task.sleep(for: .seconds(3))

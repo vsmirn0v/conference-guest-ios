@@ -381,7 +381,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
 
     /// Use the established conference hold path instead of competing with the
     /// provider's WebRTC audio session. The Mac runtime owns its AVAudioSession.
-    func setTransferHeld(_ held: Bool) async throws {
+    @MainActor func setTransferHeld(_ held: Bool) async throws {
         guard let id = callID, transferHoldCompletion == nil else { throw NSError(domain: "JamTransfer", code: 1) }
         transferHolding = held
         let generation = UUID(); transferHoldGeneration = generation

@@ -405,11 +405,19 @@ final class PresenterModelTests: XCTestCase {
         await model.start(); XCTAssertTrue(model.running)
         model.setForeground(false)
         let count = sent.count
+        let compositions = model.compositionCount
+        // Background passthrough shares the outgoing cadence with foreground
+        // composition. Admit the next frame after that interval, then reject
+        // an immediate burst without copying its pixels or running the GPU.
+        try await Task.sleep(for: .seconds(1.0 / Double(MediaEnergyBudget.shared.sharingFPS) + 0.02))
         model.acceptScreen(source)
         XCTAssertTrue(model.running); XCTAssertFalse(model.hasPreview)
         XCTAssertEqual(sent.count, count + 1)
         XCTAssertTrue(sent.last.flatMap(CMSampleBufferGetImageBuffer) === CMSampleBufferGetImageBuffer(source),
                       "Screen-only background path must avoid GPU work/pixel copies")
+        XCTAssertEqual(model.compositionCount, compositions)
+        model.acceptScreen(source)
+        XCTAssertEqual(sent.count, count + 1, "Background frame bursts must remain paced")
         model.setForeground(true); await waitUntil { model.hasPreview }
         model.end(); model.acceptScreen(source)
         XCTAssertFalse(model.running)
