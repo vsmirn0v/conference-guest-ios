@@ -1,4 +1,5 @@
 import ConferenceCore
+import AVFoundation
 import UIKit
 import XCTest
 @testable import RockNRoll
@@ -15,7 +16,8 @@ final class MeetingNoticeLiveTests: XCTestCase {
         let original = window.rootViewController, idle = UIApplication.shared.isIdleTimerDisabled
         let container = UIViewController(); window.rootViewController = container; window.makeKeyAndVisible()
         UIApplication.shared.isIdleTimerDisabled = true
-        let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore())
+        let systemCall = SystemCallCoordinator()
+        let engine = NativeConferenceEngine(systemCall: systemCall, catchUp: CatchUpStore())
         var active = false, ended = false
         engine.onEvent = { event in switch event { case .active: active = true; case .left, .failed: ended = true; default: break } }
         defer { engine.leave(); window.rootViewController = original; UIApplication.shared.isIdleTimerDisabled = idle }
@@ -37,6 +39,21 @@ final class MeetingNoticeLiveTests: XCTestCase {
         print("GUEST_CODEC " + String(decoding: data, as: UTF8.self))
         XCTAssertTrue(evidence.contains { $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" && (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 10 })
         XCTAssertFalse(ended)
+        let hardware = GuestPublishingCodecPolicy.hardwareH264Available
+        if hardware {
+            XCTAssertTrue(evidence.contains { $0["mimeType"] as? String == "video/H264" && $0["powerEfficientEncoder"] as? Bool == true && (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 10 })
+        }
+        if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_ENERGY"] == "1" {
+            MediaEnergyBudget.shared.update(lowPower: true, thermal: .nominal)
+            defer { MediaEnergyBudget.shared.update(lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled, thermal: ProcessInfo.processInfo.thermalState) }
+            try await Task.sleep(for: .seconds(3))
+            let constrained = await GuestMicrophoneProbe.codecEvidenceForTesting()
+            print("GUEST_ENERGY_CODEC " + String(decoding: try JSONSerialization.data(withJSONObject: constrained, options: .sortedKeys), as: UTF8.self))
+            let device = try XCTUnwrap(GuestCaptureDeviceObserver.currentDevice())
+            XCTAssertLessThanOrEqual(1 / CMTimeGetSeconds(device.activeVideoMinFrameDuration), 15.01)
+            XCTAssertTrue(constrained.contains { $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" &&
+                (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > (initialFrames[$0["id"] as? String ?? ""] ?? 0) + 10 })
+        }
         camera.sendActions(for: .touchUpInside)
         let studio = engine.studioForTesting
         studio.presenter.selectCanvas(); studio.open(.presenter)
@@ -59,6 +76,32 @@ final class MeetingNoticeLiveTests: XCTestCase {
         }, "Presenter must encode fresh frames, not just retain camera counters")
         XCTAssertFalse(ended)
         await studio.presenter.stop()
+        if hardware {
+            XCTAssertTrue(presenting.contains { $0["mimeType"] as? String == "video/H264" && $0["powerEfficientEncoder"] as? Bool == true &&
+                (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > (initialFrames[$0["id"] as? String ?? ""] ?? 0) + 10 })
+        }
+        if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_RECOVERY"] == "1" {
+            camera.sendActions(for: .touchUpInside)
+            try await Task.sleep(for: .seconds(3))
+            systemCall.requestHoldForTesting(true)
+            try await Task.sleep(for: .seconds(2))
+            systemCall.requestHoldForTesting(false)
+            try await Task.sleep(for: .seconds(12))
+            let recovered = await GuestMicrophoneProbe.codecEvidenceForTesting()
+            print("GUEST_RECOVERED_CODEC " + String(decoding: try JSONSerialization.data(withJSONObject: recovered, options: .sortedKeys), as: UTF8.self))
+            XCTAssertFalse(ended)
+            XCTAssertTrue(recovered.contains { $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" && (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 10 })
+            XCTAssertTrue(recovered.contains { $0["type"] as? String == "inbound-rtp" && $0["kind"] as? String == "video" && (($0["framesDecoded"] as? NSNumber)?.intValue ?? 0) > 10 })
+            XCTAssertTrue(recovered.contains { $0["type"] as? String == "inbound-rtp" && $0["kind"] as? String == "audio" && (($0["bytesReceived"] as? NSNumber)?.intValue ?? 0) > 0 })
+            if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_FALLBACK"] == "1" {
+                engine.codecFallbackForTesting()
+                try await Task.sleep(for: .seconds(12))
+                let fallback = await GuestMicrophoneProbe.codecEvidenceForTesting()
+                print("GUEST_FALLBACK_CODEC " + String(decoding: try JSONSerialization.data(withJSONObject: fallback, options: .sortedKeys), as: UTF8.self))
+                XCTAssertFalse(ended)
+                XCTAssertTrue(fallback.contains { $0["mimeType"] as? String == "video/VP8" && (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 10 })
+            }
+        }
     }
     func testHeaderInRequestedFavorite() async throws {
         guard let requested = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_NOTICE_FAVORITE"] else {

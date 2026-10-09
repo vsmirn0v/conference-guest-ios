@@ -15,6 +15,8 @@ final class NativeConferenceEngine: CallEngine {
     private let identity = GuestIdentity()
     private var nameForNextCoordinator: String?
     private var sessionEpoch = UUID()
+    private var codecFallbackObserver: NSObjectProtocol?
+    private var codecChecks: [String: Task<Void, Never>] = [:]
     private var finishing: Task<Void, Never>?
     private var accessSubscription: AnyCancellable?
     private var nameUpdateGeneration: UInt64 = 0
@@ -84,6 +86,7 @@ final class NativeConferenceEngine: CallEngine {
     private var activeRoomIdentifier: String?
     #if DEBUG
     var studioForTesting: StudioModel { studio }
+    func codecFallbackForTesting() { GuestPublishingCodecPolicy.shared.disable(generation: sessionEpoch) }
     private var testHoldScheduled = false
     private var testNetworkRecoveryScheduled = false
     private var recoveryTraceStarted = false
@@ -102,6 +105,11 @@ final class NativeConferenceEngine: CallEngine {
     init(systemCall: SystemCallCoordinator, catchUp: CatchUpStore) {
         self.systemCall = systemCall
         self.catchUp = catchUp
+    }
+    deinit {
+        codecChecks.values.forEach { $0.cancel() }
+        if let codecFallbackObserver { NotificationCenter.default.removeObserver(codecFallbackObserver) }
+        GuestPublishingCodecPolicy.shared.end(generation: sessionEpoch)
     }
 
     func showMediaStatus(_ message: String?) { activeControls?.showMediaStatus(message) }
@@ -185,6 +193,7 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     func configure(container: UIViewController, networkURL: URL, displayName: String) throws {
+        GuestPublishingCodecPolicy.prepare()
         identity.setName(displayName)
         floatingSourceView = container.view
         if configuredNetworkURL != nil {
@@ -599,6 +608,38 @@ final class NativeConferenceEngine: CallEngine {
         }
     }
 
+    private func installCodecRecovery() {
+        codecChecks.values.forEach { $0.cancel() }; codecChecks.removeAll()
+        if let codecFallbackObserver { NotificationCenter.default.removeObserver(codecFallbackObserver) }
+        codecFallbackObserver = NotificationCenter.default.addObserver(forName: GuestPublishingCodecPolicy.fallbackNotification,
+            object: GuestPublishingCodecPolicy.shared, queue: .main) { [weak self] notification in
+                let generation = notification.userInfo?["generation"] as? UUID
+                Task { @MainActor [weak self] in
+                    guard let self, self.sessionEpoch == generation, self.hasBecomeActive, !self.leaveRequested else { return }
+                    self.beginMediaReconnect(forNetwork: false)
+                }
+            }
+        GuestPublishingCodecPolicy.shared.onSelection = { [weak self] generation, trackID in
+            Task { @MainActor [weak self] in
+                guard let self, self.sessionEpoch == generation, !self.leaveRequested else { return }
+                self.codecChecks[trackID]?.cancel()
+                self.codecChecks[trackID] = Task { @MainActor [weak self] in
+                    do { try await Task.sleep(for: .seconds(8)) } catch { return }
+                    guard let self, self.sessionEpoch == generation, !self.leaveRequested else { return }
+                    let works = await GuestMicrophoneProbe.publicationWorks(trackID: trackID)
+                    guard !Task.isCancelled, self.sessionEpoch == generation, !self.leaveRequested else { return }
+                    self.codecChecks.removeValue(forKey: trackID)
+                    if works == false { GuestPublishingCodecPolicy.shared.disable(generation: generation) }
+                }
+            }
+        }
+    }
+    private func endCodecPolicy() {
+        GuestPublishingCodecPolicy.shared.end(generation: sessionEpoch)
+        codecChecks.values.forEach { $0.cancel() }; codecChecks.removeAll()
+        if let codecFallbackObserver { NotificationCenter.default.removeObserver(codecFallbackObserver) }
+        codecFallbackObserver = nil
+    }
     func join(target: JoinTarget, displayName: String) throws {
         guard finishing == nil else { throw ProviderError.teardownInProgress }
         reactionsAdapter?.stop(); reactionsAdapter = nil; reactions.begin()
@@ -651,6 +692,8 @@ final class NativeConferenceEngine: CallEngine {
         try audio.prepareForJoin()
         startNetworkMonitor()
         hasJoinStarted = true
+        GuestPublishingCodecPolicy.shared.begin(generation: sessionEpoch, roomID: target.roomID)
+        installCodecRecovery()
         beginFloatingVideoSession()
         installCallHandlers()
         #if DEBUG && targetEnvironment(simulator)
@@ -689,6 +732,7 @@ final class NativeConferenceEngine: CallEngine {
         guard hasJoinStarted, !leaveRequested else { return }
         reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil
         leaveRequested = true
+        endCodecPolicy()
         resetPiPMicrophoneObservation()
         endFloatingVideoSession()
         activeControls?.isHidden = true
@@ -1361,6 +1405,7 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func finishSession(userEnded: Bool, event: CallEvent) {
+        endCodecPolicy()
         guard finishing == nil, hasJoinStarted else { return }
         reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil
         endFloatingVideoSession()

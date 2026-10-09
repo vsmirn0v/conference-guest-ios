@@ -10,6 +10,8 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
     private let preview = LocalSharePreviewSender()
     private let stopLock = NSLock()
     private var stopped = false
+    private var cadence = OutgoingVideoCadence()
+    private let cadenceLock = NSLock()
     #if DEBUG
     private var deliveryExperiment: OutgoingShareExperiment?
     #endif
@@ -54,6 +56,12 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
             return
         }
         #endif
+        if sampleBufferType == .video {
+            let process = ProcessInfo.processInfo
+            let fps = process.thermalState == .critical ? 5 : (process.isLowPowerModeEnabled || process.thermalState == .serious ? 10 : 15)
+            cadenceLock.lock(); let wanted = cadence.accept(sampleBuffer, fps: fps); cadenceLock.unlock()
+            guard wanted else { return }
+        }
         if sampleBufferType == .video { sendPreview(sampleBuffer) }
         screenShare.processSampleBuffer(sampleBuffer, with: sampleBufferType)
     }

@@ -50,6 +50,8 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     private var sharingTransceiver: LKRTCRtpTransceiver?
     private(set) var videoTrack: LKRTCVideoTrack?
     private var camera: LKRTCCameraVideoCapturer?
+    @MainActor private var cameraEnergySubscription: AnyCancellable?
+    @MainActor private var cameraSource: LKRTCVideoSource?
     private var cameraPosition: AVCaptureDevice.Position
     private(set) var captureDevice: AVCaptureDevice?
     private var audioTrack: LKRTCAudioTrack?
@@ -220,6 +222,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         guard !closed || !enabled else { throw CancellationError() }
         guard enabled != (camera != nil) else { return }
         if !enabled {
+            cameraEnergySubscription = nil; cameraSource = nil
             videoTrack = nil; updateVideoSender(); captureDevice = nil
             let old = camera; camera = nil
             if let old { await withCheckedContinuation { completion in old.stopCapture { completion.resume() } } }
@@ -236,7 +239,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         let source = factory.videoSource()
         let capturer = LKRTCCameraVideoCapturer(delegate: source)
         camera = capturer; captureDevice = device
-        let fps = min(24, Int(format.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 24))
+        let fps = min(24, MediaEnergyBudget.shared.cameraFPS, Int(format.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 24))
         do {
             try await withCheckedThrowingContinuation { (completion: CheckedContinuation<Void, Error>) in
                 capturer.startCapture(with: device, format: format, fps: fps) { if let error = $0 { completion.resume(throwing: error) } else { completion.resume() } }
@@ -251,6 +254,22 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
             throw CancellationError()
         }
         videoTrack = factory.videoTrack(with: source, trackId: "camera")
+        cameraSource = source
+        cameraEnergySubscription = MediaEnergyBudget.shared.$pressure.removeDuplicates().sink { [weak self, weak capturer] pressure in
+            Task { @MainActor [weak self, weak capturer] in
+                guard let self, let capturer, self.camera === capturer, !self.closed else { return }
+                let fps = pressure == .normal ? 24 : pressure == .constrained ? 15 : 10
+                let minimum = Int(ceil(device.activeFormat.videoSupportedFrameRateRanges.map(\.minFrameRate).min() ?? 1))
+                let maximum = Int(floor(device.activeFormat.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? Double(fps)))
+                let rate = max(minimum, min(maximum, fps))
+                self.cameraSource?.adaptOutputFormat(toWidth: 1280, height: 720, fps: Int32(rate))
+                do {
+                    try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
+                    device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(rate))
+                    device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(rate))
+                } catch { /* Capture continues at its previously accepted rate. */ }
+            }
+        }
         updateVideoSender()
     }
     @MainActor func flipCamera() async throws {

@@ -113,7 +113,11 @@ final class PresenterModel: ObservableObject {
     private(set) var heartbeatCount = 0
     private var renderWanted: Bool { active && foreground && !held && (presented || running || starting) }
     private var canRender: Bool { renderWanted && canCompose && (!screenPicking || running) && (!screenSelected || screenSample != nil) }
-    private var renderInterval: TimeInterval { 1.0 / Double(includeCamera && !nativeOverlay ? MediaEnergyBudget.shared.previewFPS : MediaEnergyBudget.shared.inlineFPS) }
+    private var renderInterval: TimeInterval {
+        let budget = MediaEnergyBudget.shared
+        let preview = includeCamera && !nativeOverlay ? budget.previewFPS : budget.inlineFPS
+        return 1.0 / Double(running ? min(preview, budget.sharingFPS) : preview)
+    }
 
     init(observeLifecycle: Bool = true, preferences: UserDefaults = .standard) {
         self.preferences = preferences
@@ -429,8 +433,11 @@ final class PresenterModel: ObservableObject {
         canvasSize = CGSize(width: max(2, (width * scale / 2).rounded(.down) * 2),
                             height: max(2, (height * scale / 2).rounded(.down) * 2))
         if !foreground {
-            if running, let stamped = PresenterCompositor.sample(pixels,
-                time: CMTime(seconds: ProcessInfo.processInfo.systemUptime, preferredTimescale: 1_000_000_000)) { sendSample?(stamped) }
+            let now = ProcessInfo.processInfo.systemUptime
+            if running, now - lastSentTime >= 1.0 / Double(MediaEnergyBudget.shared.sharingFPS),
+               let stamped = PresenterCompositor.sample(pixels, time: CMTime(seconds: now, preferredTimescale: 1_000_000_000)) {
+                lastSentTime = now; sendSample?(stamped)
+            }
         } else { pendingRender = true; refresh() }
     }
     func selectCanvas(clearImage: Bool = false) {

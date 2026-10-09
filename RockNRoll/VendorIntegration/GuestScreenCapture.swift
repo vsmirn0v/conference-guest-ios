@@ -23,6 +23,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
     private var generation = 0
     private var selectionGeneration = 0
     private var captureSource: LocalSharePreview.Source = .screen
+    private var cadence = OutgoingVideoCadence()
     private let onError: (String) -> Void
     private let preview: LocalSharePreview
     private let onFrame: ((CMSampleBuffer) -> Void)?
@@ -200,6 +201,7 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
                 return
             }
             #endif
+            guard cadence.accept(sampleBuffer, fps: MediaEnergyBudget.shared.sharingFPS) else { return }
             if let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) { preview.accept(pixels) }
             upload.processSampleBuffer(sampleBuffer, with: .video)
         }

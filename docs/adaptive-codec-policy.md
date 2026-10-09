@@ -1,6 +1,44 @@
 # Adaptive codec policy — evaluation, 9 October 2026
 
-This is a design proposal, not a new shipping codec selection rule.
+The qualified subset of this proposal is implemented for the next beta. Newer
+outgoing formats remain gated on matched quality/energy qualification.
+
+## Implemented subset
+
+- Guest publishing: upgrade the pinned SDK's default VP8 request to H.264 only
+  when VideoToolbox lists an actual hardware H.264 encoder, the SDK supports
+  H.264, and that call's joined socket explicitly advertises H.264. Existing
+  H.264, VP9/HEVC, unknown formats and malformed requests pass through unchanged.
+- The isolated, typed Objective-C bridge forwards the public Foundation
+  WebSocket send/receive methods and completions. It does not patch SDK binaries,
+  use private OS selectors, rewrite SDP, or change incoming/audio messages.
+- Match the invitation ID in the outgoing join and subsequent message envelope.
+  The embedded media room name is a different resolved UUID; it is not the short
+  invitation ID. Track socket identity and call generation so old capabilities
+  and late callbacks cannot affect a replacement meeting.
+- A bounded, one-shot publication check detects an enabled sender that cannot
+  encode frames. Disable the override for that call and use the existing media
+  reconnection path, preserving microphone/camera intent. A new call may retry;
+  a stopped track does not trigger recovery.
+- Camera capture adapts to 30/15/10 fps for guest SDK calls and 24/15/10 fps for
+  native RTC calls under normal/constrained/severe pressure. Main-app recovery
+  retains the existing five-second hysteresis. Sharing/Presenter delivery uses
+  15/10/5 fps before IPC/encoding, retaining resolution and unchanged audio.
+  ReplayKit extensions gate only video; screen/frame-format changes are immediate.
+- Shared native hardware VP9 receiving and TrueConf hardware H.264 receiving
+  remain independent of outgoing decisions and Low Power Mode.
+
+Physical validation: guest camera and Presenter encode with VideoToolbox and
+`powerEfficientEncoder=true`; an independent browser decodes fresh H.264 camera
+and 1280×720 Presenter frames. A constrained capture check verifies the device's
+frame duration plus fresh encoded frames rather than requiring optional FPS
+statistics. Hold/resume restores incoming audio/video and outgoing publishing;
+explicit fallback restores fresh VP8 software frames without ending the meeting.
+
+VP9 sending still uses software encoding with unqualified native simulcast/SVC
+settings; the earlier 180×320 trial does not establish equal quality. HEVC is not
+advertised by the guest encoder and the tested native servers reject it. Do not
+force either format, or infer measured battery savings from codec names.
 
 ## Recommendation
 

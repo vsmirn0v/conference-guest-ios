@@ -9,6 +9,7 @@ final class GuestPresenterSender: GuestScreenCapture {
     private var upload: JazzScreenShare?
     private let preview: LocalSharePreview
     private var started = false
+    private var cadence = OutgoingVideoCadence()
     init(preview: LocalSharePreview, onError: @escaping (String) -> Void) {
         self.preview = preview
         upload = JazzScreenShare { error in
@@ -23,11 +24,11 @@ final class GuestPresenterSender: GuestScreenCapture {
     }
     func start(source: LocalSharePreview.Source) {
         guard !started else { return }
-        started = true; preview.begin(source: source)
+        started = true; cadence = OutgoingVideoCadence(); preview.begin(source: source)
         upload?.broadcastStarted(withSetupInfo: nil)
     }
     func send(_ sample: CMSampleBuffer) {
-        guard started, let upload else { return }
+        guard started, let upload, cadence.accept(sample, fps: MediaEnergyBudget.shared.sharingFPS) else { return }
         upload.processSampleBuffer(sample, with: .video)
         if let pixels = CMSampleBufferGetImageBuffer(sample) { preview.accept(pixels) }
     }

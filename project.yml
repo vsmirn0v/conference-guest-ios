@@ -29,6 +29,7 @@ targets:
       - path: Shared/Localization.swift
       - path: Shared/LocalSharePreviewTransport.swift
       - path: Shared/OutgoingShareExperiment.swift
+      - path: Shared/OutgoingVideoCadence.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
     dependencies:
       - package: JazzSDK
@@ -94,6 +95,7 @@ targets:
       - path: Shared/GuestBroadcastStop.swift
       - path: Shared/LocalSharePreviewTransport.swift
       - path: Shared/OutgoingShareExperiment.swift
+      - path: Shared/OutgoingVideoCadence.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
     dependencies:
       - package: JazzSDK
