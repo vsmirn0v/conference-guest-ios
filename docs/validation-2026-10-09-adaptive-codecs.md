@@ -74,3 +74,25 @@ direct Share action, replacing its obsolete Presenter-first assumption.
 
 Build 55 uploaded but remains Ready to Submit, without tester group assignment.
 Build 56 replaces that candidate with the interruption-safe publication watchdog.
+
+Build 56 is archived from clean detached source
+`32a5f2569bedf0462e35e6f0bc780f90d2b989b9`. Archive and distribution export pass
+strict deep signature verification. All three bundles are 0.2.0 (56), minimum
+iOS 16.0; the exported app has Production iCloud and `get-task-allow=false`.
+Bluetooth/camera/microphone purpose strings and encryption compliance are
+present; Contacts permission and Debug codec trials are absent.
+
+- App and dSYM UUID: `C94467D1-E5F9-39B3-8462-688312ACEAFF`.
+- Local export app SHA-256: `828d216448bec2d6981887e04d0fd483652be12adb12ea35f76e3ab2b9e0d1dc`.
+- Local export IPA SHA-256: `9eaf804e042ddd019bb8e19f8bb3b8b49c955801f1821576b6fb763c3c18c8c5`.
+
+Xcode reports `Uploaded RockNRoll` and `EXPORT SUCCEEDED`. Existing missing
+third-party framework symbol warnings do not block delivery; the app's own
+symbols match.
+
+At 08:08 MSK on October 9, App Store Connect confirms 0.2.0 (56) is Testing,
+expiring in 90 days, in both Rock’n’Roll Internal (one tester) and Rock’n’Roll
+Public Beta (six testers). Build ID: `97d3c7e3-771c-43e0-8bd6-171525afd053`.
+Saved testing notes: “Improved video playback, screen sharing and connection
+stability.” No provider branding is used in those notes. Build 55 was not added
+to either group.
