@@ -68,7 +68,7 @@
     "plane_mismatches": 0
   },
   "simulator": {
-    "tests": 33,
+    "tests": 34,
     "expected_skips": 2,
     "failures": 0
   },

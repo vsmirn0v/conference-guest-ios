@@ -35,7 +35,7 @@ network recovery pause the check. Source/capture generation changes reset it.
 
 `GuestCameraTrackBinding` records the original source at public track creation.
 This avoids relying on sender/source Objective-C wrapper identity. The binding
-is source-owned, bounded and does not retain cameras. Exactly one matching
+is source-owned, keeps the newest 64 IDs and does not retain cameras. Exactly one matching
 active capture proxy is required. Raw capture is counted before orientation so
 encoder retention/pool starvation cannot hide behind a stopped downstream
 media-source counter. Screen-share tracks retain their own media-source counter.
@@ -48,7 +48,7 @@ is replaced. Debug-only scalar checks and fault injection are excluded from Rele
 
 ## Validation
 
-- iOS 27 simulator: 33 focused tests, two expected hardware/benchmark skips,
+- iOS 27 simulator: 34 focused tests, two expected hardware/benchmark skips,
   zero failures. Non-square asymmetric fixtures cover 90°/180°/270°, full/limited
   range, exact Y/U/V samples, timestamps, backpressure and resumed delivery.
 - A retained-eight-buffer test proves that raw input continues, the watchdog

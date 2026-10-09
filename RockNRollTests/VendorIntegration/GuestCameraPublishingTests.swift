@@ -121,6 +121,14 @@ final class GuestCameraPublishingTests: XCTestCase {
         second.restore(); XCTAssertTrue(camera.delegate === downstream)
     }
     @MainActor
+    func testLongLivedCameraSourceKeepsNewestTrackBindings() {
+        GuestCameraTrackBinding.prepare()
+        let factory = RTCPeerConnectionFactory(), source = factory.videoSource()
+        for index in 0..<80 { _ = factory.videoTrack(with: source, trackId: "replacement-\(index)") }
+        XCTAssertTrue(GuestCameraTrackBinding.source(source, owns: "replacement-79"))
+        XCTAssertFalse(GuestCameraTrackBinding.source(source, owns: "replacement-0"))
+    }
+    @MainActor
     func testRawCaptureAdvancesThroughPoolStarvationAndCannotBindAnotherSource() throws {
         GuestCameraTrackBinding.prepare()
         let factory = RTCPeerConnectionFactory(), source = factory.videoSource()

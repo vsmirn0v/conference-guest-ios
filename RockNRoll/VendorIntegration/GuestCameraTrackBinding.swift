@@ -10,7 +10,7 @@ enum GuestCameraTrackBinding {
     static func prepare() { _ = installed }
     static func source(_ source: RTCVideoSource, owns trackID: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        return (objc_getAssociatedObject(source, &trackIDsKey) as? NSSet)?.contains(trackID) == true
+        return (objc_getAssociatedObject(source, &trackIDsKey) as? NSArray)?.contains(trackID) == true
     }
     private static let installed: Bool = {
         let selector = #selector(RTCPeerConnectionFactory.videoTrack(with:trackId:))
@@ -20,9 +20,10 @@ enum GuestCameraTrackBinding {
         let forward: @convention(block) (RTCPeerConnectionFactory, RTCVideoSource, NSString) -> RTCVideoTrack = { factory, source, trackID in
             let track = original(factory, selector, source, trackID)
             lock.lock()
-            let ids = (objc_getAssociatedObject(source, &trackIDsKey) as? NSSet)?.mutableCopy() as? NSMutableSet ?? NSMutableSet()
-            if ids.count < 64 { ids.add(trackID) }
-            objc_setAssociatedObject(source, &trackIDsKey, ids.copy(), .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            var ids = objc_getAssociatedObject(source, &trackIDsKey) as? [String] ?? []
+            ids.removeAll { $0 == trackID as String }; ids.append(trackID as String)
+            if ids.count > 64 { ids.removeFirst(ids.count - 64) }
+            objc_setAssociatedObject(source, &trackIDsKey, ids as NSArray, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             lock.unlock()
             return track
         }
