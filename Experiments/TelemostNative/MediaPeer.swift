@@ -134,15 +134,19 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
             }
         }
     }
-    func publishPattern(sharing: Bool, codecPolicy: CodecPolicy) async throws -> [String: Any] {
+    func publishPattern(sharing: Bool, codecPolicy: CodecPolicy, scalabilityMode: String? = nil, width: Int = 640, height: Int = 360) async throws -> [String: Any] {
         let audioSettings = LKRTCRtpTransceiverInit(); audioSettings.direction = .sendOnly
         let audioSource = factory.audioSource(with: LKRTCMediaConstraints(mandatoryConstraints: ["googEchoCancellation": "false", "googNoiseSuppression": "false", "googAutoGainControl": "false"], optionalConstraints: nil))
         let audioTrack = factory.audioTrack(with: audioSource, trackId: "synthetic-audio")
         guard let audioTransceiver = connection.addTransceiver(with: audioTrack, init: audioSettings) else { throw ProbeError.invalidPayload }
         let source = factory.videoSource()
-        source.adaptOutputFormat(toWidth: 640, height: 360, fps: 10)
+        source.adaptOutputFormat(toWidth: Int32(width), height: Int32(height), fps: 10)
         let track = factory.videoTrack(with: source, trackId: "synthetic-video")
         let settings = LKRTCRtpTransceiverInit(); settings.direction = .sendOnly
+        if let scalabilityMode {
+            let encoding = LKRTCRtpEncodingParameters(); encoding.scalabilityMode = scalabilityMode
+            settings.sendEncodings = [encoding]
+        }
         guard let transceiver = connection.addTransceiver(with: track, init: settings) else { throw ProbeError.invalidPayload }
         if codecPolicy != .serverDefault {
             let codecs = factory.rtpSenderCapabilities(forKind: "video").codecs
@@ -166,12 +170,12 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
             var count = 0
             while !Task.isCancelled {
                 var pixelBuffer: CVPixelBuffer?
-                CVPixelBufferCreate(nil, 640, 360, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixelBuffer)
+                CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixelBuffer)
                 if let buffer = pixelBuffer {
                     CVPixelBufferLockBaseAddress(buffer, [])
                     let bytes = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
                     let stride = CVPixelBufferGetBytesPerRow(buffer)
-                    for y in 0..<360 { for x in 0..<640 {
+                    for y in 0..<height { for x in 0..<width {
                         let i = y * stride + x * 4
                         bytes[i] = UInt8((x + count * 8) % 256)
                         bytes[i + 1] = UInt8(y % 256)

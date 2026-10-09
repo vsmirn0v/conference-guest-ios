@@ -47,6 +47,7 @@
 		2128C5C3A0577197295EEC96 /* OutgoingShareExperiment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BF711C6C4AE255609932EE9 /* OutgoingShareExperiment.swift */; };
 		21570B208BECECA604469258 /* NSLayoutConstraint+Priority.swift in Sources */ = {isa = PBXBuildFile; fileRef = 912ED3A027AB9D2DFD1EBBC9 /* NSLayoutConstraint+Priority.swift */; };
 		21FA1695C874173F866A3F63 /* TelemostCallEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F277EC3E056DFF48B655BB0 /* TelemostCallEngine.swift */; };
+		2285D8375C86B65566CE2C8A /* vp9-svc.json in Resources */ = {isa = PBXBuildFile; fileRef = 8C15F3F32829CCA9C004757F /* vp9-svc.json */; };
 		2386827A1522B328B7B4FC7C /* MacGuestScreenCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F111C19BEF411D95F3B20A8 /* MacGuestScreenCapture.swift */; };
 		23DE3D169843E74CAA125E65 /* CatchUpStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70E1D2B21C4871293EC9597C /* CatchUpStoreTests.swift */; };
 		244CA96DDF770D07B5E30909 /* GuestSignalCodecBridge.m in Sources */ = {isa = PBXBuildFile; fileRef = 7EAA20645AF1976C8D0FFAB5 /* GuestSignalCodecBridge.m */; };
@@ -442,6 +443,7 @@
 		88EF3E7A0EEE19E9A9B3E857 /* CatchUpStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatchUpStore.swift; sourceTree = "<group>"; };
 		8ABF3D1959D288FA94E88311 /* ContinuationBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContinuationBanner.swift; sourceTree = "<group>"; };
 		8BF711C6C4AE255609932EE9 /* OutgoingShareExperiment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingShareExperiment.swift; sourceTree = "<group>"; };
+		8C15F3F32829CCA9C004757F /* vp9-svc.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "vp9-svc.json"; sourceTree = "<group>"; };
 		8C28DB8E6F73735636A2365C /* MediaEnergyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaEnergyTests.swift; sourceTree = "<group>"; };
 		8CD40516B8DF9183003C367E /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		8D515F3060E9EAB3AB128908 /* MeetingHeaderStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingHeaderStatusTests.swift; sourceTree = "<group>"; };
@@ -825,6 +827,7 @@
 			isa = PBXGroup;
 			children = (
 				5A544335BB02387649633464 /* vp9-lossless.json */,
+				8C15F3F32829CCA9C004757F /* vp9-svc.json */,
 			);
 			path = Fixtures;
 			sourceTree = "<group>";
@@ -1188,6 +1191,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A73AC6762964EE0B3C3E4A8F /* vp9-lossless.json in Resources */,
+				2285D8375C86B65566CE2C8A /* vp9-svc.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

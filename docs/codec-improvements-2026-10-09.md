@@ -114,6 +114,11 @@ The browser showed only its own participant after app test cleanup.
 
 ## Remaining qualification and limits
 
+Further investigation isolated the spatial-SVC hardware and SDK bridge limits.
+See [the production hybrid decoder plan](vp9-production-path-2026-10-09.md).
+Restoring an Annex-B index alone did not qualify hardware spatial SVC on Mac or
+iPhone. The supported direction is per-decoder native software fallback.
+
 Multilayer VP9 support, rapid room replacement, competing calls, background PiP
 and live LiveKit full recovery still need qualification for the new decoder
 paths. Existing shipping codecs/recovery are not replaced by this experiment.

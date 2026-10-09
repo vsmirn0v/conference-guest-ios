@@ -39,8 +39,10 @@ need live qualification before enabling these new paths in Release.
 Current qualification: single-layer guest VP9 (`L1T3`) and forced software
 recovery pass on Mac and iPhone. The normal browser's multilayer `L3T3_KEY`
 stream fails hardware qualification. Keep this experiment disabled for shipping
-until layered stream handling is fixed and qualified. See
-`docs/codec-improvements-2026-10-09.md` for results and limits.
+until a native hybrid decoder is integrated and qualified. Spatial hardware VP9
+failed even with a valid frame index on Mac and iPhone; returning fallback status
+alone does not activate software fallback in the pinned factory. See
+`docs/vp9-production-path-2026-10-09.md` for the framework/API requirements.
 
 The VideoToolbox packet/session implementation is shared with the already
 qualified native receiving adapter. It requires a hardware session and verifies

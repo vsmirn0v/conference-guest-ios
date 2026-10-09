@@ -49,6 +49,34 @@ import XCTest
         XCTAssertFalse(factory.createDecoder(codec) is VP9HardwareDecoder)
         #endif
     }
+    /// An opt-in acceptance gate, not a default CI assertion that this hardware
+    /// supports SVC. The base-only stream isolates ordinary VP9 from the same
+    /// encoder's three-spatial-layer stream, with independent reference pixels.
+    func testLayeredHardwareQualification() throws {
+        guard VP9HardwareDecoder.available,
+              ProcessInfo.processInfo.environment["ROCKNROLL_TEST_VP9_SVC"] == "1" else {
+            throw XCTSkip("Opt-in physical hardware SVC qualification")
+        }
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "vp9-svc", withExtension: "json"))
+        let fixtures = try JSONDecoder().decode([VP9Fixture].self, from: Data(contentsOf: url))
+        for fixture in fixtures {
+            let core = VideoToolboxVP9Session()
+            var exact = 0, failed = 0
+            for (index, frame) in fixture.frames.enumerated() {
+                switch core.decode(frame.data, keyFrame: frame.key, timestamp: UInt32(index * 9000)) {
+                case let .frame(buffer):
+                    if let buffer {
+                        let decoded = LKRTCVideoFrame(buffer: LKRTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 0)
+                        if VP9Fixture.digest(decoded) == frame.sha256 { exact += 1 }
+                    }
+                case .failure: failed += 1
+                case .waitingForKeyFrame: break
+                }
+            }
+            print("VP9_SVC_QUALIFICATION width=\(fixture.width) height=\(fixture.height) exact=\(exact) required=\(fixture.frames.count) failures=\(failed) hardware=\(core.verifiedHardwareSession)")
+            XCTAssertEqual(exact, fixture.frames.count, "All layers must decode correctly before enabling the new SDK decoder")
+        }
+    }
     func testDecodedPixelsResolutionChangeRTPRotationAndRelease() throws {
         guard VP9HardwareDecoder.available else { throw XCTSkip("Hardware VP9 decoder required") }
         let fixtures = try fixtures()
