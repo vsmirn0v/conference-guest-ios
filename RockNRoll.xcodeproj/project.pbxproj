@@ -130,6 +130,7 @@
 		7715492FDE15C262A39D2B74 /* ConferenceModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65570B6D840AF2D71932D313 /* ConferenceModel.swift */; };
 		772D6857C9D1ADD26D37C906 /* FloatingVideoContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1567DFCAF9DFADA92D9DECFF /* FloatingVideoContentView.swift */; };
 		78971867C7199811A6A89C22 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = F2AC2A05DFF407FD96CD3930 /* InfoPlist.strings */; };
+		792920E1AD87832C0D03CCDB /* LiveKitWebRTC-notices.txt in Resources */ = {isa = PBXBuildFile; fileRef = C06F78D38F40E86788A17689 /* LiveKitWebRTC-notices.txt */; };
 		79D4AEF2125A4A9C9B9023D9 /* VideoDecoderFactoryExperiment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33A3CDA83820E909C8C2F9D6 /* VideoDecoderFactoryExperiment.swift */; };
 		7A5DC867A8305333CF5988AD /* GuestPublishingCodecPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96286C0E19F9306EA715BF8D /* GuestPublishingCodecPolicy.swift */; };
 		7B64C3E70A699389A9055A95 /* PresenterCanvasTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB369290564963B920E5DB8A /* PresenterCanvasTests.swift */; };
@@ -137,6 +138,7 @@
 		7E12467922DF5F5C89E54D31 /* GuestBroadcast.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3CCCF54E4D96F10DF8446D48 /* GuestBroadcast.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		7ECAE69B4571F80DBEE4733F /* GuestBroadcastStop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70BDFD0E30DDEF30801600B2 /* GuestBroadcastStop.swift */; };
 		8114E58CBABF98EFE781E0C9 /* MicrophoneActivityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FC786FE646EE28859FE43C9 /* MicrophoneActivityTests.swift */; };
+		81EC1734AE46C322404A5F31 /* LiveKitWebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 1CF2445B568B7A0BFE699865 /* LiveKitWebRTC */; };
 		81ECC8E92E1CA9FAA30A9B6F /* NativeVideoPixelBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CA509E66DEC04AC314D1240 /* NativeVideoPixelBuffer.swift */; };
 		81FAB07C47B53539FFC098DE /* SpeakerFixtureActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = BED2653E8497C35147D804BC /* SpeakerFixtureActions.swift */; };
 		834AACCDD5E41D3D2D7924E6 /* FavoriteRoomRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD1ABCFEFE075B13558256F /* FavoriteRoomRow.swift */; };
@@ -217,6 +219,7 @@
 		D9E827D41E62EC8E63511272 /* ChatStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B653B040BAC24FB00F892D0 /* ChatStore.swift */; };
 		DB67BC27E439A130FAA4FF10 /* RoomSyncUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65F648EC831C55B448DD9A37 /* RoomSyncUITests.swift */; };
 		DB8BD5D1A44C59F08C1C7DE7 /* MacAudioDevicesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16722E5FE635885822227AA7 /* MacAudioDevicesTests.swift */; };
+		DC43E13DB6361E5CD4A00292 /* LiveKitWebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 68A692131C1E04E59A5EB58B /* LiveKitWebRTC */; };
 		DCB9C347482577A35E60FBF7 /* CatchUpStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88EF3E7A0EEE19E9A9B3E857 /* CatchUpStore.swift */; };
 		DD76B7C3FFD74D6416883136 /* RoomSyncCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33040F702F0225D226CAF319 /* RoomSyncCoordinatorTests.swift */; };
 		DF11840F64A5219F131DB9AB /* MacScreenCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C431195AC30436736EB33ACE /* MacScreenCaptureTests.swift */; };
@@ -498,6 +501,7 @@
 		BCE88312DF5C01F8D16E5BFD /* PresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterTests.swift; sourceTree = "<group>"; };
 		BD6CCF5106C0A518803CCA07 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BED2653E8497C35147D804BC /* SpeakerFixtureActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerFixtureActions.swift; sourceTree = "<group>"; };
+		C06F78D38F40E86788A17689 /* LiveKitWebRTC-notices.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "LiveKitWebRTC-notices.txt"; sourceTree = "<group>"; };
 		C09FCE59F22D1FD6B3AD3F2A /* RockCallViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RockCallViewController.swift; sourceTree = "<group>"; };
 		C1BE2AF3B26609A47AD2110A /* NativeVideoDecoderFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeVideoDecoderFactory.swift; sourceTree = "<group>"; };
 		C22ED977A6A00525FC0E8F35 /* SceneDelegate+Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SceneDelegate+Fixtures.swift"; sourceTree = "<group>"; };
@@ -521,6 +525,7 @@
 		D88EF24A02F9D32A5154827C /* MeetingContinuationCloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingContinuationCloud.swift; sourceTree = "<group>"; };
 		DC0320B7DFBDB9A0BBAFE223 /* GuestPublishingCodecTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestPublishingCodecTests.swift; sourceTree = "<group>"; };
 		DC22448823F9B3C0741DDC1D /* CallMediaSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallMediaSnapshot.swift; sourceTree = "<group>"; };
+		DCD95F34D084D7B376C1CF5F /* webrtc-xcframework */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "webrtc-xcframework"; path = "Dependencies/webrtc-xcframework"; sourceTree = SOURCE_ROOT; };
 		DD573672F58CD87BE5C3118D /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.stringsdict; name = ru; path = ru.lproj/Localizable.stringsdict; sourceTree = "<group>"; };
 		DE3198CBF3E9C793FD28E25F /* JazzScreenShareResources.bundle */ = {isa = PBXFileReference; lastKnownFileType = wrapper.cfbundle; path = JazzScreenShareResources.bundle; sourceTree = "<group>"; };
 		DE3A8FC38C4EF599DFDB0C07 /* StudioModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioModel.swift; sourceTree = "<group>"; };
@@ -569,6 +574,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				29A92AF9133DA95B92B92E84 /* LiveKit in Frameworks */,
+				81EC1734AE46C322404A5F31 /* LiveKitWebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -580,6 +586,7 @@
 				1B5855178CAEB4440A6E84E9 /* JazzSDKScreenShare.xcframework in Frameworks */,
 				96E45477868AE00B30673F3A /* ConferenceCore in Frameworks */,
 				88D5A969729A522616DB9AC1 /* LiveKit in Frameworks */,
+				DC43E13DB6361E5CD4A00292 /* LiveKitWebRTC in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -706,6 +713,22 @@
 			path = Shared;
 			sourceTree = "<group>";
 		};
+		7F56CCF85F1C0798618F3BC2 /* Legal */ = {
+			isa = PBXGroup;
+			children = (
+				C06F78D38F40E86788A17689 /* LiveKitWebRTC-notices.txt */,
+			);
+			path = Legal;
+			sourceTree = "<group>";
+		};
+		94BB2C7E1CD21145E1F86957 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				7F56CCF85F1C0798618F3BC2 /* Legal */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		AAAF80F72166B50CB7E2E712 /* VendorSDK */ = {
 			isa = PBXGroup;
 			children = (
@@ -818,6 +841,7 @@
 				93AAC86B2D4D8F6CE7FA6694 /* Localizable.strings */,
 				D75611CBD0EC5F3C490CFE82 /* Localizable.stringsdict */,
 				EF8975EC14F7662026B49AC9 /* NativeRTC */,
+				94BB2C7E1CD21145E1F86957 /* Resources */,
 				DE1989965E587ACD4611EA1E /* Telemost */,
 				672F662333AA560B12382850 /* TrueConf */,
 				D5F9600D215EDCBE2254334D /* VendorIntegration */,
@@ -985,6 +1009,7 @@
 			isa = PBXGroup;
 			children = (
 				D3398AA0F6FDB72AD43F46CB /* ConferenceCore */,
+				DCD95F34D084D7B376C1CF5F /* webrtc-xcframework */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -1045,6 +1070,7 @@
 			name = RockBroadcast;
 			packageProductDependencies = (
 				72993603D3AE089A79E5B15E /* LiveKit */,
+				1CF2445B568B7A0BFE699865 /* LiveKitWebRTC */,
 			);
 			productName = RockBroadcast;
 			productReference = 1CE7740CA4FFBA32B49D81D2 /* RockBroadcast.appex */;
@@ -1092,6 +1118,7 @@
 				0B3F91314298394121DA8F1D /* JazzSDK */,
 				023105828817798EB4DA9C73 /* ConferenceCore */,
 				AB6F15C1E25726E56A54D099 /* LiveKit */,
+				68A692131C1E04E59A5EB58B /* LiveKitWebRTC */,
 			);
 			productName = RockNRoll;
 			productReference = CC42FB720B95DDCB4C47E645 /* RockNRoll.app */;
@@ -1143,6 +1170,7 @@
 				F9F8D192EC109A45CD86AF9F /* XCRemoteSwiftPackageReference "jazz-ios-sdk" */,
 				36607511BEEFA22968AB3E84 /* XCRemoteSwiftPackageReference "client-sdk-swift" */,
 				A1978F2AD8396DBE4B0BF1C1 /* XCLocalSwiftPackageReference "ConferenceCore" */,
+				00D3430CC82F9C071776A609 /* XCLocalSwiftPackageReference "Dependencies/webrtc-xcframework" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 2835BD9AF29D4B9549DF8290 /* Products */;
@@ -1166,6 +1194,7 @@
 				39A122CD5DC9D10C3DCC29DA /* Assets.xcassets in Resources */,
 				A6B7066F04A854827E9466A5 /* InfoPlist.strings in Resources */,
 				89311DB1696CAA632627CC3D /* JazzScreenShareResources.bundle in Resources */,
+				792920E1AD87832C0D03CCDB /* LiveKitWebRTC-notices.txt in Resources */,
 				AB028C03E1A572AB2D347562 /* Localizable.strings in Resources */,
 				A84E5AF54AB0C60B1F0F65BC /* Localizable.stringsdict in Resources */,
 			);
@@ -1980,6 +2009,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		00D3430CC82F9C071776A609 /* XCLocalSwiftPackageReference "Dependencies/webrtc-xcframework" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = "Dependencies/webrtc-xcframework";
+		};
 		A1978F2AD8396DBE4B0BF1C1 /* XCLocalSwiftPackageReference "ConferenceCore" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ConferenceCore;
@@ -2020,10 +2053,18 @@
 			package = F9F8D192EC109A45CD86AF9F /* XCRemoteSwiftPackageReference "jazz-ios-sdk" */;
 			productName = JazzSDK;
 		};
+		1CF2445B568B7A0BFE699865 /* LiveKitWebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LiveKitWebRTC;
+		};
 		57D559C6B683E448E9EF28F5 /* JazzSDK */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = F9F8D192EC109A45CD86AF9F /* XCRemoteSwiftPackageReference "jazz-ios-sdk" */;
 			productName = JazzSDK;
+		};
+		68A692131C1E04E59A5EB58B /* LiveKitWebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LiveKitWebRTC;
 		};
 		72993603D3AE089A79E5B15E /* LiveKit */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -40,6 +40,7 @@ import XCTest
         policy.fallBack(generation: current); XCTAssertTrue(policy.snapshot.enabled)
     }
     func testFactoryKeepsExistingCodecsAndSimulatorSoftwarePath() {
+        XCTAssertTrue(NativeVP9Hybrid.available, "The app must resolve the patched framework, including on Simulator")
         let factory = NativeVideoDecoderFactory()
         XCTAssertEqual(factory.supportedCodecs().map(\.name), LKRTCDefaultVideoDecoderFactory().supportedCodecs().map(\.name))
         XCTAssertFalse(factory.createDecoder(LKRTCVideoCodecInfo(name: "VP9", parameters: ["profile-id": "2"])) is VP9HardwareDecoder)
@@ -172,15 +173,31 @@ import XCTest
         try await waitForHardware(after: beforeHold)
         print("VP9_DEVICE_HOLD_RECOVERY \(NativeVideoDecoderFactory.evidenceForTesting)")
         let beforeFallback = readyCount
+        let streamFallback = NativeVP9Hybrid.available
+        func streamKey(_ row: [String: Any]) -> String {
+            "\(row["target"] as? String ?? ""):\(row["mid"] as? String ?? "")"
+        }
+        let previousFrames = Dictionary((await engine.codecEvidenceForTesting()).map {
+            (streamKey($0), ($0["framesDecoded"] as? NSNumber)?.intValue ?? 0)
+        }, uniquingKeysWith: max)
         NativeVideoDecoderFactory.failForTesting()
         var recovered = false
         while !ended && !recovered && Date() < deadline {
             try await Task.sleep(for: .milliseconds(200))
             let streams = await engine.codecEvidenceForTesting()
-            recovered = readyCount > beforeFallback && streams.contains { $0["mimeType"] as? String == "video/VP9" && $0["decoderImplementation"] as? String == "libvpx" && (($0["framesDecoded"] as? NSNumber)?.intValue ?? 0) >= 10 }
+            recovered = (streamFallback || readyCount > beforeFallback) && streams.contains {
+                $0["mimeType"] as? String == "video/VP9" &&
+                ($0["decoderImplementation"] as? String)?.hasPrefix("libvpx") == true &&
+                (($0["framesDecoded"] as? NSNumber)?.intValue ?? 0) >=
+                    (streamFallback ? previousFrames[streamKey($0), default: 0] : 0) + 10
+            }
             if recovered { print("VP9_DEVICE_SOFTWARE_RECOVERY \(streams)") }
         }
         XCTAssertTrue(recovered); XCTAssertFalse(ended)
+        if streamFallback {
+            XCTAssertEqual(readyCount, beforeFallback, "Native fallback must preserve the meeting connection")
+            XCTAssertTrue(NativeVideoDecoderPolicy.shared.snapshot.enabled)
+        } else { XCTAssertFalse(NativeVideoDecoderPolicy.shared.snapshot.enabled) }
         XCTAssertFalse(engine.microphoneSendingForTesting)
     }
 }

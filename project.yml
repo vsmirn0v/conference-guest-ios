@@ -15,6 +15,8 @@ packages:
   LiveKit:
     url: https://github.com/livekit/client-sdk-swift.git
     revision: 57a84d71c33e97349963c1cbd442fb4b01428b7c
+  NativeWebRTC:
+    path: Dependencies/webrtc-xcframework
 targets:
   RockNRoll:
     type: application
@@ -37,6 +39,8 @@ targets:
         embed: false
       - package: ConferenceCore
       - package: LiveKit
+      - package: NativeWebRTC
+        product: LiveKitWebRTC
       - target: RockBroadcast
       - target: GuestBroadcast
     settings:
@@ -74,6 +78,8 @@ targets:
       - path: RockBroadcast
     dependencies:
       - package: LiveKit
+      - package: NativeWebRTC
+        product: LiveKitWebRTC
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.broadcast

@@ -292,8 +292,8 @@ final class TelemostCallEngine: CallEngine {
                 else { chat.isReadOnly = true; chat.unavailableReason = L("The host has disabled meeting chat.") }
                 let factory = try NativeRTCPeer.makeFactory()
                 self.factory = factory
-                let subscriber = NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: bootstrap.iceServers)
-                let publisher = NativeRTCPeer(target: "PUBLISHER", factory: factory, ice: bootstrap.iceServers, cameraPosition: cameraPosition)
+                let subscriber = try NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: bootstrap.iceServers)
+                let publisher = try NativeRTCPeer(target: "PUBLISHER", factory: factory, ice: bootstrap.iceServers, cameraPosition: cameraPosition)
                 self.subscriber = subscriber; self.publisher = publisher
                 for peer in [subscriber, publisher] {
                     peer.onCandidate = { [weak self] candidate in Task { @MainActor in
@@ -542,7 +542,15 @@ final class TelemostCallEngine: CallEngine {
         let sender = NativeScreenSender(factory: factory, preview: view.sharePreview,
             onFirstFrame: { [weak self] in
                 guard let self, self.sharingGeneration == attempt, self.hasJoinStarted, !self.leaving else { return }
-                self.sharingActive = true; self.publisher?.setSharing(self.screenSender?.track)
+                do {
+                    guard let publisher = self.publisher, let track = self.screenSender?.track else { throw CancellationError() }
+                    try publisher.setSharing(track)
+                } catch {
+                    self.setScreenSharing(false)
+                    if !(error is CancellationError) { self.recover(error) }
+                    return
+                }
+                self.sharingActive = true
                 self.view?.setSharing(true); self.scheduleMedia(); self.refresh()
             }, onEnd: { [weak self] message in
                 guard let self, self.sharingGeneration == attempt else { return }
@@ -556,7 +564,7 @@ final class TelemostCallEngine: CallEngine {
         if retirePresenter { studio.presenter.sharingEnded() }
         sharingGeneration = UUID(); sharingTask?.cancel(); sharingTask = nil
         let sender = screenSender; screenSender = nil
-        sharingActive = false; publisher?.setSharing(nil); view?.setSharing(false)
+        sharingActive = false; try? publisher?.setSharing(nil); view?.setSharing(false)
         BroadcastManager.shared.requestStop()
         await sender?.stop()
         if retirePresenter { await studio.presenter.waitForScreenStop() }
@@ -684,7 +692,11 @@ final class TelemostCallEngine: CallEngine {
         let attempt = UUID(); sharingGeneration = attempt
         let sender = NativeScreenSender(factory: factory, preview: view.sharePreview, onFirstFrame: { [weak self] in
             guard let self, self.sharingGeneration == attempt else { return }
-            self.sharingActive = true; self.publisher?.setSharing(self.screenSender?.track)
+            do {
+                guard let publisher = self.publisher, let track = self.screenSender?.track else { throw CancellationError() }
+                try publisher.setSharing(track)
+            } catch { self.setScreenSharing(false); return }
+            self.sharingActive = true
             self.scheduleMedia(); self.refresh()
         }, onEnd: { _ in })
         screenSender = sender

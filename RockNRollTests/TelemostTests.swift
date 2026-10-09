@@ -253,7 +253,7 @@ final class TelemostTests: XCTestCase {
         }
         let received = expectation(description: "MID available after remote SDP")
         received.assertForOverFulfill = false
-        let receiver = NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: [])
+        let receiver = try NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: [])
         receiver.onTrack = { mid, video in
             XCTAssertFalse(mid.isEmpty); XCTAssertEqual(video.kind, "video"); received.fulfill()
         }

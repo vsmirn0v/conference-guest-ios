@@ -335,7 +335,7 @@ final class TrueConfCallEngine: CallEngine {
             try await transport.send(["method": "getIceConfig", "streamConferenceId": stream])
         case "getIceConfig":
             guard publisher == nil, !streamID.isEmpty, let values = event["iceServers"] as? [[String: Any]], let factory else { return }
-            let peer = NativeRTCPeer(target: "COMPOSITE", factory: factory,
+            let peer = try NativeRTCPeer(target: "COMPOSITE", factory: factory,
                 ice: try TrueConfICE.decode(values, cid: cid, stream: streamID), cameraPosition: cameraPosition, topology: .composite)
             publisher = peer
             let generation = epoch
@@ -367,7 +367,7 @@ final class TrueConfCallEngine: CallEngine {
             case "offer":
                 let answer = try await peer.answer(event)
                 try await sendMedia(["type": "answer", "sdp": answer["sdp"] ?? "", "browser": "RockNRoll Native"])
-                peer.localSDPSent(); peer.enablePublishing(); serverReady = true
+                peer.localSDPSent(); try peer.enablePublishing(); serverReady = true
                 try await transport.send(["method": "ManageLayout", "func": "Get"])
                 scheduleMedia()
             case "answer":
@@ -531,7 +531,15 @@ final class TrueConfCallEngine: CallEngine {
         let sender = NativeScreenSender(factory: factory, preview: view.sharePreview,
             onFirstFrame: { [weak self] in
                 guard let self, self.sharingGeneration == attempt, self.hasJoinStarted, !self.leaving else { return }
-                self.sharingActive = true; self.publisher?.setSharing(self.screenSender?.track)
+                do {
+                    guard let publisher = self.publisher, let track = self.screenSender?.track else { throw CancellationError() }
+                    try publisher.setSharing(track)
+                } catch {
+                    self.setScreenSharing(false)
+                    if !(error is CancellationError) { self.recover(error) }
+                    return
+                }
+                self.sharingActive = true
                 self.view?.setSharing(true); self.scheduleMedia(); self.refresh()
             }, onEnd: { [weak self] message in
                 guard let self, self.sharingGeneration == attempt else { return }
@@ -545,7 +553,7 @@ final class TrueConfCallEngine: CallEngine {
         if retirePresenter { studio.presenter.sharingEnded() }
         sharingGeneration = UUID(); sharingTask?.cancel(); sharingTask = nil
         let sender = screenSender; screenSender = nil
-        sharingActive = false; publisher?.setSharing(nil); view?.setSharing(false)
+        sharingActive = false; try? publisher?.setSharing(nil); view?.setSharing(false)
         BroadcastManager.shared.requestStop()
         await sender?.stop()
         if retirePresenter { await studio.presenter.waitForScreenStop() }

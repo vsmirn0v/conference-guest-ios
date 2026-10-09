@@ -172,18 +172,42 @@ final class TelemostFeatureTests: XCTestCase {
     }
     func testSeparatePresentationTransceiverAndStop() async throws {
         let factory = try NativeRTCPeer.makeFactory()
-        let publisher = NativeRTCPeer(target: "PUBLISHER", factory: factory, ice: [])
-        let receiver = NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: [])
+        let publisher = try NativeRTCPeer(target: "PUBLISHER", factory: factory, ice: [])
+        let receiver = try NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: [])
         let track = factory.videoTrack(with: factory.videoSource(forScreenCast: true), trackId: "screen")
-        publisher.setSharing(track)
+        try publisher.setSharing(track)
         let offer = try await publisher.offer()
         let tracks = try XCTUnwrap(offer["tracks"] as? [[String: Any]])
         XCTAssertEqual(tracks.map { $0["kind"] as? String }, ["DISPLAY_VIDEO"])
         try await publisher.accept(try await receiver.answer(offer))
-        publisher.setSharing(nil)
+        try publisher.setSharing(nil)
         let stopped = try await publisher.offer()
         XCTAssertTrue((stopped["tracks"] as? [[String: Any]] ?? []).isEmpty)
         await publisher.close(); await receiver.close()
+    }
+    func testClosedPeerRejectsPublishingAndSharingWhileNewPeerWorks() async throws {
+        let factory = try NativeRTCPeer.makeFactory()
+        let track = factory.videoTrack(with: factory.videoSource(forScreenCast: true), trackId: "screen")
+        for topology in [NativeRTCPeer.Topology.split, .composite] {
+            let retired = try NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: [], topology: topology)
+            // Also cover closure by WebRTC before our lifecycle flag is set.
+            retired.connection.close()
+            for operation in [{ try retired.enablePublishing() }, { try retired.setSharing(track) }] {
+                XCTAssertThrowsError(try operation()) { error in
+                    guard let native = error as? NativeRTCError, case .disconnected = native else {
+                        XCTFail("Unexpected closure must request connection recovery: \(error)"); return
+                    }
+                }
+            }
+            await retired.close()
+            XCTAssertNoThrow(try retired.setSharing(nil), "Cleanup must remain safe after close")
+            let current = try NativeRTCPeer(target: "PUBLISHER", factory: factory, ice: [], topology: topology)
+            try current.setSharing(track)
+            let offer = try await current.offer()
+            XCTAssertEqual((offer["tracks"] as? [[String: Any]])?.count, 1)
+            await current.close()
+            XCTAssertThrowsError(try current.setSharing(track)) { XCTAssertTrue($0 is CancellationError) }
+        }
     }
     func testScreenSenderRejectsFramesAfterStop() async throws {
         var first = 0

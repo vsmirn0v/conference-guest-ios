@@ -58,7 +58,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     private var audioProfile: StudioAudioProfile?
     @MainActor private var closed = false
 
-    init(target: String, factory: LKRTCPeerConnectionFactory, ice: [[String: Any]], cameraPosition: AVCaptureDevice.Position = .front, topology: Topology = .split) {
+    @MainActor init(target: String, factory: LKRTCPeerConnectionFactory, ice: [[String: Any]], cameraPosition: AVCaptureDevice.Position = .front, topology: Topology = .split) throws {
         self.target = target; self.factory = factory; self.cameraPosition = cameraPosition; self.topology = topology
         super.init(); sequence = target == "PUBLISHER" ? 1 : 0
         let decoderGeneration = NativeVideoDecoderPolicy.shared.snapshot.generation
@@ -71,15 +71,19 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         configuration.iceServers = Self.servers(ice)
         connection = factory.peerConnection(with: configuration,
             constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
-        if target == "PUBLISHER" { enablePublishing() }
+        guard connection != nil else { throw NativeRTCError.invalidResponse }
+        if target == "PUBLISHER" { try enablePublishing() }
     }
     /// A composite server supplies its receive offer first. Add outbound
     /// transceivers only after answering it to preserve the remote MID order.
-    func enablePublishing() {
+    @MainActor func enablePublishing() throws {
+        guard !closed else { throw CancellationError() }
+        guard connection.signalingState != .closed else { throw NativeRTCError.disconnected }
         guard audioTransceiver == nil else { return }
         let settings = LKRTCRtpTransceiverInit(); settings.direction = .sendOnly
-        audioTransceiver = connection.addTransceiver(of: .audio, init: settings)
-        videoTransceiver = connection.addTransceiver(of: .video, init: settings)
+        guard let audio = connection.addTransceiver(of: .audio, init: settings),
+              let video = connection.addTransceiver(of: .video, init: settings) else { throw NativeRTCError.disconnected }
+        audioTransceiver = audio; videoTransceiver = video
         // Preserve other codecs as fallbacks when the server declines H.264.
         preferPublishingH264(videoTransceiver)
     }
@@ -185,13 +189,19 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         if topology == .composite { videoTransceiver?.sender.track = presentationTrack ?? videoTrack }
         else { videoTransceiver?.sender.track = videoTrack }
     }
-    @MainActor func setSharing(_ track: LKRTCVideoTrack?) {
+    @MainActor func setSharing(_ track: LKRTCVideoTrack?) throws {
+        if track != nil {
+            guard !closed else { throw CancellationError() }
+            guard connection.signalingState != .closed else { throw NativeRTCError.disconnected }
+        }
         if topology == .composite {
+            guard track == nil || videoTransceiver != nil else { throw NativeRTCError.disconnected }
             presentationTrack = track; updateVideoSender(); return
         }
         if sharingTransceiver == nil, track != nil {
             let settings = LKRTCRtpTransceiverInit(); settings.direction = .sendOnly
-            sharingTransceiver = connection.addTransceiver(of: .video, init: settings)
+            guard let transceiver = connection.addTransceiver(of: .video, init: settings) else { throw NativeRTCError.disconnected }
+            sharingTransceiver = transceiver
             preferPublishingH264(sharingTransceiver)
         }
         sharingTransceiver?.sender.track = track
@@ -281,7 +291,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         if let decoderObservation { NotificationCenter.default.removeObserver(decoderObservation) }
         decoderObservation = nil; onDecoderFallback = nil
         closed = true
-        setSharing(nil)
+        try? setSharing(nil)
         onCandidate = nil; onTrack = nil; onState = nil
         try? await setCamera(false); setMicrophone(false, profile: .conversation); connection.close()
     }
