@@ -51,3 +51,43 @@ struct CameraEffectStatus: Equatable, Identifiable {
         return result
     }
 }
+
+/// Center Stage is scoped to this app. After our first full-frame default,
+/// system controls remain authoritative; opening Studio never reapplies a stale
+/// saved value over a newer Control Center choice.
+@MainActor
+final class CameraFramingPolicy {
+    static let shared = CameraFramingPolicy()
+    static let preferenceKey = "studio.automatic-framing"
+    private let preferences: UserDefaults
+    private let read: () -> Bool
+    private let write: (Bool) -> Void
+    private let cooperate: () -> Void
+    private var prepared = false
+
+    init(preferences: UserDefaults = .standard,
+         read: @escaping () -> Bool = { AVCaptureDevice.isCenterStageEnabled },
+         write: @escaping (Bool) -> Void = { AVCaptureDevice.isCenterStageEnabled = $0 },
+         cooperate: @escaping () -> Void = { AVCaptureDevice.centerStageControlMode = .cooperative }) {
+        self.preferences = preferences; self.read = read; self.write = write; self.cooperate = cooperate
+    }
+    @discardableResult
+    func synchronize() -> Bool {
+        if !prepared {
+            cooperate()
+            if preferences.object(forKey: Self.preferenceKey) == nil { write(false) }
+            prepared = true
+        }
+        let enabled = read()
+        if preferences.object(forKey: Self.preferenceKey) as? Bool != enabled {
+            preferences.set(enabled, forKey: Self.preferenceKey)
+        }
+        return enabled
+    }
+    @discardableResult
+    func setEnabled(_ enabled: Bool) -> Bool {
+        _ = synchronize()
+        cooperate(); write(enabled)
+        return synchronize()
+    }
+}

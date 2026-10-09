@@ -63,18 +63,18 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         while !condition(), Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
         XCTAssertTrue(condition())
     }
-    func testSuccessfulTransferPreparesSourceBeforeJoiningAndLeavesOnlyAfterTargetConnected() async throws {
+    func testSuccessfulTransferKeepsSourceActiveAndLeavesOnlyAfterTargetConnected() async throws {
         let cloud = Cloud(), source = make(cloud, "mac"), target = make(cloud, "phone")
         let active = jam(); var prepared = false; var left = false
-        source.onPrepareSource = { id in XCTAssertEqual(id, active.sessionID); prepared = true }
+        source.onPrepareSource = { _ in prepared = true; XCTFail("New transfers must not pause the original before connecting") }
         source.onLeaveSource = { id, _ in
-            XCTAssertTrue(prepared); XCTAssertEqual(id, active.sessionID)
+            XCTAssertFalse(prepared); XCTAssertEqual(id, active.sessionID)
             left = true; source.updateCurrent(nil); return true
         }
         source.updateCurrent(active); await source.refresh(); await target.refresh()
         cloud.onChange = { Task { await source.refresh() } }
         target.onJoinTarget = { value, quiet in
-            XCTAssertTrue(prepared); XCTAssertFalse(left); XCTAssertFalse(quiet)
+            XCTAssertFalse(prepared); XCTAssertFalse(left); XCTAssertFalse(quiet)
             var local = self.jam("phone"); local.updatedAt = Date()
             Task { target.targetDidConnect(invitation: value.invitation, sessionID: local.sessionID); target.updateCurrent(local) }
             return local.sessionID
@@ -86,7 +86,7 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         XCTAssertNil(cloud.records["mac"])
         XCTAssertEqual(cloud.records["phone"]?.name, "Ani")
     }
-    func testFailedDestinationEndsBeforeOriginalResumesAndKeepsSendingOff() async throws {
+    func testFailedDestinationEndsWithoutChangingOriginalAudio() async throws {
         let cloud = Cloud(), source = make(cloud, "mac"), target = make(cloud, "phone")
         let active = jam(); var cancelledTarget = false; var resumed = false
         source.onPrepareSource = { _ in }
@@ -97,7 +97,8 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         target.onJoinTarget = { _, _ in Task { target.targetDidFail() }; return UUID() }
         target.onCancelTarget = { _, _ in cancelledTarget = true; return true }
         target.begin(active)
-        await eventually({ resumed })
+        await eventually({ !target.moving && cancelledTarget })
+        XCTAssertFalse(resumed, "Original was never paused and must not have its microphone changed")
         XCTAssertFalse(target.moving)
         XCTAssertNotNil(source.current)
     }
@@ -119,7 +120,8 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         }
         target.onCancelTarget = { _, _ in true }
         target.begin(active)
-        await eventually { resumed }
+        await eventually { !target.moving }
+        XCTAssertFalse(resumed)
         XCTAssertNotNil(source.current)
         XCTAssertFalse(target.moving)
     }
@@ -241,7 +243,8 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         await eventually { joins == 2 }
         XCTAssertTrue(target.moving)
         cancellation?.resume(); cancellation = nil
-        await eventually { originalResumed }
+        await eventually { !firstSource.waitingForMove }
+        XCTAssertFalse(originalResumed)
         XCTAssertTrue(target.moving, "Old cancellation must not clear the new transfer")
         XCTAssertEqual(target.destinationInvitation, next.invitation)
         target.cancel(); await eventually { !target.moving }
@@ -342,10 +345,52 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         target.begin(active)
         await eventually { !target.moving && target.status?.contains("Could not confirm") == true }
         target.updateCurrent(replacement)
-        await eventually { resumed }
+        await eventually { cloud.requests[active.sessionID]?.phase == .cancelled && !source.waitingForMove }
+        XCTAssertFalse(resumed)
         XCTAssertEqual(cloud.requests[active.sessionID]?.phase, .cancelled)
         XCTAssertEqual(target.current?.sessionID, replacement.sessionID)
         XCTAssertNil(target.status)
         target.setEnabled(false); source.setEnabled(false)
+    }
+
+    func testTargetStartsWhileSourceAcknowledgementIsStillPending() async throws {
+        let cloud = Cloud(), source = make(cloud, "mac"), target = make(cloud, "phone")
+        let active = jam(), local = jam("phone")
+        var joined = false, left = false
+        source.updateCurrent(active); await source.refresh()
+        source.onPrepareSource = { _ in XCTFail("Original must remain active") }
+        source.onLeaveSource = { _, _ in left = true; source.updateCurrent(nil); return true }
+        target.onJoinTarget = { _, quiet in joined = true; XCTAssertFalse(quiet); return local.sessionID }
+        target.begin(active)
+        await eventually { joined }
+        XCTAssertEqual(cloud.requests[active.sessionID]?.phase, .requested)
+        XCTAssertFalse(left)
+        await source.refresh()
+        XCTAssertEqual(cloud.requests[active.sessionID]?.phase, .prepared)
+        XCTAssertFalse(left)
+        cloud.onChange = { Task { await source.refresh() } }
+        target.targetDidConnect(invitation: active.invitation, sessionID: local.sessionID)
+        target.updateCurrent(local)
+        await eventually { left && !target.moving }
+    }
+
+    func testSourceRetriesFinishingWithoutAttemptingTheSameTransitionAgain() async throws {
+        let cloud = Cloud(), source = make(cloud, "mac"), active = jam()
+        source.updateCurrent(active); await source.refresh()
+        let request = JamTransfer(source: active, targetDevice: "phone", targetLabel: "phone", connectsBeforePausing: true)
+        try await cloud.claim(request); await source.refresh()
+        let prepared = try XCTUnwrap(cloud.requests[active.sessionID])
+        _ = try await cloud.transition(prepared, to: .connected, actor: "phone")
+        var attempts = 0
+        source.onLeaveSource = { _, _ in
+            attempts += 1
+            if attempts == 1 { return false }
+            source.updateCurrent(nil); return true
+        }
+        await source.refresh()
+        XCTAssertEqual(cloud.requests[active.sessionID]?.phase, .finishing)
+        await source.refresh()
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(cloud.requests[active.sessionID]?.phase, .completed)
     }
 }

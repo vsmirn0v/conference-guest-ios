@@ -46,6 +46,11 @@ final class CalendarMeetingsTests: XCTestCase {
         XCTAssertNotEqual(MeetingRoomIdentity(url), MeetingRoomIdentity(URL(string: "https://other.test/team?psw=one")!))
         XCTAssertNotEqual(MeetingRoomIdentity(url), MeetingRoomIdentity(url, engine: .community))
     }
+    func testRoomDetailsShowAuthorityAndRoomWithoutInvitationCredentials() throws {
+        let identity = try XCTUnwrap(MeetingRoomIdentity(URL(string: "https://meet.example.test:8443/calls/team?psw=secret&token=private")!))
+        XCTAssertEqual(identity.displayDetails, "meet.example.test:8443 · team")
+        XCTAssertEqual(MeetingRoomIdentity(url)?.displayDetails, "meet.example.test · team")
+    }
     func testStructuredLinkGroupsKeepCurrentLocationAheadOfQuotedInvitations() {
         let current = URL(string: "https://meeting.example.test/current?psw=now")!
         let quoted = URL(string: "https://meeting.example.test/older?psw=before")!

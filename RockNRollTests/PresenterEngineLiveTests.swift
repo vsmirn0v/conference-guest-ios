@@ -6,6 +6,69 @@ import XCTest
 @testable import RockNRoll
 
 @MainActor final class PresenterEngineLiveTests: XCTestCase {
+    func testMacNativeOrdinaryCameraGeometry() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              let name = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAMERA_ENGINE"],
+              let link = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAMERA_INVITE"] else {
+            throw XCTSkip("Opt-in authorized Mac native-camera check")
+        }
+        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { throw XCTSkip("Existing camera permission required") }
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first { $0.isKeyWindow })
+        let original = window.rootViewController, idle = UIApplication.shared.isIdleTimerDisabled
+        let container = UIViewController(); window.rootViewController = container; UIApplication.shared.isIdleTimerDisabled = true
+        defer { window.rootViewController = original; UIApplication.shared.isIdleTimerDisabled = idle }
+        let call = SystemCallCoordinator(), catchUp = CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        var active = false, ended = false
+        let events: (CallEvent) -> Void = { event in
+            switch event { case .active: active = true; case .connecting: active = false; case .left, .failed: ended = true; default: break }
+        }
+        let engine: any CallEngine, studio: StudioModel, stats: () async -> [[String: Any]]
+        switch name {
+        case "telemost":
+            let selected = TelemostCallEngine(systemCall: call, catchUp: catchUp, chat: ChatStore())
+            selected.onEvent = events; engine = selected; studio = selected.studioForTesting
+            stats = { await selected.codecEvidenceForTesting() }
+            try selected.join(target: TelemostTarget.parse(link), name: "Camera geometry QA", container: container, quiet: false)
+        case "trueconf":
+            let selected = TrueConfCallEngine(systemCall: call, catchUp: catchUp, chat: ChatStore())
+            selected.onEvent = events; engine = selected; studio = selected.studioForTesting
+            stats = { await selected.codecEvidenceForTesting() }
+            try selected.join(target: TrueConfTarget.parse(link), name: "Camera geometry QA", container: container, quiet: false)
+        default: throw XCTSkip("Select a native engine")
+        }
+        defer { engine.leave() }
+        try await wait { active || ended }; XCTAssertFalse(ended)
+        studio.open(.camera)
+        try await wait { studio.previewRunning || ended }; XCTAssertFalse(ended)
+        XCTAssertFalse(studio.cameraOn); XCTAssertFalse(studio.microphoneOn)
+        let first = try XCTUnwrap(studio.selectedCameraDevice)
+        print("MAC_NATIVE_CAMERA engine=\(name) stage=private automaticFraming=\(AVCaptureDevice.isCenterStageEnabled) centerStageActive=\(first.isCenterStageActive)")
+        if studio.canFlipCamera {
+            studio.flipCamera()
+            try await wait { !studio.switchingCamera && studio.previewRunning && studio.selectedCameraDevice?.uniqueID != first.uniqueID || ended }
+            XCTAssertFalse(studio.cameraOn)
+        } else { print("MAC_NATIVE_CAMERA engine=\(name) switchSkipped=single-camera") }
+        let selected = try XCTUnwrap(studio.selectedCameraDevice)
+        let started = await studio.startVideo(); XCTAssertTrue(started)
+        try await wait { studio.cameraOn && studio.liveCaptureDevice?()?.uniqueID == selected.uniqueID || ended }
+        XCTAssertFalse(ended); XCTAssertFalse(studio.microphoneOn)
+        try await Task.sleep(for: .seconds(3))
+        let firstStats = await stats()
+        print("MAC_NATIVE_CAMERA engine=\(name) stage=published streams=\(firstStats.filter { $0["type"] as? String == "outbound-rtp" })")
+        if studio.canFlipCamera {
+            studio.open(.camera); studio.flipCamera()
+            try await wait { !studio.switchingCamera && studio.liveCaptureDevice?()?.uniqueID != selected.uniqueID || ended }
+            XCTAssertNotNil(studio.previewView); studio.close()
+        }
+        let seconds = min(90, max(10, Int(ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAMERA_OBSERVE_SECONDS"] ?? "20") ?? 20))
+        try await Task.sleep(for: .seconds(seconds))
+        let final = await stats()
+        let previous = firstStats.reduce(into: [String: Int]()) { counts, row in counts[row["id"] as? String ?? ""] = (row["framesEncoded"] as? NSNumber)?.intValue ?? 0 }
+        XCTAssertTrue(final.contains { row in row["type"] as? String == "outbound-rtp" && row["kind"] as? String == "video" &&
+            (row["framesEncoded"] as? NSNumber)?.intValue ?? 0 > previous[row["id"] as? String ?? "", default: 0] + 20 })
+        XCTAssertFalse(ended); XCTAssertFalse(studio.microphoneOn)
+        print("MAC_NATIVE_CAMERA engine=\(name) stage=final streams=\(final.filter { $0["type"] as? String == "outbound-rtp" })")
+    }
     func testNativePresenterCameraSurvivesAudioChangesAndHold() async throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("Physical camera and microphone required")

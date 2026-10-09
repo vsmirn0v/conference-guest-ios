@@ -14,6 +14,13 @@ public struct MeetingRoomIdentity: Hashable, Codable, Sendable {
     public let origin: String
     public let room: String
     public let engine: MeetingEngineKind
+    /// Human-readable authority and room identity, never invitation credentials.
+    public var displayDetails: String {
+        let components = URLComponents(string: origin)
+        let host = components?.host ?? origin
+        let website = components?.port.map { host + ":" + String($0) } ?? host
+        return website + " · " + room
+    }
     public init?(_ url: URL, engine: MeetingEngineKind? = nil) {
         guard let target = try? JoinTarget.parse(url.absoluteString) else { return nil }
         var origin = URLComponents(url: target.originURL, resolvingAgainstBaseURL: false)!

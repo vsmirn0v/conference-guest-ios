@@ -16,6 +16,16 @@ final class GuestStreamViews {
         let cameraOn: Bool
         let sharing: Bool
     }
+    struct GalleryItem {
+        let id: PinTarget
+        let name: String
+        let microphoneOn: Bool
+        let active: Bool
+        let speaking: Bool
+        let watermark: String?
+        let renderer: UIView?
+    }
+    var onGalleryPresentation: (([GalleryItem]) -> Void)?
     struct Presentation: Equatable {
         let target: PinTarget?
         let name: String?
@@ -81,6 +91,7 @@ final class GuestStreamViews {
         selectedTarget = nil
         orderedTargets = []
         onStagePresentation?(.empty)
+        onGalleryPresentation?([])
         renderedTiles.removeAll()
         localCameraChanges.send(nil)
         onPreferredVideo?(nil, "", false)
@@ -264,6 +275,7 @@ final class GuestStreamViews {
     }
 
     private func publishPreferredVideo() {
+        publishGallery()
         // The call window can become hidden while system PiP remains active.
         // Keep a signaled stream eligible until the participant ends it.
         let available = renderedTiles.values.filter {
@@ -351,9 +363,36 @@ final class GuestStreamViews {
                           preferred?.model.isSharingScreen == true)
     }
 
+    private func publishGallery() {
+        guard let onGalleryPresentation else { return }
+        var source: [PinTarget: RenderedTile] = [:]
+        for tile in renderedTiles.values.sorted(by: preferredSource) {
+            let key = PinTarget(participant: tile.model.id, isShare: tile.model.isSharingScreen)
+            if source[key] == nil { source[key] = tile }
+        }
+        let roster = participants?.values.sorted { $0.id < $1.id } ?? []
+        let items = roster.flatMap { participant -> [GalleryItem] in
+            var result: [GalleryItem] = []
+            for isShare in [false, true] {
+                guard displayMode != .audioOnly, displayMode == .all || isShare,
+                      !isShare || participant.sharing && !participant.isLocal else { continue }
+                let id = PinTarget(participant: participant.id, isShare: isShare)
+                let tile = source[id]
+                let watermark: String?
+                if case .visible(let text) = tile?.model.watermarkState { watermark = text } else { watermark = nil }
+                result.append(GalleryItem(id: id, name: participant.name, microphoneOn: participant.microphoneOn,
+                    active: isShare ? participant.sharing : participant.cameraOn,
+                    speaking: tile?.model.isDominantSpeaker == true, watermark: watermark,
+                    renderer: tile?.video))
+            }
+            return result
+        }
+        onGalleryPresentation(items)
+    }
+
     private func preferredSource(_ lhs: RenderedTile, _ rhs: RenderedTile) -> Bool {
         func priority(_ tile: RenderedTile) -> Int {
-            let content = tile.model.isPinned ? 0 : tile.model.isSharingScreen ? 10 : 20
+            let content = tile.model.isPinned ? 0 : tile.model.isSharingScreen ? 10 : tile.model.isDominantSpeaker ? 20 : 30
             switch tile.model.displayMode {
             case .speaker: return content
             case .tile: return content + 1

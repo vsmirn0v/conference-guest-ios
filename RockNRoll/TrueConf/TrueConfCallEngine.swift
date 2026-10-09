@@ -79,7 +79,15 @@ final class TrueConfCallEngine: CallEngine {
         studio.applyProfile = { [weak self] profile in self?.audioProfile = profile; self?.scheduleMedia() }
         studio.enableCamera = { [weak self] in self?.setCamera(true) }
         studio.enableMicrophone = { [weak self] in self?.setMicrophone(true) }
-        studio.flipLiveCamera = { [weak self] in self?.flipCamera() }
+        studio.selectLiveCamera = { [weak self] device in
+            guard let self, let publisher = self.publisher, !self.leaving else { throw CancellationError() }
+            let generation = self.epoch
+            try await publisher.selectCamera(device)
+            guard self.epoch == generation, self.publisher === publisher, !self.leaving else { throw CancellationError() }
+            self.cameraPosition = device.position
+            self.refresh()
+        }
+        studio.onCameraSelectionChanged = { [weak self] device in self?.publisher?.preferredCameraDevice = device }
         studio.liveCaptureDevice = { [weak self] in self?.publisher?.captureDevice }
         studio.makeLivePreview = { [weak self] in
             guard let track = self?.publisher?.videoTrack else { return nil }
@@ -166,7 +174,6 @@ final class TrueConfCallEngine: CallEngine {
         view.onLeave = { [weak self] in self?.leave() }
         view.onMicrophone = { [weak self] in self?.setMicrophone($0) }
         view.onCamera = { [weak self] in self?.setCamera($0) }
-        view.onFlipCamera = { [weak self] in self?.flipCamera() }
         view.onSpeaker = { [weak self] enabled in
             do { try self?.audio.selectBuiltInOutput(speaker: enabled) }
             catch { self?.onMediaStatus?(error.localizedDescription) }
@@ -240,6 +247,7 @@ final class TrueConfCallEngine: CallEngine {
     private func pauseAudio() {
         guard hasJoinStarted else { return }
         LKRTCAudioSession.sharedInstance().isAudioEnabled = false
+        publisher?.setMicrophone(false, profile: audioProfile)
         view?.setSpeakerReceptionAvailable(false)
         updateMicrophoneStatus()
     }
@@ -269,6 +277,13 @@ final class TrueConfCallEngine: CallEngine {
         #else
         return systemCall.canRestoreAudio
         #endif
+    }
+    private var effectiveMicrophoneEnabled: Bool {
+        microphoneIntent && hasJoinStarted && !leaving && !held && !quiet && canUseCallAudio
+            && LKRTCAudioSession.sharedInstance().isAudioEnabled
+    }
+    private func applyMicrophoneState() {
+        publisher?.setMicrophone(effectiveMicrophoneEnabled, profile: audioProfile)
     }
     private func updateMicrophoneStatus() {
         let available = hasJoinStarted && connected && !held && !quiet && LKRTCAudioSession.sharedInstance().isAudioEnabled
@@ -337,6 +352,7 @@ final class TrueConfCallEngine: CallEngine {
             guard publisher == nil, !streamID.isEmpty, let values = event["iceServers"] as? [[String: Any]], let factory else { return }
             let peer = try NativeRTCPeer(target: "COMPOSITE", factory: factory,
                 ice: try TrueConfICE.decode(values, cid: cid, stream: streamID), cameraPosition: cameraPosition, topology: .composite)
+            peer.preferredCameraDevice = studio.selectedCameraDevice
             publisher = peer
             let generation = epoch
             peer.onCandidate = { [weak self] candidate in Task { @MainActor in
@@ -413,10 +429,14 @@ final class TrueConfCallEngine: CallEngine {
                 mediaDirty = false
                 guard let publisher, let transport else { return }
                 do {
-                    let microphone = microphoneIntent && !held && !quiet && canUseCallAudio
                     var camera = cameraIntent && !held && !quiet && UIApplication.shared.applicationState == .active
                     if camera { await studio.releasePrivateCamera() }
-                    publisher.setMicrophone(microphone, profile: audioProfile)
+                    #if DEBUG
+                    if let beforeApplyingMicrophoneForTesting { await beforeApplyingMicrophoneForTesting() }
+                    #endif
+                    // Camera release can suspend while the user mutes. Always
+                    // apply the current intent rather than a pre-await snapshot.
+                    applyMicrophoneState()
                     do { try await publisher.setCamera(camera) }
                     catch {
                         guard !Task.isCancelled, epoch == generation else { return }
@@ -428,6 +448,7 @@ final class TrueConfCallEngine: CallEngine {
                     if camera && (!cameraIntent || held || quiet || UIApplication.shared.applicationState != .active) {
                         try await publisher.setCamera(false); camera = false; mediaDirty = true
                     }
+                    applyMicrophoneState()
                     let offer = try await publisher.offer()
                     try await withCheckedThrowingContinuation { (completion: CheckedContinuation<Void, Error>) in
                         answerCompletion = completion
@@ -440,7 +461,8 @@ final class TrueConfCallEngine: CallEngine {
                         }
                     }
                     guard epoch == generation, !leaving else { return }
-                    let audioOn = microphone && microphoneIntent && !held && !quiet
+                    applyMicrophoneState()
+                    let audioOn = effectiveMicrophoneEnabled && publisher.microphoneSending
                     let videoOn = (camera && cameraIntent && !held && !quiet) || sharingActive
                     try await transport.send(["method": "VideoSourceType", "Type": sharingActive ? 2 : 0, "Conference": streamID])
                     try await transport.send(["method": "DeviceStatus", "value": (videoOn ? 0 : 4 << 16) | (audioOn ? 0 : 4)])
@@ -468,6 +490,7 @@ final class TrueConfCallEngine: CallEngine {
             let allowed = await withCheckedContinuation { completion in AVAudioSession.sharedInstance().requestRecordPermission { completion.resume(returning: $0) } }
             guard let self, self.hasJoinStarted, self.microphoneRequest == request else { return }
             self.microphoneIntent = allowed; if allowed { self.studio.releasePrivateMicrophone() }
+            self.applyMicrophoneState()
             self.systemCall.setMuted(!allowed); self.scheduleMedia()
             if !allowed { self.onMediaStatus?(L("Microphone access is disabled. Enable it in Settings.")) }
         }
@@ -486,20 +509,6 @@ final class TrueConfCallEngine: CallEngine {
             guard let self, self.hasJoinStarted, self.cameraRequest == request else { return }
             self.cameraIntent = allowed; self.scheduleMedia()
             if !allowed { self.onMediaStatus?(L("Camera access is disabled. Enable it in Settings.")) }
-        }
-    }
-    private func flipCamera() {
-        let generation = epoch
-        Task { [weak self] in
-            guard let self, let publisher else { return }
-            do {
-                try await publisher.flipCamera()
-                guard epoch == generation else { return }
-                if let position = publisher.captureDevice?.position { cameraPosition = position }
-                studio.liveCameraChanged()
-                refresh()
-            }
-            catch { if epoch == generation { onMediaStatus?(error.localizedDescription) } }
         }
     }
     private func setScreenSharing(_ enabled: Bool, broadcast: Bool = false) {
@@ -655,11 +664,19 @@ final class TrueConfCallEngine: CallEngine {
     func showMediaStatus(_ message: String?) { view?.showMediaStatus(message) }
     func setTransferHeld(_ held: Bool, restoreSending: Bool) async throws {
         if !restoreSending { microphoneIntent = false; cameraIntent = false }
-        quiet = held; try await systemCall.setTransferHeld(held)
+        quiet = held
+        // Stop samples before waiting for the system hold acknowledgement.
+        applyMicrophoneState(); updateMicrophoneStatus()
+        #if DEBUG
+        if let beforeRequestingTransferHoldForTesting { await beforeRequestingTransferHoldForTesting() }
+        #endif
+        try await systemCall.setTransferHeld(held)
         view?.setHeld(held); scheduleMedia(); if !held { restoreAudio() }
     }
     #if DEBUG
     var studioForTesting: StudioModel { studio }
+    var beforeApplyingMicrophoneForTesting: (() async -> Void)?
+    var beforeRequestingTransferHoldForTesting: (() async -> Void)?
     var readyForPresenterForTesting: Bool { connected && !held && !quiet && !leaving }
     func codecEvidenceForTesting() async -> [[String: Any]] {
         guard let publisher else { return [] }

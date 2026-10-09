@@ -1,12 +1,155 @@
 import AVFoundation
 import ImagePlayground
 import LiveKit
+import LiveKitWebRTC
 import VideoToolbox
 import XCTest
 @testable import RockNRoll
 
 @MainActor
 final class StudioTests: XCTestCase {
+    func testMacCameraRotationSkipsStaleOutputsAfterRestart() {
+        typealias Output = MacCameraFrameOrientation.OutputGeometry
+        let stale = Output(physicalAngle: 90, isActive: false, isEnabled: false)
+        let starting = Output(physicalAngle: 180, isActive: false, isEnabled: true)
+        let active = Output(physicalAngle: 0, isActive: true, isEnabled: true)
+        XCTAssertEqual(MacCameraFrameOrientation.rotation(upright: 0, outputs: [nil, active]), 0)
+        XCTAssertEqual(MacCameraFrameOrientation.rotation(upright: 0, outputs: [nil, stale, starting, active]), 0)
+        XCTAssertEqual(MacCameraFrameOrientation.rotation(upright: 0, outputs: [nil, stale, starting]), 180)
+        XCTAssertNil(MacCameraFrameOrientation.rotation(upright: 0, outputs: [nil, nil]))
+    }
+
+    func testAutomaticFramingDefaultsOffOnceAndHonorsSubsequentSystemChoice() {
+        let name = "CameraFramingTests.\(UUID())"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        var systemEnabled = true, writes: [Bool] = [], cooperative = 0
+        let policy = CameraFramingPolicy(preferences: defaults, read: { systemEnabled },
+            write: { systemEnabled = $0; writes.append($0) }, cooperate: { cooperative += 1 })
+        XCTAssertFalse(policy.synchronize())
+        XCTAssertEqual(writes, [false]); XCTAssertEqual(cooperative, 1)
+        systemEnabled = true // User changes Control Center while Studio is closed.
+        XCTAssertTrue(policy.synchronize())
+        XCTAssertEqual(writes, [false], "Reading system settings must not overwrite the user's newer choice")
+        XCTAssertEqual(defaults.object(forKey: CameraFramingPolicy.preferenceKey) as? Bool, true)
+        let relaunched = CameraFramingPolicy(preferences: defaults, read: { systemEnabled },
+            write: { systemEnabled = $0; writes.append($0) }, cooperate: { cooperative += 1 })
+        XCTAssertTrue(relaunched.synchronize())
+        XCTAssertEqual(writes, [false], "A later launch must not repeat the default-off migration")
+        XCTAssertFalse(relaunched.setEnabled(false))
+        XCTAssertEqual(writes, [false, false])
+        XCTAssertEqual(defaults.object(forKey: CameraFramingPolicy.preferenceKey) as? Bool, false)
+    }
+    func testLiveKitCameraRotationPreservesSourcePixelsAndTiming() throws {
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 128, 72, kCVPixelFormatType_32BGRA, nil, &pixels), kCVReturnSuccess)
+        let buffer = CVPixelVideoBuffer(pixelBuffer: try XCTUnwrap(pixels))
+        let frame = VideoFrame(dimensions: Dimensions(width: 128, height: 72), rotation: ._90,
+                               timeStampNs: 123456, buffer: buffer)
+        let corrected = LiveKitCameraFrameProcessor.corrected(frame, rotation: ._0)
+        XCTAssertTrue((corrected.buffer as? CVPixelVideoBuffer) === buffer)
+        XCTAssertEqual(corrected.dimensions, frame.dimensions)
+        XCTAssertEqual(corrected.rotation, ._0)
+        XCTAssertEqual(corrected.timeStampNs, frame.timeStampNs)
+        XCTAssertTrue(LiveKitCameraFrameProcessor.corrected(frame, rotation: nil) === frame)
+        XCTAssertTrue(LiveKitCameraFrameProcessor.corrected(frame, rotation: ._90) === frame)
+    }
+
+    func testNativeCameraRotationPreservesSourcePixelsAndTiming() throws {
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 128, 72, kCVPixelFormatType_32BGRA, nil, &pixels), kCVReturnSuccess)
+        let buffer = LKRTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels))
+        let frame = LKRTCVideoFrame(buffer: buffer, rotation: ._90, timeStampNs: 123456)
+        frame.timeStamp = 234
+        let corrected = NativeCameraFrameDelegate.corrected(frame, rotation: ._0)
+        XCTAssertTrue(corrected.buffer === frame.buffer)
+        XCTAssertEqual(corrected.width, 128); XCTAssertEqual(corrected.height, 72)
+        XCTAssertEqual(corrected.rotation, ._0)
+        XCTAssertEqual(corrected.timeStampNs, frame.timeStampNs)
+        XCTAssertEqual(corrected.timeStamp, frame.timeStamp)
+        XCTAssertTrue(NativeCameraFrameDelegate.corrected(frame, rotation: nil) === frame)
+        XCTAssertTrue(NativeCameraFrameDelegate.corrected(frame, rotation: ._90) === frame)
+    }
+
+    func testMacCameraDiscoveryAvoidsRearCompatibilityAliases() throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Mac discovery bridge") }
+        let devices = CameraDevices.available()
+        XCTAssertEqual(Set(devices.map(\.uniqueID)).count, devices.count)
+        XCTAssertFalse(devices.contains { $0.deviceType == .builtInWideAngleCamera && $0.position == .back })
+        if let system = AVCaptureDevice.default(for: .video), system.isConnected, !system.isSuspended {
+            XCTAssertTrue(devices.contains { $0.uniqueID == system.uniqueID })
+        }
+    }
+
+    func testCameraCyclingRequiresDistinctPhysicalDevices() {
+        XCTAssertNil(CameraDevices.nextID(in: [], current: nil))
+        XCTAssertNil(CameraDevices.nextID(in: ["built-in", "built-in"], current: "built-in"))
+        XCTAssertEqual(CameraDevices.nextID(in: ["built-in", "usb", "phone"], current: "built-in"), "usb")
+        XCTAssertEqual(CameraDevices.nextID(in: ["built-in", "usb", "phone"], current: "phone"), "built-in")
+        XCTAssertEqual(CameraDevices.nextID(in: ["built-in", "usb"], current: "disconnected"), "built-in")
+    }
+    func testCameraSelectionCallbackSeedsPublicationWithoutOpeningCapture() {
+        let capture = Capture()
+        let model = StudioModel(audioControl: .fullProcessing, privateCamera: capture)
+        defer { model.end() }
+        var callbacks = 0
+        model.onCameraSelectionChanged = { selected in
+            callbacks += 1
+            XCTAssertEqual(selected?.uniqueID, model.selectedCameraDevice?.uniqueID)
+        }
+        XCTAssertEqual(callbacks, 1)
+        XCTAssertEqual(capture.starts, 0)
+        XCTAssertFalse(model.cameraOn)
+        XCTAssertFalse(model.microphoneOn)
+        model.held = true
+        XCTAssertFalse(model.canFlipCamera)
+        model.flipCamera()
+        XCTAssertEqual(callbacks, 1)
+    }
+    func testNativePreflightSelectionDoesNotCreateCaptureOrVideoTrack() async throws {
+        guard let device = CameraDevices.preferred(in: CameraDevices.available()) else {
+            throw XCTSkip("No camera is exposed by this test host")
+        }
+        let peer = try NativeRTCPeer(target: "CAMERA_PREFLIGHT", factory: NativeRTCPeer.makeFactory(), ice: [])
+        try await peer.selectCamera(device)
+        XCTAssertEqual(peer.preferredCameraDevice?.uniqueID, device.uniqueID)
+        XCTAssertNil(peer.captureDevice)
+        XCTAssertNil(peer.videoTrack)
+        await peer.close()
+    }
+    func testNativeCameraSwitchRetainsTrackAndDeliversFreshFrames() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRIVATE_CAMERA"] == "1" else {
+            throw XCTSkip("Opt-in Mac camera lifecycle qualification")
+        }
+        let devices = CameraDevices.available()
+        guard devices.count > 1 else { throw XCTSkip("Two actual cameras are required") }
+        let peer = try NativeRTCPeer(target: "CAMERA_SWITCH", factory: NativeRTCPeer.makeFactory(), ice: [])
+        peer.preferredCameraDevice = devices[0]
+        do {
+            try await peer.setCamera(true)
+            let track = try XCTUnwrap(peer.videoTrack)
+            let frames = CameraFrames(); track.add(frames)
+            await waitUntil { frames.count >= 3 }
+            let count = frames.count
+            try await peer.selectCamera(devices[1])
+            XCTAssertTrue(peer.videoTrack === track, "Switching capture must preserve every attached renderer")
+            XCTAssertEqual(peer.captureDevice?.uniqueID, devices[1].uniqueID)
+            await waitUntil { frames.count > count + 3 }
+            track.remove(frames)
+            await peer.close()
+        } catch { await peer.close(); throw error }
+    }
+    private final class CameraFrames: NSObject, LKRTCVideoRenderer, @unchecked Sendable {
+        private let lock = NSLock()
+        private var received = 0
+        var count: Int { lock.lock(); defer { lock.unlock() }; return received }
+        func setSize(_ size: CGSize) {}
+        func renderFrame(_ frame: LKRTCVideoFrame?) {
+            guard frame != nil else { return }
+            lock.lock(); received += 1; lock.unlock()
+        }
+    }
     private final class LiveCamera: PresenterCameraSource {
         var stopped = false
         func stop() { stopped = true }
@@ -66,10 +209,12 @@ final class StudioTests: XCTestCase {
         let input = try XCTUnwrap(session.inputs.first as? AVCaptureDeviceInput)
         if #available(iOS 17.0, *) {
             camera.view.frame = CGRect(x: 0, y: 0, width: 320, height: 180)
-            let initial = try XCTUnwrap(layer.connection).videoRotationAngle
             camera.view.layoutIfNeeded()
             let connection = try XCTUnwrap(layer.connection)
-            XCTAssertEqual(connection.videoRotationAngle, initial, "Mac preview preserves the device connection's native orientation")
+            let coordinator = AVCaptureDevice.RotationCoordinator(device: input.device, previewLayer: layer)
+            XCTAssertEqual(connection.videoRotationAngle,
+                PrivateCameraPreview.connectionAngle(horizon: coordinator.videoRotationAngleForHorizonLevelPreview),
+                accuracy: 0.01, "Preview uses the device horizon, not the default portrait connection")
         }
         XCTAssertTrue(input.device.hasMediaType(.video))
         XCTAssertFalse(input.device.hasMediaType(.audio))
@@ -124,12 +269,9 @@ final class StudioTests: XCTestCase {
             if #available(iOS 17.0, *), let output = session.outputs.first as? AVCaptureVideoDataOutput {
                 let rotation = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
                 print("PRESENTER_CAPTURE_DEVICE=\(device.localizedName), horizon=\(rotation.videoRotationAngleForHorizonLevelCapture), output=\(output.connection(with: .video)?.videoRotationAngle ?? -1)")
-                if ProcessInfo.processInfo.isiOSAppOnMac {
-                    let previewAngle = try XCTUnwrap(layer.connection).videoRotationAngle
-                    XCTAssertEqual(lastRotation, Int(PrivateCameraPreview.connectionAngle(horizon: previewAngle - (output.connection(with: .video)?.videoRotationAngle ?? 0))))
-                    print("PRESENTER_PREVIEW_ALIGNED_ROTATION=\(lastRotation)")
-                } else { XCTAssertEqual(output.connection(with: .video)?.videoRotationAngle ?? -1,
-                    PrivateCameraPreview.connectionAngle(horizon: rotation.videoRotationAngleForHorizonLevelCapture), accuracy: 0.01) }
+                XCTAssertEqual(lastRotation, 0, "Capture output physically applies its coordinator angle")
+                XCTAssertEqual(output.connection(with: .video)?.videoRotationAngle ?? -1,
+                    PrivateCameraPreview.connectionAngle(horizon: rotation.videoRotationAngleForHorizonLevelCapture), accuracy: 0.01)
             }
         }
         await camera.stop()

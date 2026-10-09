@@ -37,11 +37,15 @@ public struct JamTransfer: Codable, Equatable, Sendable {
     public let targetLabel: String
     public let expiresAt: Date
     public let allowsStoppingShare: Bool
+    /// New receivers connect before a new source pauses. Optional for older clients.
+    public let connectsBeforePausing: Bool?
     public var phase: Phase
-    public init(source: ActiveJam, targetDevice: String, targetLabel: String, now: Date = Date()) {
+    public init(source: ActiveJam, targetDevice: String, targetLabel: String, now: Date = Date(),
+                connectsBeforePausing: Bool? = nil) {
         id = UUID(); sourceDevice = source.deviceID; sourceSession = source.sessionID
         self.targetDevice = targetDevice; self.targetLabel = targetLabel
         allowsStoppingShare = source.isSharingScreen
+        self.connectsBeforePausing = connectsBeforePausing
         expiresAt = now.addingTimeInterval(75); phase = .requested
     }
     public func canPrepare(current: ActiveJam?, now: Date) -> Bool {

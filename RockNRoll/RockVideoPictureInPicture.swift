@@ -70,12 +70,17 @@ final class RockVideoPictureInPicture {
             let sink = RoomFloatingVideoSink { [weak self] sample, rotation in
                 guard let self, self.selectedSource?.identity == identity, !self.floating.isEnded else { return }
                 self.video.enqueue(sample, rotation: rotation)
+                if let pixels = CMSampleBufferGetImageBuffer(sample) {
+                    let width = CVPixelBufferGetWidth(pixels), height = CVPixelBufferGetHeight(pixels)
+                    self.floating.preferredSize = rotation == 90 || rotation == 270
+                        ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
+                }
             }
             self.sink = sink
             sink.setWanted(presenting, fps: MediaEnergyBudget.shared.previewFPS)
             source.add(sink)
         }
-        video.contentMode = isScreenShare ? .scaleAspectFit : .scaleAspectFill
+        video.contentMode = .scaleAspectFit
         caption.text = name.isEmpty ? nil : "  \(name)\(isScreenShare ? L(" · Screen") : "")  "
         caption.isHidden = name.isEmpty
         floating.setSourceView(sourceView)

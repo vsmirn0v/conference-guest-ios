@@ -10,12 +10,14 @@ final class CallVideoView: UIView {
     private var sink: RoomFloatingVideoSink?
     var track: CallVideoSource? { didSet { if oldValue?.identity != track?.identity { bind(oldValue) } } }
     var isEnabled = true { didSet { roomView.isEnabled = isEnabled; sink?.setWanted(isEnabled, fps: 30) } }
-    var layoutMode: Layout = .fill {
+    var layoutMode: Layout = .fit {
         didSet { roomView.layoutMode = layoutMode == .fit ? .fit : .fill; nativeView.contentMode = layoutMode == .fit ? .scaleAspectFit : .scaleAspectFill }
     }
     override init(frame: CGRect) {
         super.init(frame: frame)
         roomView.renderMode = .sampleBuffer
+        roomView.layoutMode = .fit
+        nativeView.contentMode = .scaleAspectFit
         for child in [roomView, nativeView] as [UIView] {
             child.translatesAutoresizingMaskIntoConstraints = false; addSubview(child)
             NSLayoutConstraint.activate([child.leadingAnchor.constraint(equalTo: leadingAnchor), child.trailingAnchor.constraint(equalTo: trailingAnchor), child.topAnchor.constraint(equalTo: topAnchor), child.bottomAnchor.constraint(equalTo: bottomAnchor)])

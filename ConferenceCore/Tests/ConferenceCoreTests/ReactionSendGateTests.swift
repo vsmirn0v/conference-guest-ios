@@ -8,7 +8,8 @@ final class ReactionSendGateTests: XCTestCase {
         XCTAssertFalse(gate.accept(source: .camera, now: 1, effectID: "first"))
         XCTAssertFalse(gate.accept(source: .camera, now: 5, effectID: "first"))
         XCTAssertTrue(gate.accept(source: .camera, now: 5, effectID: "second"))
-        XCTAssertFalse(gate.accept(source: .manual, now: 5.5))
+        XCTAssertFalse(gate.accept(source: .manual, now: 5.2))
+        XCTAssertTrue(gate.accept(source: .manual, now: 5.5))
         XCTAssertTrue(gate.accept(source: .manual, now: 6))
     }
     func testDuplicateExtensionAndOverlappingCallbacksAreNotNewActions() {

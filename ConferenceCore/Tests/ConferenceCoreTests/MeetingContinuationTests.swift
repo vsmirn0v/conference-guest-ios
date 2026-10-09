@@ -55,4 +55,11 @@ final class MeetingContinuationTests: XCTestCase {
         var quiet = source(); quiet.audioPaused = true
         XCTAssertEqual(try JSONDecoder().decode(ActiveJam.self, from: JSONEncoder().encode(quiet)).audioPaused, true)
     }
+    func testTransferSupportsOlderClientsAndConnectFirstReservation() throws {
+        let old = JamTransfer(source: source(), targetDevice: "phone", targetLabel: "iPhone", now: date)
+        XCTAssertNil(try JSONDecoder().decode(JamTransfer.self, from: JSONEncoder().encode(old)).connectsBeforePausing)
+        let new = JamTransfer(source: source(), targetDevice: "phone", targetLabel: "iPhone", now: date, connectsBeforePausing: true)
+        XCTAssertEqual(try JSONDecoder().decode(JamTransfer.self, from: JSONEncoder().encode(new)).connectsBeforePausing, true)
+        XCTAssertTrue(new.permitsTransition(to: .prepared, actor: "mac", now: date))
+    }
 }

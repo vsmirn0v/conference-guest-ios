@@ -49,6 +49,9 @@ final class StudioModel: ObservableObject {
     @Published var held = false { didSet { if held != oldValue { soundCheck.stop(); refreshPreview(); presenter.update(cameraOn: cameraOn, held: held) } } }
     @Published private(set) var systemMicrophoneMode = L("Standard")
     @Published private(set) var cameraEffects: [CameraEffectStatus] = []
+    @Published private(set) var automaticFramingEnabled = false
+    @Published private(set) var automaticFramingSupported = false
+    private let framingPolicy: CameraFramingPolicy
     @Published var systemSettingsHelp: SystemMediaSettingsHelp?
     var liveCaptureDevice: (() -> AVCaptureDevice?)?
     @Published private(set) var observedNoiseSuppression: Bool?
@@ -57,7 +60,19 @@ final class StudioModel: ObservableObject {
     var applyProfile: ((StudioAudioProfile) async throws -> Void)?
     var enableCamera: (() -> Void)?
     var enableMicrophone: (() -> Void)?
-    var flipLiveCamera: (() -> Void)?
+    /// Device selection is shared by private preview and the next publication.
+    var selectLiveCamera: ((AVCaptureDevice) async throws -> Void)?
+    var onCameraSelectionChanged: ((AVCaptureDevice?) -> Void)? {
+        didSet { onCameraSelectionChanged?(selectedCameraDevice) }
+    }
+    @Published private(set) var selectedCameraDevice: AVCaptureDevice?
+    @Published private(set) var switchingCamera = false
+    @Published private(set) var availableCameraCount = 0
+    private var cameraSelectionTask: Task<Void, Never>?
+    var canFlipCamera: Bool {
+        active && !held && !startingVideo && !switchingCamera && !presenter.running &&
+            availableCameraCount > 1 && (!cameraOn || selectLiveCamera != nil)
+    }
     var makeLivePreview: (() -> StudioLivePreview?)?
     private let privateCamera: PrivateCameraPreviewing
     private let preferences: UserDefaults?
@@ -67,31 +82,49 @@ final class StudioModel: ObservableObject {
     private var previewTask: Task<Void, Never>?
     private var previewGeneration = UUID()
     private var backgroundObserver: NSObjectProtocol?
+    private var cameraDeviceObservers: [NSObjectProtocol] = []
     var openSystemSettings: (AVCaptureDevice.SystemUserInterface) -> Void = {
         AVCaptureDevice.showSystemUserInterface($0)
     }
     private var change: Task<Void, Never>?
 
-    init(audioControl: AudioControl, privateCamera: PrivateCameraPreviewing? = nil, preferences: UserDefaults? = nil, privateMicrophone: PrivateMicrophoneCapturing? = nil) {
+    init(audioControl: AudioControl, privateCamera: PrivateCameraPreviewing? = nil, preferences: UserDefaults? = nil, privateMicrophone: PrivateMicrophoneCapturing? = nil, framingPolicy: CameraFramingPolicy? = nil) {
         self.audioControl = audioControl
         soundCheck = PrivateSoundCheck(capture: privateMicrophone)
         self.privateCamera = privateCamera ?? PrivateCameraPreview()
         self.preferences = preferences
+        self.framingPolicy = framingPolicy ?? .shared
+        automaticFramingEnabled = self.framingPolicy.synchronize()
+        let devices = CameraDevices.available()
+        availableCameraCount = devices.count
+        selectedCameraDevice = CameraDevices.preferred(in: devices)
         presenter.openCameraEffects = { [weak self] in self?.showSystemSettings(.videoEffects) }
         if let raw = preferences?.string(forKey: Self.profileKey), let saved = StudioAudioProfile(rawValue: raw) {
             profile = saved
             hasSelection = true
         }
+        for notification in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
+            cameraDeviceObservers.append(NotificationCenter.default.addObserver(forName: notification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshCameraDevices() }
+            })
+        }
+        cameraDeviceObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshSystemSelection() }
+        })
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.close() }
             }
     }
 
-    deinit { if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) } }
+    deinit {
+        if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
+        cameraDeviceObservers.forEach(NotificationCenter.default.removeObserver)
+    }
 
     func open(_ pane: Pane) {
         guard active else { return }
+        refreshSystemSelection()
         self.pane = pane
         presented = true
         refreshPreview()
@@ -131,6 +164,7 @@ final class StudioModel: ObservableObject {
                 } else {
                     await self.presenter.releaseCamera()
                     guard self.previewGeneration == generation else { return }
+                    privateCamera.selectDevice(self.selectedCameraDevice)
                     try await privateCamera.start()
                     try Task.checkCancellation()
                     guard self.previewGeneration == generation else { return }
@@ -149,6 +183,9 @@ final class StudioModel: ObservableObject {
 
     /// Release private capture before publishing; renegotiation must retain live previews.
     func releasePrivateCamera() async {
+        // Engine publication also enters here from the in-call camera button.
+        // Finish a preflight selection before the SDK acquires its device.
+        await cameraSelectionTask?.value
         if cameraOn { await privateCamera.stop() }
         else { await releasePreviewCamera() }
         await presenter.releasePrivateCamera()
@@ -163,7 +200,7 @@ final class StudioModel: ObservableObject {
     }
 
     func startVideo() async -> Bool {
-        guard active, !held, !startingVideo, !cameraOn, let enableCamera else { return false }
+        guard active, !held, !startingVideo, !switchingCamera, !cameraOn, let enableCamera else { return false }
         startingVideo = true
         await releasePrivateCamera()
         guard active, !held, presented else { startingVideo = false; return false }
@@ -174,8 +211,50 @@ final class StudioModel: ObservableObject {
     }
 
     func flipCamera() {
-        guard active, !held, cameraOn else { return }
-        flipLiveCamera?()
+        refreshCameraDevices()
+        guard canFlipCamera else { return }
+        let devices = CameraDevices.available()
+        let current = (cameraOn ? liveCaptureDevice?() : nil) ?? selectedCameraDevice
+        guard let nextID = CameraDevices.nextID(in: devices.map(\.uniqueID), current: current?.uniqueID),
+              let next = devices.first(where: { $0.uniqueID == nextID }) else { return }
+        let wasSending = cameraOn
+        switchingCamera = true
+        previewError = nil
+        cameraSelectionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                if wasSending {
+                    try await self.selectLiveCamera?(next)
+                } else {
+                    await self.releasePreviewCamera()
+                }
+                try Task.checkCancellation()
+                guard self.active, !self.held else { self.switchingCamera = false; return }
+                self.selectedCameraDevice = next
+                self.onCameraSelectionChanged?(next)
+                self.privateCamera.selectDevice(next)
+                self.presenter.selectPrivateCamera(next)
+                self.switchingCamera = false
+                self.liveCameraChanged()
+            } catch is CancellationError {
+                self.switchingCamera = false
+                self.refreshPreview()
+            } catch {
+                self.switchingCamera = false
+                self.refreshPreview()
+                self.previewError = L("Camera could not switch: %@", error.localizedDescription)
+            }
+            self.cameraSelectionTask = nil
+        }
+    }
+    private func refreshCameraDevices() {
+        let devices = CameraDevices.available()
+        if availableCameraCount != devices.count { availableCameraCount = devices.count }
+        let selected = devices.first { $0.uniqueID == selectedCameraDevice?.uniqueID } ?? CameraDevices.preferred(in: devices)
+        if selectedCameraDevice?.uniqueID != selected?.uniqueID || selectedCameraDevice?.isConnected == false {
+            selectedCameraDevice = selected
+            onCameraSelectionChanged?(selected)
+        }
     }
     func liveCameraChanged() { refreshPreview(); presenter.liveCameraChanged() }
     /// Camera replacement can occur during recovery without an off/on UI transition.
@@ -243,7 +322,12 @@ final class StudioModel: ObservableObject {
     func reportUpdateFailure() { error = L("Sound settings could not update. Try again.") }
 
     func refreshSystemSelection() {
+        refreshCameraDevices()
         let device = !held && active ? (presenter.cameraDevice ?? (cameraOn ? liveCaptureDevice?() : (previewRunning ? privateCamera.device : nil))) : nil
+        let selectedFraming = framingPolicy.synchronize()
+        if automaticFramingEnabled != selectedFraming { automaticFramingEnabled = selectedFraming }
+        let supportsFraming = (device ?? selectedCameraDevice)?.activeFormat.isCenterStageSupported == true
+        if automaticFramingSupported != supportsFraming { automaticFramingSupported = supportsFraming }
         let effects = CameraEffectStatus.read(device: device)
         if effects != cameraEffects { cameraEffects = effects }
         let mode: String
@@ -253,6 +337,12 @@ final class StudioModel: ObservableObject {
         default: mode = L("Standard")
         }
         if systemMicrophoneMode != mode { systemMicrophoneMode = mode }
+    }
+
+    func setAutomaticFraming(_ enabled: Bool) {
+        guard active, !held, automaticFramingSupported else { return }
+        automaticFramingEnabled = framingPolicy.setEnabled(enabled)
+        refreshSystemSelection()
     }
 
     func showSystemSettings(_ kind: AVCaptureDevice.SystemUserInterface) {
@@ -273,6 +363,7 @@ final class StudioModel: ObservableObject {
 
     func end() {
         active = false
+        cameraSelectionTask?.cancel(); cameraSelectionTask = nil; switchingCamera = false
         recording.end()
         microphoneActivity.setStatus(.unavailable)
         soundCheck.verifyMuted = nil
@@ -280,7 +371,7 @@ final class StudioModel: ObservableObject {
         change?.cancel(); change = nil
         applying = false
         applyProfile = nil
-        enableCamera = nil; enableMicrophone = nil; flipLiveCamera = nil; makeLivePreview = nil; liveCaptureDevice = nil
+        enableCamera = nil; enableMicrophone = nil; selectLiveCamera = nil; onCameraSelectionChanged = nil; makeLivePreview = nil; liveCaptureDevice = nil
         close()
     }
 }

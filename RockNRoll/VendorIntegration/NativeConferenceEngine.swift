@@ -64,6 +64,11 @@ final class NativeConferenceEngine: CallEngine {
     private weak var activeControls: CallControls?
     private let reactions = MeetingReactionsModel(preferences: .standard)
     private var reactionsAdapter: GuestReactionsAdapter?
+    private var receivedReactions: GuestReceivedReactions?
+    private var reactionTransport: GuestReactionTransport?
+    #if DEBUG
+    func sendReactionForTesting(_ kind: ConferenceCore.MeetingReaction) -> Bool { reactions.send(kind) }
+    #endif
     private var studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard)
     private var studioSubscription: AnyCancellable?
     private let activeSpeaker = ActiveSpeakerStore()
@@ -337,6 +342,7 @@ final class NativeConferenceEngine: CallEngine {
         let epoch = sessionEpoch
         let floating = GuestVideoPictureInPicture(sourceView: floatingSourceView, speaker: activeSpeaker)
         floating.rendersSelectedViewport = false
+        floating.wantsInlineFrames = activeControls?.wantsStageFrames ?? true
         floating.onAvailabilityChanged = { [weak self] available in
             guard let self, self.sessionEpoch == epoch, self.hasJoinStarted,
                   !self.leaveRequested, self.finishing == nil else { return }
@@ -702,6 +708,8 @@ final class NativeConferenceEngine: CallEngine {
     }
     func join(target: JoinTarget, displayName: String) throws {
         guard finishing == nil else { throw ProviderError.teardownInProgress }
+        reactionTransport?.stop(); reactionTransport = nil
+        receivedReactions?.stop(); receivedReactions = nil
         reactionsAdapter?.stop(); reactionsAdapter = nil; reactions.begin()
         sessionEpoch = UUID()
         audioRecoveryTask?.cancel(); audioRecoveryTask = nil
@@ -795,6 +803,19 @@ final class NativeConferenceEngine: CallEngine {
         mediaConnectionConfirmed = false
         traceMediaRecovery("media-join")
         bindEvents()
+        reactionTransport?.stop()
+        let expectedSession = sessionEpoch, expectedAttempt = mediaAttemptEpoch
+        let reactionTransport = GuestReactionTransport(roomID: room.id, valid: { [weak self] in
+            guard let self else { return false }
+            return self.sessionEpoch == expectedSession && self.mediaAttemptEpoch == expectedAttempt &&
+                self.hasJoinStarted && !self.leaveRequested && self.finishing == nil
+        }, onReaction: { [weak self] reaction in self?.receivedReactions?.receive(reaction) })
+        self.reactionTransport = reactionTransport
+        reactionTransport.onStateChanged = { [weak self, weak reactionTransport] in
+            guard let self, self.sessionEpoch == expectedSession, self.mediaAttemptEpoch == expectedAttempt else { return }
+            self.receivedReactions?.setTransportObserving(reactionTransport?.ready == true)
+            self.reactionsAdapter?.refresh()
+        }
         JazzSession.shared.joinConference(
             joinConferenceType: .skipIntermidiateScreen(room: room),
             mediaSettings: .allOff,
@@ -806,6 +827,8 @@ final class NativeConferenceEngine: CallEngine {
 
     func leave() {
         guard hasJoinStarted, !leaveRequested else { return }
+        reactionTransport?.stop(); reactionTransport = nil
+        receivedReactions?.stop(); receivedReactions = nil
         reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil
         leaveRequested = true
         endCodecPolicy()
@@ -1109,6 +1132,13 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func minimalRepresentation() -> JazzConferenceRepresentation {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_REACTIONS_RECEIVE_TRACE"] != nil,
+           ProcessInfo.processInfo.environment["CONFERENCE_TEST_REACTIONS_NATIVE_DEFAULT"] == "1" {
+            return JazzConferenceRepresentation(connectionRepresentation: nil, overlayRepresentation: nil,
+                                                toastsRepresentation: .default, videoStreamsRepresentation: nil)
+        }
+        #endif
         let streams = streamViews
         let epoch = sessionEpoch
         let attempt = mediaAttemptEpoch
@@ -1121,6 +1151,8 @@ final class NativeConferenceEngine: CallEngine {
             self.incomingVideoEnabled = nil
             self.updateIncomingVideoDemand()
             if !self.studio.active { self.studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard) }
+            self.studio.onCameraSelectionChanged = { GuestCaptureDeviceObserver.setPreferredDevice($0) }
+            self.studio.selectLiveCamera = { try await GuestCaptureDeviceObserver.selectCurrentDevice($0) }
             self.studio.presenter.preparePrivateCamera = { [weak self] in
                 await self?.studio.releasePreviewCamera()
             }
@@ -1263,7 +1295,7 @@ final class NativeConferenceEngine: CallEngine {
             self.reactions.begin()
             self.studio.reactions = self.reactions
             self.reactionsAdapter = GuestReactionsAdapter(model: self.reactions, state: state,
-                coordinator: coordinator, studio: self.studio,
+                coordinator: coordinator, studio: self.studio, reactionTransport: self.reactionTransport,
                 valid: { [weak self] in
                     guard let self else { return false }
                     return self.sessionEpoch == epoch && self.mediaAttemptEpoch == attempt &&
@@ -1311,6 +1343,28 @@ final class NativeConferenceEngine: CallEngine {
                                         }, studio: self.studio, activeSpeaker: self.activeSpeaker,
                                         reactions: self.reactions, meetingStatus: self.meetingStatus)
             self.activeControls = controls
+            controls.onStageVisibilityChanged = { [weak self] wanted in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                self.floatingVideo?.wantsInlineFrames = wanted
+            }
+            controls.bindStreams(streams)
+            self.receivedReactions?.stop()
+            let reactionOverlay = ReceivedReactionOverlay()
+            controls.installReactionOverlay(reactionOverlay)
+            let receiver = GuestReceivedReactions(valid: { [weak self] in
+                guard let self else { return false }
+                return self.sessionEpoch == epoch && self.mediaAttemptEpoch == attempt &&
+                    self.hasJoinStarted && !self.leaveRequested && self.finishing == nil
+            }, participant: { id in
+                if state.localParticipant.id == id {
+                    return .init(name: state.localParticipant.userName ?? L("You"), isLocal: true)
+                }
+                guard let sender = state.remoteParticipants[id] ?? state.remoteParticipants.values.first(where: { $0.id == id }) else { return nil }
+                return .init(name: sender.userName ?? L("Participant"), isLocal: false)
+            }, onReaction: { kind, name in reactionOverlay.show(kind, from: name) })
+            self.receivedReactions = receiver
+            receiver.start(in: self.floatingSourceView ?? controls)
+            receiver.setTransportObserving(self.reactionTransport?.ready == true)
             #if DEBUG
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_REACTIONS"] == "1" {
                 controls.fixtureActions = GuestReactionFixtureActions.make(model: self.reactions)
@@ -1483,10 +1537,13 @@ final class NativeConferenceEngine: CallEngine {
     private func finishSession(userEnded: Bool, event: CallEvent) {
         endCodecPolicy()
         guard finishing == nil, hasJoinStarted else { return }
+        reactionTransport?.stop(); reactionTransport = nil
+        receivedReactions?.stop(); receivedReactions = nil
         reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil
         endFloatingVideoSession()
         microphoneProbe.stop()
         studio.end()
+        GuestCaptureDeviceObserver.setPreferredDevice(nil)
         activeSpeaker.end()
         speakerSubscription?.cancel(); speakerSubscription = nil
         refreshSpeakerInput = nil

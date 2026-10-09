@@ -107,7 +107,7 @@ struct StudioPanel: View {
                                 }.frame(maxWidth: .infinity, minHeight: 36)
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(model.startingVideo || model.previewLoading)
+                            .disabled(model.startingVideo || model.switchingCamera || model.previewLoading)
                             .accessibilityIdentifier("studio.start-video")
                         } else if model.pane == .sound && !model.microphoneOn && model.enableMicrophone != nil {
                             Button {
@@ -125,6 +125,13 @@ struct StudioPanel: View {
 
     private var cameraControls: some View {
         Group {
+            if model.automaticFramingSupported {
+                Section {
+                    Toggle(L("Automatic framing"), isOn: Binding(get: { model.automaticFramingEnabled }, set: { model.setAutomaticFraming($0) }))
+                        .disabled(model.held || !model.active)
+                        .accessibilityIdentifier("studio.automatic-framing")
+                }
+            }
             if let reactions = model.reactions, reactions.available {
                 Section(L("Reactions")) { CameraReactionSettings(model: reactions) }
             }
@@ -162,9 +169,9 @@ struct StudioPanel: View {
                 }
                 .frame(height: compact ? 88 : 180).clipShape(RoundedRectangle(cornerRadius: 12))
                 .listRowInsets(EdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8))
-                if model.cameraOn && model.flipLiveCamera != nil {
+                if model.availableCameraCount > 1 {
                     Button { model.flipCamera() } label: { Label(L("Flip camera"), systemImage: "camera.rotate") }
-                        .disabled(model.held).accessibilityIdentifier("studio.flip-camera")
+                        .disabled(!model.canFlipCamera).accessibilityIdentifier("studio.flip-camera")
                 }
                 Button { model.showSystemSettings(.videoEffects) } label: {
                     Label(L("Camera effects"), systemImage: "camera.filters")

@@ -69,11 +69,13 @@ final class PresenterModel: ObservableObject {
     var preparePrivateCamera: (() async -> Void)?
     var makePrivateCamera: (AVCaptureDevice.Position) -> PrivateCameraPreviewing = { PrivateCameraPreview(position: $0, framesPerSecond: 15) }
     private var cameraPosition: AVCaptureDevice.Position = .front
-    var canFlipCamera: Bool {
-        guard !ProcessInfo.processInfo.isiOSAppOnMac else { return false }
-        let positions = Set(AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera], mediaType: .video,
-            position: .unspecified).devices.map(\.position))
-        return positions.contains(.front) && positions.contains(.back) && !cameraOn
+    private var selectedCameraDevice: AVCaptureDevice?
+    var canFlipCamera: Bool { active && !held && !cameraOn && CameraDevices.available().count > 1 }
+    func selectPrivateCamera(_ device: AVCaptureDevice) {
+        guard selectedCameraDevice?.uniqueID != device.uniqueID else { return }
+        selectedCameraDevice = device
+        cameraPosition = device.position
+        if !cameraOn { invalidateCamera(); invalidateRender(); refresh() }
     }
     var cameraDevice: AVCaptureDevice? { ownedCamera?.device }
     var cameraGeneration: UUID { cameraEpoch }
@@ -158,8 +160,11 @@ final class PresenterModel: ObservableObject {
     }
     func flipCamera() {
         guard includeCamera, canFlipCamera else { return }
-        cameraPosition = cameraPosition == .front ? .back : .front
-        invalidateCamera(); invalidateRender(); refresh()
+        let devices = CameraDevices.available()
+        let current = cameraDevice ?? selectedCameraDevice ?? CameraDevices.preferred(in: devices)
+        guard let nextID = CameraDevices.nextID(in: devices.map(\.uniqueID), current: current?.uniqueID),
+              let next = devices.first(where: { $0.uniqueID == nextID }) else { return }
+        selectPrivateCamera(next)
     }
     func showCameraEffects() {
         #if !targetEnvironment(simulator)
@@ -252,6 +257,7 @@ final class PresenterModel: ObservableObject {
                     await self.preparePrivateCamera?()
                     guard !Task.isCancelled, self.cameraEpoch == attempt else { return }
                     let capture = self.makePrivateCamera(self.cameraPosition)
+                    capture.selectDevice(self.selectedCameraDevice)
                     do {
                         try await capture.startFrames { [weak self] buffer, rotation in
                             guard let self, self.cameraEpoch == attempt, self.includeCamera, !self.held else { return }

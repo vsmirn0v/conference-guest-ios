@@ -56,6 +56,9 @@ final class MeetingReactionsTests: XCTestCase {
         guard #available(iOS 17.0, *) else { throw XCTSkip("Camera reaction metadata needs iOS 17.") }
         XCTAssertEqual(CameraReactionObserver.reaction(.thumbsUp), .like)
         XCTAssertEqual(CameraReactionObserver.reaction(.thumbsDown), .dislike)
+        XCTAssertEqual(CameraReactionObserver.reaction(.confetti), .applause)
+        XCTAssertEqual(CameraReactionObserver.reaction(.fireworks), .applause)
+        XCTAssertEqual(CameraReactionObserver.reaction(.heart), .heart)
         XCTAssertNil(CameraReactionObserver.reaction(AVCaptureReactionType(rawValue: "unmapped-effect")))
     }
     func testNativeMenuActionCanBeExecutedAfterPanelDismissal() {
@@ -63,5 +66,29 @@ final class MeetingReactionsTests: XCTestCase {
         let action = UIAction(title: "Existing meeting action") { _ in calls += 1 }
         UIButton(primaryAction: action).sendActions(for: .touchUpInside)
         XCTAssertEqual(calls, 1)
+    }
+    func testEverySDKReactionCanBeSentInSequenceWithoutEndingThePaletteSession() {
+        var time = 0.0
+        let model = MeetingReactionsModel(clock: { time })
+        model.available = true; model.ready = true
+        var sent: [MeetingReaction] = []
+        model.sender = { sent.append($0); return true }
+        let session = model.generation
+        for kind in MeetingReaction.allCases {
+            XCTAssertTrue(model.send(kind))
+            time += 0.5
+        }
+        XCTAssertEqual(sent, MeetingReaction.allCases)
+        XCTAssertEqual(model.generation, session)
+        XCTAssertTrue(model.canSend)
+    }
+    func testLegacyCapabilityRejectsUnsupportedReactionWithoutConsumingSendGate() {
+        let model = MeetingReactionsModel(clock: { 0 })
+        model.available = true; model.ready = true; model.supportedReactions = GuestReactionCode.legacy
+        var sent: [MeetingReaction] = []
+        model.sender = { sent.append($0); return true }
+        XCTAssertFalse(model.send(.heart))
+        XCTAssertTrue(model.send(.like))
+        XCTAssertEqual(sent, [.like])
     }
 }

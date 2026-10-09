@@ -1,9 +1,25 @@
+import AVFoundation
+import LiveKit
 import UIKit
 import XCTest
 @testable import RockNRoll
 
 @MainActor
 final class FloatingVideoContentTests: XCTestCase {
+    func testCallVideoDefaultPreservesFullCameraAndShareFrame() throws {
+        let surface = CallVideoView()
+        XCTAssertEqual(surface.layoutMode, .fit)
+        let room = try XCTUnwrap(surface.subviews.compactMap { $0 as? VideoView }.first)
+        let native = try XCTUnwrap(surface.subviews.compactMap { $0 as? GuestSampleBufferView }.first)
+        XCTAssertEqual(room.layoutMode, .fit)
+        XCTAssertEqual(native.contentMode, .scaleAspectFit)
+        let layer = try XCTUnwrap(native.layer.sublayers?.compactMap { $0 as? AVSampleBufferDisplayLayer }.first)
+        XCTAssertEqual(layer.videoGravity, .resizeAspect)
+        surface.layoutMode = .fill
+        XCTAssertEqual(layer.videoGravity, .resizeAspectFill)
+        surface.layoutMode = .fit
+        XCTAssertEqual(layer.videoGravity, .resizeAspect)
+    }
     func testStatusUpdatesWithoutVideoFramesAndDoesNotReplaceVideo() throws {
         let video = UIView()
         let surface = FloatingVideoContentView(videoContent: video)

@@ -1,6 +1,42 @@
 import XCTest
 
 final class MeetingPresentationUITests: XCTestCase {
+    func testGridShowsAllParticipantsAndSwitchesToSpeakerAfterRotation() {
+        let app = launch(scenario: "gallery")
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        let grid = app.scrollViews["Meeting grid"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 10))
+        for orientation: UIDeviceOrientation in [.portrait, .landscapeLeft, .portrait] {
+            XCUIDevice.shared.orientation = orientation
+            let landscape = orientation == .landscapeLeft
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                let frame = app.windows.firstMatch.frame
+                return (frame.width > frame.height) == landscape &&
+                    app.otherElements["gallery.ani.camera"].frame.width > 100
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed)
+            for id in ["ani", "aram", "mariam", "vahan"] {
+                let tile = app.otherElements["gallery." + id + ".camera"]
+                XCTAssertTrue(tile.exists)
+                XCTAssertGreaterThan(tile.frame.width, 100)
+                XCTAssertGreaterThan(tile.frame.height, 100)
+            }
+            let visible = ["ani", "aram", "mariam", "vahan"].filter {
+                app.windows.firstMatch.frame.contains(app.otherElements["gallery." + $0 + ".camera"].frame)
+            }
+            XCTAssertGreaterThanOrEqual(visible.count, 2, "Grid must show multiple participants together")
+        }
+        app.buttons["More call options"].tap()
+        let view = app.buttons["View"].firstMatch
+        XCTAssertTrue(view.waitForExistence(timeout: 5)); view.tap()
+        let speaker = app.buttons["Speaker"].firstMatch
+        for _ in 0..<4 where !speaker.isHittable { app.swipeUp() }
+        XCTAssertTrue(speaker.isHittable); speaker.tap()
+        XCTAssertFalse(grid.isHittable)
+        XCTAssertTrue(app.buttons["Next stream"].isHittable)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Speaker layout after grid rotation"; attachment.lifetime = .keepAlways; add(attachment)
+    }
     private func launch(_ language: String = "en", autoHide: Bool = false, largeText: Bool = false,
                         scenario: String? = nil) -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")

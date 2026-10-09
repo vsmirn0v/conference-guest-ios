@@ -1,8 +1,7 @@
 import Foundation
 
 public enum MeetingReaction: String, CaseIterable, Codable, Sendable {
-    // Extend only after verifying both delivery and rendering on other clients.
-    case like, dislike
+    case heart, like, smile, applause, fire, wave, handshake, thanks, thinking, sad, dislike, surprise
 }
 
 /// A reaction is transient: throttle it now rather than queueing it for later.
@@ -20,7 +19,7 @@ public struct ReactionSendGate {
             order.append(effectID)
             if order.count > 64 { seen.remove(order.removeFirst()) }
         }
-        let interval = source == .manual ? 1.0 : 3.0
+        let interval = source == .manual ? 0.35 : 3.0
         guard lastSend.map({ now - $0 >= interval }) ?? true else { return false }
         lastSend = now
         return true

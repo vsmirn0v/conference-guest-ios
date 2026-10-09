@@ -13,6 +13,9 @@ struct MeetingContinuationView: View {
                         Label(L("Jam on %@", jam.deviceLabel), systemImage: "laptopcomputer.and.iphone")
                             .font(.subheadline).foregroundStyle(.secondary)
                         Text(jam.title).font(.headline)
+                        if let identity = MeetingRoomIdentity(jam.invitation) {
+                            Label(identity.displayDetails, systemImage: "link").font(.caption).foregroundStyle(.secondary)
+                        }
                         if jam.audioPaused == true {
                             Label(L("Second device · audio off"), systemImage: "speaker.slash")
                                 .font(.caption).foregroundStyle(.secondary)
@@ -24,7 +27,7 @@ struct MeetingContinuationView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .disabled(busy || continuation.moving)
-                            Text(L("Audio pauses on the other device while this one connects. Microphone and camera start off."))
+                            Text(L("Connect here first, then leave the other device. Microphone and camera start off."))
                                 .font(.footnote).foregroundStyle(.secondary)
                             if jam.supportsCompanion {
                                 Button(L("Join as a second device")) { continuation.begin(jam, companion: true) }

@@ -51,9 +51,11 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     private var sharingTransceiver: LKRTCRtpTransceiver?
     private(set) var videoTrack: LKRTCVideoTrack?
     private var camera: LKRTCCameraVideoCapturer?
+    private var cameraFrameDelegate: NativeCameraFrameDelegate?
     @MainActor private var cameraEnergySubscription: AnyCancellable?
     @MainActor private var cameraSource: LKRTCVideoSource?
     private var cameraPosition: AVCaptureDevice.Position
+    @MainActor var preferredCameraDevice: AVCaptureDevice?
     private(set) var captureDevice: AVCaptureDevice?
     private var audioTrack: LKRTCAudioTrack?
     private var audioProfile: StudioAudioProfile?
@@ -82,8 +84,12 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         guard connection.signalingState != .closed else { throw NativeRTCError.disconnected }
         guard audioTransceiver == nil else { return }
         let settings = LKRTCRtpTransceiverInit(); settings.direction = .sendOnly
-        guard let audio = connection.addTransceiver(of: .audio, init: settings),
+        // Negotiate one audio identity for the lifetime of this publisher. A
+        // disabled track sends silence while preserving the MID/MSID on unmute.
+        let track = makeAudioTrack(profile: .conversation)
+        guard let audio = connection.addTransceiver(with: track, init: settings),
               let video = connection.addTransceiver(of: .video, init: settings) else { throw NativeRTCError.disconnected }
+        audioTrack = track; audioProfile = .conversation
         audioTransceiver = audio; videoTransceiver = video
         // Preserve other codecs as fallbacks when the server declines H.264.
         preferPublishingH264(videoTransceiver)
@@ -208,15 +214,26 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         sharingTransceiver?.sender.track = track
     }
     @MainActor func setMicrophone(_ enabled: Bool, profile: StudioAudioProfile) {
-        if !enabled { audioTransceiver?.sender.track = nil; audioTrack = nil; return }
-        if audioTrack == nil || audioProfile != profile {
-            let source = factory.audioSource(with: LKRTCMediaConstraints(mandatoryConstraints: [
-                "googEchoCancellation": "true", "googNoiseSuppression": profile == .conversation ? "true" : "false",
-                "googAutoGainControl": profile == .conversation ? "true" : "false"], optionalConstraints: nil))
-            audioTrack = factory.audioTrack(with: source, trackId: "microphone")
-            audioProfile = profile
+        guard !closed, let audioTransceiver else {
+            audioTrack?.isEnabled = false; return
         }
-        audioTransceiver?.sender.track = audioTrack
+        if enabled, audioTrack == nil || audioProfile != profile {
+            // Retired tracks must stop forwarding capture before replacing the
+            // sender: another wrapper or a queued negotiation can retain them.
+            audioTrack?.isEnabled = false
+            audioTrack = makeAudioTrack(profile: profile)
+            audioProfile = profile
+            audioTransceiver.sender.track = audioTrack
+        }
+        audioTrack?.isEnabled = enabled
+    }
+    private func makeAudioTrack(profile: StudioAudioProfile) -> LKRTCAudioTrack {
+        let source = factory.audioSource(with: LKRTCMediaConstraints(mandatoryConstraints: [
+            "googEchoCancellation": "true", "googNoiseSuppression": profile == .conversation ? "true" : "false",
+            "googAutoGainControl": profile == .conversation ? "true" : "false"], optionalConstraints: nil))
+        let track = factory.audioTrack(with: source, trackId: "microphone")
+        track.isEnabled = false
+        return track
     }
     @MainActor func microphoneLevel() async -> Float? {
         guard !closed, let sender = audioTransceiver?.sender, sender.track?.isEnabled == true else { return nil }
@@ -236,19 +253,22 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
             cameraEnergySubscription = nil; cameraSource = nil
             videoTrack = nil; updateVideoSender(); captureDevice = nil
             let old = camera; camera = nil
+            let oldDelegate = cameraFrameDelegate; cameraFrameDelegate = nil
             if let old { await withCheckedContinuation { completion in old.stopCapture { completion.resume() } } }
+            // A new start can enter while stopCapture suspends. Retiring the
+            // old capture must not clear the new capturer's weak delegate owner.
+            withExtendedLifetime(oldDelegate) {}
             return
         }
-        guard let device = LKRTCCameraVideoCapturer.captureDevices().first(where: { $0.position == cameraPosition }) ?? LKRTCCameraVideoCapturer.captureDevices().first else { throw NativeRTCError.invalidResponse }
-        let formats = LKRTCCameraVideoCapturer.supportedFormats(for: device)
-        guard let format = formats.filter({
-            let d = CMVideoFormatDescriptionGetDimensions($0.formatDescription); return d.width <= 1280 && d.height <= 720
-        }).max(by: {
-            let a = CMVideoFormatDescriptionGetDimensions($0.formatDescription), b = CMVideoFormatDescriptionGetDimensions($1.formatDescription)
-            return a.width * a.height < b.width * b.height
-        }) ?? formats.first else { throw NativeRTCError.invalidResponse }
+        let devices = CameraDevices.available()
+        let selected = preferredCameraDevice.flatMap { wanted in devices.first { $0.uniqueID == wanted.uniqueID } }
+        let fallback = ProcessInfo.processInfo.isiOSAppOnMac ? CameraDevices.preferred(in: devices) : devices.first { $0.position == cameraPosition }
+        guard let device = selected ?? fallback ?? devices.first,
+              let format = Self.cameraFormat(for: device) else { throw NativeRTCError.invalidResponse }
         let source = factory.videoSource()
-        let capturer = LKRTCCameraVideoCapturer(delegate: source)
+        let delegate = NativeCameraFrameDelegate(downstream: source)
+        let capturer = LKRTCCameraVideoCapturer(delegate: delegate)
+        cameraFrameDelegate = delegate
         camera = capturer; captureDevice = device
         let fps = min(24, MediaEnergyBudget.shared.cameraFPS, Int(format.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 24))
         do {
@@ -256,7 +276,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
                 capturer.startCapture(with: device, format: format, fps: fps) { if let error = $0 { completion.resume(throwing: error) } else { completion.resume() } }
             }
         } catch {
-            if camera === capturer { camera = nil; captureDevice = nil }
+            if camera === capturer { camera = nil; captureDevice = nil; cameraFrameDelegate = nil }
             await withCheckedContinuation { completion in capturer.stopCapture { completion.resume() } }
             throw error
         }
@@ -266,14 +286,33 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         }
         videoTrack = factory.videoTrack(with: source, trackId: "camera")
         cameraSource = source
+        configureCameraCadence(capturer: capturer, device: device)
+        updateVideoSender()
+    }
+    private static func cameraFormat(for device: AVCaptureDevice) -> AVCaptureDevice.Format? {
+        let formats = LKRTCCameraVideoCapturer.supportedFormats(for: device)
+        return formats.filter {
+            let d = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
+            return max(d.width, d.height) <= 1280 && min(d.width, d.height) <= 720
+        }.max {
+            let a = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
+            let b = CMVideoFormatDescriptionGetDimensions($1.formatDescription)
+            return a.width * a.height < b.width * b.height
+        } ?? formats.first
+    }
+    @MainActor private func configureCameraCadence(capturer: LKRTCCameraVideoCapturer, device: AVCaptureDevice) {
         cameraEnergySubscription = MediaEnergyBudget.shared.$pressure.removeDuplicates().sink { [weak self, weak capturer] pressure in
             Task { @MainActor [weak self, weak capturer] in
-                guard let self, let capturer, self.camera === capturer, !self.closed else { return }
+                guard let self, let capturer, self.camera === capturer,
+                      self.captureDevice?.uniqueID == device.uniqueID, !self.closed else { return }
                 let fps = pressure == .normal ? 24 : pressure == .constrained ? 15 : 10
                 let minimum = Int(ceil(device.activeFormat.videoSupportedFrameRateRanges.map(\.minFrameRate).min() ?? 1))
                 let maximum = Int(floor(device.activeFormat.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? Double(fps)))
                 let rate = max(minimum, min(maximum, fps))
-                self.cameraSource?.adaptOutputFormat(toWidth: 1280, height: 720, fps: Int32(rate))
+                let size = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+                // Adapt cadence using the selected sensor's full dimensions.
+                // A fixed landscape request crops cameras with a different aspect.
+                self.cameraSource?.adaptOutputFormat(toWidth: size.width, height: size.height, fps: Int32(rate))
                 do {
                     try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
                     device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(rate))
@@ -281,17 +320,56 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
                 } catch { /* Capture continues at its previously accepted rate. */ }
             }
         }
-        updateVideoSender()
+    }
+    @MainActor func selectCamera(_ device: AVCaptureDevice) async throws {
+        guard !closed else { throw CancellationError() }
+        let previousSelection = preferredCameraDevice
+        preferredCameraDevice = device
+        guard let capturer = camera, let old = captureDevice else { cameraPosition = device.position; return }
+        guard old.uniqueID != device.uniqueID else { return }
+        guard let format = Self.cameraFormat(for: device) else { preferredCameraDevice = previousSelection; throw NativeRTCError.invalidResponse }
+        let oldFormat = old.activeFormat
+        cameraEnergySubscription = nil
+        await withCheckedContinuation { continuation in capturer.stopCapture { continuation.resume() } }
+        guard !closed, camera === capturer, !Task.isCancelled else { throw CancellationError() }
+        func start(_ device: AVCaptureDevice, format: AVCaptureDevice.Format) async throws {
+            let fps = min(24, MediaEnergyBudget.shared.cameraFPS, Int(format.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 24))
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                capturer.startCapture(with: device, format: format, fps: fps) {
+                    if let error = $0 { continuation.resume(throwing: error) } else { continuation.resume() }
+                }
+            }
+        }
+        do { try await start(device, format: format) }
+        catch {
+            preferredCameraDevice = previousSelection
+            if !closed, camera === capturer {
+                try? await start(old, format: oldFormat)
+                configureCameraCadence(capturer: capturer, device: old)
+            }
+            throw error
+        }
+        guard !closed, camera === capturer, !Task.isCancelled else {
+            await withCheckedContinuation { continuation in capturer.stopCapture { continuation.resume() } }
+            throw CancellationError()
+        }
+        captureDevice = device; cameraPosition = device.position
+        configureCameraCadence(capturer: capturer, device: device)
+        // Keep videoTrack and its source: attached inline/Studio/Presenter
+        // renderers continue receiving frames after capture switches devices.
     }
     @MainActor func flipCamera() async throws {
-        guard camera != nil else { return }
-        cameraPosition = cameraPosition == .front ? .back : .front
-        try await setCamera(false); try await setCamera(true)
+        let devices = CameraDevices.available()
+        let current = captureDevice ?? preferredCameraDevice ?? CameraDevices.preferred(in: devices)
+        guard let nextID = CameraDevices.nextID(in: devices.map(\.uniqueID), current: current?.uniqueID),
+              let next = devices.first(where: { $0.uniqueID == nextID }) else { return }
+        try await selectCamera(next)
     }
     @MainActor func close() async {
         if let decoderObservation { NotificationCenter.default.removeObserver(decoderObservation) }
         decoderObservation = nil; onDecoderFallback = nil
         closed = true
+        audioTrack?.isEnabled = false
         try? setSharing(nil)
         onCandidate = nil; onTrack = nil; onState = nil
         try? await setCamera(false); setMicrophone(false, profile: .conversation); connection.close()
@@ -318,6 +396,26 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     private func reportTrack(_ transceiver: LKRTCRtpTransceiver) {
         guard !transceiver.mid.isEmpty, let video = transceiver.receiver.track as? LKRTCVideoTrack else { return }
         onTrack?(transceiver.mid, video)
+    }
+}
+
+/// Keep native source pixels intact; correct only Mac-specific SDK metadata.
+final class NativeCameraFrameDelegate: NSObject, LKRTCVideoCapturerDelegate {
+    private let downstream: LKRTCVideoCapturerDelegate
+    private let orientation = MacCameraFrameOrientation()
+    init(downstream: LKRTCVideoCapturerDelegate) { self.downstream = downstream }
+    static func corrected(_ frame: LKRTCVideoFrame, rotation: LKRTCVideoRotation?) -> LKRTCVideoFrame {
+        guard let rotation, rotation != frame.rotation else { return frame }
+        let corrected = LKRTCVideoFrame(buffer: frame.buffer, rotation: rotation, timeStampNs: frame.timeStampNs)
+        corrected.timeStamp = frame.timeStamp
+        return corrected
+    }
+    func capturer(_ capturer: LKRTCVideoCapturer, didCapture frame: LKRTCVideoFrame) {
+        let rotation = (capturer as? LKRTCCameraVideoCapturer)
+            .flatMap { orientation.rotation(in: $0.captureSession) }
+            .flatMap(LKRTCVideoRotation.init(rawValue:))
+        let corrected = Self.corrected(frame, rotation: rotation)
+        downstream.capturer(capturer, didCapture: corrected)
     }
 }
 

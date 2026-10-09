@@ -9,7 +9,7 @@ struct CameraReactionSettings: View {
             .accessibilityIdentifier("reactions.camera-sharing")
         Text(model.cameraStatus.title).font(.footnote).foregroundStyle(.secondary)
             .accessibilityIdentifier("reactions.camera-status")
-        Text(L("When your camera is shared, thumbs-up and thumbs-down camera effects also send the matching meeting reaction. Effects selected in system controls count too."))
+        Text(L("When your camera is shared, heart and thumbs effects send matching reactions. Confetti and fireworks send Celebrate. Other effects remain in your video."))
             .font(.footnote).foregroundStyle(.secondary)
     }
 }
@@ -19,14 +19,14 @@ private struct ReactionPalette: View {
     @Environment(\.sizeCategory) private var sizeCategory
     let select: (MeetingReaction) -> Void
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 44), spacing: 4),
-                                 count: min(MeetingReaction.allCases.count, sizeCategory.isAccessibilityCategory ? 2 : 5)), spacing: 12) {
-            ForEach(MeetingReaction.allCases, id: \.self) { kind in
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: sizeCategory.isAccessibilityCategory ? 120 : 64), spacing: 4)], spacing: 12) {
+            ForEach(model.supportedReactions, id: \.self) { kind in
                 Button { select(kind) } label: {
                     VStack(spacing: 6) {
                         Text(kind.emoji).font(.system(size: 28))
-                        Text(kind.title).font(.caption).multilineTextAlignment(.center).lineLimit(2)
-                    }.frame(maxWidth: .infinity, minHeight: 66)
+                        Text(kind.title).font(.caption).multilineTextAlignment(.center)
+                            .lineLimit(sizeCategory.isAccessibilityCategory ? nil : 2)
+                    }.frame(minWidth: 44, maxWidth: .infinity, minHeight: 66).contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(!model.canSend)
                     .accessibilityLabel(kind.title).accessibilityHint(L("Send reaction"))
                     .accessibilityIdentifier("reactions.send.\(kind.rawValue)")
@@ -35,6 +35,9 @@ private struct ReactionPalette: View {
         if !model.canSend {
             Text(model.available ? L("Reactions will be ready when the meeting reconnects.") : L("Reactions are unavailable in this meeting."))
                 .font(.footnote).foregroundStyle(.secondary)
+        } else if let submitted = model.submitted {
+            Text(L("Sent %@", submitted.title)).font(.footnote).foregroundStyle(.secondary)
+                .accessibilityIdentifier("reactions.confirmation")
         }
     }
 }
@@ -54,8 +57,12 @@ private struct MeetingActionRows: View {
                     }
                 }.disabled(action.attributes.contains(.disabled))
             } else if let menu = element as? UIMenu {
-                DisclosureGroup(menu.title) { MeetingActionRows(elements: menu.children, perform: perform) }
-                    .accessibilityIdentifier("meeting.menu.\(menu.identifier.rawValue)")
+                if menu.options.contains(.displayInline) {
+                    MeetingActionRows(elements: menu.children, perform: perform)
+                } else {
+                    DisclosureGroup(menu.title) { MeetingActionRows(elements: menu.children, perform: perform) }
+                        .accessibilityIdentifier("meeting.menu.\(menu.identifier.rawValue)")
+                }
             }
         }
     }
@@ -89,11 +96,10 @@ final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPre
         super.init(rootView: AnyView(EmptyView()))
         rootView = AnyView(MeetingActionsContent(model: model, menu: menu,
             close: { [weak self] in self?.dismiss(animated: true) },
-            select: { [weak self, weak model] kind in
+            select: { [weak model] kind in
                 guard model?.send(kind) == true else { return }
                 UIAccessibility.post(notification: .announcement, argument: L("You, %@", kind.title))
                 if !ProcessInfo.processInfo.isiOSAppOnMac { UISelectionFeedbackGenerator().selectionChanged() }
-                self?.dismiss(animated: true)
             }, perform: { [weak self] action in
                 self?.dismiss(animated: true) {
                     // Execute an existing public UIAction through its native control.
@@ -101,7 +107,13 @@ final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPre
                     button.sendActions(for: .touchUpInside)
                 }
             }))
-        preferredContentSize = CGSize(width: 380, height: menu == nil ? 360 : 600)
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_REACTIONS_COMPACT_WIDTH"] == "320" {
+            rootView = AnyView(rootView.frame(width: 320).accessibilityElement(children: .contain)
+                .accessibilityIdentifier("reactions.compact-content"))
+        }
+        #endif
+        preferredContentSize = CGSize(width: 480, height: menu == nil ? 480 : 600)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override var keyCommands: [UIKeyCommand]? {
@@ -126,6 +138,7 @@ final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPre
         } else {
             controller.modalPresentationStyle = .pageSheet
             controller.sheetPresentationController?.detents = [.medium(), .large()]
+            controller.sheetPresentationController?.selectedDetentIdentifier = model.supportedReactions.count > 5 ? .large : .medium
             controller.sheetPresentationController?.prefersGrabberVisible = true
         }
         host.present(controller, animated: true)

@@ -23,6 +23,14 @@ final class GuestVideoPictureInPicture {
     private weak var selectedRenderer: UIView?
     var onAvailabilityChanged: ((Bool) -> Void)?
     var rendersSelectedViewport = true
+    var wantsInlineFrames = true {
+        didSet { if oldValue != wantsInlineFrames { processor.setEnabled(shouldProcessFrames) } }
+    }
+    #if DEBUG
+    private(set) var convertedFramesForTesting = 0
+    var hasPreparedFrameForTesting: Bool { hasFrame }
+    func setFloatingForTesting(_ active: Bool) { active ? willStartFloating() : didStopFloating() }
+    #endif
     var onInlineSample: ((CMSampleBuffer, Int) -> Void)?
     var canShow: Bool { hasFrame && frameTap != nil && !suspended && floating.canShow }
 
@@ -50,18 +58,8 @@ final class GuestVideoPictureInPicture {
             caption.topAnchor.constraint(equalTo: content.topAnchor, constant: 8),
             caption.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -8)
         ])
-        floating.onWillStart = { [weak self] in
-            guard let self else { return }
-            self.presenting = true
-            self.processor.setFrameRate(MediaEnergyBudget.shared.previewFPS)
-            self.processor.setEnabled(true)
-        }
-        floating.onStopped = { [weak self] in
-            guard let self else { return }
-            self.presenting = false
-            self.processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
-            self.processor.setEnabled(self.shouldProcessFrames)
-        }
+        floating.onWillStart = { [weak self] in self?.willStartFloating() }
+        floating.onStopped = { [weak self] in self?.didStopFloating() }
         energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -70,8 +68,11 @@ final class GuestVideoPictureInPicture {
         }
         processor.onSample = { [weak self] sample, size, rotation in
             guard let self, !self.floating.isEnded, self.frameTap != nil else { return }
+            #if DEBUG
+            self.convertedFramesForTesting += 1
+            #endif
             if self.presenting || !self.hasFrame { self.video.enqueue(sample, rotation: rotation) }
-            if !self.suspended && UIApplication.shared.applicationState != .background {
+            if self.wantsInlineFrames && !self.suspended && UIApplication.shared.applicationState != .background {
                 if self.rendersSelectedViewport { self.selectedViewport?.showCorrectedVideo(sample, rotation: rotation) }
                 self.onInlineSample?(sample, rotation)
             }
@@ -82,12 +83,27 @@ final class GuestVideoPictureInPicture {
                 self.floating.setSourceView(self.sourceView)
                 self.onAvailabilityChanged?(self.canShow)
             }
+            // Gallery needs only a prepared first frame for automatic PiP. Its
+            // visible tiles already convert their own frames independently.
+            self.processor.setEnabled(self.shouldProcessFrames)
         }
     }
 
     private var shouldProcessFrames: Bool {
         !floating.isEnded && frameTap != nil && !suspended &&
-            (presenting || UIApplication.shared.applicationState != .background)
+            (presenting || UIApplication.shared.applicationState != .background && (wantsInlineFrames || !hasFrame))
+    }
+
+    private func willStartFloating() {
+        guard !floating.isEnded, frameTap != nil, !suspended else { return }
+        presenting = true
+        processor.setFrameRate(MediaEnergyBudget.shared.previewFPS)
+        processor.setEnabled(true)
+    }
+    private func didStopFloating() {
+        presenting = false
+        processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
+        processor.setEnabled(shouldProcessFrames)
     }
 
     func select(viewport: StreamViewport?, name: String, isScreenShare: Bool) {
@@ -101,6 +117,7 @@ final class GuestVideoPictureInPicture {
             frameTap = nil
             let sourceID = processor.replaceSource()
             processor.setEnabled(false)
+            hasFrame = false
             // The SDK may replace a tile while the call is backgrounded. Keep
             // the last displayed frame and the stable PiP anchor until the new
             // renderer supplies a frame, so a layout refresh cannot close PiP.
@@ -139,7 +156,7 @@ final class GuestVideoPictureInPicture {
         guard self.suspended != suspended else { return }
         self.suspended = suspended
         floating.setSuspended(suspended)
-        if suspended { selectedViewport?.clearCorrectedVideo() }
+        if suspended { selectedViewport?.clearCorrectedVideo(); hasFrame = false; video.clear() }
         processor.setEnabled(shouldProcessFrames)
         onAvailabilityChanged?(canShow)
     }

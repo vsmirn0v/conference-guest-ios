@@ -74,10 +74,19 @@ struct HomeMeetingCard: View {
                 Text(L("Calendar event is no longer available.")).font(.caption).foregroundStyle(.secondary)
             }
             Text(title).font(.body.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("home.title." + (item.calendar?.id ?? item.handoff?.deviceID ?? ""))
+            Label(item.id.displayDetails, systemImage: "link")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                .accessibilityElement(children: .ignore).accessibilityLabel(item.id.displayDetails)
+                .accessibilityIdentifier("home.room." + (item.calendar?.id ?? item.handoff?.deviceID ?? ""))
             if meeting?.tentative == true { Text(L("Tentative")).font(.caption).foregroundStyle(.secondary) }
         }
         .accessibilityElement(children: .combine)
+        .accessibilityLabel([
+            item.handoff.map { source != nil ? L("Jam on %@", $0.deviceLabel) : L("Recently active") } ??
+                meeting.map { HomeMeetingCard.timing($0, at: now) } ?? "",
+            title, item.id.displayDetails
+        ].filter { !$0.isEmpty }.joined(separator: ". "))
+        .accessibilityIdentifier("home.title." + (item.calendar?.id ?? item.handoff?.deviceID ?? ""))
     }
     private var actions: some View { HStack(spacing: 0) { joinButton; starButton }.fixedSize(horizontal: true, vertical: false) }
     private var joinButton: some View {

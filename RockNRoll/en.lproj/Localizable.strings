@@ -448,6 +448,10 @@
 "Portrait blur" = "Portrait blur";
 "Studio Light" = "Studio Light";
 "Center Stage" = "Center Stage";
+"Automatic framing" = "Automatic framing";
+"Grid" = "Grid";
+"Speaker view" = "Speaker";
+"Layout" = "Layout";
 "System background" = "System background";
 "Edge Light" = "Edge Light";
 "Selected in system settings" = "Selected in system settings";
@@ -719,3 +723,26 @@
 "This meeting has ended." = "This meeting has ended.";
 "This meeting requires host admission or signing in on its website." = "This meeting requires host admission or signing in on its website.";
 "This meeting uses a connection protocol this app does not support yet." = "This meeting uses a connection protocol this app does not support yet.";
+
+"Sent %@" = "Sent %@";
+
+"When your camera is shared, thumbs-up and thumbs-down effects send Like and Dislike. Confetti and fireworks send Applause. Other effects remain in your video." = "When your camera is shared, thumbs-up and thumbs-down effects send Like and Dislike. Confetti and fireworks send Applause. Other effects remain in your video.";
+
+"Connect here first, then leave the other device. Microphone and camera start off." = "Connect here first, then leave the other device. Microphone and camera start off.";
+
+"Connecting on %@… This jam stays active here." = "Connecting on %@… This jam stays active here.";
+
+"Move was not confirmed. This jam remains active here." = "Move was not confirmed. This jam remains active here.";
+
+"Heart" = "Heart";
+"Celebrate" = "Celebrate";
+"Laugh" = "Laugh";
+"Fire" = "Fire";
+"Wave" = "Wave";
+"Handshake" = "Handshake";
+"Thanks" = "Thanks";
+"Thinking" = "Thinking";
+"Sad" = "Sad";
+"When your camera is shared, heart and thumbs effects send matching reactions. Confetti and fireworks send Celebrate. Other effects remain in your video." = "When your camera is shared, heart and thumbs effects send matching reactions. Confetti and fireworks send Celebrate. Other effects remain in your video.";
+
+"Connected here. Finishing the move…" = "Connected here. Finishing the move…";

@@ -9,6 +9,7 @@ final class GuestReactionsAdapter {
     let model: MeetingReactionsModel
     private let state: JazzActiveConferenceState
     private let studio: StudioModel
+    private let reactionTransport: GuestReactionTransport?
     private let valid: () -> Bool
     private let transportReady: () -> Bool
     private let cameraAllowed: () -> Bool
@@ -20,15 +21,21 @@ final class GuestReactionsAdapter {
     private var notifications: [NSObjectProtocol] = []
 
     init(model: MeetingReactionsModel, state: JazzActiveConferenceState,
-         coordinator: JazzActiveConferenceCoordinator, studio: StudioModel,
+         coordinator: JazzActiveConferenceCoordinator, studio: StudioModel, reactionTransport: GuestReactionTransport? = nil,
          valid: @escaping () -> Bool, transportReady: @escaping () -> Bool,
          cameraAllowed: @escaping () -> Bool) {
         self.model = model; self.state = state; self.studio = studio
+        self.reactionTransport = reactionTransport
         self.valid = valid; self.transportReady = transportReady; self.cameraAllowed = cameraAllowed
         model.sender = { [weak self] kind in
             guard let self, self.valid(), self.transportReady(), self.state.isToggleReactionsVisible else { return false }
+            if let transport = self.reactionTransport, transport.hasModernProtocol { return transport.send(kind) }
             let reaction: JazzConferenceReaction
-            switch kind { case .like: reaction = .like; case .dislike: reaction = .dislike }
+            switch kind {
+            case .like: reaction = .like; case .dislike: reaction = .dislike
+            case .applause: reaction = .applause; case .smile: reaction = .smile; case .surprise: reaction = .surprise
+            default: return false
+            }
             coordinator.sendReaction(reaction: reaction)
             return true
         }
@@ -46,6 +53,7 @@ final class GuestReactionsAdapter {
         }
         model.onPreferenceChanged = { [weak self] in self?.cameraObserver.stop(); self?.refresh() }
         let changes: [AnyPublisher<Void, Never>] = [state.$cameraState.map { _ in () }.eraseToAnyPublisher(),
+            state.$localParticipant.map { _ in () }.eraseToAnyPublisher(),
             state.$isToggleReactionsVisible.map { _ in () }.eraseToAnyPublisher(),
             studio.presenter.objectWillChange.map { _ in () }.eraseToAnyPublisher()]
         Publishers.MergeMany(changes).receive(on: DispatchQueue.main).sink { [weak self] in self?.refresh() }
@@ -63,8 +71,12 @@ final class GuestReactionsAdapter {
         refresh()
     }
     func refresh() {
+        reactionTransport?.confirmLocalParticipant(state.localParticipant.id)
         let available = valid() && state.isToggleReactionsVisible
-        let ready = valid() && transportReady()
+        let modern = reactionTransport?.hasModernProtocol == true
+        let supported = modern ? MeetingReaction.allCases : GuestReactionCode.legacy
+        if model.supportedReactions != supported { model.supportedReactions = supported }
+        let ready = valid() && transportReady() && (!modern || reactionTransport?.ready == true)
         if model.available != available { model.available = available }
         if model.ready != ready { model.ready = ready }
         guard valid(), cameraAllowed(), UIApplication.shared.applicationState == .active else {

@@ -47,7 +47,13 @@ final class CameraReactionObserver {
     }
     @available(iOS 17.0, *)
     nonisolated static func reaction(_ type: AVCaptureReactionType) -> MeetingReaction? {
-        switch type { case .thumbsUp: return .like; case .thumbsDown: return .dislike; default: return nil }
+        switch type {
+        case .heart: return .heart
+        case .thumbsUp: return .like
+        case .thumbsDown: return .dislike
+        case .confetti, .fireworks: return .applause
+        default: return nil
+        }
     }
     @available(iOS 17.0, *)
     nonisolated private static func identity(_ state: AVCaptureReactionEffectState, deviceID: String) -> String? {

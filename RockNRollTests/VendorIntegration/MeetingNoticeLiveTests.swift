@@ -7,6 +7,73 @@ import XCTest
 
 @MainActor
 final class MeetingNoticeLiveTests: XCTestCase {
+    func testMacOrdinaryCameraSelectionAndGeometry() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_CAMERA_INVITE"] else {
+            throw XCTSkip("Opt-in authorized Mac camera check")
+        }
+        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
+            throw XCTSkip("Existing camera permission required")
+        }
+        let target = try JoinTarget.parse(invitation)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = try XCTUnwrap(scene.windows.first)
+        let original = window.rootViewController, idle = UIApplication.shared.isIdleTimerDisabled
+        let container = UIViewController(); window.rootViewController = container; window.makeKeyAndVisible()
+        UIApplication.shared.isIdleTimerDisabled = true
+        let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore())
+        var active = false, ended = false
+        engine.onEvent = { event in switch event { case .active: active = true; case .left, .failed: ended = true; default: break } }
+        defer { engine.leave(); window.rootViewController = original; UIApplication.shared.isIdleTimerDisabled = idle }
+        let endpoint = try await VendorEndpointResolver.make().resolve(for: target)
+        try engine.configure(container: container, networkURL: endpoint, displayName: "Camera geometry QA")
+        try engine.join(target: target, displayName: "Camera geometry QA")
+        func wait(_ condition: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(25)
+            while !condition() && !ended && Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+            XCTAssertFalse(ended)
+            XCTAssertTrue(condition(), "Mac camera state did not settle before deadline")
+        }
+        try await wait { active && engine.studioForTesting.enableCamera != nil }
+        let studio = engine.studioForTesting
+        studio.open(.camera)
+        try await wait { studio.previewRunning }
+        XCTAssertFalse(studio.cameraOn); XCTAssertFalse(studio.microphoneOn)
+        let first = try XCTUnwrap(studio.selectedCameraDevice)
+        print("MAC_CAMERA_GEOMETRY stage=private devices=\(studio.availableCameraCount) name=\(first.localizedName) preview=\(studio.previewRunning) automaticFraming=\(AVCaptureDevice.isCenterStageEnabled) centerStageActive=\(first.isCenterStageActive)")
+        if studio.canFlipCamera {
+            studio.flipCamera()
+            try await wait { !studio.switchingCamera && studio.previewRunning && studio.selectedCameraDevice?.uniqueID != first.uniqueID }
+            XCTAssertFalse(studio.cameraOn); XCTAssertFalse(studio.microphoneOn)
+        } else { print("MAC_CAMERA_GEOMETRY switchSkipped=single-camera") }
+        let selected = try XCTUnwrap(studio.selectedCameraDevice)
+        let started = await studio.startVideo(); XCTAssertTrue(started)
+        try await wait { studio.cameraOn && GuestCaptureDeviceObserver.currentDevice()?.uniqueID == selected.uniqueID }
+        try await Task.sleep(for: .seconds(3))
+        let before = try XCTUnwrap(GuestCaptureDeviceObserver.currentSource())
+        let firstStats = await GuestMicrophoneProbe.codecEvidenceForTesting()
+        let initial = firstStats.filter { $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" }
+        XCTAssertTrue(initial.contains { ($0["framesEncoded"] as? NSNumber)?.intValue ?? 0 > 10 })
+        print("MAC_CAMERA_GEOMETRY stage=published name=\(selected.localizedName) colors=\(GuestH264ColorEncoder.evidenceForTesting())")
+        if studio.canFlipCamera {
+            studio.open(.camera)
+            studio.flipCamera()
+            try await wait { !studio.switchingCamera && GuestCaptureDeviceObserver.currentSource()?.generation != before.generation }
+            XCTAssertNotNil(studio.previewView)
+            XCTAssertFalse(studio.microphoneOn)
+            print("MAC_CAMERA_GEOMETRY stage=live-switch name=\(GuestCaptureDeviceObserver.currentDevice()?.localizedName ?? "unavailable")")
+            studio.close()
+        }
+        // Gives an independent receiver time to inspect the full camera image.
+        let seconds = min(90, max(10, Int(ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAMERA_OBSERVE_SECONDS"] ?? "20") ?? 20))
+        try await Task.sleep(for: .seconds(seconds))
+        let final = await GuestMicrophoneProbe.codecEvidenceForTesting()
+        let previous = initial.reduce(into: [String: Int]()) { counts, row in counts[row["id"] as? String ?? ""] = (row["framesEncoded"] as? NSNumber)?.intValue ?? 0 }
+        XCTAssertTrue(final.contains { row in row["type"] as? String == "outbound-rtp" && row["kind"] as? String == "video" &&
+            (row["framesEncoded"] as? NSNumber)?.intValue ?? 0 > previous[row["id"] as? String ?? "", default: 0] + 20 })
+        XCTAssertFalse(studio.microphoneOn)
+        print("MAC_CAMERA_GEOMETRY stage=final colors=\(GuestH264ColorEncoder.evidenceForTesting())")
+    }
     func testSustainedCameraPublishingAndHoldRecovery() async throws {
         guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_CAMERA_INVITE"] else {
             throw XCTSkip("Opt-in authorized camera check")

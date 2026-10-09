@@ -178,11 +178,17 @@ final class TelemostFeatureTests: XCTestCase {
         try publisher.setSharing(track)
         let offer = try await publisher.offer()
         let tracks = try XCTUnwrap(offer["tracks"] as? [[String: Any]])
-        XCTAssertEqual(tracks.map { $0["kind"] as? String }, ["DISPLAY_VIDEO"])
+        XCTAssertEqual(tracks.map { $0["kind"] as? String }, ["AUDIO", "DISPLAY_VIDEO"])
+        XCTAssertFalse(publisher.microphoneSending, "Negotiated audio must stay muted while sharing")
         try await publisher.accept(try await receiver.answer(offer))
         try publisher.setSharing(nil)
         let stopped = try await publisher.offer()
-        XCTAssertTrue((stopped["tracks"] as? [[String: Any]] ?? []).isEmpty)
+        let remaining = try XCTUnwrap(stopped["tracks"] as? [[String: Any]])
+        XCTAssertEqual(remaining.map { $0["kind"] as? String }, ["AUDIO"])
+        XCTAssertEqual(remaining as NSArray,
+                       tracks.filter { $0["kind"] as? String == "AUDIO" } as NSArray,
+                       "Stopping presentation must preserve the negotiated microphone identity")
+        XCTAssertFalse(publisher.microphoneSending)
         await publisher.close(); await receiver.close()
     }
     func testClosedPeerRejectsPublishingAndSharingWhileNewPeerWorks() async throws {
@@ -204,8 +210,14 @@ final class TelemostFeatureTests: XCTestCase {
             let current = try NativeRTCPeer(target: "PUBLISHER", factory: factory, ice: [], topology: topology)
             try current.setSharing(track)
             let offer = try await current.offer()
-            XCTAssertEqual((offer["tracks"] as? [[String: Any]])?.count, 1)
+            let tracks = try XCTUnwrap(offer["tracks"] as? [[String: Any]])
+            XCTAssertEqual(tracks.count, 2)
+            let presentationKind = topology == .composite ? "VIDEO" : "DISPLAY_VIDEO"
+            XCTAssertEqual(tracks.compactMap { $0["kind"] as? String }.sorted(), ["AUDIO", presentationKind])
+            XCTAssertFalse(current.microphoneSending)
             await current.close()
+            current.setMicrophone(true, profile: .conversation)
+            XCTAssertFalse(current.microphoneSending, "A closed peer cannot revive capture")
             XCTAssertThrowsError(try current.setSharing(track)) { XCTAssertTrue($0 is CancellationError) }
         }
     }

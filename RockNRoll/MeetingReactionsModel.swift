@@ -4,10 +4,21 @@ import Foundation
 
 extension MeetingReaction {
     var emoji: String {
-        switch self { case .like: return "👍"; case .dislike: return "👎" }
+        switch self {
+        case .like: return "👍"; case .dislike: return "👎"
+        case .applause: return "🎉"; case .smile: return "😂"; case .surprise: return "😱"
+        case .heart: return "❤️"; case .fire: return "🔥"; case .wave: return "👋"
+        case .handshake: return "🤝"; case .thanks: return "🙏"; case .thinking: return "🤔"; case .sad: return "😢"
+        }
     }
     var title: String {
-        switch self { case .like: return L("Like"); case .dislike: return L("Dislike") }
+        switch self {
+        case .like: return L("Like"); case .dislike: return L("Dislike")
+        case .applause: return L("Celebrate"); case .smile: return L("Laugh"); case .surprise: return L("Surprise")
+        case .heart: return L("Heart"); case .fire: return L("Fire"); case .wave: return L("Wave")
+        case .handshake: return L("Handshake"); case .thanks: return L("Thanks")
+        case .thinking: return L("Thinking"); case .sad: return L("Sad")
+        }
     }
 }
 
@@ -28,6 +39,7 @@ final class MeetingReactionsModel: ObservableObject {
     @Published private(set) var active = true
     @Published var available = false
     @Published var ready = false
+    @Published var supportedReactions = MeetingReaction.allCases
     @Published var cameraStatus: CameraStatus = .off
     @Published private(set) var generation = UUID()
     @Published var shareCameraReactions: Bool {
@@ -51,7 +63,8 @@ final class MeetingReactionsModel: ObservableObject {
     }
     @discardableResult func send(_ reaction: MeetingReaction, source: ReactionSendGate.Source = .manual,
                                  effectID: String? = nil) -> Bool {
-        guard canSend, source == .manual || (shareCameraReactions && (cameraStatus == .ready || cameraStatus == .systemDisabled)) else { return false }
+        guard canSend, supportedReactions.contains(reaction),
+              source == .manual || (shareCameraReactions && (cameraStatus == .ready || cameraStatus == .systemDisabled)) else { return false }
         // Mark camera events even when throttled; extending an effect must not replay it.
         guard gate.accept(source: source, now: clock(), effectID: effectID), sender?(reaction) == true else { return false }
         submitted = reaction

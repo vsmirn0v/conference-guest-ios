@@ -10,6 +10,11 @@ enum GuestCaptureDeviceObserver {
     static let changed = Notification.Name("dev.vsmirn0v.capture-device-changed")
     private static let lock = NSLock()
     private static let capturers = NSHashTable<RTCCameraVideoCapturer>.weakObjects()
+    private static let revisions = NSMapTable<RTCCameraVideoCapturer, NSNumber>(keyOptions: .weakMemory, valueOptions: .strongMemory)
+    private static func revision(_ capturer: RTCCameraVideoCapturer) -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return revisions.object(forKey: capturer)?.uint64Value ?? 0
+    }
     private static var sessions: [ObjectIdentifier: NSKeyValueObservation] = [:]
     private static var sources: [ObjectIdentifier: Source] = [:]
     private static var frameDelegates: [ObjectIdentifier: GuestCameraFrameDelegate] = [:]
@@ -19,6 +24,57 @@ enum GuestCaptureDeviceObserver {
         return matches.count == 1 ? matches[0] : nil
     }
     struct Source { let device: AVCaptureDevice; let generation: UUID; let requestedFPS: Int }
+    private static var preferredDeviceID: String?
+    static func setPreferredDevice(_ device: AVCaptureDevice?) {
+        lock.lock(); preferredDeviceID = device?.uniqueID; lock.unlock()
+    }
+    /// Switch the existing source instead of rebuilding the SDK track/renderers.
+    /// Await stop before start; a failed device restores the last working camera.
+    private static func activeCapturers() -> [RTCCameraVideoCapturer] {
+        lock.lock(); defer { lock.unlock() }
+        return capturers.allObjects.filter { $0.captureSession.isRunning }
+    }
+    @MainActor static func selectCurrentDevice(_ device: AVCaptureDevice) async throws {
+        let active = activeCapturers()
+        guard active.count == 1, let capturer = active.first,
+              let old = currentDevice() else { throw CocoaError(.featureUnsupported) }
+        guard old.uniqueID != device.uniqueID else { setPreferredDevice(device); return }
+        let previousFormat = old.activeFormat
+        let requested = currentSource()?.requestedFPS ?? 30
+        guard let format = matchingFormat(device, requested: previousFormat) else { throw CocoaError(.featureUnsupported) }
+        let expected = revision(capturer) &+ 1
+        await withCheckedContinuation { continuation in capturer.stopCapture { continuation.resume() } }
+        try Task.checkCancellation()
+        guard revision(capturer) == expected else { throw CancellationError() }
+        setPreferredDevice(device)
+        do {
+            try await start(capturer, device: device, format: format, fps: requested)
+        } catch {
+            if !Task.isCancelled, revision(capturer) == expected &+ 1 {
+                setPreferredDevice(old)
+                try? await start(capturer, device: old, format: previousFormat, fps: requested)
+            }
+            throw error
+        }
+        guard !Task.isCancelled, revision(capturer) == expected &+ 1 else { throw CancellationError() }
+    }
+    private static func start(_ camera: RTCCameraVideoCapturer, device: AVCaptureDevice,
+                              format: AVCaptureDevice.Format, fps: Int) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            camera.startCapture(with: device, format: format, fps: fps) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+    }
+    private static func matchingFormat(_ device: AVCaptureDevice, requested: AVCaptureDevice.Format) -> AVCaptureDevice.Format? {
+        let target = CMVideoFormatDescriptionGetDimensions(requested.formatDescription)
+        return RTCCameraVideoCapturer.supportedFormats(for: device).min {
+            let a = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
+            let b = CMVideoFormatDescriptionGetDimensions($1.formatDescription)
+            return abs(a.width - target.width) + abs(a.height - target.height) <
+                abs(b.width - target.width) + abs(b.height - target.height)
+        }
+    }
     private static var fpsLimit = 30
     private static var energySubscription: AnyCancellable?
     private static let configurationQueue = DispatchQueue(label: "dev.vsmirn0v.capture-energy")
@@ -67,6 +123,7 @@ enum GuestCaptureDeviceObserver {
             capturer.delegate = proxy
         }
         lock.lock()
+        revisions.setObject(NSNumber(value: (revisions.object(forKey: capturer)?.uint64Value ?? 0) &+ 1), forKey: capturer)
         capturers.add(capturer)
         sources[key] = Source(device: device, generation: UUID(), requestedFPS: requestedFPS)
         if sessions[key] == nil {
@@ -85,6 +142,7 @@ enum GuestCaptureDeviceObserver {
     }
     private static func unregister(_ capturer: RTCCameraVideoCapturer) -> GuestCameraFrameDelegate? {
         lock.lock(); capturers.remove(capturer)
+        revisions.setObject(NSNumber(value: (revisions.object(forKey: capturer)?.uint64Value ?? 0) &+ 1), forKey: capturer)
         let proxy = frameDelegates.removeValue(forKey: ObjectIdentifier(capturer))
         sessions.removeValue(forKey: ObjectIdentifier(capturer)); sources.removeValue(forKey: ObjectIdentifier(capturer))
         lock.unlock()
@@ -112,10 +170,14 @@ enum GuestCaptureDeviceObserver {
         typealias Start = @convention(c) (RTCCameraVideoCapturer, Selector, AVCaptureDevice, AVCaptureDevice.Format, Int, Completion?) -> Void
         let original = unsafeBitCast(method_getImplementation(method), to: Start.self)
         let forward: @convention(block) (RTCCameraVideoCapturer, AVCaptureDevice, AVCaptureDevice.Format, Int, Completion?) -> Void = { capturer, device, format, fps, completion in
-            register(capturer, device: device, requestedFPS: fps)
-            lock.lock(); let limit = fpsLimit; lock.unlock()
+            lock.lock(); let preferred = preferredDeviceID; let limit = fpsLimit; lock.unlock()
+            let selected = preferred.flatMap { id in CameraDevices.available().first { $0.uniqueID == id } } ?? device
+            guard let selectedFormat = selected.uniqueID == device.uniqueID ? format : matchingFormat(selected, requested: format) else {
+                completion?(CocoaError(.featureUnsupported) as NSError); return
+            }
+            register(capturer, device: selected, requestedFPS: fps)
             let observed: Completion = { error in notify(); completion?(error) }
-            original(capturer, selector, device, format, supportedFPS(min(fps, limit), format: format), observed)
+            original(capturer, selector, selected, selectedFormat, supportedFPS(min(fps, limit), format: selectedFormat), observed)
         }
         method_setImplementation(method, imp_implementationWithBlock(forward))
         let stopSelector = #selector(RTCCameraVideoCapturer.stopCapture(completionHandler:))

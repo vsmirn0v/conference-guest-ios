@@ -83,11 +83,14 @@ final class GuestCameraPublishingTests: XCTestCase {
         _ = encoder.release(); base.complete(stamp: 200)
         XCTAssertEqual(received.count, 4)
     }
-    func testMacRotationUsesPhysicalSensorContractAndPreservesQuarterTurns() {
+    func testMacRotationMatchesNativePreviewConnectionAndPreservesQuarterTurns() {
         XCTAssertEqual(GuestCameraFrameDelegate.rotation(upright: 0, physical: 0), ._0)
         XCTAssertEqual(GuestCameraFrameDelegate.rotation(upright: 0, physical: 90), ._270)
         XCTAssertEqual(GuestCameraFrameDelegate.rotation(upright: 90, physical: 0), ._90)
         XCTAssertNil(GuestCameraFrameDelegate.rotation(upright: 32, physical: 0))
+        XCTAssertNil(GuestCameraFrameDelegate.rotation(upright: .nan, physical: 0))
+        XCTAssertNil(GuestCameraFrameDelegate.rotation(upright: 0, physical: .infinity))
+        XCTAssertEqual(GuestCameraFrameDelegate.rotation(upright: 270, physical: 90), ._180)
     }
     func testNativeRotationPreservesPixelRangeAndMatchesSoftwareReference() throws {
         for format in [kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange] {

@@ -25,9 +25,14 @@ final class MeetingReactionsUITests: XCTestCase {
         let more = app.buttons["call.more"]
         XCTAssertTrue(more.waitForExistence(timeout: 30))
         let submitted = app.staticTexts["reactions.test-submitted"]
-        for (index, kind) in ["like", "dislike"].enumerated() {
-            more.tap()
-            assertUnsupportedReactionsAbsent(app)
+        more.tap()
+        let all = ["heart", "like", "smile", "applause", "fire", "wave", "handshake", "thanks", "thinking", "sad", "dislike", "surprise"]
+        let visual = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_REACTIONS_VISUAL_KIND"]
+        if let visual { XCTAssertTrue(all.contains(visual)); print("OUTGOING_VISUAL_READY kind=\(visual)") }
+        let repeats = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_REACTIONS_VISUAL_REPEATS"].flatMap(Int.init) ?? 8
+        let sequence = visual.map { Array(repeating: $0, count: min(max(repeats, 1), 32)) } ?? all
+        for (index, kind) in sequence.enumerated() {
+            assertAllReactionsAvailable(app)
             let button = app.buttons["reactions.send.\(kind)"]
             XCTAssertTrue(button.waitForExistence(timeout: 5)); XCTAssertTrue(button.isEnabled)
             button.tap()
@@ -35,7 +40,7 @@ final class MeetingReactionsUITests: XCTestCase {
             XCTAssertEqual(submitted.label, kind)
             print("Independent receiver check: submitted \(kind)")
             // Keep each transient reaction observable to the external receiver.
-            Thread.sleep(forTimeInterval: 8)
+            Thread.sleep(forTimeInterval: visual == nil ? 8 : 0.7)
         }
     }
 
@@ -66,7 +71,7 @@ final class MeetingReactionsUITests: XCTestCase {
         assertEmptyStageEdges(app, invitation: invitation)
         let more = app.buttons["call.more"]
         more.tap()
-        assertUnsupportedReactionsAbsent(app)
+        assertAllReactionsAvailable(app)
         for kind in ["like", "dislike"] {
             XCTAssertTrue(app.buttons["reactions.send.\(kind)"].isHittable)
             XCTAssertTrue(app.buttons["reactions.send.\(kind)"].isEnabled)
@@ -159,7 +164,7 @@ final class MeetingReactionsUITests: XCTestCase {
         shortcut.tap()
         XCTAssertTrue(app.buttons["reactions.send.dislike"].waitForExistence(timeout: 5))
         app.buttons["reactions.send.dislike"].tap()
-        XCTAssertFalse(app.buttons["reactions.done"].exists)
+        XCTAssertTrue(app.buttons["reactions.done"].exists)
     }
     func testLiveGuestManualAndCameraReactions() throws {
         #if targetEnvironment(simulator)
@@ -177,13 +182,14 @@ final class MeetingReactionsUITests: XCTestCase {
         defer { app.terminate() }
         let more = app.buttons["call.more"]
         XCTAssertTrue(more.waitForExistence(timeout: 25))
+        more.tap()
         for kind in ["like", "dislike"] {
-            more.tap()
             let send = app.buttons["reactions.send.\(kind)"]
             XCTAssertTrue(send.waitForExistence(timeout: 5)); XCTAssertTrue(send.isEnabled)
             send.tap()
             Thread.sleep(forTimeInterval: 2)
         }
+        app.buttons["reactions.done"].tap()
         let sent = app.staticTexts["reactions.test-submitted"]
         XCTAssertEqual(sent.value as? String, "2")
         for index in 0..<8 {
@@ -220,11 +226,37 @@ final class MeetingReactionsUITests: XCTestCase {
     }
     func testPaletteAndExistingActionsSurviveRotation() { checkPalette(language: "en") }
     func testRussianPaletteAndExistingActionsSurviveRotation() { checkPalette(language: "ru") }
-    private func assertUnsupportedReactionsAbsent(_ app: XCUIApplication,
+    func testPaletteButtonsFit320PointContent() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)"]
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
+        app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "reactions"
+        app.launchEnvironment["CONFERENCE_TEST_REACTIONS_COMPACT_WIDTH"] = "320"
+        XCUIDevice.shared.orientation = .portrait
+        defer { app.terminate() }
+        app.launch()
+        let more = app.buttons["call.more"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
+        let content = app.descendants(matching: .any)["reactions.compact-content"].firstMatch
+        XCTAssertTrue(content.waitForExistence(timeout: 5))
+        XCTAssertEqual(content.frame.width, 320, accuracy: 1)
+        assertAllReactionsAvailable(app)
+        for kind in ["heart", "like", "smile", "applause", "fire", "wave", "handshake", "thanks", "thinking", "sad", "dislike", "surprise"] {
+            let button = app.buttons["reactions.send.\(kind)"]
+            XCTAssertTrue(button.isHittable)
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.minX, content.frame.minX)
+            XCTAssertLessThanOrEqual(button.frame.maxX, content.frame.maxX)
+        }
+        app.buttons["reactions.send.heart"].tap()
+        XCTAssertTrue(app.buttons["reactions.done"].exists)
+        XCTAssertTrue(app.staticTexts["reactions.confirmation"].exists)
+    }
+    private func assertAllReactionsAvailable(_ app: XCUIApplication,
                                                     file: StaticString = #filePath, line: UInt = #line) {
-        for kind in ["applause", "smile", "surprise"] {
-            XCTAssertFalse(app.buttons["reactions.send.\(kind)"].exists,
-                           "Unqualified reaction is offered in the palette", file: file, line: line)
+        for kind in ["heart", "like", "smile", "applause", "fire", "wave", "handshake", "thanks", "thinking", "sad", "dislike", "surprise"] {
+            XCTAssertTrue(app.buttons["reactions.send.\(kind)"].exists,
+                           "A supported reaction is missing from the palette", file: file, line: line)
         }
     }
     private func checkPalette(language: String) {
@@ -237,14 +269,13 @@ final class MeetingReactionsUITests: XCTestCase {
         app.launch()
         let more = app.buttons["call.more"]
         XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
-        assertUnsupportedReactionsAbsent(app)
+        assertAllReactionsAvailable(app)
         for kind in ["like", "dislike"] {
             let button = app.buttons["reactions.send.\(kind)"]
             XCTAssertTrue(button.waitForExistence(timeout: 5)); XCTAssertTrue(button.isHittable)
         }
         app.buttons["reactions.send.like"].tap()
-        XCTAssertFalse(app.buttons["reactions.done"].waitForExistence(timeout: 1))
-        more.tap()
+        XCTAssertTrue(app.buttons["reactions.done"].waitForExistence(timeout: 1))
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(app.buttons["reactions.send.dislike"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["reactions.send.dislike"].isHittable)
@@ -255,6 +286,7 @@ final class MeetingReactionsUITests: XCTestCase {
         for _ in 0..<4 { if view.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(view.isHittable); view.tap()
         let audio = app.buttons[language == "ru" ? "Только звук" : "Audio only"].firstMatch
+        for _ in 0..<4 where !audio.isHittable { app.swipeUp() }
         XCTAssertTrue(audio.waitForExistence(timeout: 5)); audio.tap()
         XCTAssertTrue(more.waitForExistence(timeout: 5))
     }

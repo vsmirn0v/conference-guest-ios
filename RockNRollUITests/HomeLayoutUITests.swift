@@ -73,6 +73,8 @@ final class HomeLayoutUITests: XCTestCase {
                 XCTAssertTrue(schedule.label.contains(" – "), "Both start and end times must be visible")
                 XCTAssertTrue(app.staticTexts["home.calendar.daily"].label.contains("Work"))
                 XCTAssertTrue(app.staticTexts["home.calendar.daily"].label.contains("Our rehearsal room"))
+                XCTAssertTrue(title.label.contains("meeting.example.test"))
+                XCTAssertFalse(title.label.contains("psw="))
                 if mode == "home-preview-current" {
                     XCTAssertTrue(title.label.contains(language == "en" ? "Scheduled now" : "По расписанию сейчас"))
                 }
@@ -116,6 +118,9 @@ final class HomeLayoutUITests: XCTestCase {
         launch("home-handoff", handoff: true)
         let move = app.buttons["Continue on this device"]
         XCTAssertTrue(move.waitForExistence(timeout: 10))
+        let room = app.descendants(matching: .any)["home.title.daily"].firstMatch
+        XCTAssertTrue(room.exists)
+        XCTAssertTrue(room.label.contains("meeting.example.test"))
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Continue on this device")).count, 1)
         XCTAssertTrue(app.buttons["calendar.star.daily"].isHittable)
         XCTAssertTrue(favorites.element(boundBy: 1).isHittable)

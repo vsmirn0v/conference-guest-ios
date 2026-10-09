@@ -78,7 +78,8 @@ final class GuestCallLayoutFixture: UIViewController {
                 }
             ]
         }
-        let entries: [(String, String, Bool)] = solo ? [("self", "Your contact", false)] :
+        let entries: [(String, String, Bool)] = scenario == "gallery" ?
+            [("ani", "Ani", false), ("aram", "Aram", false), ("mariam", "Mariam", false), ("vahan", "Vahan", false)] : solo ? [("self", "Your contact", false)] :
             [("share", "Ani’s arrangement", true), ("camera", "Aram", false)]
         for (id, name, share) in entries {
             let renderer = RTCMTLVideoView()
@@ -109,6 +110,7 @@ final class GuestCallLayoutFixture: UIViewController {
         controls.onAutomaticView = { [weak self] in self?.streams.useAutomaticView() }
         controls.onPinStage = { [weak self] in self?.streams.toggleSelectedPin() }
         controls.onPinParticipant = { [weak self] in self?.streams.setPin($0) }
+        if scenario == "gallery" { controls.bindStreams(streams) }
         controls.frame = view.bounds
         controls.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         if ["participants", "studio", "reactions", "notices"].contains(scenario) {
