@@ -79,6 +79,7 @@ enum H264ColorSignalling {
         let vuiIndex = reader.index
         guard let vui = reader.read(1) else { return nil }
         var format = 5, fullRange = 0
+        var wanted = [Int(color.primaries), Int(color.transfer), Int(color.matrix)]
         let replaced: Range<Int>
         var prefix: [UInt8] = []
         var suffix: [UInt8] = []
@@ -104,15 +105,18 @@ enum H264ColorSignalling {
                 if description == 1 {
                     guard let primaries = reader.read(8), let transfer = reader.read(8),
                           let matrix = reader.read(8) else { return nil }
-                    // Trust an encoder that already publishes an explicit contract.
-                    if primaries != 2 || transfer != 2 || matrix != 2 { return nil }
+                    // Fill unspecified fields only when existing explicit fields agree.
+                    let fields = Array(zip([primaries, transfer, matrix], wanted))
+                    guard fields.contains(where: { $0.0 == 2 && $0.1 != 2 }),
+                          fields.allSatisfy({ $0.0 == 2 || $0.1 == 2 || $0.0 == $0.1 }) else { return nil }
+                    wanted = fields.map { $0.0 == 2 ? $0.1 : $0.0 }
                 }
             }
             replaced = start..<reader.index
         }
         let signal = [UInt8(1)] + binary(format, count: 3) + [UInt8(fullRange), 1]
-            + binary(Int(color.primaries), count: 8) + binary(Int(color.transfer), count: 8)
-            + binary(Int(color.matrix), count: 8)
+            + binary(wanted[0], count: 8) + binary(wanted[1], count: 8)
+            + binary(wanted[2], count: 8)
         bits.replaceSubrange(replaced, with: prefix + signal + suffix)
         while bits.count % 8 != 0 { bits.append(0) }
         var output = [header]; zeros = 0

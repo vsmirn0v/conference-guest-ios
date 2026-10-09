@@ -11,6 +11,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     // retiring an old connection cannot tear it down under a new call.
     private static let sharedFactory: Result<LKRTCPeerConnectionFactory, Error> = Result {
         guard sslInitialized else { throw NativeRTCError.invalidResponse }
+        NativeH264ColorEncoder.prepare()
         let encoder = LKRTCDefaultVideoEncoderFactory()
         if let codec = LKRTCDefaultVideoEncoderFactory.supportedCodecs().first(where: { $0.name == "H264" }) { encoder.preferredCodec = codec }
         return LKRTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: NativeH264DecoderFactory(base: NativeVideoDecoderFactory()))

@@ -563,6 +563,7 @@ final class TrueConfCallEngine: CallEngine {
         _ = view?.visibleVideoQualities(foreground: UIApplication.shared.applicationState == .active, wantsVideo: false)
     }
     private func refresh(speakingOnly: Bool = false) {
+        studio.observeLiveCamera(publisher?.videoTrack.map(ObjectIdentifier.init))
         var items: [CallParticipant] = []
         if let receiveTrack {
             for (id, rectangle) in regions {
@@ -659,12 +660,16 @@ final class TrueConfCallEngine: CallEngine {
     }
     #if DEBUG
     var studioForTesting: StudioModel { studio }
+    var readyForPresenterForTesting: Bool { connected && !held && !quiet && !leaving }
     func codecEvidenceForTesting() async -> [[String: Any]] {
         guard let publisher else { return [] }
         let report: LKRTCStatisticsReport = await withCheckedContinuation { completion in publisher.connection.statistics { completion.resume(returning: $0) } }
         return report.statistics.values.filter { ["inbound-rtp", "outbound-rtp"].contains($0.type) }.map { entry in
             var row: [String: Any] = ["id": entry.id, "type": entry.type]
-            for key in ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "totalAudioEnergy"] { row[key] = entry.values[key] }
+            if entry.type == "outbound-rtp", let mid = entry.values["mid"] as? String {
+                row["track"] = publisher.connection.transceivers.first { $0.mid == mid }?.sender.track?.trackId
+            }
+            for key in ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "totalAudioEnergy", "bytesSent", "packetsSent"] { row[key] = entry.values[key] }
             if let id = entry.values["codecId"] as? String, let codec = report.statistics[id] { row["mimeType"] = codec.values["mimeType"]; row["sdpFmtpLine"] = codec.values["sdpFmtpLine"] }
             return row
         }

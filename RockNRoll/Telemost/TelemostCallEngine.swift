@@ -574,6 +574,7 @@ final class TelemostCallEngine: CallEngine {
         _ = view?.visibleVideoQualities(foreground: UIApplication.shared.applicationState == .active, wantsVideo: false)
     }
     private func refresh(speakingOnly: Bool = false) {
+        studio.observeLiveCamera(publisher?.videoTrack.map(ObjectIdentifier.init))
         guard let localID = bootstrap?.participantID else {
             view?.render(snapshot: .init(participants: [.init(id: "local", name: name, isLocal: true, microphoneOn: false, cameraOn: false, screenShareOn: false, isSpeaking: false, videoTracks: [])])); return
         }
@@ -675,6 +676,7 @@ final class TelemostCallEngine: CallEngine {
     }
     #if DEBUG
     var studioForTesting: StudioModel { studio }
+    var readyForPresenterForTesting: Bool { connected && !held && !quiet && !leaving }
     var microphoneSendingForTesting: Bool { publisher?.microphoneSending == true }
     func setSendingForTesting(microphone: Bool, camera: Bool) {
         setMicrophone(microphone); setCamera(camera)
@@ -716,8 +718,8 @@ final class TelemostCallEngine: CallEngine {
                 peer.connection.statistics { completion.resume(returning: $0) }
             }
             for entry in report.statistics.values where ["outbound-rtp", "inbound-rtp"].contains(entry.type) {
-                var fields: [String: Any] = ["target": peer.target, "type": entry.type]
-                for key in ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder"] {
+                var fields: [String: Any] = ["target": peer.target, "type": entry.type, "id": entry.id]
+                for key in ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "bytesSent", "packetsSent"] {
                     if let value = entry.values[key] { fields[key] = value }
                 }
                 if let codecID = entry.values["codecId"] as? String, let codec = report.statistics[codecID] {

@@ -32,6 +32,10 @@ final class MeetingNoticeLiveTests: XCTestCase {
         let deadline = Date().addingTimeInterval(25)
         while !active && !ended && Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
         XCTAssertTrue(active); guard active && !ended else { return }
+        // Active can precede the SDK's first custom-controls representation.
+        let controlsDeadline = Date().addingTimeInterval(5)
+        while !descendants(window).contains(where: { ($0 as? UIButton)?.accessibilityLabel == L("Start video") }),
+              Date() < controlsDeadline { try await Task.sleep(for: .milliseconds(50)) }
         let button = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == L("Start video") })
         button.sendActions(for: .touchUpInside)
         var previous: [String: Int] = [:]

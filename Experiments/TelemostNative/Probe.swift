@@ -139,7 +139,9 @@ final class TelemostProbe {
                 }
                 probeLog("server-codec-config", codecConfig)
                 if let publisher {
-                    let offer = try await publisher.publishPattern(sharing: sharing, codecPolicy: codecPolicy)
+            let hd = CommandLine.arguments.contains("--hd30")
+            let offer = try await publisher.publishPattern(sharing: sharing, codecPolicy: codecPolicy,
+                width: hd ? 1280 : 640, height: hd ? 720 : 360, fps: hd ? 30 : 10)
                     try await send("publisherSdpOffer", offer)
                     try await send("updateMe", ["participantMeta": ["name": name, "role": "SPEAKER", "sendAudio": true, "sendVideo": !sharing], "participantAttributes": ["name": name, "role": "SPEAKER"], "sendAudio": true, "sendVideo": !sharing, "sendSharing": sharing])
                 }

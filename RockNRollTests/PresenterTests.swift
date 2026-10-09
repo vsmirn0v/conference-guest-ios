@@ -225,6 +225,10 @@ final class PresenterCompositorTests: XCTestCase {
 
 @MainActor
 final class PresenterModelTests: XCTestCase {
+    private final class LiveCamera: PresenterCameraSource {
+        var stopped = false
+        func stop() { stopped = true }
+    }
     private final class Capture: PrivateCameraPreviewing {
         let view = UIView()
         var started = false, stopped = false
@@ -241,6 +245,32 @@ final class PresenterModelTests: XCTestCase {
     private func waitUntil(_ predicate: () -> Bool) async {
         for _ in 0..<200 { if predicate() { return }; try? await Task.sleep(nanoseconds: 10_000_000) }
         XCTFail("Presenter did not settle")
+    }
+    func testPublishingUpdatesPreserveLiveCameraButReleasePrivateCapture() async throws {
+        let model = PresenterModel(observeLifecycle: false)
+        defer { model.end() }
+        let capture = Capture(), live = LiveCamera()
+        model.makePrivateCamera = { _ in capture }
+        model.selectCanvas(); model.includeCamera = true; model.open()
+        await waitUntil { capture.started }
+        await model.releasePrivateCamera()
+        XCTAssertTrue(capture.stopped)
+        var deliver: ((CVPixelBuffer, Int) -> Void)?
+        model.makeCameraSource = { deliver = $0; return live }
+        model.update(cameraOn: true, held: false)
+        await waitUntil { deliver != nil }
+        let pixels = try XCTUnwrap(CMSampleBufferGetImageBuffer(screenSample()))
+        deliver?(pixels, 0)
+        XCTAssertTrue(model.hasCameraFrames)
+        let generation = model.cameraGeneration
+        for _ in 0..<3 { await model.releasePrivateCamera() }
+        XCTAssertFalse(live.stopped, "Share, microphone and sound-profile updates reuse the same live tap")
+        XCTAssertEqual(model.cameraGeneration, generation)
+        deliver?(pixels, 0)
+        XCTAssertTrue(model.hasCameraFrames)
+        model.update(cameraOn: true, held: true)
+        await waitUntil { live.stopped }
+        XCTAssertFalse(model.hasCameraFrames)
     }
     func testSetupDoesNotSendUntilExplicitShareAndHoldStopsSharing() async {
         let model = PresenterModel(observeLifecycle: false)

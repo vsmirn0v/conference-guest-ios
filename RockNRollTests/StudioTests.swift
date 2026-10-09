@@ -7,6 +7,30 @@ import XCTest
 
 @MainActor
 final class StudioTests: XCTestCase {
+    private final class LiveCamera: PresenterCameraSource {
+        var stopped = false
+        func stop() { stopped = true }
+    }
+    func testRecoveryRebindsPresenterWhenTrackChangesWithoutCameraOff() async {
+        let studio = StudioModel(audioControl: .fullProcessing)
+        defer { studio.end() }
+        let first = LiveCamera(), second = LiveCamera()
+        var current = first, bindings = 0
+        studio.presenter.makeCameraSource = { _ in bindings += 1; return current }
+        studio.presenter.selectCanvas(); studio.cameraOn = true
+        studio.presenter.includeCamera = true
+        studio.open(.presenter)
+        studio.observeLiveCamera(ObjectIdentifier(first))
+        await waitUntil { bindings > 0 }
+        let before = bindings
+        current = second; studio.observeLiveCamera(ObjectIdentifier(second))
+        await waitUntil { first.stopped && bindings > before }
+        XCTAssertTrue(studio.cameraOn)
+        XCTAssertFalse(second.stopped)
+        let updated = bindings
+        studio.observeLiveCamera(ObjectIdentifier(second))
+        XCTAssertEqual(bindings, updated, "Speaking/roster updates must not recreate the camera tap")
+    }
     func testMacStudioManualQualificationWindow() async throws {
         guard ProcessInfo.processInfo.isiOSAppOnMac,
               ProcessInfo.processInfo.environment["ROCKNROLL_TEST_STUDIO_MANUAL"] == "1" else {
@@ -209,6 +233,9 @@ final class StudioTests: XCTestCase {
         await waitUntil { model.previewView != nil }
         XCTAssertTrue(model.previewView === video)
         XCTAssertEqual(capture.starts, 0)
+        await model.releasePrivateCamera()
+        XCTAssertTrue(model.previewView === video, "Publishing updates must preserve an existing live preview")
+        XCTAssertEqual(stopped, 0)
         model.close()
         XCTAssertEqual(stopped, 1)
         XCTAssertTrue(model.cameraOn)

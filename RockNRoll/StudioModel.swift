@@ -63,6 +63,7 @@ final class StudioModel: ObservableObject {
     private let preferences: UserDefaults?
     private static let profileKey = "studio.audio-profile"
     private var livePreview: StudioLivePreview?
+    private var liveCameraIdentity: ObjectIdentifier?
     private var previewTask: Task<Void, Never>?
     private var previewGeneration = UUID()
     private var backgroundObserver: NSObjectProtocol?
@@ -146,10 +147,11 @@ final class StudioModel: ObservableObject {
         }
     }
 
-    /// Every publishing entry point awaits camera release, including a short toolbar tap.
+    /// Release private capture before publishing; renegotiation must retain live previews.
     func releasePrivateCamera() async {
-        await releasePreviewCamera()
-        await presenter.releaseCamera()
+        if cameraOn { await privateCamera.stop() }
+        else { await releasePreviewCamera() }
+        await presenter.releasePrivateCamera()
     }
 
     func releasePreviewCamera() async {
@@ -176,6 +178,12 @@ final class StudioModel: ObservableObject {
         flipLiveCamera?()
     }
     func liveCameraChanged() { refreshPreview(); presenter.liveCameraChanged() }
+    /// Camera replacement can occur during recovery without an off/on UI transition.
+    func observeLiveCamera(_ identity: ObjectIdentifier?) {
+        guard liveCameraIdentity != identity else { return }
+        liveCameraIdentity = identity
+        liveCameraChanged()
+    }
 
     #if DEBUG
     /// Direct-launch physical checks must not depend on XCTest keeping the app alive.

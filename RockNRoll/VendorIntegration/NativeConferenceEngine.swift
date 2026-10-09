@@ -90,6 +90,7 @@ final class NativeConferenceEngine: CallEngine {
     private var activeRoomIdentifier: String?
     #if DEBUG
     var studioForTesting: StudioModel { studio }
+    var readyForPresenterForTesting: Bool { isSDKActive && !isSystemHeld && !leaveRequested && !needsMediaReconnect }
     var codecCheckTrackIDsForTesting: [String] { codecChecks.keys.sorted() }
     func codecFallbackForTesting() { GuestPublishingCodecPolicy.shared.disable(generation: sessionEpoch) }
     private var testHoldScheduled = false
@@ -671,8 +672,9 @@ final class NativeConferenceEngine: CallEngine {
                     guard !Task.isCancelled, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,
                           !self.leaveRequested else { return }
                     guard self.canCheckVideoPublication else { health.reset(); continue }
+                    guard let works else { health.reset(); continue }
                     startupCheckPending = false
-                    if works == false { GuestPublishingCodecPolicy.shared.disable(generation: generation); return }
+                    if !works { GuestPublishingCodecPolicy.shared.disable(generation: generation); return }
                 }
                 let sample = await GuestMicrophoneProbe.publicationProgress(trackID: trackID)
                 guard !Task.isCancelled, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,

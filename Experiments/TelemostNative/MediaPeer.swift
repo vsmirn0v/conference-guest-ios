@@ -136,13 +136,13 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
             }
         }
     }
-    func publishPattern(sharing: Bool, codecPolicy: CodecPolicy, scalabilityMode: String? = nil, width: Int = 640, height: Int = 360) async throws -> [String: Any] {
+    func publishPattern(sharing: Bool, codecPolicy: CodecPolicy, scalabilityMode: String? = nil, width: Int = 640, height: Int = 360, fps: Int = 10) async throws -> [String: Any] {
         let audioSettings = LKRTCRtpTransceiverInit(); audioSettings.direction = .sendOnly
         let audioSource = factory.audioSource(with: LKRTCMediaConstraints(mandatoryConstraints: ["googEchoCancellation": "false", "googNoiseSuppression": "false", "googAutoGainControl": "false"], optionalConstraints: nil))
         let audioTrack = factory.audioTrack(with: audioSource, trackId: "synthetic-audio")
         guard let audioTransceiver = connection.addTransceiver(with: audioTrack, init: audioSettings) else { throw ProbeError.invalidPayload }
         let source = factory.videoSource()
-        source.adaptOutputFormat(toWidth: Int32(width), height: Int32(height), fps: 10)
+        source.adaptOutputFormat(toWidth: Int32(width), height: Int32(height), fps: Int32(fps))
         let track = factory.videoTrack(with: source, trackId: "synthetic-video")
         let settings = LKRTCRtpTransceiverInit(); settings.direction = .sendOnly
         if let scalabilityMode {
@@ -169,8 +169,10 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
         logCodecs(offer.sdp, target: target, phase: "local-offer")
         let capturer = LKRTCVideoCapturer(delegate: source)
         syntheticTask = Task {
-            var count = 0
-            while !Task.isCancelled {
+            // Precompute immutable input pixels so sender CPU/load cannot change
+            // the source cadence during a matched receiving-energy comparison.
+            var frames: [CVPixelBuffer] = []
+            for count in 0..<16 {
                 var pixelBuffer: CVPixelBuffer?
                 CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixelBuffer)
                 if let buffer = pixelBuffer {
@@ -185,11 +187,19 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
                         bytes[i + 3] = 255
                     } }
                     CVPixelBufferUnlockBaseAddress(buffer, [])
-                    let frame = LKRTCVideoFrame(buffer: LKRTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000))
-                    source.capturer(capturer, didCapture: frame)
+                    frames.append(buffer)
                 }
+            }
+            guard !frames.isEmpty else { return }
+            var count = 0
+            var next = ProcessInfo.processInfo.systemUptime
+            while !Task.isCancelled {
+                let frame = LKRTCVideoFrame(buffer: LKRTCCVPixelBuffer(pixelBuffer: frames[count % frames.count]), rotation: ._0,
+                    timeStampNs: Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000))
+                source.capturer(capturer, didCapture: frame)
                 count += 1
-                try? await Task.sleep(nanoseconds: 100_000_000)
+                next = max(next + 1 / Double(fps), ProcessInfo.processInfo.systemUptime)
+                try? await Task.sleep(nanoseconds: UInt64(max(0, next - ProcessInfo.processInfo.systemUptime) * 1_000_000_000))
             }
         }
         return ["sdp": offer.sdp, "pcSeq": sequence, "tracks": [["mid": audioTransceiver.mid, "transceiverMid": audioTransceiver.mid, "kind": "AUDIO", "priority": 0, "label": "Synthetic tone", "codecs": [:], "groupId": 1, "description": ""], ["mid": transceiver.mid, "transceiverMid": transceiver.mid, "kind": sharing ? "DISPLAY_VIDEO" : "VIDEO", "priority": 0, "label": "Synthetic native pattern", "codecs": [:], "groupId": sharing ? 2 : 1, "description": ""]]]

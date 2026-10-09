@@ -157,6 +157,7 @@ final class PresenterCompositor: @unchecked Sendable {
             let output else { return nil }
         CVBufferSetAttachment(output, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
         CVBufferSetAttachment(output, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_sRGB, .shouldPropagate)
+        H264InputColorSignalling.tagPresenter(output)
         context.render(canvas.cropped(to: bounds), to: output, bounds: bounds, colorSpace: colorSpace)
         return Self.sample(output, time: time)
     }

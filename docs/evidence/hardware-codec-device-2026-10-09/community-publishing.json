@@ -1,0 +1,30 @@
+[
+  {
+    "profile": "production",
+    "phase": "high",
+    "input": "syntheticCamera",
+    "wall_end_s": "1791572930.8451061",
+    "elapsed_s": "6.008584833354689",
+    "process_cpu_percent": "9.007678430293879",
+    "decoded": "180",
+    "size": "1280x720",
+    "luma_psnr_db": "45.52489016606946",
+    "thermal_before": "0",
+    "thermal_after": "0",
+    "source": "camera"
+  },
+  {
+    "profile": "production",
+    "phase": "high",
+    "input": "syntheticShare",
+    "wall_end_s": "1791573029.8477402",
+    "elapsed_s": "6.002783083240502",
+    "process_cpu_percent": "8.822107889897616",
+    "decoded": "181",
+    "size": "1920x1080",
+    "luma_psnr_db": "44.18595282028884",
+    "thermal_before": "0",
+    "thermal_after": "0",
+    "source": "share"
+  }
+]

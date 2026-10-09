@@ -87,12 +87,18 @@ final class GuestMicrophoneProbe {
                 $0.values["framesEncoded"] is NSNumber &&
                 (($0.values["rid"] as? String).map { activeRIDs.contains($0) } ?? true)
             }
-            let sources = Set(outbound.compactMap { $0.values["mediaSourceId"] as? String })
-            guard !outbound.isEmpty, sources.count == 1, let sourceID = sources.first else { return nil }
-            // Raw camera progress continues if a stuck encoder retains every
-            // native pool buffer; downstream media-source frames then stop.
+            guard !outbound.isEmpty else { return nil }
+            // A CID-bound raw camera counter is independent of optional RTP stats links.
+            // Non-camera sources still require one unambiguous media source.
             let raw = GuestCaptureDeviceObserver.rawCaptureProgress(trackID: trackID)
-            guard let captured = raw?.frames ?? (report.statistics[sourceID]?.values["frames"] as? NSNumber)?.int64Value else { return nil }
+            let captured: Int64
+            if let raw { captured = raw.frames }
+            else {
+                let sources = Set(outbound.compactMap { $0.values["mediaSourceId"] as? String })
+                guard sources.count == 1, let sourceID = sources.first,
+                      let frames = (report.statistics[sourceID]?.values["frames"] as? NSNumber)?.int64Value else { return nil }
+                captured = frames
+            }
             let input = raw.map { "raw-\($0.generation)" } ?? "media-source"
             return .init(stream: outbound.map(\.id).sorted().joined(separator: ",") + "/" + input, captured: captured,
                          encoded: outbound.reduce(0) { $0 + (($1.values["framesEncoded"] as? NSNumber)?.int64Value ?? 0) },
@@ -112,9 +118,10 @@ final class GuestMicrophoneProbe {
                 var row: [String: Any] = ["id": entry.id, "type": entry.type]
                 let sender = (entry.values["mid"] as? String).flatMap { mid in peer.transceivers.first { $0.mid == mid }?.sender }
                 if entry.type == "outbound-rtp", let sender {
+                    row["rawCamera"] = sender.track.map { GuestCaptureDeviceObserver.rawCaptureProgress(trackID: $0.trackId) != nil }
                     row["negotiatedCodecs"] = sender.parameters.codecs.map { ["name": $0.name, "parameters": $0.parameters] }
                 }
-                let keys = ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "bytesSent", "bytesReceived", "totalAudioEnergy"]
+                let keys = ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "bytesSent", "bytesReceived", "totalAudioEnergy", "rid", "mediaSourceId", "qualityLimitationReason", "targetBitrate"]
                 for key in keys { row[key] = entry.values[key] }
                 if let codecID = entry.values["codecId"] as? String, let codec = report.statistics[codecID] {
                     row["mimeType"] = codec.values["mimeType"]; row["sdpFmtpLine"] = codec.values["sdpFmtpLine"]

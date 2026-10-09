@@ -5,6 +5,7 @@ import LiveKitWebRTC
 final class NativeVideoPixelBuffer {
     private var pool: CVPixelBufferPool?
     private var size = CGSize.zero
+    private var pixelFormat: OSType = 0
     func convert(_ frame: LKRTCVideoFrame, region: CGRect? = nil) -> CVPixelBuffer? {
         if region == nil, let native = frame.buffer as? LKRTCCVPixelBuffer,
            native.cropX == 0, native.cropY == 0,
@@ -12,6 +13,11 @@ final class NativeVideoPixelBuffer {
            CVPixelBufferGetWidth(native.pixelBuffer) == Int(frame.width),
            CVPixelBufferGetHeight(native.pixelBuffer) == Int(frame.height) { return native.pixelBuffer }
         let source = frame.buffer.toI420()
+        let native = (frame.buffer as? LKRTCCVPixelBuffer)?.pixelBuffer
+        let nativeFormat = native.map(CVPixelBufferGetPixelFormatType)
+        let preservesYUV = nativeFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+            nativeFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        let format = preservesYUV ? nativeFormat! : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         let fullWidth = Int(source.width), fullHeight = Int(source.height)
         var x = 0, y = 0, width = fullWidth, height = fullHeight
         if let region {
@@ -24,10 +30,10 @@ final class NativeVideoPixelBuffer {
         }
         guard width > 0, height > 0, width <= 4096, height <= 4096 else { return nil }
         let dimensions = CGSize(width: width, height: height)
-        if pool == nil || size != dimensions {
-            size = dimensions
+        if pool == nil || size != dimensions || pixelFormat != format {
+            size = dimensions; pixelFormat = format
             let attributes: [CFString: Any] = [kCVPixelBufferWidthKey: width, kCVPixelBufferHeightKey: height,
-                kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                kCVPixelBufferPixelFormatTypeKey: format,
                 kCVPixelBufferIOSurfacePropertiesKey: [:]]
             guard CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &pool) == kCVReturnSuccess else { return nil }
         }
@@ -46,9 +52,20 @@ final class NativeVideoPixelBuffer {
             }
         }
         CVBufferRemoveAllAttachments(result)
-        CVBufferSetAttachment(result, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_601_4, .shouldPropagate)
-        CVBufferSetAttachment(result, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
-        CVBufferSetAttachment(result, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        if preservesYUV, let native {
+            // Cropping/scaling rearranges YUV samples without changing their range or color space.
+            // Geometry and RGB attachments do not describe the newly created NV12 buffer.
+            for key in [kCVImageBufferYCbCrMatrixKey, kCVImageBufferColorPrimariesKey, kCVImageBufferTransferFunctionKey] {
+                if let value = CVBufferCopyAttachment(native, key, nil) {
+                    CVBufferSetAttachment(result, key, value, .shouldPropagate)
+                }
+            }
+        } else {
+            // WebRTC's generic I420 conversion uses video-range BT.601 samples.
+            CVBufferSetAttachment(result, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_601_4, .shouldPropagate)
+            CVBufferSetAttachment(result, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+            CVBufferSetAttachment(result, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        }
         return result
     }
 }

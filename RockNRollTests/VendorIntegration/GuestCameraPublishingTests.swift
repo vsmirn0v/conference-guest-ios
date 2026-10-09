@@ -4,6 +4,41 @@ import XCTest
 @testable import RockNRoll
 
 final class GuestCameraPublishingTests: XCTestCase {
+    func testPartialColorDescriptionCompletesOnlyAgreeingFields() {
+        let source = Data(base64Encoded: "AAAAASdCAB+rQKD8gA==")!
+        let color = H264ColorDescription(primaries: 1, transfer: 13, matrix: 1)
+        let partial = H264ColorSignalling.applying(.init(primaries: 1, transfer: 2, matrix: 2), to: source)
+        let complete = H264ColorSignalling.applying(color, to: source)
+        XCTAssertNotEqual(partial, source)
+        XCTAssertEqual(H264ColorSignalling.applying(color, to: partial), complete)
+        XCTAssertEqual(H264ColorSignalling.applying(.init(primaries: 2, transfer: 2, matrix: 1), to: partial),
+                       H264ColorSignalling.applying(.init(primaries: 1, transfer: 2, matrix: 1), to: source))
+        let conflicting = H264ColorSignalling.applying(.init(primaries: 9, transfer: 2, matrix: 2), to: source)
+        XCTAssertEqual(H264ColorSignalling.applying(color, to: conflicting), conflicting)
+    }
+    func testOnlyExplicitlyQualifiedPresenterRGBGetsH264ColorTags() throws {
+        var buffer: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 32, 16, kCVPixelFormatType_32BGRA, nil, &buffer), kCVReturnSuccess)
+        let pixels = try XCTUnwrap(buffer)
+        CVBufferSetAttachment(pixels, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(pixels, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_sRGB, .shouldPropagate)
+        CVBufferSetAttachment(pixels, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
+        XCTAssertNil(H264InputColorSignalling.color(pixels), "An external RGB frame must not inherit the Presenter conversion contract")
+        H264InputColorSignalling.tagPresenter(pixels)
+        XCTAssertEqual(H264InputColorSignalling.color(pixels), .init(primaries: 1, transfer: 13, matrix: 1))
+        CVBufferSetAttachment(pixels, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        XCTAssertNil(H264InputColorSignalling.color(pixels))
+    }
+    func testDefaultBGRAAssertsOnlyQualifiedEncoderMatrix() throws {
+        var buffer: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 32, 16, kCVPixelFormatType_32BGRA, nil, &buffer), kCVReturnSuccess)
+        let pixels = try XCTUnwrap(buffer)
+        XCTAssertNil(H264InputColorSignalling.color(pixels), "Camera qualification must not broaden")
+        XCTAssertEqual(H264InputColorSignalling.defaultBGRAMatrix(pixels), .init(primaries: 2, transfer: 2, matrix: 1))
+        CVBufferSetAttachment(pixels, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_P3_D65, .shouldPropagate)
+        XCTAssertNil(H264InputColorSignalling.defaultBGRAMatrix(pixels), "Unknown ICC/P3/HDR content must not inherit the default")
+    }
+
     func testIndependentBaselineMainHighFixturesPreservePayloadAndExplicitColor() throws {
         struct Fixture: Decodable { let name: String; let original: Data; let expected: Data }
         let file = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "h264-color-signalling", withExtension: "json"))

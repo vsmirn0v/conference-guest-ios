@@ -1,0 +1,108 @@
+{
+  "device": "iPhone 17 Pro Max (A19 Pro)",
+  "os": "iOS 27.0.1",
+  "source_base": "cf812cf4bca4397b5aeb4423fc59226aba41749a",
+  "build": "Debug optimized -O, current uncommitted qualification changes",
+  "profiles": [
+    {
+      "brightness": 0.24935342371463776,
+      "elapsed_s": 15.015351708396338,
+      "frames": 450,
+      "hardware": [
+        {
+          "failed": true,
+          "hardwareFrames": 20,
+          "verifiedHardwareSession": false
+        }
+      ],
+      "height": 720,
+      "mean_decode_ms": 4.094833333333333,
+      "mode": "software",
+      "process_cpu_percent": 46.86829277575149,
+      "thermal_after": 0,
+      "thermal_before": 0,
+      "wall_end_s": 1791568948.562402,
+      "wall_start_s": 1791568933.546623,
+      "width": 1280,
+      "pair": 4,
+      "system_percent_per_hour": 7.462624840036183,
+      "matched_frame_count": true
+    },
+    {
+      "brightness": 0.24935342371463776,
+      "elapsed_s": 15.008882499998435,
+      "frames": 450,
+      "hardware": [
+        {
+          "failed": false,
+          "hardwareFrames": 531,
+          "verifiedHardwareSession": true
+        }
+      ],
+      "height": 720,
+      "mean_decode_ms": 1.8819266666666665,
+      "mode": "hardware",
+      "process_cpu_percent": 15.980123770042509,
+      "thermal_after": 0,
+      "thermal_before": 0,
+      "wall_end_s": 1791568973.530601,
+      "wall_start_s": 1791568958.5212889,
+      "width": 1280,
+      "pair": 4,
+      "system_percent_per_hour": 7.130281935727439,
+      "matched_frame_count": true
+    },
+    {
+      "brightness": 0.24935342371463776,
+      "elapsed_s": 15.051690041669644,
+      "frames": 453,
+      "hardware": [
+        {
+          "failed": false,
+          "hardwareFrames": 713,
+          "verifiedHardwareSession": true
+        }
+      ],
+      "height": 720,
+      "mean_decode_ms": 1.855128035320088,
+      "mode": "hardware",
+      "process_cpu_percent": 15.543649872692145,
+      "thermal_after": 0,
+      "thermal_before": 0,
+      "wall_end_s": 1791569068.592671,
+      "wall_start_s": 1791569053.5405169,
+      "width": 1280,
+      "pair": 5,
+      "system_percent_per_hour": 6.482641273180932,
+      "matched_frame_count": false
+    },
+    {
+      "brightness": 0.24935342371463776,
+      "elapsed_s": 15.007032541674562,
+      "frames": 377,
+      "hardware": [
+        {
+          "failed": true,
+          "hardwareFrames": 21,
+          "verifiedHardwareSession": false
+        }
+      ],
+      "height": 720,
+      "mean_decode_ms": 4.059196286472148,
+      "mode": "software",
+      "process_cpu_percent": 41.00740091627273,
+      "thermal_after": 0,
+      "thermal_before": 0,
+      "wall_end_s": 1791569093.625941,
+      "wall_start_s": 1791569078.61847,
+      "width": 1280,
+      "pair": 5,
+      "system_percent_per_hour": 7.352400886336594,
+      "matched_frame_count": false
+    }
+  ],
+  "limitations": [
+    "Short connected-device Power Profiler estimates, not battery runtime prediction.",
+    "One phase excluded from matched energy claims because software delivered fewer frames."
+  ]
+}

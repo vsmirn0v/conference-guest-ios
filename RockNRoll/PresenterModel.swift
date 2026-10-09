@@ -77,6 +77,13 @@ final class PresenterModel: ObservableObject {
     }
     var cameraDevice: AVCaptureDevice? { ownedCamera?.device }
     var cameraGeneration: UUID { cameraEpoch }
+    #if DEBUG
+    var cameraEvidenceForTesting: [String: Any] {
+        ["foreground": foreground, "presented": presented, "held": held, "active": active,
+         "cameraOn": cameraOn, "includeCamera": includeCamera, "liveSource": cameraSource != nil,
+         "privateSource": ownedCamera != nil, "startingPrivate": cameraTask != nil, "frames": hasCameraFrames]
+    }
+    #endif
     @Published private(set) var available = false
     let preview = GuestSampleBufferView()
     var makeCameraSource: ((@escaping (CVPixelBuffer, Int) -> Void) -> PresenterCameraSource?)?
@@ -202,6 +209,11 @@ final class PresenterModel: ObservableObject {
         cameraStop = Task { await previous?.value; await pending?.value; await source?.stop(); await camera?.stop() }
     }
     func releaseCamera() async { invalidateCamera(); await cameraStop?.value }
+    /// Publishing needs exclusive capture ownership, not removal of a live-track observer.
+    func releasePrivateCamera() async {
+        if ownedCamera != nil || cameraTask != nil { invalidateCamera() }
+        await cameraStop?.value
+    }
     private func invalidateRender() {
         epoch = UUID(); latest = nil; hasPreview = false; preview.clear()
         pendingRender = true; lastRenderTime = -.infinity; retryAfter = 0
