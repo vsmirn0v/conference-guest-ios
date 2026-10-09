@@ -1,0 +1,393 @@
+diff --git a/sdk/BUILD.gn b/sdk/BUILD.gn
+--- a/sdk/BUILD.gn
++++ b/sdk/BUILD.gn
+@@ -53,11 +53,20 @@
+ 
+ if (rtc_include_tests && is_mac) {
+   rtc_test("vp9_hybrid_unittests") {
+-    sources = [ "objc/unittests/vp9_hardware_decoder_wrapper_unittest.cc" ]
++    sources = [
++      "objc/unittests/vp9_hardware_decoder_wrapper_unittest.cc",
++      "objc/unittests/vp9_hybrid_factory_unittest.mm",
++    ]
++    configs += [ "..:common_objc" ]
+     deps = [
++      ":base_objc",
++      ":native_video",
++      ":videoframebuffer_objc",
++      ":vp9",
+       ":vp9_hardware_decoder_wrapper",
+       "../api/environment:environment_factory",
+       "../api/video:encoded_image",
++      "../api/video:video_frame",
+       "../api/video_codecs:rtc_software_fallback_wrappers",
+       "../api/video_codecs:video_codecs_api",
+       "../modules/video_coding:video_codec_interface",
+diff --git a/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm b/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm
+--- a/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm
++++ b/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm
+@@ -49,8 +49,11 @@
+                   format:(const webrtc::SdpVideoFormat &)format {
+   // A handle owns exactly one hardware decoder. Reuse cannot share its state
+   // between receive streams; a reused handle safely creates software instead.
+-  id<RTC_OBJC_TYPE(RTCVideoDecoder)> hardware = _hardwareDecoder;
+-  _hardwareDecoder = nil;
++  id<RTC_OBJC_TYPE(RTCVideoDecoder)> hardware;
++  @synchronized(self) {
++    hardware = _hardwareDecoder;
++    _hardwareDecoder = nil;
++  }
+   auto software = webrtc::VP9Decoder::Create();
+   const auto profile = format.parameters.find("profile-id");
+   if (!hardware || format.name != "VP9" ||
+diff --git a/sdk/objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm b/sdk/objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm
+--- a/sdk/objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm
++++ b/sdk/objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm
+@@ -27,6 +27,9 @@
+ @end
+ 
+ @implementation VP9HybridProbeDecoder
++@synthesize starts = _starts;
++@synthesize decodes = _decodes;
++@synthesize releases = _releases;
+ - (void)setCallback:(RTCVideoDecoderCallback)callback {}
+ - (NSInteger)startDecodeWithNumberOfCores:(int)numberOfCores {
+   self.starts += 1;
+diff --git a/sdk/objc/unittests/vp9_hybrid_factory_unittest.mm b/sdk/objc/unittests/vp9_hybrid_factory_unittest.mm
+new file mode 100644
+--- /dev/null
++++ b/sdk/objc/unittests/vp9_hybrid_factory_unittest.mm
+@@ -0,0 +1,333 @@
++/*
++ * Copyright 2026 The WebRTC project authors. All Rights Reserved.
++ *
++ * Use of this source code is governed by a BSD-style license
++ * that can be found in the LICENSE file in the root of the source
++ * tree. An additional intellectual property rights grant can be found
++ * in the file PATENTS. All contributing project authors may
++ * be found in the AUTHORS file in the root of the source tree.
++ */
++
++#import <Foundation/Foundation.h>
++#import <CommonCrypto/CommonDigest.h>
++#import <dispatch/dispatch.h>
++
++#include <array>
++#include <atomic>
++#include <cstdlib>
++#include <fstream>
++#include <vector>
++
++#import "base/RTCVideoDecoder.h"
++#import "base/RTCVideoDecoderFactory.h"
++#import "sdk/objc/api/video_codec/RTCVideoDecoderVP9.h"
++#import "sdk/objc/components/video_frame_buffer/RTCCVPixelBuffer.h"
++#include "api/environment/environment_factory.h"
++#include "api/video/video_frame_buffer.h"
++#include "modules/video_coding/include/video_error_codes.h"
++#include "sdk/objc/native/src/objc_video_decoder_factory.h"
++#include "test/gtest.h"
++
++@interface VP9HybridCLIHardwareDecoder : NSObject <RTC_OBJC_TYPE(RTCVideoDecoder)>
++@property(nonatomic) int starts;
++@property(nonatomic) int decodes;
++@property(nonatomic) int releases;
++@property(nonatomic, copy) RTCVideoDecoderCallback callback;
++@property(nonatomic, strong) RTC_OBJC_TYPE(RTCVideoFrame) *outputFrame;
++@end
++
++@implementation VP9HybridCLIHardwareDecoder
++@synthesize starts = _starts;
++@synthesize decodes = _decodes;
++@synthesize releases = _releases;
++@synthesize callback = _callback;
++@synthesize outputFrame = _outputFrame;
++- (void)setCallback:(RTCVideoDecoderCallback)callback { _callback = [callback copy]; }
++- (NSInteger)startDecodeWithNumberOfCores:(int)numberOfCores {
++  self.starts += 1;
++  return WEBRTC_VIDEO_CODEC_OK;
++}
++- (NSInteger)releaseDecoder {
++  self.releases += 1;
++  self.callback = nil;
++  return WEBRTC_VIDEO_CODEC_OK;
++}
++- (NSInteger)decode:(RTC_OBJC_TYPE(RTCEncodedImage) *)image
++        missingFrames:(BOOL)missingFrames
++    codecSpecificInfo:(id<RTC_OBJC_TYPE(RTCCodecSpecificInfo)>)info
++         renderTimeMs:(int64_t)renderTimeMs {
++  self.decodes += 1;
++  if (self.outputFrame && self.callback) {
++    self.callback(self.outputFrame);
++  }
++  return WEBRTC_VIDEO_CODEC_OK;
++}
++- (NSString *)implementationName { return @"VP9HybridCLIHardware"; }
++@end
++
++@interface VP9HybridCLIFactory : NSObject <RTC_OBJC_TYPE(RTCVideoDecoderFactory)>
++- (instancetype)initWithHandle:(id<RTC_OBJC_TYPE(RTCVideoDecoder)>)handle;
++@end
++
++@implementation VP9HybridCLIFactory {
++  id<RTC_OBJC_TYPE(RTCVideoDecoder)> _handle;
++}
++- (instancetype)initWithHandle:(id<RTC_OBJC_TYPE(RTCVideoDecoder)>)handle {
++  if (self = [super init]) {
++    _handle = handle;
++  }
++  return self;
++}
++- (NSArray<RTC_OBJC_TYPE(RTCVideoCodecInfo) *> *)supportedCodecs {
++  return @[ [[RTC_OBJC_TYPE(RTCVideoCodecInfo) alloc] initWithName:@"VP9" parameters:@{}] ];
++}
++- (id<RTC_OBJC_TYPE(RTCVideoDecoder)>)createDecoder:(RTC_OBJC_TYPE(RTCVideoCodecInfo) *)info {
++  return _handle;
++}
++@end
++
++namespace webrtc {
++namespace {
++
++std::unique_ptr<VideoDecoder> BuildHybrid(
++    id<RTC_OBJC_TYPE(RTCVideoDecoder)> handle,
++    const char* profile = "0") {
++  VP9HybridCLIFactory *factory = [[VP9HybridCLIFactory alloc] initWithHandle:handle];
++  ObjCVideoDecoderFactory bridge(factory);
++  return bridge.Create(CreateEnvironment(), SdpVideoFormat("VP9", {{"profile-id", profile}}));
++}
++
++class VP9HybridFactoryTest : public ::testing::Test {
++ public:
++  void SetUp() override {
++    if (![RTC_OBJC_TYPE(RTCVideoDecoderVP9) isSupported]) {
++      GTEST_SKIP() << "VP9 disabled in this build";
++    }
++  }
++};
++
++class OutputCallback final : public DecodedImageCallback {
++ public:
++  int32_t Decoded(VideoFrame& frame) override {
++    ++frames;
++    timestamp = frame.rtp_timestamp();
++    width = frame.width();
++    return 0;
++  }
++  int frames = 0;
++  uint32_t timestamp = 0;
++  int width = 0;
++};
++
++class PixelCallback final : public DecodedImageCallback {
++ public:
++  int32_t Decoded(VideoFrame& frame) override {
++    ++frames;
++    EXPECT_EQ(frame.rtp_timestamp(), timestamp);
++    EXPECT_EQ(frame.width(), width);
++    EXPECT_EQ(frame.height(), height);
++    auto buffer = frame.video_frame_buffer()->ToI420();
++    if (!buffer || buffer->width() != width || buffer->height() != height) {
++      ADD_FAILURE() << "Unexpected decoded I420 dimensions";
++      return WEBRTC_VIDEO_CODEC_ERROR;
++    }
++    std::vector<uint8_t> packed;
++    auto append_plane = [&](const uint8_t* data, int stride, int columns, int rows) {
++      for (int row = 0; row < rows; ++row) {
++        packed.insert(packed.end(), data + row * stride, data + row * stride + columns);
++      }
++    };
++    append_plane(buffer->DataY(), buffer->StrideY(), width, height);
++    append_plane(buffer->DataU(), buffer->StrideU(), (width + 1) / 2, (height + 1) / 2);
++    append_plane(buffer->DataV(), buffer->StrideV(), (width + 1) / 2, (height + 1) / 2);
++    std::array<uint8_t, CC_SHA256_DIGEST_LENGTH> actual;
++    CC_SHA256(packed.data(), static_cast<CC_LONG>(packed.size()), actual.data());
++    EXPECT_EQ(actual, sha256);
++    return WEBRTC_VIDEO_CODEC_OK;
++  }
++  int frames = 0;
++  int width = 0;
++  int height = 0;
++  uint32_t timestamp = 0;
++  std::array<uint8_t, CC_SHA256_DIGEST_LENGTH> sha256;
++};
++
++TEST_F(VP9HybridFactoryTest, BridgesOutputAndRetiresCallback) {
++  @autoreleasepool {
++    VP9HybridCLIHardwareDecoder *hardware = [[VP9HybridCLIHardwareDecoder alloc] init];
++    CVPixelBufferRef pixels = nullptr;
++    ASSERT_EQ(CVPixelBufferCreate(kCFAllocatorDefault, 2, 2,
++                                 kCVPixelFormatType_32BGRA, nullptr, &pixels), kCVReturnSuccess);
++    RTC_OBJC_TYPE(RTCCVPixelBuffer) *buffer =
++        [[RTC_OBJC_TYPE(RTCCVPixelBuffer) alloc] initWithPixelBuffer:pixels];
++    CVPixelBufferRelease(pixels);
++    hardware.outputFrame = [[RTC_OBJC_TYPE(RTCVideoFrame) alloc]
++        initWithBuffer:buffer rotation:RTC_OBJC_TYPE(RTCVideoRotation_0) timeStampNs:0];
++    hardware.outputFrame.timeStamp = 1234;
++    auto decoder = BuildHybrid(
++        [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware]);
++    ASSERT_TRUE(decoder);
++    VideoDecoder::Settings settings;
++    settings.set_codec_type(kVideoCodecVP9);
++    ASSERT_TRUE(decoder->Configure(settings));
++    OutputCallback callback;
++    ASSERT_EQ(decoder->RegisterDecodeCompleteCallback(&callback), 0);
++    EncodedImage image;
++    image.SetEncodedData(EncodedImageBuffer::Create(8));
++    image.SetSpatialIndex(0);
++    image.SetSpatialLayerFrameSize(0, 8);
++    EXPECT_EQ(decoder->Decode(image, 0), WEBRTC_VIDEO_CODEC_OK);
++    EXPECT_EQ(hardware.starts, 1);
++    EXPECT_EQ(hardware.decodes, 1);
++    EXPECT_EQ(callback.frames, 1);
++    EXPECT_EQ(callback.timestamp, 1234u);
++    EXPECT_EQ(callback.width, 2);
++    EXPECT_TRUE(decoder->GetDecoderInfo().is_hardware_accelerated);
++    EXPECT_EQ(decoder->Release(), WEBRTC_VIDEO_CODEC_OK);
++    EXPECT_EQ(hardware.releases, 1);
++    EXPECT_FALSE(hardware.callback);
++    EXPECT_EQ(decoder->Decode(image, 0), WEBRTC_VIDEO_CODEC_UNINITIALIZED);
++    EXPECT_EQ(callback.frames, 1);
++  }
++}
++
++TEST_F(VP9HybridFactoryTest, SpatialMetadataIsRejectedBeforeObjCConversion) {
++  @autoreleasepool {
++    VP9HybridCLIHardwareDecoder *hardware = [[VP9HybridCLIHardwareDecoder alloc] init];
++    auto decoder = BuildHybrid(
++        [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware]);
++    VideoDecoder::Settings settings;
++    settings.set_codec_type(kVideoCodecVP9);
++    ASSERT_TRUE(decoder->Configure(settings));
++    const uint8_t invalid[] = {0};
++    EncodedImage image;
++    image.SetEncodedData(EncodedImageBuffer::Create(invalid, sizeof(invalid)));
++    image.SetSpatialIndex(2);
++    image._frameType = VideoFrameType::kVideoFrameKey;
++    decoder->Decode(image, 0);
++    EXPECT_EQ(hardware.decodes, 0);
++    EXPECT_EQ(hardware.releases, 1);
++    EXPECT_FALSE(decoder->GetDecoderInfo().is_hardware_accelerated);
++    decoder->Release();
++  }
++}
++
++TEST_F(VP9HybridFactoryTest, ProfileTwoUsesSoftware) {
++  @autoreleasepool {
++    VP9HybridCLIHardwareDecoder *hardware = [[VP9HybridCLIHardwareDecoder alloc] init];
++    auto decoder = BuildHybrid(
++        [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware], "2");
++    ASSERT_TRUE(decoder);
++    EXPECT_FALSE(decoder->GetDecoderInfo().is_hardware_accelerated);
++    EXPECT_EQ(hardware.starts, 0);
++  }
++}
++
++TEST_F(VP9HybridFactoryTest, NativeFactoryHandleIsNotConcreteHardware) {
++  @autoreleasepool {
++    auto decoder = BuildHybrid([RTC_OBJC_TYPE(RTCVideoDecoderVP9)
++        vp9DecoderWithHardwareDecoder:[RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9Decoder]]);
++    ASSERT_TRUE(decoder);
++    EXPECT_FALSE(decoder->GetDecoderInfo().is_hardware_accelerated);
++  }
++}
++
++TEST_F(VP9HybridFactoryTest, ReusedHandleCannotShareHardwareConcurrently) {
++  @autoreleasepool {
++    VP9HybridCLIHardwareDecoder *hardware = [[VP9HybridCLIHardwareDecoder alloc] init];
++    id<RTC_OBJC_TYPE(RTCVideoDecoder)> handle =
++        [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware];
++    std::atomic<int> hardware_count{0};
++    std::atomic<int> software_count{0};
++    auto* hw_count = &hardware_count;
++    auto* sw_count = &software_count;
++    dispatch_apply(32, dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^(size_t) {
++      @autoreleasepool {
++        auto decoder = BuildHybrid(handle);
++        if (decoder && decoder->GetDecoderInfo().is_hardware_accelerated) {
++          ++*hw_count;
++        } else if (decoder) {
++          ++*sw_count;
++        }
++      }
++    });
++    EXPECT_EQ(hardware_count.load(), 1);
++    EXPECT_EQ(software_count.load(), 31);
++    EXPECT_EQ(hardware.starts, 0);
++  }
++}
++
++TEST_F(VP9HybridFactoryTest, SpatialFixtureMatchesIndependentTopLayerPixels) {
++  const char* path = std::getenv("WEBRTC_VP9_SVC_FIXTURE");
++  if (!path) {
++    GTEST_SKIP() << "Set WEBRTC_VP9_SVC_FIXTURE to the independent RVP9SVC1 fixture";
++  }
++  std::ifstream input(path, std::ios::binary);
++  ASSERT_TRUE(input.is_open());
++  std::array<char, 8> magic;
++  ASSERT_TRUE(input.read(magic.data(), magic.size()));
++  EXPECT_EQ(std::string(magic.data(), magic.size()), "RVP9SVC1");
++  auto read_u32 = [&](uint32_t& value) {
++    std::array<uint8_t, 4> bytes;
++    if (!input.read(reinterpret_cast<char*>(bytes.data()), bytes.size())) {
++      return false;
++    }
++    value = uint32_t{bytes[0]} | (uint32_t{bytes[1]} << 8) |
++            (uint32_t{bytes[2]} << 16) | (uint32_t{bytes[3]} << 24);
++    return true;
++  };
++  uint32_t frame_count;
++  ASSERT_TRUE(read_u32(frame_count));
++  ASSERT_GT(frame_count, 0u);
++  ASSERT_LE(frame_count, 1000u);
++  @autoreleasepool {
++    VP9HybridCLIHardwareDecoder *hardware = [[VP9HybridCLIHardwareDecoder alloc] init];
++    auto decoder = BuildHybrid(
++        [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware]);
++    ASSERT_TRUE(decoder);
++    VideoDecoder::Settings settings;
++    settings.set_codec_type(kVideoCodecVP9);
++    ASSERT_TRUE(decoder->Configure(settings));
++    PixelCallback callback;
++    ASSERT_EQ(decoder->RegisterDecodeCompleteCallback(&callback), WEBRTC_VIDEO_CODEC_OK);
++    for (uint32_t i = 0; i < frame_count; ++i) {
++      SCOPED_TRACE(i);
++      uint32_t width, height, key, length;
++      ASSERT_TRUE(read_u32(width) && read_u32(height) && read_u32(key) && read_u32(length));
++      ASSERT_GT(width, 0u);
++      ASSERT_LE(width, 4096u);
++      ASSERT_GT(height, 0u);
++      ASSERT_LE(height, 4096u);
++      ASSERT_LE(key, 1u);
++      ASSERT_GT(length, 0u);
++      ASSERT_LE(length, 4u * 1024u * 1024u);
++      std::vector<uint8_t> payload(length);
++      ASSERT_TRUE(input.read(reinterpret_cast<char*>(payload.data()), payload.size()));
++      ASSERT_TRUE(input.read(reinterpret_cast<char*>(callback.sha256.data()),
++                             callback.sha256.size()));
++      callback.width = width;
++      callback.height = height;
++      callback.timestamp = i * 3000;
++      EncodedImage image;
++      image.SetEncodedData(EncodedImageBuffer::Create(payload.data(), payload.size()));
++      image.SetSpatialIndex(2);
++      // Native WebRTC may retain base-layer dimensions after spatial combining.
++      image._encodedWidth = width / 4;
++      image._encodedHeight = height / 4;
++      image._frameType = key ? VideoFrameType::kVideoFrameKey : VideoFrameType::kVideoFrameDelta;
++      image.SetRtpTimestamp(callback.timestamp);
++      ASSERT_EQ(decoder->Decode(image, 0), WEBRTC_VIDEO_CODEC_OK);
++      EXPECT_EQ(callback.frames, static_cast<int>(i + 1));
++    }
++    EXPECT_EQ(input.peek(), std::ifstream::traits_type::eof());
++    EXPECT_EQ(hardware.starts, 1);
++    EXPECT_EQ(hardware.decodes, 0);
++    EXPECT_EQ(hardware.releases, 1);
++    EXPECT_FALSE(decoder->GetDecoderInfo().is_hardware_accelerated);
++    EXPECT_EQ(decoder->Release(), WEBRTC_VIDEO_CODEC_OK);
++    EXPECT_EQ(hardware.releases, 1);
++  }
++}
++
++}  // namespace
++}  // namespace webrtc

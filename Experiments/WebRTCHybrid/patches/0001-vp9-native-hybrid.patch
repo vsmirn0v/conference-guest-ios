@@ -1,0 +1,651 @@
+diff --git a/sdk/BUILD.gn b/sdk/BUILD.gn
+--- a/sdk/BUILD.gn
++++ b/sdk/BUILD.gn
+@@ -37,6 +37,34 @@
+     "../api:peer_connection_interface",
+     "../test:test_support",
+   ]
++}
++
++rtc_library("vp9_hardware_decoder_wrapper") {
++  sources = [
++    "objc/native/src/vp9_hardware_decoder_wrapper.cc",
++    "objc/native/src/vp9_hardware_decoder_wrapper.h",
++  ]
++  deps = [
++    "../api/video:encoded_image",
++    "../api/video_codecs:video_codecs_api",
++    "../modules/video_coding:video_codec_interface",
++  ]
++}
++
++if (rtc_include_tests && is_mac) {
++  rtc_test("vp9_hybrid_unittests") {
++    sources = [ "objc/unittests/vp9_hardware_decoder_wrapper_unittest.cc" ]
++    deps = [
++      ":vp9_hardware_decoder_wrapper",
++      "../api/environment:environment_factory",
++      "../api/video:encoded_image",
++      "../api/video_codecs:rtc_software_fallback_wrappers",
++      "../api/video_codecs:video_codecs_api",
++      "../modules/video_coding:video_codec_interface",
++      "../test:test_main",
++      "../test:test_support",
++    ]
++  }
+ }
+ 
+ if (is_ios || is_mac) {
+@@ -894,7 +922,10 @@
+         ":base_native_additions_objc",
+         ":base_objc",
+         ":helpers_objc",
++        ":native_video",
++        ":vp9_hardware_decoder_wrapper",
+         ":wrapped_native_codec_objc",
++        "../api/video_codecs:rtc_software_fallback_wrappers",
+         "../api/video_codecs:scalability_mode",
+         "../api/video_codecs:video_codecs_api",
+         "../modules/video_coding:webrtc_vp9",
+@@ -1347,6 +1378,7 @@
+             "objc/unittests/RTCPeerConnectionTest.mm",
+             "objc/unittests/RTCSessionDescriptionTest.mm",
+             "objc/unittests/RTCTracingTest.mm",
++            "objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm",
+             "objc/unittests/frame_buffer_helpers.h",
+             "objc/unittests/frame_buffer_helpers.mm",
+             "objc/unittests/nalu_rewriter_xctest.mm",
+@@ -1379,6 +1411,7 @@
+             ":videoframebuffer_objc",
+             ":videosource_objc",
+             ":videotoolbox_objc",
++            ":vp9",
+             "../api:jsep",
+             "../api:rtc_error_matchers",
+             "../api:scoped_refptr",
+diff --git a/sdk/objc/api/video_codec/RTCVideoDecoderVP9.h b/sdk/objc/api/video_codec/RTCVideoDecoderVP9.h
+--- a/sdk/objc/api/video_codec/RTCVideoDecoderVP9.h
++++ b/sdk/objc/api/video_codec/RTCVideoDecoderVP9.h
+@@ -25,6 +25,21 @@
+  */
+ + (id<RTC_OBJC_TYPE(RTCVideoDecoder)>)vp9Decoder;
+ 
++/** Returns a factory-only VP9 decoder with per-stream software fallback.
++ * Return a fresh handle from each createDecoder: call; it cannot be decoded
++ * directly. hardwareDecoder must be a concrete hardware-only implementation,
++ * not another factory-only native decoder. Pass nil for software-only decoding.
++ * The native bridge rejects spatial SVC before invoking hardwareDecoder and
++ * retries the original encoded image in libvpx. Hardware must return -13
++ * (WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE) for permanent incompatibility, without
++ * emitting a frame for that input. Delta-frame recovery can require a keyframe.
++ * releaseDecoder must stop callbacks before returning. No room reconnect is
++ * required, and fallback affects only this decoder instance.
++ */
+++ (id<RTC_OBJC_TYPE(RTCVideoDecoder)>)vp9DecoderWithHardwareDecoder:
++    (nullable id<RTC_OBJC_TYPE(RTCVideoDecoder)>)hardwareDecoder
++    NS_SWIFT_NAME(vp9Decoder(hardwareDecoder:));
++
+ /** Returns the list of supported codec formats (profiles) for the VP9 decoder.
+  */
+ + (NSArray<RTC_OBJC_TYPE(RTCVideoCodecInfo) *> *)supportedCodecs;
+diff --git a/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm b/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm
+--- a/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm
++++ b/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm
+@@ -17,7 +17,52 @@
+ #import "api/peerconnection/RTCVideoCodecInfo+Private.h"
+ #import "sdk/objc/base/RTCMacros.h"
+ 
++#include <utility>
++
++#include "api/video_codecs/video_decoder_software_fallback_wrapper.h"
+ #include "modules/video_coding/codecs/vp9/include/vp9.h"
++#include "sdk/objc/native/src/objc_video_decoder_factory.h"
++#include "sdk/objc/native/src/vp9_hardware_decoder_wrapper.h"
++
++@interface RTC_OBJC_TYPE (RTCVideoDecoderVP9HardwareBuilder)
++    : RTC_OBJC_TYPE(RTCNativeVideoDecoder) <RTC_OBJC_TYPE (RTCNativeVideoDecoderBuilder)> {
++  id<RTC_OBJC_TYPE(RTCVideoDecoder)> _hardwareDecoder;
++}
++- (instancetype)initWithHardwareDecoder:(id<RTC_OBJC_TYPE(RTCVideoDecoder)>)decoder;
++@end
++
++@implementation RTC_OBJC_TYPE (RTCVideoDecoderVP9HardwareBuilder)
++
++- (instancetype)initWithHardwareDecoder:(id<RTC_OBJC_TYPE(RTCVideoDecoder)>)decoder {
++  if (self = [super init]) {
++    _hardwareDecoder = decoder;
++  }
++  return self;
++}
++
++- (std::unique_ptr<webrtc::VideoDecoder>)build:(const webrtc::Environment &)env {
++  return [self buildWithEnvironment:env format:webrtc::SdpVideoFormat("VP9")];
++}
++
++- (std::unique_ptr<webrtc::VideoDecoder>)
++    buildWithEnvironment:(const webrtc::Environment &)env
++                  format:(const webrtc::SdpVideoFormat &)format {
++  // A handle owns exactly one hardware decoder. Reuse cannot share its state
++  // between receive streams; a reused handle safely creates software instead.
++  id<RTC_OBJC_TYPE(RTCVideoDecoder)> hardware = _hardwareDecoder;
++  _hardwareDecoder = nil;
++  auto software = webrtc::VP9Decoder::Create();
++  const auto profile = format.parameters.find("profile-id");
++  if (!hardware || format.name != "VP9" ||
++      (profile != format.parameters.end() && profile->second != "0")) {
++    return software;
++  }
++  return webrtc::CreateVideoDecoderSoftwareFallbackWrapper(
++      env, std::move(software),
++      webrtc::CreateVP9HardwareDecoderWrapper(webrtc::CreateObjCVideoDecoder(hardware)));
++}
++
++@end
+ 
+ @interface RTC_OBJC_TYPE (RTCVideoDecoderVP9Builder)
+     : RTC_OBJC_TYPE(RTCNativeVideoDecoder) <RTC_OBJC_TYPE (RTCNativeVideoDecoderBuilder)>
+@@ -48,6 +93,20 @@
+ #endif
+     }
+ 
++    + (id<RTC_OBJC_TYPE(RTCVideoDecoder)>)vp9DecoderWithHardwareDecoder:
++        (id<RTC_OBJC_TYPE(RTCVideoDecoder)>)hardwareDecoder {
++#if defined(RTC_ENABLE_VP9)
++      if (!hardwareDecoder ||
++          [hardwareDecoder conformsToProtocol:@protocol(RTC_OBJC_TYPE(RTCNativeVideoDecoderBuilder))]) {
++        return [self vp9Decoder];
++      }
++      return [[RTC_OBJC_TYPE(RTCVideoDecoderVP9HardwareBuilder) alloc]
++          initWithHardwareDecoder:hardwareDecoder];
++#else
++      return nil;
++#endif
++    }
++
+     + (NSArray<RTC_OBJC_TYPE(RTCVideoCodecInfo) *> *)supportedCodecs {
+ #if defined(RTC_ENABLE_VP9)
+       std::vector<webrtc::SdpVideoFormat> formats =
+diff --git a/sdk/objc/native/src/objc_video_decoder_factory.h b/sdk/objc/native/src/objc_video_decoder_factory.h
+--- a/sdk/objc/native/src/objc_video_decoder_factory.h
++++ b/sdk/objc/native/src/objc_video_decoder_factory.h
+@@ -18,8 +18,14 @@
+ 
+ @protocol RTC_OBJC_TYPE
+ (RTCVideoDecoderFactory);
++@protocol RTC_OBJC_TYPE
++(RTCVideoDecoder);
+ 
+ namespace webrtc {
++
++// Internal bridge for a concrete Objective-C decoder, not a native builder.
++std::unique_ptr<VideoDecoder> CreateObjCVideoDecoder(
++    id<RTC_OBJC_TYPE(RTCVideoDecoder)> decoder);
+ 
+ class ObjCVideoDecoderFactory : public VideoDecoderFactory {
+  public:
+diff --git a/sdk/objc/native/src/objc_video_decoder_factory.mm b/sdk/objc/native/src/objc_video_decoder_factory.mm
+--- a/sdk/objc/native/src/objc_video_decoder_factory.mm
++++ b/sdk/objc/native/src/objc_video_decoder_factory.mm
+@@ -84,6 +84,11 @@
+ };
+ }  // namespace
+ 
++std::unique_ptr<VideoDecoder> CreateObjCVideoDecoder(
++    id<RTC_OBJC_TYPE(RTCVideoDecoder)> decoder) {
++  return std::make_unique<ObjCVideoDecoder>(decoder);
++}
++
+ ObjCVideoDecoderFactory::ObjCVideoDecoderFactory(
+     id<RTC_OBJC_TYPE(RTCVideoDecoderFactory)> decoder_factory)
+     : decoder_factory_(decoder_factory) {}
+@@ -127,7 +132,7 @@
+         return [builder build:env];
+ #pragma clang diagnostic pop
+       } else {
+-        return std::unique_ptr<ObjCVideoDecoder>(new ObjCVideoDecoder(decoder));
++        return CreateObjCVideoDecoder(decoder);
+       }
+     }
+   }
+diff --git a/sdk/objc/native/src/vp9_hardware_decoder_wrapper.h b/sdk/objc/native/src/vp9_hardware_decoder_wrapper.h
+new file mode 100644
+--- /dev/null
++++ b/sdk/objc/native/src/vp9_hardware_decoder_wrapper.h
+@@ -0,0 +1,28 @@
++/*
++ * Copyright 2026 The WebRTC project authors. All Rights Reserved.
++ *
++ * Use of this source code is governed by a BSD-style license
++ * that can be found in the LICENSE file in the root of the source
++ * tree. An additional intellectual property rights grant can be found
++ * in the file PATENTS. All contributing project authors may
++ * be found in the AUTHORS file in the root of the source tree.
++ */
++
++#ifndef SDK_OBJC_NATIVE_SRC_VP9_HARDWARE_DECODER_WRAPPER_H_
++#define SDK_OBJC_NATIVE_SRC_VP9_HARDWARE_DECODER_WRAPPER_H_
++
++#include <memory>
++
++#include "api/video_codecs/video_decoder.h"
++
++namespace webrtc {
++
++// Must be inside a software fallback wrapper. Inspect native spatial metadata
++// before an Objective-C adapter drops it. The supplied decoder must be hardware
++// only and return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE for permanent failures.
++std::unique_ptr<VideoDecoder> CreateVP9HardwareDecoderWrapper(
++    std::unique_ptr<VideoDecoder> hardware_decoder);
++
++}  // namespace webrtc
++
++#endif  // SDK_OBJC_NATIVE_SRC_VP9_HARDWARE_DECODER_WRAPPER_H_
+diff --git a/sdk/objc/native/src/vp9_hardware_decoder_wrapper.cc b/sdk/objc/native/src/vp9_hardware_decoder_wrapper.cc
+new file mode 100644
+--- /dev/null
++++ b/sdk/objc/native/src/vp9_hardware_decoder_wrapper.cc
+@@ -0,0 +1,73 @@
++/*
++ * Copyright 2026 The WebRTC project authors. All Rights Reserved.
++ *
++ * Use of this source code is governed by a BSD-style license
++ * that can be found in the LICENSE file in the root of the source
++ * tree. An additional intellectual property rights grant can be found
++ * in the file PATENTS. All contributing project authors may
++ * be found in the AUTHORS file in the root of the source tree.
++ */
++
++#include "sdk/objc/native/src/vp9_hardware_decoder_wrapper.h"
++
++#include <utility>
++
++#include "api/video/encoded_image.h"
++#include "modules/video_coding/include/video_error_codes.h"
++
++namespace webrtc {
++namespace {
++
++class VP9HardwareDecoderWrapper final : public VideoDecoder {
++ public:
++  explicit VP9HardwareDecoderWrapper(std::unique_ptr<VideoDecoder> decoder)
++      : decoder_(std::move(decoder)) {}
++
++  bool Configure(const Settings& settings) override {
++    return decoder_->Configure(settings);
++  }
++
++  int32_t Decode(const EncodedImage& image, int64_t render_time_ms) override {
++    // A combined keyframe's width/height may describe only its base layer.
++    // Check every frame, including an enhancement layer first seen mid-GOP.
++    if (image.SpatialIndex().value_or(0) > 0) {
++      return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
++    }
++    // SpatialLayerFrameSize(i) requires i <= SpatialIndex().value_or(0).
++    // Only layer zero is accessible after the check above.
++    if (const auto base_size = image.SpatialLayerFrameSize(0);
++        base_size && *base_size != image.size()) {
++      // Never silently decode just a base prefix of a concatenated image.
++      return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
++    }
++    return decoder_->Decode(image, render_time_ms);
++  }
++
++  int32_t RegisterDecodeCompleteCallback(DecodedImageCallback* callback) override {
++    return decoder_->RegisterDecodeCompleteCallback(callback);
++  }
++
++  int32_t Release() override { return decoder_->Release(); }
++
++  DecoderInfo GetDecoderInfo() const override {
++    DecoderInfo info = decoder_->GetDecoderInfo();
++    info.is_hardware_accelerated = true;
++    return info;
++  }
++
++  const char* ImplementationName() const override {
++    return decoder_->ImplementationName();
++  }
++
++ private:
++  const std::unique_ptr<VideoDecoder> decoder_;
++};
++
++}  // namespace
++
++std::unique_ptr<VideoDecoder> CreateVP9HardwareDecoderWrapper(
++    std::unique_ptr<VideoDecoder> hardware_decoder) {
++  return std::make_unique<VP9HardwareDecoderWrapper>(std::move(hardware_decoder));
++}
++
++}  // namespace webrtc
+diff --git a/sdk/objc/unittests/vp9_hardware_decoder_wrapper_unittest.cc b/sdk/objc/unittests/vp9_hardware_decoder_wrapper_unittest.cc
+new file mode 100644
+--- /dev/null
++++ b/sdk/objc/unittests/vp9_hardware_decoder_wrapper_unittest.cc
+@@ -0,0 +1,184 @@
++/*
++ * Copyright 2026 The WebRTC project authors. All Rights Reserved.
++ *
++ * Use of this source code is governed by a BSD-style license
++ * that can be found in the LICENSE file in the root of the source
++ * tree. An additional intellectual property rights grant can be found
++ * in the file PATENTS. All contributing project authors may
++ * be found in the AUTHORS file in the root of the source tree.
++ */
++
++#include "sdk/objc/native/src/vp9_hardware_decoder_wrapper.h"
++
++#include <memory>
++#include <utility>
++
++#include "api/environment/environment_factory.h"
++#include "api/video/encoded_image.h"
++#include "api/video_codecs/video_decoder_software_fallback_wrapper.h"
++#include "modules/video_coding/include/video_error_codes.h"
++#include "test/gtest.h"
++
++namespace webrtc {
++namespace {
++
++struct DecoderState {
++  int configurations = 0;
++  int decodes = 0;
++  int releases = 0;
++  int32_t result = WEBRTC_VIDEO_CODEC_OK;
++  const EncodedImage* image = nullptr;
++  int64_t render_time_ms = 0;
++  DecodedImageCallback* callback = nullptr;
++};
++
++class CountingDecoder final : public VideoDecoder {
++ public:
++  explicit CountingDecoder(DecoderState& state) : state_(state) {}
++  bool Configure(const Settings&) override {
++    ++state_.configurations;
++    return true;
++  }
++  int32_t Decode(const EncodedImage& image, int64_t render_time_ms) override {
++    ++state_.decodes;
++    state_.image = &image;
++    state_.render_time_ms = render_time_ms;
++    return state_.result;
++  }
++  int32_t RegisterDecodeCompleteCallback(DecodedImageCallback* callback) override {
++    state_.callback = callback;
++    return WEBRTC_VIDEO_CODEC_OK;
++  }
++  int32_t Release() override {
++    ++state_.releases;
++    state_.callback = nullptr;
++    return WEBRTC_VIDEO_CODEC_OK;
++  }
++  const char* ImplementationName() const override { return "CountingDecoder"; }
++
++ private:
++  DecoderState& state_;
++};
++
++class Callback final : public DecodedImageCallback {
++ public:
++  int32_t Decoded(VideoFrame&) override { return 0; }
++};
++
++EncodedImage SingleLayer() {
++  EncodedImage image;
++  image.SetEncodedData(EncodedImageBuffer::Create(8));
++  image.SetSpatialIndex(0);
++  image.SetSpatialLayerFrameSize(0, 8);
++  image.SetRtpTimestamp(1234);
++  image._frameType = VideoFrameType::kVideoFrameKey;
++  return image;
++}
++
++TEST(VP9HardwareDecoderWrapperTest, ForwardsTemporalLayersAndLifecycle) {
++  DecoderState hardware;
++  auto decoder = CreateVP9HardwareDecoderWrapper(
++      std::make_unique<CountingDecoder>(hardware));
++  VideoDecoder::Settings settings;
++  Callback callback;
++  EXPECT_TRUE(decoder->Configure(settings));
++  EXPECT_EQ(decoder->RegisterDecodeCompleteCallback(&callback), 0);
++  auto image = SingleLayer();
++  image.SetTemporalIndex(2);
++  EXPECT_EQ(decoder->Decode(image, 42), WEBRTC_VIDEO_CODEC_OK);
++  EXPECT_EQ(hardware.image, &image);
++  EXPECT_EQ(hardware.render_time_ms, 42);
++  EXPECT_EQ(hardware.callback, &callback);
++  EXPECT_TRUE(decoder->GetDecoderInfo().is_hardware_accelerated);
++  EXPECT_EQ(decoder->Release(), 0);
++  EXPECT_EQ(hardware.configurations, 1);
++  EXPECT_EQ(hardware.releases, 1);
++  EXPECT_EQ(hardware.callback, nullptr);
++}
++
++TEST(VP9HardwareDecoderWrapperTest, AcceptsOrdinaryUnlayeredInput) {
++  DecoderState hardware;
++  auto decoder = CreateVP9HardwareDecoderWrapper(
++      std::make_unique<CountingDecoder>(hardware));
++  EncodedImage image;
++  image.SetEncodedData(EncodedImageBuffer::Create(8));
++  EXPECT_EQ(decoder->Decode(image, 0), WEBRTC_VIDEO_CODEC_OK);
++  EXPECT_EQ(hardware.decodes, 1);
++}
++
++TEST(VP9HardwareDecoderWrapperTest, RejectsSpatialMetadataBeforeHardware) {
++  for (int scenario = 0; scenario < 4; ++scenario) {
++    DecoderState hardware;
++    auto decoder = CreateVP9HardwareDecoderWrapper(
++        std::make_unique<CountingDecoder>(hardware));
++    auto image = SingleLayer();
++    if (scenario == 0) {
++      image.SetSpatialIndex(1);
++    } else if (scenario == 1) {
++      image.SetSpatialIndex(1);
++      image.SetSpatialLayerFrameSize(0, 4);
++      image.SetSpatialLayerFrameSize(1, 4);
++    } else if (scenario == 2) {
++      image.SetSpatialLayerFrameSize(0, 4);
++    } else {
++      image._frameType = VideoFrameType::kVideoFrameDelta;
++      image.SetSpatialIndex(2);
++    }
++    EXPECT_EQ(decoder->Decode(image, 0), WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE);
++    EXPECT_EQ(hardware.decodes, 0);
++  }
++}
++
++TEST(VP9HardwareDecoderWrapperTest, RetriesSameSvcImageAndKeepsSoftwareActive) {
++  DecoderState hardware;
++  DecoderState software;
++  auto decoder = CreateVideoDecoderSoftwareFallbackWrapper(
++      CreateEnvironment(), std::make_unique<CountingDecoder>(software),
++      CreateVP9HardwareDecoderWrapper(std::make_unique<CountingDecoder>(hardware)));
++  VideoDecoder::Settings settings;
++  settings.set_codec_type(kVideoCodecVP9);
++  Callback callback;
++  ASSERT_TRUE(decoder->Configure(settings));
++  ASSERT_EQ(decoder->RegisterDecodeCompleteCallback(&callback), 0);
++  auto image = SingleLayer();
++  image.SetSpatialIndex(2);
++  EXPECT_EQ(decoder->Decode(image, 42), WEBRTC_VIDEO_CODEC_OK);
++  EXPECT_EQ(hardware.decodes, 0);
++  EXPECT_EQ(hardware.releases, 1);
++  EXPECT_EQ(hardware.callback, nullptr);
++  EXPECT_EQ(software.configurations, 1);
++  EXPECT_EQ(software.image, &image);
++  EXPECT_EQ(software.render_time_ms, 42);
++  EXPECT_EQ(software.callback, &callback);
++  EXPECT_FALSE(decoder->GetDecoderInfo().is_hardware_accelerated);
++  auto next = SingleLayer();
++  EXPECT_EQ(decoder->Decode(next, 43), WEBRTC_VIDEO_CODEC_OK);
++  EXPECT_EQ(hardware.decodes, 0);
++  EXPECT_EQ(software.decodes, 2);
++  EXPECT_EQ(decoder->Release(), 0);
++  EXPECT_EQ(hardware.releases, 1);
++  EXPECT_EQ(software.releases, 1);
++}
++
++TEST(VP9HardwareDecoderWrapperTest, PermanentHardwareFailureRetriesOriginalImage) {
++  DecoderState hardware;
++  hardware.result = WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
++  DecoderState software;
++  auto decoder = CreateVideoDecoderSoftwareFallbackWrapper(
++      CreateEnvironment(), std::make_unique<CountingDecoder>(software),
++      CreateVP9HardwareDecoderWrapper(std::make_unique<CountingDecoder>(hardware)));
++  VideoDecoder::Settings settings;
++  settings.set_codec_type(kVideoCodecVP9);
++  ASSERT_TRUE(decoder->Configure(settings));
++  auto image = SingleLayer();
++  EXPECT_EQ(decoder->Decode(image, 42), WEBRTC_VIDEO_CODEC_OK);
++  EXPECT_EQ(hardware.image, &image);
++  EXPECT_EQ(software.image, &image);
++  EXPECT_EQ(hardware.decodes, 1);
++  EXPECT_EQ(software.decodes, 1);
++  EXPECT_EQ(hardware.releases, 1);
++  EXPECT_EQ(decoder->Release(), 0);
++}
++
++}  // namespace
++}  // namespace webrtc
+diff --git a/sdk/objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm b/sdk/objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm
+new file mode 100644
+--- /dev/null
++++ b/sdk/objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm
+@@ -0,0 +1,137 @@
++/*
++ * Copyright 2026 The WebRTC project authors. All Rights Reserved.
++ *
++ * Use of this source code is governed by a BSD-style license
++ * that can be found in the LICENSE file in the root of the source
++ * tree. An additional intellectual property rights grant can be found
++ * in the file PATENTS. All contributing project authors may
++ * be found in the AUTHORS file in the root of the source tree.
++ */
++
++#import <Foundation/Foundation.h>
++#import <OCMock/OCMock.h>
++#import <XCTest/XCTest.h>
++
++#import "base/RTCVideoDecoder.h"
++#import "base/RTCVideoDecoderFactory.h"
++#import "sdk/objc/api/video_codec/RTCVideoDecoderVP9.h"
++#include "api/environment/environment_factory.h"
++#include "modules/video_coding/include/video_error_codes.h"
++#include "sdk/objc/native/src/objc_video_decoder_factory.h"
++#include "test/gtest.h"
++
++@interface VP9HybridProbeDecoder : NSObject <RTC_OBJC_TYPE(RTCVideoDecoder)>
++@property(nonatomic) int starts;
++@property(nonatomic) int decodes;
++@property(nonatomic) int releases;
++@end
++
++@implementation VP9HybridProbeDecoder
++- (void)setCallback:(RTCVideoDecoderCallback)callback {}
++- (NSInteger)startDecodeWithNumberOfCores:(int)numberOfCores {
++  self.starts += 1;
++  return WEBRTC_VIDEO_CODEC_OK;
++}
++- (NSInteger)releaseDecoder {
++  self.releases += 1;
++  return WEBRTC_VIDEO_CODEC_OK;
++}
++- (NSInteger)decode:(RTC_OBJC_TYPE(RTCEncodedImage) *)image
++        missingFrames:(BOOL)missingFrames
++    codecSpecificInfo:(id<RTC_OBJC_TYPE(RTCCodecSpecificInfo)>)info
++         renderTimeMs:(int64_t)renderTimeMs {
++  self.decodes += 1;
++  return WEBRTC_VIDEO_CODEC_OK;
++}
++- (NSString *)implementationName { return @"VP9HybridProbe"; }
++@end
++
++namespace {
++
++std::unique_ptr<webrtc::VideoDecoder> BuildHybrid(
++    id<RTC_OBJC_TYPE(RTCVideoDecoder)> handle,
++    const char* profile = "0") {
++  id factory = OCMProtocolMock(@protocol(RTC_OBJC_TYPE(RTCVideoDecoderFactory)));
++  RTC_OBJC_TYPE(RTCVideoCodecInfo) *info =
++      [[RTC_OBJC_TYPE(RTCVideoCodecInfo) alloc] initWithName:@"VP9" parameters:nil];
++  OCMStub([factory supportedCodecs]).andReturn(@[ info ]);
++  OCMStub([factory createDecoder:[OCMArg any]]).andReturn(handle);
++  webrtc::ObjCVideoDecoderFactory bridge(factory);
++  return bridge.Create(webrtc::CreateEnvironment(),
++                       webrtc::SdpVideoFormat("VP9", {{"profile-id", profile}}));
++}
++
++}  // namespace
++
++@interface RTCVideoDecoderVP9HybridTests : XCTestCase
++@end
++
++@implementation RTCVideoDecoderVP9HybridTests
++- (void)testPublicFactoryCreatesNativeHybrid {
++  VP9HybridProbeDecoder *hardware = [[VP9HybridProbeDecoder alloc] init];
++  auto decoder = BuildHybrid(
++      [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware]);
++  ASSERT_TRUE(decoder);
++  webrtc::VideoDecoder::Settings settings;
++  settings.set_codec_type(webrtc::kVideoCodecVP9);
++  ASSERT_TRUE(decoder->Configure(settings));
++  webrtc::EncodedImage image;
++  image.SetEncodedData(webrtc::EncodedImageBuffer::Create(8));
++  image.SetSpatialIndex(0);
++  image.SetSpatialLayerFrameSize(0, 8);
++  EXPECT_EQ(decoder->Decode(image, 0), WEBRTC_VIDEO_CODEC_OK);
++  EXPECT_EQ(hardware.starts, 1);
++  EXPECT_EQ(hardware.decodes, 1);
++  EXPECT_TRUE(decoder->GetDecoderInfo().is_hardware_accelerated);
++  EXPECT_EQ(decoder->Release(), WEBRTC_VIDEO_CODEC_OK);
++  EXPECT_EQ(hardware.releases, 1);
++}
++
++- (void)testSpatialMetadataDoesNotReachObjectiveCDecoder {
++  VP9HybridProbeDecoder *hardware = [[VP9HybridProbeDecoder alloc] init];
++  auto decoder = BuildHybrid(
++      [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware]);
++  webrtc::VideoDecoder::Settings settings;
++  settings.set_codec_type(webrtc::kVideoCodecVP9);
++  ASSERT_TRUE(decoder->Configure(settings));
++  webrtc::EncodedImage image;
++  // Invalid VP9 payload: software may reject it; the invariant is routing.
++  const uint8_t invalid[] = {0};
++  image.SetEncodedData(webrtc::EncodedImageBuffer::Create(invalid, sizeof(invalid)));
++  image.SetSpatialIndex(2);
++  image._frameType = webrtc::VideoFrameType::kVideoFrameKey;
++  decoder->Decode(image, 0);
++  EXPECT_EQ(hardware.decodes, 0);
++  EXPECT_EQ(hardware.releases, 1);
++  EXPECT_FALSE(decoder->GetDecoderInfo().is_hardware_accelerated);
++  decoder->Release();
++}
++
++- (void)testProfileTwoBypassesHardware {
++  VP9HybridProbeDecoder *hardware = [[VP9HybridProbeDecoder alloc] init];
++  auto decoder = BuildHybrid(
++      [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware], "2");
++  ASSERT_TRUE(decoder);
++  EXPECT_FALSE(decoder->GetDecoderInfo().is_hardware_accelerated);
++  EXPECT_EQ(hardware.starts, 0);
++}
++
++- (void)testHandleCannotShareHardwareBetweenStreams {
++  VP9HybridProbeDecoder *hardware = [[VP9HybridProbeDecoder alloc] init];
++  id<RTC_OBJC_TYPE(RTCVideoDecoder)> handle =
++      [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware];
++  auto first = BuildHybrid(handle);
++  auto second = BuildHybrid(handle);
++  ASSERT_TRUE(first);
++  ASSERT_TRUE(second);
++  EXPECT_TRUE(first->GetDecoderInfo().is_hardware_accelerated);
++  EXPECT_FALSE(second->GetDecoderInfo().is_hardware_accelerated);
++}
++
++- (void)testNativeHandleIsNotInvokedAsConcreteHardware {
++  auto decoder = BuildHybrid([RTC_OBJC_TYPE(RTCVideoDecoderVP9)
++      vp9DecoderWithHardwareDecoder:[RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9Decoder]]);
++  ASSERT_TRUE(decoder);
++  EXPECT_FALSE(decoder->GetDecoderInfo().is_hardware_accelerated);
++}
++@end

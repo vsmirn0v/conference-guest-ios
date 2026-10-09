@@ -1,0 +1,24 @@
+diff --git a/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm b/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm
+--- a/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm
++++ b/sdk/objc/api/video_codec/RTCVideoDecoderVP9.mm
+@@ -34,7 +34,7 @@
+ @implementation RTC_OBJC_TYPE (RTCVideoDecoderVP9HardwareBuilder)
+ 
+ - (instancetype)initWithHardwareDecoder:(id<RTC_OBJC_TYPE(RTCVideoDecoder)>)decoder {
+-  if (self = [super init]) {
++  if ((self = [super init])) {
+     _hardwareDecoder = decoder;
+   }
+   return self;
+diff --git a/sdk/objc/unittests/vp9_hybrid_factory_unittest.mm b/sdk/objc/unittests/vp9_hybrid_factory_unittest.mm
+--- a/sdk/objc/unittests/vp9_hybrid_factory_unittest.mm
++++ b/sdk/objc/unittests/vp9_hybrid_factory_unittest.mm
+@@ -73,7 +73,7 @@
+   id<RTC_OBJC_TYPE(RTCVideoDecoder)> _handle;
+ }
+ - (instancetype)initWithHandle:(id<RTC_OBJC_TYPE(RTCVideoDecoder)>)handle {
+-  if (self = [super init]) {
++  if ((self = [super init])) {
+     _handle = handle;
+   }
+   return self;

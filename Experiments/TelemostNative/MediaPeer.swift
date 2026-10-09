@@ -81,6 +81,8 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
     private let lock = NSLock()
     private(set) var frameCount = 0
     private(set) var lastFrameTimestamp: Int64 = -1
+    private var lastDimensions: (Int32, Int32) = (0, 0)
+    var receivedDimensions: (Int32, Int32) { lock.lock(); defer { lock.unlock() }; return lastDimensions }
     var receivedFrames: Int { lock.lock(); defer { lock.unlock() }; return frameCount }
     var isConnected: Bool { [.connected, .completed].contains(connection.iceConnectionState) }
 
@@ -259,7 +261,7 @@ final class MediaPeer: NSObject, LKRTCPeerConnectionDelegate, LKRTCVideoRenderer
     func setSize(_ size: CGSize) { probeLog("video-size", ["width": size.width, "height": size.height]) }
     func renderFrame(_ frame: LKRTCVideoFrame?) {
         guard let frame else { return }
-        lock.lock(); frameCount += 1; let count = frameCount; let changed = frame.timeStampNs != lastFrameTimestamp; lastFrameTimestamp = frame.timeStampNs; lock.unlock()
+        lock.lock(); frameCount += 1; let count = frameCount; let changed = frame.timeStampNs != lastFrameTimestamp; lastFrameTimestamp = frame.timeStampNs; lastDimensions = (frame.width, frame.height); lock.unlock()
         if count == 1 || count % 60 == 0 { probeLog("decoded-frame", ["count": count, "width": frame.width, "height": frame.height, "newTimestamp": changed]) }
     }
 }

@@ -49,6 +49,27 @@ import XCTest
         XCTAssertFalse(factory.createDecoder(codec) is VP9HardwareDecoder)
         #endif
     }
+    func testNativeFallbackStatusIsStickyAndDoesNotChangeMeetingPolicy() throws {
+        let fixture = try XCTUnwrap(try fixtures().first)
+        let image = try XCTUnwrap(fixture.frames.first).image(timestamp: 90_000)
+        let decoder = VP9HardwareDecoder()
+        let policy = NativeVideoDecoderPolicy.shared
+        let before = policy.snapshot
+        XCTAssertEqual(decoder.startDecode(withNumberOfCores: 2), 0)
+        decoder.setCallback { _ in }
+        let initialStatus = decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0)
+        if initialStatus == 0 {
+            // Corrupt a delta frame after a valid key frame so VideoToolbox
+            // produces a permanent decode error, without touching the meeting.
+            image.frameType = .videoFrameDelta; image.buffer = Data(repeating: 255, count: 80)
+            XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -13)
+        } else { XCTAssertEqual(initialStatus, -13) }
+        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -13)
+        XCTAssertEqual(policy.snapshot.generation, before.generation)
+        XCTAssertEqual(policy.snapshot.enabled, before.enabled)
+        XCTAssertEqual(decoder.release(), 0)
+        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -1)
+    }
     /// An opt-in acceptance gate, not a default CI assertion that this hardware
     /// supports SVC. The base-only stream isolates ordinary VP9 from the same
     /// encoder's three-spatial-layer stream, with independent reference pixels.

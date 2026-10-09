@@ -32,14 +32,24 @@ final class NativeVideoDecoderFactory: NSObject, LKRTCVideoDecoderFactory {
     func createDecoder(_ info: LKRTCVideoCodecInfo) -> (any LKRTCVideoDecoder)? {
         let policy = NativeVideoDecoderPolicy.shared.snapshot
         guard info.name == "VP9", (info.parameters["profile-id"] ?? "0") == "0",
-              policy.enabled, VP9HardwareDecoder.available else { return base.createDecoder(info) }
-        let decoder = VP9HardwareDecoder { NativeVideoDecoderPolicy.shared.fallBack(generation: policy.generation) }
+              VP9HardwareDecoder.available else { return base.createDecoder(info) }
+        let decoder: VP9HardwareDecoder
+        let result: any LKRTCVideoDecoder
+        if NativeVP9Hybrid.available {
+            decoder = VP9HardwareDecoder()
+            guard let hybrid = NativeVP9Hybrid.make(hardware: decoder) else { return base.createDecoder(info) }
+            result = hybrid
+        } else {
+            guard policy.enabled else { return base.createDecoder(info) }
+            decoder = VP9HardwareDecoder { NativeVideoDecoderPolicy.shared.fallBack(generation: policy.generation) }
+            result = decoder
+        }
         #if DEBUG
         Self.registryLock.lock()
         Self.decoders.removeAll { $0.value == nil }; Self.decoders.append(WeakDecoder(decoder))
         Self.registryLock.unlock()
         #endif
-        return decoder
+        return result
     }
     #if DEBUG
     private final class WeakDecoder {

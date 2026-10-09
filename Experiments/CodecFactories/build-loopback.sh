@@ -13,6 +13,7 @@ xcrun --sdk macosx swiftc -swift-version 5 -D DEBUG -parse-as-library -O \
   "$experiment_dir/../../RockNRoll/NativeRTC/VideoToolboxVP9Session.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/VP9HardwareDecoder.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/NativeVideoDecoderFactory.swift" \
+  "$experiment_dir/../../RockNRoll/NativeRTC/NativeVP9Hybrid.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/DecoderFactoryOverride.swift" \
   "$experiment_dir/../TelemostNative/Bootstrap.swift" \
   "$experiment_dir/../TelemostNative/MediaPeer.swift" \

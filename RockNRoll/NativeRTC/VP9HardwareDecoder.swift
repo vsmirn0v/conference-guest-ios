@@ -7,7 +7,8 @@ import LiveKitWebRTC
 final class VP9HardwareDecoder: NSObject, LKRTCVideoDecoder {
     static var available: Bool { VideoToolboxVP9Session.available }
     private let lock = NSRecursiveLock()
-    private let onFailure: () -> Void
+    private let onFailure: (() -> Void)?
+    private var failureStatus: Int { onFailure == nil ? -13 : -1 }
     private var callback: ((LKRTCVideoFrame) -> Void)?
     private let core = VideoToolboxVP9Session()
     private var started = false
@@ -26,6 +27,9 @@ final class VP9HardwareDecoder: NSObject, LKRTCVideoDecoder {
     #endif
 
     init(onFailure: @escaping () -> Void) { self.onFailure = onFailure }
+    /// Used only behind the matched framework's native fallback wrapper.
+    /// A permanent hardware failure retries this stream in libvpx (-13).
+    override init() { onFailure = nil; super.init() }
     func implementationName() -> String { "VideoToolbox VP9" }
     func setCallback(_ callback: @escaping (LKRTCVideoFrame) -> Void) {
         lock.lock(); self.callback = callback; lock.unlock()
@@ -41,7 +45,9 @@ final class VP9HardwareDecoder: NSObject, LKRTCVideoDecoder {
 
     func decode(_ image: LKRTCEncodedImage, missingFrames: Bool, codecSpecificInfo info: (any LKRTCCodecSpecificInfo)?, renderTimeMs: Int64) -> Int {
         lock.lock()
-        guard started, !failed, !image.buffer.isEmpty, image.buffer.count <= 16_777_216 else { lock.unlock(); return -1 }
+        guard started else { lock.unlock(); return -1 }
+        guard !failed else { let status = failureStatus; lock.unlock(); return status }
+        guard !image.buffer.isEmpty, image.buffer.count <= 16_777_216 else { lock.unlock(); return -1 }
         let pixels: CVPixelBuffer?
         switch core.decode(image.buffer, keyFrame: image.frameType == .videoFrameKey, timestamp: image.timeStamp) {
         case .waitingForKeyFrame: lock.unlock(); return -1
@@ -67,6 +73,7 @@ final class VP9HardwareDecoder: NSObject, LKRTCVideoDecoder {
     // Called with the lock held. Notify after unlocking to allow recovery to
     // release this decoder without deadlocking. Only one fallback per instance.
     private func fail() -> Int {
-        failed = true; core.retire(); lock.unlock(); onFailure(); return -1
+        failed = true; core.retire(); let status = failureStatus
+        lock.unlock(); onFailure?(); return status
     }
 }

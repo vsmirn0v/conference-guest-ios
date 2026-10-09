@@ -16,4 +16,5 @@ xcrun --sdk macosx swiftc -swift-version 5 -D DEBUG -parse-as-library -O \
   "$experiment_dir/../../RockNRoll/NativeRTC/VideoToolboxVP9Session.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/VP9HardwareDecoder.swift" \
   "$experiment_dir/../../RockNRoll/NativeRTC/NativeVideoDecoderFactory.swift" \
+  "$experiment_dir/../../RockNRoll/NativeRTC/NativeVP9Hybrid.swift" \
   -o "$output_dir/TrueConfServerProbe"

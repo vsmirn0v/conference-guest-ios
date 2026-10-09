@@ -21,6 +21,7 @@
 		07DC662E323F7A0BEF5ABD97 /* LocalizationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 014F1BB5CA2AB0F777D109C3 /* LocalizationUITests.swift */; };
 		08245B21B07D8A02CAB118A4 /* CallControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0DDC3D21920474CDC247639 /* CallControls.swift */; };
 		086FDEF144F26DCA3D72318D /* TrueConfRoster.swift in Sources */ = {isa = PBXBuildFile; fileRef = E69A9E82475DFFC65E35C5CB /* TrueConfRoster.swift */; };
+		092B7B9080A7ECC24CA64E1A /* NativeVP9Hybrid.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B66353F1722F743018414CE /* NativeVP9Hybrid.swift */; };
 		0ABE8A6E964F738D6B1C74B5 /* MeetingWebsitePresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7B28F52B13A50B0278FC5F1 /* MeetingWebsitePresenter.swift */; };
 		0B3817F1C60F1284D3F99EBD /* MeetingRecording.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DE19440BEE492AE93AE4062 /* MeetingRecording.swift */; };
 		0B8DB92453A275822334C6F9 /* CallPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26E84EDB6C185E0A79E26B59 /* CallPresentation.swift */; };
@@ -384,6 +385,7 @@
 		49E8939A9D93D27C2352C20B /* GuestStreamViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestStreamViews.swift; sourceTree = "<group>"; };
 		4A211F5228D4E2A2C7354A92 /* NativeRTCPeer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRTCPeer.swift; sourceTree = "<group>"; };
 		4B250F182880CE4EB00EB820 /* GuestVideoFrameTap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestVideoFrameTap.swift; sourceTree = "<group>"; };
+		4B66353F1722F743018414CE /* NativeVP9Hybrid.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeVP9Hybrid.swift; sourceTree = "<group>"; };
 		4C049BADA8D8CC43635B8F59 /* AudioCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCoordinator.swift; sourceTree = "<group>"; };
 		4C4CA635B347F09002064FE5 /* VideoSubscriptionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoSubscriptionCoordinatorTests.swift; sourceTree = "<group>"; };
 		4CA55617AFA3B22DCC659978 /* MeetingPresentationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingPresentationUITests.swift; sourceTree = "<group>"; };
@@ -971,6 +973,7 @@
 				4A211F5228D4E2A2C7354A92 /* NativeRTCPeer.swift */,
 				1A5345E4BCE3205566821E30 /* NativeScreenSender.swift */,
 				C1BE2AF3B26609A47AD2110A /* NativeVideoDecoderFactory.swift */,
+				4B66353F1722F743018414CE /* NativeVP9Hybrid.swift */,
 				098E0E3EA09CBF3FA13E459B /* VideoToolboxVP9Session.swift */,
 				207D787140CBEE260C4DAD74 /* VP9HardwareDecoder.swift */,
 				1CD93C5204E59FE3F8D62405 /* VP9VideoFormat.swift */,
@@ -1318,6 +1321,7 @@
 				D329CBF5AC5560CB8BF6DCE0 /* NativeRTCError.swift in Sources */,
 				D5E80A211A52A79A54C6CC9C /* NativeRTCPeer.swift in Sources */,
 				4D31747DA8AECBE564577A16 /* NativeScreenSender.swift in Sources */,
+				092B7B9080A7ECC24CA64E1A /* NativeVP9Hybrid.swift in Sources */,
 				54973712DAEDDAC83D419B1D /* NativeVideoDecoderFactory.swift in Sources */,
 				81ECC8E92E1CA9FAA30A9B6F /* NativeVideoPixelBuffer.swift in Sources */,
 				3BB94F45FBCB124E6CCAE49E /* OutgoingRoomExperiment.swift in Sources */,
