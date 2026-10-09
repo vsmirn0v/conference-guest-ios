@@ -36,6 +36,12 @@ decoder failure and requires actual VP9/libvpx frames after recovery. Repeated
 meeting replacement, competing calls, system PiP and LiveKit full recovery still
 need live qualification before enabling these new paths in Release.
 
+Current qualification: single-layer guest VP9 (`L1T3`) and forced software
+recovery pass on Mac and iPhone. The normal browser's multilayer `L3T3_KEY`
+stream fails hardware qualification. Keep this experiment disabled for shipping
+until layered stream handling is fixed and qualified. See
+`docs/codec-improvements-2026-10-09.md` for results and limits.
+
 The VideoToolbox packet/session implementation is shared with the already
 qualified native receiving adapter. It requires a hardware session and verifies
 the actual hardware property; the generic WebRTC statistics flag can remain

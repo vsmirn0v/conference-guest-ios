@@ -1,0 +1,328 @@
+{
+  "date": "2026-10-09",
+  "sourceCommit": "b85094d9e2d15d300fb3248f3b9e8fdd675a59a0",
+  "build": "Debug; decoder override opt-in; excluded from Release",
+  "mac": {
+    "hardware": "Apple M4",
+    "os": "macOS 27.0.1",
+    "method": "User-approved signed development app; live Debug diagnostics via debugger; XCTest wrapper launch rejected",
+    "camera": [
+      {
+        "encoderImplementation": "VideoToolbox",
+        "frameHeight": 1920,
+        "framesEncoded": 835,
+        "framesPerSecond": 30,
+        "frameWidth": 1080,
+        "kind": "video",
+        "mimeType": "video/H264",
+        "powerEfficientEncoder": true,
+        "type": "outbound-rtp"
+      },
+      {
+        "kind": "audio",
+        "mimeType": "audio/opus",
+        "totalAudioEnergy": 76.93874346220312,
+        "type": "inbound-rtp"
+      },
+      {
+        "decoderImplementation": "libvpx",
+        "frameHeight": 720,
+        "framesDecoded": 5687,
+        "framesPerSecond": 20,
+        "frameWidth": 1280,
+        "kind": "video",
+        "mimeType": "video/VP9",
+        "powerEfficientDecoder": false,
+        "type": "inbound-rtp"
+      }
+    ],
+    "presenter": [
+      {
+        "encoderImplementation": "VideoToolbox",
+        "framesEncoded": 3855,
+        "kind": "video",
+        "mimeType": "video/H264",
+        "powerEfficientEncoder": true,
+        "type": "outbound-rtp"
+      },
+      {
+        "encoderImplementation": "VideoToolbox",
+        "frameHeight": 720,
+        "framesEncoded": 20,
+        "framesPerSecond": 1,
+        "frameWidth": 1280,
+        "kind": "video",
+        "mimeType": "video/H264",
+        "powerEfficientEncoder": true,
+        "type": "outbound-rtp"
+      },
+      {
+        "decoderImplementation": "libvpx",
+        "frameHeight": 720,
+        "framesDecoded": 9536,
+        "framesPerSecond": 20,
+        "frameWidth": 1280,
+        "kind": "video",
+        "mimeType": "video/VP9",
+        "powerEfficientDecoder": false,
+        "type": "inbound-rtp"
+      },
+      {
+        "kind": "audio",
+        "mimeType": "audio/opus",
+        "totalAudioEnergy": 128.7770192689787,
+        "type": "inbound-rtp"
+      }
+    ],
+    "singleLayerVP9": {
+      "hardware": [
+        {
+          "failed": false,
+          "hardwareFrames": 12,
+          "verifiedHardwareSession": true
+        }
+      ],
+      "hardwareVerified": true,
+      "softwareRecoveryVerified": true
+    },
+    "singleLayerRecovery": [
+      {
+        "kind": "audio",
+        "mimeType": "audio/opus",
+        "totalAudioEnergy": 0.15733145075535887,
+        "type": "inbound-rtp"
+      },
+      {
+        "decoderImplementation": "libvpx",
+        "frameHeight": 720,
+        "framesDecoded": 11,
+        "framesPerSecond": 18,
+        "frameWidth": 1280,
+        "kind": "video",
+        "mimeType": "video/VP9",
+        "powerEfficientDecoder": false,
+        "type": "inbound-rtp"
+      }
+    ],
+    "multilayerVP9": {
+      "qualificationPassed": false,
+      "initialHardwareFrames": 1,
+      "initialWidth": 320,
+      "initialHeight": 180,
+      "nextRTCFrameWidth": 1280,
+      "nextRTCFrameHeight": 720,
+      "outputCallbackStatus": -12909,
+      "error": "kVTVideoDecoderBadDataErr",
+      "cause": "Layered stream handling is implicated; precise bitstream/session cause not established"
+    }
+  },
+  "iphone": {
+    "hardware": "iPhone 17 Pro Max",
+    "os": "iOS 27.0.1",
+    "method": "Signed development build; physical XCTest",
+    "singleLayerVP9": {
+      "qualificationPassed": true,
+      "hardwareFrames": 10,
+      "verifiedHardwareSession": true,
+      "recoveryCodec": "video/VP9",
+      "recoveryDecoder": "libvpx",
+      "recoveryFrames": 11,
+      "recoveryAudioEnergy": 0.2272671953734468,
+      "testSeconds": 7.94
+    },
+    "multilayerVP9": {
+      "qualificationPassed": false,
+      "testSeconds": 50.499,
+      "hardwareEvidenceAtAssertion": []
+    },
+    "hardwareReferenceFrames": {
+      "exactFrames": 16,
+      "passedTests": 2,
+      "expectedSkips": 1
+    },
+    "publishingHoldFallbackTestSeconds": 49.233,
+    "publishing": {
+      "GUEST_CODEC": [
+        {
+          "encoderImplementation": "VideoToolbox",
+          "frameHeight": 1920,
+          "framesEncoded": 181,
+          "framesPerSecond": 30,
+          "frameWidth": 1080,
+          "kind": "video",
+          "mimeType": "video/H264",
+          "powerEfficientEncoder": true,
+          "type": "outbound-rtp"
+        },
+        {
+          "decoderImplementation": "VideoToolbox VP9",
+          "frameHeight": 720,
+          "framesDecoded": 115,
+          "framesPerSecond": 20,
+          "frameWidth": 1280,
+          "kind": "video",
+          "mimeType": "video/VP9",
+          "powerEfficientDecoder": false,
+          "type": "inbound-rtp"
+        },
+        {
+          "kind": "audio",
+          "mimeType": "audio/opus",
+          "totalAudioEnergy": 1.4379725972136008,
+          "type": "inbound-rtp"
+        }
+      ],
+      "GUEST_ENERGY_CODEC": [
+        {
+          "encoderImplementation": "VideoToolbox",
+          "frameHeight": 1920,
+          "framesEncoded": 228,
+          "framesPerSecond": 15,
+          "frameWidth": 1080,
+          "kind": "video",
+          "mimeType": "video/H264",
+          "powerEfficientEncoder": true,
+          "type": "outbound-rtp"
+        },
+        {
+          "kind": "audio",
+          "mimeType": "audio/opus",
+          "totalAudioEnergy": 2.224729079576402,
+          "type": "inbound-rtp"
+        },
+        {
+          "decoderImplementation": "VideoToolbox VP9",
+          "frameHeight": 720,
+          "framesDecoded": 176,
+          "framesPerSecond": 20,
+          "frameWidth": 1280,
+          "kind": "video",
+          "mimeType": "video/VP9",
+          "powerEfficientDecoder": false,
+          "type": "inbound-rtp"
+        }
+      ],
+      "GUEST_PRESENTER_CODEC": [
+        {
+          "encoderImplementation": "VideoToolbox",
+          "framesEncoded": 234,
+          "kind": "video",
+          "mimeType": "video/H264",
+          "powerEfficientEncoder": true,
+          "type": "outbound-rtp"
+        },
+        {
+          "encoderImplementation": "VideoToolbox",
+          "frameHeight": 720,
+          "framesEncoded": 64,
+          "framesPerSecond": 15,
+          "frameWidth": 1280,
+          "kind": "video",
+          "mimeType": "video/H264",
+          "powerEfficientEncoder": true,
+          "type": "outbound-rtp"
+        },
+        {
+          "kind": "audio",
+          "mimeType": "audio/opus",
+          "totalAudioEnergy": 4.175455086584234,
+          "type": "inbound-rtp"
+        },
+        {
+          "decoderImplementation": "VideoToolbox VP9",
+          "frameHeight": 720,
+          "framesDecoded": 305,
+          "framesPerSecond": 20,
+          "frameWidth": 1280,
+          "kind": "video",
+          "mimeType": "video/VP9",
+          "powerEfficientDecoder": false,
+          "type": "inbound-rtp"
+        }
+      ],
+      "GUEST_RECOVERED_CODEC": [
+        {
+          "encoderImplementation": "VideoToolbox",
+          "frameHeight": 1920,
+          "framesEncoded": 241,
+          "framesPerSecond": 30,
+          "frameWidth": 1080,
+          "kind": "video",
+          "mimeType": "video/H264",
+          "powerEfficientEncoder": true,
+          "type": "outbound-rtp"
+        },
+        {
+          "kind": "audio",
+          "mimeType": "audio/opus",
+          "totalAudioEnergy": 2.0972827377954446,
+          "type": "inbound-rtp"
+        },
+        {
+          "decoderImplementation": "VideoToolbox VP9",
+          "frameHeight": 720,
+          "framesDecoded": 163,
+          "framesPerSecond": 20,
+          "frameWidth": 1280,
+          "kind": "video",
+          "mimeType": "video/VP9",
+          "powerEfficientDecoder": false,
+          "type": "inbound-rtp"
+        }
+      ],
+      "GUEST_FALLBACK_CODEC": [
+        {
+          "kind": "audio",
+          "mimeType": "audio/opus",
+          "totalAudioEnergy": 2.2957199652287117,
+          "type": "inbound-rtp"
+        },
+        {
+          "decoderImplementation": "VideoToolbox VP9",
+          "frameHeight": 720,
+          "framesDecoded": 182,
+          "framesPerSecond": 21,
+          "frameWidth": 1280,
+          "kind": "video",
+          "mimeType": "video/VP9",
+          "powerEfficientDecoder": false,
+          "type": "inbound-rtp"
+        },
+        {
+          "encoderImplementation": "libvpx",
+          "frameHeight": 320,
+          "framesEncoded": 141,
+          "framesPerSecond": 15,
+          "frameWidth": 180,
+          "kind": "video",
+          "mimeType": "video/VP8",
+          "powerEfficientEncoder": false,
+          "type": "outbound-rtp"
+        },
+        {
+          "encoderImplementation": "libvpx",
+          "framesEncoded": 5,
+          "kind": "video",
+          "mimeType": "video/VP8",
+          "powerEfficientEncoder": false,
+          "type": "outbound-rtp"
+        },
+        {
+          "encoderImplementation": "libvpx",
+          "framesEncoded": 5,
+          "kind": "video",
+          "mimeType": "video/VP8",
+          "powerEfficientEncoder": false,
+          "type": "outbound-rtp"
+        }
+      ]
+    }
+  },
+  "limits": [
+    "Single spatial layer L1T3 passed; normal L3T3_KEY failed.",
+    "Hardware session property verifies VP9 hardware use; generic WebRTC powerEfficientDecoder remains false.",
+    "Hold is automated test seam; not a real competing call.",
+    "No measured battery savings or end-to-end latency improvement.",
+    "LiveKit full recovery, rapid replacements and PiP remain unqualified for the new override."
+  ]
+}
