@@ -39,6 +39,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private var videoPublisher = RoomVideoPublisher()
     private let cameraPublication = CameraPublicationCoordinator<LocalTrackPublication>()
     private var configuredRoomOptions = RoomMediaPolicy.options
+    private var cameraQuality: CameraQualityMonitor?
+    private var cameraOutput: CameraOutputProcessor?
     private var studio = StudioModel(audioControl: .fullProcessing, preferences: .standard)
     private var microphoneProbe: RoomMicrophoneProbe?
     private var studioAudio = StudioAudioUpdates()
@@ -453,7 +455,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         }
     }
 
-    /// Serialize the first Mac publication without altering SDK frame rotation.
+    /// Serialize the first publication without altering SDK frame rotation.
     /// Existing publications retain the SDK's ordinary mute/unmute path.
     private func publishCamera(enabled: Bool, in room: Room,
                                options: VideoPublishOptions) async throws -> LocalTrackPublication? {
@@ -471,33 +473,65 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                                            preferredFormat: plan?.format ?? defaults.preferredFormat,
                                            dimensions: plan.map { Dimensions(width: $0.rawOutput.width, height: $0.rawOutput.height) } ?? defaults.dimensions,
                                            fps: plan?.captureFPS ?? defaults.fps)
-        let reportStatistics = configuredRoomOptions.reportRemoteTrackStatistics
-        guard ProcessInfo.processInfo.isiOSAppOnMac else {
-            return try await room.localParticipant.setCamera(enabled: enabled, captureOptions: capture, publishOptions: options)
-        }
         return try await cameraPublication.set(enabled: enabled, isCurrent: { [weak self] in
             guard let self, self.room === room, !self.leaveRequested else { return false }
             return enabled == (self.cameraIntentOn && !self.isHeld && !self.receptionPaused)
         }, hasPublication: {
             room.localParticipant.firstCameraVideoTrack != nil
         }, update: { enabled in
-            try await room.localParticipant.setCamera(enabled: enabled, publishOptions: options)
+            let publication = try await room.localParticipant.setCamera(enabled: enabled, publishOptions: options)
+            if enabled, let track = publication?.track as? LocalVideoTrack { self.configureCameraQuality(track, in: room) }
+            else { self.cameraQuality = nil }
+            return publication
         }, create: { @MainActor [weak self] in
             guard let self else { throw CancellationError() }
+            let processor = CameraOutputProcessor()
             let track = await LocalVideoTrack.createCameraTrack(options: capture,
-                                                               reportStatistics: reportStatistics)
+                                                               reportStatistics: true, processor: processor)
             try Task.checkCancellation()
             guard self.room === room, !self.leaveRequested, self.cameraIntentOn, !self.isHeld, !self.receptionPaused else {
                 throw CancellationError()
             }
+            if let capturer = track.capturer as? CameraCapturer { CameraBackgroundAccess.configure(capturer.captureSession) }
+            self.cameraOutput = processor
+            self.configureCameraQuality(track, in: room)
             let publication = try await room.localParticipant.publish(videoTrack: track, options: options)
             if Task.isCancelled || self.room !== room || self.leaveRequested || !self.cameraIntentOn || self.isHeld || self.receptionPaused {
                 // A stop or room replacement can arrive during negotiation.
                 try? await room.localParticipant.unpublish(publication: publication)
                 throw CancellationError()
             }
+            if let quality = self.cameraQuality { quality.onChange?(quality.profile) }
             return publication
         })
+    }
+
+    private func configureCameraQuality(_ track: LocalVideoTrack, in room: Room) {
+        guard self.room === room, let capturer = track.capturer as? CameraCapturer else { return }
+        let output = (track.processor as? CameraOutputProcessor) ?? CameraOutputProcessor()
+        track.processor = output; cameraOutput = output
+        let quality = CameraQualityMonitor(); cameraQuality = quality
+        output.setProfile(quality.profile)
+        quality.onChange = { [weak output, weak capturer] profile in
+            output?.setProfile(profile)
+            if let device = capturer?.device,
+               let fps = CameraCaptureRate.supported(profile.fps, ranges: device.activeFormat.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate }) {
+                do {
+                    try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
+                    device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(fps))
+                    device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(fps))
+                } catch { /* Processor still caps frames at the requested cadence. */ }
+            }
+        }
+        quality.start { [weak self, weak room, weak track] in
+            guard let self, let room, let track, self.room === room, !self.leaveRequested,
+                  self.cameraIntentOn, !self.isHeld, !track.isMuted,
+                  room.localParticipant.firstCameraVideoTrack === track else { return nil }
+            guard self.room === room, !self.leaveRequested, self.cameraIntentOn, !self.isHeld,
+                  room.localParticipant.firstCameraVideoTrack === track, let stats = track.statistics else { return nil }
+            return CameraUplinkStatistics.sample(stats)
+        }
+        quality.onChange?(quality.profile)
     }
 
     private func setScreenShare(_ enabled: Bool) {
@@ -558,6 +592,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private func finish(failed: Bool) {
         guard hasJoinStarted else { return }
         cameraPublication.cancel()
+        cameraQuality = nil; cameraOutput = nil
         #if DEBUG
         VideoDecoderFactoryExperiment.shared.end(token: decoderExperimentToken)
         decoderExperimentToken = nil

@@ -258,7 +258,8 @@ final class NativeConferenceEngine: CallEngine {
             buttonsVisibility: .allVisible,
             inviteButton: nil,
             screenShareExtensionIdentifier: Bundle.main.bundleIdentifier.map { "\($0).guestbroadcast" },
-            userNameService: identity
+            userNameService: identity,
+            featureFlags: GuestCameraCapabilities.flags
         )
         try Jazz.initialize(
             conferenceAuthorizationType: .jazzToken(tokenProvider: tokenProvider),

@@ -52,7 +52,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     private(set) var videoTrack: LKRTCVideoTrack?
     private var camera: LKRTCCameraVideoCapturer?
     private var cameraFrameDelegate: NativeCameraFrameDelegate?
-    @MainActor private var cameraEnergySubscription: AnyCancellable?
+    @MainActor private var cameraQuality: CameraQualityMonitor?
     @MainActor private var cameraSource: LKRTCVideoSource?
     private var cameraPosition: AVCaptureDevice.Position
     @MainActor var preferredCameraDevice: AVCaptureDevice?
@@ -250,7 +250,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         guard !closed || !enabled else { throw CancellationError() }
         guard enabled != (camera != nil) else { return }
         if !enabled {
-            cameraEnergySubscription = nil; cameraSource = nil
+            cameraQuality = nil; cameraSource = nil
             videoTrack = nil; updateVideoSender(); captureDevice = nil
             let old = camera; camera = nil
             let oldDelegate = cameraFrameDelegate; cameraFrameDelegate = nil
@@ -270,14 +270,20 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         let source = factory.videoSource()
         let delegate = NativeCameraFrameDelegate(downstream: source)
         let capturer = LKRTCCameraVideoCapturer(delegate: delegate)
+        CameraBackgroundAccess.configure(capturer.captureSession)
         cameraFrameDelegate = delegate
         camera = capturer; captureDevice = device
+        cameraSource = source
+        let quality = CameraQualityMonitor()
+        cameraQuality = quality
+        let initial = CameraQualityPolicy.bounded(CMVideoFormatDescriptionGetDimensions(format.formatDescription), maximum: quality.profile.maximum)
+        source.adaptOutputFormat(toWidth: initial.width, height: initial.height, fps: Int32(quality.profile.fps))
         do {
             try await withCheckedThrowingContinuation { (completion: CheckedContinuation<Void, Error>) in
                 capturer.startCapture(with: device, format: format, fps: fps) { if let error = $0 { completion.resume(throwing: error) } else { completion.resume() } }
             }
         } catch {
-            if camera === capturer { camera = nil; captureDevice = nil; cameraFrameDelegate = nil }
+            if camera === capturer { camera = nil; captureDevice = nil; cameraFrameDelegate = nil; cameraSource = nil; cameraQuality = nil }
             await withCheckedContinuation { completion in capturer.stopCapture { completion.resume() } }
             throw error
         }
@@ -286,7 +292,6 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
             throw CancellationError()
         }
         videoTrack = factory.videoTrack(with: source, trackId: "camera")
-        cameraSource = source
         configureCameraCadence(capturer: capturer, device: device)
         updateVideoSender()
     }
@@ -303,15 +308,17 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         } ?? formats.first
     }
     @MainActor private func configureCameraCadence(capturer: LKRTCCameraVideoCapturer, device: AVCaptureDevice) {
-        cameraEnergySubscription = MediaEnergyBudget.shared.$pressure.removeDuplicates().sink { [weak self, weak capturer] pressure in
+        let quality = cameraQuality ?? CameraQualityMonitor()
+        cameraQuality = quality
+        quality.onChange = { [weak self, weak capturer] profile in
             Task { @MainActor [weak self, weak capturer] in
                 guard let self, let capturer, self.camera === capturer,
                       self.captureDevice?.uniqueID == device.uniqueID, !self.closed else { return }
-                let fps = pressure == .normal ? 24 : pressure == .constrained ? 15 : 10
+                let fps = profile.fps
                 guard let rate = CameraCaptureRate.supported(fps,
                     ranges: device.activeFormat.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate }) else { return }
                 let raw = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
-                let size = ProcessInfo.processInfo.isiOSAppOnMac ? MacCameraCapturePlan.bounded(raw) : raw
+                let size = CameraQualityPolicy.bounded(raw, maximum: profile.maximum)
                 // Adapt cadence using the selected sensor's full dimensions.
                 // A fixed landscape request crops cameras with a different aspect.
                 self.cameraSource?.adaptOutputFormat(toWidth: size.width, height: size.height, fps: Int32(fps))
@@ -322,6 +329,23 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
                 } catch { /* Capture continues at its previously accepted rate. */ }
             }
         }
+        quality.onChange?(quality.profile)
+        quality.start { [weak self, weak capturer] in
+            guard let self, let capturer, self.camera === capturer, !self.closed, self.connection.connectionState == .connected,
+                  self.videoTransceiver?.sender.track?.trackId == self.videoTrack?.trackId,
+                  self.topology != .composite || self.presentationTrack == nil,
+                  let mid = self.videoTransceiver?.mid, self.videoTrack?.isEnabled == true else { return nil }
+            let report: LKRTCStatisticsReport = await withCheckedContinuation { completion in
+                self.connection.statistics { completion.resume(returning: $0) }
+            }
+            guard self.camera === capturer, !self.closed, self.connection.connectionState == .connected,
+                  self.videoTransceiver?.sender.track?.trackId == self.videoTrack?.trackId,
+                  self.topology != .composite || self.presentationTrack == nil,
+                  self.videoTransceiver?.mid == mid else { return nil }
+            return CameraUplinkStatistics.sample(records: report.statistics.values.map {
+                .init(id: $0.id, type: $0.type, timestamp: $0.timestamp_us, values: $0.values)
+            }, cameraMID: mid)
+        }
     }
     @MainActor func selectCamera(_ device: AVCaptureDevice) async throws {
         guard !closed else { throw CancellationError() }
@@ -331,12 +355,16 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         guard old.uniqueID != device.uniqueID else { return }
         guard let format = Self.cameraFormat(for: device) else { preferredCameraDevice = previousSelection; throw NativeRTCError.invalidResponse }
         let oldFormat = old.activeFormat
-        cameraEnergySubscription = nil
+        cameraQuality = nil
         await withCheckedContinuation { continuation in capturer.stopCapture { continuation.resume() } }
         guard !closed, camera === capturer, !Task.isCancelled else { throw CancellationError() }
         func start(_ device: AVCaptureDevice, format: AVCaptureDevice.Format) async throws {
             guard let fps = CameraCaptureRate.supported(min(24, MediaEnergyBudget.shared.cameraFPS),
                 ranges: format.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate }) else { throw NativeRTCError.invalidResponse }
+            CameraBackgroundAccess.configure(capturer.captureSession)
+            let quality = CameraQualityMonitor(); cameraQuality = quality
+            let size = CameraQualityPolicy.bounded(CMVideoFormatDescriptionGetDimensions(format.formatDescription), maximum: quality.profile.maximum)
+            cameraSource?.adaptOutputFormat(toWidth: size.width, height: size.height, fps: Int32(quality.profile.fps))
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 capturer.startCapture(with: device, format: format, fps: fps) {
                     if let error = $0 { continuation.resume(throwing: error) } else { continuation.resume() }

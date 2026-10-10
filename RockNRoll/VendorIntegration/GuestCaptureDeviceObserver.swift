@@ -83,28 +83,28 @@ enum GuestCaptureDeviceObserver {
         guard energySubscription == nil else { return }
         energySubscription = MediaEnergyBudget.shared.$pressure.removeDuplicates().sink { pressure in
             let limit = pressure == .normal ? 30 : pressure == .constrained ? 15 : 10
-            lock.lock(); fpsLimit = limit; let current = sources; lock.unlock()
-            configurationQueue.async {
-                for (key, source) in current {
-                    lock.lock()
-                    let active = sources[key]?.generation == source.generation && capturers.allObjects.contains {
-                        ObjectIdentifier($0) == key && $0.captureSession.isRunning
-                    }
-                    lock.unlock()
-                    guard active else { continue }
-                    let device = source.device
-                    let rate = supportedFPS(min(source.requestedFPS, limit), format: device.activeFormat)
-                    do {
-                        try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
-                        device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(rate))
-                        device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(rate))
-                    } catch { /* Retain the SDK's working capture settings. */ }
-                }
-            }
+            lock.lock(); fpsLimit = limit; lock.unlock()
         }
     }
     private static func supportedFPS(_ requested: Int, format: AVCaptureDevice.Format) -> Int {
         CameraCaptureRate.supported(requested, ranges: format.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate }) ?? max(1, requested)
+    }
+    static func setCadence(_ camera: RTCCameraVideoCapturer, fps: Int) {
+        let key = ObjectIdentifier(camera)
+        lock.lock(); let source = sources[key]; lock.unlock()
+        guard let source else { return }
+        configurationQueue.async { [weak camera] in
+            guard let camera else { return }
+            lock.lock(); let current = sources[key]?.generation == source.generation; lock.unlock()
+            guard current, camera.captureSession.isRunning else { return }
+            let device = source.device
+            let rate = supportedFPS(min(source.requestedFPS, fps), format: device.activeFormat)
+            do {
+                try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
+                device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(rate))
+                device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(rate))
+            } catch { /* Retain the working cadence. Source output remains capped. */ }
+        }
     }
 
     private static func register(_ capturer: RTCCameraVideoCapturer, device: AVCaptureDevice, requestedFPS: Int) {
@@ -176,12 +176,14 @@ enum GuestCaptureDeviceObserver {
             }
             register(capturer, device: selected, requestedFPS: fps)
             let expectedRevision = revision(capturer)
-            let source = (capturer.delegate as? GuestCameraFrameDelegate)?.originalDelegate as? RTCVideoSource
+            CameraBackgroundAccess.configure(capturer.captureSession)
             let observed: Completion = { error in
-                if error == nil, let plan, let source, revision(capturer) == expectedRevision {
-                    // Preserve native NV12/rotation before proportional source adaptation.
-                    source.adaptOutputFormat(toWidth: plan.rawOutput.width, height: plan.rawOutput.height,
-                        fps: Int32(supportedFPS(fps, format: selectedFormat)))
+                if error == nil, revision(capturer) == expectedRevision {
+                    // Frame forwarding adapts the actual oriented camera dimensions.
+                    // Screen-share/Presenter sources never enter this capturer hook.
+                    if let proxy = capturer.delegate as? GuestCameraFrameDelegate {
+                        setCadence(capturer, fps: proxy.requestedCadence)
+                    }
                 }
                 notify(); completion?(error)
             }

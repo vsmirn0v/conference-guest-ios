@@ -44,6 +44,27 @@ final class GuestMicrophoneProbe {
     private var observation: AnyCancellable?
     private weak var observedActivity: MicrophoneActivity?
     static func prepare() { GuestPeerRegistry.prepare() }
+    static func cameraUplink(source: RTCVideoSource) async -> CameraUplinkSample? {
+        for peer in GuestPeerRegistry.snapshot() where peer.connectionState == .connected {
+            guard let sender = peer.senders.first(where: {
+                $0.track?.kind == "video" && $0.track?.isEnabled == true &&
+                    $0.track.map { GuestCameraTrackBinding.source(source, owns: $0.trackId) } == true
+            }), sender.parameters.encodings.contains(where: { $0.isActive }),
+            let trackID = sender.track?.trackId,
+            let mid = peer.transceivers.first(where: { $0.sender.senderId == sender.senderId })?.mid else { continue }
+            let report: RTCStatisticsReport = await withCheckedContinuation { completion in
+                peer.statistics { completion.resume(returning: $0) }
+            }
+            guard peer.connectionState == .connected, sender.track?.isEnabled == true, sender.track?.trackId == trackID,
+                  GuestCameraTrackBinding.source(source, owns: trackID),
+                  sender.parameters.encodings.contains(where: { $0.isActive }),
+                  peer.transceivers.first(where: { $0.mid == mid })?.sender.senderId == sender.senderId else { return nil }
+            return CameraUplinkStatistics.sample(records: report.statistics.values.map {
+                .init(id: $0.id, type: $0.type, timestamp: $0.timestamp_us, values: $0.values)
+            }, cameraMID: mid)
+        }
+        return nil
+    }
     enum PublicationState { case retired, paused, publishing }
     static func publicationState(trackID: String) -> PublicationState {
         for peer in GuestPeerRegistry.snapshot() where peer.connectionState != .closed {

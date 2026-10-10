@@ -21,7 +21,7 @@ final class RoomMediaPolicyTests: XCTestCase {
         XCTAssertEqual(options.defaultScreenShareCaptureOptions, baseline.defaultScreenShareCaptureOptions)
         XCTAssertEqual(options.defaultAudioCaptureOptions, baseline.defaultAudioCaptureOptions)
         XCTAssertEqual(options.defaultAudioPublishOptions, baseline.defaultAudioPublishOptions)
-        XCTAssertEqual(options.suspendLocalVideoTracksInBackground, baseline.suspendLocalVideoTracksInBackground)
+        XCTAssertFalse(options.suspendLocalVideoTracksInBackground, "Supported PiP capture must not be explicitly suspended by the SDK")
     }
 
     func testCodecRejectionRetriesAutomaticallyAndSticksOnlyForThisRoom() async throws {

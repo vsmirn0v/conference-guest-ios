@@ -1,9 +1,35 @@
 import AVFoundation
+import JazzSDK
 import WebRTC
 import XCTest
 @testable import RockNRoll
 
 final class GuestCameraPublishingTests: XCTestCase {
+    func testBackgroundCameraCapabilityKeepsOneCustomPiPOwner() {
+        let flags = GuestCameraCapabilities.flags
+        XCTAssertTrue(flags.canSystemPiPUseCamera)
+        XCTAssertFalse(flags.isSystemPiPEnabled)
+        XCTAssertFalse(flags.isCallKitSupported)
+    }
+    func testGuestCameraBoundsActualPixelsBeforeMutableSDKSource() throws {
+        let receiver = FrameReceiver(), camera = RTCCameraVideoCapturer(delegate: receiver)
+        let adapter = GuestCameraFrameDelegate(camera: camera, device: nil, downstream: receiver)
+        let input = try frame(stamp: 789, matrix: kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+                              ns: 123_456, width: 1920, height: 1080)
+        for _ in 0..<3 {
+            adapter.capturer(camera, didCapture: input)
+            let output = try XCTUnwrap(receiver.lastFrame)
+            let native = try XCTUnwrap(output.buffer as? RTCCVPixelBuffer)
+            XCTAssertLessThanOrEqual(output.width, 1280); XCTAssertLessThanOrEqual(output.height, 720)
+            XCTAssertEqual(output.width * 9, output.height * 16)
+            XCTAssertEqual(CVPixelBufferGetWidth(native.pixelBuffer), Int(output.width))
+            XCTAssertEqual(CVPixelBufferGetHeight(native.pixelBuffer), Int(output.height))
+            XCTAssertEqual(output.rotation, input.rotation)
+            XCTAssertEqual(output.timeStampNs, input.timeStampNs); XCTAssertEqual(output.timeStamp, input.timeStamp)
+            XCTAssertEqual(GuestH264ColorEncoder.nativeColor(for: output), GuestH264ColorEncoder.nativeColor(for: input))
+        }
+        adapter.retire()
+    }
     func testPartialColorDescriptionCompletesOnlyAgreeingFields() {
         let source = Data(base64Encoded: "AAAAASdCAB+rQKD8gA==")!
         let color = H264ColorDescription(primaries: 1, transfer: 13, matrix: 1)
