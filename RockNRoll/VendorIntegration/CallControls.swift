@@ -508,6 +508,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.compactHeader.setSpeaker(speaker)
             self.speakingParticipant = speaker?.id
             self.updateParticipantsPanel()
+            self.updateStageMicrophoneStatus()
             if !self.focus.hidden && self.compactHeader.isHidden && hidden != self.speakerLabel.isHidden {
                 self.surface.setNeedsLayout()
             }
@@ -659,11 +660,12 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             }
         }
         stageViewport?.updatePresentation(name: name ?? L("Musician"), showInfo: true,
-            microphoneOn: microphoneOn, pinned: !automatic, watermark: presentation.watermark, zoomable: isShare,
+            microphoneOn: microphoneOn, watermark: presentation.watermark, zoomable: isShare,
             placeholderText: active ? nil : "\(name ?? L("Musician")) · \(L("Camera off"))")
         stageViewport?.updatePin(name: name ?? L("Musician"), isShare: isShare,
             pinned: !automatic, onPin: { [weak self] in self?.onPinStage?() })
         stageViewport?.setMediaActive(active)
+        updateStageMicrophoneStatus()
         layoutPresentation()
     }
 
@@ -705,6 +707,14 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         }
         speakingParticipant = speaking
         updateParticipantsPanel()
+        updateStageMicrophoneStatus()
+    }
+
+    private func updateStageMicrophoneStatus() {
+        guard let stageID else { return }
+        let microphoneOn = participantRoster.first { $0.id == stageID }?.microphoneOn ??
+            lastPresentation?.microphoneOn ?? false
+        stageViewport?.updateMicrophone(on: microphoneOn, speaking: speakingParticipant == stageID)
     }
 
     private func openParticipantsPanel() {

@@ -9,6 +9,10 @@ extension SceneDelegate {
             FloatingVideoPreference.enabled = true
         }
         if let fixture = ProcessInfo.processInfo.environment["CONFERENCE_TEST_UI_FIXTURE"] {
+            if fixture == "participant-badges" {
+                window.rootViewController = ParticipantBadgeFixture()
+                return true
+            }
             if fixture == "mac-audio" {
                 if ProcessInfo.processInfo.environment["CONFERENCE_TEST_MAC_AUDIO_VERIFY_DEFAULTS"] == "1" {
                     MacAudioLiveProbe.verifyCurrentDefaults()

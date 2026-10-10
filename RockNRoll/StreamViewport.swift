@@ -17,7 +17,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         didSet { correctedVideo?.mirrored = isCameraMirrored }
     }
     private let mediaPlaceholder = UILabel()
-    private let participantInfo = UILabel()
+    private let participantInfo = ParticipantMediaBadge()
     private let watermarkLabel = UILabel()
     private let state: StreamViewportState
     private let owner = UUID()
@@ -50,7 +50,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
          name: String, showInfo: Bool, microphoneOn: Bool, pinned: Bool,
          watermark: String?, showsPlaceholder: Bool = false,
          placeholderText: String? = nil,
-         onPin: (() -> Void)? = nil) {
+         onPin: (() -> Void)? = nil, isSpeaking: Bool = false) {
         self.video = video
         self.state = state
         super.init(frame: .zero)
@@ -132,8 +132,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             }
             addSubview(zoomControls)
             NSLayoutConstraint.activate([
-                zoomControls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-                zoomControls.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -44)
+                zoomControls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8)
             ])
             zoomVisibility.setAvailable(true)
         }
@@ -155,22 +154,18 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
 
         do {
             let label = participantInfo
-            label.font = .preferredFont(forTextStyle: .caption1)
-            label.textColor = .white
-            label.backgroundColor = UIColor.black.withAlphaComponent(0.65)
-            label.layer.cornerRadius = 6
-            label.clipsToBounds = true
             label.translatesAutoresizingMaskIntoConstraints = false
             addSubview(label)
             let bottom = label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
             infoBottom = bottom
-            label.lineBreakMode = .byTruncatingTail
-            label.accessibilityIdentifier = "Participant name"
             NSLayoutConstraint.activate([
                 label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
                 bottom,
                 label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8)
             ])
+            if zoomable {
+                zoomControls.bottomAnchor.constraint(equalTo: label.topAnchor, constant: -8).isActive = true
+            }
         }
         do {
             let label = watermarkLabel
@@ -187,8 +182,8 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             ])
         }
         updatePresentation(name: name, showInfo: showInfo, microphoneOn: microphoneOn,
-                           pinned: pinned, watermark: watermark, zoomable: zoomable,
-                           placeholderText: placeholderText)
+                           watermark: watermark, zoomable: zoomable,
+                           placeholderText: placeholderText, isSpeaking: isSpeaking)
         updateFocusAccessibility()
     }
 
@@ -197,9 +192,9 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     /// Participant metadata changes without changing the decoded stream. Keep
     /// the corrected surface and scroll state while updating its visible labels.
     func updatePresentation(name: String, showInfo: Bool, microphoneOn: Bool,
-                            pinned: Bool, watermark: String?, zoomable: Bool,
-                            placeholderText: String? = nil) {
-        participantInfo.text = "  \(name)\(microphoneOn ? "" : L(" · Mic off"))\(pinned ? L(" · Pinned") : "")  "
+                            watermark: String?, zoomable: Bool,
+                            placeholderText: String? = nil, isSpeaking: Bool = false) {
+        participantInfo.update(name: name, microphoneOn: microphoneOn, speaking: isSpeaking)
         participantInfo.isHidden = !showInfo
         mediaPlaceholder.text = placeholderText ?? name
         watermarkLabel.text = watermark
@@ -209,6 +204,10 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         if scroll.zoomScale > scroll.maximumZoomScale {
             scroll.setZoomScale(scroll.maximumZoomScale, animated: false)
         }
+    }
+
+    func updateMicrophone(on: Bool, speaking: Bool) {
+        participantInfo.updateMicrophone(on: on, speaking: speaking)
     }
 
     func updatePin(name: String, isShare: Bool, pinned: Bool, onPin: (() -> Void)?) {

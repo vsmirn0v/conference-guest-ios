@@ -83,7 +83,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let tile: UIView
         let zoom: UIScrollView
         let video: CallVideoView
-        let name: UILabel
+        let badge: ParticipantMediaBadge
         let pin: UIButton
         var viewportSize = CGSize.zero
     }
@@ -102,7 +102,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private var preservingPinDuringReconnect = false
     private var streamPinTargets: [String: PinnedStream] = [:]
     private var offeredShare: PinnedStream?
-    private var speakingLabels: [String: UILabel] = [:]
+    private var participantBadges: [String: [ParticipantMediaBadge]] = [:]
     private var speakingTiles: [String: [UIView]] = [:]
     private var tileOrder: [ObjectIdentifier: String] = [:]
     private let store: CatchUpStore
@@ -298,7 +298,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         for entry in videoTiles.values {
             entry.zoom.isAccessibilityElement = true
             entry.zoom.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
-            entry.name.alpha = focus.hidden ? 0 : 1
+            entry.badge.alpha = focus.hidden ? 0 : 1
             entry.pin.alpha = focus.hidden || (geometry.compactHeader && entry.zoom === primaryZoom) ? 0 : 1
             entry.pin.isUserInteractionEnabled = entry.pin.alpha > 0
             entry.pin.accessibilityElementsHidden = entry.pin.alpha == 0
@@ -796,7 +796,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         participantsButton.accessibilityLabel = L("Musicians, %ld", participants.count)
         participantsPanel?.update(participants.map(\.status), pinnedKey: pinnedStreamKey)
         tiles.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        speakingLabels.removeAll()
+        participantBadges.removeAll()
         speakingTiles.removeAll()
         tileOrder.removeAll()
         var streams: [(CallParticipant, CallVideoStream, CallVideoSource)] = []
@@ -990,26 +990,18 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let tile = baseTile()
         tile.accessibilityIdentifier = "camera-off." + participant.id
         tileOrder[ObjectIdentifier(tile)] = participant.id + ".camera"
-        let name = UILabel()
-        name.text = participant.name ?? L("Musician")
-        name.textColor = .white
-        name.font = .systemFont(ofSize: 16, weight: .semibold)
-        let state = UILabel()
-        state.text = participant.microphoneOn ? L("Microphone on") : L("Microphone off")
-        state.textColor = .lightGray
-        state.font = .preferredFont(forTextStyle: .caption1)
-        let id = participant.id
-        speakingLabels[id] = state
-        speakingTiles[id, default: []].append(tile)
-        let column = UIStackView(arrangedSubviews: [name, state])
-        column.axis = .vertical
-        column.spacing = 3
-        column.translatesAutoresizingMaskIntoConstraints = false
-        tile.addSubview(column)
+        let badge = ParticipantMediaBadge()
+        badge.update(name: participant.name ?? L("Musician"), microphoneOn: participant.microphoneOn,
+                     speaking: participant.isSpeaking && !isHeld)
+        participantBadges[participant.id, default: []].append(badge)
+        speakingTiles[participant.id, default: []].append(tile)
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        tile.addSubview(badge)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 14),
-            column.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -14),
-            column.centerYAnchor.constraint(equalTo: tile.centerYAnchor)
+            badge.leadingAnchor.constraint(greaterThanOrEqualTo: tile.leadingAnchor, constant: 14),
+            badge.trailingAnchor.constraint(lessThanOrEqualTo: tile.trailingAnchor, constant: -14),
+            badge.centerXAnchor.constraint(equalTo: tile.centerXAnchor),
+            badge.centerYAnchor.constraint(equalTo: tile.centerYAnchor)
         ])
         return tile
     }
@@ -1022,6 +1014,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             configureVideoTile(&cached, participant: participant, track: track,
                                isShare: isShare, primary: primary, key: key)
             videoTiles[key] = cached
+            participantBadges[participant.id, default: []].append(cached.badge)
             speakingTiles[participant.id, default: []].append(cached.tile)
             tileOrder[ObjectIdentifier(cached.tile)] = participant.id + (isShare ? ".screen" : ".camera")
             return cached.tile
@@ -1051,17 +1044,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         video.translatesAutoresizingMaskIntoConstraints = false
         zoom.addSubview(video)
         tile.addSubview(zoom)
-        let name = UILabel()
-        name.text = "  \(participant.name ?? L("Musician")) · \(isShare ? L("Screen") : L("Video")) · \(pinnedStreamKey == key ? L("Pinned") : L("Auto"))  "
-        name.textColor = .white
-        name.font = .systemFont(ofSize: 14, weight: .semibold)
-        name.backgroundColor = UIColor.black.withAlphaComponent(0.65)
-        name.layer.cornerRadius = 7
-        name.clipsToBounds = true
-        name.lineBreakMode = .byTruncatingTail
-        name.accessibilityIdentifier = "Participant name"
-        name.translatesAutoresizingMaskIntoConstraints = false
-        tile.addSubview(name)
+        let badge = ParticipantMediaBadge()
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        tile.addSubview(badge)
         let pin = UIButton(type: .system)
         pin.configuration = .tinted()
         pin.configuration?.image = UIImage(systemName: pinnedStreamKey == key ? "pin.fill" : "pin")
@@ -1079,6 +1064,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         pin.translatesAutoresizingMaskIntoConstraints = false
         tile.addSubview(pin)
         speakingTiles[participant.id, default: []].append(tile)
+        participantBadges[participant.id, default: []].append(badge)
         tileOrder[ObjectIdentifier(tile)] = participant.id + (isShare ? ".screen" : ".camera")
         NSLayoutConstraint.activate([
             zoom.leadingAnchor.constraint(equalTo: tile.leadingAnchor),
@@ -1091,15 +1077,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             video.bottomAnchor.constraint(equalTo: zoom.contentLayoutGuide.bottomAnchor),
             video.widthAnchor.constraint(equalTo: zoom.frameLayoutGuide.widthAnchor),
             video.heightAnchor.constraint(equalTo: zoom.frameLayoutGuide.heightAnchor),
-            name.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 10),
-            name.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -10),
-            name.trailingAnchor.constraint(lessThanOrEqualTo: pin.leadingAnchor, constant: -6),
+            badge.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 10),
+            badge.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -10),
+            badge.trailingAnchor.constraint(lessThanOrEqualTo: pin.leadingAnchor, constant: -6),
             pin.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -10),
             pin.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -8),
             pin.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
             pin.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
         ])
-        var entry = VideoTile(tile: tile, zoom: zoom, video: video, name: name, pin: pin)
+        var entry = VideoTile(tile: tile, zoom: zoom, video: video, badge: badge, pin: pin)
         configureVideoTile(&entry, participant: participant, track: track,
                            isShare: isShare, primary: primary, key: key)
         videoTiles[key] = entry
@@ -1112,7 +1098,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         entry.video.layoutMode = .fit
         entry.video.isMirrored = participant.isLocal && !isShare &&
             CameraPreviewPresentation.isMirrored(device: studio?.liveCaptureDevice?())
-        entry.name.text = "  \(participant.name ?? L("Musician")) · \(isShare ? L("Screen") : L("Video")) · \(pinnedStreamKey == key ? L("Pinned") : L("Auto"))  "
+        entry.badge.update(name: participant.name ?? L("Musician"), microphoneOn: participant.microphoneOn,
+                           speaking: participant.isSpeaking && !isHeld)
         entry.pin.configuration?.image = UIImage(systemName: pinnedStreamKey == key ? "pin.fill" : "pin")
         entry.pin.accessibilityLabel = pinnedStreamKey == key
             ? L("Unpin %@ %@", participant.name ?? L("Musician"), isShare ? L("screen") : L("video"))
@@ -1149,9 +1136,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             voices.first { $0.id == activeSpeaker.current?.id } ?? voices.first
         activeSpeaker.update(speaking.map { CallSpeaker(id: $0.id, name: $0.name ?? L("Musician"), isLocal: $0.isLocal) })
         for participant in snapshot.participants {
-            if let label = speakingLabels[participant.id] {
-                label.text = participant.isSpeaking ? L("Speaking") : (participant.microphoneOn ? L("Microphone on") : L("Microphone off"))
-                label.textColor = participant.isSpeaking ? .systemGreen : .lightGray
+            let speaking = participant.isSpeaking && !isHeld && speakerReceptionAvailable &&
+                !preservingPinDuringReconnect && (!participant.isLocal || isMicrophoneOn)
+            for badge in participantBadges[participant.id] ?? [] {
+                badge.updateMicrophone(on: participant.microphoneOn, speaking: speaking)
             }
             for tile in speakingTiles[participant.id] ?? [] {
                 tile.layer.borderWidth = participant.isSpeaking ? 3 : 0
@@ -1384,7 +1372,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         updateSpeakerAvailability()
     }
     private func updateSpeakerAvailability() {
-        activeSpeaker.setAvailable(speakerReceptionAvailable && !isHeld && !preservingPinDuringReconnect)
+        let available = speakerReceptionAvailable && !isHeld && !preservingPinDuringReconnect
+        activeSpeaker.setAvailable(available)
+        if !available {
+            for participant in displayedSnapshot?.participants ?? [] {
+                for badge in participantBadges[participant.id] ?? [] {
+                    badge.updateMicrophone(on: participant.microphoneOn, speaking: false)
+                }
+            }
+        }
     }
 
     func showMediaStatus(_ message: String?) {

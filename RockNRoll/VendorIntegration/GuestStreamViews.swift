@@ -209,9 +209,9 @@ final class GuestStreamViews {
             if tile.model != model {
                 renderedTiles[key] = RenderedTile(model: model, video: video, view: view)
                 view.updatePresentation(name: model.name, showInfo: model.shouldShowParticipantInfo,
-                                        microphoneOn: model.isAudioOn, pinned: model.isPinned,
+                                        microphoneOn: model.isAudioOn,
                                         watermark: watermark, zoomable: model.isSharingScreen && model.isZoomable,
-                                        placeholderText: placeholderText)
+                                        placeholderText: placeholderText, isSpeaking: model.isDominantSpeaker)
             }
             view.updatePin(name: model.name, isShare: model.isSharingScreen,
                            pinned: pinnedTarget == target, onPin: onPin)
@@ -236,7 +236,7 @@ final class GuestStreamViews {
                               showsPlaceholder: !model.isVideoOn && !model.isSharingScreen ||
                                   model.isLocal && model.isSharingScreen,
                               placeholderText: placeholderText,
-                              onPin: onPin)
+                              onPin: onPin, isSpeaking: model.isDominantSpeaker)
         view.updatePin(name: model.name, isShare: model.isSharingScreen,
                        pinned: pinnedTarget == target, onPin: onPin)
         view.setMediaActive(isActiveStream(model))

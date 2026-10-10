@@ -43,7 +43,8 @@ private final class GuestGalleryTile: UIView {
         mediaActive = item.active
         video.mirrored = item.mirrored
         viewport.updatePresentation(name: item.name, showInfo: true, microphoneOn: item.microphoneOn,
-            pinned: false, watermark: item.watermark, zoomable: false, placeholderText: L("Camera off"))
+            watermark: item.watermark, zoomable: false, placeholderText: L("Camera off"),
+            isSpeaking: item.speaking)
         viewport.updatePin(name: item.name, isShare: item.id.isShare, pinned: false, onPin: pin)
         viewport.setMediaActive(item.active)
         status.text = item.active ? L("Waiting for video…") : nil
