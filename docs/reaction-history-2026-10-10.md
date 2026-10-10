@@ -76,3 +76,9 @@ this regression on Mac and Simulator; the landscape keyboard/call-action check
 passes after the layout correction.
 
 Development evidence remains ignored under `.build/reaction-history/`.
+
+A final lifecycle regression separates the receive session's running state from
+its weak media-view root. Modern receipt continues after that root is released;
+explicit receiver stop still rejects queued events. This is covered by a focused
+regression and ships in the final build67; build66 was superseded before tester
+assignment.

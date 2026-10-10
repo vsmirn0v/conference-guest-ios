@@ -128,6 +128,19 @@ final class GuestReceivedReactionsTests: XCTestCase {
         receiver.stop()
     }
 
+    func testModernHistoryReceiptDoesNotRequireRetainingTheOldVideoRoot() {
+        var ingested = 0
+        let receiver = GuestReceivedReactions(valid: { true }, participant: { _ in nil },
+            onReaction: { _, _ in }, onEvent: { _, _ in ingested += 1 })
+        receiver.start(in: UIView()) // The media view may be released independently.
+        receiver.setTransportObserving(true, modernProtocol: true)
+        receiver.receive(.init(kind: .heart, participantID: "remote"), source: .transport, present: false)
+        XCTAssertEqual(ingested, 1)
+        receiver.stop()
+        receiver.receive(.init(kind: .heart, participantID: "remote"), source: .transport, present: false)
+        XCTAssertEqual(ingested, 1, "Explicit stop still revokes the receiver")
+    }
+
     func testVisibleOverlayMountsCardsBeforeConstrainingAndBoundsBurst() throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)

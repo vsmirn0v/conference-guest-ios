@@ -128,6 +128,7 @@ final class GuestReceivedReactions {
         let name: String?
         let isLocal: Bool
     }
+    private var running = false
     private weak var root: UIView?
     private weak var delegate: NSObject?
     private var tap: GuestReactionDelegateTap?
@@ -170,7 +171,7 @@ final class GuestReceivedReactions {
         }
     }
     func start(in root: UIView) {
-        stop(); self.root = root
+        stop(); running = true; self.root = root
         presentationWindow.setActive(UIApplication.shared.applicationState == .active)
         #if DEBUG
         Self.currentForTesting = self
@@ -234,7 +235,7 @@ final class GuestReceivedReactions {
         #endif
     }
     func receive(_ reaction: GuestReceivedReaction, source: Source = .delegate, present: Bool = true) {
-        guard valid(), root != nil, source == .transport || !preferModernProtocol else { return }
+        guard valid(), running, source == .transport || !preferModernProtocol else { return }
         let sender = participant(reaction.participantID)
         guard sender?.isLocal != true else {
             #if DEBUG
@@ -263,6 +264,7 @@ final class GuestReceivedReactions {
         generation = UUID(); tap?.invalidate(); tap = nil; delegate = nil; setObserving(transportObserving)
     }
     func stop() {
+        running = false
         presentationWindow.setActive(false)
         refreshTask?.cancel(); refreshTask = nil; root = nil; transportObserving = false; preferModernProtocol = false; detach()
         #if DEBUG
