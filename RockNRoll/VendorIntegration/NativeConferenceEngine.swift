@@ -35,6 +35,9 @@ final class NativeConferenceEngine: CallEngine {
     private var reconnectingForNetwork = false
     private var mediaConnectionConfirmed = false
     private var mediaAttemptEpoch = UUID()
+    private var connectionSubscription: AnyCancellable?
+    private var connectionTerminationReason: JazzConferenceConnectionStage.TerminationReason?
+    private var terminalEventTask: Task<Void, Never>?
     private var activeCoordinator: JazzActiveConferenceCoordinator?
     private let localSharePreview = LocalSharePreview()
     private let localPreviewReceiver = LocalSharePreviewReceiver()
@@ -71,6 +74,9 @@ final class NativeConferenceEngine: CallEngine {
     #if DEBUG
     func sendReactionForTesting(_ kind: ConferenceCore.MeetingReaction) -> Bool { reactions.send(kind) }
     func reconnectReactionsForTesting() { beginMediaReconnect(forNetwork: false) }
+    var mediaAttemptForTesting: UUID { mediaAttemptEpoch }
+    var mediaReadyForTesting: Bool { isSDKActive && mediaConnectionConfirmed && !isMediaReconnecting }
+    func terminateTransportForTesting() { JazzSession.shared.terminateActiveConference() }
     #endif
     private var studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard)
     private var studioSubscription: AnyCancellable?
@@ -328,7 +334,7 @@ final class NativeConferenceEngine: CallEngine {
                         self.updateNetworkRecoveryStatus()
                         return
                     }
-                    self.finishSession(userEnded: self.leaveRequested, event: .left)
+                    self.scheduleTerminalEvent(.left)
                     return
                 }
                 if self.networkRecovery.requiresRecovery || self.isMediaReconnecting {
@@ -468,13 +474,13 @@ final class NativeConferenceEngine: CallEngine {
 
     private func recoverAudioIfReady() {
         if networkRecovery.requiresRecovery { startNetworkRecoveryIfNeeded(); return }
-        guard !isMediaReconnecting, hasMediaJoinStarted, hasBecomeActive, isCallAudioReady,
-              let coordinator = activeCoordinator,
-              audioGate.takeRecovery() else { return }
+        guard !isMediaReconnecting, hasBecomeActive, isCallAudioReady else { return }
         if needsMediaReconnect {
+            guard audioGate.takeRecovery() else { return }
             beginMediaReconnect(forNetwork: false)
             return
         }
+        guard hasMediaJoinStarted, let coordinator = activeCoordinator, audioGate.takeRecovery() else { return }
         audio.ensureMixing()
         // Reapply reception after the system returns the audio session. The
         // provider controls its own media engine; we only restore its setting.
@@ -712,6 +718,9 @@ final class NativeConferenceEngine: CallEngine {
     }
     func join(target: JoinTarget, displayName: String) throws {
         guard finishing == nil else { throw ProviderError.teardownInProgress }
+        terminalEventTask?.cancel(); terminalEventTask = nil
+        connectionSubscription?.cancel(); connectionSubscription = nil
+        connectionTerminationReason = nil
         reactionTransport?.stop(); reactionTransport = nil
         receivedReactions?.stop(); receivedReactions = nil
         reactionsAdapter?.stop(); reactionsAdapter = nil; reactions.begin()
@@ -817,6 +826,9 @@ final class NativeConferenceEngine: CallEngine {
         pendingRoom = nil
         hasMediaJoinStarted = true
         mediaAttemptEpoch = UUID()
+        terminalEventTask?.cancel(); terminalEventTask = nil
+        connectionSubscription?.cancel(); connectionSubscription = nil
+        connectionTerminationReason = nil
         mediaConnectionConfirmed = false
         traceMediaRecovery("media-join")
         bindEvents()
@@ -1458,7 +1470,7 @@ final class NativeConferenceEngine: CallEngine {
             return controls
         }
         return JazzConferenceRepresentation(
-            connectionRepresentation: nil,
+            connectionRepresentation: connectionRepresentation(epoch: epoch, attempt: attempt),
             overlayRepresentation: overlay,
             toastsRepresentation: .custom { [weak self] publisher in
                 guard let self, self.sessionEpoch == epoch else { return UIView() }
@@ -1539,6 +1551,106 @@ final class NativeConferenceEngine: CallEngine {
             }
     }
 
+    private func connectionRepresentation(epoch: UUID, attempt: UUID) -> JazzConferenceConnectionRepresentation {
+        JazzConferenceConnectionRepresentation { [weak self] state, _, _ in
+            let view = UIView()
+            view.backgroundColor = .systemBackground
+            let progress = UIActivityIndicatorView(style: .medium)
+            progress.startAnimating()
+            let label = UILabel()
+            label.text = L("Connecting…")
+            label.font = .preferredFont(forTextStyle: .body)
+            label.adjustsFontForContentSizeCategory = true
+            label.textAlignment = .center
+            label.numberOfLines = 0
+            let cancel = UIButton(type: .system)
+            cancel.setTitle(L("Cancel"), for: .normal)
+            cancel.addAction(UIAction { [weak self] _ in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                self.leave()
+            }, for: .touchUpInside)
+            let stack = UIStackView(arrangedSubviews: [progress, label, cancel])
+            stack.axis = .vertical; stack.spacing = 16; stack.alignment = .center
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                stack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+                stack.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 24),
+                stack.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
+                cancel.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+            ])
+            guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                  self.hasJoinStarted, !self.leaveRequested, self.finishing == nil else {
+                return JazzConferenceConnectionCustomRepresentation(view: view, canOpenNextScreen: true)
+            }
+            self.connectionSubscription?.cancel()
+            self.connectionSubscription = state.$connectionStage.receive(on: DispatchQueue.main)
+                .sink { [weak self, weak label] stage in
+                    guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                          self.hasJoinStarted, self.finishing == nil else { return }
+                    label?.text = self.isSystemHeld ? L("Jam on hold") :
+                        (self.hasBecomeActive ? L("Restoring jam audio…") : L("Connecting…"))
+                    if case .terminated(let reason) = stage {
+                        // Use the delivered value: @Published emits before its backing field changes.
+                        if case .finish(let event) = self.terminationContext.resolve(.left, reason: reason) {
+                            // A real host end/kick must not be overwritten by the
+                            // later cancellation from our own transport teardown.
+                            self.finishSession(userEnded: self.leaveRequested, event: event)
+                        } else {
+                            self.connectionTerminationReason = reason
+                            self.scheduleTerminalEvent(.left)
+                        }
+                    }
+                }
+            return JazzConferenceConnectionCustomRepresentation(view: view, canOpenNextScreen: true)
+        }
+    }
+
+    private var terminationContext: GuestTerminationContext {
+        GuestTerminationContext(established: hasBecomeActive, leaving: leaveRequested,
+            rebuilding: isMediaReconnecting, recoveringNetwork: networkRecovery.requiresRecovery,
+            recoveringAudio: isSystemHeld || isAudioInterrupted || needsMediaReconnect ||
+                systemCall.isAwaitingAudioRecovery)
+    }
+
+    private func scheduleTerminalEvent(_ event: CallEvent) {
+        if event == .evicted {
+            finishSession(userEnded: false, event: .evicted)
+            return
+        }
+        terminalEventTask?.cancel()
+        let epoch = sessionEpoch, attempt = mediaAttemptEpoch
+        terminalEventTask = Task { @MainActor [weak self] in
+            // SDK phase, reason and CallKit delegates can arrive in different orders.
+            // This short coalescing turn lets the typed reason and synchronous owner
+            // state arbitrate; it is not the interruption/recovery deadline.
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                  self.hasJoinStarted, self.finishing == nil else { return }
+            self.terminalEventTask = nil
+            switch self.terminationContext.resolve(event, reason: self.connectionTerminationReason) {
+            case .ignore: break
+            case .finish(let result): self.finishSession(userEnded: self.leaveRequested, event: result)
+            case .recover:
+                self.traceMediaRecovery("transport-ended-during-recovery")
+                self.needsMediaReconnect = true
+                self.audioGate.markInterrupted()
+                self.updateConnectionGap()
+                self.onEvent?(.connecting)
+                if self.networkRecovery.requiresRecovery {
+                    self.startNetworkRecoveryIfNeeded()
+                } else {
+                    self.isAudioInterrupted = true
+                    self.catchUp.begin(.audioInterruption)
+                    self.onMediaStatus?(self.isSystemHeld ? L("Jam on hold") : L("Restoring jam audio…"))
+                    self.recoverAudioIfReady()
+                    self.scheduleUnpairedInterruptionRecovery()
+                }
+            }
+        }
+    }
+
     private func bindEvents() {
         let epoch = sessionEpoch
         let attempt = mediaAttemptEpoch
@@ -1566,7 +1678,7 @@ final class NativeConferenceEngine: CallEngine {
                   self.finishing == nil else { return }
             if let room, let active = self.activeRoom, !EventRelay.matches(room, active) { return }
             if self.isMediaReconnecting {
-                switch event { case .left, .inactive, .canceled, .failed: return; default: break }
+                switch event { case .left, .inactive, .canceled, .failed: self.scheduleTerminalEvent(event); return; default: break }
             }
             if event == .failed && self.hasBecomeActive && !self.leaveRequested {
                 self.networkRecovery.sdkReconnecting(at: ProcessInfo.processInfo.systemUptime)
@@ -1584,7 +1696,7 @@ final class NativeConferenceEngine: CallEngine {
             if self.isMediaReconnecting && (event == .active || event == .joined) { return }
             switch event {
             case .left, .inactive, .canceled, .failed, .evicted:
-                self.finishSession(userEnded: self.leaveRequested, event: event)
+                self.scheduleTerminalEvent(event)
             default: self.onEvent?(event)
             }
         }
@@ -1593,6 +1705,9 @@ final class NativeConferenceEngine: CallEngine {
     private func finishSession(userEnded: Bool, event: CallEvent) {
         endCodecPolicy()
         guard finishing == nil, hasJoinStarted else { return }
+        terminalEventTask?.cancel(); terminalEventTask = nil
+        connectionSubscription?.cancel(); connectionSubscription = nil
+        connectionTerminationReason = nil
         reactionTransport?.stop(); reactionTransport = nil
         receivedReactions?.stop(); receivedReactions = nil
         reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil

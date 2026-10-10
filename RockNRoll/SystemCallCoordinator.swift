@@ -59,6 +59,14 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         return !observedCalls.contains { $0.id == callID ? ($0.held || $0.ended) : !$0.ended }
     }
 
+    /// CallKit delegates update these flags before the engine's queued callbacks.
+    /// Consult them when a transport-end event races the hold/deactivation callback.
+    var isAwaitingAudioRecovery: Bool {
+        guard let callID, isConnected else { return false }
+        return isHeld || !isAudioSessionActive ||
+            observedCalls.contains { $0.id == callID ? ($0.held && !$0.ended) : !$0.ended }
+    }
+
     init(transactionRequester: ((CXTransaction, @escaping (Error?) -> Void) -> Void)? = nil,
          callUpdateReporter: ((UUID, CXCallUpdate) -> Void)? = nil,
          callSnapshot: (() -> [ObservedCall])? = nil,

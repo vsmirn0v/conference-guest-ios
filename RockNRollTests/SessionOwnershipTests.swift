@@ -1,8 +1,8 @@
 import AVFoundation
 import CallKit
+import JazzSDK
 import ConferenceCore
 import XCTest
-import JazzSDK
 @testable import RockNRoll
 
 @MainActor
@@ -16,6 +16,87 @@ final class SessionOwnershipTests: XCTestCase {
     private final class HoldAction: CXSetHeldCallAction {
         var fulfilled = false
         override func fulfill() { fulfilled = true }
+    }
+
+    func testTerminationBeforeQueuedHoldCallbackPreservesMeetingOwnership() throws {
+        var snapshot: [SystemCallCoordinator.ObservedCall] = []
+        var deferredHold = false
+        let calls = SystemCallCoordinator(transactionRequester: { _, done in done(nil) }, callSnapshot: { snapshot })
+        calls.start(); calls.markConnected()
+        let id = try XCTUnwrap(calls.callID)
+        let provider = CXProvider(configuration: SystemCallCoordinator.providerConfiguration())
+        snapshot = [.init(id: id, connected: true, held: false)]
+        calls.provider(provider, didActivate: .sharedInstance())
+        XCTAssertFalse(calls.isAwaitingAudioRecovery)
+        calls.onHoldChanged = { held in Task { @MainActor in deferredHold = held } }
+        snapshot = [.init(id: id, connected: true, held: true),
+                    .init(id: UUID(), connected: false, held: false)]
+        calls.provider(provider, perform: HoldAction(call: id, onHold: true))
+        XCTAssertFalse(deferredHold, "The engine's deferred callback has not executed yet")
+        XCTAssertTrue(calls.isAwaitingAudioRecovery)
+        let context = GuestTerminationContext(established: true, leaving: false, rebuilding: false,
+                                             recoveringNetwork: false, recoveringAudio: calls.isAwaitingAudioRecovery)
+        for event in [CallEvent.inactive, .left, .canceled] { XCTAssertEqual(context.resolve(event), .recover) }
+        XCTAssertEqual(calls.callID, id)
+        calls.markEnded(reason: .remoteEnded)
+    }
+
+    func testDeactivationAndCompetingCallAreVisibleBeforeEngineCallbacks() throws {
+        var snapshot: [SystemCallCoordinator.ObservedCall] = []
+        let calls = SystemCallCoordinator(transactionRequester: { _, done in done(nil) }, callSnapshot: { snapshot })
+        calls.start(); calls.markConnected()
+        let id = try XCTUnwrap(calls.callID)
+        let provider = CXProvider(configuration: SystemCallCoordinator.providerConfiguration())
+        snapshot = [.init(id: id, connected: true, held: false)]
+        calls.provider(provider, didActivate: .sharedInstance())
+        XCTAssertFalse(calls.isAwaitingAudioRecovery)
+        snapshot = [.init(id: id, connected: true, held: true)]
+        XCTAssertTrue(calls.isAwaitingAudioRecovery, "Observer hold can precede the provider delegate")
+        snapshot = [.init(id: id, connected: true, held: false)]
+        snapshot.append(.init(id: UUID(), connected: false, held: false))
+        XCTAssertTrue(calls.isAwaitingAudioRecovery, "Even a dialing competitor owns a competing call")
+        snapshot.removeLast()
+        calls.provider(provider, didDeactivate: .sharedInstance())
+        XCTAssertTrue(calls.isAwaitingAudioRecovery)
+        calls.markEnded(reason: .remoteEnded)
+        XCTAssertFalse(calls.isAwaitingAudioRecovery, "An explicitly ended call cannot authorize rejoining")
+    }
+
+    func testTypedHostEndAndRejectionWinOverInterruptionOrRebuild() {
+        for rebuilding in [false, true] {
+            let context = GuestTerminationContext(established: true, leaving: false, rebuilding: rebuilding,
+                                                 recoveringNetwork: true, recoveringAudio: true)
+            XCTAssertEqual(context.resolve(.inactive, reason: .kickedFromConference(.callEnded)), .finish(.left))
+            XCTAssertEqual(context.resolve(.left, reason: .network(.roomClosed)), .finish(.left))
+            for reason in [JazzConferenceKickReason.beenKicked, .maxConferenceCapacityExceeded,
+                           .maxConferenceViewersCapacityExceeded, .maxConferenceDurationExceeded,
+                           .featureUnsupported, .unknowned] {
+                XCTAssertEqual(context.resolve(.inactive, reason: .kickedFromConference(reason)), .finish(.evicted))
+            }
+            for reason in [JazzConferenceConnectionStage.TerminationReason.network(.unathorized),
+                           .network(.roomNotFound(nil)), .rejectedByRecipient, .alreadyInCall,
+                           .webinarUnsupported, .network(.unsupported)] {
+                XCTAssertEqual(context.resolve(.left, reason: reason), .finish(.failed))
+            }
+        }
+    }
+
+    func testUnknownEndRecoversOnlyEstablishedInterruptionAndLocalTeardownIsIgnored() {
+        var context = GuestTerminationContext(established: false, leaving: false, rebuilding: false,
+                                             recoveringNetwork: false, recoveringAudio: true)
+        XCTAssertEqual(context.resolve(.inactive), .finish(.inactive), "Initial join failures remain failures")
+        context.established = true
+        XCTAssertEqual(context.resolve(.left), .recover)
+        XCTAssertEqual(context.resolve(.left, reason: .network(.rejectedDueToConnectionProblem)), .recover)
+        context.rebuilding = true
+        XCTAssertEqual(context.resolve(.inactive), .ignore)
+        XCTAssertEqual(context.resolve(.canceled, reason: .userCanceled), .ignore)
+        context.leaving = true
+        XCTAssertEqual(context.resolve(.left, reason: .network(.rejectedDueToConnectionProblem)), .finish(.left))
+        context.leaving = false; context.rebuilding = false; context.recoveringAudio = false
+        XCTAssertEqual(context.resolve(.left), .finish(.left), "Ordinary end is not silently treated as a hold")
+        context.recoveringNetwork = true
+        XCTAssertEqual(context.resolve(.inactive), .recover)
     }
 
     func testRecoveryAfterLongCallWithoutActivationOrUnholdCallbacks() throws {

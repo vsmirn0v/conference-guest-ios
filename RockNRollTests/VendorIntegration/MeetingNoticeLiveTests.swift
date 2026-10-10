@@ -7,6 +7,77 @@ import XCTest
 
 @MainActor
 final class MeetingNoticeLiveTests: XCTestCase {
+    func testTransportTerminationDuringHoldPreservesMeetingAndRecovers() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_HOLD_INVITE"] else {
+            throw XCTSkip("Opt-in live Mac transport interruption check")
+        }
+        let target = try JoinTarget.parse(invitation)
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first?.windows.first { $0.isKeyWindow })
+        let previous = window.rootViewController, container = UIViewController()
+        window.rootViewController = container; window.makeKeyAndVisible()
+        let calls = SystemCallCoordinator()
+        let engine = NativeConferenceEngine(systemCall: calls, catchUp: CatchUpStore())
+        let chat = ChatStore(); engine.chat = chat
+        var ended = false
+        engine.onEvent = { event in
+            if [.left, .failed, .canceled, .evicted].contains(event) { ended = true }
+        }
+        defer { engine.leave(); window.rootViewController = previous }
+        try engine.configure(container: container, networkURL: await VendorEndpointResolver.make().resolve(for: target),
+                             displayName: "Call recovery QA")
+        try engine.join(target: target, displayName: "Call recovery QA")
+        func wait(_ condition: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(35)
+            while !condition() && !ended && Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+            XCTAssertFalse(ended)
+            XCTAssertTrue(condition(), "Live meeting did not reach media readiness")
+        }
+        func checkVisibleControls(_ name: String) async throws {
+            func isInteractive() -> Bool {
+                descendants(window).compactMap { $0 as? UIButton }.contains { button in
+                    guard button.accessibilityLabel == L("Leave"), !button.bounds.isEmpty else { return false }
+                    let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
+                    var hit = window.hitTest(point, with: nil)
+                    while hit != nil && hit !== button { hit = hit?.superview }
+                    return hit === button
+                }
+            }
+            let deadline = Date().addingTimeInterval(5)
+            while !isInteractive() && Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+            XCTAssertTrue(isInteractive(), "A connection/end sheet must not cover the recovered controls")
+            let screenshot = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            let proof = XCTAttachment(image: screenshot); proof.name = name; proof.lifetime = .keepAlways; add(proof)
+        }
+        try await wait { engine.mediaReadyForTesting }
+        guard engine.mediaReadyForTesting, !ended else { return }
+        try await checkVisibleControls("before-interruption")
+        let attempt = engine.mediaAttemptForTesting, callID = calls.callID
+        print("GUEST_HOLD_TERMINATION_BASELINE_READY")
+        try await calls.setTransferHeld(true)
+        await Task.yield()
+        engine.terminateTransportForTesting()
+        try await Task.sleep(for: .seconds(3))
+        XCTAssertTrue(engine.hasJoinStarted)
+        XCTAssertFalse(ended, "Transport end while held must preserve logical meeting ownership")
+        XCTAssertEqual(calls.callID, callID)
+        XCTAssertEqual(engine.mediaAttemptForTesting, attempt, "Do not restart while another call owns audio")
+        print("GUEST_HOLD_TERMINATION_SESSION_PRESERVED")
+        try await calls.setTransferHeld(false)
+        try await wait { engine.mediaReadyForTesting && engine.mediaAttemptForTesting != attempt }
+        XCTAssertEqual(calls.callID, callID)
+        try await Task.sleep(for: .milliseconds(500))
+        try await checkVisibleControls("recovered-meeting-controls")
+        print("GUEST_HOLD_TERMINATION_REJOINED")
+        engine.leave()
+        let deadline = Date().addingTimeInterval(5)
+        while engine.hasJoinStarted && Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertFalse(engine.hasJoinStarted, "Explicit Leave still ends the recovered meeting")
+    }
+
     func testMacOrdinaryCameraSelectionAndGeometry() async throws {
         guard ProcessInfo.processInfo.isiOSAppOnMac,
               let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_CAMERA_INVITE"] else {
