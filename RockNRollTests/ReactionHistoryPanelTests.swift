@@ -95,6 +95,11 @@ final class ReactionHistoryPanelTests: XCTestCase {
         try choose(L("Reactions"))
         XCTAssertTrue(find(UILabel.self, in: panel.view).contains { $0.accessibilityIdentifier == "reaction.history-scope" })
         XCTAssertTrue(find(ReactionHistoryRowView.self, in: panel.view).contains { $0.group.events.count == 2 })
+        let history = try XCTUnwrap(find(UIScrollView.self, in: panel.view).first { $0.accessibilityLabel == L("Jam chat messages") })
+        if let column = history.superview?.superview as? UIStackView {
+            print("PANEL_LAYOUT", panel.view.bounds, column.frame, column.arrangedSubviews.map { "\(type(of: $0)) hidden=\($0.isHidden) \($0.frame)" })
+        }
+        XCTAssertGreaterThan(history.frame.height, (history.superview?.superview?.bounds.height ?? panel.view.bounds.height) - 170, "Reaction history must use the available panel height")
         XCTAssertLessThanOrEqual(filter.frame.maxX, filter.superview!.bounds.width + 1)
         XCTAssertGreaterThanOrEqual(filter.frame.minX, -1)
         let attachment = XCTAttachment(image: UIGraphicsImageRenderer(bounds: panel.view.bounds).image { _ in

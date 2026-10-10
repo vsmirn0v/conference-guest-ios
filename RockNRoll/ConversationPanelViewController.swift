@@ -101,6 +101,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         super.viewDidLoad()
         overrideUserInterfaceStyle = .dark
         view.backgroundColor = .clear
+        view.tintColor = accent
         panel.backgroundColor = dark
         panel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(panel)
@@ -137,6 +138,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         activityFilterButton.contentHorizontalAlignment = .leading
         activityFilterButton.accessibilityIdentifier = "chat.activity-filter"
         activityFilterButton.showsMenuAsPrimaryAction = true
+        activityFilterButton.heightAnchor.constraint(equalToConstant: 44).withPriority(.defaultHigh).isActive = true
         updateActivityFilter()
         messageList.delegate = self
 
@@ -411,6 +413,9 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         row.axis = .horizontal
         row.alignment = .bottom
         row.spacing = 8
+        // Give the reading area spare height, not a bottom-aligned composer row.
+        row.heightAnchor.constraint(equalTo: composer.heightAnchor).withPriority(.defaultHigh).isActive = true
+        row.heightAnchor.constraint(greaterThanOrEqualTo: sendButton.heightAnchor).withPriority(.defaultHigh).isActive = true
         hint.font = .preferredFont(forTextStyle: .caption1)
         hint.textColor = .lightGray
         hint.numberOfLines = 0
@@ -529,7 +534,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         messageList.isHidden = selected != .chat
         transcript.isHidden = selected != .liveText
         catchUpHost.view.isHidden = selected != .catchUp
-        footer.isHidden = selected != .chat
+        footer.isHidden = selected != .chat || activityFilter == .reactions
         if selected != .chat { composer.resignFirstResponder() }
         newMessagesButton.isHidden = selected != .chat || !hasNewMessages
         if selected != .liveText { followButton.isHidden = true }

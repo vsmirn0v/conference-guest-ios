@@ -69,4 +69,10 @@ keyboard-compatible filter/disclosure actions and grouped accessibility feedback
   or Apple's effect recognition. Earlier Presenter mirroring changes are included;
   the known native Mac system-effect orientation issue remains unresolved.
 
+Final visual review also corrected a vertically stretching filter button and
+composer row. The reaction-only view now uses the full reading area and hides the
+unused composer. Panel controls inherit the app accent. A frame assertion covers
+this regression on Mac and Simulator; the landscape keyboard/call-action check
+passes after the layout correction.
+
 Development evidence remains ignored under `.build/reaction-history/`.
