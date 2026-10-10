@@ -6,6 +6,64 @@ import XCTest
 @testable import RockNRoll
 
 final class PresenterCompositorTests: XCTestCase {
+    func testCameraMirrorChangesOnlyCameraPixelsAndKeepsSceneGeometry() throws {
+        let camera = try solid(50)
+        CVPixelBufferLockBaseAddress(camera, [])
+        let stride = CVPixelBufferGetBytesPerRow(camera)
+        let bytes = CVPixelBufferGetBaseAddress(camera)!.assumingMemoryBound(to: UInt8.self)
+        for y in 0..<90 { for x in 80..<160 {
+            for channel in 0..<3 { bytes[y * stride + x * 4 + channel] = 210 }
+        } }
+        CVPixelBufferUnlockBaseAddress(camera, [])
+        for layout in [PresenterScene.Layout.card, .beside, .instrument] {
+            let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90), software: true)
+            var scene = PresenterScene(); scene.layout = layout
+            scene.placement = .init(x: 0.1, y: 0.1, width: 0.4, height: 0.6)
+            scene.focus = CGPoint(x: 0.35, y: 0.5); scene.zoom = 1.3
+            scene.strokes = [[CGPoint(x: 0.02, y: 0.1), CGPoint(x: 0.02, y: 0.9)]]
+            let natural = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: camera, time: .zero)))
+            scene.cameraMirrored = true
+            let mirrored = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: camera, time: .zero)))
+            XCTAssertNotEqual(mirrored, natural)
+            let sample = try XCTUnwrap(compositor.render(scene: scene, camera: camera, time: .zero))
+            let output = try XCTUnwrap(CMSampleBufferGetImageBuffer(sample))
+            let row = CVPixelBufferGetBytesPerRow(output)
+            let cameraBounds = layout == .beside ? CGRect(x: 160 * 0.74, y: 90 * 0.08, width: 160 * 0.24, height: 90 * 0.84) : scene.placement.pixels(in: CGSize(width: 160, height: 90))
+            for y in 0..<90 { for x in 0..<160 {
+                if CGFloat(x) < floor(cameraBounds.minX) - 1 || CGFloat(x) > ceil(cameraBounds.maxX) + 1 {
+                    for c in 0..<4 { XCTAssertEqual(mirrored[y * row + x * 4 + c], natural[y * row + x * 4 + c]) }
+                }
+            } }
+            XCTAssertEqual(compositor.backgroundBuilds, 1, "Mirroring must not rebuild the slide/background")
+            XCTAssertEqual(compositor.annotationRasterizations, 1)
+        }
+    }
+
+    func testMirroringCutoutReusesTheMaskAndNeverExposesUnmaskedCamera() throws {
+        let camera = try solid(220)
+        var mask: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 160, 90, kCVPixelFormatType_OneComponent8,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &mask), kCVReturnSuccess)
+        let half = try XCTUnwrap(mask)
+        CVPixelBufferLockBaseAddress(half, [])
+        let stride = CVPixelBufferGetBytesPerRow(half)
+        let bytes = CVPixelBufferGetBaseAddress(half)!.assumingMemoryBound(to: UInt8.self)
+        for y in 0..<90 { memset(bytes + y * stride, 255, 80); memset(bytes + y * stride + 80, 0, stride - 80) }
+        CVPixelBufferUnlockBaseAddress(half, [])
+        var requests = 0
+        let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90), software: true,
+            personMask: { _, _ in requests += 1; return half })
+        var scene = PresenterScene(); scene.layout = .cutout
+        let natural = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: camera, cameraRevision: 1, time: .zero)))
+        scene.cameraMirrored = true
+        let mirrored = try pixels(XCTUnwrap(compositor.render(scene: scene, camera: camera, cameraRevision: 1, time: .zero)))
+        XCTAssertNotEqual(natural, mirrored)
+        XCTAssertEqual(requests, 1)
+        let rejected = PresenterCompositor(size: CGSize(width: 160, height: 90), software: true, personMask: { _, _ in nil })
+        XCTAssertEqual(try pixels(XCTUnwrap(rejected.render(scene: scene, camera: camera, time: .zero))),
+            try pixels(XCTUnwrap(rejected.render(scene: scene, camera: nil, time: .zero))))
+    }
+
     private func pixels(_ sample: CMSampleBuffer) throws -> [UInt8] {
         let buffer = try XCTUnwrap(CMSampleBufferGetImageBuffer(sample))
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
@@ -225,6 +283,17 @@ final class PresenterCompositorTests: XCTestCase {
 
 @MainActor
 final class PresenterModelTests: XCTestCase {
+    func testCameraMirroringDefaultsOnAndPersistsAcrossPresenterRestart() {
+        let suite = "presenter-mirror-test-" + UUID().uuidString
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let first = PresenterModel(observeLifecycle: false, preferences: preferences)
+        XCTAssertTrue(first.mirrorCamera)
+        first.mirrorCamera = false; first.end()
+        let next = PresenterModel(observeLifecycle: false, preferences: preferences)
+        XCTAssertFalse(next.mirrorCamera)
+        next.end()
+    }
     private final class LiveCamera: PresenterCameraSource {
         var stopped = false
         func stop() { stopped = true }

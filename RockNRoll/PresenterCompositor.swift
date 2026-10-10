@@ -17,12 +17,14 @@ struct PresenterScene: Equatable {
     var focus = CGPoint(x: 0.5, y: 0.5)
     var speaking = false
     var cameraRotation = 0
+    var cameraMirrored = false
     var placement = PresenterPlacement()
     var draftStroke: [CGPoint] = []
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.layout == rhs.layout && lhs.backdrop == rhs.backdrop && lhs.image === rhs.image && lhs.imageFraming == rhs.imageFraming &&
         lhs.strokes == rhs.strokes && lhs.draftStroke == rhs.draftStroke && lhs.zoom == rhs.zoom &&
         lhs.focus == rhs.focus && lhs.speaking == rhs.speaking && lhs.cameraRotation == rhs.cameraRotation &&
+        lhs.cameraMirrored == rhs.cameraMirrored &&
         lhs.placement == rhs.placement
     }
 }
@@ -126,17 +128,17 @@ final class PresenterCompositor: @unchecked Sendable {
             case .card, .beside:
                 let card = scene.layout == .beside ? CGRect(x: size.width * 0.74, y: size.height * 0.08,
                     width: size.width * 0.24, height: size.height * 0.84) : card
-                canvas = fit(input, into: card, fill: false).composited(over: canvas)
+                canvas = fit(cameraPresentation(input, mirrored: scene.cameraMirrored), into: card, fill: false).composited(over: canvas)
             case .instrument:
                 let crop = Self.instrumentCrop(extent: input.extent, zoom: scene.zoom, focus: scene.focus)
                 let target = card
-                canvas = fit(input.cropped(to: crop), into: target, fill: false).composited(over: canvas)
+                canvas = fit(cameraPresentation(input.cropped(to: crop), mirrored: scene.cameraMirrored), into: target, fill: false).composited(over: canvas)
             case .cutout:
                 // No cached mask from another person/frame. If Vision cannot protect
                 // the room, omit the entire camera card rather than send raw pixels.
                 if let person = cutout(input, pixels: camera, revision: cameraRevision, rotation: rotation) {
                     let target = card
-                    canvas = fit(person, into: target, fill: false).composited(over: canvas)
+                    canvas = fit(cameraPresentation(person, mirrored: scene.cameraMirrored), into: target, fill: false).composited(over: canvas)
                 }
             }
         }
@@ -160,6 +162,13 @@ final class PresenterCompositor: @unchecked Sendable {
         H264InputColorSignalling.tagPresenter(output)
         context.render(canvas.cropped(to: bounds), to: output, bounds: bounds, colorSpace: colorSpace)
         return Self.sample(output, time: time)
+    }
+
+    /// Preserve the camera's crop/extent and mask; reflection never reaches the canvas.
+    private func cameraPresentation(_ image: CIImage, mirrored: Bool) -> CIImage {
+        guard mirrored else { return image }
+        return image.transformed(by: CGAffineTransform(a: -1, b: 0, c: 0, d: 1,
+            tx: image.extent.minX + image.extent.maxX, ty: 0))
     }
 
     static func sample(_ pixels: CVPixelBuffer, time: CMTime) -> CMSampleBuffer? {

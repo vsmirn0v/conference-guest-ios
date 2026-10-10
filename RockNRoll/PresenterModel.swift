@@ -66,6 +66,13 @@ final class PresenterModel: ObservableObject {
     private var canvasSize = CGSize(width: 1280, height: 720)
     private var compositorSize = CGSize.zero
     @Published var includeCamera = false { didSet { if includeCamera != oldValue { error = nil; invalidateCamera(); invalidateRender(); refresh() } } }
+    @Published var mirrorCamera = true {
+        didSet {
+            guard mirrorCamera != oldValue else { return }
+            preferences.set(mirrorCamera, forKey: "presenter.mirror-camera.v1")
+            requestRender()
+        }
+    }
     var preparePrivateCamera: (() async -> Void)?
     var makePrivateCamera: (AVCaptureDevice.Position) -> PrivateCameraPreviewing = { PrivateCameraPreview(position: $0, framesPerSecond: 15) }
     private var cameraPosition: AVCaptureDevice.Position = .front
@@ -130,6 +137,9 @@ final class PresenterModel: ObservableObject {
 
     init(observeLifecycle: Bool = true, preferences: UserDefaults = .standard) {
         self.preferences = preferences
+        if preferences.object(forKey: "presenter.mirror-camera.v1") != nil {
+            mirrorCamera = preferences.bool(forKey: "presenter.mirror-camera.v1")
+        }
         energySubscription = MediaEnergyBudget.shared.$pressure.dropFirst().sink { [weak self] _ in
             DispatchQueue.main.async { self?.pump() }
         }
@@ -312,7 +322,8 @@ final class PresenterModel: ObservableObject {
     }
     private func render() {
         guard !busy, canRender else { return }
-        let settings = scene
+        var settings = scene
+        settings.cameraMirrored = mirrorCamera
         let passThrough = screenSelected && (nativeOverlay || !includeCamera) && settings.strokes.isEmpty && settings.draftStroke.isEmpty
         // A plain screen needs neither a Vision request nor a compositor pool.
         if !passThrough && (compositor == nil || compositorSize != canvasSize) {

@@ -34,6 +34,10 @@ struct PresenterControls: View {
                 Text(L("Move or resize the camera using macOS controls. The app does not add a second camera layer."))
                     .font(.footnote).foregroundStyle(.secondary)
             } else if model.includeCamera {
+                Toggle(L("Mirror camera image"), isOn: $model.mirrorCamera)
+                    .accessibilityIdentifier("presenter.mirror-camera")
+                Text(L("Mirroring applies to your camera in the shared canvas."))
+                    .font(.footnote).foregroundStyle(.secondary)
                 Label(model.hasCameraFrames ? L("Camera capture active") : L("Waiting for your camera…"),
                       systemImage: model.hasCameraFrames ? "camera.fill" : "hourglass")
                     .font(.footnote).foregroundStyle(.secondary)
