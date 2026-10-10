@@ -18,6 +18,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         #endif
         #if DEBUG
+        CameraBackgroundTrace.start()
         let model = CalendarUIFixture.makeModel() ?? RoomSyncUIFixture.makeModel()
         RoomSyncUIFixture.configure(model)
         MeetingContinuationUIFixture.configure(model)

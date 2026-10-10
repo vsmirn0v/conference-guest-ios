@@ -529,6 +529,10 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                   room.localParticipant.firstCameraVideoTrack === track else { return nil }
             guard self.room === room, !self.leaveRequested, self.cameraIntentOn, !self.isHeld,
                   room.localParticipant.firstCameraVideoTrack === track, let stats = track.statistics else { return nil }
+            #if DEBUG
+            CameraBackgroundTrace.outgoing(encoded: Int64(stats.outboundRtpStream.reduce(0) { $0 + ($1.framesEncoded ?? 0) }),
+                                           bytes: Int64(stats.outboundRtpStream.reduce(0) { $0 + ($1.bytesSent ?? 0) }))
+            #endif
             return CameraUplinkStatistics.sample(stats)
         }
         quality.onChange?(quality.profile)

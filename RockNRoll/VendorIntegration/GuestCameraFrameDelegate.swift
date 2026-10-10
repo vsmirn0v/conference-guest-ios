@@ -12,6 +12,13 @@ final class GuestCameraFrameDelegate: NSObject, RTCVideoCapturerDelegate {
     struct Progress { let generation: UUID; let frames: Int64 }
     private let generation = UUID()
     private var frames: Int64 = 0
+    #if DEBUG
+    private var forwardedFrames: Int64 = 0
+    var backgroundTrace: [String: Any] {
+        lock.lock(); defer { lock.unlock() }
+        return ["raw": frames, "forwarded": forwardedFrames, "active": active, "scale": scaler.diagnostics]
+    }
+    #endif
     private let orientation = GuestCameraOrientation()
     private let scaler = CameraPixelScaler()
     private var profile = CameraQualityPolicy.Profile(tier: .balance, fps: 20)
@@ -82,6 +89,9 @@ final class GuestCameraFrameDelegate: NSObject, RTCVideoCapturerDelegate {
                 adapted = (size.width, size.height, profile.fps)
             }
         }
+        #if DEBUG
+        lock.lock(); forwardedFrames &+= 1; lock.unlock()
+        #endif
         downstream.capturer(capturer, didCapture: boundedFrame)
     }
     func deactivate() {

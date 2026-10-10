@@ -198,7 +198,7 @@ final class TrueConfCallEngine: CallEngine {
         let center = NotificationCenter.default
         for notification in [UIApplication.didBecomeActiveNotification, UIApplication.didEnterBackgroundNotification] {
             observers.append(center.addObserver(forName: notification, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.updateVisibleVideo(); self?.scheduleMedia() }
+                Task { @MainActor in self?.updateVisibleVideo() }
             })
         }
         let monitor = NWPathMonitor(); pathMonitor = monitor
@@ -429,7 +429,8 @@ final class TrueConfCallEngine: CallEngine {
                 mediaDirty = false
                 guard let publisher, let transport else { return }
                 do {
-                    var camera = cameraIntent && !held && !quiet && UIApplication.shared.applicationState == .active
+                    // Preserve camera intent through the video-call PiP transition.
+                    var camera = cameraIntent && !held && !quiet
                     if camera { await studio.releasePrivateCamera() }
                     #if DEBUG
                     if let beforeApplyingMicrophoneForTesting { await beforeApplyingMicrophoneForTesting() }
@@ -445,7 +446,7 @@ final class TrueConfCallEngine: CallEngine {
                         else { cameraIntent = false; view?.setCamera(false); onMediaStatus?(L("The camera is unavailable. Audio can continue.")) }
                     }
                     guard epoch == generation, !leaving else { return }
-                    if camera && (!cameraIntent || held || quiet || UIApplication.shared.applicationState != .active) {
+                    if camera && (!cameraIntent || held || quiet) {
                         try await publisher.setCamera(false); camera = false; mediaDirty = true
                     }
                     applyMicrophoneState()

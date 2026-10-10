@@ -4,6 +4,21 @@ import XCTest
 @testable import RockNRoll
 
 final class CameraOutputTests: XCTestCase {
+    func testEncoderAndPreviewRetentionsDoNotStarveTheBoundedCameraPool() throws {
+        let scaler = CameraPixelScaler()
+        let source = try pixels()
+        let maximum = CameraQualityPolicy.Profile(tier: .high, fps: 24).maximum
+        var retained: [CVPixelBuffer] = []
+        for _ in 0..<CameraPixelScaler.maximumRetainedBuffers {
+            let next = try autoreleasepool { try XCTUnwrap(scaler.scale(source, maximum: maximum)) }
+            retained.append(next)
+        }
+        XCTAssertGreaterThan(retained.count, 3, "Hardware encoding plus preview must not starve a triple-buffer pool")
+        XCTAssertNil(scaler.scale(source, maximum: maximum), "Retained native camera memory must remain bounded")
+        retained.removeAll()
+        XCTAssertNotNil(scaler.scale(source, maximum: maximum), "Releasing downstream references must restore progress")
+    }
+
     private func pixels(width: Int = 1920, height: Int = 1080) throws -> CVPixelBuffer {
         var value: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,

@@ -7,6 +7,38 @@ import XCTest
 
 @MainActor
 final class GuestVideoFrameTests: XCTestCase {
+    func testAutomaticGalleryUsesLiveSelfPiPWithoutReplacingIdleRemoteStage() async throws {
+        let streams = GuestStreamViews()
+        defer { streams.reset() }
+        let localRenderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        func model(_ id: String, local: Bool, camera: Bool) -> JazzParticipantViewModel {
+            JazzParticipantViewModel(name: id, isAudioOn: false, isVideoOn: camera, isPinned: false,
+                isSharingScreen: false, isLocal: local, id: id, isDominantSpeaker: false,
+                shouldShowParticipantInfo: false, isZoomable: false, watermarkState: .hidden, displayMode: .speaker)
+        }
+        let remote = streams.makeView(model: model("Remote", local: false, camera: false), video: UIView())
+        let local = streams.makeView(model: model("You", local: true, camera: true), video: localRenderer)
+        var stage: StreamViewport?, floating: StreamViewport?, stageSource = true
+        streams.onStagePresentation = { _ in }
+        streams.onPreferredVideo = { viewport, _, _ in stage = viewport }
+        streams.onFloatingVideo = { viewport, _, _, isStage in floating = viewport; stageSource = isStage }
+        streams.refreshSelection()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(stage)
+        XCTAssertTrue(floating === local)
+        XCTAssertFalse(stageSource)
+        streams.setPin(.init(participant: "Remote", isShare: false))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(floating, "An explicit inactive pin must not show another source")
+        streams.setPin(nil)
+        for mode in [ConferenceDisplayMode.screenShares, .audioOnly] {
+            streams.displayMode = mode
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertNil(floating)
+        }
+        _ = remote // Keep both SDK tiles alive for the selection check.
+    }
+
     func testHiddenGuestShareRemainsSelectedForBackgroundPiP() async {
         let streams = GuestStreamViews()
         let model = JazzParticipantViewModel(

@@ -23,6 +23,9 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     private(set) var isEnded = false
     var onWillStart: (() -> Void)?
     var onStopped: (() -> Void)?
+    #if DEBUG
+    var hasSourceForTesting: Bool { sourceView != nil }
+    #endif
     var preferredSize = CGSize(width: 320, height: 180) {
         didSet { if oldValue != preferredSize { contentController?.preferredContentSize = preferredSize } }
     }
@@ -145,6 +148,9 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
 
     func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
         guard controller === self.controller else { return }
+        #if DEBUG
+        CameraBackgroundTrace.event("pip-will-start")
+        #endif
         phase = .starting
         microphoneActivity?.setFloating(true)
         onPresentationChanged?(true)
@@ -153,11 +159,17 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
 
     func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
         guard controller === self.controller else { return }
+        #if DEBUG
+        CameraBackgroundTrace.event("pip-started")
+        #endif
         phase = .active
     }
 
     func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
         guard controller === self.controller else { return }
+        #if DEBUG
+        CameraBackgroundTrace.event("pip-stopped")
+        #endif
         let userClosed = phase != .stopping && UIApplication.shared.applicationState == .background
         phase = .idle
         microphoneActivity?.setFloating(false)
@@ -174,6 +186,9 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     func pictureInPictureController(_ controller: AVPictureInPictureController,
                                     failedToStartPictureInPictureWithError error: Error) {
         guard controller === self.controller else { return }
+        #if DEBUG
+        CameraBackgroundTrace.event("pip-failed", ["error": (error as NSError).code])
+        #endif
         phase = .idle
         microphoneActivity?.setFloating(false)
         onPresentationChanged?(false)

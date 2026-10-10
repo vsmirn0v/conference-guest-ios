@@ -18,6 +18,19 @@ enum GuestCaptureDeviceObserver {
     private static var sessions: [ObjectIdentifier: NSKeyValueObservation] = [:]
     private static var sources: [ObjectIdentifier: Source] = [:]
     private static var frameDelegates: [ObjectIdentifier: GuestCameraFrameDelegate] = [:]
+    #if DEBUG
+    static func backgroundTrace() -> [[String: Any]] {
+        lock.lock(); let all = capturers.allObjects; let proxies = frameDelegates; lock.unlock()
+        return all.map { camera in
+            var result = proxies[ObjectIdentifier(camera)]?.backgroundTrace ?? [:]
+            result["running"] = camera.captureSession.isRunning
+            result["interrupted"] = camera.captureSession.isInterrupted
+            result["supported"] = camera.captureSession.isMultitaskingCameraAccessSupported
+            result["enabled"] = camera.captureSession.isMultitaskingCameraAccessEnabled
+            return result
+        }
+    }
+    #endif
     static func rawCaptureProgress(trackID: String) -> GuestCameraFrameDelegate.Progress? {
         lock.lock(); let proxies = Array(frameDelegates.values); lock.unlock()
         let matches = proxies.compactMap { $0.progress(trackID: trackID) }

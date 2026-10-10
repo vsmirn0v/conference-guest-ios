@@ -342,9 +342,13 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
                   self.videoTransceiver?.sender.track?.trackId == self.videoTrack?.trackId,
                   self.topology != .composite || self.presentationTrack == nil,
                   self.videoTransceiver?.mid == mid else { return nil }
-            return CameraUplinkStatistics.sample(records: report.statistics.values.map {
+            let records: [CameraUplinkStatistics.Record] = report.statistics.values.map {
                 .init(id: $0.id, type: $0.type, timestamp: $0.timestamp_us, values: $0.values)
-            }, cameraMID: mid)
+            }
+            #if DEBUG
+            CameraBackgroundTrace.outgoing(records: records, cameraMID: mid)
+            #endif
+            return CameraUplinkStatistics.sample(records: records, cameraMID: mid)
         }
     }
     @MainActor func selectCamera(_ device: AVCaptureDevice) async throws {

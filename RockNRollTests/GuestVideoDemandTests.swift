@@ -5,6 +5,51 @@ import XCTest
 
 @MainActor
 final class GuestVideoDemandTests: XCTestCase {
+    func testActiveFloatingRendererReplacementKeepsCameraEligibilityAnchor() async throws {
+        let first = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        let second = RTCEAGLVideoView(frame: first.frame)
+        let floating = GuestVideoPictureInPicture(sourceView: UIView())
+        defer { floating.end() }
+        let firstViewport = makeViewport(first), secondViewport = makeViewport(second)
+        floating.select(viewport: firstViewport, name: "First", isScreenShare: false)
+        try await feed(first)
+        XCTAssertTrue(floating.hasSourceForTesting)
+        floating.setFloatingForTesting(true)
+        floating.select(viewport: secondViewport, name: "Second", isScreenShare: false)
+        XCTAssertFalse(floating.hasPreparedFrameForTesting)
+        XCTAssertTrue(floating.hasSourceForTesting, "Replacing a renderer must not revoke active video-call PiP")
+        let before = floating.convertedFramesForTesting
+        try await feed(first)
+        XCTAssertEqual(floating.convertedFramesForTesting, before)
+        try await feed(second)
+        XCTAssertGreaterThan(floating.convertedFramesForTesting, before)
+        floating.clear()
+        XCTAssertFalse(floating.hasSourceForTesting, "Actual stream termination still clears the anchor")
+    }
+
+    func testFallbackSelfVideoNeverPaintsTheSelectedRemoteStage() async throws {
+        let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        let floating = GuestVideoPictureInPicture(sourceView: UIView())
+        defer { floating.end() }
+        let viewport = makeViewport(renderer)
+        var inline = 0
+        floating.onInlineSample = { _, _ in inline += 1 }
+        floating.select(viewport: viewport, name: "You", isScreenShare: false, isStageSource: false)
+        try await feed(renderer)
+        XCTAssertTrue(floating.hasSourceForTesting)
+        XCTAssertEqual(inline, 0)
+        let primed = floating.convertedFramesForTesting
+        try await feed(renderer)
+        XCTAssertEqual(floating.convertedFramesForTesting, primed, "A hidden fallback needs just one prepared frame")
+        floating.setFloatingForTesting(true)
+        try await feed(renderer)
+        XCTAssertGreaterThan(floating.convertedFramesForTesting, primed)
+        XCTAssertEqual(inline, 0)
+        floating.select(viewport: viewport, name: "You", isScreenShare: false)
+        try await feed(renderer)
+        XCTAssertGreaterThan(inline, 0)
+    }
+
     func testGridPreparesOnceThenPiPAndInlineResumeRealFrameConversion() async throws {
         let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
         let viewport = makeViewport(renderer)

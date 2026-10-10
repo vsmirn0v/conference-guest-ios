@@ -59,9 +59,13 @@ final class GuestMicrophoneProbe {
                   GuestCameraTrackBinding.source(source, owns: trackID),
                   sender.parameters.encodings.contains(where: { $0.isActive }),
                   peer.transceivers.first(where: { $0.mid == mid })?.sender.senderId == sender.senderId else { return nil }
-            return CameraUplinkStatistics.sample(records: report.statistics.values.map {
+            let records: [CameraUplinkStatistics.Record] = report.statistics.values.map {
                 .init(id: $0.id, type: $0.type, timestamp: $0.timestamp_us, values: $0.values)
-            }, cameraMID: mid)
+            }
+            #if DEBUG
+            CameraBackgroundTrace.outgoing(records: records, cameraMID: mid)
+            #endif
+            return CameraUplinkStatistics.sample(records: records, cameraMID: mid)
         }
         return nil
     }

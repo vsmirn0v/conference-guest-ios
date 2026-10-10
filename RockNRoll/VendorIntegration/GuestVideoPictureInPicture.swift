@@ -21,6 +21,7 @@ final class GuestVideoPictureInPicture {
     private var suspended = false
     private var selectedViewport: StreamViewport?
     private weak var selectedRenderer: UIView?
+    private var isStageSource = true
     var onAvailabilityChanged: ((Bool) -> Void)?
     var rendersSelectedViewport = true
     var wantsInlineFrames = true {
@@ -29,6 +30,7 @@ final class GuestVideoPictureInPicture {
     #if DEBUG
     private(set) var convertedFramesForTesting = 0
     var hasPreparedFrameForTesting: Bool { hasFrame }
+    var hasSourceForTesting: Bool { floating.hasSourceForTesting }
     func setFloatingForTesting(_ active: Bool) { active ? willStartFloating() : didStopFloating() }
     #endif
     var onInlineSample: ((CMSampleBuffer, Int) -> Void)?
@@ -72,7 +74,7 @@ final class GuestVideoPictureInPicture {
             self.convertedFramesForTesting += 1
             #endif
             if self.presenting || !self.hasFrame { self.video.enqueue(sample, rotation: rotation) }
-            if self.wantsInlineFrames && !self.suspended && UIApplication.shared.applicationState != .background {
+            if self.isStageSource && self.wantsInlineFrames && !self.suspended && UIApplication.shared.applicationState != .background {
                 if self.rendersSelectedViewport { self.selectedViewport?.showCorrectedVideo(sample, rotation: rotation) }
                 self.onInlineSample?(sample, rotation)
             }
@@ -91,7 +93,7 @@ final class GuestVideoPictureInPicture {
 
     private var shouldProcessFrames: Bool {
         !floating.isEnded && frameTap != nil && !suspended &&
-            (presenting || UIApplication.shared.applicationState != .background && (wantsInlineFrames || !hasFrame))
+            (presenting || UIApplication.shared.applicationState != .background && (isStageSource && wantsInlineFrames || !hasFrame))
     }
 
     private func willStartFloating() {
@@ -106,8 +108,13 @@ final class GuestVideoPictureInPicture {
         processor.setEnabled(shouldProcessFrames)
     }
 
-    func select(viewport: StreamViewport?, name: String, isScreenShare: Bool) {
+    func select(viewport: StreamViewport?, name: String, isScreenShare: Bool, isStageSource: Bool = true) {
         guard !floating.isEnded else { return }
+        self.isStageSource = isStageSource
+        #if DEBUG
+        CameraBackgroundTrace.event("guest-select", ["hasViewport": viewport != nil, "presenting": presenting,
+            "rendererChanged": selectedRenderer !== viewport?.rendererView, "hasFrame": hasFrame])
+        #endif
         guard let viewport else { clear(); return }
         if selectedViewport !== viewport { selectedViewport?.clearCorrectedVideo() }
         selectedViewport = viewport
@@ -121,7 +128,7 @@ final class GuestVideoPictureInPicture {
             // The SDK may replace a tile while the call is backgrounded. Keep
             // the last displayed frame and the stable PiP anchor until the new
             // renderer supplies a frame, so a layout refresh cannot close PiP.
-            if !presenting || UIApplication.shared.applicationState == .active {
+            if !presenting {
                 video.clear()
                 hasFrame = false
                 onAvailabilityChanged?(false)
@@ -135,7 +142,9 @@ final class GuestVideoPictureInPicture {
         }
         caption.text = name.isEmpty ? nil : "  \(name)\(isScreenShare ? L(" · Screen") : "")  "
         caption.isHidden = name.isEmpty
-        floating.setSourceView(hasFrame && frameTap != nil ? sourceView : nil)
+        if hasFrame && frameTap != nil { floating.setSourceView(sourceView) }
+        else if !presenting { floating.setSourceView(nil) }
+        processor.setEnabled(shouldProcessFrames)
     }
 
     func start() { if canShow { floating.start() } }

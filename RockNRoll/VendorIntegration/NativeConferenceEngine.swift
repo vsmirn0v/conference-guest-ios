@@ -220,9 +220,9 @@ final class NativeConferenceEngine: CallEngine {
         GuestVideoFrameTap.prepare()
         GuestMicrophoneProbe.prepare()
         GuestCaptureDeviceObserver.prepare()
-        streamViews.onPreferredVideo = { [weak self] viewport, name, isShare in
+        streamViews.onFloatingVideo = { [weak self] viewport, name, isShare, isStageSource in
             guard let self, self.hasJoinStarted, !self.leaveRequested, self.finishing == nil else { return }
-            self.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare)
+            self.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare, isStageSource: isStageSource)
         }
         streamViews.onStagePresentation = { [weak self] presentation in
             guard let self else { return }

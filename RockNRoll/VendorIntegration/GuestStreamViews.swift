@@ -66,6 +66,7 @@ final class GuestStreamViews {
     let localCameraChanges = CurrentValueSubject<UIView?, Never>(nil)
     var onStagePresentation: ((Presentation) -> Void)?
     var onPreferredVideo: ((StreamViewport?, String, Bool) -> Void)?
+    var onFloatingVideo: ((StreamViewport?, String, Bool, Bool) -> Void)?
     var onShareOffer: ((String?, PinTarget?) -> Void)?
     var displayMode: ConferenceDisplayMode = .all {
         didSet { updatePreferredVideo() }
@@ -95,6 +96,7 @@ final class GuestStreamViews {
         renderedTiles.removeAll()
         localCameraChanges.send(nil)
         onPreferredVideo?(nil, "", false)
+        onFloatingVideo?(nil, "", false, false)
         onShareOffer?(nil, nil)
     }
 
@@ -361,6 +363,15 @@ final class GuestStreamViews {
         renderedTiles.values.forEach { $0.view?.accessibilityElementsHidden = onStagePresentation != nil }
         onPreferredVideo?(preferred?.view, preferred == nil ? "" : stageName ?? "",
                           preferred?.model.isSharingScreen == true)
+        // An automatic gallery can select an idle remote tile while the local
+        // camera remains visible. Its live self view may keep this call in PiP,
+        // without changing the foreground stage or its participant caption.
+        let floating = preferred ?? (displayMode == .all && requested == nil
+            ? candidates.values.first { $0.model.isLocal && !$0.model.isSharingScreen && isActiveStream($0.model) && $0.video != nil }
+            : nil)
+        onFloatingVideo?(floating?.view, floating?.model.name ?? "",
+                         floating?.model.isSharingScreen == true,
+                         floating?.view === preferred?.view && floating != nil)
     }
 
     private func publishGallery() {

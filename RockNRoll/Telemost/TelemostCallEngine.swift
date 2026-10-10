@@ -194,7 +194,9 @@ final class TelemostCallEngine: CallEngine {
         let center = NotificationCenter.default
         for notification in [UIApplication.didBecomeActiveNotification, UIApplication.didEnterBackgroundNotification] {
             observers.append(center.addObserver(forName: notification, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.updateVisibleVideo(); self?.scheduleMedia() }
+                // Visibility changes affect reception/PiP, not publication
+                // intent. Do not renegotiate a working sender on every scene change.
+                Task { @MainActor in self?.updateVisibleVideo() }
             })
         }
         let monitor = NWPathMonitor(); pathMonitor = monitor
@@ -433,7 +435,9 @@ final class TelemostCallEngine: CallEngine {
                 mediaDirty = false
                 guard let publisher, let transport else { return }
                 do {
-                    var camera = cameraIntent && !held && !quiet && UIApplication.shared.applicationState == .active
+                    // Backgrounding must not revoke camera intent. The capture
+                    // session and video-call PiP govern iOS camera availability.
+                    var camera = cameraIntent && !held && !quiet
                     var cameraFailed = false
                     if camera { await studio.releasePrivateCamera() }
                     #if DEBUG
@@ -453,7 +457,7 @@ final class TelemostCallEngine: CallEngine {
                         }
                     }
                     guard epoch == generation, !leaving else { return }
-                    if camera && (!cameraIntent || held || quiet || UIApplication.shared.applicationState != .active) {
+                    if camera && (!cameraIntent || held || quiet) {
                         try await publisher.setCamera(false); camera = false; mediaDirty = true
                     }
                     applyMicrophoneState()
@@ -471,7 +475,7 @@ final class TelemostCallEngine: CallEngine {
                     guard epoch == generation, !leaving else { return }
                     applyMicrophoneState()
                     let sendingAudio = effectiveMicrophoneEnabled && publisher.microphoneSending
-                    let sendingVideo = camera && cameraIntent && !held && !quiet && UIApplication.shared.applicationState == .active
+                    let sendingVideo = camera && cameraIntent && !held && !quiet
                     try await transport.request("updateMe", ["participantMeta": ["name": name, "role": "SPEAKER", "sendAudio": sendingAudio, "sendVideo": sendingVideo],
                         "participantAttributes": ["name": name, "role": "SPEAKER"], "sendAudio": sendingAudio, "sendVideo": sendingVideo, "sendSharing": sharingActive])
                     view?.setMicrophone(sendingAudio); view?.setCamera(sendingVideo)

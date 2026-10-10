@@ -895,7 +895,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             zoomVisibility.setAvailable(primary.1.source == .screenShareVideo)
             primaryName = primary.0.name ?? L("Musician")
             fitButton.isHidden = (videoTiles[primaryKey]?.zoom.zoomScale ?? 1) <= 1.01
-            floatingVideo?.show(source: !primary.0.isLocal ? primary.2 : nil,
+            floatingVideo?.show(source: primary.2,
                                 name: primary.0.name ?? L("Musician"),
                                 isScreenShare: primary.1.source == .screenShareVideo)
             // The selected stream fills the available viewing area. Other streams remain below it.
