@@ -141,12 +141,20 @@ including ownership, guest publishing and recovery readiness. Evidence:
 `native-audio-final-simulator.xcresult`, `device-native-audio.log` and
 `trace-native-audio.jsonl`.
 
-Background camera/PiP qualification is pending. The first physical UI run pinned
-an arbitrary camera-off participant because its fixture chose the last matching
-button; that fixture now selects a uniquely named local participant. The repeat
-was stopped by iOS refusing UI testing authorization. Neither run establishes a
-background regression or a passing background acceptance result. No beta with
-the new default has been published yet.
+Background camera/PiP qualification passed on iVitalii (iOS 27.0.1) using source
+`45d663e` and bundle 0.2.0 (69). During 70.4 seconds in the background, capture
+remained running and uninterrupted; forwarded frames advanced from 524 to 2302.
+Outgoing encoded frames advanced from 347 to 1970 and bytes sent from 139884 to
+954043. PiP remained visible, foreground recovery worked, and Leave removed PiP.
+These are capture and outgoing transport counters, not a remote image-quality
+measurement. Evidence:
+`.build/cellular-call-recovery/native-camera-background-final-device.xcresult`
+and `native-camera-background-final-trace.jsonl` (last trace-start segment).
+
+The earlier failed fixture pinned an arbitrary camera-off participant; it now
+uses a unique local participant when explicit pinning is requested. The final
+passing run used automatic camera selection. The intervening authorization
+failure occurred before camera operation and is not a media regression.
 
 Public API references:
 - https://developer.apple.com/documentation/callkit/cxcallobserver
