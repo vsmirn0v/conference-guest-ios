@@ -219,12 +219,12 @@
 		ACABEC62EC7D4E097CE88FE0 /* StudioWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E177269CF747C9FD3B7987C /* StudioWorkflowTests.swift */; };
 		AD180C2C15068ABBA3EC6B26 /* ParticipantBadgeFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = E612024D52E158968B09FA80 /* ParticipantBadgeFixture.swift */; };
 		ADD8CD693FA986FEDD7A423B /* CameraUplinkEvidenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E1EF35CB2CC3F314FDBB804 /* CameraUplinkEvidenceTests.swift */; };
-		AE8FAEF644395B0CAC2991E7 /* ParticipantMediaBadgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC716A8598425A91D3FB033B /* ParticipantMediaBadgeTests.swift */; };
 		B134CD8859004C6BA0333EED /* ReviewRegressionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5B62747320CF4363ED7E58E /* ReviewRegressionUITests.swift */; };
 		B3193389B871F476C1298C8B /* MeetingContinuationLiveFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB07FB95B1890A01E5DEE830 /* MeetingContinuationLiveFixture.swift */; };
 		B36A039AA3E58D398A91659D /* GuestPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FA1CC8CB47E634A5B66DC6 /* GuestPresenter.swift */; };
 		B37C4D5862F118D21E2C6EE3 /* RoomMicrophoneProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C92B7DCA1D0DAE96D97B915 /* RoomMicrophoneProbe.swift */; };
 		B390D3BA41CDB930AF496177 /* StreamViewport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A447AAD83CAB2DE79FB5FDAA /* StreamViewport.swift */; };
+		B39210BA346F0B0C14C2187F /* ParticipantMediaBadgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02DB0E6ADD33A3C3B34871F /* ParticipantMediaBadgeTests.swift */; };
 		B3AE0359B0AC59B520F97451 /* ReactionHistoryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF4664C8EDD10271333CE560 /* ReactionHistoryUITests.swift */; };
 		B44C72429B668A86A1BC0150 /* HomeLayoutUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 968035B1EDE3157660C75FC5 /* HomeLayoutUITests.swift */; };
 		B6FAA2EF26DF2F8F4AA6E753 /* GuestVideoDemandTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68D3C4DDB56704BF9DFC37E2 /* GuestVideoDemandTests.swift */; };
@@ -597,7 +597,6 @@
 		BB9F78F51F928A3AE8E2561B /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/Localizable.strings; sourceTree = "<group>"; };
 		BC2611EBA8D1D1AD70D95AC9 /* OutgoingVideoCadence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingVideoCadence.swift; sourceTree = "<group>"; };
 		BC70A659C3664635B495E542 /* LocalSharePreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSharePreview.swift; sourceTree = "<group>"; };
-		BC716A8598425A91D3FB033B /* ParticipantMediaBadgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParticipantMediaBadgeTests.swift; sourceTree = "<group>"; };
 		BCC4C4C953D0E9206D51DD28 /* LocalizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalizationTests.swift; sourceTree = "<group>"; };
 		BCE88312DF5C01F8D16E5BFD /* PresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterTests.swift; sourceTree = "<group>"; };
 		BD6CCF5106C0A518803CCA07 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -639,6 +638,7 @@
 		DFC5FF27962DB299A6203745 /* PiPMicrophoneFixtureViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PiPMicrophoneFixtureViewController.swift; sourceTree = "<group>"; };
 		DFF1677B565C0FDF869CD27F /* SampleHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleHandler.swift; sourceTree = "<group>"; };
 		DFFFE5408FE87945860DDB8F /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		E02DB0E6ADD33A3C3B34871F /* ParticipantMediaBadgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParticipantMediaBadgeTests.swift; sourceTree = "<group>"; };
 		E0DDC3D21920474CDC247639 /* CallControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallControls.swift; sourceTree = "<group>"; };
 		E1570279EF7B33B98A70B63D /* MacCallActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacCallActivity.swift; sourceTree = "<group>"; };
 		E178AB7DB956D0DFD7D75D31 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
@@ -787,6 +787,7 @@
 				382360352C349835D33CE89E /* MacCameraEffectsTests.swift */,
 				7359E4F2EB4A42B72C91421D /* MeetingEngineLiveTests.swift */,
 				EC35F6BCAAE4C0B3D0DCB9AA /* MeetingNoticeLiveTests.swift */,
+				E02DB0E6ADD33A3C3B34871F /* ParticipantMediaBadgeTests.swift */,
 			);
 			path = VendorIntegration;
 			sourceTree = "<group>";
@@ -1083,7 +1084,6 @@
 				86A4407E202F9667E3FAD11D /* OutgoingMediaExperimentTests.swift */,
 				8EE31B7E83BA253BE1AD08B4 /* OutgoingMediaLiveTests.swift */,
 				7A1D43E1E5944ECC6CEC7179 /* OutgoingVideoCadenceTests.swift */,
-				BC716A8598425A91D3FB033B /* ParticipantMediaBadgeTests.swift */,
 				BB369290564963B920E5DB8A /* PresenterCanvasTests.swift */,
 				B809BB80707B957EA275127D /* PresenterEngineLiveTests.swift */,
 				BCE88312DF5C01F8D16E5BFD /* PresenterTests.swift */,
@@ -1712,7 +1712,7 @@
 				E6D3FD1ABE16896F34EB1C5B /* OutgoingMediaExperimentTests.swift in Sources */,
 				1757927E6A4BAF69164DAF70 /* OutgoingMediaLiveTests.swift in Sources */,
 				F50F4BA6B4D65365D8D2D567 /* OutgoingVideoCadenceTests.swift in Sources */,
-				AE8FAEF644395B0CAC2991E7 /* ParticipantMediaBadgeTests.swift in Sources */,
+				B39210BA346F0B0C14C2187F /* ParticipantMediaBadgeTests.swift in Sources */,
 				7B64C3E70A699389A9055A95 /* PresenterCanvasTests.swift in Sources */,
 				A0921A91BF5D5732C63B1BA3 /* PresenterEngineLiveTests.swift in Sources */,
 				CA5CB9E2EB51134F04428E25 /* PresenterTests.swift in Sources */,
