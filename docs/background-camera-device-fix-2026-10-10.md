@@ -68,7 +68,8 @@ camera-specific RTP counters and no capture interruption notifications.
 - iVitalii: 32 targeted tests, two expected opt-in skips, no failures, plus the
   four passing live background/PiP/Leave runs above.
 - Source review and `git diff --check` pass. Distribution archive/export and
-  group availability are recorded separately in the build 64 release record.
+  group availability are recorded separately in the [build 65 release record](release-0.2.0-build65.md).
+  Build 64 was uploaded before the preview correction and kept unassigned.
 
 Logs/results/traces: `.build/camera-background-device`. Screenshots and camera
 pixels remain local, excluded from Git. Opt-in `CONFERENCE_TEST_CAMERA_TRACE`
