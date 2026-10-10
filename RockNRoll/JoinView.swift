@@ -21,6 +21,7 @@ struct JoinView: View {
     @State private var homeAtTop = true
     @State private var foreground = true
     @State private var showingSettings = false
+    @AppStorage(SystemCallCoordinator.controlsPreferenceKey) private var systemCallControls = false
     @State private var showingAllRooms = false
     @StateObject private var mediaCheck = StudioModel(audioControl: .fullProcessing, preferences: .standard)
     @StateObject private var favoriteDrag = FavoriteDragState()
@@ -524,6 +525,16 @@ struct JoinView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 RoomSyncSettingsView(sync: sync, continuation: continuation)
+                if !ProcessInfo.processInfo.isiOSAppOnMac {
+                    Section {
+                        Toggle(L("System call controls"), isOn: $systemCallControls)
+                            .accessibilityIdentifier("calls.systemControls")
+                    } header: {
+                        Text(L("Phone calls"))
+                    } footer: {
+                        Text(L("Audio and Picture in Picture keep working with this off. Some cellular networks block phone calls while system call controls are on. Changes apply to the next jam."))
+                    }
+                }
                 Section(L("About")) {
                     Text(L("Small music groups in Yerevan can plan sessions and share ideas live."))
                     Link(L("Community"), destination: URL(string: "https://rock.glowsoft.ru/community")!)

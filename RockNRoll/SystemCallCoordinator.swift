@@ -3,8 +3,9 @@ import CallKit
 import Foundation
 import OSLog
 
-/// Reports only a real, user-requested conference to the system call UI.
+/// Coordinates live-meeting audio and optional system call controls.
 final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverDelegate {
+    static let controlsPreferenceKey = "SystemCallControlsEnabled"
     var onActivated: (() -> Void)?
     var onDeactivated: (() -> Void)?
     /// True when the user or app deliberately ended the system call.
@@ -36,7 +37,11 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         return configuration
     }
     private lazy var controller = CXCallController()
-    private let usesSystemCall: Bool
+    private var usesSystemCall: Bool
+    private let registrationOverride: Bool?
+    private var audioInterruptionObserver: NSObjectProtocol?
+    private var applicationRecoveryTask: Task<Void, Never>?
+    private var applicationRecoveryToken: UUID?
     private let transactionRequester: ((CXTransaction, @escaping (Error?) -> Void) -> Void)?
     private let callUpdateReporter: ((UUID, CXCallUpdate) -> Void)?
     private let callSnapshot: (() -> [ObservedCall])?
@@ -59,9 +64,21 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private var transferHoldGeneration = UUID()
     private var transferHoldActionID: UUID?
 
+    #if DEBUG
+    var diagnosticState: [String: Any] {
+        let calls = observedCalls.filter { !$0.ended }
+        let owned = calls.first { $0.id == callID }
+        return ["systemCallRegistered": usesSystemCall,
+                "systemReportedConnected": isConnected,
+                "systemObservedConnected": owned?.connected ?? false,
+                "systemObservedHeld": owned?.held ?? false,
+                "systemLiveCalls": calls.count,
+                "systemOtherCalls": calls.filter { $0.id != callID }.count]
+    }
+    #endif
+
     var canRestoreAudio: Bool {
         guard let callID, isAudioSessionActive, !isHeld, !transferHolding else { return false }
-        guard usesSystemCall else { return true }
         return !observedCalls.contains { $0.id == callID ? ($0.held || $0.ended) : !$0.ended }
     }
 
@@ -76,16 +93,50 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     init(transactionRequester: ((CXTransaction, @escaping (Error?) -> Void) -> Void)? = nil,
          callUpdateReporter: ((UUID, CXCallUpdate) -> Void)? = nil,
          callSnapshot: (() -> [ObservedCall])? = nil,
+         systemCallRegistration: Bool? = nil,
          activateAudioSession: @escaping () throws -> Void = { try AVAudioSession.sharedInstance().setActive(true) }) {
         self.transactionRequester = transactionRequester
         self.callUpdateReporter = callUpdateReporter
         self.callSnapshot = callSnapshot
         self.activateAudioSession = activateAudioSession
-        usesSystemCall = transactionRequester != nil || !ProcessInfo.processInfo.isiOSAppOnMac
+        registrationOverride = systemCallRegistration
+        var register = systemCallRegistration ?? (transactionRequester != nil ||
+            (!ProcessInfo.processInfo.isiOSAppOnMac && UserDefaults.standard.bool(forKey: Self.controlsPreferenceKey)))
+        #if DEBUG
+        if systemCallRegistration == nil && transactionRequester == nil,
+           ProcessInfo.processInfo.environment["CONFERENCE_TEST_APP_AUDIO_SESSION"] == "1" { register = false }
+        #endif
+        usesSystemCall = register
         super.init()
-        if usesSystemCall && transactionRequester == nil {
-            provider.setDelegate(self, queue: .main)
-            controller.callObserver.setDelegate(self, queue: .main)
+        if transactionRequester == nil { controller.callObserver.setDelegate(self, queue: .main) }
+        audioInterruptionObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification,
+                object: AVAudioSession.sharedInstance(), queue: .main) { [weak self] notification in
+                let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                guard let raw, let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+                self?.audioSessionInterrupted(type == .began)
+            }
+    }
+
+    deinit {
+        if let audioInterruptionObserver { NotificationCenter.default.removeObserver(audioInterruptionObserver) }
+    }
+
+    /// Standalone AVAudioSession ownership still yields to genuine system calls.
+    /// A joined live meeting resumes after an actual interruption-ended event,
+    /// even without the media-player `shouldResume` hint. Current competitors
+    /// and successful session activation remain authoritative.
+    func audioSessionInterrupted(_ interrupted: Bool) {
+        guard !usesSystemCall, callID != nil else { return }
+        if interrupted {
+            cancelApplicationAudioRecovery()
+            let wasActive = isAudioSessionActive
+            isAudioSessionActive = false
+            beginAudioYield()
+            if !isHeld { isHeld = true; onHoldChanged?(true) }
+            if wasActive { onDeactivated?() }
+        } else {
+            audioYield?.releasedBySystem = true
+            resumeIfPossible()
         }
     }
 
@@ -108,6 +159,14 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
 
     func start() {
         guard callID == nil else { return }
+        usesSystemCall = registrationOverride ?? (transactionRequester != nil ||
+            (!ProcessInfo.processInfo.isiOSAppOnMac && UserDefaults.standard.bool(forKey: Self.controlsPreferenceKey)))
+        #if DEBUG
+        if registrationOverride == nil && transactionRequester == nil,
+           ProcessInfo.processInfo.environment["CONFERENCE_TEST_APP_AUDIO_SESSION"] == "1" { usesSystemCall = false }
+        #endif
+        if usesSystemCall && transactionRequester == nil { provider.setDelegate(self, queue: .main) }
+        cancelApplicationAudioRecovery()
         finishPendingTransferHold()
         let id = UUID()
         callID = id
@@ -119,13 +178,18 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         isAudioSessionActive = false
         transferHolding = false
         if !usesSystemCall {
-            // iOS apps running on Mac don't receive the CallKit audio activation
-            // callback reliably; the app owns this session until the jam ends.
+            // Application-owned sessions use the same competitor/release guards,
+            // without registering an internet call with the system Phone UI.
             #if DEBUG
-            print("Mac meeting audio: activating")
+            print("Application meeting audio: activating")
             #endif
             do {
-                try AVAudioSession.sharedInstance().setActive(true)
+                if observedCalls.contains(where: { !$0.ended }) {
+                    beginAudioYield()
+                    onDeactivated?()
+                    return
+                }
+                try activateAudioSession()
                 isAudioSessionActive = true
                 onActivated?()
             } catch {
@@ -184,12 +248,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     func end() {
         guard let callID else { return }
         if !usesSystemCall {
-            finishPendingTransferHold()
-            self.callID = nil
-            isConnected = false
-            isAudioSessionActive = false
-            try? AVAudioSession.sharedInstance().setActive(false,
-                options: .notifyOthersOnDeactivation)
+            markEnded(reason: .remoteEnded)
             onEnded?(true)
             return
         }
@@ -208,6 +267,10 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
 
     func markEnded(reason: CXCallEndedReason) {
         guard let callID else { return }
+        cancelApplicationAudioRecovery()
+        if !usesSystemCall {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
         self.callID = nil
         isConnected = false
         isHeld = false
@@ -248,8 +311,8 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     }
 
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        guard usesSystemCall, callID != nil else { return }
         log.notice("CallKit audio activated")
-        guard callID != nil else { return }
         isAudioSessionActive = true
         audioYield = nil
         onActivated?()
@@ -306,8 +369,8 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+        guard usesSystemCall, callID != nil else { return }
         log.notice("CallKit audio deactivated")
-        guard callID != nil else { return }
         isAudioSessionActive = false
         beginAudioYield()
         onDeactivated?()
@@ -321,6 +384,9 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     func observedCallChanged(_ call: ObservedCall) {
         guard let callID else { return }
         log.notice("Call state: meeting=\(call.id == callID, privacy: .public), connected=\(call.connected, privacy: .public), held=\(call.held, privacy: .public), ended=\(call.ended, privacy: .public)")
+        if !usesSystemCall, observedCalls.contains(where: { $0.id != callID && !$0.ended }) {
+            audioSessionInterrupted(true)
+        }
         resumeIfPossible()
         onCallStateChanged?()
     }
@@ -335,6 +401,15 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     }
 
     func resumeIfPossible() {
+        if !usesSystemCall {
+            guard !isAudioSessionActive, audioYield != nil else { return }
+            do { _ = try reactivateAudioIfPossible() }
+            catch {
+                log.notice("Application audio recovery deferred")
+                retryApplicationAudioRecovery()
+            }
+            return
+        }
         guard usesSystemCall, !transferHolding else { return }
         let calls = observedCalls
         observeYield(in: calls)
@@ -366,7 +441,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     /// are both required; no competitor or explicit transfer hold may be overridden.
     @discardableResult
     func reactivateAudioIfPossible() throws -> Bool {
-        guard let callID, isConnected, !transferHolding else { return false }
+        guard let callID, isConnected || !usesSystemCall, !transferHolding else { return false }
         if usesSystemCall {
             let calls = observedCalls
             observeYield(in: calls)
@@ -377,8 +452,13 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
                     return false
                 }
             }
-        } else if isHeld {
-            return false // On Mac, the app owns its AVAudioSession and hold state.
+        } else {
+            let calls = observedCalls
+            observeYield(in: calls)
+            guard !calls.contains(where: { $0.id != callID && !$0.ended }) else { return false }
+            if isHeld && audioYield == nil { return false }
+            if let audioYield, !audioYield.releasedBySystem && !audioYield.observedCompetitor { return false }
+            if isAudioSessionActive && !isHeld && audioYield == nil { return true }
         }
         try activateAudioSession()
         // Reconcile a missed unhold delegate callback against the current call,
@@ -389,9 +469,33 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         }
         isAudioSessionActive = true
         audioYield = nil
+        cancelApplicationAudioRecovery()
         log.notice("Meeting audio reactivated after verified system release")
         onActivated?()
         return true
+    }
+
+    private func retryApplicationAudioRecovery() {
+        guard !usesSystemCall, applicationRecoveryTask == nil, let id = callID else { return }
+        let token = UUID(); applicationRecoveryToken = token
+        applicationRecoveryTask = Task { @MainActor [weak self] in
+            defer {
+                if self?.applicationRecoveryToken == token {
+                    self?.applicationRecoveryTask = nil; self?.applicationRecoveryToken = nil
+                }
+            }
+            for _ in 0..<24 {
+                do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
+                guard let self, self.callID == id else { return }
+                do { _ = try self.reactivateAudioIfPossible(); return }
+                catch { /* The competing session may still be finishing teardown. */ }
+            }
+        }
+    }
+
+    private func cancelApplicationAudioRecovery() {
+        applicationRecoveryToken = nil
+        applicationRecoveryTask?.cancel(); applicationRecoveryTask = nil
     }
 
     #if DEBUG
@@ -410,16 +514,19 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         transferHolding = held
         let generation = UUID(); transferHoldGeneration = generation
         if !usesSystemCall {
-            isHeld = held
-            onHoldChanged?(held)
             if held {
+                isHeld = true
+                beginAudioYield()
+                onHoldChanged?(true)
+                cancelApplicationAudioRecovery()
                 try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
                 isAudioSessionActive = false
                 onDeactivated?()
             } else {
-                try AVAudioSession.sharedInstance().setActive(true)
-                isAudioSessionActive = true
-                onActivated?()
+                audioYield?.releasedBySystem = true
+                guard try reactivateAudioIfPossible() else {
+                    throw NSError(domain: "JamAudioOwnership", code: 2)
+                }
             }
             await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
             return

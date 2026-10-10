@@ -80,10 +80,75 @@ leaving controls usable. A signed iPhone Debug candidate built successfully
 Evidence: `.build/cellular-call-recovery/ownership-mac-final.log`,
 `ownership-simulator-final.log`, `live-recovery-mac.log` and `device-build.log`.
 
-Real cellular dialing and post-call playback are still pending. iVitalii was
-observed running installed build 67, which has not been overwritten while the
-affected meeting/trace is being preserved. A bounded shell log collection needed
-administrator privileges; filtered live Console logging was used instead. No
-failed dialing trace or new beta publication is claimed. If all release events
-and relevant observer transitions are missing, the app deliberately waits rather
-than guessing that it can take audio from another call.
+The signed development candidate was subsequently installed on iVitalii. Real
+audio worked from the user's second client, but cellular dialing still silently
+failed. No hold/deactivation/competing-call callback accompanied the failed dial;
+the ownership-race correction is valid independently, but does not close this
+dialing blocker. No new beta is claimed.
+
+Filtered Console evidence at 21:32 and 21:38 MSK on October 10 establishes the
+rejection before app callbacks: InCallService reports a valid dial request and
+available cellular calling, but `existingCallsAllowOutgoingCall: 0`, then returns
+a nil call. A bounded Debug-only trace confirms one connected system call, no
+competitor, and no configured vendor CallKit provider. The vendor proxy's
+default-enabled flag alone is therefore not evidence of a competing provider.
+Explicitly holding the app's call succeeded, but the user still could not dial.
+
+Audio-only call classification also failed to permit dialing; that experiment
+was removed. The user confirmed the device used Wi-Fi for the meeting and EDGE
+for cellular calling. Read-only inspection of Apple's installed iOS 26.5 Simulator
+TelephonyUtilities implementation corroborates the captured preflight: the
+selected line's simultaneous voice/data capability supplies `allowVoiceWithData`,
+and a nontelephony call blocks dialing when that capability is false. Holding or
+changing its video classification does not alter this predicate. This is
+corroborating implementation evidence, not disassembly of the device's iOS 27
+binary; no private telephony APIs were added to the app.
+
+## Compatible audio ownership
+
+The default now uses AVAudioSession with a standalone CXCallObserver, without
+registering the meeting as a system call. Meeting identity remains independent
+of registration. A per-device **System call controls** setting opts into CallKit
+on the next join; its standard group limits and hold capabilities are retained.
+Changing the setting never changes ownership during an established meeting.
+
+- Both modes yield to every non-ended competing call, including dialing and
+  held calls. Native mode centrally observes AVAudioSession interruptions and
+  sends the same logical hold/deactivation callbacks used by existing engines.
+- Activation requires fresh release evidence, no competitor/transfer hold, and
+  successful session activation. A live meeting resumes on an actual
+  interruption-ended event even without the media-player `shouldResume` hint;
+  foreground entry alone never supplies this evidence.
+- Final competitor completion can recover without an interruption-ended event.
+  Transient activation failures retry for at most 12 seconds; retries are fenced
+  against the meeting and episode, and canceled on leave/new interruption.
+- Camera and screen-sharing intent follow the existing hold/recovery paths.
+  Handoff unhold cannot take audio from another call. A join requested during a
+  phone call waits for that call to finish rather than activating over it.
+- The Debug-only bounded diagnostic stores state/counts, not call IDs, contacts,
+  phone numbers, invitation links or media.
+
+On October 10 the user tested the provider-free candidate on iVitalii and
+confirmed: outgoing cellular dialing succeeded and meeting playback recovered
+automatically without rejoining. The local trace records the real call connecting
+and ending at 21:56 MSK, followed by guest media recovery. This closes dialing
+and playback for that candidate; publication and background qualification are
+separate gates.
+
+29 ownership tests passed on Mac; 44 selected iOS 27 Simulator tests passed,
+including ownership, guest publishing and recovery readiness. Evidence:
+`.build/cellular-call-recovery/native-audio-final-mac.xcresult`,
+`native-audio-final-simulator.xcresult`, `device-native-audio.log` and
+`trace-native-audio.jsonl`.
+
+Background camera/PiP qualification is pending. The first physical UI run pinned
+an arbitrary camera-off participant because its fixture chose the last matching
+button; that fixture now selects a uniquely named local participant. The repeat
+was stopped by iOS refusing UI testing authorization. Neither run establishes a
+background regression or a passing background acceptance result. No beta with
+the new default has been published yet.
+
+Public API references:
+- https://developer.apple.com/documentation/callkit/cxcallobserver
+- https://developer.apple.com/documentation/avfoundation/avcapturesession/ismultitaskingcameraaccesssupported
+- https://developer.apple.com/documentation/avfaudio/handling-audio-interruptions

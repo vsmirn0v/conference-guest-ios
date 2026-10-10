@@ -761,3 +761,9 @@
 "Reactions received on this device during this meeting." = "Реакции, полученные на этом устройстве во время этой встречи.";
 "Showing recent reactions" = "Показаны последние реакции";
 "Some reactions may be missing while disconnected or backgrounded." = "Часть реакций могла быть пропущена при потере связи или в фоне.";
+
+"System call controls" = "Системные элементы звонка";
+
+"Phone calls" = "Телефонные звонки";
+
+"Audio and Picture in Picture keep working with this off. Some cellular networks block phone calls while system call controls are on. Changes apply to the next jam." = "Звук и «Картинка в картинке» работают и без этой функции. В некоторых сотовых сетях системные элементы звонка мешают совершать телефонные звонки. Изменения вступят в силу при следующем подключении.";

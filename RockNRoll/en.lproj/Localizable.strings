@@ -763,3 +763,9 @@
 "Reactions received on this device during this meeting." = "Reactions received on this device during this meeting.";
 "Showing recent reactions" = "Showing recent reactions";
 "Some reactions may be missing while disconnected or backgrounded." = "Some reactions may be missing while disconnected or backgrounded.";
+
+"System call controls" = "System call controls";
+
+"Phone calls" = "Phone calls";
+
+"Audio and Picture in Picture keep working with this off. Some cellular networks block phone calls while system call controls are on. Changes apply to the next jam." = "Audio and Picture in Picture keep working with this off. Some cellular networks block phone calls while system call controls are on. Changes apply to the next jam.";

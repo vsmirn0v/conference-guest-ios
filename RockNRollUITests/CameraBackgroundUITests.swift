@@ -69,6 +69,7 @@ final class CameraBackgroundUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
         app.launchEnvironment["CONFERENCE_TEST_CAMERA_TRACE"] = "1"
         app.launchEnvironment["CONFERENCE_TEST_RESET_FLOATING_VIDEO"] = "1"
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Camera background QA"
         app.launch()
         defer {
             app.activate()
@@ -83,8 +84,9 @@ final class CameraBackgroundUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Stop video"].waitForExistence(timeout: 30))
         sleep(10)
         if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAMERA_PIN_LOCAL"] == "1" {
-            let pins = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Pin ' AND label ENDSWITH ' video'"))
-            if let local = pins.allElementsBoundByIndex.last { local.tap() }
+            let local = app.buttons["Pin Camera background QA video"]
+            XCTAssertTrue(local.waitForExistence(timeout: 10), "Choose the fixture's own camera, not an arbitrary participant")
+            local.tap()
             sleep(3)
         }
         shot(app, "Camera foreground baseline")

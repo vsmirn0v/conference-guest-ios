@@ -7,6 +7,177 @@ import XCTest
 
 @MainActor
 final class SessionOwnershipTests: XCTestCase {
+    func testNativeMeetingResumesAfterEndedNotificationWithoutMediaPlayerHint() {
+        var activations = 0
+        let calls = SystemCallCoordinator(transactionRequester: { _, _ in XCTFail("No system call transaction") },
+            callSnapshot: { [] }, systemCallRegistration: false, activateAudioSession: { activations += 1 })
+        calls.start(); calls.markConnected()
+        NotificationCenter.default.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(),
+            userInfo: [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue])
+        XCTAssertFalse(calls.canRestoreAudio)
+        NotificationCenter.default.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(),
+            userInfo: [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.ended.rawValue])
+        XCTAssertTrue(calls.canRestoreAudio)
+        XCTAssertEqual(activations, 2, "Continuous meeting policy differs from paused media playback")
+        calls.end()
+    }
+
+    func testNativeHoldEventsCoalesceAndResumeOnlyAfterLastCompetitor() {
+        var snapshot: [SystemCallCoordinator.ObservedCall] = []
+        var events: [String] = []
+        let calls = SystemCallCoordinator(transactionRequester: { _, _ in XCTFail("No system call transaction") },
+            callSnapshot: { snapshot }, systemCallRegistration: false, activateAudioSession: {})
+        calls.onActivated = { events.append("activate") }
+        calls.onDeactivated = { events.append("deactivate") }
+        calls.onHoldChanged = { events.append($0 ? "hold" : "unhold") }
+        calls.start(); calls.markConnected(); events.removeAll()
+        let first = UUID(), second = UUID()
+        snapshot = [.init(id: first, connected: false, held: false), .init(id: second, connected: true, held: true)]
+        calls.observedCallChanged(snapshot[0])
+        calls.audioSessionInterrupted(true)
+        calls.observedCallChanged(snapshot[1])
+        XCTAssertEqual(events, ["hold", "deactivate"])
+        snapshot.removeFirst()
+        calls.observedCallChanged(.init(id: first, connected: true, held: false, ended: true))
+        calls.audioSessionInterrupted(false)
+        XCTAssertEqual(events, ["hold", "deactivate"])
+        snapshot = []
+        calls.observedCallChanged(.init(id: second, connected: true, held: false, ended: true))
+        XCTAssertEqual(events, ["hold", "deactivate", "unhold", "activate"])
+        calls.end()
+    }
+
+    func testRetiredNativeRetryCannotActivateReplacementMeeting() async throws {
+        var reject = false, attempts = 0
+        let calls = SystemCallCoordinator(transactionRequester: { _, _ in XCTFail("No system call transaction") },
+            callSnapshot: { [] }, systemCallRegistration: false, activateAudioSession: {
+                attempts += 1
+                if reject { throw NSError(domain: "test", code: 1) }
+            })
+        calls.start(); calls.markConnected()
+        let old = calls.callID
+        calls.audioSessionInterrupted(true); reject = true; calls.audioSessionInterrupted(false)
+        calls.end(); reject = false; calls.start(); calls.markConnected()
+        XCTAssertNotEqual(calls.callID, old)
+        calls.audioSessionInterrupted(true)
+        try await Task.sleep(for: .milliseconds(650))
+        XCTAssertFalse(calls.canRestoreAudio)
+        XCTAssertEqual(attempts, 3)
+        calls.end()
+    }
+
+    func testApplicationAudioModeWaitsForExistingCallBeforeJoining() throws {
+        let other = UUID()
+        var snapshot: [SystemCallCoordinator.ObservedCall] = [.init(id: other, connected: true, held: false)]
+        var activations = 0
+        let calls = SystemCallCoordinator(transactionRequester: { _, _ in XCTFail("Must not register a system call") },
+            callSnapshot: { snapshot }, systemCallRegistration: false, activateAudioSession: { activations += 1 })
+        calls.start()
+        let identity = try XCTUnwrap(calls.callID)
+        XCTAssertEqual(activations, 0)
+        XCTAssertFalse(calls.canRestoreAudio)
+        snapshot = []
+        calls.observedCallChanged(.init(id: other, connected: true, held: false, ended: true))
+        XCTAssertEqual(activations, 1)
+        XCTAssertEqual(calls.callID, identity)
+        XCTAssertTrue(calls.canRestoreAudio)
+        calls.end()
+    }
+
+    func testApplicationAudioModeNeverActivatesDuringRingingOrHeldCompetitor() throws {
+        var snapshot: [SystemCallCoordinator.ObservedCall] = []
+        var activations = 0
+        let calls = SystemCallCoordinator(transactionRequester: { _, _ in XCTFail("No system call transaction") },
+            callSnapshot: { snapshot }, systemCallRegistration: false, activateAudioSession: { activations += 1 })
+        calls.start(); calls.markConnected()
+        let identity = try XCTUnwrap(calls.callID), other = UUID()
+        calls.audioSessionInterrupted(true)
+        for connected in [false, true] {
+            snapshot = [.init(id: other, connected: connected, held: true)]
+            calls.observedCallChanged(snapshot[0])
+            calls.audioSessionInterrupted(false)
+            XCTAssertFalse(try calls.reactivateAudioIfPossible())
+            XCTAssertFalse(calls.canRestoreAudio)
+            XCTAssertEqual(activations, 1)
+        }
+        snapshot = []
+        calls.observedCallChanged(.init(id: other, connected: true, held: false, ended: true))
+        XCTAssertEqual(activations, 2)
+        XCTAssertTrue(calls.canRestoreAudio)
+        XCTAssertEqual(calls.callID, identity)
+        calls.end()
+    }
+
+    func testApplicationAudioModeRequiresFreshReleaseAndRetainsFailedActivation() throws {
+        var snapshot: [SystemCallCoordinator.ObservedCall] = []
+        var reject = false, activations = 0
+        let calls = SystemCallCoordinator(transactionRequester: { _, _ in XCTFail("No system call transaction") },
+            callSnapshot: { snapshot }, systemCallRegistration: false, activateAudioSession: {
+                if reject { throw NSError(domain: "test", code: 1) }
+                activations += 1
+            })
+        calls.start(); calls.markConnected()
+        calls.audioSessionInterrupted(true)
+        calls.observedCallChanged(.init(id: UUID(), connected: true, held: false, ended: true))
+        XCTAssertEqual(activations, 1, "An unrelated ended call is not release evidence")
+        XCTAssertFalse(try calls.reactivateAudioIfPossible())
+        let other = UUID()
+        snapshot = [.init(id: other, connected: false, held: false)]
+        calls.observedCallChanged(snapshot[0])
+        snapshot = []; reject = true
+        calls.observedCallChanged(.init(id: other, connected: true, held: false, ended: true))
+        XCTAssertFalse(calls.canRestoreAudio)
+        reject = false
+        XCTAssertTrue(try calls.reactivateAudioIfPossible(), "Failed activation retains this episode's release")
+        calls.audioSessionInterrupted(true)
+        XCTAssertFalse(try calls.reactivateAudioIfPossible(), "A new interruption cannot reuse the preceding release")
+        calls.end()
+        calls.audioSessionInterrupted(false)
+        XCTAssertNil(calls.callID)
+        XCTAssertEqual(activations, 2)
+    }
+
+    func testApplicationTransferUnholdCannotTakeAudioFromCompetingCall() async throws {
+        var snapshot: [SystemCallCoordinator.ObservedCall] = []
+        var activations = 0
+        let calls = SystemCallCoordinator(transactionRequester: { _, _ in XCTFail("No system call transaction") },
+            callSnapshot: { snapshot }, systemCallRegistration: false, activateAudioSession: { activations += 1 })
+        calls.start(); calls.markConnected()
+        try await calls.setTransferHeld(true)
+        let other = UUID()
+        snapshot = [.init(id: other, connected: true, held: false)]
+        calls.observedCallChanged(snapshot[0])
+        do { try await calls.setTransferHeld(false); XCTFail("A competitor still owns audio") }
+        catch { XCTAssertEqual(activations, 1) }
+        snapshot = []
+        calls.observedCallChanged(.init(id: other, connected: true, held: false, ended: true))
+        XCTAssertTrue(calls.canRestoreAudio)
+        XCTAssertEqual(activations, 2)
+        calls.end()
+    }
+
+    func testApplicationAudioRetriesTransientActivationFailureAfterCallEnds() async throws {
+        var snapshot: [SystemCallCoordinator.ObservedCall] = []
+        var attempts = 0
+        let calls = SystemCallCoordinator(transactionRequester: { _, _ in XCTFail("No system call transaction") },
+            callSnapshot: { snapshot }, systemCallRegistration: false, activateAudioSession: {
+                attempts += 1
+                if attempts == 2 { throw NSError(domain: "test", code: 1) }
+            })
+        calls.start(); calls.markConnected()
+        let other = UUID()
+        snapshot = [.init(id: other, connected: true, held: false)]
+        calls.observedCallChanged(snapshot[0])
+        snapshot = []
+        calls.observedCallChanged(.init(id: other, connected: true, held: false, ended: true))
+        XCTAssertFalse(calls.canRestoreAudio)
+        let deadline = Date().addingTimeInterval(2)
+        while !calls.canRestoreAudio && Date() < deadline { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertTrue(calls.canRestoreAudio)
+        XCTAssertEqual(attempts, 3)
+        calls.end()
+    }
+
     // Record acknowledgments at the delegate boundary: these local actions
     // are not attached to a system transaction.
     private final class StartAction: CXStartCallAction {

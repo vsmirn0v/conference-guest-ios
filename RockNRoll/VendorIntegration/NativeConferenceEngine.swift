@@ -2,6 +2,9 @@ import Combine
 import CallKit
 import ConferenceCore
 import JazzSDK
+#if DEBUG
+import JazzCore
+#endif
 import Network
 import UIKit
 
@@ -1098,12 +1101,15 @@ final class NativeConferenceEngine: CallEngine {
                 }
             }
         }
-        let entry: [String: Any] = ["time": Date().timeIntervalSince1970, "event": event,
+        var entry: [String: Any] = ["time": Date().timeIntervalSince1970, "event": event,
             "attempt": mediaReconnectGeneration, "audioReady": isCallAudioReady,
             "audioGateReady": audioGate.canUseMedia, "held": isSystemHeld,
             "interrupted": isAudioInterrupted, "reconnecting": isMediaReconnecting,
             "signalingActive": isSDKActive, "mediaConnected": mediaConnectionConfirmed,
             "pendingRoom": pendingRoom != nil, "incomingFrames": tracedIncomingFrames]
+        entry.merge(systemCall.diagnosticState) { _, value in value }
+        entry["vendorCallProxyEnabled"] = JMCallKitProxy.enabled
+        entry["vendorCallProviderConfigured"] = JMCallKitProxy.isProviderConfigured()
         guard var line = try? JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]) else { return }
         line.append(10)
         let file = directory.appendingPathComponent("guest-media-recovery.jsonl")
