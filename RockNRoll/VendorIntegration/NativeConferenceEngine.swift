@@ -954,7 +954,7 @@ final class NativeConferenceEngine: CallEngine {
 
 
     func resumeSystemCallIfPossible() {
-        systemCall.resumeIfPossible(afterReturningToMeeting: true)
+        systemCall.resumeIfPossible()
         scheduleUnpairedInterruptionRecovery()
     }
 

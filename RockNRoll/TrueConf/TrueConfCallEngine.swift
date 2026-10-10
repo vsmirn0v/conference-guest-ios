@@ -652,7 +652,7 @@ final class TrueConfCallEngine: CallEngine {
         onEvent?(failed ? .failed : .left)
     }
     func resumeSystemCallIfPossible() {
-        systemCall.resumeIfPossible(afterReturningToMeeting: true)
+        systemCall.resumeIfPossible()
         if systemCall.canRestoreAudio, !LKRTCAudioSession.sharedInstance().isAudioEnabled, hasJoinStarted, !held, !quiet {
             do {
                 try audio.reactivateAfterInterruption()

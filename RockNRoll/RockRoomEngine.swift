@@ -249,7 +249,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     }
 
     func resumeSystemCallIfPossible() {
-        systemCall.resumeIfPossible(afterReturningToMeeting: true)
+        systemCall.resumeIfPossible()
     }
 
     func prepareToFloat() { callView?.prepareToFloat() }

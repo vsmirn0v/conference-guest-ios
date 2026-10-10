@@ -135,6 +135,8 @@ final class SessionOwnershipTests: XCTestCase {
         XCTAssertFalse(gate.takeRecovery())
         calls.provider(provider, didDeactivate: .sharedInstance())
         XCTAssertFalse(calls.canRestoreAudio, "A late deactivation must not leave the meeting permanently silent")
+        XCTAssertFalse(try calls.reactivateAudioIfPossible(), "A fresh deactivation cannot reuse the previous call's release")
+        calls.provider(provider, didActivate: .sharedInstance())
         XCTAssertTrue(try calls.reactivateAudioIfPossible())
         XCTAssertTrue(gate.takeRecovery())
         XCTAssertEqual(calls.callID, id)
@@ -212,7 +214,7 @@ final class SessionOwnershipTests: XCTestCase {
         snapshot = [.init(id: id, connected: true, held: false)]
         let task = Task { try await calls.setTransferHeld(true) }
         while !actions.contains(where: { $0 is CXSetHeldCallAction }) { await Task.yield() }
-        calls.resumeIfPossible(afterReturningToMeeting: true)
+        calls.resumeIfPossible()
         XCTAssertFalse(try calls.reactivateAudioIfPossible(), "Even a stale unheld snapshot cannot override explicit handoff")
         let hold = try XCTUnwrap(actions.compactMap { $0 as? CXSetHeldCallAction }.last)
         calls.provider(CXProvider(configuration: CXProviderConfiguration()), perform: hold)
@@ -222,7 +224,7 @@ final class SessionOwnershipTests: XCTestCase {
         calls.markEnded(reason: .remoteEnded)
     }
 
-    func testForegroundReturnResumesHoldEvenWhenOtherCallNotificationsWereMissing() throws {
+    func testHeldToUnheldSnapshotRepairsMissingProviderCallbacks() throws {
         var snapshot: [SystemCallCoordinator.ObservedCall] = []
         var actions: [CXAction] = []
         let calls = SystemCallCoordinator(transactionRequester: { tx, done in actions += tx.actions; done(nil) },
@@ -233,10 +235,11 @@ final class SessionOwnershipTests: XCTestCase {
         let provider = CXProvider(configuration: SystemCallCoordinator.providerConfiguration())
         calls.provider(provider, perform: HoldAction(call: id, onHold: true))
         XCTAssertFalse(actions.contains { ($0 as? CXSetHeldCallAction)?.isOnHold == false })
-        calls.resumeIfPossible(afterReturningToMeeting: true)
-        XCTAssertEqual(actions.filter { ($0 as? CXSetHeldCallAction)?.isOnHold == false }.count, 1)
-        calls.resumeIfPossible(afterReturningToMeeting: true)
-        XCTAssertEqual(actions.filter { ($0 as? CXSetHeldCallAction)?.isOnHold == false }.count, 1)
+        calls.resumeIfPossible()
+        XCTAssertEqual(actions.filter { ($0 as? CXSetHeldCallAction)?.isOnHold == false }.count, 0,
+                       "Foreground checking cannot override an unresolved system hold")
+        calls.resumeIfPossible()
+        XCTAssertEqual(actions.filter { ($0 as? CXSetHeldCallAction)?.isOnHold == false }.count, 0)
         XCTAssertFalse(try calls.reactivateAudioIfPossible(), "The resume request is not proof that hold ended")
         snapshot[0].held = false
         XCTAssertTrue(try calls.reactivateAudioIfPossible())
@@ -246,12 +249,16 @@ final class SessionOwnershipTests: XCTestCase {
 
     func testResumeTimeoutAllowsRetryWithoutAffectingNewerRequest() throws {
         var actions: [CXAction] = []
-        let calls = SystemCallCoordinator(transactionRequester: { tx, done in actions += tx.actions; done(nil) })
+        var snapshot: [SystemCallCoordinator.ObservedCall] = []
+        let calls = SystemCallCoordinator(transactionRequester: { tx, done in actions += tx.actions; done(nil) },
+                                          callSnapshot: { snapshot })
         calls.start(); calls.markConnected()
-        let id = try XCTUnwrap(calls.callID)
+        let id = try XCTUnwrap(calls.callID), other = UUID()
         let provider = CXProvider(configuration: SystemCallCoordinator.providerConfiguration())
+        snapshot = [.init(id: id, connected: true, held: true), .init(id: other, connected: false, held: false)]
         calls.provider(provider, perform: HoldAction(call: id, onHold: true))
-        calls.resumeIfPossible(afterReturningToMeeting: true)
+        snapshot.removeLast()
+        calls.resumeIfPossible()
         let first = try XCTUnwrap(actions.compactMap { $0 as? CXSetHeldCallAction }.last)
         calls.provider(provider, timedOutPerforming: first)
         calls.resumeIfPossible()
@@ -261,6 +268,119 @@ final class SessionOwnershipTests: XCTestCase {
         calls.resumeIfPossible()
         XCTAssertEqual(actions.filter { $0 is CXSetHeldCallAction }.count, 2)
         calls.markEnded(reason: .remoteEnded)
+    }
+
+    func testStaleUnheldSnapshotCannotOverrideFreshSystemHoldOrDeactivation() throws {
+        for holdBeforeDeactivation in [true, false] {
+            var snapshot: [SystemCallCoordinator.ObservedCall] = []
+            var actions: [CXAction] = []
+            var activations = 0, holdChanges: [Bool] = []
+            let calls = SystemCallCoordinator(transactionRequester: { tx, done in actions += tx.actions; done(nil) },
+                callSnapshot: { snapshot }, activateAudioSession: { activations += 1 })
+            calls.start(); calls.markConnected()
+            let id = try XCTUnwrap(calls.callID), other = UUID()
+            let provider = CXProvider(configuration: SystemCallCoordinator.providerConfiguration())
+            snapshot = [.init(id: id, connected: true, held: false)]
+            calls.provider(provider, didActivate: .sharedInstance())
+            calls.onHoldChanged = { holdChanges.append($0) }
+            if holdBeforeDeactivation { calls.provider(provider, perform: HoldAction(call: id, onHold: true)) }
+            calls.provider(provider, didDeactivate: .sharedInstance())
+            // Phone is beginning to dial, but CXCallObserver still describes the meeting before hold.
+            for _ in 0..<90 {
+                calls.resumeIfPossible()
+                XCTAssertFalse(try calls.reactivateAudioIfPossible())
+            }
+            XCTAssertEqual(activations, 0)
+            XCTAssertFalse(actions.contains { ($0 as? CXSetHeldCallAction)?.isOnHold == false })
+            XCTAssertFalse(holdChanges.contains(false))
+            XCTAssertFalse(calls.canRestoreAudio)
+            if !holdBeforeDeactivation { calls.provider(provider, perform: HoldAction(call: id, onHold: true)) }
+            let competitor = SystemCallCoordinator.ObservedCall(id: other, connected: false, held: false)
+            snapshot = [.init(id: id, connected: true, held: true), competitor]
+            calls.observedCallChanged(competitor)
+            XCTAssertFalse(try calls.reactivateAudioIfPossible(), "An unconnected dialing call still owns the interruption")
+            snapshot = [.init(id: id, connected: true, held: true)]
+            calls.observedCallChanged(.init(id: other, connected: true, held: false, ended: true))
+            XCTAssertEqual(actions.filter { ($0 as? CXSetHeldCallAction)?.isOnHold == false }.count, 1)
+            XCTAssertFalse(try calls.reactivateAudioIfPossible())
+            snapshot[0].held = false
+            XCTAssertTrue(try calls.reactivateAudioIfPossible())
+            XCTAssertEqual(activations, 1)
+            XCTAssertTrue(calls.canRestoreAudio)
+            XCTAssertEqual(holdChanges.last, false)
+            XCTAssertEqual(calls.callID, id)
+            calls.markEnded(reason: .remoteEnded)
+        }
+    }
+
+    func testPreviousOrUnseenCompetingCallCannotAuthorizeNewInterruption() throws {
+        var snapshot: [SystemCallCoordinator.ObservedCall] = []
+        var actions: [CXAction] = []
+        var activations = 0
+        let calls = SystemCallCoordinator(transactionRequester: { tx, done in actions += tx.actions; done(nil) },
+            callSnapshot: { snapshot }, activateAudioSession: { activations += 1 })
+        calls.start(); calls.markConnected()
+        let id = try XCTUnwrap(calls.callID), other = UUID()
+        let provider = CXProvider(configuration: SystemCallCoordinator.providerConfiguration())
+        snapshot = [.init(id: id, connected: true, held: true), .init(id: other, connected: true, held: false)]
+        calls.provider(provider, perform: HoldAction(call: id, onHold: true))
+        calls.provider(provider, didDeactivate: .sharedInstance())
+        snapshot = [.init(id: id, connected: true, held: false)]
+        XCTAssertTrue(try calls.reactivateAudioIfPossible())
+        calls.provider(provider, perform: HoldAction(call: id, onHold: true))
+        calls.provider(provider, didDeactivate: .sharedInstance())
+        calls.observedCallChanged(.init(id: other, connected: true, held: false, ended: true))
+        calls.resumeIfPossible()
+        XCTAssertFalse(try calls.reactivateAudioIfPossible())
+        XCTAssertEqual(activations, 1)
+        XCTAssertFalse(actions.contains { ($0 as? CXSetHeldCallAction)?.isOnHold == false })
+        calls.provider(provider, perform: HoldAction(call: id, onHold: false))
+        XCTAssertTrue(try calls.reactivateAudioIfPossible(), "A fresh system unhold authorizes recovery")
+        XCTAssertEqual(activations, 2)
+        calls.markEnded(reason: .remoteEnded)
+    }
+
+    func testDeactivationBeforeDelayedHoldRetainsCompletedCompetitorEvidence() throws {
+        var snapshot: [SystemCallCoordinator.ObservedCall] = []
+        var actions: [CXAction] = []
+        let calls = SystemCallCoordinator(transactionRequester: { tx, done in actions += tx.actions; done(nil) },
+                                          callSnapshot: { snapshot }, activateAudioSession: {})
+        calls.start(); calls.markConnected()
+        let id = try XCTUnwrap(calls.callID), other = UUID()
+        let provider = CXProvider(configuration: SystemCallCoordinator.providerConfiguration())
+        snapshot = [.init(id: id, connected: true, held: false)]
+        calls.provider(provider, didActivate: .sharedInstance())
+        snapshot.append(.init(id: other, connected: false, held: false))
+        calls.provider(provider, didDeactivate: .sharedInstance())
+        snapshot = [.init(id: id, connected: true, held: true)]
+        calls.provider(provider, perform: HoldAction(call: id, onHold: true))
+        calls.resumeIfPossible()
+        XCTAssertEqual(actions.filter { ($0 as? CXSetHeldCallAction)?.isOnHold == false }.count, 1)
+        XCTAssertFalse(try calls.reactivateAudioIfPossible())
+        snapshot[0].held = false
+        XCTAssertTrue(try calls.reactivateAudioIfPossible())
+        calls.markEnded(reason: .remoteEnded)
+    }
+
+    func testFreshYieldCannotReuseSystemUnholdBeforePreviousRecoveryCompletes() throws {
+        for nextStartsWithHold in [true, false] {
+            var snapshot: [SystemCallCoordinator.ObservedCall] = []
+            var activations = 0
+            let calls = SystemCallCoordinator(transactionRequester: { _, done in done(nil) },
+                callSnapshot: { snapshot }, activateAudioSession: { activations += 1 })
+            calls.start(); calls.markConnected()
+            let id = try XCTUnwrap(calls.callID)
+            let provider = CXProvider(configuration: SystemCallCoordinator.providerConfiguration())
+            snapshot = [.init(id: id, connected: true, held: true)]
+            calls.provider(provider, perform: HoldAction(call: id, onHold: true))
+            calls.provider(provider, perform: HoldAction(call: id, onHold: false))
+            snapshot[0].held = false
+            if nextStartsWithHold { calls.provider(provider, perform: HoldAction(call: id, onHold: true)) }
+            calls.provider(provider, didDeactivate: .sharedInstance())
+            XCTAssertFalse(try calls.reactivateAudioIfPossible())
+            XCTAssertEqual(activations, 0)
+            calls.markEnded(reason: .remoteEnded)
+        }
     }
 
     func testMeetingAdvertisesHoldSupportAtStartAndConnection() throws {
