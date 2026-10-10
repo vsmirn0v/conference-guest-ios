@@ -1,5 +1,11 @@
 # Camera geometry and device selection — 9–10 October 2026
 
+> Correction (10 October): the gradient-based checks below established transport
+> consistency, not the physical camera scene's upright orientation. Their Mac
+> rotation conclusion was incorrect and is superseded by
+> [the real-scene regression qualification](mac-camera-orientation-regression-2026-10-10.md).
+> Historical evidence is retained here; it is not acceptance of the corrected rotation.
+
 ## Source corrections
 
 - Automatic framing (Center Stage) defaults off once for this app. Cooperative

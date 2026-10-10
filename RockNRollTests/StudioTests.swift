@@ -8,17 +8,6 @@ import XCTest
 
 @MainActor
 final class StudioTests: XCTestCase {
-    func testMacCameraRotationSkipsStaleOutputsAfterRestart() {
-        typealias Output = MacCameraFrameOrientation.OutputGeometry
-        let stale = Output(physicalAngle: 90, isActive: false, isEnabled: false)
-        let starting = Output(physicalAngle: 180, isActive: false, isEnabled: true)
-        let active = Output(physicalAngle: 0, isActive: true, isEnabled: true)
-        XCTAssertEqual(MacCameraFrameOrientation.rotation(upright: 0, outputs: [nil, active]), 0)
-        XCTAssertEqual(MacCameraFrameOrientation.rotation(upright: 0, outputs: [nil, stale, starting, active]), 0)
-        XCTAssertEqual(MacCameraFrameOrientation.rotation(upright: 0, outputs: [nil, stale, starting]), 180)
-        XCTAssertNil(MacCameraFrameOrientation.rotation(upright: 0, outputs: [nil, nil]))
-    }
-
     func testAutomaticFramingDefaultsOffOnceAndHonorsSubsequentSystemChoice() {
         let name = "CameraFramingTests.\(UUID())"
         let defaults = UserDefaults(suiteName: name)!
@@ -40,35 +29,30 @@ final class StudioTests: XCTestCase {
         XCTAssertEqual(writes, [false, false])
         XCTAssertEqual(defaults.object(forKey: CameraFramingPolicy.preferenceKey) as? Bool, false)
     }
-    func testLiveKitCameraRotationPreservesSourcePixelsAndTiming() throws {
-        var pixels: CVPixelBuffer?
-        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 128, 72, kCVPixelFormatType_32BGRA, nil, &pixels), kCVReturnSuccess)
-        let buffer = CVPixelVideoBuffer(pixelBuffer: try XCTUnwrap(pixels))
-        let frame = VideoFrame(dimensions: Dimensions(width: 128, height: 72), rotation: ._90,
-                               timeStampNs: 123456, buffer: buffer)
-        let corrected = LiveKitCameraFrameProcessor.corrected(frame, rotation: ._0)
-        XCTAssertTrue((corrected.buffer as? CVPixelVideoBuffer) === buffer)
-        XCTAssertEqual(corrected.dimensions, frame.dimensions)
-        XCTAssertEqual(corrected.rotation, ._0)
-        XCTAssertEqual(corrected.timeStampNs, frame.timeStampNs)
-        XCTAssertTrue(LiveKitCameraFrameProcessor.corrected(frame, rotation: nil) === frame)
-        XCTAssertTrue(LiveKitCameraFrameProcessor.corrected(frame, rotation: ._90) === frame)
-    }
-
-    func testNativeCameraRotationPreservesSourcePixelsAndTiming() throws {
+    func testNativeCameraDelegatePreservesOriginalRotationPixelsAndTiming() throws {
         var pixels: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 128, 72, kCVPixelFormatType_32BGRA, nil, &pixels), kCVReturnSuccess)
         let buffer = LKRTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels))
-        let frame = LKRTCVideoFrame(buffer: buffer, rotation: ._90, timeStampNs: 123456)
-        frame.timeStamp = 234
-        let corrected = NativeCameraFrameDelegate.corrected(frame, rotation: ._0)
-        XCTAssertTrue(corrected.buffer === frame.buffer)
-        XCTAssertEqual(corrected.width, 128); XCTAssertEqual(corrected.height, 72)
-        XCTAssertEqual(corrected.rotation, ._0)
-        XCTAssertEqual(corrected.timeStampNs, frame.timeStampNs)
-        XCTAssertEqual(corrected.timeStamp, frame.timeStamp)
-        XCTAssertTrue(NativeCameraFrameDelegate.corrected(frame, rotation: nil) === frame)
-        XCTAssertTrue(NativeCameraFrameDelegate.corrected(frame, rotation: ._90) === frame)
+        let receiver = NativeFrameReceiver()
+        let adapter = NativeCameraFrameDelegate(downstream: receiver)
+        let capturer = LKRTCCameraVideoCapturer(delegate: adapter)
+        for rotation in [LKRTCVideoRotation._0, ._90, ._180, ._270] {
+            let frame = LKRTCVideoFrame(buffer: buffer, rotation: rotation, timeStampNs: 123456)
+            frame.timeStamp = 234
+            adapter.capturer(capturer, didCapture: frame)
+            let output = try XCTUnwrap(receiver.frame)
+            XCTAssertTrue(output === frame)
+            XCTAssertTrue(output.buffer === buffer)
+            XCTAssertEqual(output.width, 128); XCTAssertEqual(output.height, 72)
+            XCTAssertEqual(output.rotation, rotation)
+            XCTAssertEqual(output.timeStampNs, frame.timeStampNs)
+            XCTAssertEqual(output.timeStamp, frame.timeStamp)
+        }
+    }
+
+    private final class NativeFrameReceiver: NSObject, LKRTCVideoCapturerDelegate {
+        var frame: LKRTCVideoFrame?
+        func capturer(_ capturer: LKRTCVideoCapturer, didCapture frame: LKRTCVideoFrame) { self.frame = frame }
     }
 
     func testMacCameraDiscoveryAvoidsRearCompatibilityAliases() throws {
@@ -211,10 +195,10 @@ final class StudioTests: XCTestCase {
             camera.view.frame = CGRect(x: 0, y: 0, width: 320, height: 180)
             camera.view.layoutIfNeeded()
             let connection = try XCTUnwrap(layer.connection)
-            let coordinator = AVCaptureDevice.RotationCoordinator(device: input.device, previewLayer: layer)
+            let reference = AVCaptureVideoPreviewLayer(session: session)
             XCTAssertEqual(connection.videoRotationAngle,
-                PrivateCameraPreview.connectionAngle(horizon: coordinator.videoRotationAngleForHorizonLevelPreview),
-                accuracy: 0.01, "Preview uses the device horizon, not the default portrait connection")
+                try XCTUnwrap(reference.connection).videoRotationAngle,
+                accuracy: 0.01, "Mac preview preserves the native compatibility connection orientation")
         }
         XCTAssertTrue(input.device.hasMediaType(.video))
         XCTAssertFalse(input.device.hasMediaType(.audio))
@@ -269,9 +253,17 @@ final class StudioTests: XCTestCase {
             if #available(iOS 17.0, *), let output = session.outputs.first as? AVCaptureVideoDataOutput {
                 let rotation = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
                 print("PRESENTER_CAPTURE_DEVICE=\(device.localizedName), horizon=\(rotation.videoRotationAngleForHorizonLevelCapture), output=\(output.connection(with: .video)?.videoRotationAngle ?? -1)")
-                XCTAssertEqual(lastRotation, 0, "Capture output physically applies its coordinator angle")
-                XCTAssertEqual(output.connection(with: .video)?.videoRotationAngle ?? -1,
-                    PrivateCameraPreview.connectionAngle(horizon: rotation.videoRotationAngleForHorizonLevelCapture), accuracy: 0.01)
+                XCTAssertEqual(lastRotation, 0, "AVCaptureVideoDataOutput supplies physically oriented pixels")
+                if ProcessInfo.processInfo.isiOSAppOnMac {
+                    let reference = AVCaptureVideoPreviewLayer(session: session)
+                    let captureConnection = try XCTUnwrap(output.connection(with: .video))
+                    let previewConnection = try XCTUnwrap(reference.connection)
+                    XCTAssertEqual(captureConnection.videoOrientation,
+                        previewConnection.videoOrientation, "Mac data capture follows its native preview orientation")
+                } else {
+                    XCTAssertEqual(output.connection(with: .video)?.videoRotationAngle ?? -1,
+                        PrivateCameraPreview.connectionAngle(horizon: rotation.videoRotationAngleForHorizonLevelCapture), accuracy: 0.01)
+                }
             }
         }
         await camera.stop()

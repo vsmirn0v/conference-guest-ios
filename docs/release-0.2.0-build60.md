@@ -9,6 +9,14 @@ Minimum iOS remains 16.0. Native codec dependencies are unchanged from beta 59.
 Beta notes: “Improved audio and video reliability, meeting layout and device
 handoff. Stability fixes.”
 
+## Camera acceptance correction (10 October)
+
+The Mac camera claim below was based on a synthetic gradient. It did not establish
+that the physical camera scene was upright, and was disproved by the built-in
+camera report. The faulty rotation override is removed in build 61; see
+[the real-scene qualification](mac-camera-orientation-regression-2026-10-10.md).
+The immutable build 60 artifact and its historical test record remain unchanged.
+
 ## Qualification
 
 - ConferenceCore: 101 tests, zero failures.

@@ -83,14 +83,24 @@ final class GuestCameraPublishingTests: XCTestCase {
         _ = encoder.release(); base.complete(stamp: 200)
         XCTAssertEqual(received.count, 4)
     }
-    func testMacRotationMatchesNativePreviewConnectionAndPreservesQuarterTurns() {
-        XCTAssertEqual(GuestCameraFrameDelegate.rotation(upright: 0, physical: 0), ._0)
-        XCTAssertEqual(GuestCameraFrameDelegate.rotation(upright: 0, physical: 90), ._270)
-        XCTAssertEqual(GuestCameraFrameDelegate.rotation(upright: 90, physical: 0), ._90)
-        XCTAssertNil(GuestCameraFrameDelegate.rotation(upright: 32, physical: 0))
-        XCTAssertNil(GuestCameraFrameDelegate.rotation(upright: .nan, physical: 0))
-        XCTAssertNil(GuestCameraFrameDelegate.rotation(upright: 0, physical: .infinity))
-        XCTAssertEqual(GuestCameraFrameDelegate.rotation(upright: 270, physical: 90), ._180)
+    func testCameraDelegatePreservesOriginalMetadataWhenNativeBakeIsUnsupported() throws {
+        let receiver = FrameReceiver(), camera = RTCCameraVideoCapturer(delegate: receiver)
+        let adapter = GuestCameraFrameDelegate(camera: camera, device: nil, downstream: receiver)
+        let source = try frame(stamp: 345, matrix: kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+                               ns: 345_000, format: kCVPixelFormatType_32BGRA, width: 32, height: 16)
+        XCTAssertNil(GuestH264ColorEncoder.nativeColor(for: source))
+        for rotation in [RTCVideoRotation._0, ._90, ._180, ._270] {
+            let input = RTCVideoFrame(buffer: source.buffer, rotation: rotation, timeStampNs: source.timeStampNs)
+            input.timeStamp = source.timeStamp
+            adapter.capturer(camera, didCapture: input)
+            let output = try XCTUnwrap(receiver.lastFrame)
+            XCTAssertTrue(output === input)
+            XCTAssertTrue(output.buffer === input.buffer)
+            XCTAssertEqual(output.rotation, rotation)
+            XCTAssertEqual(output.width, 32); XCTAssertEqual(output.height, 16)
+            XCTAssertEqual(output.timeStampNs, input.timeStampNs)
+            XCTAssertEqual(output.timeStamp, input.timeStamp)
+        }
     }
     func testNativeRotationPreservesPixelRangeAndMatchesSoftwareReference() throws {
         for format in [kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange] {
@@ -133,6 +143,39 @@ final class GuestCameraPublishingTests: XCTestCase {
             guard case .backpressure = adapter.orient(input) else { return XCTFail("Never exceed eight in-flight buffers") }
             held.removeLast()
             guard case .frame = adapter.orient(input) else { return XCTFail("Recover when retained frames are released") }
+        }
+    }
+    func testCameraDelegateBakesOriginalSDKRotationIntoNV12() throws {
+        let receiver = FrameReceiver(), camera = RTCCameraVideoCapturer(delegate: receiver)
+        let adapter = GuestCameraFrameDelegate(camera: camera, device: nil, downstream: receiver)
+        let source = try frame(stamp: 456, matrix: kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+                               ns: 456_000, width: 32, height: 16)
+        let pixels = try XCTUnwrap((source.buffer as? RTCCVPixelBuffer)?.pixelBuffer)
+        CVPixelBufferLockBaseAddress(pixels, [])
+        let y = CVPixelBufferGetBaseAddressOfPlane(pixels, 0)!.assumingMemoryBound(to: UInt8.self)
+        for row in 0..<16 { for column in 0..<32 {
+            y[row * CVPixelBufferGetBytesPerRowOfPlane(pixels, 0) + column] = UInt8((row * 32 + column) % 256)
+        } }
+        CVPixelBufferUnlockBaseAddress(pixels, [])
+        let original = source.buffer.toI420()
+        for rotation in [RTCVideoRotation._0, ._90, ._180, ._270] {
+            let input = RTCVideoFrame(buffer: source.buffer, rotation: rotation, timeStampNs: source.timeStampNs)
+            input.timeStamp = source.timeStamp
+            adapter.capturer(camera, didCapture: input)
+            let output = try XCTUnwrap(receiver.lastFrame)
+            let turns = rotation == ._90 || rotation == ._270
+            XCTAssertEqual(output.width, turns ? 16 : 32)
+            XCTAssertEqual(output.height, turns ? 32 : 16)
+            XCTAssertEqual(output.rotation, ._0)
+            XCTAssertEqual(input.rotation, rotation)
+            XCTAssertEqual(output.timeStampNs, input.timeStampNs)
+            XCTAssertEqual(output.timeStamp, input.timeStamp)
+            if rotation == ._0 { XCTAssertTrue(output === input) }
+            let actual = output.buffer.toI420()
+            for row in 0..<16 { for column in 0..<32 {
+                let (x, yy) = rotation == ._0 ? (column, row) : rotated(x: column, y: row, width: 32, height: 16, rotation: rotation)
+                XCTAssertEqual(actual.dataY[yy * Int(actual.strideY) + x], original.dataY[row * Int(original.strideY) + column])
+            } }
         }
     }
     private func rotated(x: Int, y: Int, width: Int, height: Int, rotation: RTCVideoRotation) -> (Int, Int) {
@@ -237,7 +280,8 @@ final class GuestCameraPublishingTests: XCTestCase {
 
 private final class FrameReceiver: NSObject, RTCVideoCapturerDelegate {
     var frames = 0
-    func capturer(_ capturer: RTCVideoCapturer, didCapture frame: RTCVideoFrame) { frames += 1 }
+    var lastFrame: RTCVideoFrame?
+    func capturer(_ capturer: RTCVideoCapturer, didCapture frame: RTCVideoFrame) { frames += 1; lastFrame = frame }
 }
 
 private final class TestEncoder: NSObject, RTCVideoEncoder {

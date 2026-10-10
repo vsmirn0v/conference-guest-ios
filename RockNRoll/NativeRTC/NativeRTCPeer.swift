@@ -399,23 +399,12 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     }
 }
 
-/// Keep native source pixels intact; correct only Mac-specific SDK metadata.
+/// Keep the SDK's source pixels, rotation and timing together across capture.
 final class NativeCameraFrameDelegate: NSObject, LKRTCVideoCapturerDelegate {
     private let downstream: LKRTCVideoCapturerDelegate
-    private let orientation = MacCameraFrameOrientation()
     init(downstream: LKRTCVideoCapturerDelegate) { self.downstream = downstream }
-    static func corrected(_ frame: LKRTCVideoFrame, rotation: LKRTCVideoRotation?) -> LKRTCVideoFrame {
-        guard let rotation, rotation != frame.rotation else { return frame }
-        let corrected = LKRTCVideoFrame(buffer: frame.buffer, rotation: rotation, timeStampNs: frame.timeStampNs)
-        corrected.timeStamp = frame.timeStamp
-        return corrected
-    }
     func capturer(_ capturer: LKRTCVideoCapturer, didCapture frame: LKRTCVideoFrame) {
-        let rotation = (capturer as? LKRTCCameraVideoCapturer)
-            .flatMap { orientation.rotation(in: $0.captureSession) }
-            .flatMap(LKRTCVideoRotation.init(rawValue:))
-        let corrected = Self.corrected(frame, rotation: rotation)
-        downstream.capturer(capturer, didCapture: corrected)
+        downstream.capturer(capturer, didCapture: frame)
     }
 }
 

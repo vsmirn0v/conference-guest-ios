@@ -29,7 +29,7 @@ final class StudioWorkflowTests: XCTestCase {
         XCTAssertEqual(model.scene.imageFraming, .fill)
         XCTAssertFalse(model.includeCamera); XCTAssertFalse(model.running)
     }
-    func testDeviceHorizonAngleIsAbsoluteOnEveryPlatform() {
+    func testDeviceHorizonAngleNormalizesWithoutAddingConnectionRotation() {
         XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: 0), 0)
         XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: 270), 270)
         XCTAssertEqual(PrivateCameraPreview.connectionAngle(horizon: 90), 90)

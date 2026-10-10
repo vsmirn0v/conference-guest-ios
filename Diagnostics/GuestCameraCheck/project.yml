@@ -27,7 +27,6 @@ targets:
       - ../../RockNRoll/VendorIntegration/GuestCameraTrackBinding.swift
       - ../../RockNRoll/VendorIntegration/GuestH264ColorEncoder.swift
       - ../../RockNRoll/VendorIntegration/GuestCameraFrameDelegate.swift
-      - ../../RockNRoll/MacCameraFrameOrientation.swift
       - ../../RockNRoll/VendorIntegration/H264ColorSignalling.swift
       - ../../RockNRoll/H264InputColorSignalling.swift
     settings:

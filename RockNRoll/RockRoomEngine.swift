@@ -36,7 +36,6 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private var videoDemandScheduled = false
     private let videoSubscriptions = MediaConfigurationCoordinator<ObjectIdentifier, VideoDemand>()
     private var videoPublisher = RoomVideoPublisher()
-    private var cameraFrameProcessor: LiveKitCameraFrameProcessor?
     private let cameraPublication = CameraPublicationCoordinator<LocalTrackPublication>()
     private var configuredRoomOptions = RoomMediaPolicy.options
     private var studio = StudioModel(audioControl: .fullProcessing, preferences: .standard)
@@ -447,8 +446,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         }
     }
 
-    /// Install the Mac orientation adapter before capture starts, while keeping
-    /// the SDK's ordinary mute/unmute path for an existing publication.
+    /// Serialize the first Mac publication without altering SDK frame rotation.
+    /// Existing publications retain the SDK's ordinary mute/unmute path.
     private func publishCamera(enabled: Bool, in room: Room,
                                options: VideoPublishOptions) async throws -> LocalTrackPublication? {
         guard self.room === room, !leaveRequested else { throw CancellationError() }
@@ -471,27 +470,19 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             try await room.localParticipant.setCamera(enabled: enabled, publishOptions: options)
         }, create: { @MainActor [weak self] in
             guard let self else { throw CancellationError() }
-            let processor = LiveKitCameraFrameProcessor()
             let track = await LocalVideoTrack.createCameraTrack(options: capture,
-                                                               reportStatistics: reportStatistics, processor: processor)
+                                                               reportStatistics: reportStatistics)
             try Task.checkCancellation()
             guard self.room === room, !self.leaveRequested, self.cameraIntentOn, !self.isHeld, !self.receptionPaused else {
                 throw CancellationError()
             }
-            processor.capturer = track.capturer as? CameraCapturer
-            self.cameraFrameProcessor = processor
-            do {
-                let publication = try await room.localParticipant.publish(videoTrack: track, options: options)
-                if Task.isCancelled || self.room !== room || self.leaveRequested || !self.cameraIntentOn || self.isHeld || self.receptionPaused {
-                    // A stop or room replacement can arrive during negotiation.
-                    try? await room.localParticipant.unpublish(publication: publication)
-                    throw CancellationError()
-                }
-                return publication
-            } catch {
-                if self.cameraFrameProcessor === processor { self.cameraFrameProcessor = nil }
-                throw error
+            let publication = try await room.localParticipant.publish(videoTrack: track, options: options)
+            if Task.isCancelled || self.room !== room || self.leaveRequested || !self.cameraIntentOn || self.isHeld || self.receptionPaused {
+                // A stop or room replacement can arrive during negotiation.
+                try? await room.localParticipant.unpublish(publication: publication)
+                throw CancellationError()
             }
+            return publication
         })
     }
 
@@ -553,7 +544,6 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private func finish(failed: Bool) {
         guard hasJoinStarted else { return }
         cameraPublication.cancel()
-        cameraFrameProcessor = nil
         #if DEBUG
         VideoDecoderFactoryExperiment.shared.end(token: decoderExperimentToken)
         decoderExperimentToken = nil
