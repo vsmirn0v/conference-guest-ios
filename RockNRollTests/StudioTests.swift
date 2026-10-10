@@ -8,6 +8,73 @@ import XCTest
 
 @MainActor
 final class StudioTests: XCTestCase {
+    func testMacCapturePlanUsesNativePreviewQuarterTurnWithoutChangingFrames() {
+        let maximum = CMVideoDimensions(width: 1280, height: 720)
+        let portrait = MacCameraCapturePlan.rawTarget(maximum: maximum, quarterTurn: true)
+        XCTAssertEqual(portrait.width, 720); XCTAssertEqual(portrait.height, 1280)
+        let landscape = MacCameraCapturePlan.rawTarget(maximum: maximum, quarterTurn: false)
+        XCTAssertEqual(landscape.width, 1280); XCTAssertEqual(landscape.height, 720)
+        let again = MacCameraCapturePlan.rawTarget(maximum: portrait, quarterTurn: true)
+        XCTAssertEqual(again.width, 720); XCTAssertEqual(again.height, 1280)
+    }
+    func testMacCaptureFormatRequiresExactAspectAndPrefersSmallestAdequateMode() {
+        let sizes = [(1280,720), (2160,3840), (1080,1920), (360,640)].map {
+            CMVideoDimensions(width: Int32($0.0), height: Int32($0.1))
+        }
+        let target = CMVideoDimensions(width: 720, height: 1280)
+        XCTAssertEqual(MacCameraCapturePlan.matchingIndex(sizes: sizes, target: target), 2)
+        XCTAssertEqual(MacCameraCapturePlan.matchingIndex(sizes: Array(sizes.prefix(1)), target: target), nil)
+        XCTAssertEqual(MacCameraCapturePlan.matchingIndex(sizes: Array(sizes.suffix(1)), target: target), 0)
+        XCTAssertNil(MacCameraCapturePlan.matchingIndex(sizes: [], target: target))
+        XCTAssertNil(MacCameraCapturePlan.matchingIndex(sizes: sizes, target: CMVideoDimensions(width: 0, height: 0)))
+    }
+    func testMacCameraOutputPreservesAspectWithinExisting720Budget() {
+        for (width, height, expectedWidth, expectedHeight) in [(1080,1920,720,1280), (1920,1080,1280,720),
+                                                             (1552,1164,960,720), (640,480,640,480),
+                                                             (1760,1328,880,664), (1328,1760,664,880)] {
+            let size = MacCameraCapturePlan.bounded(CMVideoDimensions(width: Int32(width), height: Int32(height)))
+            XCTAssertEqual(size.width, Int32(expectedWidth)); XCTAssertEqual(size.height, Int32(expectedHeight))
+            XCTAssertEqual(Int64(size.width) * Int64(height), Int64(size.height) * Int64(width))
+        }
+    }
+    func testMacCameraFallbackUsesNewCamerasFullAspect() {
+        let sizes = [CMVideoDimensions(width: 640, height: 480), CMVideoDimensions(width: 1280, height: 720)]
+        let portrait = CMVideoDimensions(width: 720, height: 1280)
+        let fallback = CMVideoDimensions(width: 640, height: 480)
+        XCTAssertEqual(MacCameraCapturePlan.selectionIndex(sizes: sizes, preferred: portrait, fallback: fallback), 0)
+        XCTAssertEqual(MacCameraCapturePlan.selectionIndex(sizes: sizes, preferred: nil, fallback: fallback), 0)
+        let unsupported = CMVideoDimensions(width: 1401, height: 1001)
+        let full = MacCameraCapturePlan.bounded(unsupported)
+        XCTAssertEqual(full.width, unsupported.width); XCTAssertEqual(full.height, unsupported.height)
+    }
+    func testCaptureRateClampsWithinActualSupportedRangeWithoutCrossingGaps() {
+        XCTAssertEqual(CameraCaptureRate.supported(24, ranges: [60...60]), 60)
+        XCTAssertEqual(CameraCaptureRate.supported(15, ranges: [1...10, 24...30]), 10)
+        XCTAssertEqual(CameraCaptureRate.supported(24, ranges: [1...30]), 24)
+        XCTAssertNil(CameraCaptureRate.supported(24, ranges: []))
+        XCTAssertNil(CameraCaptureRate.supported(24, ranges: [29.97...29.97]))
+        let fallback = CameraCaptureRate.candidates(30, ranges: [[15...15]])
+        XCTAssertEqual(fallback.map(\.index), [0]); XCTAssertEqual(fallback.map(\.fps), [15])
+        let preferred = CameraCaptureRate.candidates(24, ranges: [[60...60], [1...30]])
+        XCTAssertEqual(preferred.map(\.index), [1]); XCTAssertEqual(preferred.map(\.fps), [24])
+    }
+    func testInvalidPrivateCameraCadenceCannotTrapBeforePlatformCheck() {
+        for value: Double? in [nil, .nan, .infinity, -.infinity, -1, Double.greatestFiniteMagnitude] {
+            XCTAssertEqual(CameraCaptureRate.request(value), 24)
+        }
+        XCTAssertEqual(CameraCaptureRate.request(15), 15)
+        XCTAssertEqual(CameraCaptureRate.request(15.5), 15)
+        XCTAssertEqual(CameraCaptureRate.request(0.5), 1)
+    }
+    func testCaptureIntentRecoversAfterLowerCapabilityCamera() {
+        let intent = CMVideoDimensions(width: 1280, height: 720)
+        let fallback = MacCameraCapturePlan.bounded(CMVideoDimensions(width: 640, height: 480), maximum: intent)
+        XCTAssertEqual(fallback.width, 640); XCTAssertEqual(fallback.height, 480)
+        XCTAssertEqual(CameraCaptureRate.candidates(30, ranges: [[15...15]]).first?.fps, 15)
+        let restored = MacCameraCapturePlan.bounded(CMVideoDimensions(width: 1080, height: 1920), maximum: intent)
+        XCTAssertEqual(restored.width, 720); XCTAssertEqual(restored.height, 1280)
+        XCTAssertEqual(CameraCaptureRate.candidates(30, ranges: [[1...30]]).first?.fps, 30)
+    }
     func testAutomaticFramingDefaultsOffOnceAndHonorsSubsequentSystemChoice() {
         let name = "CameraFramingTests.\(UUID())"
         let defaults = UserDefaults(suiteName: name)!

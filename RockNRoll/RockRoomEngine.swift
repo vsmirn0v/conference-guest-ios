@@ -1,6 +1,7 @@
 import AVFoundation
 import ConferenceCore
 import LiveKit
+import LiveKitWebRTC
 import UIKit
 
 /// The app-owned jam service. Its media engine runs only while this route is selected.
@@ -184,9 +185,15 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             guard let self, let room, self.room === room, !self.leaveRequested,
                   let track = room.localParticipant.firstCameraVideoTrack as? LocalVideoTrack,
                   let capturer = track.capturer as? CameraCapturer else { throw CancellationError() }
-            let options = capturer.options
+            // A device's resolved limits must not become the next camera's intent.
+            let options = ProcessInfo.processInfo.isiOSAppOnMac ? self.configuredRoomOptions.defaultCameraCaptureOptions : capturer.options
+            let plan = MacCameraCapturePlan.resolve(device: device,
+                formats: LKRTCCameraVideoCapturer.supportedFormats(for: device),
+                maximum: CMVideoDimensions(width: options.dimensions.width, height: options.dimensions.height), fps: options.fps)
             _ = try await capturer.set(options: CameraCaptureOptions(device: device,
-                dimensions: options.dimensions, fps: options.fps))
+                preferredFormat: plan?.format,
+                dimensions: plan.map { Dimensions(width: $0.rawOutput.width, height: $0.rawOutput.height) } ?? options.dimensions,
+                fps: plan?.captureFPS ?? options.fps))
         }
         studio.makeLivePreview = { [weak self, weak room = self.room] in
             guard let self, let room, self.room === room, !self.leaveRequested,
@@ -452,11 +459,18 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                                options: VideoPublishOptions) async throws -> LocalTrackPublication? {
         guard self.room === room, !leaveRequested else { throw CancellationError() }
         let defaults = configuredRoomOptions.defaultCameraCaptureOptions
+        let device = studio.selectedCameraDevice ?? defaults.device ??
+            (ProcessInfo.processInfo.isiOSAppOnMac ? CameraDevices.preferred(in: CameraDevices.available()) : nil)
+        let plan = enabled && room.localParticipant.firstCameraVideoTrack == nil ? device.flatMap {
+            MacCameraCapturePlan.resolve(device: $0, formats: LKRTCCameraVideoCapturer.supportedFormats(for: $0),
+                maximum: CMVideoDimensions(width: defaults.dimensions.width, height: defaults.dimensions.height), fps: defaults.fps)
+        } : nil
         let capture = CameraCaptureOptions(deviceType: defaults.deviceType,
-                                           device: studio.selectedCameraDevice ?? defaults.device,
+                                           device: device,
                                            position: defaults.position,
-                                           preferredFormat: defaults.preferredFormat,
-                                           dimensions: defaults.dimensions, fps: defaults.fps)
+                                           preferredFormat: plan?.format ?? defaults.preferredFormat,
+                                           dimensions: plan.map { Dimensions(width: $0.rawOutput.width, height: $0.rawOutput.height) } ?? defaults.dimensions,
+                                           fps: plan?.captureFPS ?? defaults.fps)
         let reportStatistics = configuredRoomOptions.reportRemoteTrackStatistics
         guard ProcessInfo.processInfo.isiOSAppOnMac else {
             return try await room.localParticipant.setCamera(enabled: enabled, captureOptions: capture, publishOptions: options)

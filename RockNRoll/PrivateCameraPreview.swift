@@ -48,6 +48,118 @@ enum CameraDevices {
     }
 }
 
+enum CameraCaptureRate {
+    static func request(_ value: Double?, fallback: Int = 24) -> Int {
+        guard let value, value.isFinite, value > 0,
+              let integer = Int(exactly: value.rounded(.towardZero)) else { return fallback }
+        return max(1, integer)
+    }
+    static func candidates(_ requested: Int, ranges: [[ClosedRange<Double>]]) -> [(index: Int, fps: Int)] {
+        let all = ranges.enumerated().compactMap { index, range in
+            supported(requested, ranges: range).map { (index: index, fps: $0) }
+        }
+        let exact = all.filter { $0.fps == requested }
+        return exact.isEmpty ? all : exact
+    }
+    static func supported(_ requested: Int, ranges: [ClosedRange<Double>]) -> Int? {
+        ranges.compactMap { range -> Int? in
+            let low = max(1, Int(ceil(range.lowerBound))), high = Int(floor(range.upperBound))
+            guard low <= high else { return nil }
+            return max(low, min(high, requested))
+        }.min { abs($0 - requested) < abs($1 - requested) }
+    }
+}
+
+/// Select a supported sensor mode for Mac's native preview geometry. Capture
+/// format and encoder budget are separate; SDK frame rotation remains untouched.
+struct MacCameraCapturePlan {
+    let format: AVCaptureDevice.Format
+    let rawOutput: CMVideoDimensions
+    let captureFPS: Int
+
+    static func resolve(device: AVCaptureDevice, formats: [AVCaptureDevice.Format],
+                        maximum: CMVideoDimensions = CMVideoDimensions(width: 1280, height: 720),
+                        fps: Int = 24, session: AVCaptureSession? = nil) -> Self? {
+        guard ProcessInfo.processInfo.isiOSAppOnMac else { return nil }
+        let rates = CameraCaptureRate.candidates(fps,
+            ranges: formats.map { $0.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate } })
+        let eligible = rates.map { formats[$0.index] }
+        guard !eligible.isEmpty else { return nil }
+        let sizes = eligible.map { CMVideoFormatDescriptionGetDimensions($0.formatDescription) }
+        let quarterTurn = nativeQuarterTurn(device: device, session: session)
+        let target = quarterTurn.map { rawTarget(maximum: maximum, quarterTurn: $0) }
+        let fallback = bounded(CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription), maximum: maximum)
+        // Cameras with no matching landscape mode retain their complete native aspect.
+        guard let index = selectionIndex(sizes: sizes, preferred: target, fallback: fallback) else { return nil }
+        return Self(format: eligible[index], rawOutput: bounded(sizes[index], maximum: maximum), captureFPS: rates[index].fps)
+    }
+
+    private static func nativeQuarterTurn(device: AVCaptureDevice, session: AVCaptureSession?) -> Bool? {
+        let referenceSession = session ?? AVCaptureSession()
+        var temporaryInput: AVCaptureDeviceInput?
+        if session == nil {
+            referenceSession.automaticallyConfiguresApplicationAudioSession = false
+            guard let input = try? AVCaptureDeviceInput(device: device), referenceSession.canAddInput(input) else { return nil }
+            referenceSession.addInput(input); temporaryInput = input
+        }
+        let preview = AVCaptureVideoPreviewLayer(session: referenceSession)
+        defer {
+            preview.session = nil
+            if let temporaryInput { referenceSession.removeInput(temporaryInput) }
+        }
+        guard let connection = preview.connection else { return nil }
+        if #available(iOS 17.0, *) {
+            let angle = PrivateCameraPreview.connectionAngle(horizon: connection.videoRotationAngle)
+            guard [0, 90, 180, 270].contains(angle) else { return nil }
+            return angle == 90 || angle == 270
+        }
+        return connection.videoOrientation == .portrait || connection.videoOrientation == .portraitUpsideDown
+    }
+
+    static func rawTarget(maximum: CMVideoDimensions, quarterTurn: Bool) -> CMVideoDimensions {
+        let wide = max(maximum.width, maximum.height), short = min(maximum.width, maximum.height)
+        return quarterTurn ? CMVideoDimensions(width: short, height: wide) : CMVideoDimensions(width: wide, height: short)
+    }
+
+    /// An exact aspect match avoids introducing another center crop. Prefer the
+    /// smallest adequate mode, or the largest smaller mode without upscaling.
+    static func matchingIndex(sizes: [CMVideoDimensions], target: CMVideoDimensions) -> Int? {
+        guard target.width > 0, target.height > 0 else { return nil }
+        let matching = sizes.indices.filter {
+            let size = sizes[$0]
+            return size.width > 0 && size.height > 0 &&
+                Int64(size.width) * Int64(target.height) == Int64(size.height) * Int64(target.width)
+        }
+        let adequate = matching.filter { sizes[$0].width >= target.width && sizes[$0].height >= target.height }
+        func area(_ index: Int) -> Int64 { Int64(sizes[index].width) * Int64(sizes[index].height) }
+        return adequate.min { area($0) < area($1) } ?? matching.max { area($0) < area($1) }
+    }
+
+    static func selectionIndex(sizes: [CMVideoDimensions], preferred: CMVideoDimensions?, fallback: CMVideoDimensions) -> Int? {
+        preferred.flatMap { matchingIndex(sizes: sizes, target: $0) } ??
+            matchingIndex(sizes: sizes, target: fallback) ?? sizes.indices.filter {
+                sizes[$0].width > 0 && sizes[$0].height > 0
+            }.min {
+                abs(Int64(sizes[$0].width) * Int64(sizes[$0].height) - Int64(fallback.width) * Int64(fallback.height)) <
+                    abs(Int64(sizes[$1].width) * Int64(sizes[$1].height) - Int64(fallback.width) * Int64(fallback.height))
+            }
+    }
+
+    static func bounded(_ size: CMVideoDimensions,
+                        maximum: CMVideoDimensions = CMVideoDimensions(width: 1280, height: 720)) -> CMVideoDimensions {
+        guard size.width > 0, size.height > 0, maximum.width > 0, maximum.height > 0 else { return size }
+        var a = size.width, b = size.height
+        while b != 0 { let remainder = a % b; a = b; b = remainder }
+        let unitWidth = size.width / a, unitHeight = size.height / a
+        let long = max(maximum.width, maximum.height), short = min(maximum.width, maximum.height)
+        var multiplier = min(a, long / max(unitWidth, unitHeight), short / min(unitWidth, unitHeight))
+        if unitWidth % 2 != 0 || unitHeight % 2 != 0 { multiplier = multiplier / 2 * 2 }
+        // If no exact even-sized downscale exists, preserving pixels/aspect wins.
+        guard multiplier > 0 else { return size }
+        return CMVideoDimensions(width: unitWidth * multiplier, height: unitHeight * multiplier)
+    }
+}
+
 /// Local capture only: no microphone input, encoder, publication, or PiP source.
 @MainActor
 final class PrivateCameraPreview: PrivateCameraPreviewing {
@@ -136,7 +248,15 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                                 throw PreviewError.unavailable
                             }
                             session.addInput(next); input = next
-                            if session.canSetSessionPreset(.hd1280x720) { session.sessionPreset = .hd1280x720 }
+                            if let plan = MacCameraCapturePlan.resolve(device: device, formats: device.formats,
+                                fps: CameraCaptureRate.request(framesPerSecond), session: session) {
+                                session.sessionPreset = .inputPriority
+                                do {
+                                    try device.lockForConfiguration()
+                                    device.activeFormat = plan.format
+                                    device.unlockForConfiguration()
+                                } catch { session.commitConfiguration(); throw error }
+                            } else if session.canSetSessionPreset(.hd1280x720) { session.sessionPreset = .hd1280x720 }
                             session.commitConfiguration()
                         }
                         if let frames, output == nil {
@@ -156,6 +276,16 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                                 if let orientation = reference.connection?.videoOrientation,
                                    let connection = video.connection(with: .video), connection.isVideoOrientationSupported {
                                     connection.videoOrientation = orientation
+                                    let raw = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+                                    let size = MacCameraCapturePlan.bounded(raw)
+                                    let quarter = orientation == .portrait || orientation == .portraitUpsideDown
+                                    if Int64(raw.width) * Int64(size.height) == Int64(raw.height) * Int64(size.width) {
+                                        video.automaticallyConfiguresOutputBufferDimensions = false
+                                        video.deliversPreviewSizedOutputBuffers = false
+                                        video.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                                            kCVPixelBufferWidthKey as String: quarter ? size.height : size.width,
+                                            kCVPixelBufferHeightKey as String: quarter ? size.width : size.height]
+                                    }
                                 }
                             } else if #available(iOS 17.0, *), let device = input?.device {
                                 // Physical iOS devices follow their capture-device horizon.

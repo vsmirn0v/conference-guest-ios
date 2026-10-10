@@ -104,10 +104,7 @@ enum GuestCaptureDeviceObserver {
         }
     }
     private static func supportedFPS(_ requested: Int, format: AVCaptureDevice.Format) -> Int {
-        let ranges = format.videoSupportedFrameRateRanges
-        let minimum = Int(ceil(ranges.map(\.minFrameRate).min() ?? 1))
-        let maximum = Int(floor(ranges.map(\.maxFrameRate).max() ?? Double(requested)))
-        return max(1, min(maximum, max(minimum, requested)))
+        CameraCaptureRate.supported(requested, ranges: format.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate }) ?? max(1, requested)
     }
 
     private static func register(_ capturer: RTCCameraVideoCapturer, device: AVCaptureDevice, requestedFPS: Int) {
@@ -172,11 +169,22 @@ enum GuestCaptureDeviceObserver {
         let forward: @convention(block) (RTCCameraVideoCapturer, AVCaptureDevice, AVCaptureDevice.Format, Int, Completion?) -> Void = { capturer, device, format, fps, completion in
             lock.lock(); let preferred = preferredDeviceID; let limit = fpsLimit; lock.unlock()
             let selected = preferred.flatMap { id in CameraDevices.available().first { $0.uniqueID == id } } ?? device
-            guard let selectedFormat = selected.uniqueID == device.uniqueID ? format : matchingFormat(selected, requested: format) else {
+            let plan = MacCameraCapturePlan.resolve(device: selected,
+                formats: RTCCameraVideoCapturer.supportedFormats(for: selected), fps: fps)
+            guard let selectedFormat = plan?.format ?? (selected.uniqueID == device.uniqueID ? format : matchingFormat(selected, requested: format)) else {
                 completion?(CocoaError(.featureUnsupported) as NSError); return
             }
             register(capturer, device: selected, requestedFPS: fps)
-            let observed: Completion = { error in notify(); completion?(error) }
+            let expectedRevision = revision(capturer)
+            let source = (capturer.delegate as? GuestCameraFrameDelegate)?.originalDelegate as? RTCVideoSource
+            let observed: Completion = { error in
+                if error == nil, let plan, let source, revision(capturer) == expectedRevision {
+                    // Preserve native NV12/rotation before proportional source adaptation.
+                    source.adaptOutputFormat(toWidth: plan.rawOutput.width, height: plan.rawOutput.height,
+                        fps: Int32(supportedFPS(fps, format: selectedFormat)))
+                }
+                notify(); completion?(error)
+            }
             original(capturer, selector, selected, selectedFormat, supportedFPS(min(fps, limit), format: selectedFormat), observed)
         }
         method_setImplementation(method, imp_implementationWithBlock(forward))
