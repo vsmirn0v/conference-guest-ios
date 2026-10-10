@@ -50,5 +50,24 @@ Bluetooth purpose strings, encryption compliance and absence of Contacts access
 passed. App symbols match. Report:
 `.build/release69/artifact-verification.json`.
 
-Upload and TestFlight assignment are pending; no distribution completion is
-claimed yet. Previously published archives and IPAs are preserved.
+Uploaded successfully on October 10, 2026 at 23:23 MSK. Xcode confirms
+`Uploaded RockNRoll` and `EXPORT SUCCEEDED`; log: `.build/release69/upload.log`.
+Existing third-party framework symbol warnings are nonblocking; app symbols match.
+
+Apple processing completed. App Store Connect build ID:
+`bae99020-93cc-4067-9e03-2f4a756d9508`.
+Authenticated App Store Connect verification confirms build 69 is **Testing** in
+both existing groups, expiring in 90 days:
+
+- Rock’n’Roll Internal: 1 tester, 57 builds;
+  `08bd4885-fb6d-475d-a699-44829380dcd3`.
+- Rock’n’Roll Public Beta: 6 testers, 54 builds;
+  `d89117ad-e667-4553-a58c-2a2356b11390`.
+- Saved notes: “Improved meeting recovery after phone calls and reliability on
+  different networks. Fixed bugs when switching between meetings.”
+- Automatic tester notification was enabled during submission.
+- Public invitation: <https://testflight.apple.com/join/Hd13C9U3>.
+- UI proof: `.build/release69/testflight-internal.jpg` and
+  `.build/release69/testflight-public.jpg`.
+
+Previously published archives and IPAs are preserved.
