@@ -56,5 +56,20 @@ disabled-debugging, Production iCloud and encryption compliance checks. App
 symbols match; purpose strings are present and Contacts access is absent.
 Report: `.build/release70/artifact-verification.json`.
 
-Upload and TestFlight group assignment are pending. Previous published artifacts
-are preserved.
+Upload succeeded on 2026-10-11 at 02:01:33 MSK. Apple completed processing;
+App Store Connect build ID: `dcdb6cc8-a587-43a4-83ef-cd5865841f54`.
+
+The existing Rock’n’Roll Internal and Rock’n’Roll Public Beta groups were assigned
+and independently verified as **Testing** for 0.2.0 (70). Internal has one tester
+and 58 builds; public has six testers and 55 builds. Automatically notify testers
+was enabled. Public invitation: https://testflight.apple.com/join/Hd13C9U3.
+
+What to Test:
+“Improved participant status visibility and compact layouts. Fixed bugs and
+improved stability.”
+
+Distribution evidence: `.build/release70/upload.log`,
+`.build/release70/app-store-connect-build-id.txt`,
+`.build/release70/testflight-public.jpg`, and
+`.build/release70/testflight-internal.jpg`.
+Previous published artifacts are preserved.
