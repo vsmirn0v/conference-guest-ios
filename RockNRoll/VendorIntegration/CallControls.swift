@@ -109,6 +109,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private var mediaStatus: String?
     private var missedCount = 0
     private var unreadChatCount = 0
+    private var unseenReactions = false
+    private let reactionHistory: ReactionHistoryStore
     private let workspace = CallWorkspaceControls()
     private let onFloat: () -> Void
     private let onFloatingPreferenceChanged: () -> Void
@@ -140,6 +142,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
          usesNativeParticipants: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
          studio: StudioModel? = nil, activeSpeaker: ActiveSpeakerStore? = nil,
          reactions: MeetingReactionsModel? = nil, meetingStatus: MeetingHeaderStatus? = nil) {
+        self.reactionHistory = chat.reactionHistory
         self.meetingStatus = meetingStatus ?? MeetingHeaderStatus()
         self.studio = studio
         requestSDKGrid = { [weak state] in
@@ -485,6 +488,13 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             if value.actionTitle != nil { self.focus.show() }
             self.renderHeaderStatus()
         }.store(in: &subscriptions)
+        reactions?.onViewHistory = { [weak self, weak catchUp, weak chat] in
+            guard let self, let catchUp, let chat else { return }
+            self.openConversation(catchUp: catchUp, chat: chat, selected: .chat, filter: .reactions)
+        }
+        reactionHistory.$hasUnseenReactions.receive(on: DispatchQueue.main).sink { [weak self] unseen in
+            self?.unseenReactions = unseen; self?.updateChatBadge()
+        }.store(in: &subscriptions)
         reactionsButton.isHidden = true
         if let reactions {
             reactions.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] in self?.layoutPresentation() }
@@ -679,11 +689,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
 
     private func openConversation(catchUp: CatchUpStore, chat: ChatStore,
-                                  selected: ConversationMode) {
+                                  selected: ConversationMode, filter: ConversationActivityFilter = .all) {
         guard let presenter = presentationContainer,
               presenter.presentedViewController == nil else { return }
         presenter.present(ConversationPanelViewController(catchUp: catchUp, chat: chat,
-                                                           initialMode: selected, call: workspace),
+                                                           initialMode: selected, call: workspace, initialFilter: filter),
                           animated: true)
     }
 
@@ -832,12 +842,13 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
 
     private func updateChatBadge() {
-        catchUpButton.configuration?.title = unreadChatCount > 0 ? "\(unreadChatCount)" : nil
+        catchUpButton.configuration?.title = unreadChatCount > 0 ? "\(unreadChatCount)" : (unseenReactions ? "•" : nil)
         missedButton.isHidden = missedCount == 0
         missedButton.configuration?.title = missedCount > 0 ? "\(missedCount)" : nil
         missedButton.accessibilityLabel = L("Catch up, %ld missed sections", missedCount)
         catchUpButton.accessibilityLabel = unreadChatCount > 0 ?
             L("Chat, %ld unread", unreadChatCount) : L("Chat")
+        if unseenReactions { catchUpButton.accessibilityLabel = (catchUpButton.accessibilityLabel ?? L("Chat")) + ", " + L("New reactions") }
         surface.setNeedsLayout()
     }
 

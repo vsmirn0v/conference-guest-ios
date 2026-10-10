@@ -122,12 +122,12 @@ struct GuestReactionScope {
     mutating func stop() { stopped = true; taskID = nil; joined = nil; requestID = nil; localParticipantID = nil }
 }
 
-/// Invalidates already queued callbacks when the app backgrounds or the scope ends.
+/// Invalidates queued callbacks when the connection scope ends, independent of UI visibility.
 final class GuestReactionDeliveryWindow: @unchecked Sendable {
     private let lock = NSLock()
     private var generation: UUID? = UUID()
     var token: UUID? { lock.lock(); defer { lock.unlock() }; return generation }
-    func setVisible(_ visible: Bool) { lock.lock(); generation = visible ? UUID() : nil; lock.unlock() }
+    func setActive(_ visible: Bool) { lock.lock(); generation = visible ? UUID() : nil; lock.unlock() }
     func accepts(_ token: UUID?) -> Bool { token != nil && token == self.token }
 }
 
@@ -136,30 +136,29 @@ final class GuestReactionTransport {
     private var tap: GuestWebSocketTap?
     private var scope: GuestReactionScope
     private let valid: () -> Bool
-    private let onReaction: (GuestReceivedReaction) -> Void
+    private let onReaction: (GuestReceivedReaction, Bool) -> Void
     private let taskIDs = NSMapTable<URLSessionWebSocketTask, NSUUID>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private weak var currentTask: URLSessionWebSocketTask?
     private let delivery = GuestReactionDeliveryWindow()
+    private let presentation = GuestReactionDeliveryWindow()
     private var notifications: [NSObjectProtocol] = []
     var onStateChanged: (() -> Void)?
     var hasModernProtocol: Bool { scope.hasModernProtocol }
     var ready: Bool { scope.ready && currentTask != nil && valid() }
 
-    init(roomID: String, valid: @escaping () -> Bool, onReaction: @escaping (GuestReceivedReaction) -> Void) {
+    init(roomID: String, valid: @escaping () -> Bool, onReaction: @escaping (GuestReceivedReaction, Bool) -> Void) {
         scope = GuestReactionScope(roomID: roomID); self.valid = valid; self.onReaction = onReaction
-        delivery.setVisible(UIApplication.shared.applicationState != .background)
-        let delivery = delivery
+        let delivery = delivery, presentation = presentation
+        presentation.setActive(UIApplication.shared.applicationState == .active)
         tap = GuestWebSocketTap { [weak self] task, outgoing, data in
             // Decode before crossing queues. Unrelated bodies are never retained.
             guard let event = GuestReactionWireEvent.decode(data) else { return }
-            let token = delivery.token
-            Task { @MainActor [weak self] in self?.observe(event, task: task, outgoing: outgoing, token: token) }
+            let token = delivery.token, presentationToken = presentation.token, receipt = Date()
+            Task { @MainActor [weak self] in self?.observe(event, task: task, outgoing: outgoing, token: token,
+                present: presentation.accepts(presentationToken), receivedAt: receipt) }
         }
-        for (name, visible) in [(UIApplication.didEnterBackgroundNotification, false),
-                                (UIApplication.willEnterForegroundNotification, true)] {
-            notifications.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
-                delivery.setVisible(visible)
-            })
+        for (name, visible) in [(UIApplication.willResignActiveNotification, false), (UIApplication.didBecomeActiveNotification, true)] {
+            notifications.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in presentation.setActive(visible) })
         }
     }
     func confirmLocalParticipant(_ id: String) {
@@ -167,7 +166,7 @@ final class GuestReactionTransport {
         scope.confirmLocalParticipant(id)
         if ready != previous { onStateChanged?() }
     }
-    private func observe(_ event: GuestReactionWireEvent, task: URLSessionWebSocketTask, outgoing: Bool, token: UUID?) {
+    private func observe(_ event: GuestReactionWireEvent, task: URLSessionWebSocketTask, outgoing: Bool, token: UUID?, present: Bool, receivedAt: Date) {
         guard valid() else { return }
         let id: UUID
         if let existing = taskIDs.object(forKey: task) { id = existing as UUID }
@@ -176,9 +175,9 @@ final class GuestReactionTransport {
         let reaction = scope.accept(event, task: id, outgoing: outgoing)
         if scope.taskID == id { currentTask = task }
         if previous != (scope.hasModernProtocol, ready) { onStateChanged?() }
-        if let reaction, delivery.accepts(token), UIApplication.shared.applicationState != .background { onReaction(reaction) }
+        if let reaction, delivery.accepts(token) { onReaction(reaction.stamped(at: receivedAt), present) }
     }
-    @discardableResult func send(_ kind: MeetingReaction) -> Bool {
+    @discardableResult func send(_ kind: MeetingReaction, completion: ((Bool) -> Void)? = nil) -> Bool {
         guard ready, UIApplication.shared.applicationState != .background,
               let task = currentTask, let taskID = scope.taskID, let group = scope.joined?.groupID else { return false }
         struct Envelope: Encodable {
@@ -192,17 +191,17 @@ final class GuestReactionTransport {
         let envelope = Envelope(roomId: scope.roomID, groupId: group, payload: .init(reaction: .sent(kind)))
         guard let data = try? JSONEncoder().encode(envelope), let text = String(data: data, encoding: .utf8) else { return false }
         task.send(.string(text)) { [weak self] error in
-            guard error != nil else { return }
             Task { @MainActor [weak self] in
-                guard let self, self.scope.taskID == taskID else { return }
-                self.scope.retire(taskID); self.onStateChanged?()
+                completion?(error == nil)
+                guard let self, self.scope.taskID == taskID, self.valid() else { return }
+                if error != nil { self.scope.retire(taskID); self.onStateChanged?() }
             }
         }
         return true
     }
     func stop() {
-        delivery.setVisible(false); tap?.invalidate(); tap = nil; scope.stop(); currentTask = nil
-        notifications.forEach(NotificationCenter.default.removeObserver); notifications = []
+        delivery.setActive(false); tap?.invalidate(); tap = nil; scope.stop(); currentTask = nil
+        presentation.setActive(false); notifications.forEach(NotificationCenter.default.removeObserver); notifications = []
         onStateChanged?(); onStateChanged = nil
     }
     deinit { tap?.invalidate(); notifications.forEach(NotificationCenter.default.removeObserver) }

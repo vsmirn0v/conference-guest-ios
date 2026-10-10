@@ -9,10 +9,15 @@ import UIKit
 struct GuestReceivedReaction: Equatable, Sendable {
     let kind: MeetingReaction
     let participantID: String
+    let receivedAt: Date?
 
-    init(kind: MeetingReaction, participantID: String) { self.kind = kind; self.participantID = participantID }
+    init(kind: MeetingReaction, participantID: String, receivedAt: Date? = nil) {
+        self.kind = kind; self.participantID = participantID; self.receivedAt = receivedAt
+    }
+    func stamped(at date: Date) -> Self { .init(kind: kind, participantID: participantID, receivedAt: date) }
 
     init?(payload: NSDictionary) {
+        receivedAt = nil
         let current = payload["participantId"] as? String
         let documented = payload["participantFromId"] as? String
         guard payload["participantId"] == nil || current != nil,
@@ -93,7 +98,7 @@ final class GuestReactionDelegateTap: @unchecked Sendable {
             #endif
             subscriptions.forEach {
                 $0.onCallback?(reaction != nil, wireValue, keys)
-                if let reaction { $0.onReaction(reaction) }
+                if let reaction { $0.onReaction(reaction.stamped(at: Date())) }
             }
         }
         let replacement = imp_implementationWithBlock(forward)
@@ -120,7 +125,7 @@ final class GuestReactionDelegateTap: @unchecked Sendable {
 @MainActor
 final class GuestReceivedReactions {
     struct Participant {
-        let name: String
+        let name: String?
         let isLocal: Bool
     }
     private weak var root: UIView?
@@ -131,6 +136,11 @@ final class GuestReceivedReactions {
     private let valid: () -> Bool
     private let participant: (String) -> Participant?
     private let onReaction: (MeetingReaction, String) -> Void
+    private let onEvent: ((GuestReceivedReaction, String?) -> Void)?
+    private var preferModernProtocol = false
+    private let presentationWindow = GuestReactionDeliveryWindow()
+    private var lifecycle: [NSObjectProtocol] = []
+    enum Source { case delegate, transport }
     private(set) var isObserving = false
     private var transportObserving = false
     private(set) var receivedCount = 0
@@ -151,11 +161,17 @@ final class GuestReceivedReactions {
     #endif
 
     init(valid: @escaping () -> Bool, participant: @escaping (String) -> Participant?,
-         onReaction: @escaping (MeetingReaction, String) -> Void) {
-        self.valid = valid; self.participant = participant; self.onReaction = onReaction
+         onReaction: @escaping (MeetingReaction, String) -> Void,
+         onEvent: ((GuestReceivedReaction, String?) -> Void)? = nil) {
+        self.valid = valid; self.participant = participant; self.onReaction = onReaction; self.onEvent = onEvent
+        let window = presentationWindow
+        for (name, visible) in [(UIApplication.willResignActiveNotification, false), (UIApplication.didBecomeActiveNotification, true)] {
+            lifecycle.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in window.setActive(visible) })
+        }
     }
     func start(in root: UIView) {
         stop(); self.root = root
+        presentationWindow.setActive(UIApplication.shared.applicationState == .active)
         #if DEBUG
         Self.currentForTesting = self
         #endif
@@ -190,6 +206,7 @@ final class GuestReceivedReactions {
         if delegate === selected, tap != nil { return }
         detach(); delegate = selected
         let expected = generation
+        let presentationWindow = self.presentationWindow
         tap = GuestReactionDelegateTap(delegate: selected, onCallback: { [weak self] recognized, wireValue, keys in
             #if DEBUG
             Task { @MainActor [weak self] in
@@ -201,40 +218,43 @@ final class GuestReceivedReactions {
             }
             #endif
         }) { [weak self] reaction in
+            let token = presentationWindow.token
             Task { @MainActor [weak self] in
                 guard let self, self.generation == expected else { return }
-                self.receive(reaction)
+                self.receive(reaction, present: presentationWindow.accepts(token))
             }
         }
         setObserving(tap != nil || transportObserving)
     }
-    func setTransportObserving(_ observing: Bool) {
+    func setTransportObserving(_ observing: Bool, modernProtocol: Bool = false) {
+        preferModernProtocol = modernProtocol
         transportObserving = observing; setObserving(observing || tap != nil)
         #if DEBUG
         writeTrace()
         #endif
     }
-    func receive(_ reaction: GuestReceivedReaction) {
-        guard valid(), root != nil, UIApplication.shared.applicationState != .background else { return }
-        guard let sender = participant(reaction.participantID) else {
-            #if DEBUG
-            unknownParticipantCount += 1; writeTrace()
-            #endif
-            return
-        }
-        guard !sender.isLocal else {
+    func receive(_ reaction: GuestReceivedReaction, source: Source = .delegate, present: Bool = true) {
+        guard valid(), root != nil, source == .transport || !preferModernProtocol else { return }
+        let sender = participant(reaction.participantID)
+        guard sender?.isLocal != true else {
             #if DEBUG
             localCount += 1; writeTrace()
             #endif
             return
         }
+        #if DEBUG
+        if sender == nil { unknownParticipantCount += 1 }
+        #endif
         receivedCount += 1; lastReceived = reaction
         receivedByKind[reaction.kind, default: 0] += 1
-        onReaction(reaction.kind, sender.name)
+        // Receipt precedes presentation. Unknown names may be resolved by exact ID later.
+        onEvent?(reaction, sender?.name)
+        if present { onReaction(reaction.kind, sender?.name ?? L("Participant")) }
         #if DEBUG
         writeTrace()
         #endif
     }
+
     private func setObserving(_ value: Bool) {
         guard isObserving != value else { return }
         isObserving = value; onCapabilityChanged?(value)
@@ -243,7 +263,8 @@ final class GuestReceivedReactions {
         generation = UUID(); tap?.invalidate(); tap = nil; delegate = nil; setObserving(transportObserving)
     }
     func stop() {
-        refreshTask?.cancel(); refreshTask = nil; root = nil; transportObserving = false; detach()
+        presentationWindow.setActive(false)
+        refreshTask?.cancel(); refreshTask = nil; root = nil; transportObserving = false; preferModernProtocol = false; detach()
         #if DEBUG
         diagnosticLabel?.removeFromSuperview(); diagnosticLabel = nil
         #endif
@@ -286,7 +307,7 @@ final class GuestReceivedReactions {
         label.accessibilityValue = label.text
     }
     #endif
-    deinit { refreshTask?.cancel(); tap?.invalidate() }
+    deinit { refreshTask?.cancel(); tap?.invalidate(); lifecycle.forEach(NotificationCenter.default.removeObserver) }
 }
 
 /// Transient receive feedback only. No history, replay, taps, or queued events.
@@ -308,8 +329,11 @@ final class ReceivedReactionOverlay: UIView {
     }
     required init?(coder: NSCoder) { nil }
 
+    private var announcementTask: Task<Void, Never>?
+    private var announcementCount = 0
+
     func show(_ reaction: MeetingReaction, from name: String) {
-        guard !suppressed, window != nil, UIApplication.shared.applicationState != .background else { return }
+        guard !suppressed, window != nil, UIApplication.shared.applicationState == .active else { return }
         while rows.count >= 3 { remove(rows[0].id) }
         let label = UILabel()
         label.font = .preferredFont(forTextStyle: .subheadline)
@@ -336,14 +360,24 @@ final class ReceivedReactionOverlay: UIView {
         }
         rows.append((id, card, expiry)); setNeedsLayout()
         if UIAccessibility.isVoiceOverRunning {
-            UIAccessibility.post(notification: .announcement, argument: L("%@ reacted %@", name, reaction.title))
+            announcementCount += 1
+            if announcementTask == nil {
+                announcementTask = Task { [weak self] in
+                    do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                    guard let self else { return }
+                    let count = self.announcementCount
+                    self.announcementCount = 0; self.announcementTask = nil
+                    guard UIApplication.shared.applicationState == .active, !self.suppressed else { return }
+                    UIAccessibility.post(notification: .announcement, argument: L("%ld new reactions, available in Chat", count))
+                }
+            }
         }
     }
     private func remove(_ id: UUID) {
         guard let index = rows.firstIndex(where: { $0.id == id }) else { return }
         let row = rows.remove(at: index); row.expiry.cancel(); row.view.removeFromSuperview(); setNeedsLayout()
     }
-    func clear() { while let row = rows.first { remove(row.id) } }
+    func clear() { announcementTask?.cancel(); announcementTask = nil; announcementCount = 0; while let row = rows.first { remove(row.id) } }
     override func layoutSubviews() {
         super.layoutSubviews()
         let area = bounds.inset(by: contentInsets)
@@ -353,5 +387,5 @@ final class ReceivedReactionOverlay: UIView {
         stack.frame = CGRect(x: area.minX, y: area.minY, width: width, height: min(max(0, area.height), height))
         stack.clipsToBounds = true
     }
-    deinit { observer.map(NotificationCenter.default.removeObserver); rows.forEach { $0.expiry.cancel() } }
+    deinit { announcementTask?.cancel(); observer.map(NotificationCenter.default.removeObserver); rows.forEach { $0.expiry.cancel() } }
 }

@@ -94,6 +94,21 @@ extension SceneDelegate {
                           text: "Here is the arrangement: https://rock.glowsoft.ru/community",
                           sentAt: Date().addingTimeInterval(-100), isOwn: false)
             ])
+            if fixture == "reactions" || fixture == "reactions-unavailable" {
+                chat.reactionHistoryAvailable = true
+                if fixture == "reactions-unavailable" { chat.canSend = false }
+                let history = chat.reactionHistory
+                history.beginMeeting(id: UUID())
+                for index in 0..<36 {
+                    history.receive(kind: index % 3 == 0 ? .heart : .like, participantID: "ani",
+                        displayName: "Ani", isOwn: false, receivedAt: Date().addingTimeInterval(Double(index - 36) * 12))
+                }
+                let time = Date()
+                for index in 0..<3 {
+                    history.receive(kind: .like, participantID: "ani", displayName: "Ani", isOwn: false,
+                        receivedAt: time.addingTimeInterval(Double(index) * 0.1))
+                }
+            }
             let store = model.catchUpStore
             store.enter(roomKey: "https://rock.glowsoft.ru/jams/fixture-\(UUID().uuidString)")
             store.begin(.anotherCall)

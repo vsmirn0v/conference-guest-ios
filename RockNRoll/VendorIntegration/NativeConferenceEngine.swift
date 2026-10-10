@@ -66,8 +66,11 @@ final class NativeConferenceEngine: CallEngine {
     private var reactionsAdapter: GuestReactionsAdapter?
     private var receivedReactions: GuestReceivedReactions?
     private var reactionTransport: GuestReactionTransport?
+    private var reactionHistorySubscriptions = Set<AnyCancellable>()
+    private var reactionIdentitySubscription: AnyCancellable?
     #if DEBUG
     func sendReactionForTesting(_ kind: ConferenceCore.MeetingReaction) -> Bool { reactions.send(kind) }
+    func reconnectReactionsForTesting() { beginMediaReconnect(forNetwork: false) }
     #endif
     private var studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard)
     private var studioSubscription: AnyCancellable?
@@ -725,6 +728,19 @@ final class NativeConferenceEngine: CallEngine {
         activeInvitationURL = target.invitationURL
         activeRoomIdentifier = target.roomID
         chat?.clear()
+        chat?.reactionHistory.beginMeeting(id: sessionEpoch)
+        chat?.reactionHistoryAvailable = true
+        reactionHistorySubscriptions.removeAll()
+        let reactionEpoch = sessionEpoch
+        for name in [UIApplication.didEnterBackgroundNotification, UIApplication.didBecomeActiveNotification] {
+            NotificationCenter.default.publisher(for: name).sink { [weak self] notification in
+                guard let self, self.sessionEpoch == reactionEpoch, !self.leaveRequested else { return }
+                if notification.name == UIApplication.didEnterBackgroundNotification {
+                    self.chat?.reactionHistory.isReadingLatest = false
+                    self.chat?.reactionHistory.beginGap()
+                } else { self.updateReactionReceptionGap() }
+            }.store(in: &reactionHistorySubscriptions)
+        }
         meetingStatus.reset()
         identity.setName(displayName)
         let room = try resolve(target)
@@ -810,11 +826,12 @@ final class NativeConferenceEngine: CallEngine {
             guard let self else { return false }
             return self.sessionEpoch == expectedSession && self.mediaAttemptEpoch == expectedAttempt &&
                 self.hasJoinStarted && !self.leaveRequested && self.finishing == nil
-        }, onReaction: { [weak self] reaction in self?.receivedReactions?.receive(reaction) })
+        }, onReaction: { [weak self] reaction, present in self?.receivedReactions?.receive(reaction, source: .transport, present: present) })
         self.reactionTransport = reactionTransport
         reactionTransport.onStateChanged = { [weak self, weak reactionTransport] in
             guard let self, self.sessionEpoch == expectedSession, self.mediaAttemptEpoch == expectedAttempt else { return }
-            self.receivedReactions?.setTransportObserving(reactionTransport?.ready == true)
+            self.receivedReactions?.setTransportObserving(reactionTransport?.ready == true, modernProtocol: reactionTransport?.hasModernProtocol == true)
+            self.updateReactionReceptionGap()
             self.reactionsAdapter?.refresh()
         }
         JazzSession.shared.joinConference(
@@ -831,6 +848,8 @@ final class NativeConferenceEngine: CallEngine {
         reactionTransport?.stop(); reactionTransport = nil
         receivedReactions?.stop(); receivedReactions = nil
         reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil
+        reactionHistorySubscriptions.removeAll(); reactionIdentitySubscription = nil
+        chat?.reactionHistory.endMeeting()
         leaveRequested = true
         endCodecPolicy()
         resetPiPMicrophoneObservation()
@@ -927,7 +946,16 @@ final class NativeConferenceEngine: CallEngine {
         scheduleUnpairedInterruptionRecovery()
     }
 
+    private func updateReactionReceptionGap() {
+        guard hasJoinStarted, hasBecomeActive, !leaveRequested else { return }
+        let receiving = (reactionTransport?.hasModernProtocol == true ? reactionTransport?.ready == true : receivedReactions?.isObserving == true)
+        if receiving && UIApplication.shared.applicationState == .active && isNetworkAvailable && !networkRecovery.requiresRecovery && !isMediaReconnecting {
+            chat?.reactionHistory.endGap()
+        } else { chat?.reactionHistory.beginGap() }
+    }
+
     private func updateConnectionGap() {
+        updateReactionReceptionGap()
         guard hasBecomeActive, !leaveRequested else { return }
         if isNetworkAvailable && isSDKActive && !networkRecovery.requiresRecovery && !isMediaReconnecting {
             catchUp.end(.connection)
@@ -1310,6 +1338,15 @@ final class NativeConferenceEngine: CallEngine {
                     guard let self else { return false }
                     return !self.isSystemHeld && !self.isAudioInterrupted && !self.isMediaReconnecting && self.mediaConnectionConfirmed
                 })
+            self.reactionsAdapter?.onAccepted = { [weak self, weak state] kind, submissionID in
+                guard let self, let state, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                self.chat?.reactionHistory.recordLocalSubmission(kind: kind, participantID: state.localParticipant.id,
+                    displayName: state.localParticipant.userName ?? L("You"), submissionID: submissionID)
+            }
+            self.reactionsAdapter?.onFailed = { [weak self] id in
+                guard let self, self.sessionEpoch == epoch else { return }
+                self.chat?.reactionHistory.setLocalDelivery(.failed, submissionID: id)
+            }
             let controls = CallControls(localPreview: self.localSharePreview, state: state, coordinator: coordinator, router: router,
                                         catchUp: self.catchUp,
                                         chat: self.chat ?? ChatStore(),
@@ -1362,11 +1399,28 @@ final class NativeConferenceEngine: CallEngine {
                     return .init(name: state.localParticipant.userName ?? L("You"), isLocal: true)
                 }
                 guard let sender = state.remoteParticipants[id] ?? state.remoteParticipants.values.first(where: { $0.id == id }) else { return nil }
-                return .init(name: sender.userName ?? L("Participant"), isLocal: false)
-            }, onReaction: { kind, name in reactionOverlay.show(kind, from: name) })
+                return .init(name: sender.userName, isLocal: false)
+            }, onReaction: { [weak self] kind, name in
+                guard self?.chat?.reactionHistory.isReadingLatest != true else { return }
+                reactionOverlay.show(kind, from: name)
+            }, onEvent: { [weak self] event, name in
+                self?.chat?.reactionHistory.receive(kind: event.kind, participantID: event.participantID,
+                    displayName: name, isOwn: false, receivedAt: event.receivedAt)
+            })
             self.receivedReactions = receiver
+            receiver.onCapabilityChanged = { [weak self] _ in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                self.updateReactionReceptionGap()
+            }
             receiver.start(in: self.floatingSourceView ?? controls)
-            receiver.setTransportObserving(self.reactionTransport?.ready == true)
+            receiver.setTransportObserving(self.reactionTransport?.ready == true, modernProtocol: self.reactionTransport?.hasModernProtocol == true)
+            self.reactionIdentitySubscription = state.$remoteParticipants.receive(on: DispatchQueue.main).sink { [weak self] roster in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                for participant in roster.values {
+                    if let name = participant.userName { self.chat?.reactionHistory.resolveUnknownParticipant(id: participant.id, name: name) }
+                }
+            }
+            self.updateReactionReceptionGap()
             #if DEBUG
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_REACTIONS"] == "1" {
                 controls.fixtureActions = GuestReactionFixtureActions.make(model: self.reactions)
@@ -1542,6 +1596,8 @@ final class NativeConferenceEngine: CallEngine {
         reactionTransport?.stop(); reactionTransport = nil
         receivedReactions?.stop(); receivedReactions = nil
         reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil
+        reactionHistorySubscriptions.removeAll(); reactionIdentitySubscription = nil
+        chat?.reactionHistory.endMeeting()
         endFloatingVideoSession()
         microphoneProbe.stop()
         studio.end()

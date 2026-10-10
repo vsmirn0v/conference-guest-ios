@@ -8,10 +8,23 @@ enum ConversationMode: Int {
     case chat, liveText, catchUp
 }
 
+enum ConversationActivityFilter: CaseIterable {
+    case all, messages, reactions
+    var title: String {
+        switch self { case .all: L("All activity"); case .messages: L("Messages"); case .reactions: L("Reactions") }
+    }
+}
+
 @MainActor
 final class ConversationPanelViewController: UIViewController, UITextViewDelegate {
     private let catchUp: CatchUpStore
     private let chat: ChatStore
+    private let activityFilterButton = UIButton(type: .system)
+    private var activityFilter: ConversationActivityFilter
+    private var reactionViews: [String: ReactionHistoryRowView] = [:]
+    private var renderedReactionIDs = [String]()
+    private var renderingMessages = false
+    private var panelVisible = false
     private let call: CallWorkspaceControls?
     private var subscriptions = Set<AnyCancellable>()
 
@@ -59,15 +72,17 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     init(catchUp: CatchUpStore, chat: ChatStore,
          initialMode: ConversationMode = .chat, call: CallWorkspaceControls? = nil,
-         docked: Bool = false, chatAvailable: Bool = true) {
+         docked: Bool = false, chatAvailable: Bool = true, initialFilter: ConversationActivityFilter = .all) {
         self.catchUp = catchUp
         self.chat = chat
+        self.activityFilter = initialFilter
         self.call = call
         self.docked = docked
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .overFullScreen
-        mode.setEnabled(chatAvailable, forSegmentAt: ConversationMode.chat.rawValue)
-        mode.selectedSegmentIndex = (!chatAvailable && initialMode == .chat ? ConversationMode.catchUp : initialMode).rawValue
+        let canViewChat = chatAvailable || chat.reactionHistoryAvailable
+        mode.setEnabled(canViewChat, forSegmentAt: ConversationMode.chat.rawValue)
+        mode.selectedSegmentIndex = (!canViewChat && initialMode == .chat ? ConversationMode.catchUp : initialMode).rawValue
     }
 
     required init?(coder: NSCoder) { nil }
@@ -102,7 +117,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         buildFooter()
         buildCallStrip()
 
-        let column = UIStackView(arrangedSubviews: [header, mode, content, footer, callStrip])
+        let column = UIStackView(arrangedSubviews: [header, mode, activityFilterButton, content, footer, callStrip])
         column.axis = .vertical
         column.spacing = 6
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -117,6 +132,13 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             content.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).withPriority(.defaultHigh),
             callStrip.heightAnchor.constraint(equalToConstant: 50)
         ])
+
+        activityFilterButton.configuration = .plain()
+        activityFilterButton.contentHorizontalAlignment = .leading
+        activityFilterButton.accessibilityIdentifier = "chat.activity-filter"
+        activityFilterButton.showsMenuAsPrimaryAction = true
+        updateActivityFilter()
+        messageList.delegate = self
 
         mode.accessibilityLabel = L("Conversation mode")
         mode.accessibilityIdentifier = "Conversation mode"
@@ -144,6 +166,15 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateComposer() }
             .store(in: &subscriptions)
+        chat.reactionHistory.objectWillChange.receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                DispatchQueue.main.async { [weak self] in self?.renderMessages(self?.chat.items ?? []) }
+            }.store(in: &subscriptions)
+        for name in [UIApplication.didBecomeActiveNotification, UIApplication.willResignActiveNotification] {
+            NotificationCenter.default.publisher(for: name).sink { [weak self] _ in
+                DispatchQueue.main.async { [weak self] in self?.markVisibleReactions() }
+            }.store(in: &subscriptions)
+        }
         if let call {
             Publishers.CombineLatest4(call.$microphoneOn, call.$cameraOn,
                                       call.$speakerOn, call.$onHold)
@@ -172,12 +203,15 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        chat.isConversationOpen = mode.selectedSegmentIndex == ConversationMode.chat.rawValue
+        panelVisible = true
+        renderMode(); markVisibleReactions()
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        panelVisible = false
         chat.isConversationOpen = false
+        chat.reactionHistory.isReadingLatest = false
     }
 
     override func viewDidLayoutSubviews() {
@@ -217,6 +251,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             view.layoutIfNeeded()
         }
         updateComposerHeight()
+        markVisibleReactions()
     }
 
     override func viewWillTransition(to size: CGSize,
@@ -489,7 +524,8 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     private func renderMode() {
         let selected = ConversationMode(rawValue: mode.selectedSegmentIndex) ?? .chat
-        chat.isConversationOpen = selected == .chat && view.window != nil
+        chat.isConversationOpen = selected == .chat && activityFilter != .reactions && panelVisible && UIApplication.shared.applicationState == .active
+        activityFilterButton.isHidden = selected != .chat || !chat.reactionHistoryAvailable
         messageList.isHidden = selected != .chat
         transcript.isHidden = selected != .liveText
         catchUpHost.view.isHidden = selected != .catchUp
@@ -498,54 +534,132 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         newMessagesButton.isHidden = selected != .chat || !hasNewMessages
         if selected != .liveText { followButton.isHidden = true }
         renderTranscript()
+        updateComposer()
+        markVisibleReactions()
+    }
+
+    private func updateActivityFilter() {
+        activityFilterButton.configuration?.title = activityFilter.title
+        activityFilterButton.configuration?.image = UIImage(systemName: "line.3.horizontal.decrease.circle")
+        activityFilterButton.configuration?.imagePadding = 8
+        var actions: [UIMenuElement] = ConversationActivityFilter.allCases.map { filter in
+            UIAction(title: filter.title, state: activityFilter == filter ? .on : .off) { [weak self] _ in
+                guard let self else { return }
+                self.activityFilter = filter; self.updateActivityFilter()
+                self.hasNewMessages = false
+                self.messageList.setContentOffset(.zero, animated: false)
+                self.renderMessages(self.chat.items); self.renderMode()
+            }
+        }
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_UI_FIXTURE"]?.hasPrefix("reactions") == true {
+            actions.append(UIAction(title: "Receive test reaction") { [weak self] _ in
+                self?.chat.reactionHistory.receive(kind: .wave, participantID: "late", displayName: "Narek", isOwn: false)
+            })
+        }
+        #endif
+        activityFilterButton.menu = UIMenu(children: actions)
     }
 
     private func renderMessages(_ items: [ChatEntry]) {
-        guard isViewLoaded else { return }
-        let oldIDs = lastMessageIDs
-        lastMessageIDs = items.map(\.id)
-        let nearBottom = messageList.contentSize.height - messageList.contentOffset.y -
-            messageList.bounds.height < 60
+        guard isViewLoaded, !renderingMessages else { return }
+        renderingMessages = true
+        defer { renderingMessages = false }
+        let oldIDs = lastMessageIDs, oldReactionIDs = renderedReactionIDs
+        let nearBottom = messageList.contentSize.height - messageList.contentOffset.y - messageList.bounds.height < 60
         let oldOffset = messageList.contentOffset
+        let oldAnchor = messageRows.arrangedSubviews.first { $0.frame.maxY > oldOffset.y }
+        let anchorID = oldAnchor?.accessibilityIdentifier
+        let anchorOffset = oldAnchor.map { oldOffset.y - $0.frame.minY } ?? 0
+        lastMessageIDs = items.map(\.id)
+        renderedReactionIDs = chat.reactionHistory.events.map(\.id)
         let visibleIDs = Set(items.map(\.id))
         messageViews = messageViews.filter { visibleIDs.contains($0.key) }
         retryButtons = retryButtons.filter { visibleIDs.contains($0.key) }
-        var desiredViews = [UIView]()
-        if items.isEmpty {
-            let empty = UILabel()
-            empty.text = L("No messages yet. Say hello to the group.")
-            empty.textColor = .lightGray
-            empty.font = .preferredFont(forTextStyle: .body)
-            empty.numberOfLines = 0
-            desiredViews = [empty]
-        } else {
-            desiredViews = items.map { entry in
-                if let cached = messageViews[entry.id], cached.entry == entry { return cached.view }
-                retryButtons.removeValue(forKey: entry.id)
-                let view = messageRow(entry)
-                messageViews[entry.id] = (entry, view)
-                return view
+        var timeline: [(Date, String, UIView)] = []
+        if activityFilter != .reactions {
+            for entry in items {
+                let row: UIView
+                if let cached = messageViews[entry.id], cached.entry == entry { row = cached.view }
+                else {
+                    retryButtons.removeValue(forKey: entry.id)
+                    row = messageRow(entry)
+                    row.accessibilityIdentifier = "chat.message." + entry.id
+                    messageViews[entry.id] = (entry, row)
+                }
+                timeline.append((entry.sentAt, "m:" + entry.id, row))
             }
+        }
+        if activityFilter != .messages && chat.reactionHistoryAvailable {
+            let groups = chat.reactionHistory.projection(chatBoundaries: items.map(\.sentAt))
+            let groupIDs = Set(groups.map(\.id))
+            reactionViews = reactionViews.filter { groupIDs.contains($0.key) }
+            for group in groups {
+                let row: ReactionHistoryRowView
+                if let cached = reactionViews[group.id] { row = cached; if !cached.matchesContent(group) { cached.update(group) } }
+                else {
+                    row = ReactionHistoryRowView(group: group)
+                    row.onExpansionChanged = { [weak self] in self?.messageList.layoutIfNeeded(); self?.markVisibleReactions() }
+                    reactionViews[group.id] = row
+                }
+                timeline.append((group.start, "r:" + group.id, row))
+            }
+            for gap in chat.reactionHistory.gaps {
+                let time = gap.start.formatted(date: .omitted, time: .shortened) + (gap.end.map { "–" + $0.formatted(date: .omitted, time: .shortened) } ?? "…")
+                let row = activityNote(time + " · " + L("Some reactions may be missing while disconnected or backgrounded."))
+                row.accessibilityIdentifier = "reaction.gap." + gap.id
+                timeline.append((gap.start, "g:" + gap.id, row))
+            }
+        }
+        timeline.sort { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }
+        var desiredViews = timeline.map { $0.2 }
+        if desiredViews.isEmpty {
+            desiredViews = [activityNote(activityFilter == .reactions ? L("No reactions yet.") : L("No messages yet. Say hello to the group."))]
+        }
+        if activityFilter != .messages && chat.reactionHistoryAvailable {
+            let scope = activityNote(L("Reactions received on this device during this meeting."))
+            scope.accessibilityIdentifier = "reaction.history-scope"
+            desiredViews.insert(scope, at: 0)
+            if chat.reactionHistory.hasTruncatedHistory { desiredViews.insert(activityNote(L("Showing recent reactions")), at: 1) }
         }
         let desiredIdentities = Set(desiredViews.map(ObjectIdentifier.init))
-        for view in messageRows.arrangedSubviews where !desiredIdentities.contains(ObjectIdentifier(view)) {
-            view.removeFromSuperview()
+        for row in messageRows.arrangedSubviews where !desiredIdentities.contains(ObjectIdentifier(row)) { row.removeFromSuperview() }
+        for (index, row) in desiredViews.enumerated() {
+            if messageRows.arrangedSubviews.count <= index || messageRows.arrangedSubviews[index] !== row { messageRows.insertArrangedSubview(row, at: index) }
         }
-        for (index, view) in desiredViews.enumerated() {
-            if messageRows.arrangedSubviews.count <= index || messageRows.arrangedSubviews[index] !== view {
-                messageRows.insertArrangedSubview(view, at: index)
-            }
-        }
-        if nearBottom { DispatchQueue.main.async { [weak self] in self?.scrollMessagesToBottom() } }
+        messageList.layoutIfNeeded()
+        if nearBottom { scrollMessagesToBottom() }
         else {
-            messageList.setContentOffset(oldOffset, animated: false)
-            if oldIDs != lastMessageIDs {
-                hasNewMessages = true
-            }
-            if hasNewMessages && mode.selectedSegmentIndex == 0 {
-                newMessagesButton.isHidden = false
-            }
+            if let anchorID, let row = messageRows.arrangedSubviews.first(where: { $0.accessibilityIdentifier == anchorID }) {
+                messageList.setContentOffset(CGPoint(x: 0, y: max(0, row.frame.minY + anchorOffset)), animated: false)
+            } else { messageList.setContentOffset(oldOffset, animated: false) }
+            if (activityFilter != .reactions && oldIDs != lastMessageIDs) || (activityFilter != .messages && oldReactionIDs != renderedReactionIDs) { hasNewMessages = true }
+            newMessagesButton.configuration?.title = L("New activity ↓")
+            newMessagesButton.isHidden = !hasNewMessages || mode.selectedSegmentIndex != 0
         }
+        DispatchQueue.main.async { [weak self] in self?.markVisibleReactions() }
+    }
+
+    private func activityNote(_ text: String) -> UILabel {
+        let label = UILabel(); label.text = text; label.numberOfLines = 0
+        label.textColor = .lightGray; label.font = .preferredFont(forTextStyle: .caption1)
+        label.adjustsFontForContentSizeCategory = true
+        return label
+    }
+
+    private func markVisibleReactions() {
+        chat.isConversationOpen = panelVisible && UIApplication.shared.applicationState == .active &&
+            mode.selectedSegmentIndex == ConversationMode.chat.rawValue && activityFilter != .reactions
+        let reading = panelVisible && UIApplication.shared.applicationState == .active &&
+            mode.selectedSegmentIndex == ConversationMode.chat.rawValue && activityFilter != .messages &&
+            viewIfLoaded?.window != nil && presentedViewController == nil
+        let nearBottom = messageList.contentSize.height - messageList.contentOffset.y - messageList.bounds.height < 60
+        chat.reactionHistory.isReadingLatest = reading && nearBottom
+        guard reading, !renderingMessages else { return }
+        let ids = messageRows.arrangedSubviews.flatMap { row -> [String] in
+            (row as? ReactionHistoryRowView)?.visibleEventIDs(in: messageList) ?? []
+        }
+        chat.reactionHistory.markSeen(ids: ids)
     }
 
     private func messageRow(_ entry: ChatEntry) -> UIView {
@@ -668,6 +782,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
                                                          messageList.bounds.height)), animated: false)
         newMessagesButton.isHidden = true
         hasNewMessages = false
+        markVisibleReactions()
     }
 
     private func scrollTranscriptToBottom() {
@@ -678,6 +793,13 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        if scrollView === messageList {
+            markVisibleReactions()
+            if messageList.contentSize.height - messageList.contentOffset.y - messageList.bounds.height < 60 {
+                hasNewMessages = false; newMessagesButton.isHidden = true
+            }
+            return
+        }
         guard scrollView === transcript, !isRenderingTranscript,
               mode.selectedSegmentIndex == ConversationMode.liveText.rawValue else { return }
         let remaining = transcript.contentSize.height - transcript.contentOffset.y - transcript.bounds.height
@@ -698,8 +820,9 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         sendButton.isEnabled = chat.canSend && RoomChatPacket.accepts(text: clean)
         retryButtons.values.forEach { $0.isEnabled = chat.canSend }
         composer.isEditable = chat.canSend
-        composerRow.isHidden = chat.isReadOnly
-        if !chat.canSend { hint.text = chat.unavailableReason ?? L("Chat isn't available right now.") }
+        composerRow.isHidden = chat.isReadOnly || activityFilter == .reactions
+        if activityFilter == .reactions { hint.text = nil }
+        else if !chat.canSend { hint.text = chat.unavailableReason ?? L("Chat isn't available right now.") }
         else if count > 2_000 { hint.text = L("%ld characters over the limit", count - 2_000) }
         else if count > 0 && !RoomChatPacket.accepts(text: clean) { hint.text = L("This message is too large to send.") }
         else if count >= 1_800 { hint.text = L("%ld/2,000 characters", count) }

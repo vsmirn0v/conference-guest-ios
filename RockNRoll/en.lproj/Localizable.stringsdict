@@ -34,6 +34,22 @@
 			<string>%ld musicians</string>
 		</dict>
 	</dict>
+	<key>%ld new reactions, available in Chat</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld new reaction, available in Chat</string>
+			<key>other</key>
+			<string>%ld new reactions, available in Chat</string>
+		</dict>
+	</dict>
 	<key>%ld participants</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -48,6 +64,22 @@
 			<string>%ld participant</string>
 			<key>other</key>
 			<string>%ld participants</string>
+		</dict>
+	</dict>
+	<key>%ld reactions</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld reaction</string>
+			<key>other</key>
+			<string>%ld reactions</string>
 		</dict>
 	</dict>
 	<key>Catch up, %ld missed sections</key>

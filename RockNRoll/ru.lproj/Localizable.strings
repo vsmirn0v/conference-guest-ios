@@ -748,3 +748,16 @@
 "Mirror camera image" = "Зеркальное видео камеры";
 
 "Mirroring applies to your camera in the shared canvas." = "Камера в публикуемом холсте отображается зеркально.";
+
+"All activity" = "Вся активность";
+"Messages" = "Сообщения";
+"View reaction history" = "История реакций";
+"New reactions" = "Новые реакции";
+"Show reaction details" = "Подробнее о реакциях";
+"Hide reaction details" = "Скрыть подробности";
+"Not sent" = "Не отправлено";
+"New activity ↓" = "Новая активность ↓";
+"No reactions yet." = "Реакций пока нет.";
+"Reactions received on this device during this meeting." = "Реакции, полученные на этом устройстве во время этой встречи.";
+"Showing recent reactions" = "Показаны последние реакции";
+"Some reactions may be missing while disconnected or backgrounded." = "Часть реакций могла быть пропущена при потере связи или в фоне.";

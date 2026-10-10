@@ -7,6 +7,8 @@ import UIKit
 @MainActor
 final class GuestReactionsAdapter {
     let model: MeetingReactionsModel
+    var onAccepted: ((MeetingReaction, String) -> Void)?
+    var onFailed: ((String) -> Void)?
     private let state: JazzActiveConferenceState
     private let studio: StudioModel
     private let reactionTransport: GuestReactionTransport?
@@ -29,7 +31,15 @@ final class GuestReactionsAdapter {
         self.valid = valid; self.transportReady = transportReady; self.cameraAllowed = cameraAllowed
         model.sender = { [weak self] kind in
             guard let self, self.valid(), self.transportReady(), self.state.isToggleReactionsVisible else { return false }
-            if let transport = self.reactionTransport, transport.hasModernProtocol { return transport.send(kind) }
+            let submissionID = UUID().uuidString
+            if let transport = self.reactionTransport, transport.hasModernProtocol {
+                let failed = self.onFailed
+                guard transport.send(kind, completion: { accepted in
+                    if !accepted { failed?(submissionID) }
+                }) else { return false }
+                self.onAccepted?(kind, submissionID)
+                return true
+            }
             let reaction: JazzConferenceReaction
             switch kind {
             case .like: reaction = .like; case .dislike: reaction = .dislike
@@ -37,6 +47,7 @@ final class GuestReactionsAdapter {
             default: return false
             }
             coordinator.sendReaction(reaction: reaction)
+            self.onAccepted?(kind, submissionID)
             return true
         }
         cameraObserver.onReaction = { [weak self] kind, id in

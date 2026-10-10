@@ -750,3 +750,16 @@
 "Mirror camera image" = "Mirror camera image";
 
 "Mirroring applies to your camera in the shared canvas." = "Mirroring applies to your camera in the shared canvas.";
+
+"All activity" = "All activity";
+"Messages" = "Messages";
+"View reaction history" = "View reaction history";
+"New reactions" = "New reactions";
+"Show reaction details" = "Show reaction details";
+"Hide reaction details" = "Hide reaction details";
+"Not sent" = "Not sent";
+"New activity ↓" = "New activity ↓";
+"No reactions yet." = "No reactions yet.";
+"Reactions received on this device during this meeting." = "Reactions received on this device during this meeting.";
+"Showing recent reactions" = "Showing recent reactions";
+"Some reactions may be missing while disconnected or backgrounded." = "Some reactions may be missing while disconnected or backgrounded.";

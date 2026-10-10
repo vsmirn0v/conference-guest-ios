@@ -74,10 +74,17 @@ private struct MeetingActionsContent: View {
     let close: () -> Void
     let select: (MeetingReaction) -> Void
     let perform: (UIAction) -> Void
+    let viewHistory: () -> Void
     var body: some View {
         NavigationStack {
             List {
-                Section(L("Reactions")) { ReactionPalette(model: model, select: select) }
+                Section(L("Reactions")) {
+                    ReactionPalette(model: model, select: select)
+                    if model.onViewHistory != nil {
+                        Button(L("View reaction history"), action: viewHistory)
+                            .accessibilityIdentifier("reactions.history")
+                    }
+                }
                 if model.available { Section { CameraReactionSettings(model: model) } }
                 if let menu { Section(L("Meeting actions")) { MeetingActionRows(elements: menu.children, perform: perform) } }
             }.listStyle(.insetGrouped).navigationTitle(menu == nil ? L("Reactions") : L("More"))
@@ -105,6 +112,13 @@ final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPre
                     // Execute an existing public UIAction through its native control.
                     let button = UIButton(primaryAction: action)
                     button.sendActions(for: .touchUpInside)
+                }
+            }, viewHistory: { [weak self, weak model] in
+                guard let model else { return }
+                let generation = model.generation
+                self?.dismiss(animated: true) {
+                    guard model.generation == generation else { return }
+                    model.onViewHistory?()
                 }
             }))
         #if DEBUG

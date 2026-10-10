@@ -42,6 +42,26 @@
 			<string>%ld музыканта</string>
 		</dict>
 	</dict>
+	<key>%ld new reactions, available in Chat</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>%ld новые реакции в чате</string>
+			<key>many</key>
+			<string>%ld новых реакций в чате</string>
+			<key>one</key>
+			<string>%ld новая реакция в чате</string>
+			<key>other</key>
+			<string>%ld новые реакции в чате</string>
+		</dict>
+	</dict>
 	<key>%ld participants</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -60,6 +80,26 @@
 			<string>%ld участник</string>
 			<key>other</key>
 			<string>%ld участника</string>
+		</dict>
+	</dict>
+	<key>%ld reactions</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>few</key>
+			<string>%ld реакции</string>
+			<key>many</key>
+			<string>%ld реакций</string>
+			<key>one</key>
+			<string>%ld реакция</string>
+			<key>other</key>
+			<string>%ld реакции</string>
 		</dict>
 	</dict>
 	<key>Catch up, %ld missed sections</key>

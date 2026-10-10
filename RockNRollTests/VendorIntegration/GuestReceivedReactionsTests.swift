@@ -79,7 +79,7 @@ final class GuestReceivedReactionsTests: XCTestCase {
         receiver.stop()
     }
 
-    func testReceivedTransportEventsRequireCurrentRemoteRosterAndLiveReceiver() {
+    func testReceivedEventsKeepUnknownIdentityButRequireLiveReceiver() {
         let root = UIView()
         var valid = true
         var received: [MeetingReaction] = []
@@ -92,12 +92,40 @@ final class GuestReceivedReactionsTests: XCTestCase {
         receiver.receive(.init(kind: .heart, participantID: "unknown"))
         receiver.receive(.init(kind: .heart, participantID: "local"))
         receiver.receive(.init(kind: .heart, participantID: "remote"))
-        XCTAssertEqual(received, [.heart])
+        XCTAssertEqual(received, [.heart, .heart])
         valid = false
         receiver.receive(.init(kind: .like, participantID: "remote"))
         valid = true; receiver.stop()
         receiver.receive(.init(kind: .like, participantID: "remote"))
-        XCTAssertEqual(received, [.heart])
+        XCTAssertEqual(received, [.heart, .heart])
+    }
+
+    func testModernTransportIsAuthoritativeAndRepeatedTapsRemainDistinct() {
+        let root = UIView()
+        var events = [GuestReceivedReaction]()
+        let receiver = GuestReceivedReactions(valid: { true }, participant: { _ in nil },
+            onReaction: { _, _ in }, onEvent: { event, _ in events.append(event) })
+        receiver.start(in: root)
+        receiver.setTransportObserving(true, modernProtocol: true)
+        let event = GuestReceivedReaction(kind: .like, participantID: "remote")
+        receiver.receive(event) // Duplicate public delegate forwarding is ignored.
+        receiver.receive(event, source: .transport)
+        receiver.receive(event, source: .transport) // A deliberate repeated tap is retained.
+        XCTAssertEqual(events.count, 2)
+        receiver.stop()
+        receiver.receive(event, source: .transport)
+        XCTAssertEqual(events.count, 2)
+    }
+
+    func testStalePresentationStillIngestsHistoryWithoutReplayingOverlay() {
+        let root = UIView()
+        var ingested = 0, overlays = 0
+        let receiver = GuestReceivedReactions(valid: { true }, participant: { _ in nil },
+            onReaction: { _, _ in overlays += 1 }, onEvent: { _, _ in ingested += 1 })
+        receiver.start(in: root)
+        receiver.receive(.init(kind: .like, participantID: "remote"), present: false)
+        XCTAssertEqual(ingested, 1); XCTAssertEqual(overlays, 0)
+        receiver.stop()
     }
 
     func testVisibleOverlayMountsCardsBeforeConstrainingAndBoundsBurst() throws {
@@ -137,6 +165,7 @@ final class GuestReceivedReactionsTests: XCTestCase {
         let previous = window.rootViewController, container = UIViewController()
         window.rootViewController = container; window.makeKeyAndVisible()
         let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore())
+        let chat = ChatStore(); engine.chat = chat
         var ready = false, ended = false
         engine.onEvent = { event in
             switch event { case .active: ready = true; case .left, .failed: ended = true; default: break }
@@ -176,6 +205,22 @@ final class GuestReceivedReactionsTests: XCTestCase {
         XCTAssertFalse(ended)
         XCTAssertEqual(Set(receiver.receivedByKind.keys), expected)
         XCTAssertEqual(visible, expected, "Every received kind must draw a visible transient label")
+        XCTAssertEqual(Set(chat.reactionHistory.events.map(\.kind)), expected)
+        XCTAssertEqual(chat.reactionHistory.events.count, 12, "One authoritative transport prevents delegate echoes")
+        XCTAssertTrue(chat.reactionHistory.hasUnseenReactions)
+        let ids = chat.reactionHistory.events.map(\.id)
+        engine.reconnectReactionsForTesting()
+        let recoveryDeadline = Date().addingTimeInterval(25)
+        while Date() < recoveryDeadline && (!engine.readyForPresenterForTesting || GuestReceivedReactions.currentForTesting === receiver) {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        XCTAssertTrue(engine.readyForPresenterForTesting)
+        XCTAssertFalse(GuestReceivedReactions.currentForTesting === receiver)
+        XCTAssertEqual(chat.reactionHistory.events.map(\.id), ids)
+        XCTAssertTrue(chat.reactionHistory.hasUnseenReactions)
+        print("GUEST_REACTION_HISTORY_RECONNECT_PRESERVED count=\(ids.count)")
+        engine.leave()
+        XCTAssertTrue(chat.reactionHistory.events.isEmpty)
     }
 
     /// Qualifies the SDK's own rendering beneath our custom stage without

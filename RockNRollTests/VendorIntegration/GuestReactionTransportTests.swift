@@ -111,15 +111,15 @@ final class GuestReactionTransportTests: XCTestCase {
         XCTAssertNil(scope.accept(received(), task: task, outgoing: false))
     }
 
-    func testBackgroundDropsQueuedEventsWithoutReplayOnForeground() {
+    func testScopeEndDropsQueuedEventsWithoutReplayOnReplacement() {
         let window = GuestReactionDeliveryWindow()
         let before = window.token
         XCTAssertTrue(window.accepts(before))
-        window.setVisible(false)
+        window.setActive(false)
         XCTAssertFalse(window.accepts(before)); XCTAssertNil(window.token)
-        window.setVisible(true)
+        window.setActive(true)
         XCTAssertFalse(window.accepts(before)); XCTAssertTrue(window.accepts(window.token))
-        window.setVisible(false)
+        window.setActive(false)
         XCTAssertFalse(window.accepts(nil))
     }
 

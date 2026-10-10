@@ -46,6 +46,7 @@ final class MeetingReactionsModel: ObservableObject {
         didSet { preferences?.set(shareCameraReactions, forKey: Self.preferenceKey); onPreferenceChanged?() }
     }
     @Published private(set) var submitted: MeetingReaction?
+    var onViewHistory: (() -> Void)?
     var sender: ((MeetingReaction) -> Bool)?
     var onPreferenceChanged: (() -> Void)?
     private let preferences: UserDefaults?
@@ -76,6 +77,6 @@ final class MeetingReactionsModel: ObservableObject {
     }
     func end() {
         generation = UUID(); active = false; available = false; ready = false
-        sender = nil; onPreferenceChanged = nil; gate = ReactionSendGate(); cameraStatus = .paused
+        sender = nil; onPreferenceChanged = nil; onViewHistory = nil; gate = ReactionSendGate(); cameraStatus = .paused
     }
 }

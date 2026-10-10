@@ -17,6 +17,8 @@ enum ChatDelivery: Equatable {
 
 @MainActor
 final class ChatStore: ObservableObject {
+    let reactionHistory = ReactionHistoryStore()
+    @Published var reactionHistoryAvailable = false
     @Published private(set) var items: [ChatEntry] = []
     @Published var canSend = false
     @Published var unavailableReason: String?
@@ -113,6 +115,7 @@ final class ChatStore: ObservableObject {
     }
 
     func clear() {
+        reactionHistory.endMeeting(); reactionHistoryAvailable = false
         seenMessageIDs.removeAll()
         seenOrder.removeAll()
         snapshotTail.removeAll()

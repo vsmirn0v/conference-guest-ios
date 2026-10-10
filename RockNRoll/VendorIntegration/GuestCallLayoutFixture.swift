@@ -14,6 +14,7 @@ final class GuestCallLayoutFixture: UIViewController {
     private var views: [String: UIView] = [:]
     private let meetingStatus = MeetingHeaderStatus()
     private let reactions = MeetingReactionsModel()
+    private let chat = ChatStore()
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -27,7 +28,12 @@ final class GuestCallLayoutFixture: UIViewController {
         let studio = ["studio", "reactions"].contains(scenario) ? StudioModel(audioControl: .noiseSuppression, privateCamera: StudioCameraFixture(), privateMicrophone: StudioMicrophoneFixture()) : nil
         if scenario == "reactions" {
             reactions.available = true; reactions.ready = true; studio?.reactions = reactions
-            reactions.sender = { _ in true }
+            chat.reactionHistoryAvailable = true; chat.reactionHistory.beginMeeting()
+            chat.reactionHistory.receive(kind: .heart, participantID: "ani", displayName: "Ani", isOwn: false)
+            reactions.sender = { [weak chat] kind in
+                chat?.reactionHistory.recordLocalSubmission(kind: kind, participantID: "self", displayName: "You", submissionID: UUID().uuidString)
+                return true
+            }
         }
         studio?.soundCheck.verifyMuted = { [weak self] in self?.controls.setFixtureMedia(microphone: false) }
         studio?.observeNoiseSuppression(true)
@@ -47,7 +53,7 @@ final class GuestCallLayoutFixture: UIViewController {
         if scenario == "notices" { catchUp.observe(messages: [], canView: true, enabled: true) }
         let solo = scenario == "solo"
         controls = CallControls(localPreview: preview, state: nil, coordinator: nil, router: nil,
-            catchUp: catchUp, chat: ChatStore(), initialDisplayMode: .all,
+            catchUp: catchUp, chat: chat, initialDisplayMode: .all,
             invitationURL: URL(string: "https://rock.glowsoft.ru/jams/test"), roomIdentifier: "fixture",
             onDisplayMode: { [weak self] mode in self?.streams.displayMode = mode },
             onFloat: {}, onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
