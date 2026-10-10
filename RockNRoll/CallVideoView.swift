@@ -8,6 +8,9 @@ final class CallVideoView: UIView {
     private let roomView = VideoView()
     private let nativeView = GuestSampleBufferView()
     private var sink: RoomFloatingVideoSink?
+    var isMirrored = false {
+        didSet { roomView.mirrorMode = isMirrored ? .mirror : .off; nativeView.mirrored = isMirrored }
+    }
     var track: CallVideoSource? { didSet { if oldValue?.identity != track?.identity { bind(oldValue) } } }
     var isEnabled = true { didSet { roomView.isEnabled = isEnabled; sink?.setWanted(isEnabled, fps: 30) } }
     var layoutMode: Layout = .fit {
@@ -16,6 +19,7 @@ final class CallVideoView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         roomView.renderMode = .sampleBuffer
+        roomView.mirrorMode = .off
         roomView.layoutMode = .fit
         nativeView.contentMode = .scaleAspectFit
         for child in [roomView, nativeView] as [UIView] {

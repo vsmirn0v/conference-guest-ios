@@ -22,6 +22,7 @@ final class GuestVideoPictureInPicture {
     private var selectedViewport: StreamViewport?
     private weak var selectedRenderer: UIView?
     private var isStageSource = true
+    var isMirrored: Bool { selectedViewport?.isCameraMirrored == true }
     var onAvailabilityChanged: ((Bool) -> Void)?
     var rendersSelectedViewport = true
     var wantsInlineFrames = true {
@@ -73,6 +74,7 @@ final class GuestVideoPictureInPicture {
             #if DEBUG
             self.convertedFramesForTesting += 1
             #endif
+            self.video.mirrored = self.isMirrored
             if self.presenting || !self.hasFrame { self.video.enqueue(sample, rotation: rotation) }
             if self.isStageSource && self.wantsInlineFrames && !self.suspended && UIApplication.shared.applicationState != .background {
                 if self.rendersSelectedViewport { self.selectedViewport?.showCorrectedVideo(sample, rotation: rotation) }

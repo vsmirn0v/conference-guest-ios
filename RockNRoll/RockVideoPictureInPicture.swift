@@ -60,9 +60,10 @@ final class RockVideoPictureInPicture {
         show(source: track.map { .room($0) }, name: name, isScreenShare: isScreenShare)
     }
 
-    func show(source: CallVideoSource?, name: String = "", isScreenShare: Bool = false) {
+    func show(source: CallVideoSource?, name: String = "", isScreenShare: Bool = false, mirrored: Bool = false) {
         guard !floating.isEnded else { return }
         guard let source else { clear(); return }
+        video.mirrored = mirrored && !isScreenShare
         if selectedSource?.identity != source.identity {
             retireSink()
             selectedSource = source

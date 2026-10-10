@@ -36,6 +36,7 @@
 		0FC5F096386EE375F9DED70E /* PresenterCompositor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48415EFA954EFA597244FCCB /* PresenterCompositor.swift */; };
 		15D9480608433A6F872E623B /* GuestVP9HardwareDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C25649F074191A643400907 /* GuestVP9HardwareDecoder.swift */; };
 		167D4877A97DC883D0CA5497 /* GuestCameraFrameDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0ABB4E8E269830AABC6FA5A6 /* GuestCameraFrameDelegate.swift */; };
+		171D7EC3781F3163C7AB5BDB /* CameraPreviewPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CF21F89911BC05A681CEAF5 /* CameraPreviewPresentationTests.swift */; };
 		1757927E6A4BAF69164DAF70 /* OutgoingMediaLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EE31B7E83BA253BE1AD08B4 /* OutgoingMediaLiveTests.swift */; };
 		17F1063643112456FE8B5A72 /* H264InputColorSignalling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36CA49E1F2463B06F4D176B5 /* H264InputColorSignalling.swift */; };
 		19443EAC7D5940620A68F902 /* OutgoingVideoCadence.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC2611EBA8D1D1AD70D95AC9 /* OutgoingVideoCadence.swift */; };
@@ -49,6 +50,7 @@
 		1DA42345D3CEE9BBA4EAC113 /* CallVideoView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46FDF50D630C8064BE866093 /* CallVideoView.swift */; };
 		1E4D06DEC5D20E4D142D3243 /* RoomMediaPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BF7621A80A949572423961A /* RoomMediaPolicy.swift */; };
 		1F35805A29943F09662AEB20 /* FloatingVideoPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE480DD0A0D1B8E60EE1A8BF /* FloatingVideoPreference.swift */; };
+		200BCF2B4FEF4BF5CBC8A70D /* CameraPreviewPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 069D40A31FAF91A90FB12157 /* CameraPreviewPresentation.swift */; };
 		2128C5C3A0577197295EEC96 /* OutgoingShareExperiment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BF711C6C4AE255609932EE9 /* OutgoingShareExperiment.swift */; };
 		21570B208BECECA604469258 /* NSLayoutConstraint+Priority.swift in Sources */ = {isa = PBXBuildFile; fileRef = 912ED3A027AB9D2DFD1EBBC9 /* NSLayoutConstraint+Priority.swift */; };
 		21FA1695C874173F866A3F63 /* TelemostCallEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F277EC3E056DFF48B655BB0 /* TelemostCallEngine.swift */; };
@@ -352,6 +354,7 @@
 		04E30EEC66DD1D769AC38533 /* CameraOutputProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraOutputProcessor.swift; sourceTree = "<group>"; };
 		0541024059C20CE20308E021 /* MeetingContinuationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingContinuationCoordinatorTests.swift; sourceTree = "<group>"; };
 		05BBE962B794CA6D9B47C606 /* h264-color-signalling.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "h264-color-signalling.json"; sourceTree = "<group>"; };
+		069D40A31FAF91A90FB12157 /* CameraPreviewPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreviewPresentation.swift; sourceTree = "<group>"; };
 		0749D2146BB11184D76828DA /* RoomHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomHistoryStore.swift; sourceTree = "<group>"; };
 		08841EF21263FF97C33C034C /* StudioCameraFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioCameraFixture.swift; sourceTree = "<group>"; };
 		08CD8AFDAE2DD223386B8D65 /* PresenterCanvasEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterCanvasEditor.swift; sourceTree = "<group>"; };
@@ -526,6 +529,7 @@
 		8C15F3F32829CCA9C004757F /* vp9-svc.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "vp9-svc.json"; sourceTree = "<group>"; };
 		8C28DB8E6F73735636A2365C /* MediaEnergyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaEnergyTests.swift; sourceTree = "<group>"; };
 		8CD40516B8DF9183003C367E /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		8CF21F89911BC05A681CEAF5 /* CameraPreviewPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreviewPresentationTests.swift; sourceTree = "<group>"; };
 		8D515F3060E9EAB3AB128908 /* MeetingHeaderStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingHeaderStatusTests.swift; sourceTree = "<group>"; };
 		8EE31B7E83BA253BE1AD08B4 /* OutgoingMediaLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingMediaLiveTests.swift; sourceTree = "<group>"; };
 		8FF52EAA23F3B290DCC84B43 /* GuestCaptureDeviceObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestCaptureDeviceObserver.swift; sourceTree = "<group>"; };
@@ -852,6 +856,7 @@
 				F76550791D2144E46F371781 /* CameraEffectStatus.swift */,
 				04E30EEC66DD1D769AC38533 /* CameraOutputProcessor.swift */,
 				C69D117BCD386DF22D1F0CF6 /* CameraPixelScaler.swift */,
+				069D40A31FAF91A90FB12157 /* CameraPreviewPresentation.swift */,
 				625AF83D1B2E1CB6F903074A /* CameraPublicationCoordinator.swift */,
 				4B8F6964033A539BC76FDFD9 /* CameraQualityMonitor.swift */,
 				D0ACDA74166427F59AD1BD5A /* CameraQualityPolicy.swift */,
@@ -1016,6 +1021,7 @@
 				270229F164B19B6D1CDB3C4A /* CalendarMeetingStoreTests.swift */,
 				B2C3A80C7C6D781A2CF24679 /* CallPresentationTests.swift */,
 				4AA7158E44DFAF1E76780DB0 /* CameraOutputTests.swift */,
+				8CF21F89911BC05A681CEAF5 /* CameraPreviewPresentationTests.swift */,
 				9BA718FA2B251FAF59981266 /* CameraPublicationCoordinatorTests.swift */,
 				4C64C3EA2595E98B725D9A3D /* CameraQualityPolicyTests.swift */,
 				4E1EF35CB2CC3F314FDBB804 /* CameraUplinkEvidenceTests.swift */,
@@ -1413,6 +1419,7 @@
 				9D7C69CF01DFB0398F2B832E /* CameraEffectStatus.swift in Sources */,
 				3D16E32DC3FE7512062C23B4 /* CameraOutputProcessor.swift in Sources */,
 				50483BF66610B9DE4AC66CD3 /* CameraPixelScaler.swift in Sources */,
+				200BCF2B4FEF4BF5CBC8A70D /* CameraPreviewPresentation.swift in Sources */,
 				EBBBD0E62F116A5ACBB349AA /* CameraPublicationCoordinator.swift in Sources */,
 				910097522207D307E2310672 /* CameraQualityMonitor.swift in Sources */,
 				22B5ECA1AD4E2BE61E63EE0A /* CameraQualityPolicy.swift in Sources */,
@@ -1620,6 +1627,7 @@
 				EB7D743E004A98ACB0768CD4 /* CalendarMeetingStoreTests.swift in Sources */,
 				4122B33EF757A3B9929EC51A /* CallPresentationTests.swift in Sources */,
 				56851E055577D77C58DE0D03 /* CameraOutputTests.swift in Sources */,
+				171D7EC3781F3163C7AB5BDB /* CameraPreviewPresentationTests.swift in Sources */,
 				8E0B247CF960C3CA98872422 /* CameraPublicationCoordinatorTests.swift in Sources */,
 				ED71682E1BDAC7423FD90586 /* CameraQualityPolicyTests.swift in Sources */,
 				ADD8CD693FA986FEDD7A423B /* CameraUplinkEvidenceTests.swift in Sources */,

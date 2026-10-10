@@ -41,6 +41,7 @@ private final class GuestGalleryTile: UIView {
             stop(); renderer = item.renderer; video.clear(); hasFrame = false
         }
         mediaActive = item.active
+        video.mirrored = item.mirrored
         viewport.updatePresentation(name: item.name, showInfo: true, microphoneOn: item.microphoneOn,
             pinned: false, watermark: item.watermark, zoomable: false, placeholderText: L("Camera off"))
         viewport.updatePin(name: item.name, isShare: item.id.isShare, pinned: false, onPin: pin)

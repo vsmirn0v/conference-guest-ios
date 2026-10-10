@@ -897,7 +897,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             fitButton.isHidden = (videoTiles[primaryKey]?.zoom.zoomScale ?? 1) <= 1.01
             floatingVideo?.show(source: primary.2,
                                 name: primary.0.name ?? L("Musician"),
-                                isScreenShare: primary.1.source == .screenShareVideo)
+                                isScreenShare: primary.1.source == .screenShareVideo,
+                                mirrored: primary.0.isLocal && primary.1.source == .camera &&
+                                    CameraPreviewPresentation.isMirrored(device: studio?.liveCaptureDevice?()))
             // The selected stream fills the available viewing area. Other streams remain below it.
             let primaryTile = videoTile(for: primary.0, publication: primary.1,
                                         track: primary.2, primary: true)
@@ -1108,6 +1110,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                                     track: CallVideoSource, isShare: Bool, primary: Bool, key: String) {
         if entry.video.track?.identity != track.identity { entry.video.track = track }
         entry.video.layoutMode = .fit
+        entry.video.isMirrored = participant.isLocal && !isShare &&
+            CameraPreviewPresentation.isMirrored(device: studio?.liveCaptureDevice?())
         entry.name.text = "  \(participant.name ?? L("Musician")) · \(isShare ? L("Screen") : L("Video")) · \(pinnedStreamKey == key ? L("Pinned") : L("Auto"))  "
         entry.pin.configuration?.image = UIImage(systemName: pinnedStreamKey == key ? "pin.fill" : "pin")
         entry.pin.accessibilityLabel = pinnedStreamKey == key

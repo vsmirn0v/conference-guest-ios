@@ -13,6 +13,9 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     private let content = UIView()
     private let video: UIView
     private var correctedVideo: GuestSampleBufferView?
+    var isCameraMirrored = false {
+        didSet { correctedVideo?.mirrored = isCameraMirrored }
+    }
     private let mediaPlaceholder = UILabel()
     private let participantInfo = UILabel()
     private let watermarkLabel = UILabel()
@@ -301,6 +304,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             correctedVideo = overlay
         }
         guard let correctedVideo else { return }
+        correctedVideo.mirrored = isCameraMirrored
         correctedVideo.frame = content.bounds
         if correctedVideo.enqueue(sample, rotation: rotation) {
             correctedVideo.isHidden = false

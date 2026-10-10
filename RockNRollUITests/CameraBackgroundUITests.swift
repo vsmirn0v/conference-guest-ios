@@ -1,6 +1,61 @@
 import XCTest
 
 final class CameraBackgroundUITests: XCTestCase {
+    func testPrivateAndLiveCameraPreviewSurviveFrontRearSwitch() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Real front/rear camera capture requires a physical iPhone")
+        #else
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAMERA_INVITE"] else {
+            throw XCTSkip("Provide a disposable meeting")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launch()
+        defer {
+            if app.buttons["studio.done"].exists { app.buttons["studio.done"].tap() }
+            if app.buttons["Stop video"].exists { app.buttons["Stop video"].tap() }
+            if app.buttons["Leave"].exists { app.buttons["Leave"].tap() }
+        }
+        let camera = app.buttons["Start video"].firstMatch
+        XCTAssertTrue(camera.waitForExistence(timeout: 60))
+        camera.press(forDuration: 0.7)
+        let status = app.descendants(matching: .any)["studio.preview-status"].firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        let start = app.buttons["studio.start-video"]
+        wait(for: [expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: start)], timeout: 15)
+        XCTAssertTrue(status.label.contains("Only you"))
+        shot(app, "Private front camera mirror")
+        let flip = app.buttons["studio.flip-camera"]
+        if !flip.exists || !flip.isHittable { app.swipeUp() }
+        XCTAssertTrue(flip.isEnabled)
+        flip.tap(); sleep(3)
+        app.swipeDown()
+        wait(for: [expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: start)], timeout: 15)
+        shot(app, "Private rear camera unmirrored")
+        if !flip.isHittable { app.swipeUp() }
+        flip.tap(); sleep(3)
+        app.swipeDown()
+        wait(for: [expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: start)], timeout: 15)
+        start.tap()
+        if app.buttons["Continue"].waitForExistence(timeout: 2) { app.buttons["Continue"].tap() }
+        XCTAssertTrue(app.buttons["Stop video"].waitForExistence(timeout: 20))
+        app.buttons["Stop video"].firstMatch.press(forDuration: 0.7)
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        XCTAssertTrue(status.label.contains("Visible to jam"))
+        sleep(3); shot(app, "Live front camera mirror")
+        if !flip.exists || !flip.isHittable { app.swipeUp() }
+        flip.tap(); sleep(3)
+        app.swipeDown()
+        shot(app, "Live rear camera unmirrored")
+        if !flip.isHittable { app.swipeUp() }
+        flip.tap(); sleep(3)
+        app.swipeDown()
+        shot(app, "Live front camera restored")
+        #endif
+    }
+
     func testOutgoingCameraKeepsRunningInBackground() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("Real camera and system video-call PiP require a physical iPhone")

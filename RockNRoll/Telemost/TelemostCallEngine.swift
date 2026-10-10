@@ -92,6 +92,7 @@ final class TelemostCallEngine: CallEngine {
         studio.makeLivePreview = { [weak self] in
             guard let track = self?.publisher?.videoTrack else { return nil }
             let preview = CallVideoView(); preview.track = .native(track)
+            preview.isMirrored = CameraPreviewPresentation.isMirrored(device: self?.publisher?.captureDevice)
             return StudioLivePreview(view: preview, stop: { preview.track = nil })
         }
         microphoneProbe = NativeMicrophoneProbe(activity: studio.microphoneActivity) { [weak self] in

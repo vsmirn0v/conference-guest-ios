@@ -657,8 +657,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         layoutPresentation()
     }
 
-    func showStageFrame(_ sample: CMSampleBuffer, rotation: Int) {
+    func showStageFrame(_ sample: CMSampleBuffer, rotation: Int, mirrored: Bool = false) {
         guard stageName != nil, stageActive, !stageView.isHidden else { return }
+        stageVideo.mirrored = mirrored
         if stageVideo.enqueue(sample, rotation: rotation) {
             stageHasFrame = true
             stageStatus.isHidden = true

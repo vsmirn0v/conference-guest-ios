@@ -196,12 +196,15 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                 preferredFormat: plan?.format,
                 dimensions: plan.map { Dimensions(width: $0.rawOutput.width, height: $0.rawOutput.height) } ?? options.dimensions,
                 fps: plan?.captureFPS ?? options.fps))
+            guard self.room === room, !self.leaveRequested else { throw CancellationError() }
+            self.refresh(room)
         }
         studio.makeLivePreview = { [weak self, weak room = self.room] in
             guard let self, let room, self.room === room, !self.leaveRequested,
                   let track = room.localParticipant.firstCameraVideoTrack else { return nil }
             let preview = VideoView()
             preview.layoutMode = .fit
+            preview.mirrorMode = CameraPreviewPresentation.isMirrored(device: self.studio.liveCaptureDevice?()) ? .mirror : .off
             preview.track = track
             return StudioLivePreview(view: preview, stop: { preview.track = nil })
         }

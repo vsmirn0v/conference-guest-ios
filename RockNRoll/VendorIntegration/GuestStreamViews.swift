@@ -24,8 +24,20 @@ final class GuestStreamViews {
         let speaking: Bool
         let watermark: String?
         let renderer: UIView?
+        var mirrored = false
     }
     var onGalleryPresentation: (([GalleryItem]) -> Void)?
+    var localCameraMirrored: () -> Bool = { true }
+    private var cameraDeviceObservation: NSObjectProtocol?
+    init() {
+        cameraDeviceObservation = NotificationCenter.default.addObserver(
+            forName: GuestCaptureDeviceObserver.changed, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshSelection() }
+            }
+    }
+    deinit {
+        if let cameraDeviceObservation { NotificationCenter.default.removeObserver(cameraDeviceObservation) }
+    }
     struct Presentation: Equatable {
         let target: PinTarget?
         let name: String?
@@ -277,6 +289,9 @@ final class GuestStreamViews {
     }
 
     private func publishPreferredVideo() {
+        for tile in renderedTiles.values {
+            tile.view?.isCameraMirrored = tile.model.isLocal && !tile.model.isSharingScreen && localCameraMirrored()
+        }
         publishGallery()
         // The call window can become hidden while system PiP remains active.
         // Keep a signaled stream eligible until the participant ends it.
@@ -394,7 +409,7 @@ final class GuestStreamViews {
                 result.append(GalleryItem(id: id, name: participant.name, microphoneOn: participant.microphoneOn,
                     active: isShare ? participant.sharing : participant.cameraOn,
                     speaking: tile?.model.isDominantSpeaker == true, watermark: watermark,
-                    renderer: tile?.video))
+                    renderer: tile?.video, mirrored: participant.isLocal && !isShare && localCameraMirrored()))
             }
             return result
         }

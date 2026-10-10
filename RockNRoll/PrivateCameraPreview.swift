@@ -198,7 +198,7 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         guard authorized else { throw PreviewError.permission }
         try await capture.start(position: position, selectedDevice: selectedDevice, frames: frames, framesPerSecond: framesPerSecond)
         surface.device = device
-        surface.mirrored = device?.position == .front
+        surface.mirrored = CameraPreviewPresentation.isMirrored(device: device)
         surface.layoutIfNeeded()
     }
 

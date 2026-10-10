@@ -4,6 +4,9 @@ import UIKit
 final class GuestSampleBufferView: UIView {
     private let display = AVSampleBufferDisplayLayer()
     private var rotation = 0
+    var mirrored = false {
+        didSet { if oldValue != mirrored { setNeedsLayout(); layoutIfNeeded() } }
+    }
     override var contentMode: UIView.ContentMode {
         didSet { display.videoGravity = contentMode == .scaleAspectFill ? .resizeAspectFill : .resizeAspect }
     }
@@ -47,7 +50,7 @@ final class GuestSampleBufferView: UIView {
         display.bounds = CGRect(origin: .zero,
             size: sideways ? CGSize(width: bounds.height, height: bounds.width) : bounds.size)
         display.position = CGPoint(x: bounds.midX, y: bounds.midY)
-        display.setAffineTransform(CGAffineTransform(rotationAngle: CGFloat(rotation) * .pi / 180))
+        display.setAffineTransform(CameraPreviewPresentation.transform(rotation: rotation, mirrored: mirrored))
         CATransaction.commit()
     }
 }

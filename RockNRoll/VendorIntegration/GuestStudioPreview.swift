@@ -14,7 +14,8 @@ final class GuestStudioPreview {
     init(streams: GuestStreamViews) {
         processor.setFrameRate(MediaEnergyBudget.shared.previewFPS)
         processor.setEnabled(true)
-        processor.onSample = { [weak self] sample, _, rotation in
+        processor.onSample = { [weak self, weak streams] sample, _, rotation in
+            self?.view.mirrored = streams?.localCameraMirrored() ?? true
             self?.view.enqueue(sample, rotation: rotation)
         }
         energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak processor] _ in

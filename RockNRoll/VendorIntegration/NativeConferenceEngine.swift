@@ -355,7 +355,7 @@ final class NativeConferenceEngine: CallEngine {
             #if DEBUG
             self.tracedIncomingFrames &+= 1
             #endif
-            self.activeControls?.showStageFrame(sample, rotation: rotation)
+            self.activeControls?.showStageFrame(sample, rotation: rotation, mirrored: self.floatingVideo?.isMirrored == true)
         }
         floating.bindMicrophoneActivity(studio.microphoneActivity)
         floating.onPresentationChanged = { [weak self] in self?.videoDemand.setFloating($0) }
@@ -1141,6 +1141,7 @@ final class NativeConferenceEngine: CallEngine {
         }
         #endif
         let streams = streamViews
+        streams.localCameraMirrored = { CameraPreviewPresentation.isMirrored(device: GuestCaptureDeviceObserver.currentDevice()) }
         let epoch = sessionEpoch
         let attempt = mediaAttemptEpoch
         // The SDK's fourth view is a persistent reaction picker, not a receive
