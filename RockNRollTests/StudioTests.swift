@@ -243,6 +243,18 @@ final class StudioTests: XCTestCase {
         XCTAssertNotNil(host.presentedViewController)
         model.end(); host.dismiss(animated: false)
     }
+    private final class PrivatePreviewSamples: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        private var time: Double?
+        var snapshot: (count: Int, time: Double?) {
+            lock.lock(); defer { lock.unlock() }; return (count, time)
+        }
+        func record(_ sample: CMSampleBuffer, accepted: Bool) {
+            guard accepted else { return }
+            lock.lock(); count += 1; time = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample)); lock.unlock()
+        }
+    }
     func testMacPrivateCameraPreviewUsesVideoOnlyAndReleasesCapture() async throws {
         guard ProcessInfo.processInfo.isiOSAppOnMac,
               ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRIVATE_CAMERA"] == "1" else {
@@ -250,42 +262,86 @@ final class StudioTests: XCTestCase {
         }
         let camera = PrivateCameraPreview()
         camera.selectDevice(CameraDevices.available().first { $0.deviceType == .builtInWideAngleCamera })
-        try await camera.start()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
         window.rootViewController = UIViewController(); window.isHidden = false
-        window.rootViewController?.view.addSubview(camera.view)
-        camera.view.frame = window.bounds; camera.view.layoutIfNeeded()
         defer { window.isHidden = true }
-        let layer = try XCTUnwrap(camera.view.layer as? AVCaptureVideoPreviewLayer)
-        let session = try XCTUnwrap(layer.session)
-        XCTAssertTrue(session.isRunning)
-        XCTAssertFalse(session.automaticallyConfiguresApplicationAudioSession)
-        XCTAssertTrue(layer.isPreviewing)
-        XCTAssertEqual(session.inputs.count, 1)
-        XCTAssertTrue(session.outputs.isEmpty, "Preview must not add an encoding/recording output")
-        let input = try XCTUnwrap(session.inputs.first as? AVCaptureDeviceInput)
-        if #available(iOS 17.0, *) {
-            camera.view.frame = CGRect(x: 0, y: 0, width: 320, height: 180)
-            camera.view.layoutIfNeeded()
-            let connection = try XCTUnwrap(layer.connection)
-            let reference = AVCaptureVideoPreviewLayer(session: session)
-            XCTAssertEqual(connection.videoRotationAngle,
-                try XCTUnwrap(reference.connection).videoRotationAngle,
-                accuracy: 0.01, "Mac preview preserves the native compatibility connection orientation")
+        do {
+            try await camera.start()
+            let preview = try XCTUnwrap(camera.view as? CameraCapturePreviewView)
+            let delivery = try XCTUnwrap(preview.frameDeliveryForTesting)
+            let samples = PrivatePreviewSamples()
+            delivery.onEnqueuedForTesting = { samples.record($0, accepted: $1) }
+            defer { delivery.onEnqueuedForTesting = nil }
+            window.rootViewController?.view.addSubview(preview)
+            preview.frame = window.bounds; preview.layoutIfNeeded()
+            let session = camera.captureSessionForTesting
+            XCTAssertTrue(session.isRunning)
+            XCTAssertFalse(session.automaticallyConfiguresApplicationAudioSession)
+            XCTAssertNil((preview.layer as? AVCaptureVideoPreviewLayer)?.session)
+            XCTAssertNil((preview.layer as? AVCaptureVideoPreviewLayer)?.connection)
+            XCTAssertEqual(session.inputs.count, 1)
+            XCTAssertEqual(session.outputs.count, 1, "Preview and Presenter share one raw video output")
+            let output = try XCTUnwrap(session.outputs.first as? AVCaptureVideoDataOutput)
+            XCTAssertTrue(output.alwaysDiscardsLateVideoFrames)
+            await waitUntil { samples.snapshot.count >= 3 && preview.hasDisplayedFrameForTesting }
+            let initialSample = samples.snapshot
+            XCTAssertTrue(preview.hasDisplayedFrameForTesting)
+            let input = try XCTUnwrap(session.inputs.first as? AVCaptureDeviceInput)
+            if #available(iOS 17.0, *) {
+                camera.view.frame = CGRect(x: 0, y: 0, width: 320, height: 180)
+                camera.view.layoutIfNeeded()
+                let connection = try XCTUnwrap(output.connection(with: .video))
+                let reference = AVCaptureVideoPreviewLayer(session: session)
+                defer { reference.session = nil }
+                XCTAssertEqual(connection.videoOrientation,
+                    try XCTUnwrap(reference.connection).videoOrientation,
+                    "Mac raw preview preserves the native compatibility connection orientation")
+            }
+            XCTAssertTrue(input.device.hasMediaType(.video))
+            XCTAssertFalse(input.device.hasMediaType(.audio))
+            var presenterFrames = 0
+            var presenterRotation: Int?
+            try await camera.startFrames { _, rotation in
+                presenterRotation = rotation; presenterFrames += 1
+            }
+            await waitUntil { presenterFrames >= 3 }
+            XCTAssertEqual(presenterRotation, 0, "The data output already orients private camera pixels")
+            XCTAssertEqual(session.outputs.count, 1)
+            XCTAssertTrue(session.outputs.first === output)
+            XCTAssertTrue(session.inputs.first === input)
+            try await camera.start()
+            let retiredPresenterFrames = presenterFrames
+            let previewBeforeResume = samples.snapshot
+            await waitUntil { samples.snapshot.count >= previewBeforeResume.count + 3 }
+            XCTAssertEqual(presenterFrames, retiredPresenterFrames, "Preview-only capture retires the Presenter callback")
+            XCTAssertGreaterThan(try XCTUnwrap(samples.snapshot.time), try XCTUnwrap(initialSample.time),
+                "Raw preview continues accepting fresh frames through consumer changes")
+            XCTAssertEqual(session.outputs.count, 1)
+            XCTAssertTrue(session.outputs.first === output)
+            XCTAssertTrue(session.inputs.first === input)
+            XCTAssertTrue(session.isRunning)
+            XCTAssertTrue(camera.device === input.device)
+            XCTAssertNil((preview.layer as? AVCaptureVideoPreviewLayer)?.session)
+            if #available(iOS 17.0, *), ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAMERA_WINDOW"] == "1" {
+                let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).first { $0.isKeyWindow })
+                let host = try XCTUnwrap(window.rootViewController)
+                let model = StudioModel(audioControl: .noiseSuppression, privateCamera: camera)
+                StudioPresentation.show(model, from: host.view)
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+                model.end(); host.dismiss(animated: false)
+            }
+            await camera.stop()
+            XCTAssertFalse(session.isRunning)
+            XCTAssertTrue(session.inputs.isEmpty, "SDK camera ownership must be released before publication")
+            XCTAssertTrue(session.outputs.isEmpty)
+            let stoppedPresenterFrames = presenterFrames
+            await camera.stop()
+            XCTAssertEqual(presenterFrames, stoppedPresenterFrames)
+            XCTAssertFalse(session.isRunning); XCTAssertTrue(session.inputs.isEmpty); XCTAssertTrue(session.outputs.isEmpty)
+        } catch {
+            await camera.stop()
+            throw error
         }
-        XCTAssertTrue(input.device.hasMediaType(.video))
-        XCTAssertFalse(input.device.hasMediaType(.audio))
-        if #available(iOS 17.0, *), ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAMERA_WINDOW"] == "1" {
-            let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).first { $0.isKeyWindow })
-            let host = try XCTUnwrap(window.rootViewController)
-            let model = StudioModel(audioControl: .noiseSuppression, privateCamera: camera)
-            StudioPresentation.show(model, from: host.view)
-            try await Task.sleep(nanoseconds: 60_000_000_000)
-            model.end(); host.dismiss(animated: false)
-        }
-        await camera.stop()
-        XCTAssertFalse(session.isRunning)
-        XCTAssertTrue(session.inputs.isEmpty, "SDK camera ownership must be released before publication")
     }
     func testPresenterCameraMatchesOutputCadenceAndReleasesCapture() async throws {
         #if targetEnvironment(simulator)
@@ -300,18 +356,20 @@ final class StudioTests: XCTestCase {
         let originalMinimum = selected.activeVideoMinFrameDuration
         let originalMaximum = selected.activeVideoMaxFrameDuration
         try await camera.start()
+        let session = camera.captureSessionForTesting
+        if !ProcessInfo.processInfo.isiOSAppOnMac {
+            XCTAssertTrue(session.outputs.isEmpty, "Physical iOS preview retains its native output behavior")
+        }
         var times: [TimeInterval] = []
         var lastFrame: CVPixelBuffer?
         var lastRotation = 0
         try await camera.startFrames { pixels, rotation in lastFrame = pixels; lastRotation = rotation; times.append(ProcessInfo.processInfo.systemUptime) }
-        let layer = try XCTUnwrap(camera.view.layer as? AVCaptureVideoPreviewLayer)
-        let session = try XCTUnwrap(layer.session)
         let device = try XCTUnwrap(camera.device)
         XCTAssertEqual(CMTimeGetSeconds(device.activeVideoMinFrameDuration), 1.0 / 15, accuracy: 0.001)
         XCTAssertEqual(CMTimeGetSeconds(device.activeVideoMaxFrameDuration), 1.0 / 15, accuracy: 0.001)
         XCTAssertEqual(session.inputs.count, 1); XCTAssertEqual(session.outputs.count, 1)
         XCTAssertFalse(session.automaticallyConfiguresApplicationAudioSession)
-        // Measure steady capture after native preview graph setup. Orientation
+        // Measure steady capture after output setup. Orientation
         // inspection and stop can synchronously reconfigure that graph on Mac.
         times.removeAll()
         try await Task.sleep(nanoseconds: 2_000_000_000)
@@ -334,6 +392,7 @@ final class StudioTests: XCTestCase {
                 XCTAssertEqual(lastRotation, 0, "AVCaptureVideoDataOutput supplies physically oriented pixels")
                 if ProcessInfo.processInfo.isiOSAppOnMac {
                     let reference = AVCaptureVideoPreviewLayer(session: session)
+                    defer { reference.session = nil }
                     let captureConnection = try XCTUnwrap(output.connection(with: .video))
                     let previewConnection = try XCTUnwrap(reference.connection)
                     XCTAssertEqual(captureConnection.videoOrientation,
@@ -351,7 +410,7 @@ final class StudioTests: XCTestCase {
             print("PRESENTER_CAPTURE_FPS=\(rate)")
             XCTAssertLessThan(rate, 17); XCTAssertGreaterThan(rate, 10)
         }
-        XCTAssertFalse(session.isRunning); XCTAssertTrue(session.inputs.isEmpty)
+        XCTAssertFalse(session.isRunning); XCTAssertTrue(session.inputs.isEmpty); XCTAssertTrue(session.outputs.isEmpty)
         XCTAssertEqual(CMTimeGetSeconds(device.activeVideoMinFrameDuration), CMTimeGetSeconds(originalMinimum), accuracy: 0.001,
             "Presenter must not leave the SDK camera capped")
         XCTAssertEqual(CMTimeGetSeconds(device.activeVideoMaxFrameDuration), CMTimeGetSeconds(originalMaximum), accuracy: 0.001)

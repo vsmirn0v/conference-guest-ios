@@ -2,8 +2,8 @@ import AVFoundation
 import Combine
 import UIKit
 
-/// Borrow the owner's capture session for native, unencoded preview. Visible
-/// views request preview cadence without changing the outgoing encoder budget.
+/// Reuse the owner's unencoded camera feed. Mac views share raw frames to avoid
+/// synchronous preview graph changes on the UI thread; iOS uses native preview.
 @MainActor
 final class CameraCapturePreview {
     let session: AVCaptureSession
@@ -28,8 +28,12 @@ final class CameraCapturePreview {
     }
     func setFloatingDemand(_ wanted: Bool) { floatingDemand = wanted; refreshDemand() }
     func makeView() -> CameraCapturePreviewView {
-        let view = CameraCapturePreviewView(source: self, native: !views.allObjects.contains { $0.ownsNativePreview })
+        let view = CameraCapturePreviewView(source: self, native: !ProcessInfo.processInfo.isiOSAppOnMac &&
+            !views.allObjects.contains { $0.ownsNativePreview })
         views.add(view)
+        // A native attachment can pump the run loop. Reserve its ownership
+        // before attaching so nested view creation cannot claim it again.
+        view.refreshDevice()
         return view
     }
     fileprivate func refreshDemand() {
@@ -49,9 +53,12 @@ final class CameraCapturePreviewView: UIView {
     fileprivate var ownsNativePreview: Bool { native && source != nil }
     private var sampleView: GuestSampleBufferView?
     private var sink: RoomFloatingVideoSink?
+    private var frameDelivery: SampleBufferFrameDelivery?
     #if DEBUG
     private(set) var hasDisplayedFrameForTesting = false
     var willDetachSessionForTesting: (() -> Void)?
+    var sourceSessionForTesting: AVCaptureSession? { source?.session }
+    var frameDeliveryForTesting: SampleBufferFrameDelivery? { frameDelivery }
     #endif
     private var rotationCoordinator: AnyObject?
     private var rotationObservation: NSKeyValueObservation?
@@ -59,7 +66,7 @@ final class CameraCapturePreviewView: UIView {
     private var lifecycle: [NSObjectProtocol] = []
     var onDisplaySizeChanged: ((CGSize) -> Void)?
     var enabled = true { didSet { refreshDemand() } }
-    var mirrored = true { didSet { sampleView?.mirrored = mirrored; setNeedsLayout() } }
+    var mirrored = true { didSet { if mirrored != oldValue { sampleView?.mirrored = mirrored; setNeedsLayout() } } }
     fileprivate var isDisplaying: Bool {
         guard enabled, window != nil, source != nil, UIApplication.shared.applicationState != .background else { return false }
         var ancestor: UIView? = self
@@ -72,28 +79,24 @@ final class CameraCapturePreviewView: UIView {
         super.init(frame: .zero)
         backgroundColor = .black
         isUserInteractionEnabled = false
-        if native { preview.session = source.session }
-        else {
-            // UIKit-on-Mac renders only one native preview reliably. Additional
-            // Studio surfaces share raw frames without a second capture output.
+        if !native {
             let surface = GuestSampleBufferView(); surface.contentMode = .scaleAspectFit
+            surface.mirrored = mirrored
             surface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             addSubview(surface); sampleView = surface
-            let sink = RoomFloatingVideoSink { [weak self] sample, rotation in
+            let delivery = surface.makeFrameDelivery { [weak self] size, rotation in
                 guard let self else { return }
-                self.sampleView?.enqueue(sample, rotation: rotation)
                 #if DEBUG
                 self.hasDisplayedFrameForTesting = true
                 #endif
-                if let pixels = CMSampleBufferGetImageBuffer(sample) {
-                    let width = CVPixelBufferGetWidth(pixels), height = CVPixelBufferGetHeight(pixels)
-                    self.updateSize(rotation == 90 || rotation == 270 ? CGSize(width: height, height: width) : CGSize(width: width, height: height))
-                }
+                self.updateSize(rotation == 90 || rotation == 270 ? CGSize(width: size.height, height: size.width) : size)
             }
+            delivery.setEnabled(false)
+            frameDelivery = delivery
+            let sink = RoomFloatingVideoSink(backgroundDeliver: { delivery.deliver($0, rotation: $1) })
             self.sink = sink; source.frames.add(sink)
         }
-        preview.videoGravity = .resizeAspect
-        refreshDevice()
+        if native { preview.videoGravity = .resizeAspect }
         for event in [UIApplication.didEnterBackgroundNotification, UIApplication.didBecomeActiveNotification] {
             lifecycle.append(NotificationCenter.default.addObserver(forName: event, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.refreshDemand() }
@@ -103,9 +106,13 @@ final class CameraCapturePreviewView: UIView {
     required init?(coder: NSCoder) { nil }
     override var isHidden: Bool { didSet { refreshDemand() } }
     override var contentMode: UIView.ContentMode {
-        didSet { preview.videoGravity = contentMode == .scaleAspectFill ? .resizeAspectFill : .resizeAspect; sampleView?.contentMode = contentMode }
+        didSet {
+            if native { preview.videoGravity = contentMode == .scaleAspectFill ? .resizeAspectFill : .resizeAspect }
+            sampleView?.contentMode = contentMode
+        }
     }
     fileprivate func refreshDevice() {
+        guard native else { setNeedsLayout(); return }
         if native, let source, preview.session !== source.session { preview.session = source.session }
         rotationObservation = nil; rotationCoordinator = nil
         if #available(iOS 17.0, *), !ProcessInfo.processInfo.isiOSAppOnMac, let device = source?.device {
@@ -119,13 +126,19 @@ final class CameraCapturePreviewView: UIView {
     }
     override func didMoveToWindow() { super.didMoveToWindow(); refreshDevice(); refreshDemand() }
     fileprivate func refreshDemand() {
-        preview.connection?.isEnabled = isDisplaying
-        sink?.setWanted(isDisplaying, fps: source?.frameRate == 0 ? 30 : source?.frameRate ?? 30)
+        let displaying = isDisplaying
+        if native, let connection = preview.connection, connection.isEnabled != displaying {
+            connection.isEnabled = displaying
+        }
+        frameDelivery?.setActive(displaying)
+        frameDelivery?.setEnabled(displaying)
+        sink?.setWanted(displaying, fps: source?.frameRate == 0 ? 30 : source?.frameRate ?? 30)
         source?.refreshDemand()
     }
     override func layoutSubviews() {
         super.layoutSubviews()
         sampleView?.frame = bounds
+        guard native else { refreshDemand(); return }
         guard let connection = preview.connection else { refreshDemand(); return }
         if #available(iOS 17.0, *), !ProcessInfo.processInfo.isiOSAppOnMac,
            let coordinator = rotationCoordinator as? AVCaptureDevice.RotationCoordinator {
@@ -140,8 +153,8 @@ final class CameraCapturePreviewView: UIView {
             }
         }
         if connection.isVideoMirroringSupported {
-            connection.automaticallyAdjustsVideoMirroring = false
-            connection.isVideoMirrored = mirrored
+            if connection.automaticallyAdjustsVideoMirroring { connection.automaticallyAdjustsVideoMirroring = false }
+            if connection.isVideoMirrored != mirrored { connection.isVideoMirrored = mirrored }
         }
         if let device = source?.device {
             let dimensions = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
@@ -164,17 +177,19 @@ final class CameraCapturePreviewView: UIView {
         // first so reentrant layout cannot detach the same layer twice.
         guard let previous = source else { return }
         source = nil
+        frameDelivery?.invalidate(); frameDelivery = nil
         if let sink { sink.retire(); previous.frames.remove(sink) }
         sink = nil; sampleView?.clear()
         rotationObservation = nil; rotationCoordinator = nil
         #if DEBUG
         willDetachSessionForTesting?()
         #endif
-        preview.session = nil
+        if native { preview.session = nil }
         previous.refreshDemand()
     }
     deinit {
         // UIKit removes a detached/deallocated surface from the weak view set.
+        frameDelivery?.invalidate()
         sink?.retire()
         lifecycle.forEach(NotificationCenter.default.removeObserver)
         let previous = source

@@ -1,5 +1,4 @@
-import JazzSDKScreenShare
-import ReplayKit
+import CoreMedia
 
 /// Owns one capture session. Leaving/holding invalidates picker callbacks before
 /// stopping capture; a late selection must never start sharing into another room.
@@ -16,8 +15,9 @@ import ScreenCaptureKit
 @MainActor
 final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScreenSource {
     private var stream: SCStream?
-    private var upload: JazzScreenShare?
+    private var upload: GuestPresenterSender?
     private var uploadStarted = false
+    private var retirement: Task<Void, Never>?
     private var picking = false
     private var pickerRegistered = false
     private var generation = 0
@@ -42,7 +42,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
     }
 
     func start() {
-        guard !picking else { return }
+        guard !picking, retirement == nil else { return }
         let picker = SCContentSharingPicker.shared
         guard picker.isAvailable, !picker.isActive || pickerRegistered else {
             let message = L("Screen sharing is unavailable. Close any other sharing chooser and try again.")
@@ -65,6 +65,8 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
     }
 
     func stop() async {
+        if let retirement { await retirement.value; return }
+        guard stream != nil || upload != nil || pickerRegistered || picking else { return }
         #if DEBUG
         if let deliveryExperiment, deliveryExperiment.received > 0 { print(deliveryExperiment.summary) }
         deliveryExperiment?.reset()
@@ -73,17 +75,25 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         selectionGeneration += 1
         let previous = stream
         stream = nil
-        let previousUpload = upload, wasUploading = uploadStarted
+        let previousUpload = upload
         upload = nil; uploadStarted = false
         releasePicker()
         if onFrame == nil { preview.end() }
         // Stop forwarding frames immediately, before any suspension point.
-        if wasUploading { previousUpload?.broadcastFinished() }
-        if let previous {
-            do { try await previous.stopCapture() }
-            catch { onError(L("Could not stop screen sharing: %@", error.localizedDescription)) }
-            try? previous.removeStreamOutput(self, type: .screen)
+        let attempt = generation
+        let ending = Task { @MainActor [self] in
+            await previousUpload?.stop()
+            if let previous {
+                do { try await previous.stopCapture() }
+                catch {
+                    if generation == attempt { onError(L("Could not stop screen sharing: %@", error.localizedDescription)) }
+                }
+                try? previous.removeStreamOutput(self, type: .screen)
+            }
         }
+        retirement = ending
+        await ending.value
+        retirement = nil
     }
 
     private func selected(_ filter: SCContentFilter) async {
@@ -119,11 +129,13 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         do {
             try capture.addStreamOutput(self, type: .screen, sampleHandlerQueue: .main)
             if onFrame == nil && upload == nil {
-                let sender = JazzScreenShare { [weak self] error in
+                let sender = GuestPresenterSender(preview: preview) { [weak self] message in
                     Task { @MainActor in
                         guard let self, self.generation == attempt else { return }
+                        let retirementGeneration = self.generation + 1
                         await self.stop()
-                        self.onError(L("Screen sharing stopped: %@", error.localizedDescription))
+                        guard self.generation == retirementGeneration else { return }
+                        self.onError(message)
                     }
                 }
                 upload = sender
@@ -190,20 +202,19 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
                 deliveryExperiment?.reset()
                 #endif
                 uploadStarted = true
-                preview.begin(source: captureSource)
-                upload.broadcastStarted(withSetupInfo: nil)
+                upload.start(source: captureSource)
             }
             #if DEBUG
             if let deliveryExperiment {
                 deliveryExperiment.deliver(sampleBuffer,
-                    send: { upload.processSampleBuffer(sampleBuffer, with: .video) },
+                    send: { upload.send(sampleBuffer, applyCadence: false, updatePreview: false) },
                     preview: { if let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) { preview.accept(pixels) } })
                 return
             }
             #endif
             guard cadence.accept(sampleBuffer, fps: MediaEnergyBudget.shared.sharingFPS) else { return }
             if let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) { preview.accept(pixels) }
-            upload.processSampleBuffer(sampleBuffer, with: .video)
+            upload.send(sampleBuffer, applyCadence: false, updatePreview: false)
         }
     }
 
@@ -218,12 +229,9 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
             print("Native screen capture stopped: domain=\((error as NSError).domain), code=\((error as NSError).code), message=\(error.localizedDescription)")
             #endif
             self.stream = nil
-            let previousUpload = self.upload, wasUploading = self.uploadStarted
-            self.upload = nil; self.uploadStarted = false
-            self.releasePicker()
-            if self.onFrame == nil { self.preview.end() }
-            self.generation += 1
-            if wasUploading { previousUpload?.broadcastFinished() }
+            let retirementGeneration = self.generation + 1
+            await self.stop()
+            guard self.generation == retirementGeneration else { return }
             if (error as NSError).code != SCStreamError.Code.userStopped.rawValue {
                 let message = L("Screen sharing stopped: %@", error.localizedDescription)
                 self.onError(message); self.onEnd(message)

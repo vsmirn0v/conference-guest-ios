@@ -5,6 +5,16 @@ import XCTest
 
 @MainActor
 final class CameraPreviewLifecycleTests: XCTestCase {
+    private func assertSource(_ view: CameraCapturePreviewView, session: AVCaptureSession,
+                              file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(view.sourceSessionForTesting === session, file: file, line: line)
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            XCTAssertNil((view.layer as? AVCaptureVideoPreviewLayer)?.session, file: file, line: line)
+        } else {
+            XCTAssertTrue((view.layer as? AVCaptureVideoPreviewLayer)?.session === session, file: file, line: line)
+        }
+    }
+
     private final class PrivateCapture: PrivateCameraPreviewing {
         let view = UIView()
         func start() async throws {}
@@ -21,7 +31,7 @@ final class CameraPreviewLifecycleTests: XCTestCase {
         surface.track = nil
         let current = surface.subviews.compactMap { $0 as? CameraCapturePreviewView }
         XCTAssertEqual(current.count, 1)
-        XCTAssertTrue((current.first?.layer as? AVCaptureVideoPreviewLayer)?.session === replacement.session)
+        assertSource(try XCTUnwrap(current.first), session: replacement.session)
         surface.track = nil
         XCTAssertTrue(surface.subviews.compactMap { $0 as? CameraCapturePreviewView }.isEmpty)
     }
@@ -82,7 +92,7 @@ final class CameraPreviewLifecycleTests: XCTestCase {
         surface.clear()
         let active = surface.subviews.compactMap { $0 as? CameraCapturePreviewView }
         XCTAssertEqual(active.count, 1)
-        XCTAssertTrue((active.first?.layer as? AVCaptureVideoPreviewLayer)?.session === replacement.session)
+        assertSource(try XCTUnwrap(active.first), session: replacement.session)
         XCTAssertNil((preview.layer as? AVCaptureVideoPreviewLayer)?.session)
         surface.clear()
         XCTAssertTrue(surface.subviews.isEmpty)
@@ -94,9 +104,9 @@ final class CameraPreviewLifecycleTests: XCTestCase {
         old.stop()
         let replacement = source.makeView()
         defer { replacement.stop() }
-        XCTAssertTrue((replacement.layer as? AVCaptureVideoPreviewLayer)?.session === source.session)
+        assertSource(replacement, session: source.session)
         old.stop()
-        XCTAssertTrue((replacement.layer as? AVCaptureVideoPreviewLayer)?.session === source.session)
+        assertSource(replacement, session: source.session)
     }
 
     func testVisibilityChangedDuringReplacementKeepsTheLatestDemand() throws {
@@ -110,7 +120,7 @@ final class CameraPreviewLifecycleTests: XCTestCase {
         }
         surface.setCameraPreview(replacement, enabled: true)
         let active = try XCTUnwrap(surface.subviews.first as? CameraCapturePreviewView)
-        XCTAssertTrue((active.layer as? AVCaptureVideoPreviewLayer)?.session === replacement.session)
+        assertSource(active, session: replacement.session)
         XCTAssertFalse(active.enabled, "A nested hide request wins over the older visible request")
         surface.clear()
     }
@@ -134,7 +144,7 @@ final class CameraPreviewLifecycleTests: XCTestCase {
                 surface.layoutIfNeeded()
                 try await Task.sleep(for: .milliseconds(120))
                 let preview = try XCTUnwrap(surface.subviews.first as? CameraCapturePreviewView)
-                XCTAssertTrue((preview.layer as? AVCaptureVideoPreviewLayer)?.session === source.session)
+                assertSource(preview, session: source.session)
                 preview.willDetachSessionForTesting = { [weak surface] in
                     surface?.layoutIfNeeded()
                     surface?.clear()

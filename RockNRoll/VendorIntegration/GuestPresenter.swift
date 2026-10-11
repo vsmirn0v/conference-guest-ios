@@ -6,35 +6,57 @@ import Combine
 /// Public screen-share sender; no SDK camera replacement or audio hook.
 @MainActor
 final class GuestPresenterSender: GuestScreenCapture {
-    private var upload: JazzScreenShare?
+    private var upload: BoundedScreenShareUpload?
+    private var stopping: BoundedScreenShareUpload?
     private let preview: LocalSharePreview
+    private let onError: (String) -> Void
     private var started = false
+    private var retired = false
     private var cadence = OutgoingVideoCadence()
     init(preview: LocalSharePreview, onError: @escaping (String) -> Void) {
-        self.preview = preview
-        upload = JazzScreenShare { error in
-            #if DEBUG
-            print("Presenter sender failed: domain=\((error as NSError).domain), code=\((error as NSError).code), message=\(error.localizedDescription)")
-            #endif
-            Task { @MainActor in onError(L("Screen sharing stopped: %@", error.localizedDescription)) }
-        }
+        self.preview = preview; self.onError = onError
     }
+    deinit { upload?.retire() }
     func start() {
         start(source: .presenter)
     }
     func start(source: LocalSharePreview.Source) {
-        guard !started else { return }
-        started = true; cadence = OutgoingVideoCadence(); preview.begin(source: source)
-        upload?.broadcastStarted(withSetupInfo: nil)
+        guard !started, !retired else { return }
+        started = true; cadence = OutgoingVideoCadence()
+        let upload = BoundedScreenShareUpload { [weak self] in
+            let sender = JazzScreenShare { [weak self] error in
+                Task { @MainActor [weak self] in
+                    guard let self, self.started, !self.retired else { return }
+                    #if DEBUG
+                    print("Presenter sender failed: domain=\((error as NSError).domain), code=\((error as NSError).code), message=\(error.localizedDescription)")
+                    #endif
+                    self.onError(L("Screen sharing stopped: %@", error.localizedDescription))
+                }
+            }
+            return .init(start: { sender.broadcastStarted(withSetupInfo: nil) },
+                         send: { sender.processSampleBuffer($0, with: .video) },
+                         finish: { sender.broadcastFinished() })
+        }
+        self.upload = upload
+        upload.start()
+        preview.begin(source: source)
     }
-    func send(_ sample: CMSampleBuffer) {
-        guard started, let upload, cadence.accept(sample, fps: MediaEnergyBudget.shared.sharingFPS) else { return }
-        upload.processSampleBuffer(sample, with: .video)
-        if let pixels = CMSampleBufferGetImageBuffer(sample) { preview.accept(pixels) }
+    func send(_ sample: CMSampleBuffer, applyCadence: Bool = true, updatePreview: Bool = true) {
+        guard started, let upload,
+              !applyCadence || cadence.accept(sample, fps: MediaEnergyBudget.shared.sharingFPS) else { return }
+        upload.submit(sample)
+        if updatePreview, let pixels = CMSampleBufferGetImageBuffer(sample) { preview.accept(pixels) }
     }
     func stop() async {
-        if started { upload?.broadcastFinished() }
-        started = false; upload = nil; preview.end()
+        if retired { await stopping?.waitUntilStopped(); return }
+        started = false; retired = true
+        if let upload {
+            self.upload = nil; stopping = upload
+            upload.retire()
+        }
+        preview.end()
+        await stopping?.waitUntilStopped()
+        stopping = nil
     }
 }
 

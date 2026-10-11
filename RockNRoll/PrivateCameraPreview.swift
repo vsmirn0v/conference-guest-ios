@@ -171,7 +171,7 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         self.position = position; self.framesPerSecond = framesPerSecond
     }
     private lazy var previewSource: CameraCapturePreview = {
-        let source = CameraCapturePreview(session: capture.session, device: nil)
+        let source = CameraCapturePreview(session: capture.session, device: nil, frames: capture.previewFrames)
         source.onDemandChanged = { [weak self] in
             guard let self, self.framesPerSecond == nil else { return }
             self.capture.setPreviewRate(MediaEnergyBudget.shared.previewFPS)
@@ -180,6 +180,9 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
     }()
     private lazy var surface = previewSource.makeView()
     var view: UIView { surface }
+    #if DEBUG
+    var captureSessionForTesting: AVCaptureSession { capture.session }
+    #endif
     var device: AVCaptureDevice? {
         guard capture.session.isRunning else { return nil }
         return (capture.session.inputs.first as? AVCaptureDeviceInput)?.device
@@ -230,6 +233,7 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
 
     private final class Capture: @unchecked Sendable {
         let session = AVCaptureSession()
+        let previewFrames = CameraPreviewFrames()
         private let queue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.private-camera")
         private var input: AVCaptureDeviceInput?
         private var output: AVCaptureVideoDataOutput?
@@ -271,11 +275,11 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                             } else if session.canSetSessionPreset(.hd1280x720) { session.sessionPreset = .hd1280x720 }
                             session.commitConfiguration()
                         }
-                        if let frames, output == nil {
+                        if (frames != nil || ProcessInfo.processInfo.isiOSAppOnMac), output == nil {
                             let video = AVCaptureVideoDataOutput()
                             video.alwaysDiscardsLateVideoFrames = true
                             video.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-                            let receiver = FrameSink(handler: frames)
+                            let receiver = FrameSink(previewFrames: previewFrames)
                             session.beginConfiguration()
                             guard session.canAddOutput(video) else { session.commitConfiguration(); throw PreviewError.unavailable }
                             session.addOutput(video)
@@ -323,6 +327,9 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                             output = video; sink = receiver
                             session.commitConfiguration()
                         }
+                        // Preview and Presenter share this output; changing the
+                        // consumer must not rebuild the running capture graph.
+                        sink?.setHandler(frames)
                         // Preview and Presenter use an explicit supported cadence. Keep
                         // the selected format/system effects and clamp to its range.
                         if let requested = framesPerSecond, requested.isFinite, requested > 0,
@@ -363,6 +370,11 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         func stop() async {
             await withCheckedContinuation { result in
                 queue.async { [self] in
+                    if input == nil, output == nil, sink == nil, originalDurations == nil,
+                       rotationObservation == nil, rotationCoordinator == nil, !session.isRunning {
+                        result.resume(); return
+                    }
+                    sink?.setHandler(nil)
                     if session.isRunning { session.stopRunning() }
                     // Release the camera device before handing ownership to the meeting SDK.
                     session.beginConfiguration()
@@ -391,22 +403,31 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         }
     }
 
-    /// Conflates camera callbacks instead of enqueueing a main-thread task/frame.
+    /// Raw preview stays on the capture queue. Only Presenter needs a bounded
+    /// main-thread callback, using the same camera output.
     private final class FrameSink: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
-        private let handler: @MainActor (CVPixelBuffer, Int) -> Void
+        private let previewFrames: CameraPreviewFrames
+        private var handler: (@MainActor (CVPixelBuffer, Int) -> Void)?
         private let lock = NSLock()
         private var latest: CVPixelBuffer?
         private var pending = false
-        init(handler: @escaping @MainActor (CVPixelBuffer, Int) -> Void) { self.handler = handler }
+        init(previewFrames: CameraPreviewFrames) { self.previewFrames = previewFrames }
+        func setHandler(_ handler: (@MainActor (CVPixelBuffer, Int) -> Void)?) {
+            lock.lock(); self.handler = handler; latest = nil; lock.unlock()
+        }
         func captureOutput(_ output: AVCaptureOutput, didOutput sample: CMSampleBuffer, from connection: AVCaptureConnection) {
             guard let pixels = CMSampleBufferGetImageBuffer(sample) else { return }
-            lock.lock(); latest = pixels
+            if previewFrames.hasSinks { previewFrames.render(pixels, rotation: 0) }
+            lock.lock()
+            guard handler != nil else { lock.unlock(); return }
+            latest = pixels
             if pending { lock.unlock(); return }
             pending = true; lock.unlock()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.lock.lock(); let frame = self.latest; self.latest = nil; self.pending = false; self.lock.unlock()
-                if let frame { self.handler(frame, 0) }
+                self.lock.lock(); let frame = self.latest, handler = self.handler
+                self.latest = nil; self.pending = false; self.lock.unlock()
+                if let frame, let handler { handler(frame, 0) }
             }
         }
     }
