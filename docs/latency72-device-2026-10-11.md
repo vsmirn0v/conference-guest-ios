@@ -70,7 +70,12 @@ profiler qualify real background execution separately.
 Numeric comparison: `docs/evidence/latency72-device-2026-10-11.json`.
 Ignored result bundles, traces and logs: `.build/latency72-device/`.
 Accepted comparisons: `new-native-r2`, `old-native`, `new-pip`, `old-pip-r2`.
-Functional bundles: `receive.xcresult`, `system-pip.xcresult`.
+Functional bundles: `receive.xcresult`, `system-pip.xcresult` and
+`live-share-qualified.xcresult`. The live browser demo-card share displayed in
+the meeting, continued moving in automatic PiP over Home, and returned to the
+meeting. Its initial run failed only an obsolete caption-text assertion; the
+current named screen-share tile selector passed, including the existing pixel
+motion check. The production rendering source was unchanged by that test fix.
 The existing Mac/iOS 27/iOS 17.5 rendering qualification is documented in
 `incoming-media-latency-2026-10-11.md`.
 

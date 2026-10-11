@@ -1134,9 +1134,8 @@ final class ConferenceMediaUITests: XCTestCase {
         #endif
         app.launchEnvironment["CONFERENCE_TEST_RESET_FLOATING_VIDEO"] = "1"
         app.launch()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(
-            format: "label CONTAINS %@", "Floating video QA · Screen"
-        )).firstMatch.waitForExistence(timeout: 35))
+        XCTAssertTrue(app.otherElements["Floating video QA screen share"]
+            .firstMatch.waitForExistence(timeout: 35), "The remote screen-share tile must be present")
         attachScreenshot(of: app, named: "Jam share before minimizing")
         expectation(for: NSPredicate(format: "value == %@", "Floating video available"),
                     evaluatedWith: app.buttons["More call options"])

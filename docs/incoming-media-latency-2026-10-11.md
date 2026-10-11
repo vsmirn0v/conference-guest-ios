@@ -155,3 +155,11 @@ latency, PiP/background lifecycle and incoming audio/video restoration after a
 competing call/network change on iVitalii when available. Compare unplugged
 energy with the prior build at 30 fps. No battery improvement is claimed from
 Mac or simulator data.
+
+## Physical follow-up
+
+The iPhone rendering, real RTP, background camera, moving system PiP and live
+browser screen-share checks are now qualified in
+[the device report](latency72-device-2026-10-11.md). Idle app CPU/latency were
+similar in the matched 30 fps comparison; UI-stall resilience improved. Actual
+unplugged battery savings and optical display latency remain unverified.
