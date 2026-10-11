@@ -94,7 +94,14 @@ final class CameraOutputTests: XCTestCase {
     }
     @MainActor func testPlatformCameraAccessUsesRuntimeSupport() {
         let session = AVCaptureSession()
+        let output = AVCaptureVideoDataOutput()
+        output.alwaysDiscardsLateVideoFrames = false
+        session.addOutput(output)
         let supported = CameraBackgroundAccess.configure(session)
+        XCTAssertTrue(output.alwaysDiscardsLateVideoFrames,
+            "Discard late camera frames even if background camera access is unavailable")
+        CameraBackgroundAccess.configure(session)
+        XCTAssertTrue(output.alwaysDiscardsLateVideoFrames)
         XCTAssertEqual(supported, session.isMultitaskingCameraAccessSupported)
         XCTAssertEqual(session.isMultitaskingCameraAccessEnabled, supported)
         XCTAssertFalse(session.isRunning)

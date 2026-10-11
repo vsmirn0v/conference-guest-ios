@@ -686,6 +686,17 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         if source != nil { stageHasFrame = true; stageStatus.isHidden = true }
     }
 
+    func makeStageFrameDelivery(mirrored: Bool) -> SampleBufferFrameDelivery? {
+        guard stageName != nil, stageActive, wantsStageFrames, !isHeld else { return nil }
+        stageVideo.mirrored = mirrored
+        if let delivery = stageVideo.existingFrameDelivery() { return delivery }
+        let delivery = stageVideo.makeFrameDelivery { [weak self] _, _ in
+            self?.stageHasFrame = true; self?.stageStatus.isHidden = true
+        }
+        delivery.setActive(true)
+        return delivery
+    }
+
     func showStageFrame(_ sample: CMSampleBuffer, rotation: Int, mirrored: Bool = false) {
         guard stageName != nil, stageActive, !stageView.isHidden else { return }
         stageVideo.mirrored = mirrored

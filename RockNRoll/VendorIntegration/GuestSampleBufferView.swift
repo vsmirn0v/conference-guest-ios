@@ -3,6 +3,8 @@ import UIKit
 
 final class GuestSampleBufferView: UIView {
     private let display = AVSampleBufferDisplayLayer()
+    private lazy var renderTarget = SampleBufferRenderTarget(layer: display)
+    private var frameDelivery: SampleBufferFrameDelivery?
     private var rotation = 0
     private var capturePreview: CameraCapturePreviewView?
     private weak var captureSource: CameraCapturePreview?
@@ -30,13 +32,31 @@ final class GuestSampleBufferView: UIView {
             setNeedsLayout()
             layoutIfNeeded()
         }
-        if display.status == .failed { display.flush() }
-        guard display.isReadyForMoreMediaData else { return false }
-        display.enqueue(sample)
-        return true
+        return renderTarget.enqueue(sample)
     }
 
-    func clear() { setCameraPreview(nil); display.flushAndRemoveImage() }
+    func clear() {
+        frameDelivery?.invalidate(); frameDelivery = nil
+        setCameraPreview(nil); renderTarget.clear(removingImage: true)
+    }
+
+    func existingFrameDelivery() -> SampleBufferFrameDelivery? {
+        frameDelivery.flatMap { $0.isCurrent ? $0 : nil }
+    }
+    func makeFrameDelivery(onGeometry: @escaping @MainActor (CGSize, Int) -> Void) -> SampleBufferFrameDelivery {
+        frameDelivery?.invalidate()
+        let delivery = SampleBufferFrameDelivery(target: renderTarget) { [weak self] size, rotation in
+            guard let self else { return }
+            if self.rotation != rotation { self.rotation = rotation; self.setNeedsLayout(); self.layoutIfNeeded() }
+            onGeometry(size, rotation)
+        }
+        frameDelivery = delivery
+        return delivery
+    }
+    func setFrameDeliverySuspended(_ suspended: Bool) {
+        frameDelivery?.setEnabled(!suspended)
+        if suspended { renderTarget.clearImage() }
+    }
 
     func setCameraPreview(_ source: CameraCapturePreview?, enabled: Bool = true) {
         if captureSource !== source {
@@ -47,7 +67,7 @@ final class GuestSampleBufferView: UIView {
                 preview.onDisplaySizeChanged = { [weak self] size in self?.onCameraPreviewSizeChanged?(size) }
                 preview.autoresizingMask = [.flexibleWidth, .flexibleHeight]
                 preview.frame = bounds; addSubview(preview); capturePreview = preview
-                display.flushAndRemoveImage()
+                renderTarget.clear(removingImage: true)
             }
         }
         capturePreview?.mirrored = mirrored
@@ -58,7 +78,7 @@ final class GuestSampleBufferView: UIView {
     /// A static canvas has no next frame to restart display after reparenting.
     func restore(_ sample: CMSampleBuffer, rotation: Int) {
         layoutIfNeeded()
-        display.flush()
+        renderTarget.clear(removingImage: false)
         enqueue(sample, rotation: rotation)
     }
 

@@ -23,8 +23,10 @@ final class TrackPresenterCamera: PresenterCameraSource {
 /// Prime one AVKit frame, then process only while PiP is starting/visible.
 /// Observing a track never creates another capturer or encoder.
 final class RoomFloatingVideoSink: NSObject, VideoRenderer, LKRTCVideoRenderer, @unchecked Sendable {
-    @MainActor var isAdaptiveStreamEnabled: Bool { false }
-    @MainActor var adaptiveStreamSize: CGSize { .zero }
+    @MainActor var isAdaptiveStreamEnabled: Bool { lock.lock(); defer { lock.unlock() }; return wanted && !retired && adaptiveSize != .zero }
+    @MainActor var adaptiveStreamSize: CGSize { lock.lock(); defer { lock.unlock() }; return adaptiveSize }
+    private var adaptiveSize = CGSize.zero
+    @MainActor func setAdaptiveSize(_ size: CGSize) { lock.lock(); adaptiveSize = size; lock.unlock() }
     private let lock = NSLock()
     private struct Frame {
         let rotation: Int
@@ -34,46 +36,79 @@ final class RoomFloatingVideoSink: NSObject, VideoRenderer, LKRTCVideoRenderer, 
     private var wanted = false
     private var primed = false
     private var retired = false
+    private var reportedRoomGeometryMismatch = false
+    var onRoomGeometryMismatch: (@MainActor () -> Void)?
     private let nativeConverter = NativeVideoPixelBuffer()
-    private lazy var frames: LatestVideoFrameProcessor<Frame, (CMSampleBuffer, Int)> = LatestVideoFrameProcessor(
-        label: "dev.vsmirn0v.conferenceguest.floating-frame", convert: { frame in
+    private lazy var frames: LatestVideoFrameProcessor<Frame, (CMSampleBuffer, Int)> = makeProcessor()
+    private func makeProcessor() -> LatestVideoFrameProcessor<Frame, (CMSampleBuffer, Int)> {
+        let convert: (Frame) -> (CMSampleBuffer, Int)? = { frame in
             autoreleasepool {
                 frame.pixels().flatMap { pixels in
                     PresenterCompositor.sample(pixels, time: CMTime(seconds: frame.time, preferredTimescale: 1_000_000_000))
                         .map { ($0, frame.rotation) }
                 }
             }
-        }, deliver: { [weak self] sample, rotation in
-            guard let self else { return }
-            self.lock.lock()
-            let accepted = !self.retired && (!self.primed || self.wanted)
-            if accepted { self.primed = true }
-            let enabled = !self.retired && self.wanted
-            self.lock.unlock()
-            if accepted { self.deliver(sample, rotation) }
-            if !enabled { self.frames.setEnabled(false) }
+        }
+        let label = "dev.vsmirn0v.conferenceguest.floating-frame"
+        if let backgroundDeliver {
+            return LatestVideoFrameProcessor(label: label, convert: convert, backgroundDeliver: { [weak self] sample, rotation in
+                if self?.accept() == true { backgroundDeliver(sample, rotation) }
+            })
+        }
+        return LatestVideoFrameProcessor(label: label, convert: convert, deliver: { [weak self] sample, rotation in
+            if self?.accept() == true { self?.deliver?(sample, rotation) }
         })
-    let deliver: @MainActor (CMSampleBuffer, Int) -> Void
+    }
+    private func accept() -> Bool {
+        lock.lock()
+        let accepted = !retired && (!primed || wanted)
+        if accepted { primed = true }
+        let enabled = !retired && wanted
+        // Demand changes can now arrive while worker delivery primes a frame.
+        // Update the scheduler under the same lock, so priming cannot disable
+        // a newer request to start PiP.
+        if !enabled { frames.setEnabled(false) }
+        lock.unlock()
+        return accepted
+    }
+    private let deliver: (@MainActor (CMSampleBuffer, Int) -> Void)?
+    private let backgroundDeliver: ((CMSampleBuffer, Int) -> Void)?
     @MainActor init(deliver: @escaping @MainActor (CMSampleBuffer, Int) -> Void) {
-        self.deliver = deliver
+        self.deliver = deliver; backgroundDeliver = nil
         super.init()
         frames.setEnabled(true)
     }
+    @MainActor init(backgroundDeliver: @escaping (CMSampleBuffer, Int) -> Void) {
+        deliver = nil; self.backgroundDeliver = backgroundDeliver
+        super.init(); frames.setEnabled(true)
+    }
     func setWanted(_ value: Bool, fps: Int) {
+        frames.setFrameRate(fps)
         lock.lock(); wanted = value
         let enabled = !retired && (value || !primed)
+        frames.setEnabled(enabled)
         lock.unlock()
-        frames.setFrameRate(fps); frames.setEnabled(enabled)
     }
     func prime() {
-        lock.lock(); primed = false; let enabled = !retired; lock.unlock()
-        frames.setEnabled(enabled)
+        lock.lock(); primed = false; frames.setEnabled(!retired); lock.unlock()
     }
     func retire() {
-        lock.lock(); retired = true; lock.unlock()
-        frames.setEnabled(false)
+        lock.lock(); retired = true; frames.setEnabled(false); lock.unlock()
     }
     func render(frame: VideoFrame) {
+        // LiveKit's public pixel accessor does not expose native crop metadata.
+        // A padded/cropped frame must stay with its SDK renderer instead of
+        // guessing offsets or changing the image's field of view.
+        if onRoomGeometryMismatch != nil, let buffer = frame.buffer as? CVPixelVideoBuffer,
+           (CVPixelBufferGetWidth(buffer.pixelBuffer) != Int(frame.dimensions.width) ||
+            CVPixelBufferGetHeight(buffer.pixelBuffer) != Int(frame.dimensions.height)) {
+            lock.lock()
+            let notify = !retired && !reportedRoomGeometryMismatch
+            if notify { reportedRoomGeometryMismatch = true }
+            lock.unlock()
+            if notify { DispatchQueue.main.async { [weak self] in self?.onRoomGeometryMismatch?() } }
+            return
+        }
         submit(rotation: frame.rotation.rawValue) { frame.toCVPixelBuffer() }
     }
     func render(pixels: CVPixelBuffer, rotation: Int) { submit(rotation: rotation) { pixels } }

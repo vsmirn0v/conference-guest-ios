@@ -110,10 +110,10 @@ final class NativeConferenceEngine: CallEngine {
     var readyForPresenterForTesting: Bool { isSDKActive && !isSystemHeld && !leaveRequested && !needsMediaReconnect }
     var codecCheckTrackIDsForTesting: [String] { codecChecks.keys.sorted() }
     func codecFallbackForTesting() { GuestPublishingCodecPolicy.shared.disable(generation: sessionEpoch) }
+    private let receiveMonitor = ReceiveDelayMonitor()
     private var testHoldScheduled = false
     private var testNetworkRecoveryScheduled = false
     private var recoveryTraceStarted = false
-    private var tracedIncomingFrames: UInt64 = 0
     #endif
     private(set) var hasJoinStarted = false
     private var hasMediaJoinStarted = false
@@ -351,6 +351,9 @@ final class NativeConferenceEngine: CallEngine {
 
     private func beginFloatingVideoSession() {
         endFloatingVideoSession()
+        #if DEBUG
+        receiveMonitor.start(label: "guest") { await GuestMicrophoneProbe.receiveDelayRecords() }
+        #endif
         guard let floatingSourceView else { return }
         let epoch = sessionEpoch
         let floating = GuestVideoPictureInPicture(sourceView: floatingSourceView, speaker: activeSpeaker)
@@ -361,13 +364,10 @@ final class NativeConferenceEngine: CallEngine {
                   !self.leaveRequested, self.finishing == nil else { return }
             self.activeControls?.setFloatingVideoAvailable(available)
         }
-        floating.onInlineSample = { [weak self] sample, rotation in
+        floating.makeInlineFrameDelivery = { [weak self] mirrored in
             guard let self, self.sessionEpoch == epoch, self.hasJoinStarted,
-                  !self.leaveRequested, self.finishing == nil else { return }
-            #if DEBUG
-            self.tracedIncomingFrames &+= 1
-            #endif
-            self.activeControls?.showStageFrame(sample, rotation: rotation, mirrored: self.floatingVideo?.isMirrored == true)
+                  !self.leaveRequested, self.finishing == nil else { return nil }
+            return self.activeControls?.makeStageFrameDelivery(mirrored: mirrored)
         }
         floating.onInlineCameraPreview = { [weak self] source, mirrored in
             guard let self, self.sessionEpoch == epoch, !self.leaveRequested, self.finishing == nil else { return }
@@ -381,6 +381,9 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func endFloatingVideoSession() {
+        #if DEBUG
+        receiveMonitor.stop()
+        #endif
         floatingVideo?.end()
         floatingVideo = nil
     }
@@ -772,7 +775,6 @@ final class NativeConferenceEngine: CallEngine {
         testHoldScheduled = false
         testNetworkRecoveryScheduled = false
         recoveryTraceStarted = false
-        tracedIncomingFrames = 0
         #endif
         microphoneIntentOn = false
         cameraIntentOn = false
@@ -1110,7 +1112,7 @@ final class NativeConferenceEngine: CallEngine {
             "audioGateReady": audioGate.canUseMedia, "held": isSystemHeld,
             "interrupted": isAudioInterrupted, "reconnecting": isMediaReconnecting,
             "signalingActive": isSDKActive, "mediaConnected": mediaConnectionConfirmed,
-            "pendingRoom": pendingRoom != nil, "incomingFrames": tracedIncomingFrames]
+            "pendingRoom": pendingRoom != nil, "incomingFrames": floatingVideo?.convertedFramesForTesting ?? 0]
         entry.merge(systemCall.diagnosticState) { _, value in value }
         entry["vendorCallProxyEnabled"] = JMCallKitProxy.enabled
         entry["vendorCallProviderConfigured"] = JMCallKitProxy.isProviderConfigured()

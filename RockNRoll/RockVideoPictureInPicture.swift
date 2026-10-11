@@ -8,6 +8,8 @@ final class RockVideoPictureInPicture {
     private let content = UIView()
     private let video = GuestSampleBufferView()
     private var sink: RoomFloatingVideoSink?
+    private var frameDelivery: SampleBufferFrameDelivery?
+    private var suspended = false
     private var cameraPreview: CameraCapturePreview?
     private var energySubscription: AnyCancellable?
     private var presenting = false
@@ -25,6 +27,7 @@ final class RockVideoPictureInPicture {
         floating.onPresentationChanged = { [weak self] visible in
             guard let self else { return }
             self.presenting = visible
+            self.frameDelivery?.setActive(visible)
             self.cameraPreview?.setFloatingDemand(visible)
             self.sink?.setWanted(visible, fps: MediaEnergyBudget.shared.previewFPS)
             self.onPresentationChanged?(visible)
@@ -71,20 +74,17 @@ final class RockVideoPictureInPicture {
             cameraPreview?.setFloatingDemand(false); cameraPreview = nil
             selectedSource = source
             let identity = source.identity
-            let sink = RoomFloatingVideoSink { [weak self] sample, rotation in
+            let delivery = video.makeFrameDelivery { [weak self] size, rotation in
                 guard let self, self.selectedSource?.identity == identity, !self.floating.isEnded else { return }
-                #if DEBUG
-                let enqueued = self.video.enqueue(sample, rotation: rotation)
-                PreviewExperimentMetrics.delivery(sample: sample, enqueued: enqueued)
-                #else
-                self.video.enqueue(sample, rotation: rotation)
-                #endif
-                if let pixels = CMSampleBufferGetImageBuffer(sample) {
-                    let width = CVPixelBufferGetWidth(pixels), height = CVPixelBufferGetHeight(pixels)
-                    self.floating.preferredSize = rotation == 90 || rotation == 270
-                        ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
-                }
+                self.floating.preferredSize = rotation == 90 || rotation == 270
+                    ? CGSize(width: size.height, height: size.width) : size
             }
+            #if DEBUG
+            delivery.onEnqueuedForTesting = { sample, accepted in PreviewExperimentMetrics.delivery(sample: sample, enqueued: accepted) }
+            #endif
+            delivery.setActive(presenting); delivery.setEnabled(!suspended)
+            frameDelivery = delivery
+            let sink = RoomFloatingVideoSink(backgroundDeliver: { delivery.deliver($0, rotation: $1) })
             self.sink = sink
             sink.setWanted(presenting, fps: MediaEnergyBudget.shared.previewFPS)
             if let capture = source.cameraPreview {
@@ -102,7 +102,10 @@ final class RockVideoPictureInPicture {
     func bindMicrophoneActivity(_ activity: MicrophoneActivity) { floating.bindMicrophoneActivity(activity) }
     func setMicrophoneStatus(_ status: PiPMicrophoneStatus) { floating.setMicrophoneStatus(status) }
     func refreshPreference() { floating.refreshPreference() }
-    func setSuspended(_ suspended: Bool) { floating.setSuspended(suspended) }
+    func setSuspended(_ suspended: Bool) {
+        self.suspended = suspended; video.setFrameDeliverySuspended(suspended)
+        floating.setSuspended(suspended)
+    }
     func foregrounded() { floating.foregrounded() }
 
     func clear() {
@@ -115,6 +118,7 @@ final class RockVideoPictureInPicture {
     }
 
     private func retireSink() {
+        frameDelivery?.invalidate(); frameDelivery = nil
         if let sink { sink.retire(); cameraPreview?.frames.remove(sink); selectedSource?.remove(sink) }
         sink = nil
     }

@@ -49,6 +49,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private var testHoldScheduled = false
     private var directMediaForTesting = false
     private let outgoingMonitor = OutgoingRoomMonitor()
+    private let receiveMonitor = ReceiveDelayMonitor()
     private var decoderExperimentToken: UUID?
     #endif
     private(set) var hasJoinStarted = false
@@ -350,6 +351,11 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                 self.chat.canSend = true
                 #if DEBUG
                 print("Jam engine: connected")
+                let receiveSource = RoomReceiveDelaySource(room: room)
+                self.receiveMonitor.start(label: "room") { [weak self, weak room] in
+                    guard let self, let room, self.room === room, !self.leaveRequested else { return [] }
+                    return await receiveSource.records()
+                }
                 if OutgoingRoomExperiment.configured != nil { self.outgoingMonitor.start(room: room) }
                 #endif
                 self.systemCall.markConnected()
@@ -513,6 +519,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
 
     private func configureCameraQuality(_ track: LocalVideoTrack, in room: Room) {
         guard self.room === room, let capturer = track.capturer as? CameraCapturer else { return }
+        CameraBackgroundAccess.configure(capturer.captureSession)
         let output = (track.processor as? CameraOutputProcessor) ?? CameraOutputProcessor()
         track.processor = output; cameraOutput = output
         let quality = CameraQualityMonitor(); cameraQuality = quality
@@ -608,6 +615,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         cameraPublication.cancel()
         cameraQuality = nil; cameraOutput = nil; cameraPreview = nil; callView?.localCameraPreview = nil
         #if DEBUG
+        receiveMonitor.stop()
         VideoDecoderFactoryExperiment.shared.end(token: decoderExperimentToken)
         decoderExperimentToken = nil
         #endif

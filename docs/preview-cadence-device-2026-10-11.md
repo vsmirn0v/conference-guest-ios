@@ -104,3 +104,42 @@ A signed Release build passed. Its executable has no PreviewCadenceExperiment,
 PreviewExperimentMetrics or setExperimentalPreviewFPS symbols. Production
 preview remains 30/15/10 fps; outgoing camera, Presenter and screen-share budgets
 are unchanged. **60 fps remains experimental and is not exposed in the app UI.**
+
+## Latency follow-up: stale frames and background delivery
+
+Implemented the first two follow-ups while preserving 30 fps and the existing
+power/thermal limits. Existing camera data outputs now discard late frames,
+including those configured through the guest SDK capture boundary. No capturer,
+encoder, pixel-copy stage or continuous display timer was added.
+
+PiP now enqueues prepared camera/decoded frames through
+`AVSampleBufferVideoRenderer` on the converter queue on iOS 17+. Geometry changes
+use a coalesced main-thread callback; stable-size frames do not wait for UI work.
+iOS 16 retains main-thread delivery with one newest pending sample. Source
+tokens and serialized enqueue/flush reject old-room and ended-meeting frames.
+Suspension clears the displayed image without retiring the source needed for
+resume. Frame-rate pacing itself was not changed.
+
+An iOS 17.5 regression run exposed a display-layer lifetime deadlock during
+enqueue. The delivery target now retains that layer and releases it on the UI
+queue. The reproduced test passes with this fix. A review also found and fixed
+a race between first-frame priming and a new PiP demand request.
+
+| Final qualification | Passed | Skipped | Failed |
+|---|---:|---:|---:|
+| Mac, including real native and guest SDK cameras | 31 | 0 | 0 |
+| iOS 27 simulator, including color/speaker UI checks | 52 | 5 | 0 |
+| iOS 17.5 simulator, renderer/pacing/cleanup compatibility | 23 | 3 | 0 |
+
+Tests demonstrate camera and guest-decoded enqueues continuing during deliberate
+UI blocking, the 30 fps cap, idle priming, source replacement, suspension/resume,
+cleanup, and main-thread fallback conflation. Simulator skips cover real Mac
+camera checks and unsupported conversion experiments. The signed iOS Release
+build succeeds and contains no 60 fps experiment symbols. Local reproduction
+logs/result bundles are under `.build/preview-low-latency/` (ignored).
+
+The Mac run records a camera/security startup responsiveness warning before
+steady frame delivery. No steady-state latency or energy conclusion is drawn
+from that warning or from these functional tests. Physical iPhone system PiP,
+background/interruptions, optical camera-to-display latency and unplugged energy
+qualification remain pending. No new beta was uploaded for this follow-up.

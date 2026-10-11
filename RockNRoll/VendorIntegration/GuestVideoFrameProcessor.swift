@@ -22,13 +22,22 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
         let size: CGSize
         let rotation: Int
         let timestamp: Int64
+        let deliveries: [SampleBufferFrameDelivery]
     }
     private let lock = NSLock()
+    private var deliveries: [SampleBufferFrameDelivery] = []
     private lazy var frames = LatestVideoFrameProcessor<RTCVideoFrame, PreparedFrame>(
         label: "dev.vsmirn0v.conferenceguest.floating-frames", convert: { [weak self] frame in
-            guard let sample = self?.makeSample(frame) else { return nil }
+            guard let self else { return nil }
+            self.lock.lock(); let deliveries = self.deliveries; self.lock.unlock()
+            guard let sample = self.makeSample(frame) else { return nil }
             return PreparedFrame(sample: sample, size: CGSize(width: Int(frame.width), height: Int(frame.height)),
-                                 rotation: frame.rotation.rawValue, timestamp: frame.timeStampNs)
+                                 rotation: frame.rotation.rawValue, timestamp: frame.timeStampNs, deliveries: deliveries)
+        }, onPrepared: { [weak self] frame in
+#if DEBUG
+            if let self { self.lock.lock(); self.preparedCount += 1; self.lock.unlock() }
+#endif
+            frame.deliveries.forEach { $0.deliver(frame.sample, rotation: frame.rotation) }
         }, deliver: { [weak self] frame in
             guard let self else { return }
 #if DEBUG
@@ -43,6 +52,8 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
     private let experiment: GuestVideoConversionExperiment
     private var transferSession: VTPixelTransferSession?
     var onDeliveryForTesting: (@MainActor (Int64) -> Void)?
+    private var preparedCount = 0
+    var preparedFrameCount: Int { lock.lock(); defer { lock.unlock() }; return preparedCount }
     private var nativeConversionCount = 0
     var experimentalNativeConversions: Int {
         lock.lock(); defer { lock.unlock() }; return nativeConversionCount
@@ -55,6 +66,13 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
 #endif
 
     func setEnabled(_ enabled: Bool) { frames.setEnabled(enabled) }
+    func setFloatingDelivery(_ delivery: SampleBufferFrameDelivery?) {
+        setFrameDeliveries(delivery.map { [$0] } ?? [])
+    }
+    func setFrameDeliveries(_ deliveries: [SampleBufferFrameDelivery]) {
+        lock.lock(); self.deliveries = deliveries; lock.unlock()
+    }
+    func setMainDeliveryEnabled(_ enabled: Bool) { frames.setMainDeliveryEnabled(enabled) }
     func replaceSource() -> UUID { frames.replaceSource() }
     func setFrameRate(_ framesPerSecond: Int) { frames.setFrameRate(framesPerSecond) }
     func submit(_ frame: RTCVideoFrame, source: UUID? = nil) { frames.submit(frame, source: source) }

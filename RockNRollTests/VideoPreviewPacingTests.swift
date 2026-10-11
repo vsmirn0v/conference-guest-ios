@@ -164,6 +164,9 @@ final class VideoPreviewPacingTests: XCTestCase {
         do {
             try await peer.setCamera(true)
             let source = try XCTUnwrap(peer.cameraPreview)
+            let outputs = source.session.outputs.compactMap { $0 as? AVCaptureVideoDataOutput }
+            XCTAssertFalse(outputs.isEmpty)
+            XCTAssertTrue(outputs.allSatisfy(\.alwaysDiscardsLateVideoFrames))
             view.track = .cameraPreview(source)
             view.isMirrored = true; view.layoutIfNeeded()
             let second = source.makeView()

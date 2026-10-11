@@ -132,6 +132,20 @@ final class GuestMicrophoneProbe {
         return nil
     }
     #if DEBUG
+    static func receiveDelayRecords() async -> [ReceiveDelayStatistics.Record] {
+        var records: [ReceiveDelayStatistics.Record] = []
+        for peer in GuestPeerRegistry.snapshot() where peer.connectionState == .connected {
+            let report: RTCStatisticsReport = await withCheckedContinuation { completion in
+                peer.statistics { completion.resume(returning: $0) }
+            }
+            guard peer.connectionState == .connected else { continue }
+            let prefix = String(ObjectIdentifier(peer).hashValue) + "/"
+            records += report.statistics.values.filter { $0.type == "inbound-rtp" }.compactMap {
+                ReceiveDelayStatistics.record(id: prefix + $0.id, time: $0.timestamp_us / 1_000_000, values: $0.values)
+            }
+        }
+        return records
+    }
     /// One-shot qualification only: never poll codec diagnostics in a release.
     static func codecEvidenceForTesting() async -> [[String: Any]] {
         var evidence: [[String: Any]] = []

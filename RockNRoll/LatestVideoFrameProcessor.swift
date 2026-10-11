@@ -7,22 +7,58 @@ final class LatestVideoFrameProcessor<Input, Output>: @unchecked Sendable {
     private let queue: DispatchQueue
     private let lock = NSLock()
     private let convert: (Input) -> Output?
-    private let deliver: @MainActor (Output) -> Void
+    private let deliver: (@MainActor (Output) -> Void)?
+    private let onPrepared: ((Output) -> Void)?
     private var source = UUID()
     private var generation: UInt64 = 0
     private var enabled = false
+    private var mainDeliveryEnabled = true
     private var busy = false
     private var scheduled = false
     private var deliveryScheduled = false
-    private var pending: Input?
-    private var output: (UInt64, Output)?
+    private struct Pending { let input: Input
+        #if DEBUG
+        let arrival: Double
+        #endif
+    }
+    private var pending: Pending?
+    private struct Prepared { let generation: UInt64; let value: Output
+        #if DEBUG
+        let arrival: Double; let start: Double; let ready: Double
+        #endif
+    }
+    private var output: Prepared?
+    #if DEBUG
+    private let label: String
+    private var timingObserver: ((ReceiveVideoTiming.Sample) -> Void)?
+    var onTimingForTesting: ((ReceiveVideoTiming.Sample) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return timingObserver }
+        set { lock.lock(); timingObserver = newValue; lock.unlock() }
+    }
+    private func timing(_ prepared: Prepared) {
+        let delivered = CACurrentMediaTime()
+        if ReceiveVideoTiming.enabled { ReceiveVideoTiming.shared.record(label: label, arrival: prepared.arrival, start: prepared.start, ready: prepared.ready, delivered: delivered) }
+        onTimingForTesting?(.init(queueMS: (prepared.start - prepared.arrival) * 1000, conversionMS: (prepared.ready - prepared.start) * 1000, deliveryMS: (delivered - prepared.ready) * 1000))
+    }
+    #endif
     private var deadline: TimeInterval?
     private var interval: TimeInterval = 1 / 30
 
     init(label: String, convert: @escaping (Input) -> Output?,
-         deliver: @escaping @MainActor (Output) -> Void) {
+         onPrepared: ((Output) -> Void)? = nil, deliver: @escaping @MainActor (Output) -> Void) {
         queue = DispatchQueue(label: label, qos: .userInitiated)
-        self.convert = convert; self.deliver = deliver
+        #if DEBUG
+        self.label = label
+        #endif
+        self.convert = convert; self.deliver = deliver; self.onPrepared = onPrepared
+    }
+
+    init(label: String, convert: @escaping (Input) -> Output?, backgroundDeliver: @escaping (Output) -> Void) {
+        queue = DispatchQueue(label: label, qos: .userInitiated)
+        #if DEBUG
+        self.label = label
+        #endif
+        self.convert = convert; deliver = nil; onPrepared = backgroundDeliver
     }
 
     func setEnabled(_ value: Bool) {
@@ -31,6 +67,12 @@ final class LatestVideoFrameProcessor<Input, Output>: @unchecked Sendable {
             enabled = value; generation &+= 1
             pending = nil; output = nil; deadline = nil; scheduled = false
         }
+        lock.unlock()
+    }
+
+    func setMainDeliveryEnabled(_ value: Bool) {
+        lock.lock(); mainDeliveryEnabled = value
+        if !value { output = nil }
         lock.unlock()
     }
 
@@ -52,7 +94,11 @@ final class LatestVideoFrameProcessor<Input, Output>: @unchecked Sendable {
     func submit(_ input: Input, source expected: UUID? = nil) {
         lock.lock()
         guard enabled, expected == nil || expected == source else { lock.unlock(); return }
-        pending = input
+        #if DEBUG
+        pending = Pending(input: input, arrival: CACurrentMediaTime())
+        #else
+        pending = Pending(input: input)
+        #endif
         lock.unlock()
         drain()
     }
@@ -86,11 +132,38 @@ final class LatestVideoFrameProcessor<Input, Output>: @unchecked Sendable {
         queue.async { [weak self] in
             guard let self else { return }
             self.lock.lock(); let current = self.enabled && self.generation == expected; self.lock.unlock()
-            let result = current ? autoreleasepool { self.convert(input) } : nil
+            #if DEBUG
+            let start = CACurrentMediaTime()
+            #endif
+            let result = current ? autoreleasepool { self.convert(input.input) } : nil
+            #if DEBUG
+            let ready = CACurrentMediaTime()
+            #endif
+            let prepared = result.map { value in
+                #if DEBUG
+                Prepared(generation: expected, value: value, arrival: input.arrival, start: start, ready: ready)
+                #else
+                Prepared(generation: expected, value: value)
+                #endif
+            }
             self.lock.lock()
             self.busy = false
-            if self.enabled && self.generation == expected, let result {
-                self.output = (expected, result)
+            let accepted = self.enabled && self.generation == expected
+            #if DEBUG
+            let waitForMain = self.deliver != nil && self.mainDeliveryEnabled
+            #endif
+            self.lock.unlock()
+            // The receiver owns its source token, so retirement also rejects a
+            // callback already leaving this queue. No UIKit in this callback.
+            if accepted, let prepared {
+                self.onPrepared?(prepared.value)
+                #if DEBUG
+                if !waitForMain { self.timing(prepared) }
+                #endif
+            }
+            self.lock.lock()
+            if self.deliver != nil, self.mainDeliveryEnabled, self.enabled && self.generation == expected, let prepared {
+                self.output = prepared
                 if !self.deliveryScheduled {
                     self.deliveryScheduled = true
                     DispatchQueue.main.async { [weak self] in self?.deliverLatest() }
@@ -105,8 +178,13 @@ final class LatestVideoFrameProcessor<Input, Output>: @unchecked Sendable {
         lock.lock()
         deliveryScheduled = false
         let latest = output; output = nil
-        let current = enabled && latest?.0 == generation
+        let current = enabled && mainDeliveryEnabled && latest?.generation == generation
         lock.unlock()
-        if current, let latest { deliver(latest.1) }
+        if current, let latest {
+            deliver?(latest.value)
+            #if DEBUG
+            timing(latest)
+            #endif
+        }
     }
 }

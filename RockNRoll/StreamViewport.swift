@@ -311,6 +311,22 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         }
     }
 
+    func makeCorrectedFrameDelivery(onGeometry: (@MainActor () -> Void)? = nil) -> SampleBufferFrameDelivery? {
+        guard !video.isHidden else { return nil }
+        if correctedVideo == nil {
+            let overlay = GuestSampleBufferView()
+            overlay.isHidden = true; overlay.isUserInteractionEnabled = false
+            overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            content.addSubview(overlay); correctedVideo = overlay
+        }
+        guard let overlay = correctedVideo else { return nil }
+        overlay.mirrored = isCameraMirrored; overlay.frame = content.bounds
+        if let current = overlay.existingFrameDelivery() { return current }
+        let delivery = overlay.makeFrameDelivery { [weak overlay] _, _ in overlay?.isHidden = false; onGeometry?() }
+        delivery.setActive(true)
+        return delivery
+    }
+
     func clearCorrectedVideo() {
         correctedVideo?.clear()
         correctedVideo?.removeFromSuperview()

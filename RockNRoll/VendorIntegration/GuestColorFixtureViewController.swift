@@ -49,9 +49,11 @@ final class GuestColorFixtureViewController: UIViewController {
         changeSpeaker.setTitle("Change speaker without a frame", for: .normal)
         changeSpeaker.addAction(UIAction { [weak self] _ in self?.changeSpeaker() }, for: .touchUpInside)
         column.addArrangedSubview(changeSpeaker)
-        processor.onSample = { [weak self] sample, _, rotation in
-            self?.correctedViewport?.showCorrectedVideo(sample, rotation: rotation)
-            self?.correctedViewport?.accessibilityValue = "Rendered"
+        if let viewport = correctedViewport, let delivery = viewport.makeCorrectedFrameDelivery(onGeometry: { [weak viewport = correctedViewport] in
+            viewport?.accessibilityValue = "Rendered"
+        }) {
+            delivery.setActive(true)
+            processor.setFrameDeliveries([delivery]); processor.setMainDeliveryEnabled(false)
         }
     }
 

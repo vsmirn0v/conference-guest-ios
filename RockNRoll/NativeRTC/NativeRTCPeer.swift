@@ -18,6 +18,9 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     }
     static func makeFactory() throws -> LKRTCPeerConnectionFactory { try sharedFactory.get() }
     deinit { if let decoderObservation { NotificationCenter.default.removeObserver(decoderObservation) } }
+    #if DEBUG
+    @MainActor private let receiveMonitor = ReceiveDelayMonitor()
+    #endif
     let target: String
     let factory: LKRTCPeerConnectionFactory
     private(set) var connection: LKRTCPeerConnection!
@@ -76,10 +79,23 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
             }
         let configuration = LKRTCConfiguration(); configuration.sdpSemantics = .unifiedPlan
         configuration.iceServers = Self.servers(ice)
+        #if DEBUG
+        if let experiment = ReceiveAudioCatchUpExperiment.overrideForTesting ?? ReceiveAudioCatchUpExperiment.configured { configuration.audioJitterBufferFastAccelerate = experiment.fastAccelerate }
+        #endif
         connection = factory.peerConnection(with: configuration,
             constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
         guard connection != nil else { throw NativeRTCError.invalidResponse }
         if target == "PUBLISHER" { try enablePublishing() }
+        #if DEBUG
+        receiveMonitor.start(label: "native-" + target) { [weak self] in
+            guard let self, !self.closed, let connection = self.connection else { return [] }
+            let report: LKRTCStatisticsReport = await withCheckedContinuation { continuation in connection.statistics { continuation.resume(returning: $0) } }
+            guard !self.closed else { return [] }
+            return report.statistics.values.filter { $0.type == "inbound-rtp" }.compactMap {
+                ReceiveDelayStatistics.record(id: $0.id, time: $0.timestamp_us / 1_000_000, values: $0.values)
+            }
+        }
+        #endif
     }
     /// A composite server supplies its receive offer first. Add outbound
     /// transceivers only after answering it to preserve the remote MID order.
@@ -419,6 +435,9 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         if let decoderObservation { NotificationCenter.default.removeObserver(decoderObservation) }
         decoderObservation = nil; onDecoderFallback = nil
         closed = true
+        #if DEBUG
+        receiveMonitor.stop()
+        #endif
         audioTrack?.isEnabled = false
         try? setSharing(nil)
         onCandidate = nil; onTrack = nil; onState = nil

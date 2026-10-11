@@ -23,6 +23,9 @@ final class GuestVideoPictureInPicture {
     private weak var selectedRenderer: UIView?
     private var cameraPreview: CameraCapturePreview?
     private var cameraSink: RoomFloatingVideoSink?
+    private var frameDelivery: SampleBufferFrameDelivery?
+    private var inlineDelivery: SampleBufferFrameDelivery?
+    var makeInlineFrameDelivery: ((Bool) -> SampleBufferFrameDelivery?)?
     private var isStageSource = true
     var isMirrored: Bool { selectedViewport?.isCameraMirrored == true }
     var onAvailabilityChanged: ((Bool) -> Void)?
@@ -30,6 +33,7 @@ final class GuestVideoPictureInPicture {
     var wantsInlineFrames = true {
         didSet {
             guard oldValue != wantsInlineFrames else { return }
+            refreshInlineDelivery()
             processor.setEnabled(shouldProcessFrames)
             if let cameraPreview {
                 if rendersSelectedViewport {
@@ -41,8 +45,7 @@ final class GuestVideoPictureInPicture {
         }
     }
     #if DEBUG
-    private(set) var convertedFramesForTesting = 0
-    private var cameraPreviewFrames = 0
+    var convertedFramesForTesting: Int { processor.preparedFrameCount }
     var hasPreparedFrameForTesting: Bool { hasFrame }
     var hasSourceForTesting: Bool { floating.hasSourceForTesting }
     func setFloatingForTesting(_ active: Bool) { active ? willStartFloating() : didStopFloating() }
@@ -87,13 +90,9 @@ final class GuestVideoPictureInPicture {
         }
         processor.onSample = { [weak self] sample, size, rotation in
             guard let self, !self.floating.isEnded, self.frameTap != nil else { return }
-            #if DEBUG
-            self.convertedFramesForTesting += 1
-            #endif
             self.video.mirrored = self.isMirrored
-            if self.presenting || !self.hasFrame { self.video.enqueue(sample, rotation: rotation) }
             if self.isStageSource && self.wantsInlineFrames && !self.suspended && UIApplication.shared.applicationState != .background {
-                if self.rendersSelectedViewport { self.selectedViewport?.showCorrectedVideo(sample, rotation: rotation) }
+                if self.rendersSelectedViewport && self.inlineDelivery == nil { self.selectedViewport?.showCorrectedVideo(sample, rotation: rotation) }
                 self.onInlineSample?(sample, rotation)
             }
             self.floating.preferredSize = rotation == 90 || rotation == 270
@@ -117,6 +116,7 @@ final class GuestVideoPictureInPicture {
     private func willStartFloating() {
         guard !floating.isEnded, frameTap != nil || cameraPreview != nil, !suspended else { return }
         presenting = true
+        frameDelivery?.setActive(true)
         cameraPreview?.setFloatingDemand(true)
         cameraSink?.setWanted(true, fps: MediaEnergyBudget.shared.previewFPS)
         processor.setFrameRate(MediaEnergyBudget.shared.previewFPS)
@@ -124,6 +124,7 @@ final class GuestVideoPictureInPicture {
     }
     private func didStopFloating() {
         presenting = false
+        frameDelivery?.setActive(false)
         cameraPreview?.setFloatingDemand(false)
         cameraSink?.setWanted(false, fps: MediaEnergyBudget.shared.previewFPS)
         processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
@@ -143,26 +144,22 @@ final class GuestVideoPictureInPicture {
         if viewport.isLocalCamera, let capture = GuestCaptureDeviceObserver.cameraPreview() {
             frameTap?.invalidate(); frameTap = nil
             processor.setEnabled(false)
+            processor.setFrameDeliveries([])
             if cameraPreview !== capture {
                 retireCameraSink()
                 cameraPreview = capture; hasFrame = false
-                let sink = RoomFloatingVideoSink { [weak self, weak capture] sample, rotation in
+                let delivery = video.makeFrameDelivery { [weak self, weak capture] size, rotation in
                     guard let self, self.cameraPreview === capture, !self.suspended, !self.floating.isEnded else { return }
-                    self.video.enqueue(sample, rotation: rotation)
-                    #if DEBUG
-                    self.cameraPreviewFrames += 1
-                    if self.cameraPreviewFrames % 60 == 0 { CameraBackgroundTrace.event("camera-preview", ["frames": self.cameraPreviewFrames, "floating": self.presenting]) }
-                    #endif
-                    if let pixels = CMSampleBufferGetImageBuffer(sample) {
-                        let width = CVPixelBufferGetWidth(pixels), height = CVPixelBufferGetHeight(pixels)
-                        self.floating.preferredSize = rotation == 90 || rotation == 270
-                            ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
-                    }
+                    self.floating.preferredSize = rotation == 90 || rotation == 270
+                        ? CGSize(width: size.height, height: size.width) : size
                     if !self.hasFrame {
                         self.hasFrame = true; self.floating.setSourceView(self.sourceView)
                         self.onAvailabilityChanged?(self.canShow)
                     }
                 }
+                delivery.setActive(presenting); delivery.setEnabled(!suspended)
+                frameDelivery = delivery
+                let sink = RoomFloatingVideoSink(backgroundDeliver: { delivery.deliver($0, rotation: $1) })
                 cameraSink = sink; capture.frames.add(sink)
             }
             selectedRenderer = viewport.rendererView
@@ -185,6 +182,8 @@ final class GuestVideoPictureInPicture {
             viewport.clearCorrectedVideo()
             frameTap?.invalidate()
             frameTap = nil
+            frameDelivery?.invalidate(); frameDelivery = nil
+            processor.setFrameDeliveries([])
             let sourceID = processor.replaceSource()
             processor.setEnabled(false)
             hasFrame = false
@@ -197,17 +196,46 @@ final class GuestVideoPictureInPicture {
                 onAvailabilityChanged?(false)
             }
             selectedRenderer = viewport.rendererView
+            let delivery = video.makeFrameDelivery { [weak self] size, rotation in
+                guard let self, !self.floating.isEnded else { return }
+                self.video.mirrored = self.isMirrored
+                self.floating.preferredSize = rotation == 90 || rotation == 270
+                    ? CGSize(width: size.height, height: size.width) : size
+                if !self.hasFrame {
+                    self.hasFrame = true; self.floating.setSourceView(self.sourceView)
+                    self.onAvailabilityChanged?(self.canShow)
+                    self.processor.setEnabled(self.shouldProcessFrames)
+                }
+            }
+            delivery.setActive(presenting); delivery.setEnabled(!suspended)
+            frameDelivery = delivery
+            processor.setMainDeliveryEnabled(onInlineSample != nil)
+            processor.setFrameDeliveries([delivery])
             let processor = processor
             frameTap = GuestVideoFrameTap(view: viewport.rendererView) { [weak processor] frame in
                 processor?.submit(frame, source: sourceID)
             }
             processor.setEnabled(shouldProcessFrames)
         }
+        refreshInlineDelivery()
         caption.text = name.isEmpty ? nil : "  \(name)\(isScreenShare ? L(" · Screen") : "")  "
         caption.isHidden = name.isEmpty
         if hasFrame && frameTap != nil { floating.setSourceView(sourceView) }
         else if !presenting { floating.setSourceView(nil) }
         processor.setEnabled(shouldProcessFrames)
+    }
+
+    private func refreshInlineDelivery() {
+        inlineDelivery?.setEnabled(false)
+        inlineDelivery = nil
+        if cameraPreview == nil, isStageSource, wantsInlineFrames, !suspended,
+           UIApplication.shared.applicationState != .background {
+            inlineDelivery = makeInlineFrameDelivery?(isMirrored)
+                ?? (rendersSelectedViewport ? selectedViewport?.makeCorrectedFrameDelivery() : nil)
+            inlineDelivery?.setActive(true); inlineDelivery?.setEnabled(true)
+        }
+        processor.setFrameDeliveries([frameDelivery, inlineDelivery].compactMap { $0 })
+        processor.setMainDeliveryEnabled(onInlineSample != nil)
     }
 
     func start() { if canShow { floating.start() } }
@@ -216,20 +244,23 @@ final class GuestVideoPictureInPicture {
     func refreshPreference() { floating.refreshPreference() }
     func foregrounded() {
         floating.foregrounded()
+        refreshInlineDelivery()
         processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
         processor.setEnabled(shouldProcessFrames)
     }
 
     func backgrounded() {
+        inlineDelivery?.setEnabled(false)
         if !presenting { processor.setEnabled(false) }
     }
 
     func setSuspended(_ suspended: Bool) {
         guard self.suspended != suspended else { return }
         self.suspended = suspended
+        video.setFrameDeliverySuspended(suspended)
         floating.setSuspended(suspended)
         if suspended {
-            selectedViewport?.clearCorrectedVideo(); hasFrame = false; video.clear()
+            selectedViewport?.clearCorrectedVideo(); hasFrame = false
             cameraPreview?.setFloatingDemand(false); cameraSink?.setWanted(false, fps: MediaEnergyBudget.shared.previewFPS)
             onInlineCameraPreview?(nil, false)
         } else if let cameraPreview {
@@ -238,11 +269,15 @@ final class GuestVideoPictureInPicture {
             cameraSink?.setWanted(presenting, fps: MediaEnergyBudget.shared.previewFPS)
             onInlineCameraPreview?(isStageSource && wantsInlineFrames ? cameraPreview : nil, isMirrored)
         }
+        refreshInlineDelivery()
         processor.setEnabled(shouldProcessFrames)
         onAvailabilityChanged?(canShow)
     }
 
     func clear() {
+        inlineDelivery?.invalidate(); inlineDelivery = nil
+        frameDelivery?.invalidate(); frameDelivery = nil
+        processor.setFrameDeliveries([])
         selectedViewport?.clearCorrectedVideo()
         floating.setSourceView(nil)
         processor.setEnabled(false)
@@ -260,6 +295,7 @@ final class GuestVideoPictureInPicture {
     }
 
     private func retireCameraSink() {
+        frameDelivery?.invalidate(); frameDelivery = nil
         if let cameraSink { cameraSink.retire(); cameraPreview?.frames.remove(cameraSink) }
         cameraSink = nil; cameraPreview?.setFloatingDemand(false); cameraPreview = nil
     }

@@ -33,12 +33,7 @@ private final class GuestGalleryTile: UIView {
             Task { @MainActor in self?.processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS) }
         }
         processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
-        processor.onSample = { [weak self] sample, _, rotation in
-            guard let self, self.visible, self.mediaActive else { return }
-            if self.video.enqueue(sample, rotation: rotation) {
-                self.hasFrame = true; self.status.isHidden = true
-            }
-        }
+        processor.setMainDeliveryEnabled(false)
         update(item, pin: pin)
     }
     required init?(coder: NSCoder) { nil }
@@ -79,12 +74,18 @@ private final class GuestGalleryTile: UIView {
         }
         if tap?.matches(renderer) != true {
             stop()
+            let delivery = video.makeFrameDelivery { [weak self] _, _ in
+                guard let self, self.visible, self.mediaActive else { return }
+                self.hasFrame = true; self.status.isHidden = true
+            }
+            delivery.setActive(true)
+            processor.setFrameDeliveries([delivery])
             let source = processor.replaceSource(), processor = processor
             tap = GuestVideoFrameTap(view: renderer) { [weak processor] frame in processor?.submit(frame, source: source) }
         }
         processor.setEnabled(tap != nil)
     }
-    private func stop() { processor.setEnabled(false); tap?.invalidate(); tap = nil; video.setCameraPreview(nil) }
+    private func stop() { processor.setEnabled(false); processor.setFrameDeliveries([]); video.clear(); tap?.invalidate(); tap = nil; video.setCameraPreview(nil) }
     override func layoutSubviews() {
         super.layoutSubviews(); viewport.frame = bounds
         status.frame = bounds.insetBy(dx: 16, dy: 48)

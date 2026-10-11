@@ -117,9 +117,13 @@ final class CameraQualityMonitor {
     deinit { task?.cancel() }
 }
 
-/// Configure before starting capture; runtime support governs older devices.
+/// Configure existing camera outputs before capture. Share/Presenter sources
+/// never enter this policy; runtime support governs background camera access.
 enum CameraBackgroundAccess {
     @discardableResult static func configure(_ session: AVCaptureSession) -> Bool {
+        for output in session.outputs.compactMap({ $0 as? AVCaptureVideoDataOutput }) {
+            output.alwaysDiscardsLateVideoFrames = true
+        }
         guard session.isMultitaskingCameraAccessSupported else { return false }
         if !session.isMultitaskingCameraAccessEnabled, !session.isRunning {
             session.isMultitaskingCameraAccessEnabled = true
