@@ -112,7 +112,8 @@ static NSError *CaptureError(NSString *message) {
 - (void)releasePicker {
     _picking = NO;
     if (_stream || !_registered) return;
-    [_picker removeObserver:self]; [_picker setActive:NO]; _registered = NO;
+    _registered = NO;
+    [_picker removeObserver:self]; [_picker setActive:NO];
 }
 
 - (void)stopWithCompletionHandler:(void (^)(NSError *))completion {
@@ -120,11 +121,11 @@ static NSError *CaptureError(NSString *message) {
     if (!_stopCompletions) _stopCompletions = [NSMutableArray array];
     [_stopCompletions addObject:[completion copy]];
     if (_stopping) return;
+    _stopping = YES;
     ++_generation; ++_selection;
     NSObject *retired = _stream; _stream = nil;
     [self releasePicker];
     if (!retired) { [self finishStop:nil]; return; }
-    _stopping = YES;
     [retired stopCaptureWithCompletionHandler:^(NSError *error) {
         dispatch_async(dispatch_get_main_queue(), ^{
             [retired removeStreamOutput:self type:0 error:nil];

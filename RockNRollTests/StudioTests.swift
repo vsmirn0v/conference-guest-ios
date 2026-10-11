@@ -311,7 +311,11 @@ final class StudioTests: XCTestCase {
         XCTAssertEqual(CMTimeGetSeconds(device.activeVideoMaxFrameDuration), 1.0 / 15, accuracy: 0.001)
         XCTAssertEqual(session.inputs.count, 1); XCTAssertEqual(session.outputs.count, 1)
         XCTAssertFalse(session.automaticallyConfiguresApplicationAudioSession)
+        // Measure steady capture after native preview graph setup. Orientation
+        // inspection and stop can synchronously reconfigure that graph on Mac.
+        times.removeAll()
         try await Task.sleep(nanoseconds: 2_000_000_000)
+        let steadyTimes = times
         if let lastFrame {
             var image: CGImage?
             XCTAssertEqual(VTCreateCGImageFromCVPixelBuffer(lastFrame, options: nil, imageOut: &image), noErr)
@@ -341,9 +345,9 @@ final class StudioTests: XCTestCase {
             }
         }
         await camera.stop()
-        XCTAssertGreaterThan(times.count, 10)
-        if let first = times.first, let last = times.last, last > first {
-            let rate = Double(times.count - 1) / (last - first)
+        XCTAssertGreaterThan(steadyTimes.count, 10)
+        if let first = steadyTimes.first, let last = steadyTimes.last, last > first {
+            let rate = Double(steadyTimes.count - 1) / (last - first)
             print("PRESENTER_CAPTURE_FPS=\(rate)")
             XCTAssertLessThan(rate, 17); XCTAssertGreaterThan(rate, 10)
         }

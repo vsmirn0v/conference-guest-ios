@@ -148,8 +148,10 @@ final class StudioModel: ObservableObject {
         previewGeneration = UUID()
         let generation = previewGeneration
         previewTask?.cancel()
-        livePreview?.stop(); livePreview = nil
+        let retired = livePreview; livePreview = nil
         previewView = nil; previewRunning = false; previewError = nil
+        retired?.stop()
+        guard previewGeneration == generation else { return }
         let wanted = presented && pane == .camera && active && !held && !startingVideo && !presenter.running
         previewLoading = wanted
         previewTask = Task { @MainActor [weak self, privateCamera] in
@@ -194,8 +196,9 @@ final class StudioModel: ObservableObject {
     func releasePreviewCamera() async {
         previewGeneration = UUID()
         previewTask?.cancel(); previewTask = nil
+        let retired = livePreview; livePreview = nil
         previewRunning = false; previewLoading = false; previewView = nil
-        livePreview?.stop(); livePreview = nil
+        retired?.stop()
         await privateCamera.stop()
     }
 

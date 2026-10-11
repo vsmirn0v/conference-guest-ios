@@ -12,6 +12,7 @@ final class CallVideoView: UIView {
     private var sink: RoomFloatingVideoSink?
     private var delivery: SampleBufferFrameDelivery?
     private var cameraPreview: CameraCapturePreviewView?
+    private var bindingRevision: UInt64 = 0
     private var energy: AnyCancellable?
     private var observers: [NSObjectProtocol] = []
     private var foreground = UIApplication.shared.applicationState != .background
@@ -59,20 +60,30 @@ final class CallVideoView: UIView {
     }
     required init?(coder: NSCoder) { nil }
     private func bind(_ previous: CallVideoSource?) {
-        delivery?.invalidate(); delivery = nil
-        if let sink { sink.retire(); previous?.remove(sink) }
-        sink = nil; video.clear(); roomFallback.track = nil; roomFallback.isHidden = true
-        cameraPreview?.stop(); cameraPreview?.removeFromSuperview(); cameraPreview = nil
+        bindingRevision &+= 1
+        let revision = bindingRevision, retiredCamera = cameraPreview, retiredSink = sink, retiredDelivery = delivery
+        cameraPreview = nil; sink = nil; delivery = nil
+        retiredDelivery?.invalidate()
+        if let retiredSink { retiredSink.retire(); previous?.remove(retiredSink) }
+        retiredCamera?.stop(); retiredCamera?.removeFromSuperview()
+        guard revision == bindingRevision else { return }
+        video.clear()
+        guard revision == bindingRevision else { return }
+        roomFallback.track = nil
+        guard revision == bindingRevision else { return }
+        roomFallback.isHidden = true
         video.isHidden = track == nil
         guard let track else { return }
         if let source = track.cameraPreview {
             video.isHidden = true
             let preview = source.makeView()
+            guard revision == bindingRevision else { preview.stop(); return }
             preview.mirrored = isMirrored; preview.enabled = renderingEnabled
             preview.contentMode = video.contentMode
-            preview.translatesAutoresizingMaskIntoConstraints = false; addSubview(preview)
-            NSLayoutConstraint.activate([preview.leadingAnchor.constraint(equalTo: leadingAnchor), preview.trailingAnchor.constraint(equalTo: trailingAnchor), preview.topAnchor.constraint(equalTo: topAnchor), preview.bottomAnchor.constraint(equalTo: bottomAnchor)])
             cameraPreview = preview
+            preview.translatesAutoresizingMaskIntoConstraints = false; addSubview(preview)
+            guard revision == bindingRevision else { return }
+            NSLayoutConstraint.activate([preview.leadingAnchor.constraint(equalTo: leadingAnchor), preview.trailingAnchor.constraint(equalTo: trailingAnchor), preview.topAnchor.constraint(equalTo: topAnchor), preview.bottomAnchor.constraint(equalTo: bottomAnchor)])
             return
         }
         if let local = track.roomTrack as? LocalVideoTrack, local.source == .camera {

@@ -71,14 +71,14 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         #endif
         generation += 1
         selectionGeneration += 1
-        if onFrame == nil { preview.end() }
         let previous = stream
         stream = nil
+        let previousUpload = upload, wasUploading = uploadStarted
+        upload = nil; uploadStarted = false
         releasePicker()
+        if onFrame == nil { preview.end() }
         // Stop forwarding frames immediately, before any suspension point.
-        if uploadStarted { upload?.broadcastFinished() }
-        uploadStarted = false
-        upload = nil
+        if wasUploading { previousUpload?.broadcastFinished() }
         if let previous {
             do { try await previous.stopCapture() }
             catch { onError(L("Could not stop screen sharing: %@", error.localizedDescription)) }
@@ -218,12 +218,12 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
             print("Native screen capture stopped: domain=\((error as NSError).domain), code=\((error as NSError).code), message=\(error.localizedDescription)")
             #endif
             self.stream = nil
+            let previousUpload = self.upload, wasUploading = self.uploadStarted
+            self.upload = nil; self.uploadStarted = false
             self.releasePicker()
             if self.onFrame == nil { self.preview.end() }
             self.generation += 1
-            if self.uploadStarted { self.upload?.broadcastFinished() }
-            self.uploadStarted = false
-            self.upload = nil
+            if wasUploading { previousUpload?.broadcastFinished() }
             if (error as NSError).code != SCStreamError.Code.userStopped.rawValue {
                 let message = L("Screen sharing stopped: %@", error.localizedDescription)
                 self.onError(message); self.onEnd(message)

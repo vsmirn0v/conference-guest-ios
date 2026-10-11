@@ -402,15 +402,20 @@ final class PresenterModelTests: XCTestCase {
         await waitUntil { emit != nil && model.hasPreview }
         let buffer = try XCTUnwrap(CMSampleBufferGetImageBuffer(screenSample()))
         let before = model.compositionCount
+        let started = ProcessInfo.processInfo.systemUptime
+        let ceiling = MediaEnergyBudget.shared.previewFPS
         for index in 0..<60 {
             emit?(buffer, 0); model.scene.placement.x = CGFloat(index % 10) / 100
             try await Task.sleep(nanoseconds: 5_000_000)
         }
         try await Task.sleep(nanoseconds: 100_000_000)
-        XCTAssertLessThanOrEqual(model.compositionCount - before, 9, "Frames and edits share a 15 fps ceiling")
+        let elapsed = ProcessInfo.processInfo.systemUptime - started
+        XCTAssertLessThanOrEqual(model.compositionCount - before, Int(ceil(elapsed * Double(ceiling))) + 2,
+            "Frames and edits share the preview ceiling, including one pending composition")
         let settled = model.compositionCount
-        try await Task.sleep(nanoseconds: 100_000_000)
-        XCTAssertEqual(model.compositionCount, settled, "Identical retained camera pixels must not be composited on a timer")
+        try await Task.sleep(nanoseconds: 800_000_000)
+        XCTAssertLessThanOrEqual(model.compositionCount, settled + 2,
+            "Only a pending frame and one camera-expiry transition may compose after the source stops")
         model.includeCamera = false
         await waitUntil { capture.stopped }
     }

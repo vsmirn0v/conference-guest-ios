@@ -5,6 +5,27 @@ import XCTest
 
 @MainActor
 final class MacScreenCaptureTests: XCTestCase {
+    private final class Picker: NSObject {
+        @objc var active = true
+        var removals = 0
+        var onRemove: (() -> Void)?
+        @objc func removeObserver(_ observer: NSObject) {
+            removals += 1
+            if removals == 1 { onRemove?() }
+        }
+    }
+    func testStopReenteredDuringPickerRemovalRemovesObserverOnce() {
+        let bridge = MacScreenCaptureBridge(), picker = Picker()
+        bridge.setValue(picker, forKey: "picker")
+        bridge.setValue(true, forKey: "registered")
+        var completions = 0
+        picker.onRemove = { bridge.stop { _ in completions += 1 } }
+        bridge.stop { _ in completions += 1 }
+        XCTAssertEqual(picker.removals, 1)
+        XCTAssertEqual(completions, 2)
+        XCTAssertFalse(picker.active)
+    }
+
     private final class Bridge: MacScreenCaptureBridge {
         var starts = 0, stops = 0
         var completion: ((Error?) -> Void)?

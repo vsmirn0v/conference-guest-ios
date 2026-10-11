@@ -5,6 +5,45 @@ import XCTest
 
 @MainActor
 final class CameraPreviewLifecycleTests: XCTestCase {
+    private final class PrivateCapture: PrivateCameraPreviewing {
+        let view = UIView()
+        func start() async throws {}
+        func stop() async {}
+    }
+
+    func testCallSurfaceKeepsCameraReplacedDuringDetach() throws {
+        let original = CameraCapturePreview(session: AVCaptureSession(), device: nil)
+        let replacement = CameraCapturePreview(session: AVCaptureSession(), device: nil)
+        let surface = CallVideoView()
+        surface.track = .cameraPreview(original)
+        let preview = try XCTUnwrap(surface.subviews.compactMap { $0 as? CameraCapturePreviewView }.first)
+        preview.willDetachSessionForTesting = { surface.track = .cameraPreview(replacement) }
+        surface.track = nil
+        let current = surface.subviews.compactMap { $0 as? CameraCapturePreviewView }
+        XCTAssertEqual(current.count, 1)
+        XCTAssertTrue((current.first?.layer as? AVCaptureVideoPreviewLayer)?.session === replacement.session)
+        surface.track = nil
+        XCTAssertTrue(surface.subviews.compactMap { $0 as? CameraCapturePreviewView }.isEmpty)
+    }
+
+    func testStudioCloseDuringObserverStopDoesNotStopTwice() async throws {
+        let model = StudioModel(audioControl: .fullProcessing, privateCamera: PrivateCapture())
+        var stops = 0
+        model.makeLivePreview = {
+            StudioLivePreview(view: UIView(), stop: {
+                stops += 1
+                if stops == 1 { model.close() }
+            })
+        }
+        model.cameraOn = true; model.open(.camera)
+        for _ in 0..<100 where model.previewView == nil { await Task.yield() }
+        XCTAssertNotNil(model.previewView)
+        model.close()
+        XCTAssertEqual(stops, 1)
+        XCTAssertNil(model.previewView)
+        model.end()
+    }
+
     func testClearingPreviewDuringSessionDetachDoesNotDetachTwice() throws {
         let source = CameraCapturePreview(session: AVCaptureSession(), device: nil)
         let surface = GuestSampleBufferView()
