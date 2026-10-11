@@ -14,7 +14,7 @@ struct CallSpeaker: Equatable {
 final class ActiveSpeakerStore {
     @Published private(set) var current: CallSpeaker?
     private var candidate: CallSpeaker?
-    private(set) var available = true
+    @Published private(set) var available = true
     private var ended = false
     private var transition: Task<Void, Never>?
     private let delay: UInt64

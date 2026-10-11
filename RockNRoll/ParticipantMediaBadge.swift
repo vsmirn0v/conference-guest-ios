@@ -1,5 +1,17 @@
 import UIKit
 
+/// One interpretation of signaled microphone state and observed speech, shared
+/// by captions, highlights, participant lists and accessibility descriptions.
+struct ParticipantAudioState: Equatable {
+    let microphoneOn: Bool
+    let speaking: Bool
+
+    init(microphoneOn: Bool, speaking: Bool, receptionAvailable: Bool = true) {
+        self.microphoneOn = microphoneOn
+        self.speaking = microphoneOn && speaking && receptionAvailable
+    }
+}
+
 /// A passive caption whose microphone status cannot be truncated by the name.
 final class ParticipantMediaBadge: UIView {
     private let microphone = UIImageView()
@@ -29,7 +41,7 @@ final class ParticipantMediaBadge: UIView {
     required init?(coder: NSCoder) { nil }
 
     func update(name: String, microphoneOn: Bool, speaking: Bool) {
-        let speaking = microphoneOn && speaking
+        let speaking = ParticipantAudioState(microphoneOn: microphoneOn, speaking: speaking).speaking
         if participantName != name {
             participantName = name
             self.name.text = name

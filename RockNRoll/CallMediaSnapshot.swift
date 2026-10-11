@@ -38,7 +38,7 @@ struct CallParticipant {
     var status: ParticipantStatus {
         .init(id: id, name: name ?? L("Musician"), isLocal: isLocal,
             microphoneOn: microphoneOn, cameraOn: cameraOn, screenShareOn: screenShareOn,
-            isSpeaking: isSpeaking,
+            isSpeaking: ParticipantAudioState(microphoneOn: microphoneOn, speaking: isSpeaking).speaking,
             videoKey: videoTracks.first { !$0.isMuted && $0.source == .camera }?.id,
             shareKey: isLocal ? nil : videoTracks.first { !$0.isMuted && $0.source == .screenShareVideo }?.id)
     }
@@ -56,7 +56,7 @@ struct CallMediaSnapshot {
             let videos = participant.videoTracks
             return CallParticipant(id: participant.identity?.stringValue ?? participant.sid?.stringValue ?? "local",
                 name: participant.name, isLocal: participant === room.localParticipant,
-                microphoneOn: participant.audioTracks.contains { !$0.isMuted },
+                microphoneOn: participant.audioTracks.contains { $0.source == .microphone && !$0.isMuted },
                 cameraOn: videos.contains { !$0.isMuted && $0.source != .screenShareVideo },
                 screenShareOn: videos.contains { !$0.isMuted && $0.source == .screenShareVideo },
                 isSpeaking: participant.isSpeaking,

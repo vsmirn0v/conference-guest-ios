@@ -124,6 +124,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     var snapshotForTesting: CallMediaSnapshot? { displayedSnapshot }
     #endif
     private var displayMode: ConferenceDisplayMode = .all
+    private var localMicrophoneStatus: PiPMicrophoneStatus?
     private var isMicrophoneOn = false
     private var isCameraOn = false
     private var isSpeakerOn = true
@@ -1130,16 +1131,22 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func refreshSpeaking(snapshot: CallMediaSnapshot, speakerOrder: [String]? = nil) {
         displayedSnapshot = snapshot
-        participantsPanel?.update(snapshot.participants.map(\.status), pinnedKey: pinnedStreamKey)
-        let voices = snapshot.participants.filter { $0.isSpeaking && $0.microphoneOn && (!$0.isLocal || isMicrophoneOn) }
+        let participants = snapshot.participants.map { participant in
+            var value = participant
+            if value.isLocal, let localMicrophoneStatus { value.microphoneOn = localMicrophoneStatus == .on }
+            value.isSpeaking = ParticipantAudioState(microphoneOn: value.microphoneOn,
+                speaking: participant.isSpeaking, receptionAvailable: speakerReceptionAvailable && !isHeld &&
+                    !preservingPinDuringReconnect && (!participant.isLocal || isMicrophoneOn)).speaking
+            return value
+        }
+        participantsPanel?.update(participants.map(\.status), pinnedKey: pinnedStreamKey)
+        let voices = participants.filter(\.isSpeaking)
         let speaking = speakerOrder.flatMap { order in order.compactMap { id in voices.first { $0.id == id } }.first } ??
             voices.first { $0.id == activeSpeaker.current?.id } ?? voices.first
         activeSpeaker.update(speaking.map { CallSpeaker(id: $0.id, name: $0.name ?? L("Musician"), isLocal: $0.isLocal) })
-        for participant in snapshot.participants {
-            let speaking = participant.isSpeaking && !isHeld && speakerReceptionAvailable &&
-                !preservingPinDuringReconnect && (!participant.isLocal || isMicrophoneOn)
+        for participant in participants {
             for badge in participantBadges[participant.id] ?? [] {
-                badge.updateMicrophone(on: participant.microphoneOn, speaking: speaking)
+                badge.updateMicrophone(on: participant.microphoneOn, speaking: participant.isSpeaking)
             }
             for tile in speakingTiles[participant.id] ?? [] {
                 tile.layer.borderWidth = participant.isSpeaking ? 3 : 0
@@ -1300,6 +1307,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func setMicrophone(_ enabled: Bool) {
         isMicrophoneOn = enabled
+        if let snapshot = displayedSnapshot { refreshSpeaking(snapshot: snapshot) }
         studio?.microphoneOn = enabled
         workspace.microphoneOn = enabled
         view.setNeedsLayout()
@@ -1313,6 +1321,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func setFloatingMicrophoneStatus(_ status: PiPMicrophoneStatus) {
         floatingVideo?.setMicrophoneStatus(status)
+        localMicrophoneStatus = status
+        if let snapshot = displayedSnapshot { refreshSpeaking(snapshot: snapshot) }
     }
 
     func setCamera(_ enabled: Bool) {
@@ -1374,13 +1384,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private func updateSpeakerAvailability() {
         let available = speakerReceptionAvailable && !isHeld && !preservingPinDuringReconnect
         activeSpeaker.setAvailable(available)
-        if !available {
-            for participant in displayedSnapshot?.participants ?? [] {
-                for badge in participantBadges[participant.id] ?? [] {
-                    badge.updateMicrophone(on: participant.microphoneOn, speaking: false)
-                }
-            }
-        }
+        if let snapshot = displayedSnapshot { refreshSpeaking(snapshot: snapshot) }
     }
 
     func showMediaStatus(_ message: String?) {

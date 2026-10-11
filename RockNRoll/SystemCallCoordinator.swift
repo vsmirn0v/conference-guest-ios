@@ -55,6 +55,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         var observedHold = false
         var observedCompetitor = false
         var releasedBySystem = false
+        var activationAttempted = false
     }
     private var audioYield: AudioYield?
     private var resumeActionID: UUID?
@@ -460,6 +461,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             if let audioYield, !audioYield.releasedBySystem && !audioYield.observedCompetitor { return false }
             if isAudioSessionActive && !isHeld && audioYield == nil { return true }
         }
+        audioYield?.activationAttempted = true
         try activateAudioSession()
         // Reconcile a missed unhold delegate callback against the current call,
         // only after the system actually grants activation.
@@ -563,8 +565,11 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
 
     private func beginAudioYield() {
         // Preserve evidence in either hold/deactivation callback order. A release
-        // is a boundary: the next interruption cannot reuse its permission.
-        if audioYield == nil || audioYield?.releasedBySystem == true { audioYield = AudioYield() }
+        // is a boundary, including an inferred release whose activation failed.
+        // The next interruption cannot reuse that attempt's permission.
+        if audioYield == nil || audioYield?.releasedBySystem == true || audioYield?.activationAttempted == true {
+            audioYield = AudioYield()
+        }
         observeYield(in: observedCalls)
     }
 

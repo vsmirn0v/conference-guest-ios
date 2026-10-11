@@ -7,6 +7,29 @@ import XCTest
 
 @MainActor
 final class SessionOwnershipTests: XCTestCase {
+    func testFreshNativeInterruptionCannotReuseFailedCompetitorRecovery() throws {
+        var snapshot: [SystemCallCoordinator.ObservedCall] = []
+        var reject = false
+        let calls = SystemCallCoordinator(transactionRequester: { _, _ in XCTFail("Unexpected CallKit transaction") },
+            callSnapshot: { snapshot }, systemCallRegistration: false,
+            activateAudioSession: { if reject { throw NSError(domain: "TransientActivation", code: 1) } })
+        calls.start(); calls.markConnected()
+        defer { calls.end() }
+        let first = UUID()
+        snapshot = [.init(id: first, connected: true, held: false)]
+        calls.observedCallChanged(snapshot[0])
+        snapshot = []; reject = true
+        calls.observedCallChanged(.init(id: first, connected: true, held: false, ended: true))
+        XCTAssertFalse(calls.canRestoreAudio)
+        // A new interruption arrives before its competing call reaches CXCallObserver.
+        calls.audioSessionInterrupted(true)
+        reject = false
+        XCTAssertFalse(try calls.reactivateAudioIfPossible(), "The previous call's completion must not release a fresh interruption")
+        XCTAssertFalse(calls.canRestoreAudio)
+        calls.audioSessionInterrupted(false)
+        XCTAssertTrue(calls.canRestoreAudio, "A fresh ended notification still resumes the meeting")
+    }
+
     func testNativeMeetingResumesAfterEndedNotificationWithoutMediaPlayerHint() {
         var activations = 0
         let calls = SystemCallCoordinator(transactionRequester: { _, _ in XCTFail("No system call transaction") },

@@ -5,6 +5,79 @@ import XCTest
 
 @MainActor
 final class ParticipantMediaBadgeTests: XCTestCase {
+    func testMutedNativeParticipantCannotRetainSpeakingBorder() throws {
+        let call = RockCallViewController(title: "Review", catchUp: CatchUpStore(), chat: ChatStore())
+        call.loadViewIfNeeded()
+        let participant = CallParticipant(id: "remote", name: "Remote", isLocal: false,
+            microphoneOn: false, cameraOn: false, screenShareOn: false, isSpeaking: true, videoTracks: [])
+        call.render(snapshot: .init(participants: [participant]))
+        func tile(in view: UIView) -> UIView? {
+            if view.accessibilityIdentifier == "camera-off.remote" { return view }
+            return view.subviews.lazy.compactMap { tile(in: $0) }.first
+        }
+        let rendered = try XCTUnwrap(tile(in: call.view))
+        XCTAssertEqual(rendered.layer.borderWidth, 0, "Muted participants must not be highlighted as speaking")
+    }
+
+    func testHeldNativeParticipantClearsSpeakingBorder() throws {
+        let call = RockCallViewController(title: "Review", catchUp: CatchUpStore(), chat: ChatStore())
+        call.loadViewIfNeeded()
+        let participant = CallParticipant(id: "remote", name: "Remote", isLocal: false,
+            microphoneOn: true, cameraOn: false, screenShareOn: false, isSpeaking: true, videoTracks: [])
+        call.render(snapshot: .init(participants: [participant]))
+        call.setHeld(true)
+        func tile(in view: UIView) -> UIView? {
+            if view.accessibilityIdentifier == "camera-off.remote" { return view }
+            return view.subviews.lazy.compactMap { tile(in: $0) }.first
+        }
+        let rendered = try XCTUnwrap(tile(in: call.view))
+        XCTAssertEqual(rendered.layer.borderWidth, 0, "An interrupted meeting must not retain a stale speaking highlight")
+    }
+
+    func testMutedGuestGalleryParticipantCannotRemainSpeaking() throws {
+        let gallery = GuestGalleryView()
+        gallery.update([.init(id: .init(participant: "remote", isShare: false), name: "Remote",
+            microphoneOn: false, active: false, speaking: true, watermark: nil, renderer: nil)])
+        let tile = try XCTUnwrap(gallery.subviews.first)
+        XCTAssertEqual(tile.layer.borderWidth, 0)
+        XCTAssertNil(tile.accessibilityValue, "Gallery must not announce Speaking while its badge announces Microphone off")
+    }
+
+    func testGuestGalleryUsesSameSpeakerAndAvailabilityAsStage() throws {
+        let gallery = GuestGalleryView()
+        gallery.update([.init(id: .init(participant: "remote", isShare: false), name: "Remote",
+            microphoneOn: true, active: false, speaking: false, watermark: nil, renderer: nil)])
+        let tile = try XCTUnwrap(gallery.subviews.first)
+        gallery.setSpeaker("remote", available: true)
+        XCTAssertEqual(tile.layer.borderWidth, 3)
+        gallery.setSpeaker("remote", available: false)
+        XCTAssertEqual(tile.layer.borderWidth, 0)
+        XCTAssertNil(tile.accessibilityValue)
+        gallery.setSpeaker("remote", available: true)
+        XCTAssertEqual(tile.layer.borderWidth, 3)
+        XCTAssertTrue(gallery.subviews.first === tile)
+    }
+
+    func testLocalBadgeTracksActualSendingAndUnavailableStatusWithoutRosterRefresh() throws {
+        let call = RockCallViewController(title: "Review", catchUp: CatchUpStore(), chat: ChatStore())
+        call.loadViewIfNeeded(); call.setMicrophone(true)
+        let local = CallParticipant(id: "local", name: "Local", isLocal: true,
+            microphoneOn: true, cameraOn: false, screenShareOn: false, isSpeaking: true, videoTracks: [])
+        let remote = CallParticipant(id: "remote", name: "Remote", isLocal: false,
+            microphoneOn: false, cameraOn: false, screenShareOn: false, isSpeaking: false, videoTracks: [])
+        call.render(snapshot: .init(participants: [local, remote]))
+        func caption(in view: UIView) -> ParticipantMediaBadge? {
+            if let badge = view as? ParticipantMediaBadge, badge.accessibilityLabel == "Local" { return badge }
+            return view.subviews.lazy.compactMap { caption(in: $0) }.first
+        }
+        let badge = try XCTUnwrap(caption(in: call.view))
+        for (status, expected) in [(PiPMicrophoneStatus.on, L("Speaking")), (.muted, L("Microphone off")),
+                                   (.on, L("Speaking")), (.unavailable, L("Microphone off"))] {
+            call.setFloatingMicrophoneStatus(status)
+            XCTAssertEqual(badge.accessibilityValue, expected)
+        }
+    }
+
     func testMutedStatusWinsOverStaleSpeakingAndFullNameRemainsAccessible() {
         let badge = ParticipantMediaBadge()
         let name = "Николай Александрович — акустическая гитара"
@@ -177,6 +250,13 @@ final class ParticipantMediaBadgeTests: XCTestCase {
                 isLocal: false, microphoneOn: on, cameraOn: true, sharing: true)], speaking: speaker)
             XCTAssertEqual(badge.accessibilityValue, expected)
         }
+        controls.updateParticipantRoster([.init(id: "remote", name: "Alexander Smirnov", isLocal: false,
+            microphoneOn: true, cameraOn: true, sharing: true)], speaking: "remote")
+        XCTAssertEqual(badge.accessibilityValue, L("Speaking"))
+        controls.setHeld(true)
+        XCTAssertEqual(badge.accessibilityValue, L("Microphone on"))
+        controls.setHeld(false)
+        XCTAssertEqual(badge.accessibilityValue, L("Speaking"))
     }
 
     func testZoomControlsStayAboveCaptionAtLargeTextSizes() throws {

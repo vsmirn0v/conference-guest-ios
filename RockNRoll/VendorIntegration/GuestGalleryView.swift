@@ -49,13 +49,17 @@ private final class GuestGalleryTile: UIView {
         viewport.setMediaActive(item.active)
         status.text = item.active ? L("Waiting for video…") : nil
         status.isHidden = !item.active || hasFrame
-        layer.borderWidth = item.speaking ? 3 : 0
+        updateAudio(ParticipantAudioState(microphoneOn: item.microphoneOn, speaking: item.speaking))
         layer.borderColor = UIColor.systemGreen.cgColor
         layer.cornerRadius = 12
         clipsToBounds = true
-        accessibilityValue = item.speaking ? L("Speaking") : nil
         accessibilityIdentifier = "gallery." + item.id.participant + (item.id.isShare ? ".screen" : ".camera")
         refreshDemand()
+    }
+    func updateAudio(_ state: ParticipantAudioState) {
+        viewport.updateMicrophone(on: state.microphoneOn, speaking: state.speaking)
+        layer.borderWidth = state.speaking ? 3 : 0
+        accessibilityValue = state.speaking ? L("Speaking") : nil
     }
     func setVisible(_ value: Bool) { visible = value; refreshDemand() }
     private func refreshDemand() {
@@ -80,6 +84,8 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
     private var tiles: [GuestStreamViews.PinTarget: GuestGalleryTile] = [:]
     private var order: [GuestStreamViews.PinTarget] = []
     private var active = false
+    private var items: [GuestStreamViews.GalleryItem] = []
+    private var speaker: (id: String?, available: Bool)?
     private var observers: [NSObjectProtocol] = []
     var onPin: ((GuestStreamViews.PinTarget) -> Void)?
     var onInteraction: (() -> Void)?
@@ -96,6 +102,7 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
     }
     required init?(coder: NSCoder) { nil }
     func update(_ items: [GuestStreamViews.GalleryItem]) {
+        self.items = items
         let keys = Set(items.map(\.id))
         for key in tiles.keys.filter({ !keys.contains($0) }) {
             tiles.removeValue(forKey: key)?.removeFromSuperview()
@@ -110,7 +117,19 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
                 tiles[item.id] = tile; addSubview(tile)
             }
         }
+        updateAudio()
         setNeedsLayout()
+    }
+    func setSpeaker(_ id: String?, available: Bool) {
+        speaker = (id, available)
+        updateAudio()
+    }
+    private func updateAudio() {
+        for item in items {
+            let speaking = speaker.map { $0.id == item.id.participant } ?? item.speaking
+            tiles[item.id]?.updateAudio(ParticipantAudioState(microphoneOn: item.microphoneOn,
+                speaking: speaking, receptionAvailable: speaker?.available ?? true))
+        }
     }
     func setActive(_ value: Bool) { active = value; refreshDemand() }
     override func layoutSubviews() {

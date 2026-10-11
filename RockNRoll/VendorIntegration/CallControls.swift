@@ -45,6 +45,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private let usesNativeParticipants: Bool
     private weak var participantsPanel: ParticipantPanelViewController?
     private var participantRoster: [GuestStreamViews.Participant] = []
+    private var speakerReceptionAvailable = true
     private var speakingParticipant: String?
     private var pinnedParticipant: GuestStreamViews.PinTarget?
     private var participantPinTargets: [String: GuestStreamViews.PinTarget] = [:]
@@ -507,11 +508,15 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.speakerLabel.isHidden = speaker == nil
             self.compactHeader.setSpeaker(speaker)
             self.speakingParticipant = speaker?.id
-            self.updateParticipantsPanel()
-            self.updateStageMicrophoneStatus()
+            self.updateSpeakerPresentation()
             if !self.focus.hidden && self.compactHeader.isHidden && hidden != self.speakerLabel.isHidden {
                 self.surface.setNeedsLayout()
             }
+        }.store(in: &subscriptions)
+
+        self.activeSpeaker.$available.sink { [weak self] available in
+            self?.speakerReceptionAvailable = available
+            self?.updateSpeakerPresentation()
         }.store(in: &subscriptions)
 
         catchUp.$timeline.receive(on: DispatchQueue.main).sink { [weak self] timeline in
@@ -706,15 +711,26 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
         }
         speakingParticipant = speaking
+        updateSpeakerPresentation()
+    }
+
+    private func updateSpeakerPresentation() {
         updateParticipantsPanel()
         updateStageMicrophoneStatus()
+        galleryView.setSpeaker(speakingParticipant, available: speakerReceptionAvailable && !isHeld)
+    }
+
+    private func participantAudio(microphoneOn: Bool, id: String) -> ParticipantAudioState {
+        ParticipantAudioState(microphoneOn: microphoneOn, speaking: speakingParticipant == id,
+            receptionAvailable: speakerReceptionAvailable && !isHeld)
     }
 
     private func updateStageMicrophoneStatus() {
         guard let stageID else { return }
         let microphoneOn = participantRoster.first { $0.id == stageID }?.microphoneOn ??
             lastPresentation?.microphoneOn ?? false
-        stageViewport?.updateMicrophone(on: microphoneOn, speaking: speakingParticipant == stageID)
+        let state = participantAudio(microphoneOn: microphoneOn, id: stageID)
+        stageViewport?.updateMicrophone(on: state.microphoneOn, speaking: state.speaking)
     }
 
     private func openParticipantsPanel() {
@@ -753,7 +769,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             return ParticipantStatus(id: participant.id, name: participant.name, isLocal: participant.isLocal,
                 microphoneOn: participant.microphoneOn, cameraOn: participant.cameraOn,
                 screenShareOn: participant.sharing,
-                isSpeaking: participant.microphoneOn && speakingParticipant == participant.id,
+                isSpeaking: participantAudio(microphoneOn: participant.microphoneOn, id: participant.id).speaking,
                 videoKey: videoKey, shareKey: shareKey)
         }
         panel.update(statuses, pinnedKey: pinnedParticipant.map(key))
@@ -775,6 +791,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     func setHeld(_ held: Bool) {
         studio?.held = held
         isHeld = held
+        updateSpeakerPresentation()
         renderCameraControl()
         if held { focus.show() }
         workspace.onHold = held
@@ -1190,6 +1207,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.galleryCount = items.count
             self.activeGalleryShares = Set(items.filter { $0.id.isShare }.map(\.id))
             self.explicitGridShares.formIntersection(self.activeGalleryShares)
+            self.galleryView.setSpeaker(self.speakingParticipant, available: self.speakerReceptionAvailable && !self.isHeld)
             self.galleryView.update(items)
             self.updateDisplayBackdrops(); self.layoutPresentation()
         }

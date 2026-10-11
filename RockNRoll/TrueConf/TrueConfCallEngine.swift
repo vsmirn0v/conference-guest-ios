@@ -58,9 +58,7 @@ final class TrueConfCallEngine: CallEngine {
     private var observers: [NSObjectProtocol] = []
     private var pathMonitor: NWPathMonitor?
     private var pathSignature: String?
-    private var previousManualAudio = false
-    private var previousAudioEnabled = true
-    private var rtcAudioActive = false
+    private lazy var callAudio = NativeCallAudio(owner: systemCall, audio: audio)
     private var cameraRequest = UUID()
     private var microphoneRequest = UUID()
     private(set) var hasJoinStarted = false
@@ -163,9 +161,7 @@ final class TrueConfCallEngine: CallEngine {
         audioProfile = studio.profile
         try audio.prepareForJoin()
         factory = try NativeRTCPeer.makeFactory()
-        let rtcAudio = LKRTCAudioSession.sharedInstance()
-        previousManualAudio = rtcAudio.useManualAudio; previousAudioEnabled = rtcAudio.isAudioEnabled
-        rtcAudio.useManualAudio = true; rtcAudio.isAudioEnabled = false
+        callAudio.begin()
         let view = RockCallViewController(title: title ?? L("Jam %@", target.roomID), catchUp: catchUp,
             chat: chat, invitationURL: target.invitationURL, roomIdentifier: target.roomID)
         view.supportsChat = false; view.supportsSharing = true; view.studio = studio
@@ -215,7 +211,7 @@ final class TrueConfCallEngine: CallEngine {
         #if DEBUG && targetEnvironment(simulator)
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
             try AVAudioSession.sharedInstance().setActive(true)
-            activateRTCAudio(); rtcAudio.isAudioEnabled = !quiet
+            callAudio.activate(); LKRTCAudioSession.sharedInstance().isAudioEnabled = !quiet
             connect(); return
         }
         #endif
@@ -225,13 +221,13 @@ final class TrueConfCallEngine: CallEngine {
         systemCall.onCallStateChanged = { [weak self] in Task { @MainActor in self?.resumeSystemCallIfPossible() } }
         systemCall.onActivated = { [weak self] in Task { @MainActor in
             guard let self, self.hasJoinStarted else { return }
-            self.activateRTCAudio()
+            self.callAudio.activate()
             self.audio.callAudioDidActivate(); self.restoreAudio()
             if self.transport == nil && self.connectionTask == nil && self.recoveryTask == nil { self.connect() }
         } }
         systemCall.onDeactivated = { [weak self] in Task { @MainActor in
             guard let self else { return }; self.pauseAudio()
-            self.deactivateRTCAudio()
+            self.callAudio.deactivate()
         } }
         systemCall.onHoldChanged = { [weak self] value in Task { @MainActor in
             guard let self else { return }; self.held = value
@@ -247,48 +243,33 @@ final class TrueConfCallEngine: CallEngine {
     }
     private func pauseAudio() {
         guard hasJoinStarted else { return }
-        LKRTCAudioSession.sharedInstance().isAudioEnabled = false
+        callAudio.pause()
         publisher?.setMicrophone(false, profile: audioProfile)
         view?.setSpeakerReceptionAvailable(false)
         updateMicrophoneStatus()
     }
-    private func activateRTCAudio() {
-        guard !rtcAudioActive else { return }
-        LKRTCAudioSession.sharedInstance().audioSessionDidActivate(AVAudioSession.sharedInstance())
-        rtcAudioActive = true
-    }
-    private func deactivateRTCAudio() {
-        guard rtcAudioActive else { return }
-        LKRTCAudioSession.sharedInstance().audioSessionDidDeactivate(AVAudioSession.sharedInstance())
-        rtcAudioActive = false
+    private var audioState: NativeCallAudioState {
+        .init(joined: hasJoinStarted, connected: connected, leaving: leaving,
+              held: held, quiet: quiet, microphoneIntent: microphoneIntent)
     }
     private func restoreAudio() {
-        guard hasJoinStarted, !leaving, !held, !quiet else { return }
-        guard canUseCallAudio else { return }
-        let wasPaused = !LKRTCAudioSession.sharedInstance().isAudioEnabled
-        LKRTCAudioSession.sharedInstance().isAudioEnabled = true
-        audio.ensureMixing(); view?.setSpeakerReceptionAvailable(true)
-        if connected && wasPaused { recover() } else { scheduleMedia() }
+        let restoration = callAudio.restore(audioState)
+        guard restoration != .blocked else { return }
+        view?.setSpeakerReceptionAvailable(true)
+        if restoration == .reconnect { recover() } else { scheduleMedia() }
         catchUp.end(.audioInterruption)
         updateMicrophoneStatus()
     }
-    private var canUseCallAudio: Bool {
-        #if DEBUG && targetEnvironment(simulator)
-        return ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" || systemCall.canRestoreAudio
-        #else
-        return systemCall.canRestoreAudio
-        #endif
-    }
-    private var effectiveMicrophoneEnabled: Bool {
-        microphoneIntent && hasJoinStarted && !leaving && !held && !quiet && canUseCallAudio
-            && LKRTCAudioSession.sharedInstance().isAudioEnabled
+    private var canUseCallAudio: Bool { callAudio.canUseCallAudio }
+    private var effectiveMicrophoneEnabled: Bool { callAudio.shouldSendMicrophone(audioState) }
+    private var microphoneStatus: PiPMicrophoneStatus {
+        callAudio.microphoneStatus(audioState, sending: publisher?.microphoneSending == true)
     }
     private func applyMicrophoneState() {
         publisher?.setMicrophone(effectiveMicrophoneEnabled, profile: audioProfile)
     }
     private func updateMicrophoneStatus() {
-        let available = hasJoinStarted && connected && !held && !quiet && LKRTCAudioSession.sharedInstance().isAudioEnabled
-        let status: PiPMicrophoneStatus = available ? (publisher?.microphoneSending == true ? .on : .muted) : .unavailable
+        let status = microphoneStatus
         studio.microphoneActivity.setStatus(status)
         view?.setFloatingMicrophoneStatus(status)
     }
@@ -486,7 +467,7 @@ final class TrueConfCallEngine: CallEngine {
         microphoneRequest = UUID(); let request = microphoneRequest
         if !enabled {
             microphoneIntent = false; publisher?.setMicrophone(false, profile: audioProfile)
-            view?.setMicrophone(false); systemCall.setMuted(true); updateMicrophoneStatus(); scheduleMedia(); return
+            view?.setMicrophone(false); systemCall.setMuted(true); updateMicrophoneStatus(); refresh(speakingOnly: true); scheduleMedia(); return
         }
         Task { [weak self] in
             let allowed = await withCheckedContinuation { completion in AVAudioSession.sharedInstance().requestRecordPermission { completion.resume(returning: $0) } }
@@ -594,7 +575,7 @@ final class TrueConfCallEngine: CallEngine {
         }
         let localVideo = publisher?.videoTrack.map { CallVideoStream(id: localID + ".camera", source: .camera, track: .native($0)) }
         items.insert(.init(id: localID.isEmpty ? "local" : localID, name: name, isLocal: true,
-            microphoneOn: publisher?.microphoneSending == true && !held && !quiet, cameraOn: localVideo != nil,
+            microphoneOn: microphoneStatus == .on, cameraOn: localVideo != nil,
             screenShareOn: sharingActive, isSpeaking: studio.microphoneActivity.status == .on && studio.microphoneActivity.level > 0.1,
             videoTracks: localVideo.map { [$0] } ?? []), at: 0)
         let snapshot = CallMediaSnapshot(participants: items)
@@ -635,8 +616,8 @@ final class TrueConfCallEngine: CallEngine {
     }
     private func finish(failed: Bool) async {
         guard hasJoinStarted else { return }
-        LKRTCAudioSession.sharedInstance().isAudioEnabled = false
-        deactivateRTCAudio()
+        callAudio.pause()
+        callAudio.deactivate()
         hasJoinStarted = false; leaving = true; epoch = UUID()
         connectionTask?.cancel(); recoveryTask?.cancel(); mediaTask?.cancel(); connectionDeadline?.cancel(); completeAnswer(CancellationError())
         pathMonitor?.cancel(); pathMonitor = nil; observers.forEach(NotificationCenter.default.removeObserver); observers = []
@@ -644,22 +625,15 @@ final class TrueConfCallEngine: CallEngine {
         view?.endFloatingVideo(); studio.end(); chat.clear(); pauseAudio()
         microphoneProbe = nil
         await closeTransport()
-        LKRTCAudioSession.sharedInstance().isAudioEnabled = previousAudioEnabled
-        LKRTCAudioSession.sharedInstance().useManualAudio = previousManualAudio
+        callAudio.finish()
         if failed { systemCall.markEnded(reason: .failed) }
         await catchUp.finishMeeting().value
         view?.dismiss(animated: false); view = nil
         onEvent?(failed ? .failed : .left)
     }
     func resumeSystemCallIfPossible() {
-        systemCall.resumeIfPossible()
-        if systemCall.canRestoreAudio, !LKRTCAudioSession.sharedInstance().isAudioEnabled, hasJoinStarted, !held, !quiet {
-            do {
-                try audio.reactivateAfterInterruption()
-                activateRTCAudio()
-                restoreAudio()
-            } catch { onMediaStatus?(error.localizedDescription) }
-        }
+        do { if try callAudio.resumeIfPossible(audioState) { restoreAudio() } }
+        catch { onMediaStatus?(error.localizedDescription) }
     }
     func prepareToFloat() { view?.prepareToFloat() }
     func restoreFromFloatingVideo() { view?.restoreFromFloatingVideo() }

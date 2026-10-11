@@ -160,7 +160,7 @@ final class ParticipantPanelViewController: UIViewController {
         guard let cell = labels[status.id] else { return }
         cell.name.text = status.name + (status.isLocal ? L(" (you)") : "")
         cell.name.accessibilityLabel = cell.name.text
-        cell.speaking.isHidden = !status.isSpeaking
+        cell.speaking.isHidden = !ParticipantAudioState(microphoneOn: status.microphoneOn, speaking: status.isSpeaking).speaking
         cell.media.text = L("Mic %@ · Video %@", status.microphoneOn ? L("on") : L("off"), status.cameraOn ? L("on") : L("off")) +
             (status.screenShareOn ? L(" · Sharing screen") : "")
     }
