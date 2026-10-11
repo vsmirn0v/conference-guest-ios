@@ -23,8 +23,10 @@ start = datetime.fromisoformat(toc.findtext('.//start-date')).timestamp()
 end = datetime.fromisoformat(toc.findtext('.//end-date')).timestamp()
 phases = [json.loads(line) for line in (a.directory / 'measurements.jsonl').read_text().splitlines()]
 phases = [row for row in phases if start <= row['wall_start_s'] < row['wall_end_s'] <= end]
-if len(phases) != 2:
-    raise ValueError('Expected two full phases inside the actual recording')
+request_path = a.directory / 'request.json'
+expected_phases = len(json.loads(request_path.read_text())['rates'].split(',')) if request_path.exists() else 2
+if len(phases) != expected_phases:
+    raise ValueError('Expected all full phases inside the actual recording')
 
 def rows(filename, schema):
     root = export(filename, schema)
@@ -39,6 +41,12 @@ def rows(filename, schema):
 
 power = list(rows('process.xml', 'ProcessSubsystemPowerImpact'))
 system = list(rows('system.xml', 'SystemPowerLevel'))
+pid_path = a.directory / 'pid.txt'
+if pid_path.exists():
+    pid = pid_path.read_text().strip()
+    power = [row for row in power if row['process'].findtext('pid') == pid]
+if not power or not system:
+    raise ValueError('Power Profiler produced no usable process/system samples')
 for phase in phases:
     expected = phase['requested_fps']
     if abs(phase['capture_fps'] - expected) > expected * 0.02 or phase['actual_sensor_fps'] != expected:

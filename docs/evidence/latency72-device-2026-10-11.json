@@ -1,0 +1,224 @@
+{
+  "old_native": {
+    "actual_sensor_fps": 30,
+    "battery_state": 2,
+    "brightness": 0.3499999940395355,
+    "capture_callback_age_ms": {
+      "maximum": 36.12870862707496,
+      "median": 33.71875069569796,
+      "p95": 34.63333402760327,
+      "p99": 35.132417106069624,
+      "samples": 1807
+    },
+    "capture_fps": 29.993879280553823,
+    "capture_height": 720,
+    "capture_interval_ms": {
+      "maximum": 40.43249995447695,
+      "median": 33.309958409518,
+      "p95": 34.6180833876133,
+      "p99": 35.411000018939376,
+      "samples": 1806
+    },
+    "capture_width": 1280,
+    "cpu_seconds": 1.1334590000000002,
+    "invalid_capture_timestamps": 0,
+    "low_power": false,
+    "pip_capture_to_enqueue_ms": {
+      "samples": 0
+    },
+    "pip_enqueue_fps": 0,
+    "pip_interval_ms": {
+      "samples": 0
+    },
+    "pip_queue_ms": {
+      "samples": 0
+    },
+    "pip_rejected": 0,
+    "requested_fps": 30,
+    "surface": "native",
+    "thermal_end": 0,
+    "wall_end_s": 1791742687.812429,
+    "wall_start_s": 1791742627.5505362,
+    "cpu_percent_one_core": 1.8808884809596624
+  },
+  "new_native": {
+    "actual_sensor_fps": 30,
+    "battery_state": 2,
+    "brightness": 0.3499999940395355,
+    "capture_callback_age_ms": {
+      "maximum": 36.21191740967333,
+      "median": 33.83975033648312,
+      "p95": 34.54858367331326,
+      "p99": 35.14420834835619,
+      "samples": 1809
+    },
+    "capture_fps": 29.99390164092698,
+    "capture_height": 720,
+    "capture_interval_ms": {
+      "maximum": 38.30370830837637,
+      "median": 33.34212501067668,
+      "p95": 34.399958327412605,
+      "p99": 35.167791647836566,
+      "samples": 1808
+    },
+    "capture_width": 1280,
+    "cpu_seconds": 1.230204,
+    "invalid_capture_timestamps": 0,
+    "low_power": false,
+    "pip_capture_to_enqueue_ms": {
+      "samples": 0
+    },
+    "pip_enqueue_fps": 0,
+    "pip_interval_ms": {
+      "samples": 0
+    },
+    "pip_queue_ms": {
+      "samples": 0
+    },
+    "pip_rejected": 0,
+    "requested_fps": 30,
+    "surface": "native",
+    "thermal_end": 0,
+    "wall_end_s": 1791742525.369792,
+    "wall_start_s": 1791742465.065532,
+    "cpu_percent_one_core": 2.0399951838958845
+  },
+  "old_pip": {
+    "actual_sensor_fps": 30,
+    "battery_state": 2,
+    "brightness": 0.3499999940395355,
+    "capture_callback_age_ms": {
+      "maximum": 36.16308362688869,
+      "median": 33.3187086507678,
+      "p95": 35.16566741745919,
+      "p99": 35.62400001101196,
+      "samples": 1800
+    },
+    "capture_fps": 29.99313721510646,
+    "capture_height": 720,
+    "capture_interval_ms": {
+      "maximum": 36.24633338768035,
+      "median": 33.34991668816656,
+      "p95": 34.54562497790903,
+      "p99": 35.36379162687808,
+      "samples": 1799
+    },
+    "capture_width": 1280,
+    "cpu_seconds": 2.358841,
+    "invalid_capture_timestamps": 0,
+    "low_power": false,
+    "pip_capture_to_enqueue_ms": {
+      "maximum": 37.672792095690966,
+      "median": 34.67904170975089,
+      "p95": 36.55912564136088,
+      "p99": 37.01658407226205,
+      "samples": 1800
+    },
+    "pip_enqueue_fps": 29.99299884802777,
+    "pip_interval_ms": {
+      "maximum": 36.90912504680455,
+      "median": 33.3439166424796,
+      "p95": 34.84179172664881,
+      "p99": 35.78545828349888,
+      "samples": 1799
+    },
+    "pip_queue_ms": {
+      "maximum": 1.8710840959101915,
+      "median": 1.2808754108846188,
+      "p95": 1.5809590695425868,
+      "p99": 1.6699590487405658,
+      "samples": 1800
+    },
+    "pip_rejected": 0,
+    "requested_fps": 30,
+    "surface": "pip",
+    "thermal_end": 0,
+    "wall_end_s": 1791743054.9063191,
+    "wall_start_s": 1791742994.897822,
+    "power_sample_coverage_s": {
+      "cpu-impact": 60.00849533081055,
+      "gpu-impact": 60.00849533081055,
+      "display-impact": 60.00849533081055,
+      "networking-impact": 0
+    },
+    "cpu_impact": 0.0,
+    "gpu_impact": 8.944754920374066e-05,
+    "display_impact": 0.09891412294694248,
+    "networking_impact": null,
+    "cpu_percent_one_core": 3.9308449779009322,
+    "system_percent_per_hour": null,
+    "system_power_unavailable_while_charging": true,
+    "system_brightness_percent": 35.0
+  },
+  "new_pip": {
+    "actual_sensor_fps": 30,
+    "battery_state": 2,
+    "brightness": 0.3499999940395355,
+    "capture_callback_age_ms": {
+      "maximum": 36.471458966843784,
+      "median": 33.86758337728679,
+      "p95": 34.72445870283991,
+      "p99": 35.33462539780885,
+      "samples": 1809
+    },
+    "capture_fps": 29.993496985140023,
+    "capture_height": 720,
+    "capture_interval_ms": {
+      "maximum": 38.311000098474324,
+      "median": 33.3247083472088,
+      "p95": 34.5095832599327,
+      "p99": 35.33595835324377,
+      "samples": 1808
+    },
+    "capture_width": 1280,
+    "cpu_seconds": 2.416064,
+    "invalid_capture_timestamps": 0,
+    "low_power": false,
+    "pip_capture_to_enqueue_ms": {
+      "maximum": 37.9262090427801,
+      "median": 35.18466674722731,
+      "p95": 36.18279239162803,
+      "p99": 36.80070908740163,
+      "samples": 1809
+    },
+    "pip_enqueue_fps": 29.993611385624597,
+    "pip_interval_ms": {
+      "maximum": 38.70808333158493,
+      "median": 33.317583380267024,
+      "p95": 34.84158334322274,
+      "p99": 35.737750004045665,
+      "samples": 1808
+    },
+    "pip_queue_ms": {
+      "maximum": 2.6202501030638814,
+      "median": 1.2964174384251237,
+      "p95": 1.6200840473175049,
+      "p99": 1.9448751118034124,
+      "samples": 1809
+    },
+    "pip_rejected": 0,
+    "requested_fps": 30,
+    "surface": "pip",
+    "thermal_end": 0,
+    "wall_end_s": 1791742904.24928,
+    "wall_start_s": 1791742843.91932,
+    "power_sample_coverage_s": {
+      "cpu-impact": 60.32995676994324,
+      "gpu-impact": 60.32995676994324,
+      "display-impact": 60.32995676994324,
+      "networking-impact": 0
+    },
+    "cpu_impact": 0.0,
+    "gpu_impact": 0.0,
+    "display_impact": 0.008290043613638026,
+    "networking_impact": null,
+    "cpu_percent_one_core": 4.004749887503346,
+    "system_percent_per_hour": null,
+    "system_power_unavailable_while_charging": true,
+    "system_brightness_percent": 35.0
+  },
+  "baseline_revision": "c49eddc",
+  "implementation_revision": "a8d12c4",
+  "device": "iPhone 17 Pro Max, iOS 27.0.1",
+  "battery_benefit_verified": false
+}

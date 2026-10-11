@@ -11,6 +11,7 @@ final class PreviewCadenceUITests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest.previewexperiment")
         app.launchEnvironment["ROCK_PREVIEW_EXPERIMENT"] = "1"
         app.launchEnvironment["ROCK_PREVIEW_SURFACE"] = env["ROCK_PREVIEW_SURFACE"] ?? "native"
+        app.launchEnvironment["ROCK_PREVIEW_RATES"] = env["ROCK_PREVIEW_RATES"] ?? "30,60"
         app.launchEnvironment["ROCK_PREVIEW_REVERSE"] = env["ROCK_PREVIEW_REVERSE"] ?? "0"
         app.launchEnvironment["ROCK_PREVIEW_SECONDS"] = env["ROCK_PREVIEW_SECONDS"] ?? "90"
         app.launch()
@@ -28,7 +29,8 @@ final class PreviewCadenceUITests: XCTestCase {
             XCTAssertTrue(pip.waitForExistence(timeout: 10))
         } else { app.buttons["preview.experiment.begin"].tap() }
         let duration = min(110, max(15, Double(env["ROCK_PREVIEW_SECONDS"] ?? "90") ?? 90))
-        sleep(UInt32(2 * (duration + 12) + 6))
+        let phases = (env["ROCK_PREVIEW_RATES"] ?? "30,60").split(separator: ",").count
+        sleep(UInt32(Double(phases) * (duration + 12) + 6))
         app.activate()
         XCTAssertEqual(status.label, "Complete", "Do not accept a partial/interrupted measurement")
         print("PREVIEW_MEASURE_COMPLETE \(Date().timeIntervalSince1970)")

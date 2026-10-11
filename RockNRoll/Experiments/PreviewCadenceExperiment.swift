@@ -18,6 +18,7 @@ final class PreviewCadenceExperiment {
     private let floating: Bool
     private let reversed: Bool
     private let duration: Double
+    private let rates: [Int]
     private var started = false
     private var oldBrightness: CGFloat = 0
     private var oldIdleDisabled = false
@@ -32,6 +33,7 @@ final class PreviewCadenceExperiment {
         let env = ProcessInfo.processInfo.environment
         floating = env["ROCK_PREVIEW_SURFACE"] == "pip"
         reversed = env["ROCK_PREVIEW_REVERSE"] == "1"
+        rates = env["ROCK_PREVIEW_RATES"] == "30" ? [30] : [30, 60]
         duration = min(110, max(15, Double(env["ROCK_PREVIEW_SECONDS"] ?? "90") ?? 90))
         window = UIWindow(windowScene: windowScene)
         controller.view.backgroundColor = .black
@@ -106,7 +108,7 @@ final class PreviewCadenceExperiment {
         task = Task { [weak self] in
             guard let self else { return }
             do {
-                let rates = self.reversed ? [60, 30] : [30, 60]
+                let rates = self.reversed ? Array(self.rates.reversed()) : self.rates
                 for fps in rates {
                     try Task.checkCancellation()
                     MediaEnergyBudget.shared.setExperimentalPreviewFPS(fps)
