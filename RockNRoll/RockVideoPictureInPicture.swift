@@ -73,7 +73,12 @@ final class RockVideoPictureInPicture {
             let identity = source.identity
             let sink = RoomFloatingVideoSink { [weak self] sample, rotation in
                 guard let self, self.selectedSource?.identity == identity, !self.floating.isEnded else { return }
+                #if DEBUG
+                let enqueued = self.video.enqueue(sample, rotation: rotation)
+                PreviewExperimentMetrics.delivery(sample: sample, enqueued: enqueued)
+                #else
                 self.video.enqueue(sample, rotation: rotation)
+                #endif
                 if let pixels = CMSampleBufferGetImageBuffer(sample) {
                     let width = CVPixelBufferGetWidth(pixels), height = CVPixelBufferGetHeight(pixels)
                     self.floating.preferredSize = rotation == 90 || rotation == 270

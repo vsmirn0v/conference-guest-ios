@@ -301,7 +301,13 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         updateVideoSender()
     }
     private static func cameraFormat(for device: AVCaptureDevice) -> AVCaptureDevice.Format? {
-        let formats = LKRTCCameraVideoCapturer.supportedFormats(for: device)
+        var formats = LKRTCCameraVideoCapturer.supportedFormats(for: device)
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["ROCK_PREVIEW_EXPERIMENT"] == "1" {
+            let fast = formats.filter { $0.videoSupportedFrameRateRanges.contains { $0.minFrameRate <= 30 && $0.maxFrameRate >= 60 } }
+            if !fast.isEmpty { formats = fast }
+        }
+        #endif
         if let plan = MacCameraCapturePlan.resolve(device: device, formats: formats) { return plan.format }
         return formats.filter {
             let d = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
@@ -455,6 +461,7 @@ final class NativeCameraFrameDelegate: NSObject, LKRTCVideoCapturerDelegate {
     #endif
     func capturer(_ capturer: LKRTCVideoCapturer, didCapture frame: LKRTCVideoFrame) {
         #if DEBUG
+        PreviewExperimentMetrics.capture(timestamp: frame.timeStampNs, pixels: (frame.buffer as? LKRTCCVPixelBuffer)?.pixelBuffer)
         lock.lock(); times.append(frame.timeStampNs)
         if times.count > 120 { times.removeFirst(times.count - 120) }
         lock.unlock()

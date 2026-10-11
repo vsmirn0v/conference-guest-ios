@@ -5,6 +5,9 @@ import ConferenceCore
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
     private var conference: ConferenceModel?
+    #if DEBUG
+    private var previewExperiment: PreviewCadenceExperiment?
+    #endif
 
     func scene(
         _ scene: UIScene,
@@ -12,6 +15,13 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         options connectionOptions: UIScene.ConnectionOptions
     ) {
         guard let windowScene = scene as? UIWindowScene else { return }
+        #if DEBUG
+        if let experiment = PreviewCadenceExperiment.make(windowScene: windowScene) {
+            previewExperiment = experiment; window = experiment.window
+            experiment.start()
+            return
+        }
+        #endif
         #if DEBUG
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_CLEAR_NAME"] == "1" {
             UserDefaults.standard.removeObject(forKey: "savedDisplayName")

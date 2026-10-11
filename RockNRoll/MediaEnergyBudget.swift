@@ -7,7 +7,21 @@ final class MediaEnergyBudget: ObservableObject {
     enum Pressure: Int { case normal, constrained, severe }
     static let shared = MediaEnergyBudget()
     @Published private(set) var pressure: Pressure = .normal
-    var previewFPS: Int { pressure == .normal ? 30 : pressure == .constrained ? 15 : 10 }
+    var previewFPS: Int {
+        #if DEBUG
+        if pressure == .normal, let experimentalPreviewFPS { return experimentalPreviewFPS }
+        #endif
+        return pressure == .normal ? 30 : pressure == .constrained ? 15 : 10
+    }
+    #if DEBUG
+    private var experimentalPreviewFPS: Int?
+    /// Explicit laboratory override; outgoing/Presenter budgets remain separate.
+    func setExperimentalPreviewFPS(_ fps: Int?) {
+        experimentalPreviewFPS = fps == 60 ? 60 : nil
+        let current = pressure
+        pressure = current // Notify existing capture and PiP demand subscribers.
+    }
+    #endif
     var inlineFPS: Int { pressure == .normal ? 30 : pressure == .constrained ? 20 : 15 }
     var thumbnailInterval: TimeInterval { pressure == .normal ? 0.5 : pressure == .constrained ? 1 : 2 }
     var cameraFPS: Int { pressure == .normal ? 30 : pressure == .constrained ? 15 : 10 }
