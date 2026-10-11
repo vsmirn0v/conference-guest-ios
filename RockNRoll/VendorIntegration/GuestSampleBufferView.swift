@@ -8,6 +8,8 @@ final class GuestSampleBufferView: UIView {
     private var rotation = 0
     private var capturePreview: CameraCapturePreviewView?
     private weak var captureSource: CameraCapturePreview?
+    private var captureRevision: UInt64 = 0
+    private var captureEnabled = true
     var onCameraPreviewSizeChanged: ((CGSize) -> Void)?
     var mirrored = false {
         didSet { capturePreview?.mirrored = mirrored; if oldValue != mirrored { setNeedsLayout(); layoutIfNeeded() } }
@@ -59,20 +61,29 @@ final class GuestSampleBufferView: UIView {
     }
 
     func setCameraPreview(_ source: CameraCapturePreview?, enabled: Bool = true) {
+        captureEnabled = enabled
         if captureSource !== source {
-            capturePreview?.stop(); capturePreview?.removeFromSuperview(); capturePreview = nil
+            captureRevision &+= 1
+            let revision = captureRevision, previous = capturePreview
+            // AVFoundation may reenter this setter while detaching. Publish
+            // the new binding first and let any newer request win.
+            capturePreview = nil
             captureSource = source
+            previous?.stop(); previous?.removeFromSuperview()
+            guard revision == captureRevision else { return }
             if let source {
                 let preview = source.makeView()
+                guard revision == captureRevision else { preview.stop(); return }
                 preview.onDisplaySizeChanged = { [weak self] size in self?.onCameraPreviewSizeChanged?(size) }
                 preview.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-                preview.frame = bounds; addSubview(preview); capturePreview = preview
+                capturePreview = preview
+                preview.frame = bounds; addSubview(preview)
                 renderTarget.clear(removingImage: true)
             }
         }
         capturePreview?.mirrored = mirrored
         capturePreview?.contentMode = contentMode
-        capturePreview?.enabled = enabled
+        capturePreview?.enabled = captureEnabled
     }
 
     /// A static canvas has no next frame to restart display after reparenting.

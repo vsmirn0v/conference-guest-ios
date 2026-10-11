@@ -28,7 +28,7 @@ final class CameraCapturePreview {
     }
     func setFloatingDemand(_ wanted: Bool) { floatingDemand = wanted; refreshDemand() }
     func makeView() -> CameraCapturePreviewView {
-        let view = CameraCapturePreviewView(source: self, native: views.allObjects.isEmpty)
+        let view = CameraCapturePreviewView(source: self, native: !views.allObjects.contains { $0.ownsNativePreview })
         views.add(view)
         return view
     }
@@ -46,10 +46,12 @@ final class CameraCapturePreviewView: UIView {
     private var preview: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
     private var source: CameraCapturePreview?
     private let native: Bool
+    fileprivate var ownsNativePreview: Bool { native && source != nil }
     private var sampleView: GuestSampleBufferView?
     private var sink: RoomFloatingVideoSink?
     #if DEBUG
     private(set) var hasDisplayedFrameForTesting = false
+    var willDetachSessionForTesting: (() -> Void)?
     #endif
     private var rotationCoordinator: AnyObject?
     private var rotationObservation: NSKeyValueObservation?
@@ -158,12 +160,18 @@ final class CameraCapturePreviewView: UIView {
         if size != displaySize { displaySize = size; onDisplaySizeChanged?(size) }
     }
     func stop() {
-        let previous = source
-        if let sink { sink.retire(); previous?.frames.remove(sink) }
-        sink = nil; sampleView?.clear(); source = nil
+        // setSession(nil) may pump the main run loop on Mac. Retire ownership
+        // first so reentrant layout cannot detach the same layer twice.
+        guard let previous = source else { return }
+        source = nil
+        if let sink { sink.retire(); previous.frames.remove(sink) }
+        sink = nil; sampleView?.clear()
         rotationObservation = nil; rotationCoordinator = nil
+        #if DEBUG
+        willDetachSessionForTesting?()
+        #endif
         preview.session = nil
-        previous?.refreshDemand()
+        previous.refreshDemand()
     }
     deinit {
         // UIKit removes a detached/deallocated surface from the weak view set.
