@@ -47,6 +47,7 @@ final class NativeConferenceEngine: CallEngine {
     private var localPreviewEpoch = UUID()
     private var screenCapture: GuestScreenCapture?
     private var screenCaptureStop: Task<Void, Never>?
+    private var cameraCaptureStop: Task<Void, Never>?
     private var isSystemHeld = false { didSet { updatePiPMicrophoneStatus() } }
     private var audioGate = CallAudioRecoveryGate()
     private var audioRecoveryTask: Task<Void, Never>?
@@ -522,10 +523,14 @@ final class NativeConferenceEngine: CallEngine {
         let epoch = sessionEpoch
         scheduleMediaReconnectTimeout(for: generation)
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, self.sessionEpoch == epoch, self.mediaReconnectGeneration == generation,
+                  self.isMediaReconnecting, !self.leaveRequested, self.finishing == nil else { return }
             await self.stopScreenSharing()
             guard self.sessionEpoch == epoch, self.mediaReconnectGeneration == generation,
-                  self.isMediaReconnecting, !self.leaveRequested else { return }
+                  self.isMediaReconnecting, !self.leaveRequested, self.finishing == nil else { return }
+            await self.stopCameraCapture()
+            guard self.sessionEpoch == epoch, self.mediaReconnectGeneration == generation,
+                  self.isMediaReconnecting, !self.leaveRequested, self.finishing == nil else { return }
             if case .inactive = JazzSession.shared.jazzConferencePhase {
                 self.restartMediaAfterTermination()
             } else {
@@ -630,11 +635,15 @@ final class NativeConferenceEngine: CallEngine {
                   self.mediaReconnectGeneration == generation else { return }
             if self.reconnectingForNetwork {
                 self.networkRecovery.attemptFinished(succeeded: false, at: ProcessInfo.processInfo.systemUptime)
+                self.mediaReconnectGeneration &+= 1
+                let stoppedGeneration = self.mediaReconnectGeneration
+                self.pendingRoom = nil
+                await self.stopCameraCapture()
+                guard self.sessionEpoch == epoch, !self.leaveRequested, self.finishing == nil,
+                      self.mediaReconnectGeneration == stoppedGeneration else { return }
                 self.isMediaReconnecting = false
                 self.reconnectingForNetwork = false
                 self.hasScheduledMediaRestart = false
-                self.mediaReconnectGeneration &+= 1
-                self.pendingRoom = nil
                 JazzSession.shared.terminateActiveConference()
                 self.updateNetworkRecoveryStatus()
                 return
@@ -895,7 +904,8 @@ final class NativeConferenceEngine: CallEngine {
         #if DEBUG
         print("Guest capture requested: enabled=\(enabled), leaving=\(leaveRequested), held=\(isSystemHeld), stopping=\(screenCaptureStop != nil)")
         #endif
-        guard !leaveRequested, !isSystemHeld, screenCaptureStop == nil else { return }
+        guard !leaveRequested, finishing == nil, !isMediaReconnecting, !isSystemHeld,
+              screenCaptureStop == nil else { return }
         guard !enabled || !studio.presenter.running else { return }
         if !enabled {
             Task { @MainActor in await stopScreenSharing() }
@@ -1206,7 +1216,12 @@ final class NativeConferenceEngine: CallEngine {
             self.updateIncomingVideoDemand()
             if !self.studio.active { self.studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard) }
             self.studio.onCameraSelectionChanged = { GuestCaptureDeviceObserver.setPreferredDevice($0) }
-            self.studio.selectLiveCamera = { try await GuestCaptureDeviceObserver.selectCurrentDevice($0) }
+            self.studio.selectLiveCamera = { [weak self] device in
+                guard self?.canChangeMedia(epoch: epoch, attempt: attempt) == true else { throw CancellationError() }
+                try await GuestCaptureDeviceObserver.selectCurrentDevice(device) { [weak self] in
+                    self?.canChangeMedia(epoch: epoch, attempt: attempt) == true
+                }
+            }
             self.studio.presenter.preparePrivateCamera = { [weak self] in
                 await self?.studio.releasePreviewCamera()
             }
@@ -1247,12 +1262,11 @@ final class NativeConferenceEngine: CallEngine {
             #endif
             self.studio.presenter.startSharing = { [weak self] sample in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
-                      !self.leaveRequested, !self.isSystemHeld else { throw CancellationError() }
+                      self.canChangeMedia(epoch: epoch, attempt: attempt), !self.isSystemHeld else { throw CancellationError() }
                 // A previous native/broadcast sender may still be releasing its
                 // socket. Preserve the private scene while retiring that sender.
                 await self.stopScreenSharing(retirePresenter: false)
-                guard self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
-                      !self.leaveRequested, !self.isSystemHeld else { throw CancellationError() }
+                guard self.canChangeMedia(epoch: epoch, attempt: attempt), !self.isSystemHeld else { throw CancellationError() }
                 let sender = GuestPresenterSender(preview: self.localSharePreview) { [weak self] message in
                     guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
                     self.studio.presenter.stop()
@@ -1264,7 +1278,7 @@ final class NativeConferenceEngine: CallEngine {
             }
             self.studio.presenter.sendSample = { [weak self] sample in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
-                      !self.leaveRequested, !self.isSystemHeld else { return }
+                      self.canChangeMedia(epoch: epoch, attempt: attempt), !self.isSystemHeld else { return }
                 (self.screenCapture as? GuestPresenterSender)?.send(sample)
             }
             self.studio.presenter.stopSharing = { [weak self] in
@@ -1403,6 +1417,8 @@ final class NativeConferenceEngine: CallEngine {
                                             guard let self, self.sessionEpoch == epoch,
                                                   !isOn || !self.isSystemHeld else { return }
                                             self.cameraIntentOn = isOn
+                                        }, canChangeMedia: { [weak self] in
+                                            self?.canChangeMedia(epoch: epoch, attempt: attempt) == true
                                         }, studio: self.studio, activeSpeaker: self.activeSpeaker,
                                         reactions: self.reactions, meetingStatus: self.meetingStatus)
             self.activeControls = controls
@@ -1742,8 +1758,10 @@ final class NativeConferenceEngine: CallEngine {
         pendingRoom = nil
         activeControls?.isHidden = true
         finishing = Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, self.sessionEpoch == epoch else { return }
             await self.stopScreenSharing()
+            guard self.sessionEpoch == epoch else { return }
+            await self.stopCameraCapture()
             guard self.sessionEpoch == epoch else { return }
             if self.leaveRequested || userEnded { await self.catchUp.finishMeeting().value }
             else if self.hasBecomeActive { self.catchUp.continueAsConnectionGap() }
@@ -1779,6 +1797,19 @@ final class NativeConferenceEngine: CallEngine {
             self.finishing = nil
             destination?(event)
         }
+    }
+
+    private func stopCameraCapture() async {
+        if let cameraCaptureStop { await cameraCaptureStop.value; return }
+        let stop = Task { await GuestCaptureDeviceObserver.stopCapturesForTeardown() }
+        cameraCaptureStop = stop
+        await stop.value
+        cameraCaptureStop = nil
+    }
+
+    private func canChangeMedia(epoch: UUID, attempt: UUID) -> Bool {
+        sessionEpoch == epoch && mediaAttemptEpoch == attempt && hasJoinStarted &&
+            !leaveRequested && finishing == nil && !isMediaReconnecting && cameraCaptureStop == nil
     }
 
     private static func map(_ phase: JazzConferencePhase) -> CallEvent {

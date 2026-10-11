@@ -1,6 +1,7 @@
 import AVFoundation
 import JazzSDK
 import WebRTC
+import UIKit
 import XCTest
 @testable import RockNRoll
 
@@ -227,6 +228,65 @@ final class GuestCameraPublishingTests: XCTestCase {
         second.deactivate()
         second.restore(); XCTAssertTrue(camera.delegate === downstream)
     }
+    func testRetirementDrainsAdmittedFrameBeforeSourceTeardown() throws {
+        let receiver = BlockingFrameReceiver(), camera = RTCCameraVideoCapturer(delegate: receiver)
+        let proxy = GuestCameraFrameDelegate(camera: camera, device: nil, downstream: receiver)
+        let input = try frame(stamp: 500, matrix: kCVImageBufferYCbCrMatrix_ITU_R_709_2)
+        let delivered = DispatchSemaphore(value: 0), retired = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            proxy.capturer(camera, didCapture: input)
+            delivered.signal()
+        }
+        XCTAssertEqual(receiver.entered.wait(timeout: .now() + 2), .success)
+        DispatchQueue.global().async { proxy.deactivate(); retired.signal() }
+        // Force the overlap, rather than hoping that frame scaling races teardown.
+        let premature = retired.wait(timeout: .now() + 0.1)
+        receiver.resume.signal()
+        XCTAssertEqual(delivered.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(premature, .timedOut, "SDK teardown must not overtake an admitted callback")
+        if premature == .timedOut { XCTAssertEqual(retired.wait(timeout: .now() + 2), .success) }
+        proxy.capturer(camera, didCapture: input)
+        XCTAssertEqual(receiver.count, 1, "Retired sources must reject later frames")
+    }
+    func testDownstreamCanRetireItsOwnCaptureWithoutDeadlock() throws {
+        let receiver = FrameReceiver(), camera = RTCCameraVideoCapturer(delegate: receiver)
+        let proxy = GuestCameraFrameDelegate(camera: camera, device: nil, downstream: receiver)
+        receiver.onFrame = { proxy.deactivate() }
+        let input = try frame(stamp: 500, matrix: kCVImageBufferYCbCrMatrix_ITU_R_709_2)
+        proxy.capturer(camera, didCapture: input)
+        proxy.capturer(camera, didCapture: input)
+        XCTAssertEqual(receiver.frames, 1)
+        receiver.onFrame = nil
+    }
+    @MainActor
+    func testQueuedCameraToggleCannotEscapeMediaRetirement() async throws {
+        var admitted = true, microphones = 0, cameras = 0
+        let controls = CallControls(localPreview: LocalSharePreview(), state: nil, coordinator: nil,
+            router: nil, catchUp: CatchUpStore(), chat: ChatStore(), initialDisplayMode: .all,
+            invitationURL: nil, roomIdentifier: nil, onDisplayMode: { _ in }, onFloat: {},
+            onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
+            onMicrophoneState: { _ in microphones += 1 }, onCameraState: { _ in cameras += 1 },
+            canChangeMedia: { admitted })
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
+        window.rootViewController = UIViewController()
+        window.rootViewController?.view.addSubview(controls)
+        window.isHidden = false
+        defer { controls.removeFromSuperview(); window.isHidden = true }
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        controls.setHeld(false)
+        let buttons = descendants(window).compactMap { $0 as? UIButton }
+        let camera = try XCTUnwrap(buttons.first { $0.accessibilityLabel == L("Start video") })
+        let mic = try XCTUnwrap(buttons.first { $0.configuration?.title == L("Mic") })
+        camera.sendActions(for: .touchUpInside) // Queues its private-preview release.
+        admitted = false
+        mic.sendActions(for: .touchUpInside)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(cameras, 0); XCTAssertEqual(microphones, 0)
+        admitted = true
+        camera.sendActions(for: .touchUpInside); mic.sendActions(for: .touchUpInside)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(cameras, 1); XCTAssertEqual(microphones, 1)
+    }
     @MainActor
     func testLongLivedCameraSourceKeepsNewestTrackBindings() {
         GuestCameraTrackBinding.prepare()
@@ -307,8 +367,22 @@ final class GuestCameraPublishingTests: XCTestCase {
 private final class FrameReceiver: NSObject, RTCVideoCapturerDelegate {
     var frames = 0
     var lastFrame: RTCVideoFrame?
-    func capturer(_ capturer: RTCVideoCapturer, didCapture frame: RTCVideoFrame) { frames += 1; lastFrame = frame }
+        var onFrame: (() -> Void)?
+        func capturer(_ capturer: RTCVideoCapturer, didCapture frame: RTCVideoFrame) {
+            frames += 1; lastFrame = frame; onFrame?()
+        }
 }
+    private final class BlockingFrameReceiver: NSObject, RTCVideoCapturerDelegate {
+        let entered = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0)
+        private let lock = NSLock()
+        private var frames = 0
+        var count: Int { lock.lock(); defer { lock.unlock() }; return frames }
+        func capturer(_ capturer: RTCVideoCapturer, didCapture frame: RTCVideoFrame) {
+            lock.lock(); frames += 1; lock.unlock()
+            entered.signal()
+            _ = resume.wait(timeout: .now() + 2)
+        }
+    }
 
 private final class TestEncoder: NSObject, RTCVideoEncoder {
     var callback: RTCVideoEncoderCallback?

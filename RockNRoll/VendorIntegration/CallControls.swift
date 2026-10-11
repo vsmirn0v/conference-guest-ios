@@ -140,6 +140,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
          onLeave: @escaping () -> Void, onScreenShare: @escaping (Bool) -> Void,
          onMicrophoneState: @escaping (Bool) -> Void,
          onCameraState: @escaping (Bool) -> Void,
+         canChangeMedia: @escaping () -> Bool = { true },
          usesNativeParticipants: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
          studio: StudioModel? = nil, activeSpeaker: ActiveSpeakerStore? = nil,
          reactions: MeetingReactionsModel? = nil, meetingStatus: MeetingHeaderStatus? = nil) {
@@ -335,12 +336,14 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         leave.configuration?.baseForegroundColor = .systemRed
 
         microphone.addAction(UIAction { [weak self] _ in
+            guard canChangeMedia() else { return }
             let turnOn = state.map { $0.microphoneState != .on } ?? !(self?.workspace.microphoneOn ?? false)
             self?.studio?.releasePrivateMicrophone()
             onMicrophoneState(turnOn)
             coordinator?.toggleMicrohone(isOn: turnOn)
         }, for: .touchUpInside)
         camera.addAction(UIAction { [weak self, weak studio] _ in
+            guard canChangeMedia() else { return }
             if let presenter = studio?.presenter, presenter.running {
                 presenter.includeCamera.toggle()
                 if !presenter.includeCamera { onCameraState(false) }
@@ -355,7 +358,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 #if DEBUG
                 CameraBackgroundTrace.event("camera-request-ready", ["on": turnOn, "active": studio?.active != false, "held": studio?.held == true, "coordinator": coordinator != nil])
                 #endif
-                guard studio?.active != false, !turnOn || studio?.held != true else { return }
+                guard canChangeMedia(), studio?.active != false, !turnOn || studio?.held != true else { return }
                 onCameraState(turnOn)
                 coordinator?.toggleCamera(isOn: turnOn)
             }

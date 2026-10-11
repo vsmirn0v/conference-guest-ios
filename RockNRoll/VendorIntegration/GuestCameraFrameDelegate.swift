@@ -7,7 +7,9 @@ import WebRTC
 final class GuestCameraFrameDelegate: NSObject, RTCVideoCapturerDelegate {
     private weak var downstream: (any RTCVideoCapturerDelegate)?
     private weak var camera: RTCCameraVideoCapturer?
-    private let lock = NSLock()
+    // Retirement must drain an admitted callback before the SDK tears down its
+    // source. Recursive locking also permits retirement from a downstream callback.
+    private let lock = NSRecursiveLock()
     private var active = true
     struct Progress { let generation: UUID; let frames: Int64 }
     private let generation = UUID()
@@ -46,22 +48,27 @@ final class GuestCameraFrameDelegate: NSObject, RTCVideoCapturerDelegate {
             let quality = CameraQualityMonitor(); self.quality = quality
             quality.onChange = { [weak self, weak camera] profile in
                 guard let self, let camera else { return }
-                self.lock.lock(); self.profile = profile; self.lock.unlock()
+                self.lock.lock(); defer { self.lock.unlock() }
+                guard self.active else { return }
+                self.profile = profile
                 GuestCaptureDeviceObserver.setCadence(camera,
                     fps: GuestCaptureDeviceObserver.previewCadence(camera, publishingFPS: profile.fps))
             }
             quality.onChange?(quality.profile)
             quality.start { [weak self] in
-                guard let source = self?.originalDelegate as? RTCVideoSource else { return nil }
+                guard let self else { return nil }
+                self.lock.lock()
+                let source = self.active ? self.originalDelegate as? RTCVideoSource : nil
+                self.lock.unlock()
+                guard let source else { return nil }
                 return await GuestMicrophoneProbe.cameraUplink(source: source)
             }
         }
     }
     func capturer(_ capturer: RTCVideoCapturer, didCapture frame: RTCVideoFrame) {
-        lock.lock(); let forwarding = active
-        if forwarding { frames &+= 1 }
-        lock.unlock()
-        guard forwarding, let downstream, camera != nil else { return }
+        lock.lock(); defer { lock.unlock() }
+        guard active, let downstream, camera != nil else { return }
+        frames &+= 1
         switch orientation.orient(frame) {
         case .frame(let native): forward(native, capturer: capturer, downstream: downstream)
         case .unsupported: forward(frame, capturer: capturer, downstream: downstream)

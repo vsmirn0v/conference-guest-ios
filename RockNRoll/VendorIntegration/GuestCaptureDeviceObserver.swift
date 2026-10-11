@@ -9,7 +9,9 @@ import WebRTC
 enum GuestCaptureDeviceObserver {
     static let changed = Notification.Name("dev.vsmirn0v.capture-device-changed")
     private static let lock = NSLock()
-    private static let capturers = NSHashTable<RTCCameraVideoCapturer>.weakObjects()
+    // Keep stopped/starting capturers discoverable until their actual owner
+    // releases them. An in-flight stop must not disappear from the teardown barrier.
+    private static let knownCapturers = NSHashTable<RTCCameraVideoCapturer>.weakObjects()
     private static let revisions = NSMapTable<RTCCameraVideoCapturer, NSNumber>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private static func revision(_ capturer: RTCCameraVideoCapturer) -> UInt64 {
         lock.lock(); defer { lock.unlock() }
@@ -19,21 +21,23 @@ enum GuestCaptureDeviceObserver {
     private static var sources: [ObjectIdentifier: Source] = [:]
     private static var frameDelegates: [ObjectIdentifier: GuestCameraFrameDelegate] = [:]
     @MainActor private static weak var previewOwner: RTCCameraVideoCapturer?
+    @MainActor private static weak var previewDelegate: GuestCameraFrameDelegate?
     @MainActor private static var preview: CameraCapturePreview?
     @MainActor static func cameraPreview() -> CameraCapturePreview? {
         let active = activeCapturers()
-        guard active.count == 1, let camera = active.first else { preview = nil; previewOwner = nil; return nil }
+        guard active.count == 1, let camera = active.first else {
+            preview = nil; previewOwner = nil; previewDelegate = nil; return nil
+        }
+        lock.lock(); let proxy = frameDelegates[ObjectIdentifier(camera)]; lock.unlock()
+        guard let proxy else { preview = nil; previewOwner = nil; previewDelegate = nil; return nil }
         let device = (camera.captureSession.inputs.first as? AVCaptureDeviceInput)?.device
-        if previewOwner !== camera {
-            previewOwner = camera
-            lock.lock(); let proxy = frameDelegates[ObjectIdentifier(camera)]; lock.unlock()
-            guard let proxy else { return nil }
+        if previewOwner !== camera || previewDelegate !== proxy {
+            previewOwner = camera; previewDelegate = proxy
             let source = CameraCapturePreview(session: camera.captureSession, device: device, frames: proxy.previewFrames)
             preview = source
-            source.onDemandChanged = { [weak camera] in
-                guard let camera else { return }
-                lock.lock(); let proxy = frameDelegates[ObjectIdentifier(camera)]; lock.unlock()
-                setCadence(camera, fps: previewCadence(camera, publishingFPS: proxy?.requestedCadence ?? 24))
+            source.onDemandChanged = { [weak camera, weak proxy] in
+                guard let camera, let proxy, previewDelegate === proxy else { return }
+                setCadence(camera, fps: previewCadence(camera, publishingFPS: proxy.requestedCadence))
             }
         } else if preview?.device?.uniqueID != device?.uniqueID { preview?.device = device }
         return preview
@@ -43,7 +47,7 @@ enum GuestCaptureDeviceObserver {
     }
     #if DEBUG
     static func backgroundTrace() -> [[String: Any]] {
-        lock.lock(); let all = capturers.allObjects; let proxies = frameDelegates; lock.unlock()
+        lock.lock(); let all = knownCapturers.allObjects; let proxies = frameDelegates; lock.unlock()
         return all.map { camera in
             var result = proxies[ObjectIdentifier(camera)]?.backgroundTrace ?? [:]
             result["running"] = camera.captureSession.isRunning
@@ -71,9 +75,23 @@ enum GuestCaptureDeviceObserver {
     /// Await stop before start; a failed device restores the last working camera.
     private static func activeCapturers() -> [RTCCameraVideoCapturer] {
         lock.lock(); defer { lock.unlock() }
-        return capturers.allObjects.filter { $0.captureSession.isRunning }
+        return knownCapturers.allObjects.filter { $0.captureSession.isRunning }
     }
-    @MainActor static func selectCurrentDevice(_ device: AVCaptureDevice) async throws {
+    @MainActor static func stopCapturesForTeardown() async {
+        lock.lock(); let cameras = knownCapturers.allObjects; lock.unlock()
+        await withTaskGroup(of: Void.self) { group in
+            for camera in cameras {
+                group.addTask {
+                    await withCheckedContinuation { continuation in
+                        camera.stopCapture { continuation.resume() }
+                    }
+                }
+            }
+        }
+    }
+    @MainActor static func selectCurrentDevice(_ device: AVCaptureDevice,
+        canContinue: @escaping @MainActor () -> Bool = { true }) async throws {
+        guard canContinue() else { throw CancellationError() }
         let active = activeCapturers()
         guard active.count == 1, let capturer = active.first,
               let old = currentDevice() else { throw CocoaError(.featureUnsupported) }
@@ -84,20 +102,20 @@ enum GuestCaptureDeviceObserver {
         let expected = revision(capturer) &+ 1
         await withCheckedContinuation { continuation in capturer.stopCapture { continuation.resume() } }
         try Task.checkCancellation()
-        guard revision(capturer) == expected else { throw CancellationError() }
+        guard canContinue(), revision(capturer) == expected else { throw CancellationError() }
         setPreferredDevice(device)
         do {
             try await start(capturer, device: device, format: format, fps: requested)
         } catch {
-            if !Task.isCancelled, revision(capturer) == expected &+ 1 {
+            if !Task.isCancelled, canContinue(), revision(capturer) == expected &+ 1 {
                 setPreferredDevice(old)
                 try? await start(capturer, device: old, format: previousFormat, fps: requested)
             }
             throw error
         }
-        guard !Task.isCancelled, revision(capturer) == expected &+ 1 else { throw CancellationError() }
+        guard !Task.isCancelled, canContinue(), revision(capturer) == expected &+ 1 else { throw CancellationError() }
     }
-    private static func start(_ camera: RTCCameraVideoCapturer, device: AVCaptureDevice,
+    @MainActor private static func start(_ camera: RTCCameraVideoCapturer, device: AVCaptureDevice,
                               format: AVCaptureDevice.Format, fps: Int) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             camera.startCapture(with: device, format: format, fps: fps) { error in
@@ -160,13 +178,13 @@ enum GuestCaptureDeviceObserver {
         }
         lock.lock()
         revisions.setObject(NSNumber(value: (revisions.object(forKey: capturer)?.uint64Value ?? 0) &+ 1), forKey: capturer)
-        capturers.add(capturer)
+        knownCapturers.add(capturer)
         sources[key] = Source(device: device, generation: UUID(), requestedFPS: requestedFPS)
         if sessions[key] == nil {
             sessions[key] = capturer.captureSession.observe(\.isRunning, options: [.new]) { _, _ in notify() }
         }
-        // Bound observation lifetime without retaining capturers or old sessions.
-        let alive = Set(capturers.allObjects.map(ObjectIdentifier.init))
+        // Bound observation lifetime without retaining knownCapturers or old sessions.
+        let alive = Set(knownCapturers.allObjects.map(ObjectIdentifier.init))
         sessions = sessions.filter { alive.contains($0.key) }
         sources = sources.filter { alive.contains($0.key) }
         frameDelegates = frameDelegates.filter { alive.contains($0.key) }
@@ -177,7 +195,7 @@ enum GuestCaptureDeviceObserver {
         DispatchQueue.main.async { NotificationCenter.default.post(name: changed, object: nil) }
     }
     private static func unregister(_ capturer: RTCCameraVideoCapturer) -> GuestCameraFrameDelegate? {
-        lock.lock(); capturers.remove(capturer)
+        lock.lock()
         revisions.setObject(NSNumber(value: (revisions.object(forKey: capturer)?.uint64Value ?? 0) &+ 1), forKey: capturer)
         let proxy = frameDelegates.removeValue(forKey: ObjectIdentifier(capturer))
         sessions.removeValue(forKey: ObjectIdentifier(capturer)); sources.removeValue(forKey: ObjectIdentifier(capturer))
@@ -190,7 +208,7 @@ enum GuestCaptureDeviceObserver {
         currentSource()?.device
     }
     static func currentSource() -> Source? {
-        lock.lock(); let all = capturers.allObjects; let registered = sources; lock.unlock()
+        lock.lock(); let all = knownCapturers.allObjects; let registered = sources; lock.unlock()
         let active = all.filter { $0.captureSession.isRunning }
         guard active.count == 1 else { return nil }
         let inputs = active[0].captureSession.inputs.compactMap { $0 as? AVCaptureDeviceInput }
