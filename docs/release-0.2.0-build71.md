@@ -62,5 +62,33 @@ Evidence under `.build/`:
 ## Delivery
 
 Build: 0.2.0 (71), all three bundles. Minimum iOS remains 16.0.
-Distribution verification and immutable artifact details will be added after
-upload and TestFlight group read-back.
+Frozen product source: `9f569254ff0bb8bb96bdf5e1bed155ee7d83acd6`.
+Signed archive:
+`~/Library/Developer/Xcode/Archives/2026-10-11/RockNRoll-0.2.0-b71.xcarchive`.
+IPA: `.build/release71/export/RockNRoll.ipa`.
+SHA-256: `fe60218d7632b203eecb76fdd6b54aa30b38e059c0524321b45d8d52b5d49d0f`.
+Executable/dSYM UUID: `6C5DBEC0-7DA6-3D35-AD36-0F28DD55CD48`.
+
+The app and both extensions passed strict deep signatures, version/minimum-OS,
+disabled-debugging, Production iCloud and encryption compliance checks. Camera,
+microphone and Bluetooth purpose strings are present; Contacts access is absent.
+App symbols match. Prebuilt third-party framework symbols are unavailable;
+Apple accepted the upload with non-blocking symbol warnings.
+Artifact report: `.build/release71/artifact-verification.json`.
+
+Upload succeeded on 2026-10-11; Apple completed processing.
+App Store Connect build ID: `9275f98f-8c53-407c-b39e-876ddcbc1884`.
+
+The existing Rock’n’Roll Internal and Rock’n’Roll Public Beta groups were assigned
+and independently verified as **Testing** for 0.2.0 (71). Internal has one tester
+and 59 builds; public has six testers and 56 builds. Automatically notify testers
+was enabled. Public invitation: https://testflight.apple.com/join/Hd13C9U3.
+
+Distribution evidence: `.build/release71/upload.log`,
+`.build/release71/app-store-connect-build-id.txt`,
+`.build/release71/testflight-public.jpg`,
+`.build/release71/testflight-internal.jpg`, and
+`.build/release71/internal-status.txt`. Previous published artifacts are preserved.
+
+What to Test: “Improved video preview smoothness and responsiveness. Fixed bugs
+and improved stability.”
