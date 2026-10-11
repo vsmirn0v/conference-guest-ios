@@ -11,10 +11,10 @@ final class MediaEnergyTests: XCTestCase {
         XCTAssertEqual(budget.inlineFPS, 30)
         XCTAssertEqual(budget.cameraFPS, 30); XCTAssertEqual(budget.sharingFPS, 15)
         budget.update(lowPower: true, thermal: .nominal)
-        XCTAssertEqual(budget.previewFPS, 10)
+        XCTAssertEqual(budget.previewFPS, 15)
         XCTAssertEqual(budget.cameraFPS, 15); XCTAssertEqual(budget.sharingFPS, 10)
         budget.update(lowPower: false, thermal: .critical)
-        XCTAssertEqual(budget.previewFPS, 5)
+        XCTAssertEqual(budget.previewFPS, 10)
         XCTAssertEqual(budget.cameraFPS, 10); XCTAssertEqual(budget.sharingFPS, 5)
         budget.update(lowPower: false, thermal: .nominal)
         XCTAssertEqual(budget.pressure, .severe, "Do not oscillate immediately on thermal changes")
@@ -23,7 +23,7 @@ final class MediaEnergyTests: XCTestCase {
         XCTAssertEqual(budget.pressure, .severe)
         budget.update(lowPower: false, thermal: .nominal)
         try await Task.sleep(nanoseconds: 80_000_000)
-        XCTAssertEqual(budget.previewFPS, 15)
+        XCTAssertEqual(budget.previewFPS, 30)
     }
     func testBackgroundMeterDoesNotCalculatePCMUnlessFloatingVideoNeedsIt() throws {
         let meter = MicrophoneActivity(observeLifecycle: false)

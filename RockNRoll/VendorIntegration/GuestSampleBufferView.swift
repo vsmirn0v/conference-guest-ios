@@ -4,11 +4,14 @@ import UIKit
 final class GuestSampleBufferView: UIView {
     private let display = AVSampleBufferDisplayLayer()
     private var rotation = 0
+    private var capturePreview: CameraCapturePreviewView?
+    private weak var captureSource: CameraCapturePreview?
+    var onCameraPreviewSizeChanged: ((CGSize) -> Void)?
     var mirrored = false {
-        didSet { if oldValue != mirrored { setNeedsLayout(); layoutIfNeeded() } }
+        didSet { capturePreview?.mirrored = mirrored; if oldValue != mirrored { setNeedsLayout(); layoutIfNeeded() } }
     }
     override var contentMode: UIView.ContentMode {
-        didSet { display.videoGravity = contentMode == .scaleAspectFill ? .resizeAspectFill : .resizeAspect }
+        didSet { display.videoGravity = contentMode == .scaleAspectFill ? .resizeAspectFill : .resizeAspect; capturePreview?.contentMode = contentMode }
     }
 
     override init(frame: CGRect) {
@@ -33,7 +36,24 @@ final class GuestSampleBufferView: UIView {
         return true
     }
 
-    func clear() { display.flushAndRemoveImage() }
+    func clear() { setCameraPreview(nil); display.flushAndRemoveImage() }
+
+    func setCameraPreview(_ source: CameraCapturePreview?, enabled: Bool = true) {
+        if captureSource !== source {
+            capturePreview?.stop(); capturePreview?.removeFromSuperview(); capturePreview = nil
+            captureSource = source
+            if let source {
+                let preview = source.makeView()
+                preview.onDisplaySizeChanged = { [weak self] size in self?.onCameraPreviewSizeChanged?(size) }
+                preview.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                preview.frame = bounds; addSubview(preview); capturePreview = preview
+                display.flushAndRemoveImage()
+            }
+        }
+        capturePreview?.mirrored = mirrored
+        capturePreview?.contentMode = contentMode
+        capturePreview?.enabled = enabled
+    }
 
     /// A static canvas has no next frame to restart display after reparenting.
     func restore(_ sample: CMSampleBuffer, rotation: Int) {

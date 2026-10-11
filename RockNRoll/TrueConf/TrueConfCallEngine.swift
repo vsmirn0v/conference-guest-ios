@@ -89,7 +89,7 @@ final class TrueConfCallEngine: CallEngine {
         studio.liveCaptureDevice = { [weak self] in self?.publisher?.captureDevice }
         studio.makeLivePreview = { [weak self] in
             guard let track = self?.publisher?.videoTrack else { return nil }
-            let preview = CallVideoView(); preview.track = .native(track)
+            let preview = CallVideoView(); preview.track = self?.publisher?.cameraPreview.map { .cameraPreview($0) } ?? .native(track)
             preview.isMirrored = CameraPreviewPresentation.isMirrored(device: self?.publisher?.captureDevice)
             return StudioLivePreview(view: preview, stop: { preview.track = nil })
         }
@@ -573,7 +573,7 @@ final class TrueConfCallEngine: CallEngine {
             items.append(.init(id: person.id, name: person.name, isLocal: false, microphoneOn: person.microphoneOn,
                 cameraOn: person.cameraOn, screenShareOn: person.screenShareOn, isSpeaking: false, videoTracks: videos))
         }
-        let localVideo = publisher?.videoTrack.map { CallVideoStream(id: localID + ".camera", source: .camera, track: .native($0)) }
+        let localVideo = publisher?.videoTrack.map { CallVideoStream(id: localID + ".camera", source: .camera, track: publisher?.cameraPreview.map { .cameraPreview($0) } ?? .native($0)) }
         items.insert(.init(id: localID.isEmpty ? "local" : localID, name: name, isLocal: true,
             microphoneOn: microphoneStatus == .on, cameraOn: localVideo != nil,
             screenShareOn: sharingActive, isSpeaking: studio.microphoneActivity.status == .on && studio.microphoneActivity.level > 0.1,

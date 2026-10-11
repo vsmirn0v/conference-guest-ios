@@ -8,6 +8,7 @@ final class RockVideoPictureInPicture {
     private let content = UIView()
     private let video = GuestSampleBufferView()
     private var sink: RoomFloatingVideoSink?
+    private var cameraPreview: CameraCapturePreview?
     private var energySubscription: AnyCancellable?
     private var presenting = false
     var onPresentationChanged: ((Bool) -> Void)?
@@ -24,6 +25,7 @@ final class RockVideoPictureInPicture {
         floating.onPresentationChanged = { [weak self] visible in
             guard let self else { return }
             self.presenting = visible
+            self.cameraPreview?.setFloatingDemand(visible)
             self.sink?.setWanted(visible, fps: MediaEnergyBudget.shared.previewFPS)
             self.onPresentationChanged?(visible)
         }
@@ -66,6 +68,7 @@ final class RockVideoPictureInPicture {
         video.mirrored = mirrored && !isScreenShare
         if selectedSource?.identity != source.identity {
             retireSink()
+            cameraPreview?.setFloatingDemand(false); cameraPreview = nil
             selectedSource = source
             let identity = source.identity
             let sink = RoomFloatingVideoSink { [weak self] sample, rotation in
@@ -79,7 +82,10 @@ final class RockVideoPictureInPicture {
             }
             self.sink = sink
             sink.setWanted(presenting, fps: MediaEnergyBudget.shared.previewFPS)
-            source.add(sink)
+            if let capture = source.cameraPreview {
+                cameraPreview = capture
+                capture.setFloatingDemand(presenting); capture.frames.add(sink)
+            } else { source.add(sink) }
         }
         video.contentMode = .scaleAspectFit
         caption.text = name.isEmpty ? nil : "  \(name)\(isScreenShare ? L(" · Screen") : "")  "
@@ -97,13 +103,14 @@ final class RockVideoPictureInPicture {
     func clear() {
         floating.setSourceView(nil)
         retireSink()
+        cameraPreview?.setFloatingDemand(false); cameraPreview = nil
         video.clear()
         selectedSource = nil
         caption.text = nil
     }
 
     private func retireSink() {
-        if let sink { sink.retire(); selectedSource?.remove(sink) }
+        if let sink { sink.retire(); cameraPreview?.frames.remove(sink); selectedSource?.remove(sink) }
         sink = nil
     }
 

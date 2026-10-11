@@ -170,7 +170,15 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
     init(position: AVCaptureDevice.Position = .front, framesPerSecond: Double? = nil) {
         self.position = position; self.framesPerSecond = framesPerSecond
     }
-    private lazy var surface = PreviewSurface(session: capture.session)
+    private lazy var previewSource: CameraCapturePreview = {
+        let source = CameraCapturePreview(session: capture.session, device: nil)
+        source.onDemandChanged = { [weak self] in
+            guard let self, self.framesPerSecond == nil else { return }
+            self.capture.setPreviewRate(MediaEnergyBudget.shared.previewFPS)
+        }
+        return source
+    }()
+    private lazy var surface = previewSource.makeView()
     var view: UIView { surface }
     var device: AVCaptureDevice? {
         guard capture.session.isRunning else { return nil }
@@ -196,8 +204,9 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         }
         try Task.checkCancellation()
         guard authorized else { throw PreviewError.permission }
-        try await capture.start(position: position, selectedDevice: selectedDevice, frames: frames, framesPerSecond: framesPerSecond)
-        surface.device = device
+        try await capture.start(position: position, selectedDevice: selectedDevice, frames: frames,
+            framesPerSecond: framesPerSecond ?? Double(MediaEnergyBudget.shared.previewFPS))
+        previewSource.device = device
         surface.mirrored = CameraPreviewPresentation.isMirrored(device: device)
         surface.layoutIfNeeded()
     }
@@ -227,7 +236,7 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         private var sink: FrameSink?
         private var rotationCoordinator: AnyObject?
         private var rotationObservation: NSKeyValueObservation?
-        private var originalDurations: (format: AVCaptureDevice.Format, minimum: CMTime, maximum: CMTime)?
+        private var originalDurations: (device: AVCaptureDevice, format: AVCaptureDevice.Format, minimum: CMTime, maximum: CMTime)?
         init() { session.automaticallyConfiguresApplicationAudioSession = false }
 
         func start(position: AVCaptureDevice.Position, selectedDevice: AVCaptureDevice?, frames: (@MainActor (CVPixelBuffer, Int) -> Void)?, framesPerSecond: Double?) async throws {
@@ -238,6 +247,9 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                         let preferred = selectedDevice.flatMap { selected in devices.first { $0.uniqueID == selected.uniqueID } }
                             ?? (ProcessInfo.processInfo.isiOSAppOnMac ? CameraDevices.preferred(in: devices) : devices.first { $0.position == position })
                         guard let device = preferred else { throw PreviewError.unavailable }
+                        if originalDurations == nil {
+                            originalDurations = (device, device.activeFormat, device.activeVideoMinFrameDuration, device.activeVideoMaxFrameDuration)
+                        }
                         if input?.device.uniqueID != device.uniqueID {
                             let next = try AVCaptureDeviceInput(device: device)
                             session.beginConfiguration()
@@ -311,9 +323,9 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                             output = video; sink = receiver
                             session.commitConfiguration()
                         }
-                        // Only Presenter-owned capture requests a fixed cadence. Keep
+                        // Preview and Presenter use an explicit supported cadence. Keep
                         // the selected format/system effects and clamp to its range.
-                        if frames != nil, let requested = framesPerSecond, requested.isFinite, requested > 0,
+                        if let requested = framesPerSecond, requested.isFinite, requested > 0,
                            let device = input?.device,
                            let range = device.activeFormat.videoSupportedFrameRateRanges.min(by: {
                                abs(min($0.maxFrameRate, max($0.minFrameRate, requested)) - requested) <
@@ -321,9 +333,6 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                            }) {
                             let rate = min(range.maxFrameRate, max(range.minFrameRate, requested))
                             try device.lockForConfiguration()
-                            if originalDurations == nil {
-                                originalDurations = (device.activeFormat, device.activeVideoMinFrameDuration, device.activeVideoMaxFrameDuration)
-                            }
                             let duration = CMTimeMaximum(range.minFrameDuration, CMTimeMinimum(range.maxFrameDuration,
                                 CMTime(seconds: 1 / rate, preferredTimescale: 1_000_000_000)))
                             device.activeVideoMinFrameDuration = duration
@@ -339,21 +348,22 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
             }
         }
 
+        func setPreviewRate(_ requested: Int) {
+            queue.async { [self] in
+                guard session.isRunning, let device = input?.device,
+                      let fps = CameraCaptureRate.supported(requested, ranges: device.activeFormat.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate }) else { return }
+                do {
+                    try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
+                    device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(fps))
+                    device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(fps))
+                } catch { /* Keep the supported running preview. */ }
+            }
+        }
+
         func stop() async {
             await withCheckedContinuation { result in
                 queue.async { [self] in
                     if session.isRunning { session.stopRunning() }
-                    // Restore our cadence before the SDK can reclaim the device.
-                    if let device = input?.device, let original = originalDurations,
-                       device.activeFormat === original.format {
-                        do {
-                            try device.lockForConfiguration()
-                            device.activeVideoMinFrameDuration = original.minimum
-                            device.activeVideoMaxFrameDuration = original.maximum
-                            device.unlockForConfiguration()
-                        } catch { /* Capture is stopped; cleanup must still release ownership. */ }
-                    }
-                    originalDurations = nil
                     // Release the camera device before handing ownership to the meeting SDK.
                     session.beginConfiguration()
                     output?.setSampleBufferDelegate(nil, queue: nil)
@@ -363,6 +373,18 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
                     if let input { session.removeInput(input) }
                     input = nil
                     session.commitConfiguration()
+                    // Session configuration can reset cadence. Restore the exact
+                    // pre-preview format/rate after releasing all capture inputs.
+                    if let original = originalDurations {
+                        do {
+                            try original.device.lockForConfiguration()
+                            defer { original.device.unlockForConfiguration() }
+                            original.device.activeFormat = original.format
+                            original.device.activeVideoMinFrameDuration = original.minimum
+                            original.device.activeVideoMaxFrameDuration = original.maximum
+                        } catch { /* Device is released even if restoration is unavailable. */ }
+                    }
+                    originalDurations = nil
                     result.resume()
                 }
             }
@@ -389,59 +411,7 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         }
     }
 
-    private final class PreviewSurface: UIView {
-        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
-        private var preview: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
-        var device: AVCaptureDevice? { didSet { configureRotation() } }
-        private var rotationCoordinator: AnyObject?
-        private var rotationObservation: NSKeyValueObservation?
-        var mirrored = true { didSet { setNeedsLayout() } }
-        init(session: AVCaptureSession) {
-            super.init(frame: .zero)
-            backgroundColor = .black
-            preview.session = session
-            preview.videoGravity = .resizeAspect
-        }
-        required init?(coder: NSCoder) { nil }
-        private func configureRotation() {
-            rotationObservation = nil; rotationCoordinator = nil
-            if #available(iOS 17.0, *), !ProcessInfo.processInfo.isiOSAppOnMac, let device {
-                let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: preview)
-                rotationCoordinator = coordinator
-                rotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview, options: [.initial, .new]) {
-                    [weak self] _, _ in Task { @MainActor in self?.setNeedsLayout() }
-                }
-            }
-            setNeedsLayout()
-        }
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            // The preview coordinator reports zero while its layer is detached.
-            // Rebind after Studio inserts the asynchronous capture view.
-            configureRotation()
-        }
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            guard let connection = preview.connection else { return }
-            if #available(iOS 17.0, *), !ProcessInfo.processInfo.isiOSAppOnMac,
-               let coordinator = rotationCoordinator as? AVCaptureDevice.RotationCoordinator {
-                let angle = PrivateCameraPreview.connectionAngle(horizon: coordinator.videoRotationAngleForHorizonLevelPreview)
-                if connection.isVideoRotationAngleSupported(angle) { connection.videoRotationAngle = angle }
-            } else if !ProcessInfo.processInfo.isiOSAppOnMac, connection.isVideoOrientationSupported {
-                switch window?.windowScene?.interfaceOrientation {
-                case .landscapeLeft: connection.videoOrientation = .landscapeLeft
-                case .landscapeRight: connection.videoOrientation = .landscapeRight
-                case .portraitUpsideDown: connection.videoOrientation = .portraitUpsideDown
-                default: connection.videoOrientation = .portrait
-                }
-            }
-            // Mirroring is independent from orientation and applies on every platform.
-            if connection.isVideoMirroringSupported {
-                connection.automaticallyAdjustsVideoMirroring = false
-                connection.isVideoMirrored = mirrored
-            }
-        }
-    }
+
 }
 
 @MainActor

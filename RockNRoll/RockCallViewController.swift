@@ -108,6 +108,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let store: CatchUpStore
     private let chat: ChatStore
     private let workspace = CallWorkspaceControls()
+    var localCameraPreview: CameraCapturePreview?
     private var displayedSnapshot: CallMediaSnapshot?
     var supportsChat = true
     var supportsSharing = true
@@ -768,7 +769,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
     }
 
-    func render(room: Room) { render(snapshot: CallMediaSnapshot(room: room)) }
+    func render(room: Room) { render(snapshot: CallMediaSnapshot(room: room, localCameraPreview: localCameraPreview)) }
 
     func render(snapshot: CallMediaSnapshot) {
         displayedSnapshot = snapshot
@@ -1126,7 +1127,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     func refreshSpeaking(room: Room, speakers: [Participant]? = nil) {
-        refreshSpeaking(snapshot: CallMediaSnapshot(room: room), speakerOrder: speakers?.map { $0.identity?.stringValue ?? $0.sid?.stringValue ?? "local" })
+        refreshSpeaking(snapshot: CallMediaSnapshot(room: room, localCameraPreview: localCameraPreview), speakerOrder: speakers?.map { $0.identity?.stringValue ?? $0.sid?.stringValue ?? "local" })
     }
 
     func refreshSpeaking(snapshot: CallMediaSnapshot, speakerOrder: [String]? = nil) {

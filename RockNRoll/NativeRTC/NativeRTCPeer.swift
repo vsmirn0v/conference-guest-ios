@@ -52,6 +52,10 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
     private(set) var videoTrack: LKRTCVideoTrack?
     private var camera: LKRTCCameraVideoCapturer?
     private var cameraFrameDelegate: NativeCameraFrameDelegate?
+    @MainActor private(set) var cameraPreview: CameraCapturePreview?
+    #if DEBUG
+    var captureTimestampsForTesting: [Int64] { cameraFrameDelegate?.timestampsForTesting ?? [] }
+    #endif
     @MainActor private var cameraQuality: CameraQualityMonitor?
     @MainActor private var cameraSource: LKRTCVideoSource?
     private var cameraPosition: AVCaptureDevice.Position
@@ -250,7 +254,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         guard !closed || !enabled else { throw CancellationError() }
         guard enabled != (camera != nil) else { return }
         if !enabled {
-            cameraQuality = nil; cameraSource = nil
+            cameraPreview = nil; cameraQuality = nil; cameraSource = nil
             videoTrack = nil; updateVideoSender(); captureDevice = nil
             let old = camera; camera = nil
             let oldDelegate = cameraFrameDelegate; cameraFrameDelegate = nil
@@ -292,6 +296,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
             throw CancellationError()
         }
         videoTrack = factory.videoTrack(with: source, trackId: "camera")
+        cameraPreview = CameraCapturePreview(session: capturer.captureSession, device: device, frames: delegate.previewFrames)
         configureCameraCadence(capturer: capturer, device: device)
         updateVideoSender()
     }
@@ -314,14 +319,14 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
             Task { @MainActor [weak self, weak capturer] in
                 guard let self, let capturer, self.camera === capturer,
                       self.captureDevice?.uniqueID == device.uniqueID, !self.closed else { return }
-                let fps = profile.fps
+                let fps = max(profile.fps, self.cameraPreview?.frameRate ?? 0)
                 guard let rate = CameraCaptureRate.supported(fps,
                     ranges: device.activeFormat.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate }) else { return }
                 let raw = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
                 let size = CameraQualityPolicy.bounded(raw, maximum: profile.maximum)
                 // Adapt cadence using the selected sensor's full dimensions.
                 // A fixed landscape request crops cameras with a different aspect.
-                self.cameraSource?.adaptOutputFormat(toWidth: size.width, height: size.height, fps: Int32(fps))
+                self.cameraSource?.adaptOutputFormat(toWidth: size.width, height: size.height, fps: Int32(profile.fps))
                 do {
                     try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
                     device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(rate))
@@ -330,6 +335,9 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
             }
         }
         quality.onChange?(quality.profile)
+        cameraPreview?.onDemandChanged = { [weak quality] in
+            guard let quality else { return }; quality.onChange?(quality.profile)
+        }
         quality.start { [weak self, weak capturer] in
             guard let self, let capturer, self.camera === capturer, !self.closed, self.connection.connectionState == .connected,
                   self.videoTransceiver?.sender.track?.trackId == self.videoTrack?.trackId,
@@ -389,6 +397,7 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
             throw CancellationError()
         }
         captureDevice = device; cameraPosition = device.position
+        cameraPreview?.device = device
         configureCameraCadence(capturer: capturer, device: device)
         // Keep videoTrack and its source: attached inline/Studio/Presenter
         // renderers continue receiving frames after capture switches devices.
@@ -436,9 +445,21 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
 
 /// Keep the SDK's source pixels, rotation and timing together across capture.
 final class NativeCameraFrameDelegate: NSObject, LKRTCVideoCapturerDelegate {
+    let previewFrames = CameraPreviewFrames()
     private let downstream: LKRTCVideoCapturerDelegate
     init(downstream: LKRTCVideoCapturerDelegate) { self.downstream = downstream }
+    #if DEBUG
+    private let lock = NSLock()
+    private var times: [Int64] = []
+    var timestampsForTesting: [Int64] { lock.lock(); defer { lock.unlock() }; return times }
+    #endif
     func capturer(_ capturer: LKRTCVideoCapturer, didCapture frame: LKRTCVideoFrame) {
+        #if DEBUG
+        lock.lock(); times.append(frame.timeStampNs)
+        if times.count > 120 { times.removeFirst(times.count - 120) }
+        lock.unlock()
+        #endif
+        if previewFrames.hasSinks, let native = frame.buffer as? LKRTCCVPixelBuffer { previewFrames.render(native.pixelBuffer, rotation: frame.rotation.rawValue) }
         downstream.capturer(capturer, didCapture: frame)
     }
 }

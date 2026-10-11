@@ -7,15 +7,17 @@ enum CallVideoSource {
     case room(VideoTrack)
     case native(LKRTCVideoTrack)
     case composite(CompositeVideoSource)
+    case cameraPreview(CameraCapturePreview)
     var identity: ObjectIdentifier {
-        switch self { case .room(let track): ObjectIdentifier(track); case .native(let track): ObjectIdentifier(track); case .composite(let source): ObjectIdentifier(source) }
+        switch self { case .room(let track): ObjectIdentifier(track); case .native(let track): ObjectIdentifier(track); case .composite(let source): ObjectIdentifier(source); case .cameraPreview(let source): ObjectIdentifier(source) }
     }
     var roomTrack: VideoTrack? { if case .room(let track) = self { track } else { nil } }
+    var cameraPreview: CameraCapturePreview? { if case .cameraPreview(let source) = self { source } else { nil } }
     func add(_ sink: RoomFloatingVideoSink) {
-        switch self { case .room(let track): track.add(videoRenderer: sink); case .native(let track): track.add(sink); case .composite(let source): source.add(sink) }
+        switch self { case .room(let track): track.add(videoRenderer: sink); case .native(let track): track.add(sink); case .composite(let source): source.add(sink); case .cameraPreview: break }
     }
     func remove(_ sink: RoomFloatingVideoSink) {
-        switch self { case .room(let track): track.remove(videoRenderer: sink); case .native(let track): track.remove(sink); case .composite(let source): source.remove(sink) }
+        switch self { case .room(let track): track.remove(videoRenderer: sink); case .native(let track): track.remove(sink); case .composite(let source): source.remove(sink); case .cameraPreview: break }
     }
 }
 
@@ -49,7 +51,7 @@ struct CallMediaSnapshot {
     var remoteParticipants: [CallParticipant] { participants.filter { !$0.isLocal } }
     var localShare: CallVideoSource? { participants.first { $0.isLocal }?.videoTracks.first { !$0.isMuted && $0.source == .screenShareVideo }?.track }
     init(participants: [CallParticipant]) { self.participants = participants }
-    init(room: Room) {
+    init(room: Room, localCameraPreview: CameraCapturePreview? = nil) {
         participants = ([room.localParticipant] + room.remoteParticipants.values.sorted {
             ($0.identity?.stringValue ?? "") < ($1.identity?.stringValue ?? "")
         }).map { participant in
@@ -64,7 +66,9 @@ struct CallMediaSnapshot {
                     guard let track = publication.track as? VideoTrack else { return nil }
                     return .init(id: publication.sid.stringValue,
                         source: publication.source == .screenShareVideo ? .screenShareVideo : .camera,
-                        track: .room(track), isMuted: publication.isMuted)
+                        track: participant === room.localParticipant && publication.source == .camera
+                            ? localCameraPreview.map { .cameraPreview($0) } ?? .room(track) : .room(track),
+                        isMuted: publication.isMuted)
                 })
         }
     }

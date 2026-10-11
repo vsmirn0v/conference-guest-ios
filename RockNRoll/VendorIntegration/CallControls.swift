@@ -347,8 +347,14 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 return
             }
             let turnOn = state.map { $0.cameraState != .on } ?? !(self?.cameraOn ?? false)
+            #if DEBUG
+            CameraBackgroundTrace.event("camera-request", ["on": turnOn, "held": studio?.held == true, "coordinator": coordinator != nil])
+            #endif
             Task { @MainActor [weak studio] in
                 await studio?.releasePrivateCamera()
+                #if DEBUG
+                CameraBackgroundTrace.event("camera-request-ready", ["on": turnOn, "active": studio?.active != false, "held": studio?.held == true, "coordinator": coordinator != nil])
+                #endif
                 guard studio?.active != false, !turnOn || studio?.held != true else { return }
                 onCameraState(turnOn)
                 coordinator?.toggleCamera(isOn: turnOn)
@@ -672,6 +678,12 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         stageViewport?.setMediaActive(active)
         updateStageMicrophoneStatus()
         layoutPresentation()
+    }
+
+    func showStageCameraPreview(_ source: CameraCapturePreview?, mirrored: Bool) {
+        stageVideo.mirrored = mirrored
+        stageVideo.setCameraPreview(source, enabled: wantsStageFrames && !isHeld)
+        if source != nil { stageHasFrame = true; stageStatus.isHidden = true }
     }
 
     func showStageFrame(_ sample: CMSampleBuffer, rotation: Int, mirrored: Bool = false) {

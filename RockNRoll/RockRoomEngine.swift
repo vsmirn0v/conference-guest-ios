@@ -40,6 +40,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private let cameraPublication = CameraPublicationCoordinator<LocalTrackPublication>()
     private var configuredRoomOptions = RoomMediaPolicy.options
     private var cameraQuality: CameraQualityMonitor?
+    private var cameraPreview: CameraCapturePreview?
     private var cameraOutput: CameraOutputProcessor?
     private var studio = StudioModel(audioControl: .fullProcessing, preferences: .standard)
     private var microphoneProbe: RoomMicrophoneProbe?
@@ -197,15 +198,16 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
                 dimensions: plan.map { Dimensions(width: $0.rawOutput.width, height: $0.rawOutput.height) } ?? options.dimensions,
                 fps: plan?.captureFPS ?? options.fps))
             guard self.room === room, !self.leaveRequested else { throw CancellationError() }
+            self.cameraPreview?.device = device
             self.refresh(room)
         }
         studio.makeLivePreview = { [weak self, weak room = self.room] in
             guard let self, let room, self.room === room, !self.leaveRequested,
                   let track = room.localParticipant.firstCameraVideoTrack else { return nil }
-            let preview = VideoView()
+            let preview = CallVideoView()
             preview.layoutMode = .fit
-            preview.mirrorMode = CameraPreviewPresentation.isMirrored(device: self.studio.liveCaptureDevice?()) ? .mirror : .off
-            preview.track = track
+            preview.isMirrored = CameraPreviewPresentation.isMirrored(device: self.studio.liveCaptureDevice?())
+            preview.track = self.cameraPreview.map { .cameraPreview($0) } ?? .room(track)
             return StudioLivePreview(view: preview, stop: { preview.track = nil })
         }
         view.onLeave = { [weak self] in self?.leave() }
@@ -515,16 +517,21 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         track.processor = output; cameraOutput = output
         let quality = CameraQualityMonitor(); cameraQuality = quality
         output.setProfile(quality.profile)
-        quality.onChange = { [weak output, weak capturer] profile in
+        let preview = CameraCapturePreview(session: capturer.captureSession, device: capturer.device, frames: output.previewFrames)
+        cameraPreview = preview; callView?.localCameraPreview = preview
+        quality.onChange = { [weak output, weak capturer, weak preview] profile in
             output?.setProfile(profile)
             if let device = capturer?.device,
-               let fps = CameraCaptureRate.supported(profile.fps, ranges: device.activeFormat.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate }) {
+               let fps = CameraCaptureRate.supported(max(profile.fps, preview?.frameRate ?? 0), ranges: device.activeFormat.videoSupportedFrameRateRanges.map { $0.minFrameRate...$0.maxFrameRate }) {
                 do {
                     try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
                     device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(fps))
                     device.activeVideoMaxFrameDuration = CMTime(value: 1, timescale: Int32(fps))
                 } catch { /* Processor still caps frames at the requested cadence. */ }
             }
+        }
+        preview.onDemandChanged = { [weak quality] in
+            guard let quality else { return }; quality.onChange?(quality.profile)
         }
         quality.start { [weak self, weak room, weak track] in
             guard let self, let room, let track, self.room === room, !self.leaveRequested,
@@ -599,7 +606,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private func finish(failed: Bool) {
         guard hasJoinStarted else { return }
         cameraPublication.cancel()
-        cameraQuality = nil; cameraOutput = nil
+        cameraQuality = nil; cameraOutput = nil; cameraPreview = nil; callView?.localCameraPreview = nil
         #if DEBUG
         VideoDecoderFactoryExperiment.shared.end(token: decoderExperimentToken)
         decoderExperimentToken = nil

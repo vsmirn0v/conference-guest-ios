@@ -1,4 +1,5 @@
 import ConferenceCore
+import Combine
 import UIKit
 
 /// One color-managed sink per visible gallery tile. The provider retains its
@@ -7,8 +8,10 @@ import UIKit
 private final class GuestGalleryTile: UIView {
     private let video = GuestSampleBufferView()
     private let processor = GuestVideoFrameProcessor()
+    private var energy: AnyCancellable?
     private var tap: GuestVideoFrameTap?
     private weak var renderer: UIView?
+    private var localCamera = false
     private var mediaActive = false
     private var visible = false
     private var hasFrame = false
@@ -26,7 +29,10 @@ private final class GuestGalleryTile: UIView {
         status.numberOfLines = 0; status.textAlignment = .center
         status.isUserInteractionEnabled = false
         addSubview(status)
-        processor.setFrameRate(15)
+        energy = MediaEnergyBudget.shared.$pressure.sink { [weak self] _ in
+            Task { @MainActor in self?.processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS) }
+        }
+        processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
         processor.onSample = { [weak self] sample, _, rotation in
             guard let self, self.visible, self.mediaActive else { return }
             if self.video.enqueue(sample, rotation: rotation) {
@@ -41,6 +47,7 @@ private final class GuestGalleryTile: UIView {
             stop(); renderer = item.renderer; video.clear(); hasFrame = false
         }
         mediaActive = item.active
+        localCamera = item.isLocalCamera
         video.mirrored = item.mirrored
         viewport.updatePresentation(name: item.name, showInfo: true, microphoneOn: item.microphoneOn,
             watermark: item.watermark, zoomable: false, placeholderText: L("Camera off"),
@@ -64,6 +71,12 @@ private final class GuestGalleryTile: UIView {
     func setVisible(_ value: Bool) { visible = value; refreshDemand() }
     private func refreshDemand() {
         guard visible, mediaActive, let renderer else { stop(); return }
+        if localCamera, let source = GuestCaptureDeviceObserver.cameraPreview() {
+            processor.setEnabled(false); tap?.invalidate(); tap = nil
+            video.setCameraPreview(source, enabled: visible)
+            hasFrame = true; status.isHidden = true
+            return
+        }
         if tap?.matches(renderer) != true {
             stop()
             let source = processor.replaceSource(), processor = processor
@@ -71,7 +84,7 @@ private final class GuestGalleryTile: UIView {
         }
         processor.setEnabled(tap != nil)
     }
-    private func stop() { processor.setEnabled(false); tap?.invalidate(); tap = nil }
+    private func stop() { processor.setEnabled(false); tap?.invalidate(); tap = nil; video.setCameraPreview(nil) }
     override func layoutSubviews() {
         super.layoutSubviews(); viewport.frame = bounds
         status.frame = bounds.insetBy(dx: 16, dy: 48)

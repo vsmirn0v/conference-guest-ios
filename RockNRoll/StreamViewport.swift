@@ -16,6 +16,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     var isCameraMirrored = false {
         didSet { correctedVideo?.mirrored = isCameraMirrored }
     }
+    var isLocalCamera = false
     private let mediaPlaceholder = UILabel()
     private let participantInfo = ParticipantMediaBadge()
     private let watermarkLabel = UILabel()
@@ -314,6 +315,20 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         correctedVideo?.clear()
         correctedVideo?.removeFromSuperview()
         correctedVideo = nil
+    }
+
+    func showCameraPreview(_ source: CameraCapturePreview) {
+        guard !video.isHidden else { return }
+        if correctedVideo == nil {
+            let overlay = GuestSampleBufferView()
+            overlay.isUserInteractionEnabled = false
+            overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            content.addSubview(overlay); correctedVideo = overlay
+        }
+        correctedVideo?.frame = content.bounds
+        correctedVideo?.mirrored = isCameraMirrored
+        correctedVideo?.setCameraPreview(source)
+        correctedVideo?.isHidden = false
     }
 
     override func didMoveToWindow() {

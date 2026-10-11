@@ -18,6 +18,29 @@ enum GuestCaptureDeviceObserver {
     private static var sessions: [ObjectIdentifier: NSKeyValueObservation] = [:]
     private static var sources: [ObjectIdentifier: Source] = [:]
     private static var frameDelegates: [ObjectIdentifier: GuestCameraFrameDelegate] = [:]
+    @MainActor private static weak var previewOwner: RTCCameraVideoCapturer?
+    @MainActor private static var preview: CameraCapturePreview?
+    @MainActor static func cameraPreview() -> CameraCapturePreview? {
+        let active = activeCapturers()
+        guard active.count == 1, let camera = active.first else { preview = nil; previewOwner = nil; return nil }
+        let device = (camera.captureSession.inputs.first as? AVCaptureDeviceInput)?.device
+        if previewOwner !== camera {
+            previewOwner = camera
+            lock.lock(); let proxy = frameDelegates[ObjectIdentifier(camera)]; lock.unlock()
+            guard let proxy else { return nil }
+            let source = CameraCapturePreview(session: camera.captureSession, device: device, frames: proxy.previewFrames)
+            preview = source
+            source.onDemandChanged = { [weak camera] in
+                guard let camera else { return }
+                lock.lock(); let proxy = frameDelegates[ObjectIdentifier(camera)]; lock.unlock()
+                setCadence(camera, fps: previewCadence(camera, publishingFPS: proxy?.requestedCadence ?? 24))
+            }
+        } else if preview?.device?.uniqueID != device?.uniqueID { preview?.device = device }
+        return preview
+    }
+    @MainActor static func previewCadence(_ camera: RTCCameraVideoCapturer, publishingFPS: Int) -> Int {
+        max(publishingFPS, previewOwner === camera ? preview?.frameRate ?? 0 : 0)
+    }
     #if DEBUG
     static func backgroundTrace() -> [[String: Any]] {
         lock.lock(); let all = capturers.allObjects; let proxies = frameDelegates; lock.unlock()
@@ -27,6 +50,9 @@ enum GuestCaptureDeviceObserver {
             result["interrupted"] = camera.captureSession.isInterrupted
             result["supported"] = camera.captureSession.isMultitaskingCameraAccessSupported
             result["enabled"] = camera.captureSession.isMultitaskingCameraAccessEnabled
+            if let device = (camera.captureSession.inputs.first as? AVCaptureDeviceInput)?.device {
+                result["captureFPS"] = 1 / CMTimeGetSeconds(device.activeVideoMinFrameDuration)
+            }
             return result
         }
     }
@@ -111,7 +137,7 @@ enum GuestCaptureDeviceObserver {
             lock.lock(); let current = sources[key]?.generation == source.generation; lock.unlock()
             guard current, camera.captureSession.isRunning else { return }
             let device = source.device
-            let rate = supportedFPS(min(source.requestedFPS, fps), format: device.activeFormat)
+            let rate = supportedFPS(fps, format: device.activeFormat)
             do {
                 try device.lockForConfiguration(); defer { device.unlockForConfiguration() }
                 device.activeVideoMinFrameDuration = CMTime(value: 1, timescale: Int32(rate))

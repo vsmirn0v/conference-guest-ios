@@ -7,7 +7,7 @@ final class MediaEnergyBudget: ObservableObject {
     enum Pressure: Int { case normal, constrained, severe }
     static let shared = MediaEnergyBudget()
     @Published private(set) var pressure: Pressure = .normal
-    var previewFPS: Int { pressure == .normal ? 15 : pressure == .constrained ? 10 : 5 }
+    var previewFPS: Int { pressure == .normal ? 30 : pressure == .constrained ? 15 : 10 }
     var inlineFPS: Int { pressure == .normal ? 30 : pressure == .constrained ? 20 : 15 }
     var thumbnailInterval: TimeInterval { pressure == .normal ? 0.5 : pressure == .constrained ? 1 : 2 }
     var cameraFPS: Int { pressure == .normal ? 30 : pressure == .constrained ? 15 : 10 }

@@ -25,6 +25,7 @@ final class GuestStreamViews {
         let watermark: String?
         let renderer: UIView?
         var mirrored = false
+        var isLocalCamera = false
     }
     var onGalleryPresentation: (([GalleryItem]) -> Void)?
     var localCameraMirrored: () -> Bool = { true }
@@ -213,6 +214,7 @@ final class GuestStreamViews {
                                         watermark: watermark, zoomable: model.isSharingScreen && model.isZoomable,
                                         placeholderText: placeholderText, isSpeaking: model.isDominantSpeaker)
             }
+            view.isLocalCamera = model.isLocal && !model.isSharingScreen
             view.updatePin(name: model.name, isShare: model.isSharingScreen,
                            pinned: pinnedTarget == target, onPin: onPin)
             view.setMediaActive(isActiveStream(model))
@@ -239,6 +241,7 @@ final class GuestStreamViews {
                               onPin: onPin, isSpeaking: model.isDominantSpeaker)
         view.updatePin(name: model.name, isShare: model.isSharingScreen,
                        pinned: pinnedTarget == target, onPin: onPin)
+        view.isLocalCamera = model.isLocal && !model.isSharingScreen
         view.setMediaActive(isActiveStream(model))
         view.accessibilityElementsHidden = onStagePresentation != nil
         renderedTiles[key] = RenderedTile(model: model, video: video, view: view)
@@ -409,7 +412,8 @@ final class GuestStreamViews {
                 result.append(GalleryItem(id: id, name: participant.name, microphoneOn: participant.microphoneOn,
                     active: isShare ? participant.sharing : participant.cameraOn,
                     speaking: tile?.model.isDominantSpeaker == true, watermark: watermark,
-                    renderer: tile?.video, mirrored: participant.isLocal && !isShare && localCameraMirrored()))
+                    renderer: tile?.video, mirrored: participant.isLocal && !isShare && localCameraMirrored(),
+                    isLocalCamera: participant.isLocal && !isShare))
             }
             return result
         }

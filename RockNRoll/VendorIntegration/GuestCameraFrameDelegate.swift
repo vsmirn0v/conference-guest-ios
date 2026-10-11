@@ -19,6 +19,7 @@ final class GuestCameraFrameDelegate: NSObject, RTCVideoCapturerDelegate {
         return ["raw": frames, "forwarded": forwardedFrames, "active": active, "scale": scaler.diagnostics]
     }
     #endif
+    let previewFrames = CameraPreviewFrames()
     private let orientation = GuestCameraOrientation()
     private let scaler = CameraPixelScaler()
     private var profile = CameraQualityPolicy.Profile(tier: .balance, fps: 20)
@@ -46,7 +47,8 @@ final class GuestCameraFrameDelegate: NSObject, RTCVideoCapturerDelegate {
             quality.onChange = { [weak self, weak camera] profile in
                 guard let self, let camera else { return }
                 self.lock.lock(); self.profile = profile; self.lock.unlock()
-                GuestCaptureDeviceObserver.setCadence(camera, fps: profile.fps)
+                GuestCaptureDeviceObserver.setCadence(camera,
+                    fps: GuestCaptureDeviceObserver.previewCadence(camera, publishingFPS: profile.fps))
             }
             quality.onChange?(quality.profile)
             quality.start { [weak self] in
@@ -67,6 +69,7 @@ final class GuestCameraFrameDelegate: NSObject, RTCVideoCapturerDelegate {
         }
     }
     private func forward(_ frame: RTCVideoFrame, capturer: RTCVideoCapturer, downstream: any RTCVideoCapturerDelegate) {
+        if previewFrames.hasSinks, let native = frame.buffer as? RTCCVPixelBuffer { previewFrames.render(native.pixelBuffer, rotation: frame.rotation.rawValue) }
         lock.lock(); let profile = profile; lock.unlock()
         let boundedFrame: RTCVideoFrame
         if let native = frame.buffer as? RTCCVPixelBuffer {

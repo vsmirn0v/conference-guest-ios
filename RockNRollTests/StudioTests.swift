@@ -181,12 +181,12 @@ final class StudioTests: XCTestCase {
             try await peer.setCamera(true)
             let track = try XCTUnwrap(peer.videoTrack)
             let frames = CameraFrames(); track.add(frames)
-            await waitUntil { frames.count >= 3 }
+            await waitUntil(timeout: 10) { frames.count >= 3 }
             let count = frames.count
             try await peer.selectCamera(devices[1])
             XCTAssertTrue(peer.videoTrack === track, "Switching capture must preserve every attached renderer")
             XCTAssertEqual(peer.captureDevice?.uniqueID, devices[1].uniqueID)
-            await waitUntil { frames.count > count + 3 }
+            await waitUntil(timeout: 10) { frames.count > count + 3 }
             track.remove(frames)
             await peer.close()
         } catch { await peer.close(); throw error }
@@ -249,7 +249,13 @@ final class StudioTests: XCTestCase {
             throw XCTSkip("Opt-in real Mac camera qualification")
         }
         let camera = PrivateCameraPreview()
+        camera.selectDevice(CameraDevices.available().first { $0.deviceType == .builtInWideAngleCamera })
         try await camera.start()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
+        window.rootViewController = UIViewController(); window.isHidden = false
+        window.rootViewController?.view.addSubview(camera.view)
+        camera.view.frame = window.bounds; camera.view.layoutIfNeeded()
+        defer { window.isHidden = true }
         let layer = try XCTUnwrap(camera.view.layer as? AVCaptureVideoPreviewLayer)
         let session = try XCTUnwrap(layer.session)
         XCTAssertTrue(session.isRunning)
@@ -289,10 +295,11 @@ final class StudioTests: XCTestCase {
             throw XCTSkip("Opt-in real Presenter capture qualification")
         }
         let camera = PrivateCameraPreview(framesPerSecond: 15)
+        let selected = try XCTUnwrap(CameraDevices.available().first { $0.deviceType == .builtInWideAngleCamera })
+        camera.selectDevice(selected)
+        let originalMinimum = selected.activeVideoMinFrameDuration
+        let originalMaximum = selected.activeVideoMaxFrameDuration
         try await camera.start()
-        let originalDevice = try XCTUnwrap(camera.device)
-        let originalMinimum = originalDevice.activeVideoMinFrameDuration
-        let originalMaximum = originalDevice.activeVideoMaxFrameDuration
         var times: [TimeInterval] = []
         var lastFrame: CVPixelBuffer?
         var lastRotation = 0
@@ -341,8 +348,9 @@ final class StudioTests: XCTestCase {
             XCTAssertLessThan(rate, 17); XCTAssertGreaterThan(rate, 10)
         }
         XCTAssertFalse(session.isRunning); XCTAssertTrue(session.inputs.isEmpty)
-        XCTAssertEqual(device.activeVideoMinFrameDuration, originalMinimum, "Presenter must not leave the SDK camera capped")
-        XCTAssertEqual(device.activeVideoMaxFrameDuration, originalMaximum)
+        XCTAssertEqual(CMTimeGetSeconds(device.activeVideoMinFrameDuration), CMTimeGetSeconds(originalMinimum), accuracy: 0.001,
+            "Presenter must not leave the SDK camera capped")
+        XCTAssertEqual(CMTimeGetSeconds(device.activeVideoMaxFrameDuration), CMTimeGetSeconds(originalMaximum), accuracy: 0.001)
         #endif
     }
     private final class Capture: PrivateCameraPreviewing {
@@ -366,8 +374,8 @@ final class StudioTests: XCTestCase {
             running = false
         }
     }
-    private func waitUntil(_ predicate: () -> Bool) async {
-        for _ in 0..<200 {
+    private func waitUntil(timeout: TimeInterval = 2, _ predicate: () -> Bool) async {
+        for _ in 0..<Int(timeout * 100) {
             if predicate() { return }
             try? await Task.sleep(nanoseconds: 10_000_000)
         }

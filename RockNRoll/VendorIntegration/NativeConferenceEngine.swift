@@ -369,6 +369,10 @@ final class NativeConferenceEngine: CallEngine {
             #endif
             self.activeControls?.showStageFrame(sample, rotation: rotation, mirrored: self.floatingVideo?.isMirrored == true)
         }
+        floating.onInlineCameraPreview = { [weak self] source, mirrored in
+            guard let self, self.sessionEpoch == epoch, !self.leaveRequested, self.finishing == nil else { return }
+            self.activeControls?.showStageCameraPreview(source, mirrored: mirrored)
+        }
         floating.bindMicrophoneActivity(studio.microphoneActivity)
         floating.onPresentationChanged = { [weak self] in self?.videoDemand.setFloating($0) }
         videoDemand.onChange = { [weak self] in self?.updateIncomingVideoDemand() }

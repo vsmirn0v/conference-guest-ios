@@ -89,7 +89,7 @@ final class TelemostCallEngine: CallEngine {
         studio.liveCaptureDevice = { [weak self] in self?.publisher?.captureDevice }
         studio.makeLivePreview = { [weak self] in
             guard let track = self?.publisher?.videoTrack else { return nil }
-            let preview = CallVideoView(); preview.track = .native(track)
+            let preview = CallVideoView(); preview.track = self?.publisher?.cameraPreview.map { .cameraPreview($0) } ?? .native(track)
             preview.isMirrored = CameraPreviewPresentation.isMirrored(device: self?.publisher?.captureDevice)
             return StudioLivePreview(view: preview, stop: { preview.track = nil })
         }
@@ -594,7 +594,7 @@ final class TelemostCallEngine: CallEngine {
         }
         items.removeAll { $0.isLocal }
         items.sort { $0.id < $1.id }
-        let localVideo = publisher?.videoTrack.map { CallVideoStream(id: localID + ".camera", source: .camera, track: .native($0)) }
+        let localVideo = publisher?.videoTrack.map { CallVideoStream(id: localID + ".camera", source: .camera, track: publisher?.cameraPreview.map { .cameraPreview($0) } ?? .native($0)) }
         items.insert(.init(id: localID, name: name, isLocal: true, microphoneOn: microphoneStatus == .on,
             cameraOn: localVideo != nil, screenShareOn: sharingActive, isSpeaking: speaking.contains(localID), videoTracks: localVideo.map { [$0] } ?? []), at: 0)
         let snapshot = CallMediaSnapshot(participants: items)

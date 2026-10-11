@@ -13,20 +13,29 @@ enum GuestVideoConversionExperiment: String, CaseIterable, Hashable {
 #endif
 
 /// Converts at most one frame at a time and keeps only the newest waiting frame.
-/// Limits output to 30 fps inline or 15 fps in floating video.
+/// Inline and floating display share a bounded, phase-preserving scheduler.
 /// All pixels remain in memory. Generation checks discard frames from a prior room.
 final class GuestVideoFrameProcessor: @unchecked Sendable {
     var onSample: (@MainActor (CMSampleBuffer, CGSize, Int) -> Void)?
-    private let queue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.floating-frames")
+    private struct PreparedFrame {
+        let sample: CMSampleBuffer
+        let size: CGSize
+        let rotation: Int
+        let timestamp: Int64
+    }
     private let lock = NSLock()
-    private var generation: UInt64 = 0
-    private var sourceID = UUID()
-    private var enabled = false
-    private var busy = false
-    private var nextFrameTime: CFTimeInterval = 0
-    private var frameInterval: CFTimeInterval = 1.0 / 30
-    private var pendingFrame: RTCVideoFrame?
-    private var drainScheduled = false
+    private lazy var frames = LatestVideoFrameProcessor<RTCVideoFrame, PreparedFrame>(
+        label: "dev.vsmirn0v.conferenceguest.floating-frames", convert: { [weak self] frame in
+            guard let sample = self?.makeSample(frame) else { return nil }
+            return PreparedFrame(sample: sample, size: CGSize(width: Int(frame.width), height: Int(frame.height)),
+                                 rotation: frame.rotation.rawValue, timestamp: frame.timeStampNs)
+        }, deliver: { [weak self] frame in
+            guard let self else { return }
+#if DEBUG
+            self.onDeliveryForTesting?(frame.timestamp)
+#endif
+            self.onSample?(frame.sample, frame.size, frame.rotation)
+        })
     private var pool: CVPixelBufferPool?
     private var poolSize = CGSize.zero
     private var poolPixelFormat: OSType = 0
@@ -45,97 +54,10 @@ final class GuestVideoFrameProcessor: @unchecked Sendable {
     deinit { if let transferSession { VTPixelTransferSessionInvalidate(transferSession) } }
 #endif
 
-    func setEnabled(_ enabled: Bool) {
-        lock.lock()
-        guard self.enabled != enabled else { lock.unlock(); return }
-        generation &+= 1
-        self.enabled = enabled
-        busy = false
-        nextFrameTime = 0
-        pendingFrame = nil
-        drainScheduled = false
-        lock.unlock()
-    }
-
-    func replaceSource() -> UUID {
-        lock.lock(); defer { lock.unlock() }
-        sourceID = UUID()
-        generation &+= 1
-        enabled = false
-        busy = false
-        nextFrameTime = 0
-        pendingFrame = nil
-        drainScheduled = false
-        return sourceID
-    }
-
-    func setFrameRate(_ framesPerSecond: Int) {
-        lock.lock()
-        frameInterval = 1.0 / Double(max(framesPerSecond, 1))
-        lock.unlock()
-    }
-
-    func submit(_ frame: RTCVideoFrame, source: UUID? = nil) {
-        lock.lock()
-        guard (source == nil || source == sourceID), enabled else { lock.unlock(); return }
-        pendingFrame = frame
-        lock.unlock()
-        drainPendingFrame()
-    }
-
-    private func drainPendingFrame() {
-        lock.lock()
-        guard enabled, !busy, let frame = pendingFrame else { lock.unlock(); return }
-        let now = CACurrentMediaTime()
-        if now < nextFrameTime {
-            if !drainScheduled {
-                drainScheduled = true
-                let expected = generation
-                DispatchQueue.main.asyncAfter(deadline: .now() + (nextFrameTime - now)) { [weak self] in
-                    self?.drainScheduledFrame(generation: expected)
-                }
-            }
-            lock.unlock()
-            return
-        }
-        pendingFrame = nil
-        busy = true
-        nextFrameTime = now + frameInterval
-        let expected = generation
-        lock.unlock()
-        queue.async { [weak self] in
-            guard let self else { return }
-            self.lock.lock()
-            let current = self.enabled && self.generation == expected
-            self.lock.unlock()
-            guard current else { return }
-            let sample = self.makeSample(frame)
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                self.lock.lock()
-                let current = self.enabled && self.generation == expected
-                if current { self.busy = false }
-                self.lock.unlock()
-                guard current else { return }
-                if let sample {
-#if DEBUG
-                    self.onDeliveryForTesting?(frame.timeStampNs)
-#endif
-                    self.onSample?(sample, CGSize(width: Int(frame.width), height: Int(frame.height)),
-                                   frame.rotation.rawValue)
-                }
-                self.drainPendingFrame()
-            }
-        }
-    }
-
-    private func drainScheduledFrame(generation expected: UInt64) {
-        lock.lock()
-        guard enabled && generation == expected else { lock.unlock(); return }
-        drainScheduled = false
-        lock.unlock()
-        drainPendingFrame()
-    }
+    func setEnabled(_ enabled: Bool) { frames.setEnabled(enabled) }
+    func replaceSource() -> UUID { frames.replaceSource() }
+    func setFrameRate(_ framesPerSecond: Int) { frames.setFrameRate(framesPerSecond) }
+    func submit(_ frame: RTCVideoFrame, source: UUID? = nil) { frames.submit(frame, source: source) }
 
     private func makeSample(_ frame: RTCVideoFrame) -> CMSampleBuffer? {
         guard let pixelBuffer = pixelBuffer(for: frame) else { return nil }
