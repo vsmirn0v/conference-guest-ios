@@ -160,7 +160,7 @@ final class GuestMicrophoneProbe {
                     row["rawCamera"] = sender.track.map { GuestCaptureDeviceObserver.rawCaptureProgress(trackID: $0.trackId) != nil }
                     row["negotiatedCodecs"] = sender.parameters.codecs.map { ["name": $0.name, "parameters": $0.parameters] }
                 }
-                let keys = ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "bytesSent", "bytesReceived", "totalAudioEnergy", "rid", "mediaSourceId", "qualityLimitationReason", "targetBitrate"]
+                let keys = ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "bytesSent", "bytesReceived", "totalAudioEnergy", "rid", "mediaSourceId", "qualityLimitationReason", "targetBitrate", "packetsReceived", "packetsLost", "jitter", "concealedSamples", "totalSamplesReceived", "jitterBufferDelay", "jitterBufferEmittedCount"]
                 for key in keys { row[key] = entry.values[key] }
                 if let codecID = entry.values["codecId"] as? String, let codec = report.statistics[codecID] {
                     row["mimeType"] = codec.values["mimeType"]; row["sdpFmtpLine"] = codec.values["sdpFmtpLine"]

@@ -1,6 +1,7 @@
 # Audio reliability: implementation and qualification
 
-Date: October 12, 2026. Baseline: `55b3ed3` / released 0.2.0 (74).
+Date: October 12, 2026. Distributed baseline: `b63030b` / 0.2.0 (74).
+Audio-worker implementation: `62a354f`.
 
 ## Production changes
 
@@ -80,28 +81,97 @@ checks. Exact result summaries and final live qualification are recorded below.
 
 ## Release gate
 
-No physical iPhone was used in this task, per the user's availability constraint.
-This change affects the activation/hold/recovery ordering that previously needed
-real cellular/FaceTime, receiver and Bluetooth checks. Publication is therefore
-held, with build 74 remaining the distributed beta.
+Physical qualification resumed on October 12 when iVitalii became available.
+Build 74 remains distributed until the acceptance below finishes.
 
 Synthetic reset notifications qualify app guards and callback ordering only.
 [Apple QA1749](https://developer.apple.com/library/archive/qa/qa1749/_index.html)
-requires reconstruction of orphaned audio objects after an actual service reset.
-The app preserves SDK ownership and invokes existing public media stop/restart
-paths; actual recovered capture/playout after daemon reset remains unverified.
+requires reconstruction of orphaned objects after an actual service reset.
 No private SDK object or process-wide peer factory is recreated as a workaround.
 
-Before publishing, use iVitalii to check:
+### Physical acceptance
 
-- Join muted, unmute, return to mute, quick room switching and Leave during setup.
-- Incoming/outgoing cellular and FaceTime recovery, including the earlier
-  Wi-Fi + EDGE dialing case; verify both remote audio and video after return.
-- Speaker/receiver/AirPods switching and background audio coexistence, with the
-  microphone indicator available when foreground/PiP needs it.
-- A real Settings → Developer → Reset Media Services during a disposable meeting:
-  fresh incoming playback and outgoing non-silent microphone content, with mute
-  intent and competing-call guards preserved. Do not infer this from an icon.
+- iVitalii: iPhone 17 Pro Max, iOS 27.0.1. Automated run: 75 executed,
+  72 passed, three expected opt-in/platform skips, zero failures in 104.304 seconds
+  (`device-final.xcresult`). Includes four joins across two rooms, 24 real-camera
+  and microphone on/off cycles, early Leave, ownership/worker/meter regressions,
+  and decoded Opus samples through mute/resume in native sender/receiver fixtures.
+- User confirmed audible repeating speech and moving browser camera before
+  interruption. Outgoing cellular, incoming cellular and FaceTime each restored
+  both without manual rejoin or a false meeting-ended sheet. Default system-call
+  registration remained disabled, preserving the earlier cellular dialing fix.
+- Speaker/receiver and other-app playback survived. The user initially heard
+  a temporary quality reduction and a brief speech echo on foreground return;
+  a repeat with diagnostic-only changes was clean. This is not claimed fixed.
+  Later route telemetry records Bluetooth HFP at 24 kHz and built-in output at
+  48 kHz; that documents one quality change, not the initial echo's cause.
+- PiP rearms after foreground entry and another background transition following
+  a competing call. This existing controller policy is separate from audio/media
+  resumption and is not claimed improved in this change.
+- Genuine Settings → Developer → Reset All Media Services checks restored
+  speech and rejoined automatically, but left visible incoming video black.
+  Pinning/unpinning did not repair it. The second run identifies the failed
+  resource: fresh VP9/libvpx frames decoded, reached the visible tile and passed
+  enqueue, while AVSampleBufferDisplayLayer remained failed with
+  AVFoundationErrorDomain / `mediaServicesWereReset` (-11819). Its flush-required
+  flag was false. Flushing alone did not reconstruct the orphaned display.
+
+### Render-resource recovery
+
+The shared sample-buffer target now retains an immutable layer/renderer backing
+through each enqueue and replaces orphaned backing on main. Source identity stays
+separate from replacement identity; clear, source retirement and replacement reject
+stale recovery requests. Owner callbacks and layer detach/release run outside the
+render lock. Rotation, mirror and aspect fit survive a same-sized replacement.
+Native flushes serialize with frame admission and clearing. Their completion is
+honored even after background suspension; bounded UI lock retries fall back to
+one state-only cleanup job. Expired repair admission cannot permanently gate a
+new current-source frame. A timeout retires its native backing rather than
+starting an overlapping flush on it. Late callbacks cannot clear a replacement.
+One latest frame per target supports static canvas/idle preview recovery; clearing
+or retiring a source discards it. Normal video pacing remains unchanged.
+
+The route comparator also treats interface/gateway preference order as sets,
+without changing recovery for a real route/capability change or outage. DEBUG
+changed-field, RTP and rendering counters are bounded and excluded from Release.
+The field trace establishes metadata-triggered reconnects, not an echo root cause.
+
+An isolated, generated-pixel probe restored the modern native renderer after a
+completed, settled flush, including with the normal active audio session. The
+same public sequence, fresh layer, legacy API and delayed replacement repeatedly
+failed in the active guest integration despite fresh decoded frames. This narrows
+the failure to the active integration/process state; it does not establish an SDK
+root cause. No private factory, hidden SDK object or process restart is used.
+
+After four bounded native attempts, the visible surface can recover through
+ordinary Core Animation. A lazy Core Image context converts the existing decoded
+pixels to sRGB images on one serial queue; at most one conversion, newest input
+and newest output are retained. Presentation caps at 30 fps. Rotation, mirroring,
+aspect fitting and PiP use the same surface. Source retirement serializes with
+actual contents assignment and rejects queued old pixels. First-frame UI changes
+wait for actual presentation, not conversion admission. Normal native rendering
+does not create this context or incur its conversion cost.
+
+`device-reset-image-recovery.xcresult` and
+`device-reset-image-auto-pip-qualified.xcresult` each passed a genuine Settings
+reset. The latter ran for 55.873 seconds and also returned from Home/PiP to moving
+video. Two PiP screenshots 0.64 seconds apart show a changed synthetic-camera
+wedge, not merely a changing label. Trace records fresh decoded VP9 frames and
+nonzero received Opus energy. These are functional checks, not evidence of lower
+battery use. The rare image fallback adds conversion/transfer work.
+
+Final reviewed rendering regressions: iOS 27 simulator 49 executed, 45 passed,
+four expected skips; iOS 17.5 45 executed, 41 passed, four expected skips. The final
+18 rendering cases also passed separately on each simulator and iVitalii after
+completion/start deadline refinements. Physical combined acceptance executed
+100 tests: 95 passed, five expected skips, no failures. This includes the live
+four-room/24-camera-and-microphone cycle check and actual reset/PiP case. One final
+live reset/PiP repeat on the exact final renderer passed after restoring a closed
+browser source; the unsuccessful baseline attempt performed no OS reset and is
+retained separately. New coverage includes asynchronous first presentation, source
+retirement at presentation, missing/late flush completion, expired completion
+under contention, and expired repair admission. No future producer callback is
+needed to restore a cached one-shot canvas.
 
 Keep energy/latency claims separate from functional acceptance. Current
 experiments do not measure physical battery savings.

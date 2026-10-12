@@ -13,6 +13,10 @@ final class GuestVideoFrameTap: @unchecked Sendable {
         keyOptions: .weakMemory, valueOptions: .strongMemory)
     private weak var renderer: UIView?
     private let onFrame: (RTCVideoFrame) -> Void
+#if DEBUG
+    private var receivedFrames = 0
+    var receivedFramesForTesting: Int { Self.lock.lock(); defer { Self.lock.unlock() }; return receivedFrames }
+#endif
 
     static func prepare() { _ = installed }
 
@@ -29,7 +33,12 @@ final class GuestVideoFrameTap: @unchecked Sendable {
                 lock.lock()
                 let observers = observers.object(forKey: view)?.allObjects ?? []
                 lock.unlock()
-                observers.forEach { $0.onFrame(frame) }
+                observers.forEach { observer in
+#if DEBUG
+                    lock.lock(); observer.receivedFrames += 1; lock.unlock()
+#endif
+                    observer.onFrame(frame)
+                }
             }
             method_setImplementation(method, imp_implementationWithBlock(forwarding))
             installed = true

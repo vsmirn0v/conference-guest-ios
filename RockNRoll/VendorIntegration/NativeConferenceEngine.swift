@@ -245,11 +245,15 @@ final class NativeConferenceEngine: CallEngine {
             self?.activeControls?.setShareOffer(name: name)
             self?.offeredShare = target
         }
-        audio.onServicesChanged = { [weak self] in self?.systemCall.audioServicesChanged($0) }
+        audio.onServicesChanged = { [weak self] available in
+            self?.traceMediaRecovery(available ? "media-services-ready" : "media-services-lost")
+            self?.systemCall.audioServicesChanged(available)
+        }
         audio.onStatus = { [weak self] message in self?.onMediaStatus?(message) }
         audio.onRouteChanged = { [weak self] in
             guard let self else { return }
             self.activeControls?.setAudioRouteName(self.audio.outputName)
+            self.traceMediaRecovery("audio-route-changed")
         }
         audio.onInterruptionChanged = { [weak self] interrupted in
             guard let self else { return }
@@ -1014,12 +1018,17 @@ final class NativeConferenceEngine: CallEngine {
                 // Compare routing data, excluding cost/quality notifications which
                 // can fluctuate on the same connection and must not restart calls.
                 let changed = self.lastNetworkPath.map { previous in
-                    func interfaces(_ value: NWPath) -> [Int] {
-                        value.availableInterfaces.filter { value.usesInterfaceType($0.type) }.map(\.index)
+                    func interfaces(_ value: NWPath) -> Set<Int> {
+                        Set(value.availableInterfaces.filter { value.usesInterfaceType($0.type) }.map(\.index))
                     }
-                    return interfaces(previous) != interfaces(path) || previous.gateways != path.gateways ||
-                        previous.localEndpoint != path.localEndpoint ||
-                        previous.supportsIPv4 != path.supportsIPv4 || previous.supportsIPv6 != path.supportsIPv6
+                    // Preference order does not identify a new network route.
+                    let changes = ["interfaces": interfaces(previous) != interfaces(path),
+                        "gateways": Set(previous.gateways) != Set(path.gateways),
+                        "endpoint": previous.localEndpoint != path.localEndpoint,
+                        "ipv4": previous.supportsIPv4 != path.supportsIPv4,
+                        "ipv6": previous.supportsIPv6 != path.supportsIPv6]
+                    self.traceMediaRecovery("network-path-comparison", details: ["changedFields": changes])
+                    return changes.values.contains(true)
                 } ?? false
                 self.lastNetworkPath = path
                 #if DEBUG
@@ -1036,6 +1045,7 @@ final class NativeConferenceEngine: CallEngine {
         isNetworkAvailable = available
         networkRecovery.pathChanged(available: available, changed: routeChanged,
                                     at: ProcessInfo.processInfo.systemUptime)
+        traceMediaRecovery(routeChanged ? "network-route-changed" : "network-path-updated")
         updateConnectionGap()
         completeMediaReconnectIfReady()
         startNetworkRecoveryIfNeeded()
@@ -1110,7 +1120,7 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     /// Opt-in device trace: flags only, bounded, and absent from Release builds.
-    private func traceMediaRecovery(_ event: String) {
+    private func traceMediaRecovery(_ event: String, details: [String: Any] = [:]) {
         #if DEBUG
         guard ProcessInfo.processInfo.environment["CONFERENCE_TEST_MEDIA_TRACE"] == "1",
               let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
@@ -1120,9 +1130,12 @@ final class NativeConferenceEngine: CallEngine {
             Task { @MainActor [weak self] in
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(5))
-                    guard let self, self.sessionEpoch == epoch, self.hasJoinStarted,
-                          !self.leaveRequested else { return }
+                    guard let self, self.sessionEpoch == epoch, !self.leaveRequested else { return }
+                    guard self.hasJoinStarted else { continue }
                     self.traceMediaRecovery("sample")
+                    let streams = await GuestMicrophoneProbe.codecEvidenceForTesting().filter { $0["type"] as? String == "inbound-rtp" }
+                    guard self.sessionEpoch == epoch, self.hasJoinStarted, !self.leaveRequested else { return }
+                    self.traceMediaRecovery("rtp-sample", details: ["streams": streams])
                 }
             }
         }
@@ -1132,6 +1145,17 @@ final class NativeConferenceEngine: CallEngine {
             "interrupted": isAudioInterrupted, "reconnecting": isMediaReconnecting,
             "signalingActive": isSDKActive, "mediaConnected": mediaConnectionConfirmed,
             "pendingRoom": pendingRoom != nil, "incomingFrames": floatingVideo?.convertedFramesForTesting ?? 0]
+        let audioSession = AVAudioSession.sharedInstance()
+        entry["appState"] = UIApplication.shared.applicationState.rawValue
+        entry["audioCategory"] = audioSession.category.rawValue
+        entry["audioMode"] = audioSession.mode.rawValue
+        entry["audioOptions"] = audioSession.categoryOptions.rawValue
+        entry["outputTypes"] = audioSession.currentRoute.outputs.map { $0.portType.rawValue }
+        entry["sampleRate"] = audioSession.sampleRate
+        entry["networkRecovery"] = networkRecovery.requiresRecovery
+        entry["reconnectingForNetwork"] = reconnectingForNetwork
+        entry["videoSinks"] = activeControls?.videoEvidenceForTesting
+        entry.merge(details) { _, value in value }
         entry.merge(systemCall.diagnosticState) { _, value in value }
         entry["vendorCallProxyEnabled"] = JMCallKitProxy.enabled
         entry["vendorCallProviderConfigured"] = JMCallKitProxy.isProviderConfigured()
@@ -1139,7 +1163,7 @@ final class NativeConferenceEngine: CallEngine {
         line.append(10)
         let file = directory.appendingPathComponent("guest-media-recovery.jsonl")
         var data = (try? Data(contentsOf: file)) ?? Data()
-        if data.count > 65_536 { data.removeAll(keepingCapacity: true) }
+        if data.count > 262_144 { data.removeAll(keepingCapacity: true) }
         data.append(line)
         try? data.write(to: file, options: .atomic)
         #endif
@@ -1714,6 +1738,7 @@ final class NativeConferenceEngine: CallEngine {
             guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                   self.finishing == nil else { return }
             if let room, let active = self.activeRoom, !EventRelay.matches(room, active) { return }
+            self.traceMediaRecovery("sdk-event-\(event)")
             if self.isMediaReconnecting {
                 switch event { case .left, .inactive, .canceled, .failed: self.scheduleTerminalEvent(event); return; default: break }
             }

@@ -16,6 +16,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     ) {
         guard let windowScene = scene as? UIWindowScene else { return }
         #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_RENDERER_RESET_PROBE"] == "1" {
+            let window = UIWindow(windowScene: windowScene)
+            window.rootViewController = RendererResetProbeViewController()
+            window.makeKeyAndVisible(); self.window = window
+            return
+        }
         if let experiment = PreviewCadenceExperiment.make(windowScene: windowScene) {
             previewExperiment = experiment; window = experiment.window
             experiment.start()

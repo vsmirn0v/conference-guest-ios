@@ -72,6 +72,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private let waitingBackdrop = UIView()
     private let stageView = UIView()
     private let galleryView = GuestGalleryView()
+#if DEBUG
+    var videoEvidenceForTesting: [String: Any] {
+        ["gallery": galleryView.evidenceForTesting, "stage": stageVideo.evidenceForTesting]
+    }
+#endif
     private var layoutMode: MeetingLayoutMode = .grid
     private var galleryCount = 0
     private var activeGalleryShares = Set<GuestStreamViews.PinTarget>()

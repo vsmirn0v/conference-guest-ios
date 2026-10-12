@@ -2,8 +2,14 @@ import AVFoundation
 import UIKit
 
 final class GuestSampleBufferView: UIView {
-    private let display = AVSampleBufferDisplayLayer()
-    private lazy var renderTarget = SampleBufferRenderTarget(layer: display)
+    private var display = AVSampleBufferDisplayLayer()
+    private var recoveryLayer: CALayer?
+    private lazy var renderTarget = SampleBufferRenderTarget(layer: display,
+        onLayerReplaced: { [weak self] layer in self?.replaceDisplayLayer(layer) },
+        onRecoveredFrame: { [weak self] in
+            self?.isHidden = false
+            self?.frameDelivery?.recoveredFramePresented()
+        })
     private var frameDelivery: SampleBufferFrameDelivery?
     private var rotation = 0
     private var capturePreview: CameraCapturePreviewView?
@@ -11,11 +17,19 @@ final class GuestSampleBufferView: UIView {
     private var captureRevision: UInt64 = 0
     private var captureEnabled = true
     var onCameraPreviewSizeChanged: ((CGSize) -> Void)?
+#if DEBUG
+    var evidenceForTesting: [String: Any] { renderTarget.evidenceForTesting }
+    func forceResetErrorForTesting(_ value: Bool) { renderTarget.forceResetErrorForTesting(value) }
+#endif
     var mirrored = false {
         didSet { capturePreview?.mirrored = mirrored; if oldValue != mirrored { setNeedsLayout(); layoutIfNeeded() } }
     }
     override var contentMode: UIView.ContentMode {
-        didSet { display.videoGravity = contentMode == .scaleAspectFill ? .resizeAspectFill : .resizeAspect; capturePreview?.contentMode = contentMode }
+        didSet {
+            display.videoGravity = contentMode == .scaleAspectFill ? .resizeAspectFill : .resizeAspect
+            recoveryLayer?.contentsGravity = contentMode == .scaleAspectFill ? .resizeAspectFill : .resizeAspect
+            capturePreview?.contentMode = contentMode
+        }
     }
 
     override init(frame: CGRect) {
@@ -49,11 +63,28 @@ final class GuestSampleBufferView: UIView {
         frameDelivery?.invalidate()
         let delivery = SampleBufferFrameDelivery(target: renderTarget) { [weak self] size, rotation in
             guard let self else { return }
+            self.renderTarget.checkRecovery()
             if self.rotation != rotation { self.rotation = rotation; self.setNeedsLayout(); self.layoutIfNeeded() }
             onGeometry(size, rotation)
         }
         frameDelivery = delivery
         return delivery
+    }
+
+    private func replaceDisplayLayer(_ next: AVSampleBufferDisplayLayer) {
+        let previous = display
+        display = next
+        next.videoGravity = contentMode == .scaleAspectFill ? .resizeAspectFill : .resizeAspect
+        recoveryLayer?.removeFromSuperlayer()
+        recoveryLayer = renderTarget.recoveryImageLayer
+        if let recoveryLayer {
+            previous.removeFromSuperlayer()
+            layer.insertSublayer(recoveryLayer, at: 0)
+        } else if previous !== next {
+            layer.insertSublayer(next, at: 0)
+            previous.removeFromSuperlayer()
+        }
+        setNeedsLayout(); layoutIfNeeded()
     }
     func setFrameDeliverySuspended(_ suspended: Bool) {
         frameDelivery?.setEnabled(!suspended)
@@ -91,6 +122,7 @@ final class GuestSampleBufferView: UIView {
         layoutIfNeeded()
         renderTarget.clear(removingImage: false)
         enqueue(sample, rotation: rotation)
+        renderTarget.checkRecovery()
     }
 
     override func layoutSubviews() {
@@ -98,10 +130,12 @@ final class GuestSampleBufferView: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         let sideways = rotation == 90 || rotation == 270
-        display.bounds = CGRect(origin: .zero,
+        let surface = recoveryLayer ?? display
+        surface.bounds = CGRect(origin: .zero,
             size: sideways ? CGSize(width: bounds.height, height: bounds.width) : bounds.size)
-        display.position = CGPoint(x: bounds.midX, y: bounds.midY)
-        display.setAffineTransform(CameraPreviewPresentation.transform(rotation: rotation, mirrored: mirrored))
+        surface.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        surface.setAffineTransform(CameraPreviewPresentation.transform(rotation: rotation, mirrored: mirrored))
+        recoveryLayer?.contentsGravity = contentMode == .scaleAspectFill ? .resizeAspectFill : .resizeAspect
         CATransaction.commit()
     }
 }

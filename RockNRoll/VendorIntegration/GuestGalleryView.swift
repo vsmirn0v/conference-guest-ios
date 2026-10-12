@@ -17,6 +17,13 @@ private final class GuestGalleryTile: UIView {
     private var hasFrame = false
     private var viewport: StreamViewport!
     private let status = UILabel()
+#if DEBUG
+    var evidenceForTesting: [String: Any] {
+        ["visible": visible, "mediaActive": mediaActive, "hasFrame": hasFrame,
+         "tapFrames": tap?.receivedFramesForTesting ?? 0, "preparedFrames": processor.preparedFrameCount,
+         "sink": video.evidenceForTesting]
+    }
+#endif
     var onToggleControls: (() -> Void)? { didSet { viewport.onToggleControls = onToggleControls } }
     init(item: GuestStreamViews.GalleryItem, pin: @escaping () -> Void) {
         super.init(frame: .zero)
@@ -101,6 +108,9 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
     private var items: [GuestStreamViews.GalleryItem] = []
     private var speaker: (id: String?, available: Bool)?
     private var observers: [NSObjectProtocol] = []
+#if DEBUG
+    var evidenceForTesting: [[String: Any]] { tiles.values.map(\.evidenceForTesting) }
+#endif
     var onPin: ((GuestStreamViews.PinTarget) -> Void)?
     var onInteraction: (() -> Void)?
     var onToggleControls: (() -> Void)?
