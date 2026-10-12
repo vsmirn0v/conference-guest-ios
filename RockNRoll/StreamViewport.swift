@@ -149,7 +149,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         mediaPlaceholder.isHidden = true
         mediaPlaceholder.translatesAutoresizingMaskIntoConstraints = false
         addSubview(mediaPlaceholder)
-        addSubview(identity)
+        insertSubview(identity, aboveSubview: scroll)
         NSLayoutConstraint.activate([
             mediaPlaceholder.centerXAnchor.constraint(equalTo: centerXAnchor),
             mediaPlaceholder.centerYAnchor.constraint(equalTo: centerYAnchor),
