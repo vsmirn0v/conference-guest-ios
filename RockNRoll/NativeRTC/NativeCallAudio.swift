@@ -80,7 +80,9 @@ final class NativeCallAudio {
     func resumeIfPossible(_ state: NativeCallAudioState) throws -> Bool {
         owner.resumeIfPossible()
         guard state.permitsAudio, owner.canRestoreAudio, !rtc.isAudioEnabled else { return false }
-        try audio.reactivateAfterInterruption()
+        // The owner grants AVAudioSession on its worker. Repeating activation
+        // here could race a newly arriving competitor during that extra await.
+        audio.ensureMixing()
         activate()
         return true
     }

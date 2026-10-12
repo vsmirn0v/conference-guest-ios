@@ -13,8 +13,12 @@ final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
     private var engine: AVAudioEngine?
     private var tapped = false
     private var standalone = false
+    private let worker: AudioSessionWorker
+    private var lease: AudioSessionLease?
+    init(worker: AudioSessionWorker = .shared) { self.worker = worker }
     func start(standalone: Bool, onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws {
-        let session = AVAudioSession.sharedInstance()
+        stop()
+        let expected = AudioSessionLease(); lease = expected
         let allowed: Bool
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: allowed = true
@@ -22,13 +26,16 @@ final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
         default: allowed = false
         }
         guard allowed else { throw SoundCheckError.permission }
-        try Task.checkCancellation()
-        stop()
+        try Task.checkCancellation(); try expected.check()
         self.standalone = standalone
         if standalone {
-            try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker])
-            try session.setActive(true)
+            try await worker.perform(lease: expected) {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playAndRecord, mode: .default, options: [.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker])
+                try expected.check(); try session.setActive(true)
+            }
         }
+        try Task.checkCancellation(); try expected.check()
         let engine = AVAudioEngine()
         self.engine = engine
         let input = engine.inputNode
@@ -41,9 +48,10 @@ final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
         do { try engine.start() } catch { stop(); throw error }
     }
     func stop() {
+        lease?.invalidate(); lease = nil
         if tapped { engine?.inputNode.removeTap(onBus: 0); tapped = false }
         engine?.stop(); engine = nil
-        if standalone { standalone = false; try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
+        if standalone { standalone = false; worker.deactivate() }
     }
 }
 

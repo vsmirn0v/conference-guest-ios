@@ -89,7 +89,7 @@ final class ReceiveAudioCatchUpTests: XCTestCase {
 /// Formal ICE candidate fields are rewritten to this local relay. Both peers
 /// keep their ICE credentials/DTLS/SRTP intact. Only encrypted RTP/RTCP gets the
 /// deterministic delay; STUN and DTLS pass through unchanged.
-private final class AudioPacketDelayRelay: @unchecked Sendable {
+final class AudioPacketDelayRelay: @unchecked Sendable {
     private let queue = DispatchQueue(label: "test.audio-packet-delay")
     private let listener: NWListener
     private var connections: [Int: NWConnection] = [:]
@@ -98,6 +98,10 @@ private final class AudioPacketDelayRelay: @unchecked Sendable {
     private var chosen = Set<Int>()
     private var traceStart: Double?
     private var sequence = 0
+    private var bottleneckStart: Double?
+    private var nextDeparture = 0.0
+    private var dropped = 0
+    var droppedMediaPackets: Int { lock.lock(); defer { lock.unlock() }; return dropped }
     private let lock = NSLock()
     private var delayed = 0
     var delayedMediaPackets: Int { lock.lock(); defer { lock.unlock() }; return delayed }
@@ -142,6 +146,7 @@ private final class AudioPacketDelayRelay: @unchecked Sendable {
         try await peer.addCandidate(candidate)
     }
     func beginTrace() { queue.sync { traceStart = ProcessInfo.processInfo.systemUptime; sequence = 0 } }
+    func beginBottleneck() { queue.sync { bottleneckStart = ProcessInfo.processInfo.systemUptime; nextDeparture = 0 } }
     func stop() { queue.sync { listener.cancel(); connections.values.forEach { $0.cancel() }; connections.removeAll(); pending.removeAll(); traceStart = nil } }
     private func receive(_ connection: NWConnection, side: Int) {
         connection.receiveMessage { [weak self, weak connection] data, _, _, error in
@@ -156,6 +161,19 @@ private final class AudioPacketDelayRelay: @unchecked Sendable {
                     if elapsed >= 3 && elapsed < 7 {
                         delay = 0.12 + Double(self.sequence % 5) * 0.025
                         self.lock.lock(); self.delayed += 1; self.lock.unlock()
+                    }
+                }
+                if side == 0, data[0] & 0xc0 == 0x80, let start = self.bottleneckStart {
+                    let now = ProcessInfo.processInfo.systemUptime
+                    if now - start >= 3 && now - start < 11 {
+                        // 240 kbit/s best-effort uplink, 120 ms finite queue.
+                        // IP/UDP overhead counts; DSCP is intentionally ignored.
+                        let departure = max(now, self.nextDeparture) + Double(data.count + 28) * 8 / 240_000
+                        if departure - now > 0.12 {
+                            self.lock.lock(); self.dropped += 1; self.lock.unlock()
+                            self.receive(connection, side: side); return
+                        }
+                        self.nextDeparture = departure; delay = departure - now
                     }
                 }
                 self.queue.asyncAfter(deadline: .now() + delay) { [weak self] in

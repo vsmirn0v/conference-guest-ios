@@ -37,7 +37,7 @@ final class AudioPipelineDeviceExperimentTests: XCTestCase {
             if synthetic { try manager.setManualRenderingMode(true) }
             else {
                 guard session.recordPermission == .granted else { throw XCTSkip("Microphone permission not granted") }
-                try AudioCoordinator().prepareForJoin()
+                try await AudioCoordinator().prepareForJoin()
                 try session.setActive(true)
             }
             let credentials = try await JamService().join(try JamTarget.parse(invitation), name: "Sound settings QA")
@@ -101,7 +101,7 @@ final class AudioPipelineDeviceExperimentTests: XCTestCase {
             try? session.setActive(false, options: .notifyOthersOnDeactivation)
             try? session.setCategory(category, mode: mode, options: options)
         }
-        try AudioCoordinator().prepareForJoin()
+        try await AudioCoordinator().prepareForJoin()
         try session.setActive(true)
         try manager.startLocalRecording(audioProcessingOptions: AudioProcessingOptions())
         try await Task.sleep(for: .seconds(3))

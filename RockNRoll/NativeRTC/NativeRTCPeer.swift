@@ -5,6 +5,9 @@ import LiveKitWebRTC
 
 final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sendable {
     enum Topology { case split, composite }
+    #if DEBUG
+    @MainActor static var dscpForTesting = false
+    #endif
     private let topology: Topology
     private static let sslInitialized = LKRTCInitializeSSL()
     // The default RTC audio device is process-wide. Retain one factory so
@@ -82,8 +85,12 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         #if DEBUG
         if let experiment = ReceiveAudioCatchUpExperiment.overrideForTesting ?? ReceiveAudioCatchUpExperiment.configured { configuration.audioJitterBufferFastAccelerate = experiment.fastAccelerate }
         #endif
+        var optional: [String: String]?
+        #if DEBUG
+        if Self.dscpForTesting { optional = ["googDscp": "true"] }
+        #endif
         connection = factory.peerConnection(with: configuration,
-            constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
+            constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: optional), delegate: self)
         guard connection != nil else { throw NativeRTCError.invalidResponse }
         if target == "PUBLISHER" { try enablePublishing() }
         #if DEBUG

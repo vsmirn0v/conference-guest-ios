@@ -76,6 +76,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
             self?.onMediaStatus?(L("Video preference could not update: %@", error.localizedDescription))
         }
         videoDemand.onChange = { [weak self] in self?.scheduleVideoDemand() }
+        audio.onServicesChanged = { [weak self] in self?.systemCall.audioServicesChanged($0) }
         audio.onStatus = { [weak self] in self?.onMediaStatus?($0) }
         audio.onRouteChanged = { [weak self] in
             guard let self else { return }
@@ -135,7 +136,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         self.microphoneIntentOn = false
         self.cameraIntentOn = false
         self.displayMode = .all
-        if let microphoneProbe { AudioManager.shared.remove(localAudioRenderer: microphoneProbe); self.microphoneProbe = nil }
+        microphoneProbe?.stop(); microphoneProbe = nil
         studio.end()
         studioAudio.end()
         studioAudio = StudioAudioUpdates()
@@ -161,7 +162,6 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         catchUp.observe(messages: [], canView: false, enabled: false)
         AudioManager.shared.audioSession.isAutomaticConfigurationEnabled = false
         try AudioManager.shared.setEngineAvailability(.none)
-        try audio.prepareForJoin()
         let view = RockCallViewController(title: credentials.jam.title,
                                           catchUp: catchUp, chat: chat,
                                           invitationURL: target.invitationURL,
@@ -169,7 +169,6 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         view.studio = studio
         let microphoneProbe = RoomMicrophoneProbe(activity: studio.microphoneActivity)
         self.microphoneProbe = microphoneProbe
-        AudioManager.shared.add(localAudioRenderer: microphoneProbe)
         studio.soundCheck.verifyMuted = { [weak self, weak room = self.room] in
             guard let self, let room, self.room === room, !self.leaveRequested, !self.isHeld,
                   self.audioAvailable else { throw CancellationError() }
@@ -225,22 +224,29 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         container.present(view, animated: false)
         installCallHandlers()
         hasJoinStarted = true
-        #if DEBUG && targetEnvironment(simulator)
-        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
-            directMediaForTesting = true
-            try AVAudioSession.sharedInstance().setActive(true)
-            audioGate.activate()
-            audio.callAudioDidActivate()
-            recoverAudioIfReady()
-            connect()
-            return
-        }
-        #endif
-        systemCall.start()
+        audio.start(ready: { [weak self] in
+            guard let self, self.hasJoinStarted, !self.leaveRequested else { return }
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
+                self.directMediaForTesting = true
+                try await self.audio.reactivateAfterInterruption()
+                self.audioGate.activate()
+                self.audio.callAudioDidActivate()
+                self.recoverAudioIfReady()
+                self.connect()
+                return
+            }
+            #endif
+            self.systemCall.start()
+        }, failure: { [weak self] error in
+            self?.onMediaStatus?(error.localizedDescription)
+            self?.finish(failed: true)
+        })
     }
 
     func leave() {
         guard hasJoinStarted, !leaveRequested else { return }
+        audio.endSession()
         leaveRequested = true
         callView?.endFloatingVideo()
         joinTask?.cancel()
@@ -248,7 +254,8 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         #if DEBUG
         if directMediaForTesting { finish(failed: false); return }
         #endif
-        systemCall.end()
+        if systemCall.callID == nil { finish(failed: false) }
+        else { systemCall.end() }
     }
 
     func resumeSystemCallIfPossible() {
@@ -261,6 +268,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     func showMediaStatus(_ message: String?) { callView?.showMediaStatus(message) }
 
     private func installCallHandlers() {
+        systemCall.onAudioYield = { [weak self] in self?.audio.suspendConfiguration() }
         systemCall.onCallStateChanged = nil
         systemCall.onActivated = { [weak self] in
             Task { @MainActor [weak self] in
@@ -612,6 +620,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
 
     private func finish(failed: Bool) {
         guard hasJoinStarted else { return }
+        audio.endSession()
         cameraPublication.cancel()
         cameraQuality = nil; cameraOutput = nil; cameraPreview = nil; callView?.localCameraPreview = nil
         #if DEBUG
@@ -619,7 +628,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
         VideoDecoderFactoryExperiment.shared.end(token: decoderExperimentToken)
         decoderExperimentToken = nil
         #endif
-        if let microphoneProbe { AudioManager.shared.remove(localAudioRenderer: microphoneProbe); self.microphoneProbe = nil }
+        microphoneProbe?.stop(); microphoneProbe = nil
         studio.end()
         studioAudio.end()
         callView?.endFloatingVideo()

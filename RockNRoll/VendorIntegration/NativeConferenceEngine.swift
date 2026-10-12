@@ -245,6 +245,7 @@ final class NativeConferenceEngine: CallEngine {
             self?.activeControls?.setShareOffer(name: name)
             self?.offeredShare = target
         }
+        audio.onServicesChanged = { [weak self] in self?.systemCall.audioServicesChanged($0) }
         audio.onStatus = { [weak self] message in self?.onMediaStatus?(message) }
         audio.onRouteChanged = { [weak self] in
             guard let self else { return }
@@ -390,6 +391,7 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func installCallHandlers() {
+        systemCall.onAudioYield = { [weak self] in self?.audio.suspendConfiguration() }
         let epoch = sessionEpoch
         systemCall.onCallStateChanged = { [weak self] in
             Task { @MainActor [weak self] in
@@ -801,7 +803,6 @@ final class NativeConferenceEngine: CallEngine {
         isNetworkAvailable = true
         reconnectingForNetwork = false
         mediaConnectionConfirmed = false
-        try audio.prepareForJoin()
         startNetworkMonitor()
         hasJoinStarted = true
         #if DEBUG
@@ -824,16 +825,22 @@ final class NativeConferenceEngine: CallEngine {
         installCodecRecovery()
         beginFloatingVideoSession()
         installCallHandlers()
-        #if DEBUG && targetEnvironment(simulator)
-        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
-            // This harness bypasses CallKit, which normally owns activation.
-            try audio.reactivateAfterInterruption()
-            audioGate.activate()
-            startMediaAfterActivation()
-            return
-        }
-        #endif
-        systemCall.start()
+        audio.start(ready: { [weak self] in
+            guard let self, self.hasJoinStarted, !self.leaveRequested else { return }
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
+                // This harness bypasses CallKit, which normally owns activation.
+                try await self.audio.reactivateAfterInterruption()
+                self.audioGate.activate()
+                self.startMediaAfterActivation()
+                return
+            }
+            #endif
+            self.systemCall.start()
+        }, failure: { [weak self] error in
+            self?.onMediaStatus?(error.localizedDescription)
+            self?.finishSession(userEnded: false, event: .failed)
+        })
     }
 
     private var pendingRoom: JazzRoom?
@@ -875,6 +882,7 @@ final class NativeConferenceEngine: CallEngine {
 
     func leave() {
         guard hasJoinStarted, !leaveRequested else { return }
+        audio.endSession()
         reactionTransport?.stop(); reactionTransport = nil
         receivedReactions?.stop(); receivedReactions = nil
         reactions.end(); reactionsAdapter?.stop(); reactionsAdapter = nil
@@ -896,7 +904,8 @@ final class NativeConferenceEngine: CallEngine {
                 return
             }
             #endif
-            systemCall.end()
+            if systemCall.callID == nil { finishSession(userEnded: true, event: .left) }
+            else { systemCall.end() }
         }
     }
 
@@ -1733,6 +1742,7 @@ final class NativeConferenceEngine: CallEngine {
     private func finishSession(userEnded: Bool, event: CallEvent) {
         endCodecPolicy()
         guard finishing == nil, hasJoinStarted else { return }
+        audio.endSession()
         terminalEventTask?.cancel(); terminalEventTask = nil
         connectionSubscription?.cancel(); connectionSubscription = nil
         connectionTerminationReason = nil
@@ -1750,6 +1760,7 @@ final class NativeConferenceEngine: CallEngine {
         refreshSpeakerInput = nil
         studioSubscription?.cancel(); studioSubscription = nil
         let epoch = sessionEpoch
+        let hadMediaJoin = hasMediaJoinStarted
         let destination = onEvent
         events.onEvent = nil
         events.onMediaConnected = nil
@@ -1787,7 +1798,7 @@ final class NativeConferenceEngine: CallEngine {
             self.systemCall.markEnded(reason: .remoteEnded)
             self.hasJoinStarted = false
             self.hasMediaJoinStarted = false
-            JazzSession.shared.terminateActiveConference()
+            if hadMediaJoin { JazzSession.shared.terminateActiveConference() }
             self.activeCoordinator = nil
             self.leaveRequested = false
             self.mediaReconnectTimedOut = false

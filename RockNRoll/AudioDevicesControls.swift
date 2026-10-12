@@ -10,10 +10,13 @@ final class AudioDeviceSelection: ObservableObject {
     @Published private(set) var inputs: [AVAudioSessionPortDescription] = []
     @Published private(set) var mac = MacAudioSnapshot()
     @Published private(set) var error: String?
+    private let worker: AudioSessionWorker
+    private var selectionLease: AudioSessionLease?
     private var subscriptions = Set<AnyCancellable>()
     private var observations: [NSObjectProtocol] = []
     let isMac = ProcessInfo.processInfo.isiOSAppOnMac
-    init() {
+    init(worker: AudioSessionWorker = .shared) {
+        self.worker = worker
         if isMac {
             MacAudioDevices.shared.$snapshot.sink { [weak self] _ in self?.refresh() }.store(in: &subscriptions)
         }
@@ -24,7 +27,7 @@ final class AudioDeviceSelection: ObservableObject {
         }
         refresh()
     }
-    deinit { observations.forEach(NotificationCenter.default.removeObserver) }
+    deinit { selectionLease?.invalidate(); observations.forEach(NotificationCenter.default.removeObserver) }
     func refresh() {
         let session = AVAudioSession.sharedInstance()
         inputs = session.availableInputs ?? []
@@ -37,14 +40,26 @@ final class AudioDeviceSelection: ObservableObject {
             outputName = session.currentRoute.outputs.first?.portName ?? L("Automatic")
         }
     }
+    func cancelSelection() { selectionLease?.invalidate(); selectionLease = nil }
     func selectInput(_ uid: String?) {
-        let session = AVAudioSession.sharedInstance()
-        do {
+        cancelSelection()
+        let lease = AudioSessionLease(); selectionLease = lease
+        worker.enqueue(lease: lease, operation: {
+            let session = AVAudioSession.sharedInstance()
             let port = uid.flatMap { id in session.availableInputs?.first { $0.uid == id } }
-            guard uid == nil || port != nil else { refresh(); return }
+            guard uid == nil || port != nil else { throw SoundCheckError.input }
             try session.setPreferredInput(port)
-            error = nil; refresh()
-        } catch { self.error = L("Could not change audio device. Please try again.") }
+        }) { [weak self] result in
+            Task { @MainActor in
+                guard let self, self.selectionLease === lease, lease.isActive else { return }
+                self.selectionLease = nil
+                switch result {
+                case .success: self.error = nil
+                case .failure: self.error = L("Could not change audio device. Please try again.")
+                }
+                self.refresh()
+            }
+        }
     }
     func selectMac(_ id: UInt32, _ direction: MacAudioDirection) {
         do { try MacAudioDevices.shared.select(id, for: direction); error = nil; refresh() }
@@ -107,9 +122,9 @@ struct AudioDevicesControls: View {
             if let error = devices.error { Text(error).foregroundStyle(.red) }
         }.font(.footnote).foregroundStyle(.secondary)
         .disabled(studio.held || !studio.active)
-        .onChange(of: studio.held) { if $0 { speaker.stop() } }
-        .onChange(of: studio.active) { if !$0 { speaker.stop() } }
-        .onDisappear { speaker.stop() }
+        .onChange(of: studio.held) { if $0 { speaker.stop(); devices.cancelSelection() } }
+        .onChange(of: studio.active) { if !$0 { speaker.stop(); devices.cancelSelection() } }
+        .onDisappear { speaker.stop(); devices.cancelSelection() }
     }
 }
 
@@ -128,26 +143,39 @@ final class SpeakerCheck: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published private(set) var error: String?
     private var player: AVAudioPlayer?
     private var standalone = false
+    private let worker: AudioSessionWorker
+    private var lease: AudioSessionLease?
+    private var operation: Task<Void, Never>?
+    init(worker: AudioSessionWorker = .shared) { self.worker = worker; super.init() }
     func play(standalone: Bool) {
         stop(); error = nil
-        do {
-            if standalone {
-                try AVAudioSession.sharedInstance().setCategory(.playback, options: .mixWithOthers)
-                try AVAudioSession.sharedInstance().setActive(true)
-                self.standalone = true
+        let expected = AudioSessionLease(); lease = expected
+        self.standalone = standalone; playing = true
+        operation = Task { [weak self] in
+            guard let self else { return }
+            do {
+                if standalone {
+                    try await self.worker.perform(lease: expected) {
+                        let session = AVAudioSession.sharedInstance()
+                        try session.setCategory(.playback, options: .mixWithOthers)
+                        try expected.check(); try session.setActive(true)
+                    }
+                }
+                try Task.checkCancellation(); try expected.check()
+                let player = try AVAudioPlayer(data: Self.tone())
+                self.player = player; player.delegate = self
+                guard player.play() else { throw SoundCheckError.input }
+            } catch is CancellationError { }
+            catch {
+                guard self.lease === expected else { return }
+                self.stop(); self.error = L("Cannot play the test sound. Check your output device.")
             }
-            let player = try AVAudioPlayer(data: Self.tone())
-            self.player = player; player.delegate = self
-            guard player.play() else { throw SoundCheckError.input }
-            playing = true
-        } catch { stop(); self.error = L("Cannot play the test sound. Check your output device.") }
+        }
     }
     func stop() {
+        lease?.invalidate(); lease = nil; operation?.cancel(); operation = nil
         player?.stop(); player = nil; playing = false
-        if standalone {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            standalone = false
-        }
+        if standalone { standalone = false; worker.deactivate() }
     }
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor [weak self] in guard self?.player === player else { return }; self?.stop() }

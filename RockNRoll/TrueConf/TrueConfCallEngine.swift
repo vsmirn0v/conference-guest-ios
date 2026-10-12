@@ -68,6 +68,7 @@ final class TrueConfCallEngine: CallEngine {
     init(systemCall: SystemCallCoordinator, catchUp: CatchUpStore, chat: ChatStore) {
         self.systemCall = systemCall; self.catchUp = catchUp; self.chat = chat
         audio.onRouteChanged = { [weak self] in guard let self else { return }; self.view?.setAudioRouteName(self.audio.outputName) }
+        audio.onServicesChanged = { [weak self] in self?.systemCall.audioServicesChanged($0) }
         audio.onStatus = { [weak self] in self?.onMediaStatus?($0) }
         audio.onInterruptionChanged = { [weak self] interrupted in
             guard let self, self.hasJoinStarted else { return }
@@ -159,7 +160,6 @@ final class TrueConfCallEngine: CallEngine {
         chat.isReadOnly = true; chat.unavailableReason = L("This meeting service does not provide live transcripts to anonymous guests.")
         catchUp.transcriptUnavailableReason = L("This meeting service does not provide live transcripts to anonymous guests.")
         audioProfile = studio.profile
-        try audio.prepareForJoin()
         factory = try NativeRTCPeer.makeFactory()
         callAudio.begin()
         let view = RockCallViewController(title: title ?? L("Jam %@", target.roomID), catchUp: catchUp,
@@ -172,8 +172,14 @@ final class TrueConfCallEngine: CallEngine {
         view.onMicrophone = { [weak self] in self?.setMicrophone($0) }
         view.onCamera = { [weak self] in self?.setCamera($0) }
         view.onSpeaker = { [weak self] enabled in
-            do { try self?.audio.selectBuiltInOutput(speaker: enabled) }
-            catch { self?.onMediaStatus?(error.localizedDescription) }
+            guard let self else { return }
+            let generation = self.epoch
+            Task { @MainActor [weak self] in
+                guard let self, self.epoch == generation, !self.leaving else { return }
+                do { try await self.audio.selectBuiltInOutput(speaker: enabled) }
+                catch is CancellationError { }
+                catch { self.onMediaStatus?(error.localizedDescription) }
+            }
         }
         view.onDisplayMode = { [weak self] mode in
             guard let self else { return }; self.displayMode = mode
@@ -208,16 +214,23 @@ final class TrueConfCallEngine: CallEngine {
             }
         }
         monitor.start(queue: DispatchQueue(label: "dev.vsmirn0v.conferenceguest.trueconf-path"))
-        #if DEBUG && targetEnvironment(simulator)
-        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
-            try AVAudioSession.sharedInstance().setActive(true)
-            callAudio.activate(); LKRTCAudioSession.sharedInstance().isAudioEnabled = !quiet
-            connect(); return
-        }
-        #endif
-        systemCall.start()
+        audio.start(ready: { [weak self] in
+            guard let self, self.hasJoinStarted, !self.leaving else { return }
+            #if DEBUG && targetEnvironment(simulator)
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
+                try await self.audio.reactivateAfterInterruption()
+                self.callAudio.activate(); LKRTCAudioSession.sharedInstance().isAudioEnabled = !self.quiet
+                self.connect(); return
+            }
+            #endif
+            self.systemCall.start()
+        }, failure: { [weak self] error in
+            self?.onMediaStatus?(error.localizedDescription)
+            Task { await self?.finish(failed: true) }
+        })
     }
     private func installSystemCall() {
+        systemCall.onAudioYield = { [weak self] in self?.audio.suspendConfiguration() }
         systemCall.onCallStateChanged = { [weak self] in Task { @MainActor in self?.resumeSystemCallIfPossible() } }
         systemCall.onActivated = { [weak self] in Task { @MainActor in
             guard let self, self.hasJoinStarted else { return }
@@ -611,11 +624,13 @@ final class TrueConfCallEngine: CallEngine {
     }
     func leave() {
         guard hasJoinStarted, !leaving else { return }
+        audio.endSession()
         leaving = true; view?.endFloatingVideo(); systemCall.end()
         Task { await finish(failed: false) }
     }
     private func finish(failed: Bool) async {
         guard hasJoinStarted else { return }
+        audio.endSession()
         callAudio.pause()
         callAudio.deactivate()
         hasJoinStarted = false; leaving = true; epoch = UUID()

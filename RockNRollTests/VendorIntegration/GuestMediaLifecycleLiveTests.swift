@@ -1,3 +1,4 @@
+import AVFoundation
 import ConferenceCore
 import UIKit
 import XCTest
@@ -24,6 +25,14 @@ final class GuestMediaLifecycleLiveTests: XCTestCase {
               let second = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SECOND_INVITE"] else {
             throw XCTSkip("Requires two authorized guest test rooms")
         }
+        for media: AVMediaType in camera ? [.audio, .video] : [.audio] {
+            if AVCaptureDevice.authorizationStatus(for: media) == .notDetermined {
+                _ = await AVCaptureDevice.requestAccess(for: media)
+            }
+            guard AVCaptureDevice.authorizationStatus(for: media) == .authorized else {
+                throw XCTSkip("Live capture requires \(media.rawValue) permission for this development build")
+            }
+        }
         let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             .first?.windows.first { $0.isKeyWindow })
         let original = window.rootViewController, container = UIViewController()
@@ -44,14 +53,23 @@ final class GuestMediaLifecycleLiveTests: XCTestCase {
         func wait(_ label: String, _ condition: () -> Bool) async throws {
             let deadline = Date().addingTimeInterval(45)
             while !condition(), !failed, Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
-            guard !failed, condition() else { throw NSError(domain: "GuestMediaLifecycle", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Timed out: \(label); failed=\(failed)"]) }
+            guard !failed, condition() else {
+                XCTFail("Timed out: \(label); failed=\(failed)")
+                throw NSError(domain: "GuestMediaLifecycle", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Timed out: \(label); failed=\(failed)"])
+            }
         }
         func press(_ label: String) throws {
             let button = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }
-                .first { $0.accessibilityLabel == L(label) && !$0.isHidden && $0.isEnabled }, label)
+                .first { $0.accessibilityLabel == L(label) && isVisible($0) && $0.isEnabled }, label)
             button.sendActions(for: .touchUpInside)
         }
+        // Leave before the asynchronous audio preparation creates a call owner.
+        let pending = try JoinTarget.parse(first)
+        try engine.configure(container: container, networkURL: await VendorEndpointResolver.make().resolve(for: pending), displayName: "Lifecycle QA")
+        try engine.join(target: pending, displayName: "Lifecycle QA")
+        engine.leave()
+        try await wait("pending join retired") { left && !engine.hasJoinStarted }
         // Keep the SDK initialized, as it is when the user follows multiple links.
         for (index, invite) in [first, second, first, second].enumerated() {
             active = false; left = false
@@ -61,6 +79,7 @@ final class GuestMediaLifecycleLiveTests: XCTestCase {
             try engine.join(target: target, displayName: "Lifecycle QA")
             try await wait("room \(index) connected") { active && engine.studioForTesting.enableMicrophone != nil }
             let studio = engine.studioForTesting
+            print("GUEST_MEDIA_PERMISSION video=\(AVCaptureDevice.authorizationStatus(for: .video).rawValue) audio=\(AVCaptureDevice.authorizationStatus(for: .audio).rawValue) state=\(UIApplication.shared.applicationState.rawValue)")
             var previousPreview: CameraCapturePreview?
             var previousGeneration: UUID?
             XCTAssertFalse(studio.microphoneOn); XCTAssertFalse(studio.cameraOn)
@@ -96,6 +115,14 @@ final class GuestMediaLifecycleLiveTests: XCTestCase {
             XCTAssertNil(GuestCaptureDeviceObserver.currentSource())
             print("GUEST_MEDIA_ROOM_LEFT room=\(index) camera=\(camera)")
         }
+    }
+    private func isVisible(_ view: UIView) -> Bool {
+        var node: UIView? = view
+        while let current = node {
+            if current.isHidden || current.alpha <= 0.01 { return false }
+            node = current.superview
+        }
+        return view.window != nil
     }
     private func descendants(_ view: UIView) -> [UIView] {
         [view] + view.subviews.flatMap(descendants)

@@ -26,7 +26,7 @@ final class NativeMicrophoneTests: XCTestCase {
             try? session.setCategory(category, mode: mode, options: options)
             rtc.useManualAudio = manual; rtc.isAudioEnabled = enabled
         }
-        try AudioCoordinator().prepareForJoin()
+        try await AudioCoordinator().prepareForJoin()
         rtc.useManualAudio = true; rtc.isAudioEnabled = false
         try session.setActive(true); rtc.audioSessionDidActivate(session); rtc.isAudioEnabled = true
         let inputFactory = try NativeRTCPeer.makeFactory()
