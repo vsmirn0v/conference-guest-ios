@@ -213,20 +213,21 @@ struct PresenterShareControl: View {
     @ObservedObject var model: PresenterModel
     var compact = false
     private var title: String {
-        model.running ? L("Stop sharing") : model.source == .screen && !model.screenSelected ? L("Choose screen") : L("Start sharing")
+        model.running ? L("Stop sharing") : model.screenPreparing ? L("Preparing preview…") : model.screenPicking ? L("Choose a source…") : model.source == .screen && !model.screenSelected ? L("Choose screen") : L("Start sharing")
     }
     var body: some View {
         Button {
             if model.running { model.stop() } else if model.source == .screen && !model.screenSelected { model.selectScreen() } else { Task { await model.start() } }
         } label: {
             HStack {
-                if model.starting || model.stopping { ProgressView() }
+                if model.starting || model.stopping || model.screenPreparing || model.screenPicking { ProgressView() }
                 Label(compact ? (model.running ? L("Stop") : L("Share")) : title,
                       systemImage: model.running ? "stop.circle" : "rectangle.on.rectangle")
             }.frame(maxWidth: .infinity, minHeight: 36)
         }.buttonStyle(.borderedProminent)
             .tint(model.running ? .red : .orange)
-            .disabled(!model.available || (!model.running && ((!model.hasPreview && model.source != .screen) || model.screenPicking)) || model.starting || model.stopping)
+            .disabled(!model.available || model.starting || model.stopping || (!model.running &&
+                !(model.canStartSharing || (model.source == .screen && !model.screenSelected && model.screenSelectionPhase == .idle))))
             .accessibilityLabel(title)
             .accessibilityIdentifier(model.running ? "presenter.stop" : "presenter.start")
     }

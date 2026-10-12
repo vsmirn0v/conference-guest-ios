@@ -116,10 +116,6 @@ final class TrueConfCallEngine: CallEngine {
             return TrackPresenterCamera(source: .native(track), onFrame: onFrame)
         }
         if ProcessInfo.processInfo.isiOSAppOnMac, GuestScreenCaptureFactory.isAvailable {
-            studio.presenter.prepareScreenSource = { [weak self] in
-                guard let self, self.screenSender?.composed != true else { return }
-                await self.stopScreenSharing(retirePresenter: false)
-            }
             studio.presenter.makeScreenSource = { [weak self] onFrame, onEffect, onSelection, onEnd in
                 GuestScreenCaptureFactory.make(preview: self?.view?.sharePreview ?? LocalSharePreview(),
                     onFrame: onFrame, onEffect: onEffect, onSelection: onSelection, onEnd: onEnd, onError: { _ in })

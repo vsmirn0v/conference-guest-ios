@@ -62,25 +62,127 @@ final class MacScreenCaptureTests: XCTestCase {
         try await Task.sleep(nanoseconds: 450_000_000)
         XCTAssertTrue(second.requests.isEmpty, "Stop rejects a queued resize from the old selection")
     }
-    private final class Picker: NSObject {
-        @objc var active = true
-        var removals = 0
-        var onRemove: (() -> Void)?
-        @objc func removeObserver(_ observer: NSObject) {
-            removals += 1
-            if removals == 1 { onRemove?() }
+    private final class RetiringStream: NSObject {
+        var starts = 0, stops = 0, removals = 0
+        var startCompletion: ((NSError?) -> Void)?
+        var stopCompletion: ((NSError?) -> Void)?
+        @objc(startCaptureWithCompletionHandler:) func start(_ completion: @escaping (NSError?) -> Void) {
+            starts += 1; startCompletion = completion
         }
+        @objc(stopCaptureWithCompletionHandler:) func stop(_ completion: @escaping (NSError?) -> Void) {
+            stops += 1; stopCompletion = completion
+        }
+        @objc(removeStreamOutput:type:error:) func remove(_ output: NSObject, type: Int, error: NSErrorPointer) -> Bool { removals += 1; return true }
     }
-    func testStopReenteredDuringPickerRemovalRemovesObserverOnce() {
+    private func settle() async { for _ in 0..<10 { await Task.yield() }; try? await Task.sleep(for: .milliseconds(20)) }
+    func testStopDuringReplacementDrainsOldStreamAndRejectsLateEffects() async {
+        let bridge = MacScreenCaptureBridge(), old = RetiringStream()
+        bridge.setValue(old, forKey: "stream"); bridge.setValue(true, forKey: "picking")
+        var effects = 0, completions = 0
+        bridge.onEffect = { _ in effects += 1 }
+        bridge.perform(NSSelectorFromString("selectFilter:"), with: NSObject())
+        XCTAssertEqual(old.stops, 1)
+        bridge.stop { _ in completions += 1 }; bridge.stop { _ in completions += 1 }
+        XCTAssertEqual(completions, 0, "Stop must include the stream detached for replacement")
+        old.stopCompletion?(nil); await settle()
+        XCTAssertEqual(completions, 2); XCTAssertEqual(old.removals, 1); XCTAssertEqual(old.stops, 1)
+        XCTAssertEqual(effects, 0, "Retired replacement must not reset the new session's overlay")
+    }
+    func testRetiredFailureCannotEndAReplacementStartedByStopCompletion() async {
+        let bridge = MacScreenCaptureBridge(), old = RetiringStream()
+        bridge.setValue(old, forKey: "stream")
+        var ends = 0
+        bridge.onEnd = { _ in ends += 1 }
+        bridge.stop { _ in
+            // A caller may start the next session from its completed Stop callback.
+            let generation = (bridge.value(forKey: "generation") as? NSNumber)?.uintValue ?? 0
+            bridge.setValue(generation + 1, forKey: "generation")
+        }
+        bridge.perform(NSSelectorFromString("fail:"), with: NSError(domain: "retired capture", code: 1))
+        old.stopCompletion?(nil); await settle()
+        XCTAssertEqual(ends, 0)
+    }
+    func testStopWaitsForAnInFlightStartAndCoalescesRetirement() async {
+        let lifecycle = ScreenCaptureLifecycle(), stream = RetiringStream(), output = NSObject()
+        var starts = 0, stopped = 0, drained = false
+        lifecycle.startStream(stream, output: output) { _ in starts += 1 }
+        lifecycle.retireStream(stream, output: output) { _ in stopped += 1 }
+        lifecycle.retireStream(stream, output: output) { _ in stopped += 1 }
+        lifecycle.drain { drained = true }
+        XCTAssertEqual(stream.stops, 0); XCTAssertFalse(drained)
+        stream.startCompletion?(nil); await settle()
+        XCTAssertEqual(starts, 1); XCTAssertEqual(stream.stops, 1); XCTAssertFalse(drained)
+        stream.stopCompletion?(NSError(domain: "test", code: 1)); await settle()
+        XCTAssertEqual(stopped, 2); XCTAssertTrue(drained); XCTAssertEqual(stream.removals, 1)
+    }
+    private final class Picker: NSObject {
+        @objc(isActive) var active = false
+        var additions = 0, removals = 0, presentations = 0
+        var onRemove: (() -> Void)?
+        @objc func setActive(_ value: Bool) { active = value }
+        @objc func addObserver(_ observer: NSObject) { additions += 1 }
+        @objc func removeObserver(_ observer: NSObject) { removals += 1; if removals == 1 { onRemove?() } }
+        @objc func present() { presentations += 1 }
+        @objc func presentPicker(for stream: NSObject) { presentations += 1 }
+    }
+    func testStopReenteredDuringPickerRemovalRemovesObserverOnce() throws {
         let bridge = MacScreenCaptureBridge(), picker = Picker()
-        bridge.setValue(picker, forKey: "picker")
-        bridge.setValue(true, forKey: "registered")
+        let coordinator = ScreenCapturePickerCoordinator(picker: picker)
+        let session = ScreenCapturePickerSession(coordinator: coordinator)
+        try session.present()
+        bridge.setValue(session, forKey: "pickerSession"); bridge.setValue(true, forKey: "picking")
         var completions = 0
         picker.onRemove = { bridge.stop { _ in completions += 1 } }
         bridge.stop { _ in completions += 1 }
-        XCTAssertEqual(picker.removals, 1)
-        XCTAssertEqual(completions, 2)
-        XCTAssertFalse(picker.active)
+        XCTAssertEqual(picker.removals, 1); XCTAssertEqual(completions, 2); XCTAssertFalse(picker.active)
+    }
+    func testPrivateSelectionAndCancelLeaveTheLiveShareOwnedAndUntouched() async throws {
+        let picker = Picker(), liveStream = NSObject(), privateStream = NSObject(), filter = NSObject()
+        let coordinator = ScreenCapturePickerCoordinator(picker: picker)
+        let live = ScreenCapturePickerSession(coordinator: coordinator), preview = ScreenCapturePickerSession(coordinator: coordinator)
+        var liveSelections = 0, privateSelections = 0, cancellations = 0
+        live.onFilter = { _ in liveSelections += 1; live.stream = liveStream }
+        preview.onFilter = { _ in privateSelections += 1; preview.stream = privateStream }
+        preview.onCancel = { cancellations += 1; preview.invalidate() }
+        try live.present(); coordinator.contentSharingPicker(picker, didUpdateWithFilter: filter, forStream: nil); await settle()
+        try preview.present(); coordinator.contentSharingPicker(picker, didCancelForStream: nil); await settle()
+        XCTAssertEqual(cancellations, 1); XCTAssertEqual(liveSelections, 1); XCTAssertEqual(privateSelections, 0)
+        XCTAssertTrue(picker.active); XCTAssertEqual(picker.removals, 0); XCTAssertTrue(live.stream === liveStream)
+        try preview.present(); coordinator.contentSharingPicker(picker, didUpdateWithFilter: filter, forStream: nil); await settle()
+        XCTAssertEqual(liveSelections, 1); XCTAssertEqual(privateSelections, 1)
+        // Control Center targets the associated stream, never both captures.
+        coordinator.contentSharingPicker(picker, didUpdateWithFilter: filter, forStream: liveStream); await settle()
+        XCTAssertEqual(liveSelections, 2); XCTAssertEqual(privateSelections, 1)
+        preview.invalidate(); XCTAssertTrue(picker.active)
+        live.invalidate(); XCTAssertFalse(picker.active); XCTAssertEqual(picker.removals, 1)
+    }
+    func testPickerCallbackDoesNotSynchronouslyWaitForMainThread() async throws {
+        let picker = Picker(), coordinator = ScreenCapturePickerCoordinator(picker: picker)
+        let session = ScreenCapturePickerSession(coordinator: coordinator)
+        var selections = 0; session.onFilter = { _ in selections += 1 }
+        try session.present()
+        let completed = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            coordinator.contentSharingPicker(picker, didUpdateWithFilter: NSObject(), forStream: nil)
+            completed.signal()
+        }
+        XCTAssertEqual(completed.wait(timeout: .now() + 1), .success,
+                       "A framework callback must return even while main is occupied")
+        XCTAssertEqual(selections, 0); await settle(); XCTAssertEqual(selections, 1)
+        session.invalidate()
+    }
+    func testRetiredPickerSelectionIsIgnoredAndConcurrentChooserIsRejected() async throws {
+        let picker = Picker(), coordinator = ScreenCapturePickerCoordinator(picker: picker)
+        let first = ScreenCapturePickerSession(coordinator: coordinator), next = ScreenCapturePickerSession(coordinator: coordinator)
+        var selections = 0
+        first.onFilter = { _ in selections += 1 }
+        try first.present(); XCTAssertThrowsError(try next.present())
+        coordinator.contentSharingPicker(picker, didUpdateWithFilter: NSObject(), forStream: nil)
+        first.invalidate()
+        next.onFilter = { _ in XCTFail("Retired selection must not reach the next chooser") }
+        try next.present(); await settle()
+        XCTAssertEqual(selections, 0); XCTAssertTrue(picker.active)
+        next.invalidate(); XCTAssertFalse(picker.active)
     }
 
     private final class Bridge: MacScreenCaptureBridge {

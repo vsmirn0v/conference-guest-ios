@@ -47,6 +47,11 @@ on every resize frame in [Take ScreenCaptureKit to the next level](https://devel
 - Published in [0.2.0 (76)](release-0.2.0-build76.md); both internal and public
   TestFlight groups were verified as Testing on October 12, 2026.
 
+The subsequent [Presenter lifecycle qualification](mac-presenter-screen-sharing-fix.md)
+adds independent browser verification of decoded resize geometry, shared capture
+retirement, non-destructive source selection and context reuse. Build 76's
+qualification above is retained as the historical release record.
+
 ## Browser-tab feasibility
 
 The public native picker offers display, application and window selections,

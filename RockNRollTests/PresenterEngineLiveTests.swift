@@ -9,7 +9,8 @@ import XCTest
 @MainActor final class PresenterEngineLiveTests: XCTestCase {
     func testMacGuestScreenPresenterSelectionAndResize() async throws {
         guard ProcessInfo.processInfo.isiOSAppOnMac,
-              let link = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SCREEN_PRESENTER_INVITE"] else {
+              let link = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SCREEN_PRESENTER_INVITE"],
+              let receiverURL = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SCREEN_RECEIVER"].flatMap(URL.init(string:)) else {
             throw XCTSkip("Opt-in authorized Mac screen Presenter qualification")
         }
         let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first { $0.isKeyWindow })
@@ -29,12 +30,13 @@ import XCTest
         let studio = engine.studioForTesting, model = studio.presenter
         XCTAssertNotNil(model.prepareScreenSource)
         let create = try XCTUnwrap(model.makeScreenSource)
-        var sizes = Set<String>(), frames = 0
+        var sizes = Set<String>(), frames = 0, aspects = [String: Double]()
         model.makeScreenSource = { frame, effect, selected, end in
             create({ sample in
                 if let pixels = CMSampleBufferGetImageBuffer(sample) {
                     let size = "\(CVPixelBufferGetWidth(pixels))x\(CVPixelBufferGetHeight(pixels))"
                     if sizes.insert(size).inserted { print("MAC_SCREEN_PRESENTER capture=\(size)") }
+                    aspects[size] = Double(CVPixelBufferGetWidth(pixels)) / Double(CVPixelBufferGetHeight(pixels))
                     frames += 1
                 }
                 frame(sample)
@@ -53,12 +55,31 @@ import XCTest
         try await wait { model.hasPreview || ended }
         XCTAssertFalse(model.running); XCTAssertEqual(model.source, .screen)
         model.appendAnnotation([CGPoint(x: 0.03, y: 0.03), CGPoint(x: 0.03, y: 0.4)])
+        _ = try await URLSession.shared.data(from: receiverURL.appendingPathComponent("reset"))
         await model.start(); try await wait { model.running || ended }
         print("MAC_SCREEN_PRESENTER started=\(model.running) error=\(model.error ?? "none")")
-        let resizeDeadline = Date().addingTimeInterval(50)
-        while sizes.count < 3 && !ended && Date() < resizeDeadline { try await Task.sleep(for: .seconds(1)) }
-        XCTAssertGreaterThanOrEqual(sizes.count, 3); XCTAssertTrue(model.running); XCTAssertNil(model.error); XCTAssertFalse(ended)
-        try await Task.sleep(for: .seconds(20)) // Observe actual browser reception before retirement.
+        let resizeDeadline = Date().addingTimeInterval(55)
+        var received = Set<String>()
+        while Date() < resizeDeadline && !ended {
+            let (data, _) = try await URLSession.shared.data(from: receiverURL.appendingPathComponent("frames"))
+            let report = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertTrue(report["error"] is NSNull, "Browser must read actual decoded pixels")
+            let values = report["frames"] as? [[String: Any]] ?? []
+            for (size, aspect) in aspects {
+                let matched = values.filter {
+                    guard let width = $0["width"] as? Double, let height = $0["height"] as? Double, height > 0 else { return false }
+                    return abs(width / height - aspect) < 0.02
+                }
+                let pixels = Set(matched.compactMap { ($0["hash"] as? NSNumber)?.uint64Value })
+                if pixels.count >= 5 { received.insert(size) }
+            }
+            if sizes.count >= 3 && received.isSuperset(of: sizes) { break }
+            try await Task.sleep(for: .seconds(1))
+        }
+        XCTAssertGreaterThanOrEqual(sizes.count, 3)
+        XCTAssertTrue(received.isSuperset(of: sizes), "Every captured aspect must reach a moving receiver: captured=\(sizes), received=\(received)")
+        XCTAssertTrue(model.running); XCTAssertNil(model.error); XCTAssertFalse(ended)
+        print("MAC_SCREEN_PRESENTER receiverVerified=\(received.sorted())")
         let evidence = await GuestMicrophoneProbe.codecEvidenceForTesting()
         print("MAC_SCREEN_PRESENTER frames=\(frames) sizes=\(sizes.sorted()) outbound=\(evidence.filter { $0["type"] as? String == "outbound-rtp" })")
         XCTAssertTrue(evidence.contains { $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" && ($0["framesEncoded"] as? NSNumber)?.intValue ?? 0 > 20 })

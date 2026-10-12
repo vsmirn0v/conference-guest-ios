@@ -59,7 +59,7 @@ struct PresenterPlacement: Codable, Equatable {
 /// no CI/Vision objects are accessed concurrently, and buffers come from a pool.
 // Sendability relies on the owner's serial worker, including deferred teardown.
 final class PresenterCompositor: @unchecked Sendable {
-    let size: CGSize
+    private(set) var size: CGSize
     private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
     private let context: CIContext
     private var pool: CVPixelBufferPool?
@@ -96,6 +96,18 @@ final class PresenterCompositor: @unchecked Sendable {
         else { context = CIContext(options: options.merging([.useSoftwareRenderer: true]) { _, new in new }) }
         segmentation.qualityLevel = .balanced
         segmentation.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        makePool()
+    }
+    // Worker-owned: retain CIContext/Metal resources and rebuild only size-bound state.
+    func resize(to size: CGSize) {
+        guard self.size != size else { return }
+        self.size = size; pool = nil
+        backgroundKey = nil; cachedBackground = nil
+        cachedStrokes = []; annotation = nil; cachedDraft = []; draft = nil
+        makePool()
+    }
+    var contextIdentity: ObjectIdentifier { ObjectIdentifier(context) }
+    private func makePool() {
         CVPixelBufferPoolCreate(nil, nil, [
             kCVPixelBufferWidthKey: Int(size.width), kCVPixelBufferHeightKey: Int(size.height),
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
@@ -310,4 +322,17 @@ final class PresenterCompositor: @unchecked Sendable {
         }
         return drawing.makeImage().map { CIImage(cgImage: $0).transformed(by: CGAffineTransform(translationX: bounds.minX, y: bounds.minY)) }
     }
+}
+
+/// Accessed only on PresenterModel's serial rendering queue, including teardown.
+final class PresenterRenderer: @unchecked Sendable {
+    private var compositor: PresenterCompositor?
+    func render(size: CGSize, scene: PresenterScene, camera: CVPixelBuffer?, cameraRevision: UInt64?,
+                screen: CVPixelBuffer?, rotation: Int, time: CMTime) -> CMSampleBuffer? {
+        if compositor == nil { compositor = PresenterCompositor(size: size) }
+        compositor?.resize(to: size)
+        return compositor?.render(scene: scene, camera: camera, cameraRevision: cameraRevision,
+                                  screen: screen, rotation: rotation, time: time)
+    }
+    func reset() { compositor = nil }
 }

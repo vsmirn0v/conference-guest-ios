@@ -24,3 +24,31 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 NS_ASSUME_NONNULL_END
+
+NS_ASSUME_NONNULL_BEGIN
+/// Main-thread ownership of asynchronous starts/stops, shared by both adapters.
+@interface ScreenCaptureLifecycle : NSObject
+- (void)startStream:(NSObject *)stream output:(NSObject *)output completion:(void (^)(NSError * _Nullable))completion;
+- (void)retireStream:(NSObject *)stream output:(NSObject *)output completion:(void (^)(NSError * _Nullable))completion;
+- (void)drain:(void (^)(void))completion;
+@end
+
+@class ScreenCapturePickerSession;
+/// One observer routes a system selection only to the requesting capture.
+@interface ScreenCapturePickerCoordinator : NSObject
++ (instancetype)sharedCoordinator;
+- (instancetype)initWithPicker:(NSObject *)picker;
+- (void)contentSharingPicker:(NSObject *)picker didUpdateWithFilter:(NSObject *)filter forStream:(nullable NSObject *)stream;
+- (void)contentSharingPicker:(NSObject *)picker didCancelForStream:(nullable NSObject *)stream;
+- (void)contentSharingPickerStartDidFailWithError:(NSError *)error;
+@end
+@interface ScreenCapturePickerSession : NSObject
+@property(atomic, weak, nullable) NSObject *stream;
+@property(nonatomic, copy, nullable) void (^onFilter)(NSObject *filter);
+@property(nonatomic, copy, nullable) void (^onCancel)(void);
+@property(nonatomic, copy, nullable) void (^onError)(NSError *error);
+- (instancetype)initWithCoordinator:(ScreenCapturePickerCoordinator *)coordinator;
+- (BOOL)presentWithError:(NSError **)error NS_SWIFT_NAME(present());
+- (void)invalidate;
+@end
+NS_ASSUME_NONNULL_END

@@ -962,6 +962,7 @@ final class NativeConferenceEngine: CallEngine {
         if retirePresenter {
             studio.presenter.sharingEnded()
             await studio.presenter.releaseCamera()
+            await studio.presenter.waitForScreenStop()
         }
         localPreviewEpoch = UUID()
         localSharePreview.end()
@@ -1287,12 +1288,9 @@ final class NativeConferenceEngine: CallEngine {
             #if canImport(ScreenCaptureKit)
             if ProcessInfo.processInfo.isiOSAppOnMac, GuestScreenCaptureFactory.isAvailable {
                 self.studio.presenter.prepareScreenSource = { [weak self] in
-                    guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
-                          !(self.screenCapture is GuestPresenterSender) else { return }
-                    // Ordinary sharing owns the system picker until its capture
-                    // stops. Retire it before opening the private Presenter source.
-                    await self.stopScreenSharing(retirePresenter: false)
-                    guard self.canChangeMedia(epoch: epoch, attempt: attempt), !self.isSystemHeld else { return }
+                    guard let self, self.canChangeMedia(epoch: epoch, attempt: attempt),
+                          !self.isSystemHeld, self.screenCapture == nil else { return }
+                    // Preparing a private scene must not stop an existing share.
                     self.prepareMacShareTransport()
                 }
                 self.studio.presenter.makeScreenSource = { [weak self] onFrame, onEffect, onSelection, onEnd in
@@ -1305,8 +1303,8 @@ final class NativeConferenceEngine: CallEngine {
             self.studio.presenter.startSharing = { [weak self] sample in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                       self.canChangeMedia(epoch: epoch, attempt: attempt), !self.isSystemHeld else { throw CancellationError() }
-                // A previous native/broadcast sender may still be releasing its
-                // socket. Preserve the private scene while retiring that sender.
+                // Only explicit Share commits the transition from ordinary sharing.
+                let replacingShare = self.screenCapture != nil
                 await self.stopScreenSharing(retirePresenter: false)
                 guard self.canChangeMedia(epoch: epoch, attempt: attempt), !self.isSystemHeld else { throw CancellationError() }
                 let sender = GuestPresenterSender(preview: self.localSharePreview) { [weak self] message in
@@ -1317,7 +1315,7 @@ final class NativeConferenceEngine: CallEngine {
                 self.screenCapture = sender
                 // A selected screen already prepared the receiving transport
                 // before its chooser. Do not reopen it when the user presses Share.
-                if !self.studio.presenter.screenSelected { self.prepareMacShareTransport() }
+                if replacingShare || !self.studio.presenter.screenSelected { self.prepareMacShareTransport() }
                 sender.start(); sender.send(sample)
             }
             self.studio.presenter.sendSample = { [weak self] sample in

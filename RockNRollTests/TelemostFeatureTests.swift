@@ -171,7 +171,10 @@ final class TelemostFeatureTests: XCTestCase {
         store.unavailableReason = "Read only"; store.clear(); XCTAssertNil(store.unavailableReason)
     }
     func testSeparatePresentationTransceiverAndStop() async throws {
-        let factory = try NativeRTCPeer.makeFactory()
+        // This verifies signaling/track identity, not CoreAudio device startup.
+        _ = LKRTCInitializeSSL()
+        let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
+            decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: MicrophoneFixtureDevice())
         let publisher = try NativeRTCPeer(target: "PUBLISHER", factory: factory, ice: [])
         let receiver = try NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: [])
         let track = factory.videoTrack(with: factory.videoSource(forScreenCast: true), trackId: "screen")
@@ -297,5 +300,100 @@ final class TelemostFeatureTests: XCTestCase {
         let deadline = Date().addingTimeInterval(30)
         while !condition(), Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
         XCTAssertTrue(condition()); if !condition() { throw TelemostError.timedOut }
+    }
+}
+
+/// Real encode -> RTP -> decode checks for both native engine transport layouts.
+/// No camera, microphone, meeting server or screen-capture permission is used.
+@MainActor final class ScreenShareReceiverTests: XCTestCase {
+    func testSplitScreenResizeReachesReceiver() async throws { try await receiveResizes(topology: .split) }
+    func testCompositeScreenResizeReachesReceiver() async throws { try await receiveResizes(topology: .composite) }
+    private func receiveResizes(topology: NativeRTCPeer.Topology) async throws {
+        _ = LKRTCInitializeSSL()
+        let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
+            decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: MicrophoneFixtureDevice())
+        let sender = try NativeRTCPeer(target: "PUBLISHER", factory: factory, ice: [], topology: topology)
+        let receiver = try NativeRTCPeer(target: "SUBSCRIBER", factory: factory, ice: [], topology: topology)
+        let capture = NativeScreenSender(factory: factory, preview: LocalSharePreview(), onFirstFrame: {}, onEnd: { _ in })
+        let rendered = ReceivedScreenFrames()
+        var tracks = [String: LKRTCVideoTrack]()
+        receiver.onTrack = { key, track in Task { @MainActor in
+            guard tracks[key] == nil else { return }; tracks[key] = track; track.add(rendered)
+        } }
+        func candidate(_ value: [String: Any]) -> [String: Any] {
+            var value = value; value["sdpMlineIndex"] = (value["sdpMlineIndex"] as? NSNumber)?.intValue; return value
+        }
+        sender.onCandidate = { value in Task { try? await receiver.addCandidate(candidate(value)) } }
+        receiver.onCandidate = { value in Task { try? await sender.addCandidate(candidate(value)) } }
+        let model = PresenterModel(observeLifecycle: false)
+        model.startSharing = { capture.send($0) }; model.sendSample = { capture.send($0) }; model.stopSharing = {}
+        do {
+            try capture.startComposed(); try sender.setSharing(capture.track)
+            let offer = try await sender.offer(), answer = try await receiver.answer(offer)
+            try await sender.accept(answer); sender.localSDPSent(); receiver.localSDPSent()
+            model.open()
+            var sequence = 0
+            for composed in [false, true] {
+                if composed { model.appendAnnotation([CGPoint(x: 0.05, y: 0.05), CGPoint(x: 0.9, y: 0.9)]) }
+                for size in [CGSize(width: 640, height: 360), CGSize(width: 360, height: 640), CGSize(width: 800, height: 300)] {
+                    let baseline = rendered.count
+                    let deadline = Date().addingTimeInterval(8)
+                    while Date() < deadline {
+                        sequence += 1
+                        model.acceptScreen(try pattern(size: size, sequence: sequence))
+                        if model.canStartSharing { await model.start() }
+                        try await Task.sleep(for: .milliseconds(80))
+                        if rendered.matches(size, after: baseline) >= 5 { break }
+                    }
+                    XCTAssertGreaterThanOrEqual(rendered.matches(size, after: baseline), 5,
+                        "Receiver must decode multiple fresh frames of each new aspect: \(size), composed=\(composed), received=\(rendered.summary)")
+                }
+            }
+            model.end(); await capture.stop()
+            for track in tracks.values { track.remove(rendered) }
+            let stopped = rendered.count
+            capture.send(try pattern(size: CGSize(width: 160, height: 90), sequence: 99))
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(rendered.count, stopped)
+            print("SCREEN_RESIZE_RECEIVER topology=\(topology) frames=\(rendered.count) dimensions=\(rendered.summary)")
+            await sender.close(); await receiver.close()
+        } catch {
+            model.end(); await capture.stop(); for track in tracks.values { track.remove(rendered) }
+            await sender.close(); await receiver.close(); throw error
+        }
+    }
+    private func pattern(size: CGSize, sequence: Int) throws -> CMSampleBuffer {
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, Int(size.width), Int(size.height), kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        CVPixelBufferLockBaseAddress(buffer, [])
+        let bytes = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self), stride = CVPixelBufferGetBytesPerRow(buffer)
+        for y in 0..<Int(size.height) { for x in 0..<Int(size.width) {
+            let offset = y * stride + x * 4
+            let value = UInt8(40 + (sequence * 19 + x / 10 + y / 10) % 160)
+            bytes[offset] = value; bytes[offset + 1] = value; bytes[offset + 2] = value; bytes[offset + 3] = 255
+        } }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        return try XCTUnwrap(PresenterCompositor.sample(buffer, time: CMTime(seconds: ProcessInfo.processInfo.systemUptime, preferredTimescale: 1_000_000_000)))
+    }
+}
+private final class ReceivedScreenFrames: NSObject, LKRTCVideoRenderer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var frames: [(CGSize, UInt8)] = []
+    var count: Int { lock.lock(); defer { lock.unlock() }; return frames.count }
+    var summary: [String] { lock.lock(); defer { lock.unlock() }; return Array(Set(frames.map { "\(Int($0.0.width))x\(Int($0.0.height))" })).sorted() }
+    func setSize(_ size: CGSize) {}
+    func renderFrame(_ frame: LKRTCVideoFrame?) {
+        guard let frame else { return }
+        let pixels = frame.buffer.toI420()
+        let fingerprint = pixels.dataY[Int(pixels.height / 2) * Int(pixels.strideY) + Int(pixels.width / 2)]
+        lock.lock(); frames.append((CGSize(width: Int(frame.width), height: Int(frame.height)), fingerprint)); lock.unlock()
+    }
+    func matches(_ size: CGSize, after index: Int) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        let values = frames.dropFirst(index).filter { abs($0.0.width / $0.0.height - size.width / size.height) < 0.015 }
+        // Fresh timestamps alone must not pass a frozen-picture regression.
+        return Set(values.map { $0.1 }).count
     }
 }

@@ -7,6 +7,43 @@ import XCTest
 @testable import RockNRoll
 
 final class PresenterCompositorTests: XCTestCase {
+    func testResizeContextReuseMeasurement() throws {
+        let sizes = [CGSize(width: 640, height: 360), CGSize(width: 360, height: 640), CGSize(width: 800, height: 300)]
+        var scene = PresenterScene(); scene.strokes = [[CGPoint(x: 0.1, y: 0.1), CGPoint(x: 0.9, y: 0.9)]]
+        var timings = [Bool: [Double]]()
+        for reuse in [false, true, true, false] {
+            let retained = reuse ? PresenterCompositor(size: sizes[0]) : nil
+            for index in 0..<18 {
+                let elapsed = try autoreleasepool { () throws -> Double in
+                    let began = ProcessInfo.processInfo.systemUptime
+                    let compositor = retained ?? PresenterCompositor(size: sizes[index % sizes.count])
+                    compositor.resize(to: sizes[index % sizes.count])
+                    _ = try XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero))
+                    return (ProcessInfo.processInfo.systemUptime - began) * 1_000
+                }
+                if index >= 3 { timings[reuse, default: []].append(elapsed) }
+            }
+        }
+        for reuse in [false, true] {
+            let values = try XCTUnwrap(timings[reuse]).sorted()
+            print("PRESENTER_RESIZE_COST reuse=\(reuse) medianMS=\(values[values.count / 2]) samples=\(values.count)")
+        }
+    }
+    func testResizeReusesContextAndRebuildsSizeDependentDrawingCaches() throws {
+        let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90), software: true)
+        let identity = compositor.contextIdentity
+        var scene = PresenterScene(); scene.strokes = [[CGPoint(x: 0.1, y: 0.1), CGPoint(x: 0.9, y: 0.9)]]
+        for size in [CGSize(width: 160, height: 90), CGSize(width: 90, height: 160), CGSize(width: 240, height: 90)] {
+            compositor.resize(to: size)
+            let sample = try XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero))
+            let image = try XCTUnwrap(CMSampleBufferGetImageBuffer(sample))
+            XCTAssertEqual(CVPixelBufferGetWidth(image), Int(size.width)); XCTAssertEqual(CVPixelBufferGetHeight(image), Int(size.height))
+            XCTAssertEqual(compositor.contextIdentity, identity)
+            let fresh = PresenterCompositor(size: size, software: true)
+            XCTAssertEqual(try pixels(sample), try pixels(XCTUnwrap(fresh.render(scene: scene, camera: nil, time: .zero))),
+                           "Resizing must invalidate cached annotations/background at the previous geometry")
+        }
+    }
     func testCameraMirrorChangesOnlyCameraPixelsAndKeepsSceneGeometry() throws {
         let camera = try solid(50)
         CVPixelBufferLockBaseAddress(camera, [])
@@ -579,6 +616,42 @@ final class PresenterModelTests: XCTestCase {
         XCTAssertEqual(published, 0, "Selecting a screen remains a private setup action")
         await model.start()
         XCTAssertTrue(model.running); XCTAssertEqual(published, 1)
+    }
+    func testShareWaitsForFirstRenderedFrameAndPreparationTimeoutIsRetryable() async throws {
+        let model = PresenterModel(observeLifecycle: false, screenPreparationTimeout: 0.08)
+        defer { model.end() }
+        let capture = Screen()
+        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        var starts = 0
+        model.startSharing = { _ in starts += 1 }
+        model.makeScreenSource = { frame, _, selection, _ in selected = selection; receive = frame; return capture }
+        model.open(); model.selectScreen(); await waitUntil { capture.starts == 1 }
+        XCTAssertTrue(model.screenPicking); XCTAssertFalse(model.canStartSharing)
+        selected?(); XCTAssertTrue(model.screenPreparing)
+        await model.start(); XCTAssertEqual(starts, 0)
+        await waitUntil { model.error != nil }
+        XCTAssertEqual(model.screenSelectionPhase, .idle); XCTAssertFalse(model.screenSelected)
+        await model.waitForScreenStop(); XCTAssertTrue(capture.stopped)
+        model.selectScreen(); await waitUntil { capture.starts == 2 }; selected?()
+        receive?(try screenSample()); XCTAssertFalse(model.canStartSharing, "A captured frame still needs a rendered preview")
+        await waitUntil { model.canStartSharing }
+        XCTAssertEqual(model.screenSelectionPhase, .ready)
+        await model.start(); XCTAssertTrue(model.running); XCTAssertEqual(starts, 1)
+    }
+    func testOldFramesCannotDismissReplacementChooserAndCancelledSelectionKeepsShare() async throws {
+        let model = PresenterModel(observeLifecycle: false), capture = Screen()
+        defer { model.end() }
+        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        var stops = 0
+        model.startSharing = { _ in }; model.stopSharing = { stops += 1 }
+        model.makeScreenSource = { frame, _, selection, _ in selected = selection; receive = frame; return capture }
+        model.open(); model.selectScreen(); await waitUntil { capture.starts == 1 }; selected?()
+        receive?(try screenSample()); await waitUntil { model.canStartSharing }; await model.start()
+        model.selectScreen(); XCTAssertTrue(model.screenPicking)
+        receive?(try screenSample()); XCTAssertTrue(model.screenPicking)
+        // A cancelled replacement reports selection completion but keeps its existing capture.
+        selected?(); XCTAssertTrue(model.running); XCTAssertTrue(model.screenSelected)
+        XCTAssertEqual(stops, 0); XCTAssertFalse(capture.stopped)
     }
     func testScreenResizePreservesRunningSenderAndChangesPlainAndComposedOutput() async throws {
         for composed in [false, true] {

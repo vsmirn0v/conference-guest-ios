@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-12",
+  "kind": "guest Presenter independent browser receiver",
+  "captureFrames": 1148,
+  "encodedFrames": 236,
+  "codec": "H264",
+  "encoder": "VideoToolbox",
+  "resizeAndRenderBenchmark": {
+    "samplesPerPath": 30,
+    "metric": "synthetic warmed median wall time in milliseconds; not energy",
+    "mac": { "freshContext": 16.906375, "reusedContext": 1.102708 },
+    "ios27Simulator": { "freshContext": 4.866083, "reusedContext": 1.413958 }
+  },
+  "receiver": {
+    "1100x764": {
+      "decodedObservations": 24,
+      "differentPixelHashes": 24
+    },
+    "1536x1080": {
+      "decodedObservations": 43,
+      "differentPixelHashes": 43
+    },
+    "762x1080": {
+      "decodedObservations": 37,
+      "differentPixelHashes": 37
+    },
+    "1920x770": {
+      "decodedObservations": 10,
+      "differentPixelHashes": 10
+    }
+  }
+}

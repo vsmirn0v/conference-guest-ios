@@ -15,6 +15,23 @@ import ScreenCaptureKit
 @MainActor
 final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScreenSource {
     private let windowResize = MacScreenCaptureBridge()
+    private let lifecycle = ScreenCaptureLifecycle()
+    private lazy var macPicker: ScreenCapturePickerSession = {
+        let session = ScreenCapturePickerSession()
+        session.onFilter = { [weak self] filter in
+            MainActor.assumeIsolated {
+                guard let self, let filter = filter as? SCContentFilter else { return }
+                let attempt = self.generation
+                Task { @MainActor [weak self] in
+                    guard let self, self.generation == attempt else { return }
+                    await self.selected(filter)
+                }
+            }
+        }
+        session.onCancel = { [weak self] in self?.selectionCancelled() }
+        session.onError = { [weak self] error in self?.selectionFailed(error) }
+        return session
+    }()
     private var stream: SCStream?
     private var upload: GuestPresenterSender?
     private var uploadStarted = false
@@ -44,6 +61,13 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
 
     func start() {
         guard !picking, retirement == nil else { return }
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            if stream == nil { generation += 1 }
+            picking = true; pickerRegistered = true; macPicker.stream = stream
+            do { try macPicker.present() }
+            catch { selectionFailed(error) }
+            return
+        }
         let picker = SCContentSharingPicker.shared
         guard picker.isAvailable, !picker.isActive || pickerRegistered else {
             let message = L("Screen sharing is unavailable. Close any other sharing chooser and try again.")
@@ -61,13 +85,13 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         picking = false
         guard stream == nil, pickerRegistered else { return }
         pickerRegistered = false
+        if ProcessInfo.processInfo.isiOSAppOnMac { macPicker.invalidate(); return }
         SCContentSharingPicker.shared.remove(self)
         SCContentSharingPicker.shared.isActive = false
     }
 
     func stop() async {
         if let retirement { await retirement.value; return }
-        guard stream != nil || upload != nil || pickerRegistered || picking else { return }
         #if DEBUG
         if let deliveryExperiment, deliveryExperiment.received > 0 { print(deliveryExperiment.summary) }
         deliveryExperiment?.reset()
@@ -82,15 +106,11 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         releasePicker()
         if onFrame == nil { preview.end() }
         // Stop forwarding frames immediately, before any suspension point.
-        let attempt = generation
         let ending = Task { @MainActor [self] in
             await previousUpload?.stop()
-            if let previous {
-                do { try await previous.stopCapture() }
-                catch {
-                    if generation == attempt { onError(L("Could not stop screen sharing: %@", error.localizedDescription)) }
-                }
-                try? previous.removeStreamOutput(self, type: .screen)
+            if let previous { await retire(previous) }
+            await withCheckedContinuation { continuation in
+                lifecycle.drain { continuation.resume() }
             }
         }
         retirement = ending
@@ -123,13 +143,13 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
             // UIKit's public ScreenCaptureKit surface cannot update an existing
             // filter/configuration. Replace capture, preserving the one sender.
             stream = nil
-            try? await previous.stopCapture()
-            try? previous.removeStreamOutput(self, type: .screen)
+            await retire(previous)
             guard generation == attempt, selectionGeneration == selection else { return }
             onEffect(false)
         }
         let capture = SCStream(filter: filter, configuration: config, delegate: self)
         stream = capture
+        if ProcessInfo.processInfo.isiOSAppOnMac { macPicker.stream = capture }
         if ProcessInfo.processInfo.isiOSAppOnMac, filter.style == .window {
             // Public macOS updateConfiguration is unavailable in the UIKit SDK's
             // declarations, but available on the Mac stream through our ABI adapter.
@@ -149,19 +169,39 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
                 }
                 upload = sender
             }
-            try await capture.startCapture()
-            guard generation == attempt, selectionGeneration == selection else {
-                try? await capture.stopCapture()
-                return
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                lifecycle.startStream(capture, output: self) { error in
+                    if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+                }
             }
+            guard generation == attempt, selectionGeneration == selection else { return }
             releasePicker(); onSelection()
         } catch {
             guard generation == attempt, selectionGeneration == selection else { return }
+            let retirementGeneration = generation + 1
             await stop()
+            guard generation == retirementGeneration else { return }
             let message = L("Could not share screen: %@", error.localizedDescription)
             onError(message); onEnd(message)
         }
     }
+    private func retire(_ stream: SCStream) async {
+        await withCheckedContinuation { continuation in
+            lifecycle.retireStream(stream, output: self) { _ in continuation.resume() }
+        }
+    }
+    private func selectionCancelled() {
+        guard picking else { return }
+        releasePicker(); onSelection()
+        if stream == nil { onEnd(nil) }
+    }
+    private func selectionFailed(_ error: Error) {
+        guard picking else { return }
+        releasePicker()
+        let message = L("Could not open screen sharing: %@", error.localizedDescription)
+        onError(message); onEnd(message)
+    }
+
 }
 
 @available(iOS 27.0, *)
@@ -172,18 +212,11 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
     }
 
     nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
-        Task { @MainActor [weak self] in guard let self else { return }
-            self.releasePicker(); self.onSelection()
-            if self.stream == nil { self.onEnd(nil) } }
+        Task { @MainActor [weak self] in self?.selectionCancelled() }
     }
 
     nonisolated func contentSharingPickerStartDidFailWithError(_ error: Error) {
-        Task { @MainActor [weak self] in
-            guard let self, self.picking else { return }
-            self.releasePicker()
-            let message = L("Could not open screen sharing: %@", error.localizedDescription)
-            self.onError(message); self.onEnd(message)
-        }
+        Task { @MainActor [weak self] in self?.selectionFailed(error) }
     }
 
     nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
@@ -238,7 +271,6 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
             #if DEBUG
             print("Native screen capture stopped: domain=\((error as NSError).domain), code=\((error as NSError).code), message=\(error.localizedDescription)")
             #endif
-            self.stream = nil
             let retirementGeneration = self.generation + 1
             await self.stop()
             guard self.generation == retirementGeneration else { return }

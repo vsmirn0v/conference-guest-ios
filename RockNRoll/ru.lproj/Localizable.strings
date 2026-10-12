@@ -787,3 +787,9 @@
 "Layout: %@" = "Вид: %@";
 
 "Meeting layout" = "Вид встречи";
+
+"Preparing preview…" = "Подготовка предпросмотра…";
+
+"Choose a source…" = "Выберите источник…";
+
+"No screen preview arrived. Choose the source again." = "Предпросмотр экрана не появился. Выберите источник ещё раз.";

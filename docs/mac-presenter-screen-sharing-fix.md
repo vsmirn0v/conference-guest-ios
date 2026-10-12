@@ -1,63 +1,71 @@
-# Mac Presenter screen sharing, October 12, 2026
+# Mac Presenter sharing and lifecycle qualification
 
-## Failure and correction
+Updated October 12, 2026. Follows the window-resize correction in build 76.
 
-The guest engine's Presenter source did not retire ordinary sharing before
-opening its own system chooser. It also prepared the SDK receiving transport
-only when Share was pressed, unlike ordinary sharing, which prepares it before
-selection. A live test captured a valid screen frame but failed on sender startup
-with `InvalidTransition { phase: idle, targetPhase: failed(deinit) }` and socket
-connection failures.
+## Behavior and ownership
 
-The guest Presenter preflight now retires ordinary capture while preserving the
-private scene, then prepares the receiving transport before opening the chooser.
-Starting a selected screen uses that prepared transport. An already running
-Presenter sender survives source replacement.
-
-Capture-start confirmation may arrive before the first frame. The model now
-keeps the screen source selected until either a frame arrives or capture ends;
-only cancellation/end restores the previous private source. Selection alone
-does not publish the screen to the meeting.
-
-Resizing uses build 76's shared ScreenCaptureKit size controller. The Presenter
-model updates the canvas aspect and compositor size, rejects queued renders with
-obsolete geometry, and retains the visible preview until a resized frame is
-ready. Plain and composed output keep the same sender through size changes.
-Unchanged screen frames do not republish source selection to SwiftUI controls.
+- Ordinary sharing continues while a private Presenter source is chosen or
+  previewed. Cancel/closing the preview leaves the original share untouched.
+  Explicit Start sharing commits replacement and retires the previous publisher.
+- One main-thread `ScreenCapturePickerCoordinator` routes the Mac system chooser
+  to its requesting capture. Separate leases permit a live share and a private
+  preview without delivering a selection to both. Control Center updates route
+  by their associated stream. Retired callbacks cannot affect a new chooser.
+- Both adapters use `ScreenCaptureLifecycle` to own asynchronous capture starts
+  and stops. Stop drains a stream already detached for replacement, waits for
+  startup before stopping it, coalesces repeated retirement, and detaches outputs.
+  Generation checks reject obsolete frames, selection and overlay callbacks.
+- Presenter distinguishes choosing, preparing, ready and idle. Share requires a
+  rendered preview. A missing first preview produces a retryable error after
+  15 seconds. Existing frames cannot dismiss an open replacement chooser.
+- Guest sharing prepares its SDK receiving transport before private selection
+  when no publisher exists. Replacing an ordinary share prepares a new transport
+  only after explicitly committing and retiring the old sender.
+- Window dimensions still use the shared 350 ms resize controller, bounded to
+  1920×1080 without upscaling. The model invalidates old-size work and preserves
+  the displayed preview until a new-size frame is ready.
+- Presenter now creates/uses/releases its compositor on the serial rendering
+  worker. Resizes retain the Core Image/Metal context and rebuild only the buffer
+  pool and size-dependent drawing/background caches. Plain screens bypass it.
 
 ## Qualification
 
-- Mac: 61 focused capture/Presenter/preview tests, 59 passed and two expected
-  capability/live-picker skips. iOS 27: 61 tests, 60 passed and one expected
-  live-picker skip. No failures on either target.
-- iOS 17.5: 38 source/model/canvas tests, 37 passed and one expected live-picker
-  skip. After removing redundant state publication, all 22 Presenter model
-  tests passed again on both Mac and iOS 27.
-- The final Mac Release build passed and its signed app verified successfully.
-- Real guest meeting on macOS 27.0.1: source selected through the actual Presenter
-  Source menu and macOS system chooser; a synthetic window cycled through
-  portrait, wide and small sizes. Production native capture delivered 1,492
-  frames and four sizes: 1920×770, 1100×764, 1536×1080 and 764×1080.
-- The actual guest transport encoded 376 video frames using VideoToolbox H.264;
-  `powerEfficientEncoder` was true. Sharing remained active and Stop rejected
-  subsequent capture frames. An annotation exercised the composed output path.
-- The live run verifies capture and outgoing SDK encoding. Remote browser pixel
-  geometry was not independently measured. No physical-iPhone check was needed
-  for the guest Mac preflight change; shared model behavior was tested on both
-  simulators.
-- Local logs/results are in `.build/presenter-screen-fix/`; the first failed
-  transport run is retained alongside the passing `mac-live-prepared.xcresult`.
+Evidence is under `.build/screen-sharing-lifecycle/` (local, ignored).
 
-## Reproduction
+- Mac regression suite: 80 tests, 74 passed and six expected capability/live-room
+  skips. The final callback/compositor suite ran 35 tests on Mac (33 passed,
+  two expected skips) and iOS 27 simulator (34 passed, one expected skip).
+  No failures in these completed runs. The final signed Release build and strict
+  deep code-signature verification passed.
+- iOS 27 simulator: 80 tests, 75 passed and five expected skips. iOS 17.5 simulator:
+  final 81-test suite, 76 passed and five expected skips. Both receiver transport
+  tests passed on each runtime.
+- Lifecycle tests cover Stop during replacement/startup, repeated and reentrant
+  Stop, stale callbacks after another chooser opens, two-source picker routing,
+  cancellation preserving the live source, readiness and retryable timeout.
+  Framework callback routing also completes while the main thread is occupied;
+  it snapshots ownership without synchronous dispatch to the main thread.
+- Rendering tests compare reused-context resized pixels against fresh-context
+  output, including cached annotations and background geometry.
+- A synthetic resize-and-render benchmark, with 30 warmed samples per path,
+  measured median Mac wall time of 16.91 ms with fresh contexts versus 1.10 ms
+  with context reuse. iOS 27 simulator measured 4.87 ms versus 1.41 ms. These
+  measure resize work, not steady-state frame latency or battery consumption.
+- Native transport receiver tests check split/composite layouts with plain and
+  annotated Presenter output. They require multiple changing decoded frames at
+  landscape, portrait and wide aspect ratios.
+- Real guest meeting on macOS 27.0.1: 1,148 captured frames; independent browser
+  pixel observations verified 1536×1080, 762×1080, 1920×770 and 1100×764. The
+  stream encoded 236 H.264 frames through VideoToolbox, with the SDK reporting
+  a power-efficient encoder. Stop rejected subsequent capture frames.
+- The browser evidence contains 114 decoded frame observations. Pixel hashes
+  verify motion at every captured aspect, closing the previous receiver-side gap.
+- No physical iPhone was used. This check does not measure energy savings or
+  requalify live Telemost/TrueConf servers; their shared native transport was
+  exercised through actual local RTP and decoding.
 
-Join an authorized guest test room on the Mac and open More → Presenter. Choose
-Screen or window in Share source, select a safe test window in macOS, and confirm
-that the preview appears while the canvas is still private. Press Start sharing,
-then resize that window between portrait, wide and small dimensions. Add an
-annotation to exercise composition; stop sharing and confirm capture ends.
+The wider Mac suite initially stalled in an older signaling-only test during
+CoreAudio device initialization. Its sample is retained as `mac-test-wait.sample`.
+The fixture now uses synthetic audio while preserving its SDP/track assertions.
 
-The opt-in test is
-`PresenterEngineLiveTests/testMacGuestScreenPresenterSelectionAndResize`.
-Set `TEST_RUNNER_ROCKNROLL_TEST_SCREEN_PRESENTER_INVITE` for a Mac `xcodebuild test`
-run, select only a synthetic window, and resize it through at least three sizes.
-The test keeps mic/camera off and automatically retires its share and meeting.
+Reproduction: [receiver qualification](../Experiments/ScreenSharing/README.md).
