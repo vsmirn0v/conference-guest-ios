@@ -769,3 +769,23 @@
 "Phone calls" = "Phone calls";
 
 "Audio and Picture in Picture keep working with this off. Some cellular networks block phone calls while system call controls are on. Changes apply to the next jam." = "Audio and Picture in Picture keep working with this off. Some cellular networks block phone calls while system call controls are on. Changes apply to the next jam.";
+
+"Gallery" = "Gallery";
+
+"Focus" = "Focus";
+
+"Follow speaker" = "Follow speaker";
+
+"Following speaker" = "Following speaker";
+
+"Previous participants" = "Previous participants";
+
+"Next participants" = "Next participants";
+
+"%ld–%ld of %ld" = "%ld–%ld of %ld";
+
+"Focus %@" = "Focus %@";
+
+"Layout: %@" = "Layout: %@";
+
+"Meeting layout" = "Meeting layout";

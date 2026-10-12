@@ -1,6 +1,57 @@
 import XCTest
 
 final class MeetingPresentationUITests: XCTestCase {
+    func testGuestGalleryTapSelectsExactPersonAndPreservesPage() {
+        let app = launch(scenario: "gallery-many")
+        defer { app.terminate() }
+        let gallery = app.scrollViews["Meeting grid"]
+        XCTAssertTrue(gallery.waitForExistence(timeout: 10))
+        let tile = app.otherElements["gallery.person-1.camera"]
+        XCTAssertTrue(tile.isHittable); tile.tap()
+        assertLayout(app, "Focus")
+        XCTAssertTrue(app.staticTexts["Полина"].exists)
+        XCTAssertTrue(app.scrollViews["Focus participants"].exists)
+        app.segmentedControls["Meeting layout"].buttons["Gallery"].tap()
+        assertLayout(app, "Gallery")
+        XCTAssertTrue(gallery.isHittable)
+        app.buttons["Next participants"].tap()
+        let counter = app.staticTexts["Gallery page"]
+        XCTAssertTrue(counter.label.contains("of 12"))
+        let visibleTiles = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH 'gallery.'")).allElementsBoundByIndex
+        guard let next = visibleTiles.first(where: { $0.isHittable }) else { return XCTFail("Next page must contain accessible participant tiles") }
+        next.tap()
+        assertLayout(app, "Focus")
+        app.segmentedControls["Meeting layout"].buttons["Gallery"].tap()
+        assertLayout(app, "Gallery")
+        XCTAssertTrue(next.isHittable, "Return to the previous page")
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Guest name gallery page"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    func testNativeGallerySelectionAndSpeakerChanges() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "meeting-gallery"
+        app.launchArguments = ["-AppleLanguages", "(en)"]
+        app.launch()
+        defer { app.terminate() }
+        let tile = app.otherElements["camera-off.person-1"]
+        XCTAssertTrue(tile.waitForExistence(timeout: 10)); XCTAssertTrue(tile.isHittable); tile.tap()
+        assertLayout(app, "Focus")
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Полина")
+        app.buttons["More call options"].tap(); app.buttons["Change speaking participant"].tap()
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Полина")
+        app.buttons["Focus participant.person-4.camera"].tap()
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Олег Никитин")
+        app.segmentedControls["Meeting layout"].buttons["Gallery"].tap()
+        assertLayout(app, "Gallery")
+        XCTAssertTrue(tile.isHittable)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Native name gallery"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    private func assertLayout(_ app: XCUIApplication, _ label: String, file: StaticString = #filePath, line: UInt = #line) {
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"),
+            object: app.segmentedControls["Meeting layout"].buttons[label])
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed, file: file, line: line)
+    }
     func testGridShowsAllParticipantsAndSwitchesToSpeakerAfterRotation() {
         let app = launch(scenario: "gallery")
         defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
@@ -26,14 +77,9 @@ final class MeetingPresentationUITests: XCTestCase {
             }
             XCTAssertGreaterThanOrEqual(visible.count, 2, "Grid must show multiple participants together")
         }
-        app.buttons["More call options"].tap()
-        let view = app.buttons["View"].firstMatch
-        XCTAssertTrue(view.waitForExistence(timeout: 5)); view.tap()
-        let speaker = app.buttons["Speaker"].firstMatch
-        for _ in 0..<4 where !speaker.isHittable { app.swipeUp() }
-        XCTAssertTrue(speaker.isHittable); speaker.tap()
+        app.segmentedControls["Meeting layout"].buttons["Focus"].tap()
         XCTAssertFalse(grid.isHittable)
-        XCTAssertTrue(app.buttons["Next stream"].isHittable)
+        XCTAssertTrue(app.scrollViews["Focus participants"].isHittable)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Speaker layout after grid rotation"; attachment.lifetime = .keepAlways; add(attachment)
     }

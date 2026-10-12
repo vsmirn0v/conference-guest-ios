@@ -18,6 +18,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     }
     var isLocalCamera = false
     private let mediaPlaceholder = UILabel()
+    private let identity = ParticipantIdentityView()
     private let participantInfo = ParticipantMediaBadge()
     private let watermarkLabel = UILabel()
     private let state: StreamViewportState
@@ -35,6 +36,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     var onMenuVisibilityChanged: ((Bool) -> Void)?
     var onBrowse: ((Int) -> Void)?
     var onToggleControls: (() -> Void)?
+    var onSelect: (() -> Void)? { didSet { updateFocusAccessibility() } }
     var pinInHeader = false { didSet { updatePinVisibility() } }
     var controlsHidden = false { didSet {
         guard oldValue != controlsHidden else { return }
@@ -139,6 +141,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         }
         updatePin(name: name, isShare: false, pinned: pinned, onPin: onPin)
         mediaPlaceholder.text = placeholderText ?? name
+        updateFocusAccessibility()
         mediaPlaceholder.font = .preferredFont(forTextStyle: .title2)
         mediaPlaceholder.textColor = .white
         mediaPlaceholder.numberOfLines = 0
@@ -146,6 +149,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         mediaPlaceholder.isHidden = true
         mediaPlaceholder.translatesAutoresizingMaskIntoConstraints = false
         addSubview(mediaPlaceholder)
+        addSubview(identity)
         NSLayoutConstraint.activate([
             mediaPlaceholder.centerXAnchor.constraint(equalTo: centerXAnchor),
             mediaPlaceholder.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -196,7 +200,8 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
                             watermark: String?, zoomable: Bool,
                             placeholderText: String? = nil, isSpeaking: Bool = false) {
         participantInfo.update(name: name, microphoneOn: microphoneOn, speaking: isSpeaking)
-        participantInfo.isHidden = !showInfo
+        identity.update(name: name, microphoneOn: microphoneOn, speaking: isSpeaking)
+        participantInfo.isHidden = !showInfo || !identity.isHidden
         mediaPlaceholder.text = placeholderText ?? name
         watermarkLabel.text = watermark
         watermarkLabel.isHidden = watermark == nil
@@ -205,10 +210,12 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         if scroll.zoomScale > scroll.maximumZoomScale {
             scroll.setZoomScale(scroll.maximumZoomScale, animated: false)
         }
+        updateFocusAccessibility()
     }
 
     func updateMicrophone(on: Bool, speaking: Bool) {
         participantInfo.updateMicrophone(on: on, speaking: speaking)
+        identity.updateAudio(ParticipantAudioState(microphoneOn: on, speaking: speaking))
     }
 
     func updatePin(name: String, isShare: Bool, pinned: Bool, onPin: (() -> Void)?) {
@@ -222,17 +229,20 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         pinButton.accessibilityHint = L("Changes only your view")
         pinButton.showsLargeContentViewer = true
         pinButton.largeContentTitle = pinButton.accessibilityLabel
+        updateFocusAccessibility()
     }
 
     private func updatePinVisibility() { pinButton.isHidden = controlsHidden || pinInHeader || pinAction == nil }
     private func updateFocusAccessibility() {
-        scroll.isAccessibilityElement = controlsHidden || scroll.maximumZoomScale > 1
-        if scroll.maximumZoomScale <= 1 { scroll.accessibilityLabel = L("Meeting content") }
+        scroll.isAccessibilityElement = controlsHidden || scroll.maximumZoomScale > 1 || onSelect != nil
+        if scroll.maximumZoomScale <= 1 { scroll.accessibilityLabel = onSelect != nil ? pinName : L("Meeting content") }
         scroll.accessibilityCustomActions = controlsHidden ? [UIAccessibilityCustomAction(name: L("Show controls")) { [weak self] _ in
             guard let self, self.controlsHidden else { return false }
             self.tappedStage()
             return true
-        }] : nil
+        }] : onSelect == nil ? nil : [UIAccessibilityCustomAction(name: L("Focus %@", pinName)) { [weak self] _ in
+            guard let self, let select = self.onSelect else { return false }; select(); return true
+        }]
     }
 
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
@@ -258,7 +268,13 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     }
 
     @objc private func tappedStage() {
-        if let onToggleControls { onToggleControls() }
+        if controlsHidden {
+            if let onToggleControls { onToggleControls() }
+            else { CallStageLayout.record(for: window)?.toggleControls() }
+            return
+        }
+        if let onSelect { onSelect() }
+        else if let onToggleControls { onToggleControls() }
         else { CallStageLayout.record(for: window)?.toggleControls() }
         if !controlsHidden { zoomVisibility.activity() }
     }
@@ -287,9 +303,11 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     func containsRenderer(_ renderer: UIView) -> Bool { renderer.superview === content }
 
     func setMediaActive(_ active: Bool) {
+        identity.isHidden = active || scroll.maximumZoomScale > 1
+        mediaPlaceholder.isHidden = active || scroll.maximumZoomScale <= 1
+        participantInfo.isHidden = !identity.isHidden
         if video.isHidden == !active { return }
         video.isHidden = !active
-        mediaPlaceholder.isHidden = active
         if !active { clearCorrectedVideo() }
     }
 
@@ -358,6 +376,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        identity.frame = bounds
         if let record = CallStageLayout.record(for: window), let window {
             let visible = convert(record.rect, from: window).intersection(bounds)
             if !visible.isNull { infoBottom?.constant = min(-8, visible.maxY - bounds.maxY - 8) }

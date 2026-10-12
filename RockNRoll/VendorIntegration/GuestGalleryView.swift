@@ -25,6 +25,7 @@ private final class GuestGalleryTile: UIView {
     }
 #endif
     var onToggleControls: (() -> Void)? { didSet { viewport.onToggleControls = onToggleControls } }
+    var onSelect: (() -> Void)? { didSet { viewport.onSelect = onSelect } }
     init(item: GuestStreamViews.GalleryItem, pin: @escaping () -> Void) {
         super.init(frame: .zero)
         video.contentMode = .scaleAspectFit
@@ -32,6 +33,7 @@ private final class GuestGalleryTile: UIView {
             name: item.name, showInfo: true, microphoneOn: item.microphoneOn, pinned: false,
             watermark: item.watermark, showsPlaceholder: !item.active, onPin: pin)
         addSubview(viewport)
+        viewport.pinInHeader = true
         status.textColor = .lightGray; status.font = .preferredFont(forTextStyle: .caption1)
         status.numberOfLines = 0; status.textAlignment = .center
         status.isUserInteractionEnabled = false
@@ -52,22 +54,19 @@ private final class GuestGalleryTile: UIView {
         localCamera = item.isLocalCamera
         video.mirrored = item.mirrored
         viewport.updatePresentation(name: item.name, showInfo: true, microphoneOn: item.microphoneOn,
-            watermark: item.watermark, zoomable: false, placeholderText: L("Camera off"),
+            watermark: item.watermark, zoomable: false, placeholderText: item.name,
             isSpeaking: item.speaking)
         viewport.updatePin(name: item.name, isShare: item.id.isShare, pinned: false, onPin: pin)
         viewport.setMediaActive(item.active)
         status.text = item.active ? L("Waiting for video…") : nil
         status.isHidden = !item.active || hasFrame
         updateAudio(ParticipantAudioState(microphoneOn: item.microphoneOn, speaking: item.speaking))
-        layer.borderColor = UIColor.systemGreen.cgColor
-        layer.cornerRadius = 12
-        clipsToBounds = true
         accessibilityIdentifier = "gallery." + item.id.participant + (item.id.isShare ? ".screen" : ".camera")
         refreshDemand()
     }
     func updateAudio(_ state: ParticipantAudioState) {
         viewport.updateMicrophone(on: state.microphoneOn, speaking: state.speaking)
-        layer.borderWidth = state.speaking ? 3 : 0
+        MeetingTileAppearance.update(self, speaking: state.speaking)
         accessibilityValue = state.speaking ? L("Speaking") : nil
     }
     func setVisible(_ value: Bool) { visible = value; refreshDemand() }
@@ -108,6 +107,10 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
     private var items: [GuestStreamViews.GalleryItem] = []
     private var speaker: (id: String?, available: Bool)?
     private var observers: [NSObjectProtocol] = []
+    private(set) var page = 0
+    private(set) var pagination: MeetingTileLayout.GalleryPage?
+    private var arranging = false
+    var onPageChanged: (() -> Void)?
 #if DEBUG
     var evidenceForTesting: [[String: Any]] { tiles.values.map(\.evidenceForTesting) }
 #endif
@@ -117,6 +120,7 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
     override init(frame: CGRect) {
         super.init(frame: frame)
         delegate = self; backgroundColor = .black; alwaysBounceVertical = false
+        isPagingEnabled = true; showsHorizontalScrollIndicator = false
         accessibilityIdentifier = "Meeting grid"
         for name in [UIApplication.didEnterBackgroundNotification, UIApplication.didBecomeActiveNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -137,7 +141,7 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
             if let tile = tiles[item.id] { tile.update(item, pin: pin) }
             else {
                 let tile = GuestGalleryTile(item: item, pin: pin)
-                tile.onToggleControls = { [weak self] in self?.onToggleControls?() }
+                tile.onSelect = pin
                 tiles[item.id] = tile; addSubview(tile)
             }
         }
@@ -158,18 +162,42 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
     func setActive(_ value: Bool) { active = value; refreshDemand() }
     override func layoutSubviews() {
         super.layoutSubviews()
-        let frames = MeetingTileLayout.frames(count: order.count, size: bounds.size, mode: .grid)
-        for (key, frame) in zip(order, frames) { tiles[key]?.frame = frame }
-        let next = CGSize(width: bounds.width, height: max(bounds.height, frames.map(\.maxY).max() ?? 0))
+        let previous = pagination
+        let layout = MeetingTileLayout.gallery(count: order.count, size: bounds.size,
+            largeText: traitCollection.preferredContentSizeCategory.isAccessibilityCategory)
+        arranging = true
+        if let previous, previous.capacity != layout.capacity {
+            page = page * previous.capacity / layout.capacity
+        }
+        pagination = layout
+        page = min(page, layout.pageCount - 1)
+        for (key, frame) in zip(order, layout.frames) { tiles[key]?.frame = frame }
+        let next = CGSize(width: layout.contentWidth, height: bounds.height)
         if contentSize != next { contentSize = next }
+        if previous?.capacity != layout.capacity || previous?.contentWidth != layout.contentWidth {
+            setContentOffset(CGPoint(x: CGFloat(page) * bounds.width, y: 0), animated: false)
+        }
+        arranging = false
+        if previous?.capacity != layout.capacity || previous?.contentWidth != layout.contentWidth { onPageChanged?() }
         refreshDemand()
+    }
+    func movePage(_ step: Int) {
+        guard let pagination else { return }
+        page = max(0, min(pagination.pageCount - 1, page + step))
+        setContentOffset(CGPoint(x: CGFloat(page) * bounds.width, y: 0), animated: true)
+        onPageChanged?()
     }
     private func refreshDemand() {
         let enabled = active && window != nil && UIApplication.shared.applicationState != .background
         for tile in tiles.values { tile.setVisible(enabled && bounds.intersects(tile.frame)) }
     }
     override func didMoveToWindow() { super.didMoveToWindow(); refreshDemand() }
-    func scrollViewDidScroll(_ scrollView: UIScrollView) { refreshDemand() }
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        refreshDemand()
+        guard !arranging, bounds.width > 0, let pagination else { return }
+        let next = max(0, min(pagination.pageCount - 1, Int((contentOffset.x / bounds.width).rounded())))
+        if page != next { page = next; onPageChanged?() }
+    }
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { onInteraction?() }
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 }

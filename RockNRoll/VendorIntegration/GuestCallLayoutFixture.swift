@@ -84,7 +84,8 @@ final class GuestCallLayoutFixture: UIViewController {
                 }
             ]
         }
-        let entries: [(String, String, Bool)] = scenario == "gallery" ?
+        let entries: [(String, String, Bool)] = scenario == "gallery-many" ?
+            (0..<12).map { ("person-\($0)", $0 == 1 ? "Полина" : "Participant \($0 + 1)", false) } : scenario == "gallery" ?
             [("ani", "Ani", false), ("aram", "Aram", false), ("mariam", "Mariam", false), ("vahan", "Vahan", false)] : solo ? [("self", "Your contact", false)] :
             [("share", "Ani’s arrangement", true), ("camera", "Aram", false)]
         for (id, name, share) in entries {
@@ -103,7 +104,7 @@ final class GuestCallLayoutFixture: UIViewController {
         }
         let roster = entries.map { id, name, share in
             GuestStreamViews.Participant(id: id, name: name, isLocal: solo,
-                microphoneOn: !solo, cameraOn: !solo && !share, sharing: share)
+                microphoneOn: !solo, cameraOn: !solo && !share && scenario != "gallery-many", sharing: share)
         }
         streams.updateParticipants(roster)
         controls.updateParticipantRoster(roster, speaking: solo ? nil : "camera")
@@ -116,7 +117,7 @@ final class GuestCallLayoutFixture: UIViewController {
         controls.onAutomaticView = { [weak self] in self?.streams.useAutomaticView() }
         controls.onPinStage = { [weak self] in self?.streams.toggleSelectedPin() }
         controls.onPinParticipant = { [weak self] in self?.streams.setPin($0) }
-        if scenario == "gallery" { controls.bindStreams(streams) }
+        if scenario == "gallery" || scenario == "gallery-many" { controls.bindStreams(streams) }
         controls.frame = view.bounds
         controls.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         if ["participants", "studio", "reactions", "notices"].contains(scenario) {

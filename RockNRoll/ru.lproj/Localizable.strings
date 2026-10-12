@@ -767,3 +767,23 @@
 "Phone calls" = "Телефонные звонки";
 
 "Audio and Picture in Picture keep working with this off. Some cellular networks block phone calls while system call controls are on. Changes apply to the next jam." = "Звук и «Картинка в картинке» работают и без этой функции. В некоторых сотовых сетях системные элементы звонка мешают совершать телефонные звонки. Изменения вступят в силу при следующем подключении.";
+
+"Gallery" = "Участники";
+
+"Focus" = "Фокус";
+
+"Follow speaker" = "Следить за говорящим";
+
+"Following speaker" = "Следим за говорящим";
+
+"Previous participants" = "Предыдущие участники";
+
+"Next participants" = "Следующие участники";
+
+"%ld–%ld of %ld" = "%ld–%ld из %ld";
+
+"Focus %@" = "Показать %@";
+
+"Layout: %@" = "Вид: %@";
+
+"Meeting layout" = "Вид встречи";

@@ -65,6 +65,7 @@ final class GuestStreamViews {
     private var renderedTiles: [Key: RenderedTile] = [:]
     private var participantSubscription: AnyCancellable?
     private var participants: [String: Participant]?
+    private var participantOrder: [String] = []
     private var selectionUpdateScheduled = false
     private var preserveBackgroundSelection = false
     private var activeShares: Set<String>?
@@ -97,6 +98,7 @@ final class GuestStreamViews {
         pinLossTask = nil
         pinLossGeneration = UUID()
         if !preservingSelection {
+            participantOrder.removeAll()
             preserveBackgroundSelection = false
             pinnedTarget = nil
             browsedTarget = nil
@@ -132,6 +134,9 @@ final class GuestStreamViews {
     }
 
     func updateParticipants(_ roster: [Participant]) {
+        let ids = roster.map(\.id), existing = Set(participantOrder)
+        participantOrder.removeAll { !ids.contains($0) }
+        participantOrder.append(contentsOf: ids.filter { !existing.contains($0) }.sorted())
         participants = Dictionary(uniqueKeysWithValues: roster.map { ($0.id, $0) })
         let sharing = Set(roster.filter { $0.sharing }.map(\.id))
         let cameras = Set(roster.filter { $0.cameraOn }.map(\.id))
@@ -267,9 +272,10 @@ final class GuestStreamViews {
     }
 
     func browse(_ offset: Int) {
-        guard pinnedTarget == nil, orderedTargets.count > 1 else { return }
+        guard orderedTargets.count > 1 else { return }
         let index = orderedTargets.firstIndex(of: browsedTarget ?? selectedTarget ?? orderedTargets[0]) ?? 0
         browsedTarget = orderedTargets[(index + offset % orderedTargets.count + orderedTargets.count) % orderedTargets.count]
+        if pinnedTarget != nil { pinnedTarget = browsedTarget }
         updatePreferredVideo()
     }
 
@@ -340,8 +346,12 @@ final class GuestStreamViews {
         } else {
             targets = Array(candidates.keys)
         }
+        let ranks = Dictionary(uniqueKeysWithValues: participantOrder.enumerated().map { ($1, $0) })
         orderedTargets = targets.sorted {
-            if $0.participant != $1.participant { return $0.participant < $1.participant }
+            if $0.participant != $1.participant {
+                let left = ranks[$0.participant, default: .max], right = ranks[$1.participant, default: .max]
+                return left == right ? $0.participant < $1.participant : left < right
+            }
             return !$0.isShare && $1.isShare
         }
         if let browsedTarget, !orderedTargets.contains(browsedTarget) { self.browsedTarget = nil }
@@ -399,7 +409,7 @@ final class GuestStreamViews {
             let key = PinTarget(participant: tile.model.id, isShare: tile.model.isSharingScreen)
             if source[key] == nil { source[key] = tile }
         }
-        let roster = participants?.values.sorted { $0.id < $1.id } ?? []
+        let roster = participantOrder.compactMap { participants?[$0] }
         let items = roster.flatMap { participant -> [GalleryItem] in
             var result: [GalleryItem] = []
             for isShare in [false, true] {

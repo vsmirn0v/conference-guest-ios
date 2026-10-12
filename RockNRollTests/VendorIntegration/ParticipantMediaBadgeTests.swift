@@ -16,7 +16,7 @@ final class ParticipantMediaBadgeTests: XCTestCase {
             return view.subviews.lazy.compactMap { tile(in: $0) }.first
         }
         let rendered = try XCTUnwrap(tile(in: call.view))
-        XCTAssertEqual(rendered.layer.borderWidth, 0, "Muted participants must not be highlighted as speaking")
+        XCTAssertEqual(rendered.layer.borderWidth, 1, "Muted participants must not be highlighted as speaking")
     }
 
     func testHeldNativeParticipantClearsSpeakingBorder() throws {
@@ -31,7 +31,7 @@ final class ParticipantMediaBadgeTests: XCTestCase {
             return view.subviews.lazy.compactMap { tile(in: $0) }.first
         }
         let rendered = try XCTUnwrap(tile(in: call.view))
-        XCTAssertEqual(rendered.layer.borderWidth, 0, "An interrupted meeting must not retain a stale speaking highlight")
+        XCTAssertEqual(rendered.layer.borderWidth, 1, "An interrupted meeting must not retain a stale speaking highlight")
     }
 
     func testMutedGuestGalleryParticipantCannotRemainSpeaking() throws {
@@ -39,7 +39,7 @@ final class ParticipantMediaBadgeTests: XCTestCase {
         gallery.update([.init(id: .init(participant: "remote", isShare: false), name: "Remote",
             microphoneOn: false, active: false, speaking: true, watermark: nil, renderer: nil)])
         let tile = try XCTUnwrap(gallery.subviews.first)
-        XCTAssertEqual(tile.layer.borderWidth, 0)
+        XCTAssertEqual(tile.layer.borderWidth, 1)
         XCTAssertNil(tile.accessibilityValue, "Gallery must not announce Speaking while its badge announces Microphone off")
     }
 
@@ -51,7 +51,7 @@ final class ParticipantMediaBadgeTests: XCTestCase {
         gallery.setSpeaker("remote", available: true)
         XCTAssertEqual(tile.layer.borderWidth, 3)
         gallery.setSpeaker("remote", available: false)
-        XCTAssertEqual(tile.layer.borderWidth, 0)
+        XCTAssertEqual(tile.layer.borderWidth, 1)
         XCTAssertNil(tile.accessibilityValue)
         gallery.setSpeaker("remote", available: true)
         XCTAssertEqual(tile.layer.borderWidth, 3)

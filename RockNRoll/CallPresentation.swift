@@ -1,3 +1,4 @@
+import ConferenceCore
 import UIKit
 
 /// Geometry belongs to the visible call window, independently of media providers.
@@ -164,6 +165,7 @@ final class CompactCallHeader: UIView {
     let nextStream = UIButton(type: .system)
     let automatic = UIButton(type: .system)
     let pin = UIButton(type: .system)
+    let layoutButton = UIButton(type: .system)
     let participants = UIButton(type: .system)
     let missed = UIButton(type: .system)
     let conversation = UIButton(type: .system)
@@ -185,7 +187,7 @@ final class CompactCallHeader: UIView {
         let privacyDescription: String?
     }
     private var renderedIdentity: Identity?
-    private var actions: [UIButton] { [previous, automatic, nextStream, pin, participants, missed, conversation, focus] }
+    private var actions: [UIButton] { [layoutButton, previous, automatic, nextStream, pin, participants, missed, conversation, focus] }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -211,6 +213,7 @@ final class CompactCallHeader: UIView {
         privacyIcon.isAccessibilityElement = false
         details.addSubview(privacyIcon)
         for (button, symbol, label) in [
+            (layoutButton, "square.grid.2x2", L("Meeting layout")),
             (previous, "chevron.left", L("Previous stream")),
             (automatic, "arrow.triangle.2.circlepath", L("Automatic view")),
             (nextStream, "chevron.right", L("Next stream")),
@@ -244,6 +247,23 @@ final class CompactCallHeader: UIView {
     }
     required init?(coder: NSCoder) { nil }
 
+    func setLayout(mode: ConferenceCore.MeetingLayoutMode, available: Bool,
+                   choose: @escaping (ConferenceCore.MeetingLayoutMode) -> Void,
+                   followSpeaker: (() -> Void)? = nil) {
+        layoutButton.isHidden = !available
+        layoutButton.configuration?.image = UIImage(systemName: mode == .grid ? "square.grid.2x2" : "rectangle.inset.filled")
+        layoutButton.accessibilityIdentifier = "Meeting layout menu"
+        layoutButton.accessibilityLabel = L("Layout: %@", mode.title)
+        layoutButton.showsMenuAsPrimaryAction = true
+        var options: [UIMenuElement] = ConferenceCore.MeetingLayoutMode.allCases.map { option in
+            UIAction(title: option.title, image: UIImage(systemName: option.symbol), state: mode == option ? .on : .off) { _ in choose(option) }
+        }
+        if let followSpeaker {
+            options.append(UIAction(title: L("Follow speaker"), image: UIImage(systemName: "waveform")) { _ in followSpeaker() })
+        }
+        layoutButton.menu = UIMenu(children: options)
+        setNeedsLayout()
+    }
     func update(name: String, navigation: Bool, browsing: Bool, pinned: Bool,
                 pinLabel: String?, participantsLabel: String?, chatValue: String?,
                 chatCount: Int = 0, missedCount: Int = 0, status: String?, speaking: CallSpeaker? = nil, focusAvailable: Bool,

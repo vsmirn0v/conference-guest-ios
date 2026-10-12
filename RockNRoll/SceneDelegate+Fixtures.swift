@@ -9,6 +9,10 @@ extension SceneDelegate {
             FloatingVideoPreference.enabled = true
         }
         if let fixture = ProcessInfo.processInfo.environment["CONFERENCE_TEST_UI_FIXTURE"] {
+            if fixture == "meeting-gallery" {
+                window.rootViewController = MeetingGalleryFixture()
+                return true
+            }
             if fixture == "participant-badges" {
                 window.rootViewController = ParticipantBadgeFixture()
                 return true
