@@ -165,7 +165,7 @@ four expected skips; iOS 17.5 45 executed, 41 passed, four expected skips. The f
 18 rendering cases also passed separately on each simulator and iVitalii after
 completion/start deadline refinements. Physical combined acceptance executed
 100 tests: 95 passed, five expected skips, no failures. This includes the live
-four-room/24-camera-and-microphone cycle check and actual reset/PiP case. One final
+four-join/24-camera-and-microphone cycle check and actual reset/PiP case. One final
 live reset/PiP repeat on the exact final renderer passed after restoring a closed
 browser source; the unsuccessful baseline attempt performed no OS reset and is
 retained separately. New coverage includes asynchronous first presentation, source
