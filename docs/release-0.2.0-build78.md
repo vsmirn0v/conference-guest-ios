@@ -39,8 +39,15 @@ explicit Close, Leave and hold cleanup retain their existing behavior.
 ## Distribution
 
 Export succeeded. Upload succeeded on October 12 at 22:48:55 MSK, and App Store
-Connect readback showed 0.2.0 (78) **Processing** at 22:50 MSK. Internal/public
-group assignment and final availability verification are pending.
+Connect readback showed 0.2.0 (78) **Processing** at 22:50 MSK. Processing finished
+and the build was submitted to both groups with automatic tester notification.
+
+At approximately 22:58 MSK, group readback confirmed **Testing** for 0.2.0 (78)
+in **Rock’n’Roll Internal** (one tester) and **Rock’n’Roll Public Beta** (six
+testers). Screenshots are `.build/release78/testflight-internal.png` and
+`.build/release78/testflight-public.png` (local release evidence).
+
+Apple build ID: `039dd79b-f330-4b06-bb67-c93d1fe1c178`.
 
 Existing third-party missing-dSYM warnings did not block delivery. App-owned
 crash symbols match the archived executable.

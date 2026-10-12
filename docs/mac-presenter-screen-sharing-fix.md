@@ -94,5 +94,6 @@ private-frame preparation on return, and retryable timeout after returning.
 Mac and iOS 27 simulator checks passed: 45 tests each, 43 passed and two expected
 platform/live-capture skips on each target.
 Evidence is under `.build/presenter-space-preview/`, including the build-77
-system log and result bundles. The follow-up is prepared for build 78 and is not
-in build 77.
+system log and result bundles. The follow-up is published in build 78, verified
+as Testing in both internal and public TestFlight groups; it is not in build 77.
+See [build-78 release record](release-0.2.0-build78.md).
