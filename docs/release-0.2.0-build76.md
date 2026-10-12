@@ -34,8 +34,13 @@ for the implementation boundary and `.build/window-resize/` for local evidence.
 
 ## Distribution
 
-- Upload succeeded on October 12 at 17:23 MSK. App Store Connect confirmed
-  version 0.2.0 (76) is processing; group assignment/readback remain pending.
+- Upload succeeded on October 12 at 17:23 MSK. Processing completed, and
+  App Store Connect confirmed **Testing** for 0.2.0 (76) in both Rock’n’Roll
+  Internal and Rock’n’Roll Public Beta at 17:43 MSK.
+- Apple build ID: `23b02507-a398-4ff0-b8dd-2845b040b501`.
+- Automatically notify testers was enabled at submission. Group readback
+  screenshots: `.build/release76/testflight-public.png` and
+  `.build/release76/testflight-internal.png` (local release evidence).
 - Beta notes: “Improved screen sharing when resizing a shared window.
   Stability and visual quality improvements.”
 - Existing third-party missing-dSYM warnings remain. The app's own symbols are

@@ -44,7 +44,8 @@ on every resize frame in [Take ScreenCaptureKit to the next level](https://devel
 - Evidence is local in `.build/window-resize/`. Initial probe attempts timed
   out at selection, and the consent-free current-process enumeration produced
   no complete frames; only `probe-picker-final.log` is successful live evidence.
-- This is a source fix after build 75, not a new TestFlight upload.
+- Published in [0.2.0 (76)](release-0.2.0-build76.md); both internal and public
+  TestFlight groups were verified as Testing on October 12, 2026.
 
 ## Browser-tab feasibility
 
