@@ -41,7 +41,16 @@ Local release evidence: `.build/release79/`.
 ## Distribution
 
 Archive and export succeeded. Upload completed on October 12 at 23:53:52 MSK;
-Apple accepted the package for processing. Internal/public group readback pending.
+Apple accepted the package for processing. Processing finished and both groups
+were assigned with automatic tester notification.
+
+At approximately 00:05–00:06 MSK on October 13, App Store Connect group readback
+confirmed **Testing** for 0.2.0 (79) in **Rock’n’Roll Internal** (one tester) and
+**Rock’n’Roll Public Beta** (six testers). Local confirmation screenshots are
+`.build/release79/testflight-internal.png` and
+`.build/release79/testflight-public.png`.
+
+Apple build ID: `143a1a93-7623-4deb-88a4-844abb579200`.
 
 Existing third-party missing-dSYM warnings did not block delivery. App-owned
 crash symbols match the archived executable.
