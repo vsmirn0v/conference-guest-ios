@@ -1,4 +1,5 @@
 import ConferenceCore
+import Combine
 import AVFoundation
 import ImageIO
 import VideoToolbox
@@ -530,13 +531,15 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false)
         let capture = Screen()
         var receive: ((CMSampleBuffer) -> Void)?
+        var selected: (() -> Void)?
         var cancelled: ((String?) -> Void)?
-        model.makeScreenSource = { frame, _, _, end in receive = frame; cancelled = end; return capture }
+        model.makeScreenSource = { frame, _, selection, end in receive = frame; selected = selection; cancelled = end; return capture }
         model.selectCanvas(); model.open(); model.selectScreen()
         await waitUntil { capture.starts == 1 }
-        cancelled?(nil)
+        selected?(); cancelled?(nil)
         await waitUntil { capture.stopped }
         XCTAssertFalse(model.screenPicking); XCTAssertFalse(model.screenSelected)
+        XCTAssertEqual(model.source, .canvas)
         receive?(try screenSample())
         XCTAssertFalse(model.screenSelected)
         model.end()
@@ -552,6 +555,70 @@ final class PresenterModelTests: XCTestCase {
         prepared?.resume(); await Task.yield(); await Task.yield()
         XCTAssertEqual(capture.starts, 0); XCTAssertFalse(model.screenPicking)
         model.end()
+    }
+    func testScreenSelectionBeforeFirstFrameKeepsScreenSourceAndPrivatePreview() async throws {
+        let model = PresenterModel(observeLifecycle: false), capture = Screen()
+        defer { model.end() }
+        var receive: ((CMSampleBuffer) -> Void)?
+        var selected: (() -> Void)?
+        var prepared = false, published = 0
+        model.prepareScreenSource = { prepared = true }
+        model.makeScreenSource = { frame, _, selection, _ in
+            XCTAssertTrue(prepared, "Retire the ordinary share before registering a second picker")
+            receive = frame; selected = selection; return capture
+        }
+        model.startSharing = { _ in published += 1 }
+        model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
+        model.selectScreen(); await waitUntil { capture.starts == 1 }
+        selected?()
+        XCTAssertEqual(model.source, .screen)
+        XCTAssertFalse(model.screenPicking); XCTAssertFalse(model.screenSelected)
+        receive?(try screenSample(width: 640, height: 480))
+        await waitUntil { model.hasPreview }
+        XCTAssertEqual(model.source, .screen); XCTAssertEqual(model.aspectRatio, 4 / 3)
+        XCTAssertEqual(published, 0, "Selecting a screen remains a private setup action")
+        await model.start()
+        XCTAssertTrue(model.running); XCTAssertEqual(published, 1)
+    }
+    func testScreenResizePreservesRunningSenderAndChangesPlainAndComposedOutput() async throws {
+        for composed in [false, true] {
+            let model = PresenterModel(observeLifecycle: false)
+            var sizes = [CGSize](), starts = 0, stops = 0
+            model.startSharing = { _ in starts += 1 }; model.stopSharing = { stops += 1 }
+            model.sendSample = { sample in
+                if let pixels = CMSampleBufferGetImageBuffer(sample) {
+                    sizes.append(CGSize(width: CVPixelBufferGetWidth(pixels), height: CVPixelBufferGetHeight(pixels)))
+                }
+            }
+            model.open()
+            if composed { model.appendAnnotation([CGPoint(x: 0.1, y: 0.1), CGPoint(x: 0.9, y: 0.9)]) }
+            model.acceptScreen(try screenSample(width: 640, height: 480))
+            await waitUntil { model.hasPreview }
+            await model.start(); XCTAssertTrue(model.running)
+            for size in [CGSize(width: 360, height: 640), CGSize(width: 1200, height: 450), CGSize(width: 550, height: 350)] {
+                model.acceptScreen(try screenSample(width: Int(size.width), height: Int(size.height)))
+                XCTAssertTrue(model.hasPreview, "Keep the visible preview until a resized frame is ready")
+                await waitUntil { sizes.last == size }
+                XCTAssertEqual(model.aspectRatio, size.width / size.height)
+                XCTAssertTrue(model.hasPreview); XCTAssertTrue(model.running)
+            }
+            XCTAssertEqual(starts, 1); XCTAssertEqual(stops, 0)
+            XCTAssertEqual(model.compositionCount > 0, composed)
+            model.end(); await model.waitForScreenStop()
+        }
+    }
+    func testStableScreenFramesDoNotRepublishSelectionState() async throws {
+        let model = PresenterModel(observeLifecycle: false)
+        defer { model.end() }
+        model.open()
+        let frame = try screenSample()
+        model.acceptScreen(frame); await waitUntil { model.hasPreview }
+        var changes = 0
+        let selection = model.$screenSelected.dropFirst().sink { _ in changes += 1 }
+        let source = model.$source.dropFirst().sink { _ in changes += 1 }
+        for _ in 0..<30 { model.acceptScreen(frame) }
+        XCTAssertEqual(changes, 0, "New pixels must not rebuild controls for unchanged source selection")
+        withExtendedLifetime((selection, source)) {}
     }
     func testDragUpdatesDoNotStarvePublicationAndPlacementSurvivesRestartWithoutConsent() async {
         let suite = "presenter-test-\(UUID())"

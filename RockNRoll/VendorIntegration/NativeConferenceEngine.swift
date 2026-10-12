@@ -1286,6 +1286,15 @@ final class NativeConferenceEngine: CallEngine {
             }
             #if canImport(ScreenCaptureKit)
             if ProcessInfo.processInfo.isiOSAppOnMac, GuestScreenCaptureFactory.isAvailable {
+                self.studio.presenter.prepareScreenSource = { [weak self] in
+                    guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                          !(self.screenCapture is GuestPresenterSender) else { return }
+                    // Ordinary sharing owns the system picker until its capture
+                    // stops. Retire it before opening the private Presenter source.
+                    await self.stopScreenSharing(retirePresenter: false)
+                    guard self.canChangeMedia(epoch: epoch, attempt: attempt), !self.isSystemHeld else { return }
+                    self.prepareMacShareTransport()
+                }
                 self.studio.presenter.makeScreenSource = { [weak self] onFrame, onEffect, onSelection, onEnd in
                     GuestScreenCaptureFactory.make(preview: self?.localSharePreview ?? LocalSharePreview(),
                         onFrame: onFrame, onEffect: onEffect, onSelection: onSelection, onEnd: onEnd,
@@ -1306,7 +1315,9 @@ final class NativeConferenceEngine: CallEngine {
                     self.activeControls?.showMediaStatus(message)
                 }
                 self.screenCapture = sender
-                self.prepareMacShareTransport()
+                // A selected screen already prepared the receiving transport
+                // before its chooser. Do not reopen it when the user presses Share.
+                if !self.studio.presenter.screenSelected { self.prepareMacShareTransport() }
                 sender.start(); sender.send(sample)
             }
             self.studio.presenter.sendSample = { [weak self] sample in

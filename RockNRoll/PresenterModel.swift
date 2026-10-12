@@ -229,8 +229,9 @@ final class PresenterModel: ObservableObject {
         if ownedCamera != nil || cameraTask != nil { invalidateCamera() }
         await cameraStop?.value
     }
-    private func invalidateRender() {
-        epoch = UUID(); latest = nil; hasPreview = false; preview.clear()
+    private func invalidateRender(preservePreview: Bool = false) {
+        epoch = UUID()
+        if !preservePreview { latest = nil; hasPreview = false; preview.clear() }
         pendingRender = true; lastRenderTime = -.infinity; retryAfter = 0
         timer?.invalidate(); timer = nil
     }
@@ -437,7 +438,8 @@ final class PresenterModel: ObservableObject {
         }, { [weak self] in
             guard let self, self.screenEpoch == attempt else { return }
             self.screenPicking = false
-            if !self.screenSelected { self.source = previousSource }
+            // Capture-start confirmation can precede the first screen frame.
+            // Only onEnd may restore the previous source after cancellation.
             self.refresh(); self.requestRender()
         }, { [weak self] message in
             guard let self, self.screenEpoch == attempt else { return }
@@ -454,13 +456,21 @@ final class PresenterModel: ObservableObject {
               let pixels = CMSampleBufferGetImageBuffer(sample) else { return }
         screenSample = sample
         if screenPicking { screenPicking = false }
-        if !screenSelected { screenSelected = true; invalidateRender() }
+        let firstFrame = !screenSelected
+        if firstFrame { screenSelected = true }
+        if source != .screen { source = .screen }
         let width = CGFloat(CVPixelBufferGetWidth(pixels)), height = CGFloat(CVPixelBufferGetHeight(pixels))
         guard width > 0, height > 0 else { return }
         if aspectRatio != width / height { aspectRatio = width / height }
         let scale = min(1, 1920 / max(width, height))
-        canvasSize = CGSize(width: max(2, (width * scale / 2).rounded(.down) * 2),
-                            height: max(2, (height * scale / 2).rounded(.down) * 2))
+        let size = CGSize(width: max(2, (width * scale / 2).rounded(.down) * 2),
+                          height: max(2, (height * scale / 2).rounded(.down) * 2))
+        if firstFrame || canvasSize != size {
+            canvasSize = size
+            // A queued render with the old geometry must not replace the resized
+            // preview or reach the sender after the new source frame arrives.
+            invalidateRender(preservePreview: !firstFrame)
+        }
         if !foreground {
             let now = ProcessInfo.processInfo.systemUptime
             if running, now - lastSentTime >= 1.0 / Double(MediaEnergyBudget.shared.sharingFPS),

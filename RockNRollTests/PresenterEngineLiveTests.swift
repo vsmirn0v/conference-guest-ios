@@ -1,11 +1,71 @@
 #if DEBUG
 import AVFoundation
 import ConferenceCore
+import SwiftUI
 import UIKit
 import XCTest
 @testable import RockNRoll
 
 @MainActor final class PresenterEngineLiveTests: XCTestCase {
+    func testMacGuestScreenPresenterSelectionAndResize() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              let link = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SCREEN_PRESENTER_INVITE"] else {
+            throw XCTSkip("Opt-in authorized Mac screen Presenter qualification")
+        }
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.windows.first { $0.isKeyWindow })
+        let original = window.rootViewController
+        let container = UIViewController(); window.rootViewController = container
+        defer { window.rootViewController = original }
+        let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
+        var active = false, ended = false
+        engine.onEvent = { event in
+            switch event { case .active: active = true; case .left, .failed: ended = true; default: break }
+        }
+        let target = try JoinTarget.parse(link), endpoint = try await VendorEndpointResolver.make().resolve(for: target)
+        try engine.configure(container: container, networkURL: endpoint, displayName: "Presenter resize QA")
+        try engine.join(target: target, displayName: "Presenter resize QA")
+        defer { engine.leave() }
+        try await wait { active && engine.readyForPresenterForTesting || ended }; XCTAssertFalse(ended)
+        let studio = engine.studioForTesting, model = studio.presenter
+        XCTAssertNotNil(model.prepareScreenSource)
+        let create = try XCTUnwrap(model.makeScreenSource)
+        var sizes = Set<String>(), frames = 0
+        model.makeScreenSource = { frame, effect, selected, end in
+            create({ sample in
+                if let pixels = CMSampleBufferGetImageBuffer(sample) {
+                    let size = "\(CVPixelBufferGetWidth(pixels))x\(CVPixelBufferGetHeight(pixels))"
+                    if sizes.insert(size).inserted { print("MAC_SCREEN_PRESENTER capture=\(size)") }
+                    frames += 1
+                }
+                frame(sample)
+            }, effect, selected, end)
+        }
+        studio.open(.presenter)
+        let inspector = UIHostingController(rootView: StudioPanel(model: studio))
+        container.present(inspector, animated: false)
+        // Select through the actual Source button; a browser receives only the
+        // explicitly shared synthetic window, never other desktop content.
+        let selectionDeadline = Date().addingTimeInterval(120)
+        while !model.screenSelected && model.error == nil && !ended && Date() < selectionDeadline {
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        XCTAssertNil(model.error); XCTAssertTrue(model.screenSelected); XCTAssertFalse(ended)
+        try await wait { model.hasPreview || ended }
+        XCTAssertFalse(model.running); XCTAssertEqual(model.source, .screen)
+        model.appendAnnotation([CGPoint(x: 0.03, y: 0.03), CGPoint(x: 0.03, y: 0.4)])
+        await model.start(); try await wait { model.running || ended }
+        print("MAC_SCREEN_PRESENTER started=\(model.running) error=\(model.error ?? "none")")
+        let resizeDeadline = Date().addingTimeInterval(50)
+        while sizes.count < 3 && !ended && Date() < resizeDeadline { try await Task.sleep(for: .seconds(1)) }
+        XCTAssertGreaterThanOrEqual(sizes.count, 3); XCTAssertTrue(model.running); XCTAssertNil(model.error); XCTAssertFalse(ended)
+        try await Task.sleep(for: .seconds(20)) // Observe actual browser reception before retirement.
+        let evidence = await GuestMicrophoneProbe.codecEvidenceForTesting()
+        print("MAC_SCREEN_PRESENTER frames=\(frames) sizes=\(sizes.sorted()) outbound=\(evidence.filter { $0["type"] as? String == "outbound-rtp" })")
+        XCTAssertTrue(evidence.contains { $0["type"] as? String == "outbound-rtp" && $0["kind"] as? String == "video" && ($0["framesEncoded"] as? NSNumber)?.intValue ?? 0 > 20 })
+        model.stop(); try await wait { !model.stopping }; await model.waitForScreenStop()
+        let final = frames
+        try await Task.sleep(for: .milliseconds(500)); XCTAssertEqual(frames, final)
+    }
     func testMacNativeOrdinaryCameraGeometry() async throws {
         guard ProcessInfo.processInfo.isiOSAppOnMac,
               let name = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAMERA_ENGINE"],
