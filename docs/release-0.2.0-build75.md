@@ -52,11 +52,15 @@ Mac, simulator, core and non-promoted priority/DSCP/video-yielding measurements.
 
 ## Distribution
 
-- Upload succeeded on October 12 at 14:51 MSK. App Store Connect readback showed
-  version 0.2.0, build 75, **Processing**.
-- Internal and public group assignment/readback are pending. The dedicated Safari
-  window closed while Apple processed the upload; user coordination was requested
-  before restoring that window. Upload alone is not a verified public release.
+- Upload succeeded on October 12 at 14:51 MSK. Apple build ID:
+  `1d6ba0dd-a9b5-4234-aa6d-57d987164dee`.
+- On October 12 at approximately 15:12 MSK, App Store Connect group readback
+  confirmed **Testing** for 0.2.0 (75) in both **Rock’n’Roll Internal** and
+  **Rock’n’Roll Public Beta**. Automatic tester notification was enabled.
+- Saved beta notes: “Improved audio stability and video recovery after system
+  interruptions. Stability fixes when switching meetings.”
+- Readback screenshots: `.build/release75/testflight-internal.png` and
+  `.build/release75/testflight-public.png`.
 - Existing third-party missing-dSYM warnings remain. The app's own executable
   and dSYM UUID match; its symbols are present.
 - Public invitation remains https://testflight.apple.com/join/Hd13C9U3.
