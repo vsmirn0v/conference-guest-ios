@@ -69,3 +69,30 @@ CoreAudio device initialization. Its sample is retained as `mac-test-wait.sample
 The fixture now uses synthetic audio while preserving its SDP/track assertions.
 
 Reproduction: [receiver qualification](../Experiments/ScreenSharing/README.md).
+
+## Follow-up: source selection on another macOS desktop
+
+Build 77 was archived from `7abd39e`; both `c85bdc9` and `6212a8f` are ancestors
+of that source. The reported failure was not an omitted sharing commit.
+
+The installed TestFlight build's whole-display private preview worked. During
+source replacement, its macOS log recorded app backgrounding at 22:32:00.593,
+capture shutdown at 22:32:00.831, and foregrounding at 22:32:02.462 on October 12.
+Studio's unconditional background handler closed the inspector, invalidating
+the capture and selection callbacks when choosing a source on another Space.
+
+The follow-up keeps a Mac Presenter inspector and its private capture selection
+owned while hidden. Camera/GPU composition remains suspended; only the latest
+screen sample is retained. Preview preparation timeout also pauses while hidden
+and starts afresh on return. Selection remains private until explicit Share.
+Closing the inspector, leaving, or holding still retires capture. iOS private
+Studio sessions still close when backgrounded.
+
+Five regressions exercise pending selection across desktops, actual Mac
+background/foreground notifications, iOS cancellation and stale callbacks,
+private-frame preparation on return, and retryable timeout after returning.
+Mac and iOS 27 simulator checks passed: 45 tests each, 43 passed and two expected
+platform/live-capture skips on each target.
+Evidence is under `.build/presenter-space-preview/`, including the build-77
+system log and result bundles. The follow-up is prepared for build 78 and is not
+in build 77.

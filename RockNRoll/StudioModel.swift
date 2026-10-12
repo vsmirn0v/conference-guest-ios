@@ -113,7 +113,7 @@ final class StudioModel: ObservableObject {
         })
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.close() }
+                MainActor.assumeIsolated { self?.handleBackground() }
             }
     }
 
@@ -138,6 +138,14 @@ final class StudioModel: ObservableObject {
         soundCheck.stop()
         refreshPreview()
         refreshPresenter()
+    }
+
+    func handleBackground(isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac) {
+        // Choosing a source on another Space temporarily backgrounds UIKit-on-Mac.
+        // Keep its private selection owned until the user returns or closes it.
+        // Presenter independently suspends camera/GPU work while backgrounded.
+        guard isMac, active, presented, pane == .presenter else { close(); return }
+        soundCheck.stop()
     }
 
     private func refreshPresenter() {

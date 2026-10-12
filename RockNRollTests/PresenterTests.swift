@@ -535,6 +535,102 @@ final class PresenterModelTests: XCTestCase {
             [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer), kCVReturnSuccess)
         return try XCTUnwrap(PresenterCompositor.sample(XCTUnwrap(buffer), time: CMTime(value: 1, timescale: 30)))
     }
+    func testMacDesktopBackgroundPreservesPendingPrivatePresenterSelection() async throws {
+        let studio = StudioModel(audioControl: .noiseSuppression), capture = Screen()
+        defer { studio.end() }
+        let model = studio.presenter
+        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        var published = 0
+        model.startSharing = { _ in published += 1 }
+        model.makeScreenSource = { frame, _, selection, _ in
+            receive = frame; selected = selection; return capture
+        }
+        studio.open(.presenter); model.selectScreen()
+        await waitUntil { capture.starts == 1 }
+        model.setForeground(false); studio.handleBackground(isMac: true)
+        XCTAssertTrue(studio.presented); XCTAssertTrue(model.screenPicking)
+        selected?(); receive?(try screenSample(width: 640, height: 480))
+        XCTAssertTrue(model.screenSelected); XCTAssertFalse(model.hasPreview)
+        XCTAssertFalse(capture.stopped); XCTAssertEqual(published, 0)
+        model.setForeground(true)
+        await waitUntil { model.canStartSharing }
+        XCTAssertEqual(model.aspectRatio, 4 / 3)
+        await model.start()
+        XCTAssertTrue(model.running); XCTAssertEqual(published, 1)
+        model.stop(); await model.waitForScreenStop()
+        XCTAssertTrue(capture.stopped)
+    }
+    func testPhoneBackgroundStillClosesPrivatePresenterAndRejectsLateSelection() async throws {
+        let studio = StudioModel(audioControl: .noiseSuppression), capture = Screen()
+        defer { studio.end() }
+        let model = studio.presenter
+        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        model.makeScreenSource = { frame, _, selection, _ in
+            receive = frame; selected = selection; return capture
+        }
+        studio.open(.presenter); model.selectScreen()
+        await waitUntil { capture.starts == 1 }
+        model.setForeground(false); studio.handleBackground(isMac: false)
+        await model.waitForScreenStop()
+        XCTAssertFalse(studio.presented); XCTAssertTrue(capture.stopped)
+        selected?(); receive?(try screenSample())
+        XCTAssertFalse(model.screenSelected); XCTAssertFalse(model.running)
+    }
+    func testMacBackgroundNotificationDoesNotDismissThePresenterInspector() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Mac desktop lifecycle") }
+        let studio = StudioModel(audioControl: .noiseSuppression), capture = Screen()
+        defer {
+            NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+            studio.end()
+        }
+        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        studio.presenter.makeScreenSource = { frame, _, selection, _ in
+            receive = frame; selected = selection; return capture
+        }
+        studio.presenter.setForeground(true)
+        studio.open(.presenter); studio.presenter.selectScreen()
+        await waitUntil { capture.starts == 1 }
+        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        XCTAssertTrue(studio.presented, "Switching macOS Spaces must not dismiss the requesting inspector")
+        selected?(); receive?(try screenSample())
+        XCTAssertFalse(studio.presenter.hasPreview)
+        NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        await waitUntil { studio.presenter.hasPreview }
+        XCTAssertTrue(studio.presenter.screenSelected); XCTAssertFalse(capture.stopped)
+    }
+    func testPrivateScreenPreparationWaitsForReturnFromAnotherDesktop() async throws {
+        let model = PresenterModel(observeLifecycle: false, screenPreparationTimeout: 0.04), capture = Screen()
+        defer { model.end() }
+        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        var published = 0
+        model.startSharing = { _ in published += 1 }
+        model.makeScreenSource = { frame, _, selection, _ in
+            receive = frame; selected = selection; return capture
+        }
+        model.open(); model.selectScreen(); await waitUntil { capture.starts == 1 }
+        selected?(); model.setForeground(false)
+        receive?(try screenSample())
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertNil(model.error); XCTAssertFalse(capture.stopped)
+        XCTAssertTrue(model.screenPreparing); XCTAssertFalse(model.hasPreview)
+        XCTAssertEqual(model.compositionCount, 0); XCTAssertEqual(published, 0)
+        model.setForeground(true); await waitUntil { model.canStartSharing }
+        XCTAssertNil(model.error); XCTAssertFalse(model.running)
+    }
+    func testScreenPreviewTimeoutStartsWhenReturningToItsInspector() async throws {
+        let model = PresenterModel(observeLifecycle: false, screenPreparationTimeout: 0.04), capture = Screen()
+        defer { model.end() }
+        var selected: (() -> Void)?
+        model.makeScreenSource = { _, _, selection, _ in selected = selection; return capture }
+        model.open(); model.selectScreen(); await waitUntil { capture.starts == 1 }
+        model.setForeground(false); selected?()
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertNil(model.error); XCTAssertFalse(capture.stopped)
+        model.setForeground(true)
+        await waitUntil { model.error != nil && capture.stopped }
+        XCTAssertFalse(model.screenPicking); XCTAssertFalse(model.screenPreparing)
+        XCTAssertFalse(model.screenSelected); XCTAssertFalse(model.running)
+    }
     func testLiveScreenIsPrivateUntilShareAndContinuesWithoutGPUInBackground() async throws {
         let model = PresenterModel(observeLifecycle: false)
         var sent: [CMSampleBuffer] = []

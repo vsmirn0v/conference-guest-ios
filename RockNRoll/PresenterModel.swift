@@ -56,6 +56,7 @@ final class PresenterModel: ObservableObject {
     var screenPreparing: Bool { screenSelectionPhase == .preparing }
     var canStartSharing: Bool { available && active && !held && foreground && !running && !starting && !stopping && hasPreview && canCompose && !screenPicking && !screenPreparing }
     private var screenPreparation: Task<Void, Never>?
+    private var screenPreparationFallback: Source?
     private let screenPreparationTimeout: TimeInterval
     @Published private(set) var nativeOverlay = false
     @Published private(set) var aspectRatio: CGFloat = 16 / 9
@@ -205,6 +206,7 @@ final class PresenterModel: ObservableObject {
     func setForeground(_ value: Bool) {
         foreground = value
         if !value {
+            screenPreparation?.cancel(); screenPreparation = nil
             // App-owned GPU/camera composition is a foreground feature. A native
             // ReplayKit whole-screen broadcast remains the multitasking option.
             if screenSelected {
@@ -218,7 +220,7 @@ final class PresenterModel: ObservableObject {
                 invalidateRender(); invalidateCamera()
             }
         }
-        if value { cameraHiddenInBackground = false }
+        if value { cameraHiddenInBackground = false; scheduleScreenPreparationTimeout() }
         refresh()
     }
     private func invalidateCamera() {
@@ -365,6 +367,7 @@ final class PresenterModel: ObservableObject {
                 if self.screenPreparing {
                     self.screenSelectionPhase = .ready
                     self.screenPreparation?.cancel(); self.screenPreparation = nil
+                    self.screenPreparationFallback = nil
                 }
                 if self.presented { self.preview.enqueue(sample, rotation: 0) }
                 if self.running { self.lastSentTime = ProcessInfo.processInfo.systemUptime; self.sendSample?(sample) }
@@ -421,7 +424,7 @@ final class PresenterModel: ObservableObject {
             return
         }
         let previousSource = source
-        error = nil; screenPreparation?.cancel(); screenPreparation = nil
+        error = nil; screenPreparation?.cancel(); screenPreparation = nil; screenPreparationFallback = nil
         source = .screen
         screenSelectionPhase = .choosing
         if !running { invalidateRender() }
@@ -444,16 +447,8 @@ final class PresenterModel: ObservableObject {
             guard let self, self.screenEpoch == attempt else { return }
             // Confirmation is not a publishable frame. Keep Start disabled until rendered.
             self.screenSelectionPhase = self.screenSelected && self.hasPreview ? .ready : .preparing
-            self.screenPreparation?.cancel()
-            if self.screenPreparing {
-                self.screenPreparation = Task { [weak self] in
-                    guard let self else { return }
-                    try? await Task.sleep(for: .seconds(self.screenPreparationTimeout))
-                    guard !Task.isCancelled, self.screenEpoch == attempt, self.screenPreparing else { return }
-                    self.error = L("No screen preview arrived. Choose the source again.")
-                    self.source = previousSource; self.releaseScreen(); self.refresh()
-                }
-            }
+            self.screenPreparationFallback = self.screenPreparing ? previousSource : nil
+            self.scheduleScreenPreparationTimeout()
             self.refresh(); self.requestRender()
         }, { [weak self] message in
             guard let self, self.screenEpoch == attempt else { return }
@@ -463,6 +458,20 @@ final class PresenterModel: ObservableObject {
             }
         })
         self.screenSource = source; source.start()
+        }
+    }
+    private func scheduleScreenPreparationTimeout() {
+        screenPreparation?.cancel(); screenPreparation = nil
+        // A private preview intentionally cannot render while the app is hidden.
+        // Give it the full preparation interval once its inspector is visible again.
+        guard foreground, screenPreparing, let fallback = screenPreparationFallback else { return }
+        let attempt = screenEpoch
+        screenPreparation = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(self.screenPreparationTimeout))
+            guard !Task.isCancelled, self.screenEpoch == attempt, self.foreground, self.screenPreparing else { return }
+            self.error = L("No screen preview arrived. Choose the source again.")
+            self.source = fallback; self.releaseScreen(); self.refresh()
         }
     }
     func acceptScreen(_ sample: CMSampleBuffer, epoch attempt: UUID? = nil) {
@@ -502,6 +511,7 @@ final class PresenterModel: ObservableObject {
     private func releaseScreen() {
         screenEpoch = UUID(); screenSample = nil; screenSelected = false; screenSelectionPhase = .idle
         screenPreparation?.cancel(); screenPreparation = nil
+        screenPreparationFallback = nil
         nativeOverlay = false; cameraHiddenInBackground = false; aspectRatio = 16 / 9
         canvasSize = CGSize(width: 1280, height: 720)
         let retired = screenSource; screenSource = nil
