@@ -31,6 +31,14 @@ shared by the native room adapters and the isolated guest integration.
   its existing per-source state.
 - Compact landscape has a layout menu, including **Follow speaker**, inside
   the existing header. It does not add a second header bar.
+- Swiping starts at the selected person, including camera-off cards. Selecting
+  a card or strip item clears the previous browsing cursor; unpinning or
+  following the speaker clears manual browsing as well.
+- Browsing in guest Focus enables **Follow speaker**, even without an explicit
+  pin. **View share** enters Focus immediately, and its shortcut remains
+  reachable from Gallery. A later pin result cannot undo a newer Gallery choice.
+- **Screen sharing only** discards camera selections and presents an available
+  share, or the no-sharing message when none is live.
 
 ## Implementation boundaries
 

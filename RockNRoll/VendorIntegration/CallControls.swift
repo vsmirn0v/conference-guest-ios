@@ -284,19 +284,17 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         shareOffer.configuration = .tinted()
         shareOffer.configuration?.image = UIImage(systemName: "rectangle.on.rectangle")
         shareOffer.isHidden = true
-        shareOffer.addAction(UIAction { [weak self] _ in self?.onViewShare?() }, for: .touchUpInside)
-        shareOffer.translatesAutoresizingMaskIntoConstraints = false
-        stageView.addSubview(shareOffer)
+        shareOffer.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.chooseLayout(.speaker)
+            self.onViewShare?()
+        }, for: .touchUpInside)
+        addSubview(shareOffer)
         NSLayoutConstraint.activate([
             stageStatus.centerXAnchor.constraint(equalTo: stageView.centerXAnchor),
             stageStatus.centerYAnchor.constraint(equalTo: stageView.centerYAnchor),
             stageStatus.leadingAnchor.constraint(greaterThanOrEqualTo: stageView.leadingAnchor, constant: 16),
-            stageStatus.trailingAnchor.constraint(lessThanOrEqualTo: stageView.trailingAnchor, constant: -16),
-            shareOffer.centerXAnchor.constraint(equalTo: stageView.centerXAnchor),
-            shareOffer.topAnchor.constraint(equalTo: stageView.topAnchor, constant: 56),
-            shareOffer.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            shareOffer.leadingAnchor.constraint(greaterThanOrEqualTo: stageView.leadingAnchor, constant: 8),
-            shareOffer.trailingAnchor.constraint(lessThanOrEqualTo: stageView.trailingAnchor, constant: -8)
+            stageStatus.trailingAnchor.constraint(lessThanOrEqualTo: stageView.trailingAnchor, constant: -16)
         ])
 
         let leave = Self.button(L("Leave"), symbol: "phone.down.fill")
@@ -731,9 +729,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
 
     func setShareOffer(name: String?) {
-        shareOffer.isHidden = name == nil || stageView.isHidden
+        shareOffer.isHidden = name == nil || focus.hidden
         shareOffer.configuration?.title = name.map { L("%@ is sharing · View", $0) }
         shareOffer.accessibilityLabel = name.map { L("View %@ screen share", $0) }
+        surface.setNeedsLayout()
     }
 
     private func openConversation(catchUp: CatchUpStore, chat: ChatStore,
@@ -1143,7 +1142,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop, stageView] { backdrop.frame = stage }
         if gridVisible { galleryView.frame = stage }
         galleryView.setActive(gridVisible)
-        for control in [focusButton, navigation, compactHeader, localShareCard] { surface.bringSubviewToFront(control) }
+        shareOffer.frame = CGRect(x: stage.minX + 56, y: stage.minY + 8,
+            width: max(0, stage.width - 112), height: 44)
+        for control in [shareOffer, focusButton, navigation, compactHeader, localShareCard] { surface.bringSubviewToFront(control) }
         if let reactionOverlay { surface.bringSubviewToFront(reactionOverlay) }
         reactionOverlay?.frame = surface.bounds
         (reactionOverlay as? ReceivedReactionOverlay)?.suppressed = focus.hidden
@@ -1286,7 +1287,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         updateDisplayBackdrops(); layoutPresentation(); refreshMoreMenu?()
     }
     private func refreshLayoutControls() {
-        layoutControls.update(mode: gridVisible ? .grid : .speaker, manual: stagePinned,
+        layoutControls.update(mode: gridVisible ? .grid : .speaker, manual: stagePinned || lastPresentation?.browsing == true,
             page: galleryView.page, pagination: galleryView.pagination, count: galleryCount)
         participantStrip.update(galleryItems.map {
             MeetingStripItem(id: stripID($0.id), name: $0.name, isShare: $0.id.isShare,

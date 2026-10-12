@@ -257,8 +257,9 @@ final class GuestStreamViews {
     }
 
     func setPin(_ target: PinTarget?) {
-        guard pinnedTarget != target else { return }
+        guard pinnedTarget != target || browsedTarget != nil else { return }
         pinnedTarget = target
+        browsedTarget = nil
         for (key, tile) in renderedTiles {
             tile.view?.updatePin(name: tile.model.name, isShare: key.isShare,
                                  pinned: target == PinTarget(participant: key.participant,
@@ -273,7 +274,7 @@ final class GuestStreamViews {
 
     func browse(_ offset: Int) {
         guard orderedTargets.count > 1 else { return }
-        let index = orderedTargets.firstIndex(of: browsedTarget ?? selectedTarget ?? orderedTargets[0]) ?? 0
+        let index = orderedTargets.firstIndex(of: pinnedTarget ?? browsedTarget ?? selectedTarget ?? orderedTargets[0]) ?? 0
         browsedTarget = orderedTargets[(index + offset % orderedTargets.count + orderedTargets.count) % orderedTargets.count]
         if pinnedTarget != nil { pinnedTarget = browsedTarget }
         updatePreferredVideo()

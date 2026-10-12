@@ -118,7 +118,11 @@ final class GuestCallLayoutFixture: UIViewController {
         controls.onAutomaticView = { [weak self] in self?.streams.useAutomaticView() }
         controls.onPinStage = { [weak self] in self?.streams.toggleSelectedPin() }
         controls.onPinParticipant = { [weak self] in self?.streams.setPin($0) }
-        if scenario == "gallery" || scenario == "gallery-many" { controls.bindStreams(streams) }
+        streams.onShareOffer = { [weak self] name, target in
+            self?.controls.setShareOffer(name: name)
+            self?.controls.onViewShare = { [weak self] in self?.streams.setPin(target) }
+        }
+        if ["gallery", "gallery-many", "gallery-share"].contains(scenario) { controls.bindStreams(streams) }
         controls.frame = view.bounds
         controls.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         if ["participants", "studio", "reactions", "notices"].contains(scenario) {

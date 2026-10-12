@@ -4,6 +4,145 @@ import XCTest
 
 @MainActor
 final class CallPresentationTests: XCTestCase {
+    func testNativeSwipesStartAtCameraOffSelectionAndResetAfterStripSelection() throws {
+        let call = RockCallViewController(title: "Meeting", catchUp: CatchUpStore(), chat: ChatStore())
+        call.loadViewIfNeeded()
+        call.render(snapshot: .init(participants: (0..<6).map {
+            .init(id: "p\($0)", name: "Person \($0)", isLocal: false, microphoneOn: false,
+                  cameraOn: false, screenShareOn: false, isSpeaking: false, videoTracks: [])
+        }))
+        let strip = try XCTUnwrap(descendants(call.view).compactMap { $0 as? MeetingParticipantStrip }.first)
+        strip.onSelect?("p3.camera")
+        XCTAssertEqual(focusedName(call.view), "Person 3")
+        let swipe = UISwipeGestureRecognizer(); swipe.direction = .left
+        call.perform(NSSelectorFromString("swipedStage:"), with: swipe)
+        XCTAssertEqual(focusedName(call.view), "Person 4")
+        strip.onSelect?("p1.camera")
+        call.perform(NSSelectorFromString("swipedStage:"), with: swipe)
+        XCTAssertEqual(focusedName(call.view), "Person 2")
+        let layout = try XCTUnwrap(descendants(call.view).compactMap { $0 as? MeetingLayoutControls }.first)
+        layout.onAutomatic?()
+        XCTAssertEqual(focusedName(call.view), "Person 0", "Following speaker must clear the browsing cursor")
+    }
+
+    func testNativeScreenOnlyDiscardsCameraSelectionAndShowsAvailableShare() throws {
+        let factory = try NativeRTCPeer.makeFactory()
+        let source = factory.videoSource()
+        let camera = factory.videoTrack(with: source, trackId: "camera")
+        let share = factory.videoTrack(with: source, trackId: "share")
+        let call = RockCallViewController(title: "Meeting", catchUp: CatchUpStore(), chat: ChatStore())
+        call.loadViewIfNeeded()
+        call.render(snapshot: .init(participants: [
+            .init(id: "camera", name: "Camera owner", isLocal: false, microphoneOn: false,
+                  cameraOn: true, screenShareOn: false, isSpeaking: false,
+                  videoTracks: [.init(id: "camera-stream", source: .camera, track: .native(camera))]),
+            .init(id: "presenter", name: "Presenter", isLocal: false, microphoneOn: true,
+                  cameraOn: false, screenShareOn: true, isSpeaking: false,
+                  videoTracks: [.init(id: "share-stream", source: .screenShareVideo, track: .native(share))])
+        ]))
+        let strip = try XCTUnwrap(descendants(call.view).compactMap { $0 as? MeetingParticipantStrip }.first)
+        strip.onSelect?("camera.camera")
+        call.setDisplayMode(.screenShares)
+        XCTAssertTrue(descendants(call.view).contains { $0.accessibilityIdentifier == "share-stream" })
+        XCTAssertFalse(descendants(call.view).contains { $0.accessibilityIdentifier == "camera-stream" })
+        let layout = try XCTUnwrap(descendants(call.view).compactMap { $0 as? MeetingLayoutControls }.first)
+        call.view.layoutIfNeeded()
+        XCTAssertFalse(layout.automatic.isEnabled, "An excluded camera must not remain a manual selection")
+        strip.onSelect?("presenter.screen")
+        call.setDisplayMode(.screenShares)
+        XCTAssertTrue(descendants(call.view).contains { $0.accessibilityIdentifier == "share-stream" })
+    }
+
+    func testGuestBrowsingEnablesFollowSpeakerAndRestoresAutomaticSelection() async throws {
+        let (window, controls, streams, layout) = try guestLayout()
+        defer { window.isHidden = true; streams.reset() }
+        controls.updateParticipantRoster(guestRoster, speaking: nil)
+        streams.updateParticipants(guestRoster)
+        await settleUI()
+        layout.layout.selectedSegmentIndex = 1; layout.layout.sendActions(for: .valueChanged)
+        streams.browse(1)
+        await settleUI()
+        XCTAssertTrue(layout.automatic.isEnabled)
+        XCTAssertEqual(layout.automatic.configuration?.title, L("Follow speaker"))
+        XCTAssertEqual(focusedName(window), "Boris")
+        layout.automatic.sendActions(for: .touchUpInside)
+        await settleUI()
+        XCTAssertFalse(layout.automatic.isEnabled)
+        XCTAssertEqual(focusedName(window), "Anna")
+    }
+
+    func testGuestViewShareEntersFocusFromExplicitGalleryAndLatePinCannotUndoGallery() async throws {
+        let (window, controls, streams, layout) = try guestLayout()
+        defer { window.isHidden = true; streams.reset() }
+        let roster = guestRoster.map {
+            GuestStreamViews.Participant(id: $0.id, name: $0.name, isLocal: $0.isLocal,
+                microphoneOn: $0.microphoneOn, cameraOn: $0.cameraOn, sharing: $0.id == "b")
+        }
+        controls.updateParticipantRoster(roster, speaking: nil)
+        streams.updateParticipants(roster)
+        await settleUI()
+        let strip = try XCTUnwrap(descendants(window).compactMap { $0 as? MeetingParticipantStrip }.first)
+        strip.onSelect?("a.camera")
+        await settleUI()
+        layout.layout.selectedSegmentIndex = 0; layout.layout.sendActions(for: .valueChanged)
+        controls.setShareOffer(name: "Boris")
+        controls.onViewShare = { streams.setPin(.init(participant: "b", isShare: true)) }
+        let viewShare = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityLabel == L("View %@ screen share", "Boris")
+        })
+        var ancestor: UIView? = viewShare
+        while let view = ancestor { XCTAssertFalse(view.isHidden, "The share shortcut must be reachable in Gallery"); ancestor = view.superview }
+        window.layoutIfNeeded()
+        let point = viewShare.convert(CGPoint(x: viewShare.bounds.midX, y: viewShare.bounds.midY), to: window)
+        var hit = window.hitTest(point, with: nil)
+        while hit != nil && hit !== viewShare { hit = hit?.superview }
+        XCTAssertTrue(hit === viewShare, "Gallery cards must not cover the share shortcut")
+        viewShare.sendActions(for: .touchUpInside)
+        XCTAssertEqual(layout.layout.selectedSegmentIndex, 1, "View share must enter Focus before async publication")
+        await settleUI()
+        XCTAssertEqual(streams.pinnedTarget, .init(participant: "b", isShare: true))
+        XCTAssertEqual(layout.layout.selectedSegmentIndex, 1)
+
+        strip.onSelect?("a.camera")
+        layout.layout.selectedSegmentIndex = 0; layout.layout.sendActions(for: .valueChanged)
+        await settleUI()
+        XCTAssertEqual(layout.layout.selectedSegmentIndex, 0, "A late pin result must preserve the newer Gallery choice")
+    }
+
+    private var guestRoster: [GuestStreamViews.Participant] {
+        ["Anna", "Boris", "Clara"].enumerated().map {
+            .init(id: String(UnicodeScalar(97 + $0.offset)!), name: $0.element, isLocal: false,
+                  microphoneOn: false, cameraOn: false, sharing: false)
+        }
+    }
+    private func guestLayout() throws -> (UIWindow, CallControls, GuestStreamViews, MeetingLayoutControls) {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene), host = UIViewController()
+        window.rootViewController = host; window.isHidden = false
+        let controls = CallControls(localPreview: LocalSharePreview(), state: nil, coordinator: nil,
+            router: nil, catchUp: CatchUpStore(), chat: ChatStore(), initialDisplayMode: .all,
+            invitationURL: nil, roomIdentifier: "fixture", onDisplayMode: { _ in }, onFloat: {},
+            onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
+            onMicrophoneState: { _ in }, onCameraState: { _ in })
+        controls.frame = host.view.bounds; host.view.addSubview(controls)
+        let streams = GuestStreamViews()
+        controls.onPinParticipant = { streams.setPin($0) }
+        controls.onAutomaticView = { streams.useAutomaticView() }
+        streams.onStagePresentation = { [weak controls, weak streams] presentation in
+            controls?.setStagePresentation(presentation, pinnedParticipant: streams?.pinnedTarget)
+        }
+        controls.bindStreams(streams)
+        let layout = try XCTUnwrap(descendants(window).compactMap { $0 as? MeetingLayoutControls }.first)
+        return (window, controls, streams, layout)
+    }
+    private func settleUI() async {
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+    }
+    private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+    private func focusedName(_ view: UIView) -> String? {
+        descendants(view).compactMap { $0 as? UILabel }.first { $0.accessibilityIdentifier == "Participant name" }?.text
+    }
+
     func testFocusHintWrapsAtAStableBoundedWidthAfterResize() throws {
         let view = UIView(frame: CGRect(x: 0, y: 0, width: 375, height: 667))
         let focus = CallFocusController()

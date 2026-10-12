@@ -383,7 +383,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
     private func browse(_ step: Int) {
         guard let snapshot = displayedSnapshot, orderedStreams.count > 1 else { return }
-        let selected = browsedStream ?? currentPrimaryKey.flatMap { streamPinTargets[$0] }
+        let selected = pinnedStream ?? browsedStream ?? currentPrimaryKey.flatMap { streamPinTargets[$0] }
         let index = orderedStreams.firstIndex { $0 == selected } ?? 0
         browsedStream = orderedStreams[(index + step + orderedStreams.count) % orderedStreams.count]
         pinnedStream = browsedStream
@@ -805,6 +805,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         layoutMode = .speaker; explicitLayout = true
         restoreGalleryPage = true
         pinnedStream = target
+        browsedStream = nil
         focus.show()
         if let snapshot = displayedSnapshot { render(snapshot: snapshot) }
     }
@@ -893,6 +894,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 if publication.source == .screenShareVideo { orderedStreams.append(PinnedStream(participantID: participant.id, isScreenShare: true)) }
             }
         }
+        if displayMode == .screenShares, pinnedStream?.isScreenShare == false { pinnedStream = nil }
+        if let browsedStream, !orderedStreams.contains(browsedStream) { self.browsedStream = nil }
         let activeKeys = Set(streams.map { $0.1.id })
         videoTiles = videoTiles.filter { activeKeys.contains($0.key) }
         streamPinTargets = Dictionary(uniqueKeysWithValues: orderedStreams.map { (streamID($0), $0) })
@@ -920,7 +923,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let focused = effectiveLayoutMode == .speaker && displayMode != .audioOnly
         if focused {
             if let primary { tiles.addArrangedSubview(videoTile(for: primary.0, publication: primary.1, track: primary.2, primary: true)) }
-            else if let owner = participants.first(where: { $0.id == requested?.participantID }) ??
+            else if displayMode == .all, let owner = participants.first(where: { $0.id == requested?.participantID }) ??
                 participants.first(where: { $0.id == activeSpeaker.current?.id }) ?? snapshot.remoteParticipants.first {
                 primaryName = owner.name; tiles.addArrangedSubview(audioTile(for: owner))
             }
@@ -1188,14 +1191,18 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             UIAction(title: option.title, image: UIImage(systemName: option.symbol),
                      state: option == displayMode ? .on : .off) { [weak self] _ in
                 guard let self else { return }
-                self.displayMode = option
-                self.displayModeButton.configuration?.image = UIImage(systemName: option.symbol)
-                self.displayModeButton.accessibilityLabel = L("Display: %@", option.title)
-                self.configureModeMenu()
-                if let snapshot = self.displayedSnapshot { self.render(snapshot: snapshot) }
-                self.onDisplayMode?(option)
+                self.setDisplayMode(option)
             }
         })
+    }
+
+    func setDisplayMode(_ mode: ConferenceDisplayMode) {
+        displayMode = mode
+        displayModeButton.configuration?.image = UIImage(systemName: mode.symbol)
+        displayModeButton.accessibilityLabel = L("Display: %@", mode.title)
+        configureModeMenu()
+        if let snapshot = displayedSnapshot { render(snapshot: snapshot) }
+        onDisplayMode?(mode)
     }
 
     private func configureMoreMenu() {

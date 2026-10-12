@@ -49,6 +49,11 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Полина")
         app.buttons["Focus participant.person-4.camera"].tap()
         XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Олег Никитин")
+        app.scrollViews["Meeting content"].swipeLeft()
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Елена Соколова")
+        app.buttons["Focus participant.person-1.camera"].tap()
+        app.scrollViews["Meeting content"].swipeLeft()
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Роман Тюрин")
         app.segmentedControls["Meeting layout"].buttons["Gallery"].tap()
         assertLayout(app, "Gallery")
         XCTAssertTrue(tile.isHittable)
@@ -59,6 +64,34 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(tile.isHittable)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Native name gallery"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    func testGuestSwipingFromAutomaticFocusCanResumeFollowingSpeaker() {
+        let app = launch(scenario: "gallery-many")
+        defer { app.terminate() }
+        XCTAssertTrue(app.segmentedControls["Meeting layout"].waitForExistence(timeout: 10))
+        app.segmentedControls["Meeting layout"].buttons["Focus"].tap()
+        app.otherElements["Meeting stage"].swipeLeft()
+        let follow = app.buttons["Follow speaker"]
+        XCTAssertTrue(follow.isEnabled)
+        XCTAssertTrue(app.buttons["Pin Полина video"].waitForExistence(timeout: 5))
+        follow.tap()
+        XCTAssertTrue(app.buttons["Pin Participant 1 video"].waitForExistence(timeout: 5))
+        XCTAssertFalse(follow.isEnabled)
+    }
+    func testGuestShareShortcutFocusesShareAfterReturningToGallery() {
+        let app = launch(scenario: "gallery-share")
+        defer { app.terminate() }
+        let layout = app.segmentedControls["Meeting layout"]
+        XCTAssertTrue(layout.waitForExistence(timeout: 10))
+        layout.buttons["Gallery"].tap()
+        app.otherElements["gallery.camera.camera"].tap()
+        assertLayout(app, "Focus")
+        layout.buttons["Gallery"].tap()
+        let share = app.buttons["View Ani’s arrangement screen share"]
+        XCTAssertTrue(share.isHittable)
+        share.tap()
+        assertLayout(app, "Focus")
+        XCTAssertTrue(app.buttons["Unpin Ani’s arrangement screen share"].waitForExistence(timeout: 5))
     }
     private func assertLayout(_ app: XCUIApplication, _ label: String, file: StaticString = #filePath, line: UInt = #line) {
         let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"),

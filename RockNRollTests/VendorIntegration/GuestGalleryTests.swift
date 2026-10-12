@@ -5,6 +5,31 @@ import XCTest
 
 @MainActor
 final class GuestGalleryTests: XCTestCase {
+    func testExplicitSelectionResetsBrowsingCursorIncludingSamePinAndUnpin() async {
+        let streams = GuestStreamViews()
+        streams.updateParticipants((0..<5).map {
+            .init(id: "p\($0)", name: "Person \($0)", isLocal: false,
+                  microphoneOn: false, cameraOn: false, sharing: false)
+        })
+        _ = await snapshot(streams)
+        streams.setPin(.init(participant: "p1", isShare: false))
+        streams.browse(1)
+        XCTAssertEqual(streams.pinnedTarget?.participant, "p2")
+        streams.setPin(.init(participant: "p3", isShare: false))
+        streams.browse(1)
+        XCTAssertEqual(streams.pinnedTarget?.participant, "p4")
+        streams.setPin(.init(participant: "p4", isShare: false))
+        streams.browse(-1)
+        XCTAssertEqual(streams.pinnedTarget?.participant, "p3")
+        streams.setPin(nil)
+        let delivered = expectation(description: "Return to automatic selection")
+        streams.onStagePresentation = {
+            XCTAssertFalse($0.browsing); XCTAssertTrue($0.automatic)
+            XCTAssertEqual($0.target?.participant, "p0"); delivered.fulfill()
+        }
+        streams.refreshSelection()
+        await fulfillment(of: [delivered], timeout: 2)
+    }
     func testRosterOrderAndManualCameraOffSelectionSurviveSpeakerChanges() async {
         let streams = GuestStreamViews()
         let first = GuestStreamViews.Participant(id: "a", name: "Anna", isLocal: false, microphoneOn: false, cameraOn: false, sharing: false)
