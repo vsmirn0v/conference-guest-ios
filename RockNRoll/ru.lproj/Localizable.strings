@@ -581,6 +581,7 @@
 "Start sharing" = "Начать трансляцию";
 "Stop sharing" = "Остановить трансляцию";
 "The screen continues in the background. The app camera layer and drawings return when you reopen the app; macOS manages its own overlay." = "Экран продолжает транслироваться в фоне. Слой камеры и рисунки вернутся при открытии приложения. Системным наложением управляет macOS.";
+"After you start sharing, your camera and drawings stay live when you switch apps or desktops." = "После начала трансляции камера и рисунки продолжают передаваться при переключении приложений и рабочих столов.";
 "This canvas is private. Your separate camera video is already live in the meeting." = "Этот холст виден только вам. Отдельное видео вашей камеры уже транслируется участникам.";
 "Top left" = "Сверху слева";
 "Top right" = "Сверху справа";

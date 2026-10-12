@@ -127,8 +127,39 @@ Additional Mac Studio checks and the updated continuous-camera startup fixture:
 42 tests, 38 passed, four expected capability skips (`mac-studio.xcresult`).
 Evidence is under `.build/presenter-background-camera/`, particularly
 `mac-final.xcresult`, `mac-final.log` and `simulator-final.xcresult`.
-No remote receiver was used in this follow-up. A separate
-attempt to drive the real Spaces transition under XCTest did not qualify it:
-the test host stayed classified as active after desktop/hide automation. The
-regressions inject the exact lifecycle event instead. This change is subsequent
-to build 78 and has not been published in a new binary yet.
+An initial attempt to drive Spaces under XCTest did not qualify the real
+transition: its test host stayed classified as active. The regressions inject
+the lifecycle event; the separate standalone qualification below exercises
+actual desktop switching and the encoded stream.
+
+### Live desktop-switch qualification for build 79
+
+The standalone signed Mac app joined a disposable guest room with an independent
+Chromium receiver. A synthetic animated window occupied its own full-screen
+macOS Space. Switching there hid Rock’n’Roll while Presenter continued sharing
+that window with Include my camera enabled. The inspector was also closed before
+the second switch, exercising publication independently of private preview UI.
+
+- First hidden interval: 57.7 seconds, 423 decoded frame observations and 391
+  distinct camera-region pixel hashes.
+- Second hidden interval before the motion check: 112.7 seconds, 837 observations
+  and 114 distinct camera-region hashes. The participant was mostly stationary.
+- During the subsequent motion interval: 1,338 observations and 1,220 distinct
+  camera-region hashes over 181.6 seconds. Local snapshots show changing head
+  positions. The user also confirmed live camera motion from another device
+  connected to the same room while Rock’n’Roll remained on the other desktop.
+- Received share dimensions were 1720×1080. Pixel hashes alone can change from
+  re-encoding; the controlled motion and visual receiver check establish that
+  the camera remained live.
+- Returning to Rock’n’Roll retained Camera in Presenter. Stop Sharing removed
+  the receiving video; Leave returned the sender home and left only the browser
+  participant. The browser then left and the synthetic source closed.
+- Six localization checks passed after correcting the Mac background explanation
+  in English and Russian. iOS retains its existing background explanation.
+
+Evidence: `.build/release79/receiver-evidence.json`, local receiver screenshots,
+camera-motion snapshots, and `localization.xcresult`. Private camera images and
+room credentials are not committed. No battery measurement or new physical-iPhone
+qualification is claimed; this fix changes Mac publication policy only.
+
+See [build-79 release record](release-0.2.0-build79.md) for signing and distribution.

@@ -52,7 +52,10 @@ struct PresenterControls: View {
                 Text(L("This canvas is private. Your separate camera video is already live in the meeting."))
                     .font(.footnote).foregroundStyle(.orange)
             }
-            if model.screenSelected {
+            if model.canCompose && ProcessInfo.processInfo.isiOSAppOnMac {
+                Text(L("After you start sharing, your camera and drawings stay live when you switch apps or desktops."))
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else if model.screenSelected {
                 Text(L("The screen continues in the background. The app camera layer and drawings return when you reopen the app; macOS manages its own overlay."))
                     .font(.footnote).foregroundStyle(.secondary)
             } else if model.source == .canvas {

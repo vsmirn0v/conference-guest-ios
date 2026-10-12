@@ -581,6 +581,7 @@
 "Start sharing" = "Start sharing";
 "Stop sharing" = "Stop sharing";
 "The screen continues in the background. The app camera layer and drawings return when you reopen the app; macOS manages its own overlay." = "The screen continues in the background. The app camera layer and drawings return when you reopen the app; macOS manages its own overlay.";
+"After you start sharing, your camera and drawings stay live when you switch apps or desktops." = "After you start sharing, your camera and drawings stay live when you switch apps or desktops.";
 "This canvas is private. Your separate camera video is already live in the meeting." = "This canvas is private. Your separate camera video is already live in the meeting.";
 "Top left" = "Top left";
 "Top right" = "Top right";
