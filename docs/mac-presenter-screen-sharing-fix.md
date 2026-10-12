@@ -163,3 +163,66 @@ room credentials are not committed. No battery measurement or new physical-iPhon
 qualification is claimed; this fix changes Mac publication policy only.
 
 See [build-79 release record](release-0.2.0-build79.md) for signing and distribution.
+
+
+## Follow-up: source freshness, startup ownership and capture bounds (build 80)
+
+The source chooser now reports confirmed selection separately from cancellation.
+Confirmation invalidates cached source pixels and queued old renders before the
+replacement stream can deliver samples. Share stays disabled until that source
+has a rendered frame. Cancelling keeps the previous live source; a replacement
+window that never produces pixels retires the frozen publication with a retryable
+error. Both capture adapters also recheck ownership after external callbacks,
+including a synchronous Stop from the selection callback.
+
+Each Presenter startup has a cancellation request. All three engine adapters
+check it before and after retiring the previous sender, before acquiring the new
+one. A delayed cancelled startup never invokes the global Stop of a later share.
+Returning to the inspector replays the latest background-composed sample, even
+when the source is static and no next frame arrives.
+
+Mac native and compatibility capture now use the same 30 fps ceiling and queue
+depth of three, replacing the native Mac defaults of 60 fps and eight buffers.
+The outgoing budget remains 15/10/5 fps. The private Presenter camera and live
+camera conversion observers now follow that budget; sensor rate changes keep
+capture ownership and avoid restarting the camera. Ordinary local camera preview
+keeps its existing 30 fps budget. iOS background GPU restrictions are unchanged.
+
+### Measurements and acceptance boundaries
+
+Local evidence: `.build/presenter80/`. Sequential Mac window-capture samples:
+
+| Capture setting | Process mean CPU | Median capture delivery age | P95 age |
+| --- | ---: | ---: | ---: |
+| 60 fps / depth 8 | 75.4% | 0.45 ms | 0.95 ms |
+| 30 fps / depth 3 | 78.4% | 0.63 ms | 1.11 ms |
+
+These short whole-app runs include camera composition, upload, changing capture
+geometry and differing warm-up. They do not establish a CPU or battery saving.
+RSS differed substantially with warm-up and macOS compression, so it is not a
+reliable buffer-footprint comparison. The shipped change bounds excess capture
+rate/queued surfaces to what the preview can consume; it does not promise an
+energy improvement. No physical iPhone or energy trace was used.
+
+Real system-window capture reached the independent browser with changing pixels
+and a camera inset at both settings, including while the sender was off-desktop.
+A separate standalone Presenter canvas run used a real Mac camera, an alternating
+synthetic backdrop and the guest transport. Its native Minimize commands and an
+activated full-screen Space were exercised with the browser still connected.
+The verified background phase lasted 110 seconds: camera frames advanced from
+3,566 to 5,216 (15 fps), composition stayed active, the camera inset remained
+present, and decoded receiver frames continued changing. Returning restored the
+foreground lifecycle. This canvas run qualifies Presenter camera/composition
+lifecycle; it is separate from the system-window capture measurements.
+
+Mac and iOS 27 simulator component suites passed (125 cases each, with expected
+hardware/live-room skips). Follow-up lifecycle checks include source timeout and
+callback reentrancy. Receiver tests also cover native RTP/decoding rather than
+encoder counters alone. Live remote Telemost/TrueConf servers and physical iOS
+power/thermal sensor behavior were not requalified in this change.
+
+Standalone reproduction uses Debug-only `ROCKNROLL_TEST_PRESENTER_INVITE` and
+`ROCKNROLL_TEST_CAPTURE_WINDOW`. `ROCKNROLL_TEST_PRESENTER_CANVAS=1` avoids the
+system chooser for camera/lifecycle qualification; capture FPS/depth overrides
+are opt-in laboratory parameters. The fixture never changes saved name/history,
+records frame metadata only, and leaves automatically after ten published minutes.

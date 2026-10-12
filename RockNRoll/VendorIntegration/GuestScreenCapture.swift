@@ -46,14 +46,14 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
     private let preview: LocalSharePreview
     private let onFrame: ((CMSampleBuffer) -> Void)?
     private let onEffect: (Bool) -> Void
-    private let onSelection: () -> Void
+    private let onSelection: (PresenterScreenSelection) -> Void
     private let onEnd: (String?) -> Void
     #if DEBUG
     private let deliveryExperiment = OutgoingShareExperiment.configured()
     #endif
 
     init(preview: LocalSharePreview, onFrame: ((CMSampleBuffer) -> Void)? = nil,
-         onEffect: @escaping (Bool) -> Void = { _ in }, onSelection: @escaping () -> Void = {},
+         onEffect: @escaping (Bool) -> Void = { _ in }, onSelection: @escaping (PresenterScreenSelection) -> Void = { _ in },
          onEnd: @escaping (String?) -> Void = { _ in }, onError: @escaping (String) -> Void) {
         self.preview = preview; self.onFrame = onFrame; self.onEffect = onEffect
         self.onSelection = onSelection; self.onEnd = onEnd; self.onError = onError
@@ -63,7 +63,8 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         guard !picking, retirement == nil else { return }
         if ProcessInfo.processInfo.isiOSAppOnMac {
             if stream == nil { generation += 1 }
-            picking = true; pickerRegistered = true; macPicker.stream = stream
+            picking = true
+            pickerRegistered = true; macPicker.stream = stream
             do { try macPicker.present() }
             catch { selectionFailed(error) }
             return
@@ -139,6 +140,16 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         config.width = Int(size.width); config.height = Int(size.height)
         // Meeting microphone/audio remains owned by the call engine.
         config.capturesAudio = false
+        // Mac defaults are 60 fps/eight surfaces. Our visible preview tops out
+        // at 30 fps and outgoing sharing at 15; keep capture bounded accordingly.
+        if ProcessInfo.processInfo.isiOSAppOnMac { MacScreenCaptureBridge.configureTiming(config, fps: 30, queueDepth: 3) }
+        #if DEBUG
+        if ProcessInfo.processInfo.isiOSAppOnMac,
+           let fps = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAPTURE_FPS"].flatMap(Int.init) {
+            let depth = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAPTURE_DEPTH"].flatMap(Int.init) ?? 3
+            MacScreenCaptureBridge.configureTiming(config, fps: fps, queueDepth: depth)
+        }
+        #endif
         if let previous = stream {
             // UIKit's public ScreenCaptureKit surface cannot update an existing
             // filter/configuration. Replace capture, preserving the one sender.
@@ -147,6 +158,8 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
             guard generation == attempt, selectionGeneration == selection else { return }
             onEffect(false)
         }
+        onSelection(.selected)
+        guard generation == attempt, selectionGeneration == selection else { return }
         let capture = SCStream(filter: filter, configuration: config, delegate: self)
         stream = capture
         if ProcessInfo.processInfo.isiOSAppOnMac { macPicker.stream = capture }
@@ -175,7 +188,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
                 }
             }
             guard generation == attempt, selectionGeneration == selection else { return }
-            releasePicker(); onSelection()
+            releasePicker()
         } catch {
             guard generation == attempt, selectionGeneration == selection else { return }
             let retirementGeneration = generation + 1
@@ -192,13 +205,14 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
     }
     private func selectionCancelled() {
         guard picking else { return }
-        releasePicker(); onSelection()
+        releasePicker(); onSelection(.cancelled)
         if stream == nil { onEnd(nil) }
     }
     private func selectionFailed(_ error: Error) {
         guard picking else { return }
         releasePicker()
         let message = L("Could not open screen sharing: %@", error.localizedDescription)
+        onSelection(.cancelled)
         onError(message); onEnd(message)
     }
 

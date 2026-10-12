@@ -1,3 +1,4 @@
+import Combine
 import LiveKit
 import LiveKitWebRTC
 import Foundation
@@ -9,15 +10,19 @@ import CoreMedia
 final class TrackPresenterCamera: PresenterCameraSource {
     private let source: CallVideoSource
     private let sink: RoomFloatingVideoSink
+    private var energySubscription: AnyCancellable?
     init(source: CallVideoSource, onFrame: @escaping (CVPixelBuffer, Int) -> Void) {
         self.source = source
         sink = RoomFloatingVideoSink { sample, rotation in
             if let pixels = CMSampleBufferGetImageBuffer(sample) { onFrame(pixels, rotation) }
         }
-        sink.setWanted(true, fps: 15)
+        sink.setWanted(true, fps: MediaEnergyBudget.shared.sharingFPS)
+        energySubscription = MediaEnergyBudget.shared.$pressure.dropFirst().sink { [weak sink] pressure in
+            sink?.setWanted(true, fps: pressure == .normal ? 15 : pressure == .constrained ? 10 : 5)
+        }
         source.add(sink)
     }
-    func stop() { sink.retire(); source.remove(sink) }
+    func stop() { energySubscription = nil; sink.retire(); source.remove(sink) }
 }
 
 /// Prime one AVKit frame, then process only while PiP is starting/visible.

@@ -1300,15 +1300,17 @@ final class NativeConferenceEngine: CallEngine {
                 }
             }
             #endif
-            self.studio.presenter.startSharing = { [weak self] sample in
+            self.studio.presenter.startSharing = { [weak self] sample, request in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                       self.canChangeMedia(epoch: epoch, attempt: attempt), !self.isSystemHeld else { throw CancellationError() }
+                try request.checkCancellation()
                 // Only explicit Share commits the transition from ordinary sharing.
                 let replacingShare = self.screenCapture != nil
                 await self.stopScreenSharing(retirePresenter: false)
+                try request.checkCancellation()
                 guard self.canChangeMedia(epoch: epoch, attempt: attempt), !self.isSystemHeld else { throw CancellationError() }
                 let sender = GuestPresenterSender(preview: self.localSharePreview) { [weak self] message in
-                    guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                    guard let self, !request.isCancelled, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
                     self.studio.presenter.stop()
                     self.activeControls?.showMediaStatus(message)
                 }

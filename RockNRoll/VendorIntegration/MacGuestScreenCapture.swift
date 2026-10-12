@@ -28,7 +28,7 @@ enum GuestScreenCaptureFactory {
     }
     static var isAvailable: Bool { route == .native || route == .macCompatibility }
     static func make(preview: LocalSharePreview, onFrame: ((CMSampleBuffer) -> Void)? = nil,
-                     onEffect: @escaping (Bool) -> Void = { _ in }, onSelection: @escaping () -> Void = {},
+                     onEffect: @escaping (Bool) -> Void = { _ in }, onSelection: @escaping (PresenterScreenSelection) -> Void = { _ in },
                      onEnd: @escaping (String?) -> Void = { _ in }, onError: @escaping (String) -> Void) -> GuestScreenCapture & PresenterScreenSource {
         #if canImport(ScreenCaptureKit)
         if route == .native, #available(iOS 27.0, *) {
@@ -56,12 +56,12 @@ final class MacGuestScreenCapture: GuestScreenCapture, PresenterScreenSource {
     private var retirement: Task<Void, Never>?
 
     init(preview: LocalSharePreview, onFrame: ((CMSampleBuffer) -> Void)? = nil,
-         onEffect: @escaping (Bool) -> Void = { _ in }, onSelection: @escaping () -> Void = {},
+         onEffect: @escaping (Bool) -> Void = { _ in }, onSelection: @escaping (PresenterScreenSelection) -> Void = { _ in },
          onEnd: @escaping (String?) -> Void = { _ in }, onError: @escaping (String) -> Void,
          bridge: MacScreenCaptureBridge = MacScreenCaptureBridge()) {
         self.preview = preview; self.onFrame = onFrame; self.onError = onError; self.onEnd = onEnd
         self.bridge = bridge
-        bridge.onSelection = { _ in MainActor.assumeIsolated { onSelection() } }
+        bridge.onSelection = { style in MainActor.assumeIsolated { onSelection(style < 0 ? .cancelled : .selected) } }
         bridge.onEffect = { enabled in MainActor.assumeIsolated { onEffect(enabled) } }
         bridge.onFrame = { [weak self] sample in MainActor.assumeIsolated { self?.receive(sample) } }
         bridge.onEnd = { [weak self] error in

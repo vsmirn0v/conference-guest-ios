@@ -38,7 +38,7 @@ final class GuestCallLayoutFixture: UIViewController {
         studio?.soundCheck.verifyMuted = { [weak self] in self?.controls.setFixtureMedia(microphone: false) }
         studio?.observeNoiseSuppression(true)
         studio?.applyProfile = { [weak studio] profile in studio?.observeNoiseSuppression(profile == .conversation) }
-        studio?.presenter.startSharing = { _ in }
+        studio?.presenter.startSharing = { _, _ in }
         studio?.presenter.sendSample = { _ in }
         studio?.presenter.stopSharing = {}
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_PRESENTER_WARM"] == "1" {

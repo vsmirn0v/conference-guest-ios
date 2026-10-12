@@ -6,6 +6,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
     private var conference: ConferenceModel?
     #if DEBUG
+    private var presenterExperiment: MacPresenterQualification?
     private var previewExperiment: PreviewCadenceExperiment?
     #endif
 
@@ -20,6 +21,11 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             let window = UIWindow(windowScene: windowScene)
             window.rootViewController = RendererResetProbeViewController()
             window.makeKeyAndVisible(); self.window = window
+            return
+        }
+        if let experiment = MacPresenterQualification.make(windowScene: windowScene) {
+            presenterExperiment = experiment; window = experiment.window
+            experiment.start()
             return
         }
         if let experiment = PreviewCadenceExperiment.make(windowScene: windowScene) {

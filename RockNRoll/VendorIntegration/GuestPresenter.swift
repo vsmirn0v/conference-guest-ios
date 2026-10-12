@@ -67,12 +67,12 @@ final class GuestPresenterCamera: PresenterCameraSource {
     private var observation: AnyCancellable?
     private var energySubscription: AnyCancellable?
     init(streams: GuestStreamViews, onFrame: @escaping (CVPixelBuffer, Int) -> Void) {
-        processor.setFrameRate(min(12, MediaEnergyBudget.shared.previewFPS)); processor.setEnabled(true)
+        processor.setFrameRate(min(12, MediaEnergyBudget.shared.sharingFPS)); processor.setEnabled(true)
         processor.onSample = { sample, _, rotation in
             if let pixels = CMSampleBufferGetImageBuffer(sample) { onFrame(pixels, rotation) }
         }
         energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak processor] _ in
-            DispatchQueue.main.async { processor?.setFrameRate(min(12, MediaEnergyBudget.shared.previewFPS)) }
+            DispatchQueue.main.async { processor?.setFrameRate(min(12, MediaEnergyBudget.shared.sharingFPS)) }
         }
         observation = streams.localCameraChanges.sink { [weak self] in self?.refresh($0) }
     }

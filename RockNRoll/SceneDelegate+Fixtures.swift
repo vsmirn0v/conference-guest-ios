@@ -166,7 +166,7 @@ extension SceneDelegate {
                 let studio = StudioModel(audioControl: .fullProcessing, privateCamera: StudioCameraFixture(), privateMicrophone: StudioMicrophoneFixture())
                 studio.applyProfile = { _ in }
                 studio.soundCheck.verifyMuted = { [weak call] in call?.setMicrophone(false) }
-                studio.presenter.startSharing = { _ in }
+                studio.presenter.startSharing = { _, _ in }
                 studio.presenter.sendSample = { _ in }
                 studio.presenter.stopSharing = {}
                 call.studio = studio
@@ -286,6 +286,102 @@ extension SceneDelegate {
             try? await Task.sleep(for: .milliseconds(200))
         }
         return false
+    }
+}
+#endif
+
+#if DEBUG
+import AVFoundation
+
+/// Standalone qualification process: real capture, engine and lifecycle with an
+/// independently decoded receiver. Opt-in; never changes stored profile/history.
+@MainActor final class MacPresenterQualification {
+    let window: UIWindow
+    private let container = UIViewController()
+    private let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
+    private let link: String
+    private var timer: Timer?
+    private var frames = 0
+    private var ages = [Double]()
+    private var elapsed: TimeInterval = 0
+    private var sharingStarted = false
+    private var publishedAt: TimeInterval?
+    private var starting = false
+    private let evidenceURL: URL?
+    static func make(windowScene: UIWindowScene) -> MacPresenterQualification? {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              let link = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_INVITE"],
+              ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAPTURE_WINDOW"] != nil else { return nil }
+        return MacPresenterQualification(scene: windowScene, link: link)
+    }
+    private init(scene: UIWindowScene, link: String) {
+        self.link = link; window = UIWindow(windowScene: scene)
+        evidenceURL = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_EVIDENCE"].map { URL(fileURLWithPath: $0) }
+        window.rootViewController = container; window.makeKeyAndVisible()
+    }
+    func start() {
+        Task {
+            do {
+                let target = try JoinTarget.parse(link)
+                let endpoint = try await VendorEndpointResolver.make().resolve(for: target)
+                try engine.configure(container: container, networkURL: endpoint, displayName: "Presenter capture QA")
+                try engine.join(target: target, displayName: "Presenter capture QA")
+                for _ in 0..<600 {
+                    if engine.readyForPresenterForTesting { break }
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                guard engine.readyForPresenterForTesting else { throw CocoaError(.featureUnsupported) }
+                let model = engine.studioForTesting.presenter
+                let create = model.makeScreenSource!
+                model.makeScreenSource = { [weak self] frame, effect, selection, end in
+                    create({ sample in
+                        if let self {
+                            self.frames += 1
+                            let age = (ProcessInfo.processInfo.systemUptime - sample.presentationTimeStamp.seconds) * 1000
+                            if age.isFinite && age >= 0 && age < 1000 { self.ages.append(age) }
+                        }
+                        frame(sample)
+                    }, effect, selection, end)
+                }
+                engine.studioForTesting.open(.presenter)
+                let panel = UIHostingController(rootView: StudioPanel(model: engine.studioForTesting))
+                container.present(panel, animated: false)
+                model.includeCamera = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_CAMERA"] != "0"
+                if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_CANVAS"] == "1" {
+                    model.selectCanvas(); model.scene.backdrop = .warm
+                } else { model.selectScreen() }
+                let began = ProcessInfo.processInfo.systemUptime
+                timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.tick(began: began) }
+                }
+            } catch { print("PRESENTER_QUALIFICATION_ERROR \(error)") }
+        }
+    }
+    private func tick(began: TimeInterval) {
+        elapsed = ProcessInfo.processInfo.systemUptime - began
+        let model = engine.studioForTesting.presenter
+        if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_CANVAS"] == "1" {
+            model.scene.backdrop = Int(elapsed / 2) % 2 == 0 ? .warm : .stage
+        }
+        if !sharingStarted && !starting && model.canStartSharing {
+            starting = true
+            Task {
+                await model.start(); sharingStarted = model.running; starting = false
+                if sharingStarted { publishedAt = ProcessInfo.processInfo.systemUptime }
+            }
+        }
+        var report = model.cameraEvidenceForTesting
+        report["elapsed"] = elapsed; report["captureFrames"] = frames
+        report["running"] = model.running; report["error"] = model.error ?? ""
+        report["compositions"] = model.compositionCount; report["heartbeats"] = model.heartbeatCount
+        let sorted = ages.sorted()
+        report["captureAgeMedianMs"] = sorted.isEmpty ? 0 : sorted[sorted.count / 2]
+        report["captureAgeP95Ms"] = sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, sorted.count * 95 / 100)]
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.sortedKeys]) {
+            if let evidenceURL { try? data.write(to: evidenceURL, options: .atomic) }
+            print("PRESENTER_QUALIFICATION \(String(decoding: data, as: UTF8.self))")
+        }
+        if let publishedAt, ProcessInfo.processInfo.systemUptime - publishedAt > 600 { timer?.invalidate(); timer = nil; engine.leave() }
     }
 }
 #endif

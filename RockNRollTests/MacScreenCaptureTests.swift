@@ -8,6 +8,8 @@ final class MacScreenCaptureTests: XCTestCase {
     private final class Configuration: NSObject {
         @objc var width: UInt = 1280
         @objc var height: UInt = 720
+        @objc var minimumFrameInterval = CMTime.zero
+        @objc var queueDepth = 0
     }
     private final class ResizableStream: NSObject {
         var requests = [CGSize]()
@@ -16,6 +18,16 @@ final class MacScreenCaptureTests: XCTestCase {
             requests.append(CGSize(width: Double(configuration.width), height: Double(configuration.height)))
             completions.append(completionHandler)
         }
+    }
+    func testCaptureTimingUsesBoundedDepthAndDoesNotAlterResolution() {
+        let config = Configuration()
+        MacScreenCaptureBridge.configureTiming(config, fps: 30, queueDepth: 3)
+        XCTAssertEqual(config.minimumFrameInterval, CMTime(value: 1, timescale: 30))
+        XCTAssertEqual(config.queueDepth, 3)
+        XCTAssertEqual(config.width, 1280); XCTAssertEqual(config.height, 720)
+        MacScreenCaptureBridge.configureTiming(config, fps: 0, queueDepth: 0)
+        XCTAssertEqual(config.minimumFrameInterval, CMTime(value: 1, timescale: 1))
+        XCTAssertEqual(config.queueDepth, 3)
     }
     func testWindowDimensionsPreserveAspectBoundPixelsAndDoNotUpscale() {
         XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 640, height: 480)), CGSize(width: 640, height: 480))
@@ -61,6 +73,26 @@ final class MacScreenCaptureTests: XCTestCase {
         bridge.invalidateWindowResize()
         try await Task.sleep(nanoseconds: 450_000_000)
         XCTAssertTrue(second.requests.isEmpty, "Stop rejects a queued resize from the old selection")
+    }
+    private final class Filter: NSObject {
+        @objc var style = 1
+        @objc var contentRect = CGRect(x: 0, y: 0, width: 640, height: 480)
+        @objc var pointPixelScale: Float = 1
+    }
+    func testReentrantStopFromEffectOrSelectionCannotStartAnotherCapture() {
+        for duringSelection in [false, true] {
+            let bridge = MacScreenCaptureBridge()
+            bridge.setValue(true, forKey: "picking")
+            var stops = 0, selections = 0
+            if duringSelection {
+                bridge.onSelection = { _ in selections += 1; bridge.stop { _ in stops += 1 } }
+            } else { bridge.onEffect = { _ in bridge.stop { _ in stops += 1 } } }
+            bridge.perform(NSSelectorFromString("selectFilter:"), with: Filter())
+            XCTAssertEqual(stops, 1)
+            XCTAssertEqual(selections, duringSelection ? 1 : 0)
+            XCTAssertNil(bridge.value(forKey: "stream"), "A callback may retire capture synchronously")
+            bridge.onSelection = nil; bridge.onEffect = nil
+        }
     }
     private final class RetiringStream: NSObject {
         var starts = 0, stops = 0, removals = 0

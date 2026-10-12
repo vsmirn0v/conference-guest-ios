@@ -132,10 +132,12 @@ final class TrueConfCallEngine: CallEngine {
                 self.setScreenSharing(true)
             }
         }
-        studio.presenter.startSharing = { [weak self] sample in
+        studio.presenter.startSharing = { [weak self] sample, request in
             guard let self else { throw CancellationError() }
             let generation = self.epoch
+            try request.checkCancellation()
             await self.stopScreenSharing(retirePresenter: false)
+            try request.checkCancellation()
             guard self.epoch == generation else { throw CancellationError() }
             let sender = try self.makeScreenSender()
             try sender.startComposed(); sender.send(sample)

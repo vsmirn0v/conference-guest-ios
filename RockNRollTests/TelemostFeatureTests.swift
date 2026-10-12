@@ -326,7 +326,7 @@ final class TelemostFeatureTests: XCTestCase {
         sender.onCandidate = { value in Task { try? await receiver.addCandidate(candidate(value)) } }
         receiver.onCandidate = { value in Task { try? await sender.addCandidate(candidate(value)) } }
         let model = PresenterModel(observeLifecycle: false)
-        model.startSharing = { capture.send($0) }; model.sendSample = { capture.send($0) }; model.stopSharing = {}
+        model.startSharing = { sample, _ in capture.send(sample) }; model.sendSample = { capture.send($0) }; model.stopSharing = {}
         do {
             try capture.startComposed(); try sender.setSharing(capture.track)
             let offer = try await sender.offer(), answer = try await receiver.answer(offer)

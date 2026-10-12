@@ -339,6 +339,8 @@ final class PresenterModelTests: XCTestCase {
     private final class Capture: PrivateCameraPreviewing {
         let view = UIView()
         var started = false, stopped = false
+        var frameRate = 0
+        func setFrameRate(_ fps: Int) { frameRate = fps }
         var waiting: CheckedContinuation<Void, Never>?
         var delay = false
         var onFrames: ((@escaping (CVPixelBuffer, Int) -> Void) -> Void)?
@@ -382,7 +384,7 @@ final class PresenterModelTests: XCTestCase {
     func testSetupDoesNotSendUntilExplicitShareAndHoldStopsSharing() async {
         let model = PresenterModel(observeLifecycle: false)
         var starts = 0, sends = 0, stops = 0
-        model.startSharing = { _ in starts += 1 }
+        model.startSharing = { _, _ in starts += 1 }
         model.sendSample = { _ in sends += 1 }; model.stopSharing = { stops += 1 }
         model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
         XCTAssertEqual(starts, 0); XCTAssertEqual(sends, 0); XCTAssertFalse(model.cameraOn)
@@ -415,7 +417,7 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false)
         defer { model.end() }
         var samples: [CMSampleBuffer] = []
-        model.startSharing = { samples.append($0) }; model.sendSample = { samples.append($0) }; model.stopSharing = {}
+        model.startSharing = { sample, _ in samples.append(sample) }; model.sendSample = { samples.append($0) }; model.stopSharing = {}
         model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
         await model.start()
         let count = model.compositionCount
@@ -461,7 +463,7 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false)
         defer { model.end() }
         var held: [CMSampleBuffer] = []
-        model.startSharing = { held.append($0) }; model.sendSample = { held.append($0) }; model.stopSharing = {}
+        model.startSharing = { sample, _ in held.append(sample) }; model.sendSample = { held.append($0) }; model.stopSharing = {}
         model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }; await model.start()
         model.scene.backdrop = .warm; await waitUntil { held.count == 2 }
         model.scene.backdrop = .stage; await waitUntil { held.count == 3 }
@@ -478,7 +480,7 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false)
         var continuation: CheckedContinuation<Void, Never>?
         var stops = 0
-        model.startSharing = { _ in await withCheckedContinuation { continuation = $0 } }
+        model.startSharing = { _, _ in await withCheckedContinuation { continuation = $0 } }
         model.stopSharing = { stops += 1 }
         model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
         let task = Task { await model.start() }
@@ -489,11 +491,11 @@ final class PresenterModelTests: XCTestCase {
     func testCancelledStartIsRetryableAndDoesNotExposeTechnicalError() async {
         let model = PresenterModel(observeLifecycle: false)
         model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
-        model.startSharing = { _ in throw CancellationError() }
+        model.startSharing = { _, _ in throw CancellationError() }
         await model.start()
         XCTAssertFalse(model.starting); XCTAssertFalse(model.running); XCTAssertNil(model.error)
         XCTAssertTrue(model.hasPreview)
-        model.startSharing = { _ in }; model.stopSharing = {}
+        model.startSharing = { _, _ in }; model.stopSharing = {}
         await model.start()
         XCTAssertTrue(model.running)
         model.end()
@@ -502,7 +504,7 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false)
         var continuation: CheckedContinuation<Void, Never>?
         var stops = 0
-        model.startSharing = { _ in await withCheckedContinuation { continuation = $0 } }
+        model.startSharing = { _, _ in await withCheckedContinuation { continuation = $0 } }
         model.stopSharing = { stops += 1 }
         model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
         let task = Task { await model.start() }
@@ -560,7 +562,7 @@ final class PresenterModelTests: XCTestCase {
         var emit: ((CVPixelBuffer, Int) -> Void)?
         var last: CMSampleBuffer?, sends = 0
         model.makePrivateCamera = { _ in capture }; capture.onFrames = { emit = $0 }
-        model.startSharing = { last = $0 }; model.sendSample = { last = $0; sends += 1 }; model.stopSharing = {}
+        model.startSharing = { sample, _ in last = sample }; model.sendSample = { last = $0; sends += 1 }; model.stopSharing = {}
         model.scene = PresenterScene()
         model.scene.placement = PresenterPlacement(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
         model.open(); model.acceptScreen(try screenSample(gray: 20)); model.includeCamera = true
@@ -596,7 +598,7 @@ final class PresenterModelTests: XCTestCase {
         var continuation: CheckedContinuation<Void, Never>?
         var last: CMSampleBuffer?, sends = 0
         model.makeCameraSource = { emit = $0; return live }
-        model.startSharing = { _ in await withCheckedContinuation { continuation = $0 } }
+        model.startSharing = { _, _ in await withCheckedContinuation { continuation = $0 } }
         model.sendSample = { last = $0; sends += 1 }; model.stopSharing = {}
         model.scene = PresenterScene()
         model.scene.placement = PresenterPlacement(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
@@ -629,7 +631,7 @@ final class PresenterModelTests: XCTestCase {
         let capture = Capture()
         var emit: ((CVPixelBuffer, Int) -> Void)?, sends = 0
         model.makePrivateCamera = { _ in capture }; capture.onFrames = { emit = $0 }
-        model.startSharing = { _ in sends += 1 }; model.sendSample = { _ in sends += 1 }
+        model.startSharing = { _, _ in sends += 1 }; model.sendSample = { _ in sends += 1 }
         model.open(); model.acceptScreen(try screenSample()); model.includeCamera = true
         await waitUntil { emit != nil && model.hasPreview }
         model.setForeground(false); await waitUntil { capture.stopped }
@@ -646,7 +648,7 @@ final class PresenterModelTests: XCTestCase {
         let capture = Capture()
         var last: CMSampleBuffer?
         model.makePrivateCamera = { _ in capture }
-        model.startSharing = { _ in }; model.sendSample = { last = $0 }; model.stopSharing = {}
+        model.startSharing = { _, _ in }; model.sendSample = { last = $0 }; model.stopSharing = {}
         model.open(); model.acceptScreen(try screenSample()); model.includeCamera = true
         await waitUntil { capture.started && model.canStartSharing }
         await model.start(); model.setForeground(false)
@@ -663,7 +665,7 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false, backgroundCompositionSupported: true)
         defer { model.end() }
         var sends = 0
-        model.startSharing = { _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
+        model.startSharing = { _, _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
         model.selectCanvas(); model.open(); await waitUntil { model.canStartSharing }
         await model.start(); model.setForeground(false)
         let before = sends
@@ -700,7 +702,7 @@ final class PresenterModelTests: XCTestCase {
         }
         var sends = 0
         model.makePrivateCamera = { _ in camera }
-        model.startSharing = { _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
+        model.startSharing = { _, _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
         model.setForeground(true); model.open(); model.acceptScreen(try screenSample())
         model.includeCamera = true
         for _ in 0..<2_000 {
@@ -728,9 +730,9 @@ final class PresenterModelTests: XCTestCase {
         let studio = StudioModel(audioControl: .noiseSuppression), capture = Screen()
         defer { studio.end() }
         let model = studio.presenter
-        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        var selected: ((PresenterScreenSelection) -> Void)?, receive: ((CMSampleBuffer) -> Void)?
         var published = 0
-        model.startSharing = { _ in published += 1 }
+        model.startSharing = { _, _ in published += 1 }
         model.makeScreenSource = { frame, _, selection, _ in
             receive = frame; selected = selection; return capture
         }
@@ -738,7 +740,7 @@ final class PresenterModelTests: XCTestCase {
         await waitUntil { capture.starts == 1 }
         model.setForeground(false); studio.handleBackground(isMac: true)
         XCTAssertTrue(studio.presented); XCTAssertTrue(model.screenPicking)
-        selected?(); receive?(try screenSample(width: 640, height: 480))
+        selected?(.selected); receive?(try screenSample(width: 640, height: 480))
         XCTAssertTrue(model.screenSelected); XCTAssertFalse(model.hasPreview)
         XCTAssertFalse(capture.stopped); XCTAssertEqual(published, 0)
         model.setForeground(true)
@@ -753,7 +755,7 @@ final class PresenterModelTests: XCTestCase {
         let studio = StudioModel(audioControl: .noiseSuppression), capture = Screen()
         defer { studio.end() }
         let model = studio.presenter
-        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        var selected: ((PresenterScreenSelection) -> Void)?, receive: ((CMSampleBuffer) -> Void)?
         model.makeScreenSource = { frame, _, selection, _ in
             receive = frame; selected = selection; return capture
         }
@@ -762,7 +764,7 @@ final class PresenterModelTests: XCTestCase {
         model.setForeground(false); studio.handleBackground(isMac: false)
         await model.waitForScreenStop()
         XCTAssertFalse(studio.presented); XCTAssertTrue(capture.stopped)
-        selected?(); receive?(try screenSample())
+        selected?(.selected); receive?(try screenSample())
         XCTAssertFalse(model.screenSelected); XCTAssertFalse(model.running)
     }
     func testMacBackgroundNotificationDoesNotDismissThePresenterInspector() async throws {
@@ -772,7 +774,7 @@ final class PresenterModelTests: XCTestCase {
             NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
             studio.end()
         }
-        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        var selected: ((PresenterScreenSelection) -> Void)?, receive: ((CMSampleBuffer) -> Void)?
         studio.presenter.makeScreenSource = { frame, _, selection, _ in
             receive = frame; selected = selection; return capture
         }
@@ -781,7 +783,7 @@ final class PresenterModelTests: XCTestCase {
         await waitUntil { capture.starts == 1 }
         NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
         XCTAssertTrue(studio.presented, "Switching macOS Spaces must not dismiss the requesting inspector")
-        selected?(); receive?(try screenSample())
+        selected?(.selected); receive?(try screenSample())
         XCTAssertFalse(studio.presenter.hasPreview)
         NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
         await waitUntil { studio.presenter.hasPreview }
@@ -790,14 +792,14 @@ final class PresenterModelTests: XCTestCase {
     func testPrivateScreenPreparationWaitsForReturnFromAnotherDesktop() async throws {
         let model = PresenterModel(observeLifecycle: false, screenPreparationTimeout: 0.04), capture = Screen()
         defer { model.end() }
-        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        var selected: ((PresenterScreenSelection) -> Void)?, receive: ((CMSampleBuffer) -> Void)?
         var published = 0
-        model.startSharing = { _ in published += 1 }
+        model.startSharing = { _, _ in published += 1 }
         model.makeScreenSource = { frame, _, selection, _ in
             receive = frame; selected = selection; return capture
         }
         model.open(); model.selectScreen(); await waitUntil { capture.starts == 1 }
-        selected?(); model.setForeground(false)
+        selected?(.selected); model.setForeground(false)
         receive?(try screenSample())
         try await Task.sleep(for: .milliseconds(120))
         XCTAssertNil(model.error); XCTAssertFalse(capture.stopped)
@@ -809,10 +811,10 @@ final class PresenterModelTests: XCTestCase {
     func testScreenPreviewTimeoutStartsWhenReturningToItsInspector() async throws {
         let model = PresenterModel(observeLifecycle: false, screenPreparationTimeout: 0.04), capture = Screen()
         defer { model.end() }
-        var selected: (() -> Void)?
+        var selected: ((PresenterScreenSelection) -> Void)?
         model.makeScreenSource = { _, _, selection, _ in selected = selection; return capture }
         model.open(); model.selectScreen(); await waitUntil { capture.starts == 1 }
-        model.setForeground(false); selected?()
+        model.setForeground(false); selected?(.selected)
         try await Task.sleep(for: .milliseconds(120))
         XCTAssertNil(model.error); XCTAssertFalse(capture.stopped)
         model.setForeground(true)
@@ -823,7 +825,7 @@ final class PresenterModelTests: XCTestCase {
     func testLiveScreenIsPrivateUntilShareAndContinuesWithoutGPUInBackground() async throws {
         let model = PresenterModel(observeLifecycle: false, backgroundCompositionSupported: false)
         var sent: [CMSampleBuffer] = []
-        model.startSharing = { _ in }; model.sendSample = { sent.append($0) }; model.stopSharing = {}
+        model.startSharing = { _, _ in }; model.sendSample = { sent.append($0) }; model.stopSharing = {}
         model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
         let source = try screenSample(width: 90, height: 160)
         model.acceptScreen(source)
@@ -853,12 +855,12 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false)
         let capture = Screen()
         var receive: ((CMSampleBuffer) -> Void)?
-        var selected: (() -> Void)?
+        var selected: ((PresenterScreenSelection) -> Void)?
         var cancelled: ((String?) -> Void)?
         model.makeScreenSource = { frame, _, selection, end in receive = frame; selected = selection; cancelled = end; return capture }
         model.selectCanvas(); model.open(); model.selectScreen()
         await waitUntil { capture.starts == 1 }
-        selected?(); cancelled?(nil)
+        selected?(.selected); cancelled?(nil)
         await waitUntil { capture.stopped }
         XCTAssertFalse(model.screenPicking); XCTAssertFalse(model.screenSelected)
         XCTAssertEqual(model.source, .canvas)
@@ -882,17 +884,17 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false), capture = Screen()
         defer { model.end() }
         var receive: ((CMSampleBuffer) -> Void)?
-        var selected: (() -> Void)?
+        var selected: ((PresenterScreenSelection) -> Void)?
         var prepared = false, published = 0
         model.prepareScreenSource = { prepared = true }
         model.makeScreenSource = { frame, _, selection, _ in
             XCTAssertTrue(prepared, "Retire the ordinary share before registering a second picker")
             receive = frame; selected = selection; return capture
         }
-        model.startSharing = { _ in published += 1 }
+        model.startSharing = { _, _ in published += 1 }
         model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }
         model.selectScreen(); await waitUntil { capture.starts == 1 }
-        selected?()
+        selected?(.selected)
         XCTAssertEqual(model.source, .screen)
         XCTAssertFalse(model.screenPicking); XCTAssertFalse(model.screenSelected)
         receive?(try screenSample(width: 640, height: 480))
@@ -906,18 +908,18 @@ final class PresenterModelTests: XCTestCase {
         let model = PresenterModel(observeLifecycle: false, screenPreparationTimeout: 0.08)
         defer { model.end() }
         let capture = Screen()
-        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        var selected: ((PresenterScreenSelection) -> Void)?, receive: ((CMSampleBuffer) -> Void)?
         var starts = 0
-        model.startSharing = { _ in starts += 1 }
+        model.startSharing = { _, _ in starts += 1 }
         model.makeScreenSource = { frame, _, selection, _ in selected = selection; receive = frame; return capture }
         model.open(); model.selectScreen(); await waitUntil { capture.starts == 1 }
         XCTAssertTrue(model.screenPicking); XCTAssertFalse(model.canStartSharing)
-        selected?(); XCTAssertTrue(model.screenPreparing)
+        selected?(.selected); XCTAssertTrue(model.screenPreparing)
         await model.start(); XCTAssertEqual(starts, 0)
         await waitUntil { model.error != nil }
         XCTAssertEqual(model.screenSelectionPhase, .idle); XCTAssertFalse(model.screenSelected)
         await model.waitForScreenStop(); XCTAssertTrue(capture.stopped)
-        model.selectScreen(); await waitUntil { capture.starts == 2 }; selected?()
+        model.selectScreen(); await waitUntil { capture.starts == 2 }; selected?(.selected)
         receive?(try screenSample()); XCTAssertFalse(model.canStartSharing, "A captured frame still needs a rendered preview")
         await waitUntil { model.canStartSharing }
         XCTAssertEqual(model.screenSelectionPhase, .ready)
@@ -926,23 +928,23 @@ final class PresenterModelTests: XCTestCase {
     func testOldFramesCannotDismissReplacementChooserAndCancelledSelectionKeepsShare() async throws {
         let model = PresenterModel(observeLifecycle: false), capture = Screen()
         defer { model.end() }
-        var selected: (() -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        var selected: ((PresenterScreenSelection) -> Void)?, receive: ((CMSampleBuffer) -> Void)?
         var stops = 0
-        model.startSharing = { _ in }; model.stopSharing = { stops += 1 }
+        model.startSharing = { _, _ in }; model.stopSharing = { stops += 1 }
         model.makeScreenSource = { frame, _, selection, _ in selected = selection; receive = frame; return capture }
-        model.open(); model.selectScreen(); await waitUntil { capture.starts == 1 }; selected?()
+        model.open(); model.selectScreen(); await waitUntil { capture.starts == 1 }; selected?(.selected)
         receive?(try screenSample()); await waitUntil { model.canStartSharing }; await model.start()
         model.selectScreen(); XCTAssertTrue(model.screenPicking)
         receive?(try screenSample()); XCTAssertTrue(model.screenPicking)
-        // A cancelled replacement reports selection completion but keeps its existing capture.
-        selected?(); XCTAssertTrue(model.running); XCTAssertTrue(model.screenSelected)
+        // A cancelled replacement keeps its existing capture.
+        selected?(.cancelled); XCTAssertTrue(model.running); XCTAssertTrue(model.screenSelected)
         XCTAssertEqual(stops, 0); XCTAssertFalse(capture.stopped)
     }
     func testScreenResizePreservesRunningSenderAndChangesPlainAndComposedOutput() async throws {
         for composed in [false, true] {
             let model = PresenterModel(observeLifecycle: false)
             var sizes = [CGSize](), starts = 0, stops = 0
-            model.startSharing = { _ in starts += 1 }; model.stopSharing = { stops += 1 }
+            model.startSharing = { _, _ in starts += 1 }; model.stopSharing = { stops += 1 }
             model.sendSample = { sample in
                 if let pixels = CMSampleBufferGetImageBuffer(sample) {
                     sizes.append(CGSize(width: CVPixelBufferGetWidth(pixels), height: CVPixelBufferGetHeight(pixels)))
@@ -984,7 +986,7 @@ final class PresenterModelTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let model = PresenterModel(observeLifecycle: false, preferences: defaults)
         var sends = 0
-        model.startSharing = { _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
+        model.startSharing = { _, _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
         model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }; await model.start()
         for index in 0..<30 {
             model.scene.placement.x = CGFloat(index) / 100
@@ -1069,5 +1071,148 @@ final class PresenterLiveTests: XCTestCase {
         XCTAssertTrue(engine.isSharingScreen, "Choose a safe test window and start Presenter sharing")
         try await Task.sleep(nanoseconds: 180_000_000_000)
         XCTAssertTrue(engine.isSharingScreen, "The stream must survive camera/source/layout changes")
+    }
+}
+
+extension PresenterModelTests {
+    func testReplacementWaitsForNewSourcePixels() async throws {
+        let model = PresenterModel(observeLifecycle: false, screenPreparationTimeout: 0.15,
+                                   backgroundCompositionSupported: true)
+        defer { model.end() }
+        let screen = Screen()
+        var selected: ((PresenterScreenSelection) -> Void)?, receive: ((CMSampleBuffer) -> Void)?
+        var lastSent: CMSampleBuffer?
+        model.startSharing = { sample, _ in lastSent = sample }; model.stopSharing = {}
+        model.makeScreenSource = { frame, _, selection, _ in
+            receive = frame; selected = selection; return screen
+        }
+        model.open(); model.selectScreen()
+        await waitUntil { screen.starts == 1 }
+        selected?(.selected); receive?(try screenSample(gray: 31))
+        await waitUntil { model.canStartSharing }
+        model.selectScreen()
+        XCTAssertTrue(model.screenPicking)
+        selected?(.selected) // The replacement SCStream starts, but has not delivered a frame.
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(model.canStartSharing, "Old source pixels must not enable Share for the newly selected window")
+        await model.start()
+        XCTAssertNil(lastSent, "A private replacement must not publish the previous window")
+        receive?(try screenSample(gray: 210))
+        await waitUntil { model.canStartSharing }
+        await model.start()
+        XCTAssertEqual(centerGray(lastSent), 210)
+    }
+
+    func testRetiredStartCannotStopNewPublication() async throws {
+        let model = PresenterModel(observeLifecycle: false, backgroundCompositionSupported: true)
+        defer { model.end() }
+        var suspended: CheckedContinuation<Void, Never>?
+        var starts = 0, stops = 0, live = false
+        model.startSharing = { _, request in
+            starts += 1
+            if starts == 1 { await withCheckedContinuation { suspended = $0 } }
+            try request.checkCancellation()
+            live = true
+        }
+        model.stopSharing = { stops += 1; live = false; model.sharingEnded() }
+        model.selectCanvas(); model.open()
+        await waitUntil { model.canStartSharing }
+        let previous = Task { await model.start() }
+        await waitUntil { suspended != nil }
+        model.stop()
+        await waitUntil { !model.stopping && model.canStartSharing }
+        await model.start()
+        XCTAssertTrue(model.running); XCTAssertTrue(live)
+        let before = stops
+        suspended?.resume(); await previous.value
+        XCTAssertEqual(stops, before, "An obsolete start must not stop the current publisher")
+        XCTAssertTrue(model.running); XCTAssertTrue(live)
+    }
+
+    func testReturnReplaysLatestStaticPreview() async throws {
+        let model = PresenterModel(observeLifecycle: false, backgroundCompositionSupported: true)
+        defer { model.end() }
+        var lastSent: CMSampleBuffer?
+        model.startSharing = { sample, _ in lastSent = sample }; model.sendSample = { lastSent = $0 }; model.stopSharing = {}
+        model.open(); model.acceptScreen(try screenSample(gray: 31))
+        await waitUntil { model.canStartSharing }
+        await model.start()
+        let before = model.preview.evidenceForTesting["accepted"] as? Int ?? 0
+        XCTAssertGreaterThan(before, 0)
+        model.setForeground(false)
+        model.acceptScreen(try screenSample(gray: 210))
+        await waitUntil { self.centerGray(lastSent) == 210 }
+        XCTAssertEqual(model.preview.evidenceForTesting["accepted"] as? Int ?? 0, before)
+        model.setForeground(true)
+        try await Task.sleep(for: .milliseconds(100))
+        let after = model.preview.evidenceForTesting["accepted"] as? Int ?? 0
+        XCTAssertGreaterThan(after, before, "Returning to a still Presenter must display the newest background-composed frame")
+    }
+}
+
+@MainActor extension PresenterModelTests {
+    func testOwnedPresenterCameraAdaptsToPressureWithoutRestart() async throws {
+        let budget = MediaEnergyBudget(observeSystem: false, recoveryDelay: 1)
+        let model = PresenterModel(observeLifecycle: false, energyBudget: budget), capture = Capture()
+        defer { model.end() }
+        model.makePrivateCamera = { _ in capture }
+        model.selectCanvas(); model.includeCamera = true; model.open()
+        await waitUntil { capture.started && capture.frameRate == 15 }
+        let generation = model.cameraGeneration
+        budget.update(lowPower: true, thermal: .nominal)
+        await waitUntil { capture.frameRate == 10 }
+        budget.update(lowPower: false, thermal: .critical)
+        await waitUntil { capture.frameRate == 5 }
+        budget.update(lowPower: false, thermal: .nominal)
+        await waitUntil { capture.frameRate == 15 }
+        XCTAssertEqual(model.cameraGeneration, generation)
+        XCTAssertFalse(capture.stopped, "Pressure changes must not interrupt the live camera")
+    }
+}
+
+@MainActor extension PresenterModelTests {
+    func testFailedLiveWindowReplacementRetiresFrozenPublication() async throws {
+        let model = PresenterModel(observeLifecycle: false, screenPreparationTimeout: 0.05)
+        defer { model.end() }
+        let screen = Screen()
+        var selection: ((PresenterScreenSelection) -> Void)?, frame: ((CMSampleBuffer) -> Void)?
+        var stops = 0
+        model.startSharing = { _, _ in }; model.stopSharing = { stops += 1 }
+        model.makeScreenSource = { receive, _, selected, _ in frame = receive; selection = selected; return screen }
+        model.open(); model.selectScreen(); await waitUntil { screen.starts == 1 }
+        selection?(.selected); frame?(try screenSample())
+        await waitUntil { model.canStartSharing }; await model.start()
+        model.selectScreen(); selection?(.selected)
+        await waitUntil { model.error != nil && !model.running && !model.stopping }
+        await model.waitForScreenStop()
+        XCTAssertEqual(stops, 1); XCTAssertTrue(screen.stopped)
+        XCTAssertFalse(model.hasPreview); XCTAssertFalse(model.screenSelected)
+    }
+}
+
+@MainActor extension PresenterModelTests {
+    func testSourceFailureRetiresMissingWindowButPreservesLiveCanvas() async throws {
+        for canvas in [false, true] {
+            let model = PresenterModel(observeLifecycle: false), screen = Screen()
+            var frame: ((CMSampleBuffer) -> Void)?, selection: ((PresenterScreenSelection) -> Void)?, ended: ((String?) -> Void)?
+            var stops = 0
+            model.startSharing = { _, _ in }; model.stopSharing = { stops += 1 }
+            model.makeScreenSource = { receive, _, selected, end in frame = receive; selection = selected; ended = end; return screen }
+            model.open()
+            if canvas { model.selectCanvas() }
+            else {
+                model.selectScreen(); await waitUntil { screen.starts == 1 }
+                selection?(.selected); frame?(try screenSample())
+            }
+            await waitUntil { model.canStartSharing }; await model.start()
+            model.selectScreen(); await waitUntil { screen.starts == (canvas ? 1 : 2) }
+            selection?(.selected); ended?("Source failed")
+            await waitUntil { !model.stopping }
+            XCTAssertEqual(model.running, canvas)
+            XCTAssertEqual(stops, canvas ? 0 : 1)
+            XCTAssertEqual(model.error, "Source failed")
+            if canvas { XCTAssertEqual(model.source, .canvas) }
+            model.end()
+        }
     }
 }

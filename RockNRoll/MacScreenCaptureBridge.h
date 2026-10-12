@@ -9,6 +9,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (BOOL)isSupported;
 /// Native source pixels, fit within 1920x1080 without upscaling.
 + (CGSize)outputSizeForContent:(CGSize)content NS_SWIFT_NAME(outputSize(for:));
+/// Public Mac timing properties missing from UIKit's ScreenCaptureKit surface.
++ (void)configureTiming:(NSObject *)configuration fps:(NSInteger)fps queueDepth:(NSInteger)depth;
 /// Shared by the macOS compatibility and UIKit capture paths on the Mac host.
 - (void)prepareWindowResizeForStream:(NSObject *)stream configuration:(NSObject *)configuration;
 - (void)observeWindowSample:(CMSampleBufferRef)sample;

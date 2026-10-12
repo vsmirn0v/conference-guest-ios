@@ -12,6 +12,16 @@ protocol PresenterScreenSource: AnyObject {
     func stop() async
 }
 
+/// A suspended startup must check its request before acquiring an engine sender.
+@MainActor
+final class PresenterShareRequest {
+    private(set) var isCancelled = false
+    func checkCancellation() throws { if isCancelled { throw CancellationError() } }
+    fileprivate func cancel() { isCancelled = true }
+}
+
+enum PresenterScreenSelection { case selected, cancelled }
+
 /// One compositor job and one latest camera frame. Setup is private until Share.
 @MainActor
 final class PresenterModel: ObservableObject {
@@ -57,11 +67,12 @@ final class PresenterModel: ObservableObject {
     var canStartSharing: Bool { available && active && !held && foreground && !running && !starting && !stopping && hasPreview && canCompose && !screenPicking && !screenPreparing }
     private var screenPreparation: Task<Void, Never>?
     private var screenPreparationFallback: Source?
+    private var screenPickerFallback: Source = .screen
     private let screenPreparationTimeout: TimeInterval
     @Published private(set) var nativeOverlay = false
     @Published private(set) var aspectRatio: CGFloat = 16 / 9
     @Published private(set) var cameraHiddenInBackground = false
-    var makeScreenSource: ((@escaping (CMSampleBuffer) -> Void, @escaping (Bool) -> Void, @escaping () -> Void, @escaping (String?) -> Void) -> PresenterScreenSource)?
+    var makeScreenSource: ((@escaping (CMSampleBuffer) -> Void, @escaping (Bool) -> Void, @escaping (PresenterScreenSelection) -> Void, @escaping (String?) -> Void) -> PresenterScreenSource)?
     var prepareScreenSource: (() async -> Void)?
     var shareOtherApps: (() -> Void)?
     private var screenSource: PresenterScreenSource?
@@ -69,6 +80,7 @@ final class PresenterModel: ObservableObject {
     private var screenSample: CMSampleBuffer?
     private var screenEpoch = UUID()
     private let preferences: UserDefaults
+    private let energyBudget: MediaEnergyBudget
     private var pendingRender = false
     private var canvasSize = CGSize(width: 1280, height: 720)
     @Published var includeCamera = false { didSet { if includeCamera != oldValue { error = nil; invalidateCamera(); invalidateRender(); refresh() } } }
@@ -80,7 +92,7 @@ final class PresenterModel: ObservableObject {
         }
     }
     var preparePrivateCamera: (() async -> Void)?
-    var makePrivateCamera: (AVCaptureDevice.Position) -> PrivateCameraPreviewing = { PrivateCameraPreview(position: $0, framesPerSecond: 15) }
+    var makePrivateCamera: (AVCaptureDevice.Position) -> PrivateCameraPreviewing = { PrivateCameraPreview(position: $0, framesPerSecond: Double(MediaEnergyBudget.shared.sharingFPS)) }
     private var cameraPosition: AVCaptureDevice.Position = .front
     private var selectedCameraDevice: AVCaptureDevice?
     var canFlipCamera: Bool { active && !held && !cameraOn && CameraDevices.available().count > 1 }
@@ -96,13 +108,14 @@ final class PresenterModel: ObservableObject {
     var cameraEvidenceForTesting: [String: Any] {
         ["foreground": foreground, "presented": presented, "held": held, "active": active,
          "cameraOn": cameraOn, "includeCamera": includeCamera, "liveSource": cameraSource != nil,
-         "privateSource": ownedCamera != nil, "startingPrivate": cameraTask != nil, "frames": hasCameraFrames]
+         "privateSource": ownedCamera != nil, "startingPrivate": cameraTask != nil, "frames": hasCameraFrames,
+         "cameraFrames": cameraRevision, "sensorFPS": ownedCamera?.device.map { 1 / $0.activeVideoMinFrameDuration.seconds } ?? 0]
     }
     #endif
     @Published private(set) var available = false
     let preview = GuestSampleBufferView()
     var makeCameraSource: ((@escaping (CVPixelBuffer, Int) -> Void) -> PresenterCameraSource?)?
-    var startSharing: ((CMSampleBuffer) async throws -> Void)? { didSet { available = startSharing != nil } }
+    var startSharing: ((CMSampleBuffer, PresenterShareRequest) async throws -> Void)? { didSet { available = startSharing != nil } }
     var sendSample: ((CMSampleBuffer) -> Void)?
     var stopSharing: (() async -> Void)?
     private let queue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.presenter", qos: .userInitiated)
@@ -118,6 +131,7 @@ final class PresenterModel: ObservableObject {
     private var busy = false
     private var epoch = UUID()
     private var shareEpoch = UUID()
+    private var shareRequest: PresenterShareRequest?
     private var latest: CMSampleBuffer?
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
@@ -140,21 +154,25 @@ final class PresenterModel: ObservableObject {
     private var renderWanted: Bool { active && compositionAllowed && !held && (presented || running || starting) }
     private var canRender: Bool { renderWanted && canCompose && (!screenPicking || running) && (!screenSelected || screenSample != nil) }
     private var renderInterval: TimeInterval {
-        let budget = MediaEnergyBudget.shared
+        let budget = energyBudget
         let preview = includeCamera && !nativeOverlay ? budget.previewFPS : budget.inlineFPS
         return 1.0 / Double(running ? min(preview, budget.sharingFPS) : preview)
     }
 
     init(observeLifecycle: Bool = true, preferences: UserDefaults = .standard, screenPreparationTimeout: TimeInterval = 15,
-         backgroundCompositionSupported: Bool = ProcessInfo.processInfo.isiOSAppOnMac) {
+         backgroundCompositionSupported: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
+         energyBudget: MediaEnergyBudget = .shared) {
         self.screenPreparationTimeout = screenPreparationTimeout
         self.backgroundCompositionSupported = backgroundCompositionSupported
-        self.preferences = preferences
+        self.preferences = preferences; self.energyBudget = energyBudget
         if preferences.object(forKey: "presenter.mirror-camera.v1") != nil {
             mirrorCamera = preferences.bool(forKey: "presenter.mirror-camera.v1")
         }
-        energySubscription = MediaEnergyBudget.shared.$pressure.dropFirst().sink { [weak self] _ in
-            DispatchQueue.main.async { self?.pump() }
+        energySubscription = energyBudget.$pressure.dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.ownedCamera?.setFrameRate(self.energyBudget.sharingFPS); self.pump()
+            }
         }
         if let data = preferences.data(forKey: "presenter.placement.v1"),
            let placement = try? JSONDecoder().decode(PresenterPlacement.self, from: data) {
@@ -230,6 +248,7 @@ final class PresenterModel: ObservableObject {
         }
         if value { cameraHiddenInBackground = false; scheduleScreenPreparationTimeout() }
         refresh()
+        if value { restorePreview() }
     }
     private func invalidateCamera() {
         cameraEpoch = UUID()
@@ -291,6 +310,7 @@ final class PresenterModel: ObservableObject {
                         }
                         guard !Task.isCancelled, self.cameraEpoch == attempt else { await capture.stop(); return }
                         self.ownedCamera = capture; self.cameraTask = nil
+                        capture.setFrameRate(self.energyBudget.sharingFPS)
                     } catch {
                         await capture.stop()
                         guard self.cameraEpoch == attempt else { return }
@@ -387,23 +407,27 @@ final class PresenterModel: ObservableObject {
         guard canStartSharing, let latest, let startSharing else { return }
         error = nil; starting = true
         let attempt = shareEpoch
-        let stopSharing = self.stopSharing
+        shareRequest?.cancel()
+        let request = PresenterShareRequest(); shareRequest = request
         do {
             let time = ProcessInfo.processInfo.systemUptime
             try await startSharing(PresenterCompositor.retimed(latest,
-                time: CMTime(seconds: time, preferredTimescale: 1_000_000_000)) ?? latest)
-            guard active, compositionAllowed, !held, shareEpoch == attempt else { await stopSharing?(); return }
+                time: CMTime(seconds: time, preferredTimescale: 1_000_000_000)) ?? latest, request)
+            // The engine checks this request after its last suspension. A retired
+            // completion must never invoke the global stop of a newer sender.
+            guard active, compositionAllowed, !held, shareEpoch == attempt else { return }
             running = true; lastSentTime = ProcessInfo.processInfo.systemUptime
         } catch is CancellationError {
+            request.cancel()
             // Holds/Leave/sender replacement are lifecycle transitions, not an
             // import failure. A valid scene remains available for another start.
-        } catch { if active && shareEpoch == attempt { self.error = error.localizedDescription } }
+        } catch { request.cancel(); if active && shareEpoch == attempt { self.error = error.localizedDescription } }
         guard shareEpoch == attempt else { return }
         starting = false; refresh()
     }
     func stop() {
         let wasSharing = running || starting
-        shareEpoch = UUID()
+        shareEpoch = UUID(); shareRequest?.cancel(); shareRequest = nil
         running = false; starting = false
         invalidateRender(); releaseScreen()
         if wasSharing, !stopping, let stopSharing {
@@ -413,7 +437,7 @@ final class PresenterModel: ObservableObject {
         refresh()
     }
     /// Called when an engine stops/retires its share sender; does not recurse.
-    func sharingEnded() { shareEpoch = UUID(); running = false; starting = false; releaseScreen(); invalidateRender(); refresh() }
+    func sharingEnded() { shareEpoch = UUID(); shareRequest?.cancel(); shareRequest = nil; running = false; starting = false; releaseScreen(); invalidateRender(); refresh() }
     func end() {
         active = false; presented = false
         onPreviewVisibilityChanged?(false); onPreviewVisibilityChanged = nil
@@ -431,7 +455,7 @@ final class PresenterModel: ObservableObject {
             shareOtherApps?()
             return
         }
-        let previousSource = source
+        screenPickerFallback = source
         error = nil; screenPreparation?.cancel(); screenPreparation = nil; screenPreparationFallback = nil
         source = .screen
         screenSelectionPhase = .choosing
@@ -451,19 +475,27 @@ final class PresenterModel: ObservableObject {
             guard let self, self.screenEpoch == attempt else { return }
             self.nativeOverlay = enabled; self.cameraFrame = nil; self.hasCameraFrames = false
             self.invalidateRender(); self.refresh()
-        }, { [weak self] in
+        }, { [weak self] selection in
             guard let self, self.screenEpoch == attempt else { return }
-            // Confirmation is not a publishable frame. Keep Start disabled until rendered.
-            self.screenSelectionPhase = self.screenSelected && self.hasPreview ? .ready : .preparing
-            self.screenPreparationFallback = self.screenPreparing ? previousSource : nil
-            self.scheduleScreenPreparationTimeout()
-            self.refresh(); self.requestRender()
+            if selection == .cancelled {
+                self.screenSelectionPhase = self.screenSelected ? .ready : .idle
+                self.source = self.screenPickerFallback
+            } else {
+                // Called before the replacement stream can deliver pixels. Retire
+                // queued old renders and wait for the selected source's first frame.
+                self.screenSample = nil; self.screenSelected = false
+                self.screenSelectionPhase = .preparing
+                self.screenPreparationFallback = self.screenPickerFallback
+                self.invalidateRender()
+                self.scheduleScreenPreparationTimeout()
+            }
+            self.refresh()
         }, { [weak self] message in
             guard let self, self.screenEpoch == attempt else { return }
             self.error = message
-            if self.screenSelected { self.stop() } else {
-                self.source = previousSource; self.releaseScreen(); self.refresh(); self.requestRender()
-            }
+            let fallback = self.screenPickerFallback
+            if self.screenSelected || (fallback == .screen && (self.running || self.starting)) { self.stop() }
+            else { self.source = fallback; self.releaseScreen(); self.refresh(); self.requestRender() }
         })
         self.screenSource = source; source.start()
         }
@@ -479,7 +511,11 @@ final class PresenterModel: ObservableObject {
             try? await Task.sleep(for: .seconds(self.screenPreparationTimeout))
             guard !Task.isCancelled, self.screenEpoch == attempt, self.foreground, self.screenPreparing else { return }
             self.error = L("No screen preview arrived. Choose the source again.")
-            self.source = fallback; self.releaseScreen(); self.refresh()
+            self.source = fallback
+            // The previous window has already been retired by capture. If its
+            // replacement never produces pixels, retire the frozen publication.
+            if fallback == .screen && (self.running || self.starting) { self.stop() }
+            else { self.releaseScreen(); self.refresh() }
         }
     }
     func acceptScreen(_ sample: CMSampleBuffer, epoch attempt: UUID? = nil) {
@@ -504,7 +540,7 @@ final class PresenterModel: ObservableObject {
         }
         if !compositionAllowed {
             let now = ProcessInfo.processInfo.systemUptime
-            if running, now - lastSentTime >= 1.0 / Double(MediaEnergyBudget.shared.sharingFPS),
+            if running, now - lastSentTime >= 1.0 / Double(energyBudget.sharingFPS),
                let stamped = PresenterCompositor.sample(pixels, time: CMTime(seconds: now, preferredTimescale: 1_000_000_000)) {
                 lastSentTime = now; sendSample?(stamped)
             }

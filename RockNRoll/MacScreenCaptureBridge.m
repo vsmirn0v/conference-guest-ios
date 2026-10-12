@@ -411,6 +411,12 @@ static NSError *CaptureError(NSString *message) {
     for (void (^callback)(NSError *) in callbacks) callback(error);
 }
 
++ (void)configureTiming:(NSObject *)configuration fps:(NSInteger)fps queueDepth:(NSInteger)depth {
+    if ([configuration respondsToSelector:@selector(setMinimumFrameInterval:)] && [configuration respondsToSelector:@selector(setQueueDepth:)]) {
+        [configuration setMinimumFrameInterval:CMTimeMake(1, (int32_t)MAX(1, MIN(60, fps)))];
+        [configuration setQueueDepth:MAX(3, MIN(8, depth))];
+    }
+}
 - (void)selectFilter:(NSObject *)filter {
     if (!_picking && !_stream) return;
     NSUInteger generation = _generation, selection = ++_selection;
@@ -426,6 +432,7 @@ static NSError *CaptureError(NSString *message) {
 }
 
 - (void)captureFilter:(NSObject *)filter generation:(NSUInteger)generation selection:(NSUInteger)selection {
+    if (generation != _generation || selection != _selection || _stopping) return;
     _sourceStyle = [filter style];
     NSObject *config = [[NSClassFromString(@"SCStreamConfiguration") alloc] init];
     CGSize content = [filter contentRect].size;
@@ -434,7 +441,9 @@ static NSError *CaptureError(NSString *message) {
     if (CGSizeEqualToSize(size, CGSizeZero)) size = CGSizeMake(1920, 1080);
     [config setWidth:(NSUInteger)size.width]; [config setHeight:(NSUInteger)size.height];
     [config setCapturesAudio:NO]; [config setPixelFormat:kCVPixelFormatType_32BGRA];
-    [config setMinimumFrameInterval:CMTimeMake(1, 30)]; [config setQueueDepth:3];
+    [self.class configureTiming:config fps:30 queueDepth:3];
+    if (self.onSelection) self.onSelection([filter style]);
+    if (generation != _generation || selection != _selection || _stopping) return;
     NSObject *capture = [[NSClassFromString(@"SCStream") alloc] initWithFilter:filter configuration:config delegate:self];
     _stream = capture; _pickerSession.stream = capture;
     if (_sourceStyle == 1) [self prepareWindowResizeForStream:capture configuration:config];
@@ -446,7 +455,6 @@ static NSError *CaptureError(NSString *message) {
         if (generation != self->_generation || selection != self->_selection) return;
         if (error) { [self fail:error]; return; }
         [self releasePicker];
-        if (self.onSelection) self.onSelection([filter style]);
     }];
 }
 

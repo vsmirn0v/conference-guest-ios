@@ -231,7 +231,7 @@ final class StudioTests: XCTestCase {
             throw XCTSkip("Opt-in Mac Studio presentation qualification")
         }
         let model = StudioModel(audioControl: .noiseSuppression)
-        model.presenter.startSharing = { _ in }
+        model.presenter.startSharing = { _, _ in }
         model.presenter.stopSharing = {}
         model.presenter.selectCanvas()
         let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }

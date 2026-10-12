@@ -6,6 +6,7 @@ protocol PrivateCameraPreviewing: AnyObject {
     var view: UIView { get }
     var device: AVCaptureDevice? { get }
     func selectDevice(_ device: AVCaptureDevice?)
+    func setFrameRate(_ fps: Int)
     func start() async throws
     func startFrames(_ frames: @escaping @MainActor (CVPixelBuffer, Int) -> Void) async throws
     func stop() async
@@ -14,6 +15,7 @@ protocol PrivateCameraPreviewing: AnyObject {
 extension PrivateCameraPreviewing {
     var device: AVCaptureDevice? { nil }
     func selectDevice(_ device: AVCaptureDevice?) {}
+    func setFrameRate(_ fps: Int) {}
     func startFrames(_ frames: @escaping @MainActor (CVPixelBuffer, Int) -> Void) async throws {
         throw CocoaError(.featureUnsupported)
     }
@@ -166,7 +168,7 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
     private let capture = Capture()
     private let position: AVCaptureDevice.Position
     private var selectedDevice: AVCaptureDevice?
-    private let framesPerSecond: Double?
+    private var framesPerSecond: Double?
     init(position: AVCaptureDevice.Position = .front, framesPerSecond: Double? = nil) {
         self.position = position; self.framesPerSecond = framesPerSecond
     }
@@ -214,6 +216,11 @@ final class PrivateCameraPreview: PrivateCameraPreviewing {
         surface.layoutIfNeeded()
     }
 
+    func setFrameRate(_ fps: Int) {
+        let rate = max(1, fps)
+        guard framesPerSecond != Double(rate) else { return }
+        framesPerSecond = Double(rate); capture.setPreviewRate(rate)
+    }
     func stop() async { await capture.stop() }
 
     /// On iPhone/iPad, RotationCoordinator supplies the connection angle.
