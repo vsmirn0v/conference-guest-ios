@@ -11,11 +11,15 @@ final class MeetingPresentationUITests: XCTestCase {
         assertLayout(app, "Focus")
         XCTAssertTrue(app.staticTexts["Полина"].exists)
         XCTAssertTrue(app.scrollViews["Focus participants"].exists)
+        app.buttons["Focus participant.person-0.camera"].tap()
+        XCTAssertTrue(app.buttons["Unpin Participant 1 video"].waitForExistence(timeout: 5))
         app.segmentedControls["Meeting layout"].buttons["Gallery"].tap()
         assertLayout(app, "Gallery")
         XCTAssertTrue(gallery.isHittable)
-        app.buttons["Next participants"].tap()
         let counter = app.staticTexts["Gallery page"]
+        let firstPage = counter.label
+        app.buttons["Next participants"].tap()
+        XCTAssertNotEqual(counter.label, firstPage, "Next must change the gallery page")
         XCTAssertTrue(counter.label.contains("of 12"))
         let visibleTiles = app.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH 'gallery.'")).allElementsBoundByIndex
         guard let next = visibleTiles.first(where: { $0.isHittable }) else { return XCTFail("Next page must contain accessible participant tiles") }
@@ -24,13 +28,17 @@ final class MeetingPresentationUITests: XCTestCase {
         app.segmentedControls["Meeting layout"].buttons["Gallery"].tap()
         assertLayout(app, "Gallery")
         XCTAssertTrue(next.isHittable, "Return to the previous page")
+        let pageLabel = counter.label
+        gallery.swipeRight()
+        XCTAssertNotEqual(counter.label, pageLabel, "A swipe over a participant tile must page the gallery")
+        XCTAssertTrue(tile.isHittable)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Guest name gallery page"; attachment.lifetime = .keepAlways; add(attachment)
     }
     func testNativeGallerySelectionAndSpeakerChanges() {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "meeting-gallery"
-        app.launchArguments = ["-AppleLanguages", "(en)"]
+        app.launchArguments = ["-AppleLanguages", "(en)", "-automaticallyHideMeetingControls", "NO"]
         app.launch()
         defer { app.terminate() }
         let tile = app.otherElements["camera-off.person-1"]
@@ -43,6 +51,11 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Олег Никитин")
         app.segmentedControls["Meeting layout"].buttons["Gallery"].tap()
         assertLayout(app, "Gallery")
+        XCTAssertTrue(tile.isHittable)
+        let counter = app.staticTexts["Gallery page"], initialPage = counter.label
+        app.scrollViews["Meeting content"].swipeLeft()
+        XCTAssertNotEqual(counter.label, initialPage)
+        app.scrollViews["Meeting content"].swipeRight()
         XCTAssertTrue(tile.isHittable)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Native name gallery"; attachment.lifetime = .keepAlways; add(attachment)
@@ -85,10 +98,11 @@ final class MeetingPresentationUITests: XCTestCase {
     }
     private func launch(_ language: String = "en", autoHide: Bool = false, largeText: Bool = false,
                         scenario: String? = nil) -> XCUIApplication {
+        XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(\(language))", "-AppleLocale", "en_US"]
         if largeText { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
-        if autoHide { app.launchArguments += ["-automaticallyHideMeetingControls", "YES"] }
+        app.launchArguments += ["-automaticallyHideMeetingControls", autoHide ? "YES" : "NO"]
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
         app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = scenario
         app.launch()
@@ -250,7 +264,7 @@ final class MeetingPresentationUITests: XCTestCase {
     }
     func testRussianLargestTextKeepsActionsVisible() {
         let app = launch("ru", largeText: true)
-        defer { XCUIDevice.shared.orientation = .portrait }
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
         XCTAssertTrue(app.buttons["Выйти"].waitForExistence(timeout: 10))
         for orientation: UIDeviceOrientation in [.portrait, .landscapeLeft, .portrait] {
             XCUIDevice.shared.orientation = orientation

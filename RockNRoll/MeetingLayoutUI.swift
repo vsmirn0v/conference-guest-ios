@@ -71,6 +71,15 @@ final class MeetingLayoutControls: UIView {
     let nextPage = UIButton(type: .system)
     private let position = UILabel()
     private var renderedMode: MeetingLayoutMode?
+    private struct State: Equatable {
+        let mode: MeetingLayoutMode
+        let manual: Bool
+        let page: Int
+        let capacity: Int
+        let pages: Int
+        let count: Int
+    }
+    private var renderedState: State?
     var onLayout: ((MeetingLayoutMode) -> Void)?
     var onAutomatic: (() -> Void)?
     var onPage: ((Int) -> Void)?
@@ -99,6 +108,10 @@ final class MeetingLayoutControls: UIView {
     }
     required init?(coder: NSCoder) { nil }
     func update(mode: MeetingLayoutMode, manual: Bool, page: Int, pagination: MeetingTileLayout.GalleryPage?, count: Int) {
+        let state = State(mode: mode, manual: manual, page: page, capacity: pagination?.capacity ?? 1,
+            pages: pagination?.pageCount ?? 1, count: count)
+        guard renderedState != state else { return }
+        renderedState = state
         let selection = mode == .grid ? 0 : 1
         if renderedMode != mode {
             renderedMode = mode
@@ -126,7 +139,7 @@ final class MeetingLayoutControls: UIView {
     }
 }
 
-struct MeetingStripItem {
+struct MeetingStripItem: Equatable {
     let id: String
     let name: String
     let isShare: Bool
@@ -137,16 +150,20 @@ struct MeetingStripItem {
 final class MeetingParticipantStrip: UIScrollView {
     private var buttons: [String: UIButton] = [:]
     private var items: [MeetingStripItem] = []
+    private var selectedID: String?
     var onSelect: ((String) -> Void)?
-    var vertical = false { didSet { setNeedsLayout() } }
+    var vertical = false { didSet { if oldValue != vertical { setNeedsLayout() } } }
     override init(frame: CGRect) {
         super.init(frame: frame)
         accessibilityIdentifier = "Focus participants"
+        delaysContentTouches = false
         showsVerticalScrollIndicator = true; showsHorizontalScrollIndicator = true
     }
     required init?(coder: NSCoder) { nil }
     func update(_ items: [MeetingStripItem], selected: String?) {
+        guard self.items != items || selectedID != selected else { return }
         self.items = items
+        selectedID = selected
         let current = Set(items.map(\.id))
         for key in buttons.keys.filter({ !current.contains($0) }) { buttons.removeValue(forKey: key)?.removeFromSuperview() }
         for item in items {

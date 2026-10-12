@@ -1133,7 +1133,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             }
         }
         refreshLayoutControls()
-        compactHeader.setLayout(mode: gridVisible ? .grid : .speaker, available: layoutAvailable,
+        compactHeader.setLayout(mode: gridVisible ? .grid : .speaker, available: layoutAvailable && !statusOnly,
             choose: { [weak self] in self?.chooseLayout($0) },
             followSpeaker: { [weak self] in
                 self?.layoutMode = .speaker; self?.explicitLayout = true

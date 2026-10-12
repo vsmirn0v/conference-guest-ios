@@ -187,6 +187,11 @@ final class CompactCallHeader: UIView {
         let privacyDescription: String?
     }
     private var renderedIdentity: Identity?
+    private struct Layout: Equatable {
+        let mode: MeetingLayoutMode
+        let followsSpeaker: Bool
+    }
+    private var renderedLayout: Layout?
     private var actions: [UIButton] { [layoutButton, previous, automatic, nextStream, pin, participants, missed, conversation, focus] }
 
     override init(frame: CGRect) {
@@ -251,6 +256,10 @@ final class CompactCallHeader: UIView {
                    choose: @escaping (ConferenceCore.MeetingLayoutMode) -> Void,
                    followSpeaker: (() -> Void)? = nil) {
         layoutButton.isHidden = !available
+        guard available else { return }
+        let layout = Layout(mode: mode, followsSpeaker: followSpeaker != nil)
+        guard renderedLayout != layout else { return }
+        renderedLayout = layout
         layoutButton.configuration?.image = UIImage(systemName: mode == .grid ? "square.grid.2x2" : "rectangle.inset.filled")
         layoutButton.accessibilityIdentifier = "Meeting layout menu"
         layoutButton.accessibilityLabel = L("Layout: %@", mode.title)
@@ -274,7 +283,7 @@ final class CompactCallHeader: UIView {
         self.privacySymbol = privacySymbol; self.privacyDescription = privacyDescription
         details.accessibilityLabel = L("Jam details") + ", " + name
         setSpeaker(speaking)
-        actions.forEach { $0.isHidden = false }
+        actions.filter { $0 !== layoutButton }.forEach { $0.isHidden = false }
         for button in [previous, automatic, nextStream] { button.isHidden = !navigation }
         previous.isEnabled = !pinned; nextStream.isEnabled = !pinned
         automatic.isEnabled = browsing || pinned

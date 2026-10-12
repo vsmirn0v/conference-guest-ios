@@ -57,7 +57,12 @@ final class CallFocusController {
         hint.isHidden = true
         hint.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(hint)
+        // A maximum alone leaves the multiline stack's wrapping width dependent
+        // on its previous layout, which can oscillate during rotation.
+        let preferredWidth = hint.widthAnchor.constraint(equalToConstant: 420)
+        preferredWidth.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
+            preferredWidth,
             hint.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             hint.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
             hint.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor, constant: -32)

@@ -43,7 +43,18 @@ Guest selection publication is asynchronous. Layout intent is applied at the
 interaction boundary; a later pin publication must not override a newer
 explicit Gallery choice. Hidden gallery geometry is retained while Focus is
 shown, and scroll callbacks are suppressed while paging geometry changes.
+Swipe navigation commits its page after scrolling settles; later layout passes
+do not reset an in-progress swipe. Native and guest implementations both restore
+that page on return from Focus. Identity-strip buttons receive touches immediately,
+and unchanged button/menu state is reused across layout passes.
+
+The one-time controls hint has a preferred wrapping width capped by the viewport.
+Its previous maximum-only constraint could oscillate during rotation with the
+largest accessibility text size, even while hidden.
 
 Automated fixtures use the production views with deterministic rosters. They
 check tile selection and layout independently of provider connectivity. They
 do not claim a new live-room media qualification or physical-iPhone test.
+
+Validation results and reproduction details are in
+[meeting-gallery-validation.md](meeting-gallery-validation.md).

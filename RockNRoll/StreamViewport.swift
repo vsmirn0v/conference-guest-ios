@@ -287,7 +287,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     }
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if gestureRecognizer is UISwipeGestureRecognizer {
-            return onBrowse != nil && !pinnedLocally && scroll.zoomScale <= 1.01
+            return onBrowse != nil && scroll.zoomScale <= 1.01
         }
         return true
     }

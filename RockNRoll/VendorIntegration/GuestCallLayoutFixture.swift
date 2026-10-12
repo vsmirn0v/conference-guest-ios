@@ -91,7 +91,8 @@ final class GuestCallLayoutFixture: UIViewController {
         for (id, name, share) in entries {
             let renderer = RTCMTLVideoView()
             renderers[id] = renderer
-            let model = JazzParticipantViewModel(name: name, isAudioOn: !solo, isVideoOn: !solo && !share,
+            let model = JazzParticipantViewModel(name: name, isAudioOn: !solo,
+                isVideoOn: !solo && !share && scenario != "gallery-many",
                 isPinned: false, isSharingScreen: share, isLocal: solo, id: id,
                 isDominantSpeaker: false, shouldShowParticipantInfo: true,
                 isZoomable: share, watermarkState: .hidden,
@@ -139,6 +140,8 @@ final class GuestCallLayoutFixture: UIViewController {
                 name: "Your contact", microphoneOn: false, watermark: nil, active: false,
                 automatic: true, count: 1, browsing: false))
         }
+        streams.refreshSelection()
+        guard !solo, scenario != "gallery-many" else { return }
         processor.onSample = { [weak self] sample, _, rotation in self?.controls.showStageFrame(sample, rotation: rotation) }
         processor.setEnabled(true)
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -160,7 +163,6 @@ final class GuestCallLayoutFixture: UIViewController {
             self.processor.submit(RTCVideoFrame(buffer: buffer, rotation: ._0,
                 timeStampNs: Int64(Date().timeIntervalSince1970 * 1_000_000_000)))
         }
-        streams.refreshSelection()
     }
     private func scheduleStatus(_ action: @escaping () -> Void) {
         // Give the test time to close the menu and hide controls first.

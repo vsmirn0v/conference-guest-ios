@@ -4,6 +4,23 @@ import XCTest
 
 @MainActor
 final class CallPresentationTests: XCTestCase {
+    func testFocusHintWrapsAtAStableBoundedWidthAfterResize() throws {
+        let view = UIView(frame: CGRect(x: 0, y: 0, width: 375, height: 667))
+        let focus = CallFocusController()
+        focus.installHint(in: view)
+        let hint = try XCTUnwrap(view.subviews.first as? UIStackView)
+        let label = try XCTUnwrap(hint.arrangedSubviews.first as? UILabel)
+        label.adjustsFontForContentSizeCategory = false
+        label.font = .preferredFont(forTextStyle: .callout,
+            compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge))
+        for size in [CGSize(width: 375, height: 667), CGSize(width: 667, height: 375), CGSize(width: 375, height: 667)] {
+            view.frame.size = size; view.layoutIfNeeded()
+            XCTAssertEqual(hint.bounds.width, min(420, size.width - 32), accuracy: 1)
+            XCTAssertLessThanOrEqual(label.frame.maxX, hint.bounds.width)
+            XCTAssertGreaterThan(hint.bounds.height, 20)
+            XCTAssertLessThanOrEqual(label.frame.maxY, hint.bounds.height)
+        }
+    }
     func testStageNeverIntersectsChromeAcrossCompactAndLargeWindows() {
         for size in [CGSize(width: 320, height: 568), CGSize(width: 375, height: 667),
                      CGSize(width: 667, height: 375), CGSize(width: 812, height: 375),

@@ -45,6 +45,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let participantStrip = MeetingParticipantStrip()
     private var galleryPage = 0
     private var galleryCapacity = 0
+    private var gallerySize = CGSize.zero
+    private var restoreGalleryPage = true
     private var rosterOrder: [String] = []
     private var identityTiles: [String: UIView] = [:]
     private var identityViews: [String: ParticipantIdentityView] = [:]
@@ -269,7 +271,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
         for entry in videoTiles.values where entry.zoom.window != nil { rememberZoom(entry.zoom) }
         restoringZoom = true
-        streamScroll.frame = stage
         let layoutAvailable = displayedSnapshot?.remoteParticipants.isEmpty == false && displayMode != .audioOnly
         let layoutFrame = CGRect(x: stage.minX, y: stage.minY, width: stage.width, height: 44)
         layoutControls.isHidden = !layoutAvailable || focus.hidden || geometry.compactHeader
@@ -291,16 +292,22 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
         streamScroll.frame = stage
         tiles.arrange(size: stage.size, mode: effectiveLayoutMode)
+        if effectiveLayoutMode != .grid { restoreGalleryPage = true }
         if effectiveLayoutMode == .grid, let pagination = tiles.pagination {
+            let oldPage = galleryPage
+            let geometryChanged = gallerySize != stage.size || galleryCapacity != pagination.capacity
             if galleryCapacity > 0, galleryCapacity != pagination.capacity {
                 galleryPage = galleryPage * galleryCapacity / pagination.capacity
             }
+            gallerySize = stage.size
             galleryCapacity = pagination.capacity
             galleryPage = min(galleryPage, pagination.pageCount - 1)
+            restoreGalleryPage = restoreGalleryPage || geometryChanged || oldPage != galleryPage
         }
         streamScroll.isPagingEnabled = effectiveLayoutMode == .grid
-        if effectiveLayoutMode == .grid && !streamScroll.isDragging && !streamScroll.isDecelerating {
+        if effectiveLayoutMode == .grid && restoreGalleryPage && !streamScroll.isDragging && !streamScroll.isDecelerating {
             streamScroll.setContentOffset(CGPoint(x: CGFloat(galleryPage) * stage.width, y: 0), animated: false)
+            restoreGalleryPage = false
         }
         refreshLayoutControls()
         streamScroll.layoutIfNeeded()
@@ -437,6 +444,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         routeLabel.textColor = .lightGray
         routeLabel.text = L("Audio output")
 
+        streamScroll.delegate = self
         streamScroll.addSubview(tiles)
         tiles.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -795,6 +803,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     private func setPin(_ target: PinnedStream?) {
         layoutMode = .speaker; explicitLayout = true
+        restoreGalleryPage = true
         pinnedStream = target
         focus.show()
         if let snapshot = displayedSnapshot { render(snapshot: snapshot) }
@@ -837,13 +846,14 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
     private func chooseLayout(_ mode: MeetingLayoutMode) {
         layoutMode = mode; explicitLayout = true
+        if mode == .grid { restoreGalleryPage = true }
         focus.show(); focus.interaction()
         if let snapshot = displayedSnapshot { render(snapshot: snapshot) }
     }
     private func moveGalleryPage(_ step: Int) {
         guard effectiveLayoutMode == .grid, let pagination = tiles.pagination else { return }
         galleryPage = max(0, min(pagination.pageCount - 1, galleryPage + step))
-        streamScroll.setContentOffset(CGPoint(x: CGFloat(galleryPage) * streamScroll.bounds.width, y: 0), animated: true)
+        streamScroll.setContentOffset(CGPoint(x: CGFloat(galleryPage) * streamScroll.bounds.width, y: 0), animated: false)
         refreshLayoutControls(); focus.interaction()
     }
     private func refreshLayoutControls() {
@@ -1442,10 +1452,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         if scrollView === streamScroll {
             onVideoDemandChanged?()
-            if !restoringZoom, effectiveLayoutMode == .grid, streamScroll.bounds.width > 0 {
-                galleryPage = max(0, min((tiles.pagination?.pageCount ?? 1) - 1, Int((streamScroll.contentOffset.x / streamScroll.bounds.width).rounded())))
-                refreshLayoutControls()
-            }
         }
         rememberZoom(scrollView)
     }
@@ -1456,6 +1462,13 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         if scrollView !== streamScroll { zoomVisibility.endInteraction() }
+        else if !decelerate { settleGalleryPage() }
+    }
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { if scrollView === streamScroll { settleGalleryPage() } }
+    private func settleGalleryPage() {
+        guard !restoringZoom, effectiveLayoutMode == .grid, streamScroll.bounds.width > 0 else { return }
+        galleryPage = max(0, min((tiles.pagination?.pageCount ?? 1) - 1, Int((streamScroll.contentOffset.x / streamScroll.bounds.width).rounded())))
+        refreshLayoutControls()
     }
     private func rememberZoom(_ zoom: UIScrollView) {
         guard !restoringZoom, zoom !== streamScroll, let key = zoom.accessibilityIdentifier,

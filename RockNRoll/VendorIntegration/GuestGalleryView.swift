@@ -184,7 +184,7 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
     func movePage(_ step: Int) {
         guard let pagination else { return }
         page = max(0, min(pagination.pageCount - 1, page + step))
-        setContentOffset(CGPoint(x: CGFloat(page) * bounds.width, y: 0), animated: true)
+        setContentOffset(CGPoint(x: CGFloat(page) * bounds.width, y: 0), animated: false)
         onPageChanged?()
     }
     private func refreshDemand() {
@@ -194,6 +194,10 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
     override func didMoveToWindow() { super.didMoveToWindow(); refreshDemand() }
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         refreshDemand()
+    }
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { settlePage() }
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) { if !decelerate { settlePage() } }
+    private func settlePage() {
         guard !arranging, bounds.width > 0, let pagination else { return }
         let next = max(0, min(pagination.pageCount - 1, Int((contentOffset.x / bounds.width).rounded())))
         if page != next { page = next; onPageChanged?() }
