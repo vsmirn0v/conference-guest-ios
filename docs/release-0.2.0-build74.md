@@ -20,6 +20,11 @@ ordering, fresh preview identity and media-admission guards across async work.
 - iOS 27 simulator: 53 passed, six hardware/platform skips, zero failures.
 - Each live lifecycle case used four joins across two rooms and 24 microphone
   on/off cycles; Mac also exercised 24 real-camera cycles and Leave with video on.
+- Physical iVitalii (iPhone 17 Pro Max, iOS 27.0.1): the corresponding real-camera
+  and microphone case passed in 62.255 seconds on October 12 at 08:01 MSK, with
+  24 cycles of each, four successful room departures with video enabled, fresh
+  capture/preview identity and no crash. One test passed, no failures or skips;
+  result: `.build/ios73-crash/device-release74.xcresult`.
 - Additional live Mac camera → Presenter → camera/codec-fallback check passed,
   with actual outgoing VideoToolbox/H264 encoder statistics.
 - ConferenceCore: 101 passed, zero failures.
@@ -32,9 +37,10 @@ ordering, fresh preview identity and media-admission guards across async work.
 
 The supplied iPhone crash dereferences an invalid SDK WebRTC thread vtable.
 The app-side capture overlap is demonstrated, but the exact binary crash was not
-reproduced and its owner is not established. The physical repeat remains pending:
-iVitalii was connected but required its passcode. No claim of complete native-SDK
-root-cause proof or physical-iPhone acceptance is made.
+reproduced and its owner is not established. The physical repeat of the reported
+toggle/room-switch scenario now passes; it does not establish a complete
+native-SDK root cause. Audio-session main-thread runtime warnings remain in that
+test; no UI-latency measurement is inferred from this lifecycle result.
 
 See [guest-media-retirement-2026-10-12.md](guest-media-retirement-2026-10-12.md)
 and [mac-media-responsiveness-2026-10-11.md](mac-media-responsiveness-2026-10-11.md).

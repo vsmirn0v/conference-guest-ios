@@ -49,8 +49,14 @@ initializer hooks and codec policy remain unchanged.
 - Final iOS 27 simulator run: 53 passed, six hardware/platform cases skipped,
   zero failures. Includes 24 microphone on/off cycles across four live joins.
 - ConferenceCore: 101 passed, zero failures.
-- Physical iPhone binaries are prepared; the connected device requires its
-  passcode before its remaining live camera check can run.
+- Physical iVitalii (iPhone 17 Pro Max, iOS 27.0.1): the live camera/microphone
+  lifecycle test passed in 62.255 seconds on October 12 at 08:01 MSK. It covered
+  24 on/off cycles for each device across four joins in two rooms, leaving every
+  room with camera enabled. All 24 camera restarts had distinct source generations
+  and fresh preview feeds; capture was retired after every Leave. Zero test
+  failures or skips. Result: `.build/ios73-crash/device-release74.xcresult`.
+  Audio-session main-thread runtime warnings remain; this lifecycle check does
+  not measure UI latency or prove the private SDK crash's exact owner.
 
 Reproduction uses `GuestMediaLifecycleLiveTests` with
 `TEST_RUNNER_ROCKNROLL_TEST_LIFECYCLE_INVITE` and
