@@ -49,7 +49,7 @@ this distinction matters when reproducing automation failures.
 - Camera-off fixtures now retain camera-off metadata and do not inject unrelated
   synthetic frames into their focused stage.
 
-## Release boundary
+## Original canceled release boundary
 
 No beta was uploaded or distributed, following the user's updated instruction.
 Existing build-77 archive/export files predate the final paging and interaction
@@ -57,3 +57,32 @@ fixes and must be regenerated before any later publication.
 
 No physical-iPhone or new live-room media qualification is claimed for this UI
 change. Capture, encoding, audio recovery and PiP pipelines are unchanged.
+
+## Review fixes — 2026-10-12
+
+Product commit `7abd39e` fixes the four layout review findings. Camera-off
+selection and subsequent strip selection are the starting point for swipes;
+explicit selection/unpin clears stale browsing. Guest manual browsing enables
+Follow speaker. Screen-sharing-only mode discards a camera selection. The guest
+View share shortcut is reachable above Gallery and enters Focus immediately,
+while a later pin publication preserves a newer Gallery choice.
+
+Five new unit regressions cover these transitions, including same-pin selection,
+unpin, display filtering, shortcut hit testing, and asynchronous pin publication.
+UI coverage adds automatic-Focus swiping and the Gallery-to-share shortcut, and
+extends native selection coverage with consecutive swipes after strip changes.
+
+| Target | Result | Local evidence |
+| --- | --- | --- |
+| ConferenceCore | 103 passed | `.build/meeting-layout/review-fixes-core-xcode.log` |
+| Mac, Designed for iPad | 49 passed | `.build/meeting-layout/review-fixes-final-mac.xcresult` |
+| Mac, final shortcut hit test | 16 passed | `.build/meeting-layout/review-fixes-mac-hit.xcresult` |
+| iOS 27 | 49 unit + 4 UI passed | `.build/meeting-layout/review-fixes-final-simulator.xcresult` |
+| iOS 27, final share shortcut | 1 unit + 1 UI passed | `.build/meeting-layout/review-fixes-share-simulator.xcresult` |
+| iOS 17.5, iPhone SE (3rd generation) | 49 unit + 3 UI passed | `.build/meeting-layout/review-fixes-small.xcresult` |
+
+The later user request authorized publishing this reviewed version. The fresh
+archive uses product commit `7abd39e`; App Store Connect confirmed 0.2.0 (77)
+Testing in both internal and public groups. The canceled archive remains excluded.
+See [release-0.2.0-build77.md](release-0.2.0-build77.md) for artifact identity and
+distribution evidence.
