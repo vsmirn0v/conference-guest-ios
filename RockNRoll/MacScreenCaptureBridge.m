@@ -4,8 +4,10 @@
 #import <objc/runtime.h>
 #import <dlfcn.h>
 #import <math.h>
+#import <TargetConditionals.h>
 
 static NSErrorDomain CaptureErrorDomain;
+static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatusKey;
 
 // Signatures copied from Apple's public macOS ScreenCaptureKit headers. None
 // of these selectors depends on an API introduced in macOS/iOS 27.
@@ -18,6 +20,9 @@ static NSErrorDomain CaptureErrorDomain;
 - (void)present;
 - (NSInteger)style;
 - (CGRect)contentRect;
+- (float)pointPixelScale;
+- (NSUInteger)width;
+- (NSUInteger)height;
 - (void)setWidth:(NSUInteger)width;
 - (void)setHeight:(NSUInteger)height;
 - (void)setCapturesAudio:(BOOL)capturesAudio;
@@ -29,6 +34,7 @@ static NSErrorDomain CaptureErrorDomain;
 - (BOOL)removeStreamOutput:(id)output type:(NSInteger)type error:(NSError **)error;
 - (void)startCaptureWithCompletionHandler:(void (^)(NSError *))completion;
 - (void)stopCaptureWithCompletionHandler:(void (^)(NSError *))completion;
+- (void)updateConfiguration:(id)configuration completionHandler:(void (^)(NSError *))completion;
 @end
 
 @implementation MacScreenCaptureBridge {
@@ -37,6 +43,11 @@ static NSErrorDomain CaptureErrorDomain;
     BOOL _registered, _picking, _stopping;
     NSUInteger _generation, _selection;
     NSMutableArray *_stopCompletions;
+    __weak NSObject *_resizingStream;
+    NSObject *_resizeConfiguration;
+    CGSize _outputSize, _pendingSize;
+    NSUInteger _resizeGeneration;
+    BOOL _resizeScheduled, _resizeInFlight;
 }
 
 static NSError *CaptureError(NSString *message) {
@@ -44,7 +55,9 @@ static NSError *CaptureError(NSString *message) {
 }
 
 + (BOOL)isSupported {
+    #if !TARGET_OS_OSX
     if (!NSProcessInfo.processInfo.isiOSAppOnMac) return NO;
+    #endif
     // Keep the system framework resident: instances/callback protocols may
     // outlive an individual capture. dlopen is reference-counted once only.
     static BOOL supported;
@@ -54,6 +67,14 @@ static NSError *CaptureError(NSString *message) {
         if (!framework) return;
         NSString *const __unsafe_unretained *domain = (NSString *const __unsafe_unretained *)dlsym(framework, "SCStreamErrorDomain");
         if (domain) CaptureErrorDomain = *domain;
+        NSString *const __unsafe_unretained *rect = (NSString *const __unsafe_unretained *)dlsym(framework, "SCStreamFrameInfoContentRect");
+        NSString *const __unsafe_unretained *scale = (NSString *const __unsafe_unretained *)dlsym(framework, "SCStreamFrameInfoScaleFactor");
+        NSString *const __unsafe_unretained *contentScale = (NSString *const __unsafe_unretained *)dlsym(framework, "SCStreamFrameInfoContentScale");
+        NSString *const __unsafe_unretained *status = (NSString *const __unsafe_unretained *)dlsym(framework, "SCStreamFrameInfoStatus");
+        if (rect) ContentRectKey = *rect;
+        if (scale) ScaleFactorKey = *scale;
+        if (contentScale) ContentScaleKey = *contentScale;
+        if (status) FrameStatusKey = *status;
         Class picker = NSClassFromString(@"SCContentSharingPicker");
         Class stream = NSClassFromString(@"SCStream");
         Class config = NSClassFromString(@"SCStreamConfiguration");
@@ -69,6 +90,7 @@ static NSError *CaptureError(NSString *message) {
             [stream instancesRespondToSelector:@selector(removeStreamOutput:type:error:)] &&
             [stream instancesRespondToSelector:@selector(startCaptureWithCompletionHandler:)] &&
             [stream instancesRespondToSelector:@selector(stopCaptureWithCompletionHandler:)] &&
+            [stream instancesRespondToSelector:@selector(updateConfiguration:completionHandler:)] &&
             [config instancesRespondToSelector:@selector(setWidth:)] &&
             [config instancesRespondToSelector:@selector(setHeight:)] &&
             [config instancesRespondToSelector:@selector(setCapturesAudio:)] &&
@@ -84,6 +106,89 @@ static NSError *CaptureError(NSString *message) {
         }
     });
     return supported;
+}
+
++ (CGSize)outputSizeForContent:(CGSize)content {
+    if (!isfinite(content.width) || !isfinite(content.height) || content.width < 2 || content.height < 2) return CGSizeZero;
+    double scale = MIN(1, MIN(1920 / content.width, 1080 / content.height));
+    return CGSizeMake(MAX(2, floor(content.width * scale / 2) * 2),
+                      MAX(2, floor(content.height * scale / 2) * 2));
+}
+
+- (void)prepareWindowResizeForStream:(NSObject *)stream configuration:(NSObject *)configuration {
+    NSAssert(NSThread.isMainThread, @"Capture lifecycle belongs to the main thread");
+    [self invalidateWindowResize];
+    [self.class isSupported];
+    if (![stream respondsToSelector:@selector(updateConfiguration:completionHandler:)]) return;
+    _resizingStream = stream; _resizeConfiguration = configuration;
+    _outputSize = CGSizeMake([configuration width], [configuration height]);
+    _pendingSize = _outputSize;
+}
+
+- (void)invalidateWindowResize {
+    NSAssert(NSThread.isMainThread, @"Capture lifecycle belongs to the main thread");
+    ++_resizeGeneration;
+    _resizingStream = nil; _resizeConfiguration = nil;
+    _pendingSize = CGSizeZero; _resizeScheduled = NO; _resizeInFlight = NO;
+}
+
+- (void)observeWindowSample:(CMSampleBufferRef)sample {
+    if (!_resizingStream || !ContentRectKey || !ScaleFactorKey || !ContentScaleKey || !FrameStatusKey) return;
+    NSArray *attachments = (__bridge NSArray *)CMSampleBufferGetSampleAttachmentsArray(sample, NO);
+    NSDictionary *info = [attachments.firstObject isKindOfClass:NSDictionary.class] ? attachments.firstObject : nil;
+    NSNumber *status = info[FrameStatusKey], *scale = info[ScaleFactorKey], *contentScale = info[ContentScaleKey];
+    NSDictionary *rectInfo = info[ContentRectKey];
+    CGRect rect;
+    // Ignore idle/blank/minimized frames; never replace a valid size with zero.
+    if (![status isKindOfClass:NSNumber.class] || status.integerValue != 0 ||
+        ![scale isKindOfClass:NSNumber.class] || ![contentScale isKindOfClass:NSNumber.class] ||
+        ![rectInfo isKindOfClass:NSDictionary.class] ||
+        !CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)rectInfo, &rect)) return;
+    [self observeWindowContentRect:rect scaleFactor:scale.doubleValue contentScale:contentScale.doubleValue];
+}
+
+- (void)observeWindowContentRect:(CGRect)rect scaleFactor:(double)scaleFactor contentScale:(double)contentScale {
+    NSAssert(NSThread.isMainThread, @"Capture lifecycle belongs to the main thread");
+    if (!_resizingStream || !isfinite(scaleFactor) || scaleFactor <= 0 ||
+        !isfinite(contentScale) || contentScale <= 0) return;
+    // Apple reports contentRect in surface points. Undo both backing scale and
+    // hardware content scaling to recover the window's native pixel dimensions.
+    CGSize size = [self.class outputSizeForContent:CGSizeMake(rect.size.width * scaleFactor / contentScale,
+                                                             rect.size.height * scaleFactor / contentScale)];
+    if (CGSizeEqualToSize(size, CGSizeZero)) return;
+    _pendingSize = size;
+    [self scheduleWindowResize];
+}
+
+- (void)scheduleWindowResize {
+    if (!_resizingStream || _resizeScheduled || _resizeInFlight || CGSizeEqualToSize(_pendingSize, _outputSize)) return;
+    _resizeScheduled = YES;
+    NSUInteger attempt = _resizeGeneration;
+    // One newest size, at most three updates per second. Updating on every frame
+    // during a drag would repeatedly reallocate capture/encoder surfaces.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 350 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        if (attempt != self->_resizeGeneration) return;
+        self->_resizeScheduled = NO;
+        NSObject *stream = self->_resizingStream;
+        CGSize requested = self->_pendingSize;
+        if (!stream || self->_resizeInFlight || CGSizeEqualToSize(requested, self->_outputSize)) return;
+        self->_resizeInFlight = YES;
+        [self->_resizeConfiguration setWidth:(NSUInteger)requested.width];
+        [self->_resizeConfiguration setHeight:(NSUInteger)requested.height];
+        [stream updateConfiguration:self->_resizeConfiguration completionHandler:^(NSError *error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (attempt != self->_resizeGeneration || stream != self->_resizingStream) return;
+                self->_resizeInFlight = NO;
+                if (!error) self->_outputSize = requested;
+                else {
+                    // Keep the working stream. Retry only on new frame evidence,
+                    // rather than looping forever against a retired/error stream.
+                    self->_pendingSize = self->_outputSize;
+                }
+                [self scheduleWindowResize];
+            });
+        }];
+    });
 }
 
 - (BOOL)presentWithError:(NSError **)error {
@@ -122,6 +227,7 @@ static NSError *CaptureError(NSString *message) {
     [_stopCompletions addObject:[completion copy]];
     if (_stopping) return;
     _stopping = YES;
+    [self invalidateWindowResize];
     ++_generation; ++_selection;
     NSObject *retired = _stream; _stream = nil;
     [self releasePicker];
@@ -144,6 +250,7 @@ static NSError *CaptureError(NSString *message) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (picker != self->_picker || (!self->_picking && !self->_stream)) return;
         NSUInteger generation = self->_generation, selection = ++self->_selection;
+        [self invalidateWindowResize];
         NSObject *retired = self->_stream; self->_stream = nil;
         void (^start)(void) = ^{
             if (generation != self->_generation || selection != self->_selection) return;
@@ -165,15 +272,15 @@ static NSError *CaptureError(NSString *message) {
     _sourceStyle = [filter style];
     NSObject *config = [[NSClassFromString(@"SCStreamConfiguration") alloc] init];
     CGSize content = [filter contentRect].size;
-    double aspect = content.height > 0 ? content.width / content.height : 16.0 / 9.0;
-    if (!isfinite(aspect) || aspect <= 0) aspect = 16.0 / 9.0;
-    double width = MIN(1920, 1080 * aspect);
-    [config setWidth:MAX(2, (NSInteger)(width / 2) * 2)];
-    [config setHeight:MAX(2, (NSInteger)(width / aspect / 2) * 2)];
+    double scale = [filter respondsToSelector:@selector(pointPixelScale)] ? [filter pointPixelScale] : 1;
+    CGSize size = [self.class outputSizeForContent:CGSizeMake(content.width * scale, content.height * scale)];
+    if (CGSizeEqualToSize(size, CGSizeZero)) size = CGSizeMake(1920, 1080);
+    [config setWidth:(NSUInteger)size.width]; [config setHeight:(NSUInteger)size.height];
     [config setCapturesAudio:NO]; [config setPixelFormat:kCVPixelFormatType_32BGRA];
     [config setMinimumFrameInterval:CMTimeMake(1, 30)]; [config setQueueDepth:3];
     NSObject *capture = [[NSClassFromString(@"SCStream") alloc] initWithFilter:filter configuration:config delegate:self];
     _stream = capture;
+    if (_sourceStyle == 1) [self prepareWindowResizeForStream:capture configuration:config];
     NSError *error;
     if (![capture addStreamOutput:self type:0 sampleHandlerQueue:dispatch_get_main_queue() error:&error]) {
         [self fail:error ?: CaptureError(@"Could not attach screen capture output.")]; return;
@@ -210,11 +317,13 @@ static NSError *CaptureError(NSString *message) {
     // The stream's output queue is main. Forward immediately, without copying
     // frame pixels or scheduling an unbounded queue of per-frame blocks.
     if (stream != _stream || type != 0 || !CMSampleBufferIsValid(sample) || !CMSampleBufferGetImageBuffer(sample)) return;
+    [self observeWindowSample:sample];
     if (self.onFrame) self.onFrame(sample);
 }
 - (void)stream:(id)stream didStopWithError:(NSError *)error {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (stream != self->_stream) return;
+        [self invalidateWindowResize];
         self->_stream = nil; ++self->_generation; ++self->_selection;
         [stream removeStreamOutput:self type:0 error:nil];
         [self releasePicker];

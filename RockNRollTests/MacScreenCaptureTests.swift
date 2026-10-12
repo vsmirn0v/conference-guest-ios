@@ -5,6 +5,63 @@ import XCTest
 
 @MainActor
 final class MacScreenCaptureTests: XCTestCase {
+    private final class Configuration: NSObject {
+        @objc var width: UInt = 1280
+        @objc var height: UInt = 720
+    }
+    private final class ResizableStream: NSObject {
+        var requests = [CGSize]()
+        var completions = [(NSError?) -> Void]()
+        @objc func updateConfiguration(_ configuration: Configuration, completionHandler: @escaping (NSError?) -> Void) {
+            requests.append(CGSize(width: Double(configuration.width), height: Double(configuration.height)))
+            completions.append(completionHandler)
+        }
+    }
+    func testWindowDimensionsPreserveAspectBoundPixelsAndDoNotUpscale() {
+        XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 640, height: 480)), CGSize(width: 640, height: 480))
+        XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 3840, height: 2160)), CGSize(width: 1920, height: 1080))
+        XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 1600, height: 2400)), CGSize(width: 720, height: 1080))
+        XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 1201, height: 701)), CGSize(width: 1200, height: 700))
+        for value in [CGSize.zero, CGSize(width: CGFloat.infinity, height: 100), CGSize(width: 10, height: CGFloat.nan)] {
+            XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: value), .zero)
+        }
+    }
+    func testWindowResizeCoalescesSerializesAndKeepsLatestAspect() async throws {
+        let bridge = MacScreenCaptureBridge(), stream = ResizableStream(), configuration = Configuration()
+        bridge.prepareWindowResize(forStream: stream, configuration: configuration)
+        // Surface points * backing scale / content scale = native source pixels.
+        for width in [300.0, 400.0, 450.0] {
+            bridge.observeWindowContentRect(CGRect(x: 0, y: 0, width: width, height: 300), scaleFactor: 2, contentScale: 1)
+        }
+        try await Task.sleep(nanoseconds: 450_000_000)
+        XCTAssertEqual(stream.requests, [CGSize(width: 900, height: 600)])
+        bridge.observeWindowContentRect(CGRect(x: 0, y: 0, width: 300, height: 450), scaleFactor: 1, contentScale: 0.5)
+        try await Task.sleep(nanoseconds: 450_000_000)
+        XCTAssertEqual(stream.requests.count, 1, "No overlapping configuration updates")
+        stream.completions.removeFirst()(nil)
+        try await Task.sleep(nanoseconds: 450_000_000)
+        XCTAssertEqual(stream.requests.last, CGSize(width: 600, height: 900))
+        stream.completions.removeFirst()(nil)
+        try await Task.sleep(nanoseconds: 450_000_000)
+        XCTAssertEqual(stream.requests.count, 2, "Stable frames do not reallocate surfaces")
+        bridge.invalidateWindowResize()
+    }
+    func testWindowResizeRejectsInvalidGeometryAndRetiredCompletion() async throws {
+        let bridge = MacScreenCaptureBridge(), first = ResizableStream(), second = ResizableStream()
+        bridge.prepareWindowResize(forStream: first, configuration: Configuration())
+        bridge.observeWindowContentRect(.zero, scaleFactor: 2, contentScale: 1)
+        bridge.observeWindowContentRect(CGRect(x: 0, y: 0, width: 600, height: 400), scaleFactor: 2, contentScale: 0)
+        try await Task.sleep(nanoseconds: 450_000_000)
+        XCTAssertTrue(first.requests.isEmpty)
+        bridge.observeWindowContentRect(CGRect(x: 0, y: 0, width: 600, height: 400), scaleFactor: 1, contentScale: 1)
+        try await Task.sleep(nanoseconds: 450_000_000)
+        bridge.prepareWindowResize(forStream: second, configuration: Configuration())
+        first.completions.removeFirst()(nil)
+        bridge.observeWindowContentRect(CGRect(x: 0, y: 0, width: 400, height: 600), scaleFactor: 1, contentScale: 1)
+        bridge.invalidateWindowResize()
+        try await Task.sleep(nanoseconds: 450_000_000)
+        XCTAssertTrue(second.requests.isEmpty, "Stop rejects a queued resize from the old selection")
+    }
     private final class Picker: NSObject {
         @objc var active = true
         var removals = 0

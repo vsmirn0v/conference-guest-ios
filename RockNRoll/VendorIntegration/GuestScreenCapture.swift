@@ -14,6 +14,7 @@ import ScreenCaptureKit
 @available(iOS 27.0, *)
 @MainActor
 final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScreenSource {
+    private let windowResize = MacScreenCaptureBridge()
     private var stream: SCStream?
     private var upload: GuestPresenterSender?
     private var uploadStarted = false
@@ -73,6 +74,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         #endif
         generation += 1
         selectionGeneration += 1
+        windowResize.invalidateWindowResize()
         let previous = stream
         stream = nil
         let previousUpload = upload
@@ -101,6 +103,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         let attempt = generation
         selectionGeneration += 1
         let selection = selectionGeneration
+        windowResize.invalidateWindowResize()
         let source: LocalSharePreview.Source
         switch filter.style {
         case .window: source = .window
@@ -110,9 +113,10 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         captureSource = source
         let config = SCStreamConfiguration()
         let content = filter.contentRect.size
-        let aspect = content.height > 0 ? content.width / content.height : 16 / 9
-        config.width = aspect >= 1 ? 1920 : max(2, Int(1080 * aspect / 2) * 2)
-        config.height = aspect >= 1 ? max(2, Int(1920 / aspect / 2) * 2) : 1080
+        let scale = CGFloat(filter.pointPixelScale)
+        let bounded = MacScreenCaptureBridge.outputSize(for: CGSize(width: content.width * scale, height: content.height * scale))
+        let size = bounded == .zero ? CGSize(width: 1920, height: 1080) : bounded
+        config.width = Int(size.width); config.height = Int(size.height)
         // Meeting microphone/audio remains owned by the call engine.
         config.capturesAudio = false
         if let previous = stream {
@@ -126,6 +130,11 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         }
         let capture = SCStream(filter: filter, configuration: config, delegate: self)
         stream = capture
+        if ProcessInfo.processInfo.isiOSAppOnMac, filter.style == .window {
+            // Public macOS updateConfiguration is unavailable in the UIKit SDK's
+            // declarations, but available on the Mac stream through our ABI adapter.
+            windowResize.prepareWindowResize(forStream: capture, configuration: config)
+        }
         do {
             try capture.addStreamOutput(self, type: .screen, sampleHandlerQueue: .main)
             if onFrame == nil && upload == nil {
@@ -184,6 +193,7 @@ extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutp
         MainActor.assumeIsolated {
             guard self.stream === stream, type == .screen, sampleBuffer.isValid,
                   CMSampleBufferGetImageBuffer(sampleBuffer) != nil else { return }
+            windowResize.observeWindowSample(sampleBuffer)
             if let onFrame {
                 #if DEBUG
                 if !uploadStarted, let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) {
