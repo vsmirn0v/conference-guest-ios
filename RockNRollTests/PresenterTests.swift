@@ -349,9 +349,9 @@ final class PresenterModelTests: XCTestCase {
         }
         func stop() async { stopped = true; started = false }
     }
-    private func waitUntil(_ predicate: () -> Bool) async {
+    private func waitUntil(_ predicate: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
         for _ in 0..<200 { if predicate() { return }; try? await Task.sleep(nanoseconds: 10_000_000) }
-        XCTFail("Presenter did not settle")
+        XCTFail("Presenter did not settle", file: file, line: line)
     }
     func testPublishingUpdatesPreserveLiveCameraButReleasePrivateCapture() async throws {
         let model = PresenterModel(observeLifecycle: false)
@@ -529,11 +529,200 @@ final class PresenterModelTests: XCTestCase {
         func start() { starts += 1 }
         func stop() async { stopped = true }
     }
-    private func screenSample(width: Int = 160, height: Int = 90) throws -> CMSampleBuffer {
+    private func screenSample(width: Int = 160, height: Int = 90, gray: UInt8 = 0) throws -> CMSampleBuffer {
         var buffer: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
             [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &buffer), kCVReturnSuccess)
-        return try XCTUnwrap(PresenterCompositor.sample(XCTUnwrap(buffer), time: CMTime(value: 1, timescale: 30)))
+        let pixels = try XCTUnwrap(buffer)
+        CVPixelBufferLockBaseAddress(pixels, [])
+        let bytes = try XCTUnwrap(CVPixelBufferGetBaseAddress(pixels)).assumingMemoryBound(to: UInt8.self)
+        let stride = CVPixelBufferGetBytesPerRow(pixels)
+        for row in 0..<height {
+            for column in 0..<width {
+                let index = row * stride + column * 4
+                bytes[index] = gray; bytes[index + 1] = gray; bytes[index + 2] = gray; bytes[index + 3] = 255
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(pixels, [])
+        return try XCTUnwrap(PresenterCompositor.sample(pixels, time: CMTime(value: 1, timescale: 30)))
+    }
+    private func centerGray(_ sample: CMSampleBuffer?) -> UInt8? {
+        guard let sample, let buffer = CMSampleBufferGetImageBuffer(sample) else { return nil }
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let bytes = CVPixelBufferGetBaseAddress(buffer)?.assumingMemoryBound(to: UInt8.self) else { return nil }
+        return bytes[CVPixelBufferGetHeight(buffer) / 2 * CVPixelBufferGetBytesPerRow(buffer) + CVPixelBufferGetWidth(buffer) / 2 * 4]
+    }
+    func testMacPublishedPresenterKeepsLiveCameraPixelsAcrossDesktopChanges() async throws {
+        let model = PresenterModel(observeLifecycle: false, backgroundCompositionSupported: true)
+        defer { model.end() }
+        let capture = Capture()
+        var emit: ((CVPixelBuffer, Int) -> Void)?
+        var last: CMSampleBuffer?, sends = 0
+        model.makePrivateCamera = { _ in capture }; capture.onFrames = { emit = $0 }
+        model.startSharing = { last = $0 }; model.sendSample = { last = $0; sends += 1 }; model.stopSharing = {}
+        model.scene = PresenterScene()
+        model.scene.placement = PresenterPlacement(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+        model.open(); model.acceptScreen(try screenSample(gray: 20)); model.includeCamera = true
+        await waitUntil { emit != nil && model.hasPreview }
+        emit?(try XCTUnwrap(CMSampleBufferGetImageBuffer(screenSample(gray: 150))), 0)
+        await waitUntil { model.hasCameraFrames && model.compositionCount >= 2 }
+        await model.start()
+        let generation = model.cameraGeneration
+        model.setForeground(false); model.close()
+        XCTAssertTrue(model.running); XCTAssertFalse(model.cameraHiddenInBackground)
+        XCTAssertFalse(capture.stopped); XCTAssertEqual(model.cameraGeneration, generation)
+        // New camera pixels must keep reaching the published composite, even
+        // with the inspector closed and the app on another desktop.
+        for gray in [UInt8(170), UInt8(220)] {
+            let before = sends
+            emit?(try XCTUnwrap(CMSampleBufferGetImageBuffer(screenSample(gray: gray))), 0)
+            model.acceptScreen(try screenSample(gray: 40))
+            await waitUntil { sends > before && self.centerGray(last).map { abs(Int($0) - Int(gray)) <= 3 } == true }
+        }
+        XCTAssertTrue(model.hasCameraFrames); XCTAssertFalse(capture.stopped)
+        model.stop(); await waitUntil { capture.stopped }
+        let stopped = sends
+        emit?(try XCTUnwrap(CMSampleBufferGetImageBuffer(screenSample(gray: 255))), 0)
+        model.acceptScreen(try screenSample())
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(sends, stopped); XCTAssertFalse(model.hasCameraFrames)
+    }
+    func testMacBackgroundDuringShareStartPreservesCameraAndCompletesPublication() async throws {
+        let model = PresenterModel(observeLifecycle: false, backgroundCompositionSupported: true)
+        defer { model.end() }
+        let live = LiveCamera()
+        var emit: ((CVPixelBuffer, Int) -> Void)?
+        var continuation: CheckedContinuation<Void, Never>?
+        var last: CMSampleBuffer?, sends = 0
+        model.makeCameraSource = { emit = $0; return live }
+        model.startSharing = { _ in await withCheckedContinuation { continuation = $0 } }
+        model.sendSample = { last = $0; sends += 1 }; model.stopSharing = {}
+        model.scene = PresenterScene()
+        model.scene.placement = PresenterPlacement(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+        model.open(); model.acceptScreen(try screenSample()); model.includeCamera = true
+        model.update(cameraOn: true, held: false)
+        await waitUntil { model.canStartSharing && emit != nil }
+        let start = Task { await model.start() }
+        await waitUntil { continuation != nil }
+        model.setForeground(false)
+        XCTAssertFalse(live.stopped)
+        continuation?.resume(); await start.value
+        XCTAssertTrue(model.running); XCTAssertFalse(model.starting)
+        let frame = try XCTUnwrap(CMSampleBufferGetImageBuffer(screenSample(gray: 210)))
+        // Keep the live source moving while the first worker job finishes;
+        // a lone frame can expire during a slow simulator render.
+        for _ in 0..<40 {
+            emit?(frame, 0)
+            if sends > 0 && centerGray(last).map({ $0 > 200 }) == true { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertGreaterThan(sends, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(centerGray(last)), 200)
+        model.update(cameraOn: true, held: true)
+        await waitUntil { live.stopped }
+        XCTAssertFalse(model.running); XCTAssertFalse(model.hasCameraFrames)
+    }
+    func testMacPrivateCameraStillStopsWhileHiddenWithoutPublishing() async throws {
+        let model = PresenterModel(observeLifecycle: false, backgroundCompositionSupported: true)
+        defer { model.end() }
+        let capture = Capture()
+        var emit: ((CVPixelBuffer, Int) -> Void)?, sends = 0
+        model.makePrivateCamera = { _ in capture }; capture.onFrames = { emit = $0 }
+        model.startSharing = { _ in sends += 1 }; model.sendSample = { _ in sends += 1 }
+        model.open(); model.acceptScreen(try screenSample()); model.includeCamera = true
+        await waitUntil { emit != nil && model.hasPreview }
+        model.setForeground(false); await waitUntil { capture.stopped }
+        let composed = model.compositionCount
+        emit?(try XCTUnwrap(CMSampleBufferGetImageBuffer(screenSample(gray: 255))), 0)
+        model.acceptScreen(try screenSample()); await model.start()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(model.hasCameraFrames); XCTAssertFalse(model.hasPreview)
+        XCTAssertEqual(model.compositionCount, composed); XCTAssertEqual(sends, 0)
+    }
+    func testPhonePublishedScreenDropsCameraAndAvoidsBackgroundComposition() async throws {
+        let model = PresenterModel(observeLifecycle: false, backgroundCompositionSupported: false)
+        defer { model.end() }
+        let capture = Capture()
+        var last: CMSampleBuffer?
+        model.makePrivateCamera = { _ in capture }
+        model.startSharing = { _ in }; model.sendSample = { last = $0 }; model.stopSharing = {}
+        model.open(); model.acceptScreen(try screenSample()); model.includeCamera = true
+        await waitUntil { capture.started && model.canStartSharing }
+        await model.start(); model.setForeground(false)
+        await waitUntil { capture.stopped }
+        let composed = model.compositionCount
+        try await Task.sleep(for: .seconds(1.0 / Double(MediaEnergyBudget.shared.sharingFPS) + 0.02))
+        let sample = try screenSample(gray: 40)
+        model.acceptScreen(sample)
+        XCTAssertTrue(model.running); XCTAssertTrue(model.cameraHiddenInBackground)
+        XCTAssertEqual(model.compositionCount, composed)
+        XCTAssertTrue(last.flatMap(CMSampleBufferGetImageBuffer) === CMSampleBufferGetImageBuffer(sample))
+    }
+    func testMacPublishedCanvasKeepsComposingWhileHiddenUntilEnd() async throws {
+        let model = PresenterModel(observeLifecycle: false, backgroundCompositionSupported: true)
+        defer { model.end() }
+        var sends = 0
+        model.startSharing = { _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
+        model.selectCanvas(); model.open(); await waitUntil { model.canStartSharing }
+        await model.start(); model.setForeground(false)
+        let before = sends
+        model.scene.backdrop = .warm
+        await waitUntil { sends > before }
+        XCTAssertTrue(model.running); XCTAssertNil(model.error)
+        model.end(); let stopped = sends
+        model.scene.backdrop = .stage
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(sends, stopped)
+    }
+    private final class CountingMacCamera: PrivateCameraPreviewing {
+        let capture = PrivateCameraPreview(framesPerSecond: 15)
+        var frameCount = 0
+        var view: UIView { capture.view }
+        func start() async throws { try await capture.start() }
+        func startFrames(_ frames: @escaping @MainActor (CVPixelBuffer, Int) -> Void) async throws {
+            try await capture.startFrames { [weak self] buffer, rotation in
+                self?.frameCount += 1
+                frames(buffer, rotation)
+            }
+        }
+        func stop() async { await capture.stop() }
+    }
+    func testMacNativePresenterCameraKeepsProducingPublishedFramesWhileHidden() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Mac native camera lifecycle") }
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_MAC_PRESENTER_CAMERA"] == "1" else {
+            throw XCTSkip("Opt-in real Mac camera qualification")
+        }
+        let model = PresenterModel(), camera = CountingMacCamera()
+        defer {
+            NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+            model.end()
+        }
+        var sends = 0
+        model.makePrivateCamera = { _ in camera }
+        model.startSharing = { _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
+        model.setForeground(true); model.open(); model.acceptScreen(try screenSample())
+        model.includeCamera = true
+        for _ in 0..<2_000 {
+            if model.hasCameraFrames && model.canStartSharing || model.error != nil { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        print("MAC_PRESENTER_CAMERA_READY auth=\(AVCaptureDevice.authorizationStatus(for: .video).rawValue) frames=\(camera.frameCount) error=\(model.error ?? "none") state=\(model.cameraEvidenceForTesting)")
+        XCTAssertTrue(model.hasCameraFrames, "Native camera must work before testing background composition")
+        guard model.hasCameraFrames else { return }
+        await model.start()
+        XCTAssertTrue(model.running)
+        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        model.close()
+        let framesBefore = camera.frameCount, sendsBefore = sends
+        try await Task.sleep(for: .seconds(2))
+        XCTAssertTrue(camera.capture.captureSessionForTesting.isRunning)
+        XCTAssertGreaterThan(camera.frameCount - framesBefore, 15, "Real AVCapture callbacks must keep arriving off-desktop")
+        XCTAssertGreaterThan(sends - sendsBefore, 8, "Publishing must compose moving camera frames, not stale heartbeats")
+        XCTAssertTrue(model.hasCameraFrames); XCTAssertFalse(model.cameraHiddenInBackground)
+        print("MAC_PRESENTER_HIDDEN cameraFrames=\(camera.frameCount - framesBefore) publishedFrames=\(sends - sendsBefore) elapsed=2s lifecycle=injected")
+        model.end(); await model.releaseCamera()
+        XCTAssertFalse(camera.capture.captureSessionForTesting.isRunning)
     }
     func testMacDesktopBackgroundPreservesPendingPrivatePresenterSelection() async throws {
         let studio = StudioModel(audioControl: .noiseSuppression), capture = Screen()
@@ -632,7 +821,7 @@ final class PresenterModelTests: XCTestCase {
         XCTAssertFalse(model.screenSelected); XCTAssertFalse(model.running)
     }
     func testLiveScreenIsPrivateUntilShareAndContinuesWithoutGPUInBackground() async throws {
-        let model = PresenterModel(observeLifecycle: false)
+        let model = PresenterModel(observeLifecycle: false, backgroundCompositionSupported: false)
         var sent: [CMSampleBuffer] = []
         model.startSharing = { _ in }; model.sendSample = { sent.append($0) }; model.stopSharing = {}
         model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }

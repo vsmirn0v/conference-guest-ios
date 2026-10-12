@@ -126,6 +126,7 @@ final class PresenterModel: ObservableObject {
     private var active = true
     private var held = false
     private var foreground = true
+    private let backgroundCompositionSupported: Bool
     private var cameraEpoch = UUID()
     private var cleanTransition = false
     private var lastRenderTime: TimeInterval = -.infinity
@@ -133,7 +134,10 @@ final class PresenterModel: ObservableObject {
     private var retryAfter: TimeInterval = 0
     private(set) var compositionCount = 0
     private(set) var heartbeatCount = 0
-    private var renderWanted: Bool { active && foreground && !held && (presented || running || starting) }
+    // Visibility controls the private preview. An explicitly started Mac share
+    // must keep composing/capturing when its window moves to another Space.
+    private var compositionAllowed: Bool { foreground || (backgroundCompositionSupported && (running || starting)) }
+    private var renderWanted: Bool { active && compositionAllowed && !held && (presented || running || starting) }
     private var canRender: Bool { renderWanted && canCompose && (!screenPicking || running) && (!screenSelected || screenSample != nil) }
     private var renderInterval: TimeInterval {
         let budget = MediaEnergyBudget.shared
@@ -141,8 +145,10 @@ final class PresenterModel: ObservableObject {
         return 1.0 / Double(running ? min(preview, budget.sharingFPS) : preview)
     }
 
-    init(observeLifecycle: Bool = true, preferences: UserDefaults = .standard, screenPreparationTimeout: TimeInterval = 15) {
+    init(observeLifecycle: Bool = true, preferences: UserDefaults = .standard, screenPreparationTimeout: TimeInterval = 15,
+         backgroundCompositionSupported: Bool = ProcessInfo.processInfo.isiOSAppOnMac) {
         self.screenPreparationTimeout = screenPreparationTimeout
+        self.backgroundCompositionSupported = backgroundCompositionSupported
         self.preferences = preferences
         if preferences.object(forKey: "presenter.mirror-camera.v1") != nil {
             mirrorCamera = preferences.bool(forKey: "presenter.mirror-camera.v1")
@@ -207,13 +213,15 @@ final class PresenterModel: ObservableObject {
         foreground = value
         if !value {
             screenPreparation?.cancel(); screenPreparation = nil
-            // App-owned GPU/camera composition is a foreground feature. A native
-            // ReplayKit whole-screen broadcast remains the multitasking option.
-            if screenSelected {
+            if compositionAllowed {
+                // Keep the live sender and its camera on Mac; don't enqueue
+                // hidden preview frames. Private setup still pauses below.
+                cameraHiddenInBackground = false
+            } else if screenSelected {
                 cameraHiddenInBackground = includeCamera && !nativeOverlay
                 invalidateRender()
                 if !nativeOverlay { invalidateCamera() }
-                // Never use Core Image/Metal in a background UIKit process. The
+                // Never use Core Image/Metal in a background iOS process. The
                 // screen continues unchanged, with no frozen app-owned camera.
             } else {
                 if running || starting { error = L("Presenter stopped when the app moved to the background."); stop() }
@@ -353,7 +361,7 @@ final class PresenterModel: ObservableObject {
                 guard let self else { return }
                 self.busy = false
                 defer { self.pump() }
-                guard self.epoch == attempt, self.active, self.foreground, !self.held else { return }
+                guard self.epoch == attempt, self.renderWanted else { return }
                 guard let sample else {
                     // Encoder-held pool buffers are temporary backpressure. Retry
                     // the latest scene at a low rate instead of losing a still edit.
@@ -369,7 +377,7 @@ final class PresenterModel: ObservableObject {
                     self.screenPreparation?.cancel(); self.screenPreparation = nil
                     self.screenPreparationFallback = nil
                 }
-                if self.presented { self.preview.enqueue(sample, rotation: 0) }
+                if self.presented && self.foreground { self.preview.enqueue(sample, rotation: 0) }
                 if self.running { self.lastSentTime = ProcessInfo.processInfo.systemUptime; self.sendSample?(sample) }
             }
         }
@@ -384,7 +392,7 @@ final class PresenterModel: ObservableObject {
             let time = ProcessInfo.processInfo.systemUptime
             try await startSharing(PresenterCompositor.retimed(latest,
                 time: CMTime(seconds: time, preferredTimescale: 1_000_000_000)) ?? latest)
-            guard active, foreground, !held, shareEpoch == attempt else { await stopSharing?(); return }
+            guard active, compositionAllowed, !held, shareEpoch == attempt else { await stopSharing?(); return }
             running = true; lastSentTime = ProcessInfo.processInfo.systemUptime
         } catch is CancellationError {
             // Holds/Leave/sender replacement are lifecycle transitions, not an
@@ -494,7 +502,7 @@ final class PresenterModel: ObservableObject {
             // preview or reach the sender after the new source frame arrives.
             invalidateRender(preservePreview: !firstFrame)
         }
-        if !foreground {
+        if !compositionAllowed {
             let now = ProcessInfo.processInfo.systemUptime
             if running, now - lastSentTime >= 1.0 / Double(MediaEnergyBudget.shared.sharingFPS),
                let stamped = PresenterCompositor.sample(pixels, time: CMTime(seconds: now, preferredTimescale: 1_000_000_000)) {

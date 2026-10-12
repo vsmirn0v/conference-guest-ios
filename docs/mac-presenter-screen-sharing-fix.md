@@ -97,3 +97,38 @@ Evidence is under `.build/presenter-space-preview/`, including the build-77
 system log and result bundles. The follow-up is published in build 78, verified
 as Testing in both internal and public TestFlight groups; it is not in build 77.
 See [build-78 release record](release-0.2.0-build78.md).
+
+## Follow-up: included camera disappears after switching desktops
+
+Build 78 preserved the selected screen, but Presenter still applied the iOS
+background restriction to an active Mac share. Its background handler retired
+the camera and compositor; subsequent screen frames bypassed composition.
+That removed the included camera from the outgoing share.
+
+Presenter now separates preview visibility from publication. After explicit
+Share, Mac capture and composition continue while the window is hidden, including
+while Share is starting and after closing the inspector. Hidden inspector frames
+are not enqueued. Private setup still pauses without publishing; Stop, hold and
+Leave invalidate camera callbacks and retire capture. iOS retains its background
+screen passthrough without app-owned camera/GPU composition. This policy lives
+in the Presenter model shared by all engines.
+
+Six new checks cover changing camera pixels in outgoing composites across
+background transitions, live-camera ownership during asynchronous Share startup,
+private-preview privacy, iOS passthrough, background canvas publication, and real
+Mac AVCapture callbacks with an injected background lifecycle notification.
+The real-camera check received and published 30 fresh frames over two seconds,
+then verified that capture stopped on Leave.
+
+Mac Presenter/compositor/capture checks: 70 tests, 68 passed, two expected
+platform/live-picker skips. iOS 27 simulator Presenter/compositor/capture/Studio
+checks: 111 tests, 101 passed, ten expected platform/system-capability skips.
+Additional Mac Studio checks and the updated continuous-camera startup fixture:
+42 tests, 38 passed, four expected capability skips (`mac-studio.xcresult`).
+Evidence is under `.build/presenter-background-camera/`, particularly
+`mac-final.xcresult`, `mac-final.log` and `simulator-final.xcresult`.
+No remote receiver was used in this follow-up. A separate
+attempt to drive the real Spaces transition under XCTest did not qualify it:
+the test host stayed classified as active after desktop/hide automation. The
+regressions inject the exact lifecycle event instead. This change is subsequent
+to build 78 and has not been published in a new binary yet.

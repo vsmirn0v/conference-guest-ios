@@ -143,7 +143,8 @@ final class StudioModel: ObservableObject {
     func handleBackground(isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac) {
         // Choosing a source on another Space temporarily backgrounds UIKit-on-Mac.
         // Keep its private selection owned until the user returns or closes it.
-        // Presenter independently suspends camera/GPU work while backgrounded.
+        // Presenter pauses private setup while hidden, but keeps a published
+        // Mac scene's camera/composition running across desktop changes.
         guard isMac, active, presented, pane == .presenter else { close(); return }
         soundCheck.stop()
     }
