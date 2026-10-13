@@ -1,0 +1,137 @@
+diff --git a/sdk/objc/native/src/audio/audio_device_ios.h b/sdk/objc/native/src/audio/audio_device_ios.h
+index ce73a13..3f687d2 100644
+--- a/sdk/objc/native/src/audio/audio_device_ios.h
++++ b/sdk/objc/native/src/audio/audio_device_ios.h
+@@ -183,6 +183,7 @@ class AudioDeviceIOS : public AudioDeviceGeneric,
+   void HandleValidRouteChange();
+   void HandleCanPlayOrRecordChange(bool can_play_or_record);
+   void HandleSampleRateChange();
++  void ScheduleAudioUnitRestart();
+   void HandlePlayoutGlitchDetected(uint64_t glitch_duration_ms);
+   void HandleOutputVolumeChange();
+ 
+@@ -331,6 +332,11 @@ class AudioDeviceIOS : public AudioDeviceGeneric,
+   webrtc::scoped_refptr<PendingTaskSafetyFlag> safety_ =
+       PendingTaskSafetyFlag::Create();
+ 
++  // Bounded recovery for transient route-change starts, on the owning worker.
++  uint64_t audio_unit_restart_generation_ = 0;
++  int audio_unit_restart_attempts_ = 0;
++  bool audio_unit_restart_pending_ = false;
++
+   // Playout stats.
+   std::atomic<uint64_t> total_playout_samples_count_;
+   std::atomic<uint64_t> total_playout_samples_duration_ms_;
+diff --git a/sdk/objc/native/src/audio/audio_device_ios.mm b/sdk/objc/native/src/audio/audio_device_ios.mm
+index d6dc0f4..759781e 100644
+--- a/sdk/objc/native/src/audio/audio_device_ios.mm
++++ b/sdk/objc/native/src/audio/audio_device_ios.mm
+@@ -19,6 +19,7 @@
+ 
+ #include "api/environment/environment.h"
+ #include "api/task_queue/pending_task_safety_flag.h"
++#include "api/units/time_delta.h"
+ #include "helpers.h"
+ #include "modules/audio_device/fine_audio_buffer.h"
+ #include "rtc_base/checks.h"
+@@ -584,6 +585,9 @@ static void LogDeviceInfo() {
+ 
+ void AudioDeviceIOS::HandleInterruptionBegin() {
+   RTC_DCHECK_RUN_ON(thread_);
++  ++audio_unit_restart_generation_;
++  audio_unit_restart_pending_ = false;
++  audio_unit_restart_attempts_ = 0;
+   RTCLog(@"Interruption begin. IsInterrupted changed from %d to 1.",
+          is_interrupted_);
+   if (audio_unit_ &&
+@@ -627,6 +631,8 @@ static void LogDeviceInfo() {
+       [RTC_OBJC_TYPE(RTCAudioSession) sharedInstance];
+   RTCLog(@"%@", session);
+   HandleSampleRateChange();
++  // A previous start can have failed while this route was still settling.
++  UpdateAudioUnit(session.canPlayOrRecord);
+ }
+ 
+ void AudioDeviceIOS::HandleCanPlayOrRecordChange(bool can_play_or_record) {
+@@ -706,6 +712,7 @@ static void LogDeviceInfo() {
+   if (!audio_unit_->Initialize(playout_parameters_.sample_rate(), recording_is_initialized_)) {
+     RTCLogError(@"Failed to initialize the audio unit with sample rate: %d",
+                 playout_parameters_.sample_rate());
++    ScheduleAudioUnitRestart();
+     return;
+   }
+ 
+@@ -719,12 +726,39 @@ static void LogDeviceInfo() {
+       RTCLogError(@"Failed to start audio unit with sample rate: %d, reason %d",
+                   playout_parameters_.sample_rate(),
+                   result);
++      ScheduleAudioUnitRestart();
+       return;
+     }
+   }
++  if (audio_unit_->GetState() == VoiceProcessingAudioUnit::kStarted) {
++    audio_unit_restart_attempts_ = 0;
++  }
+   RTCLog(@"Successfully handled sample rate change.");
+ }
+ 
++void AudioDeviceIOS::ScheduleAudioUnitRestart() {
++  RTC_DCHECK_RUN_ON(thread_);
++  if (audio_unit_restart_pending_ || audio_unit_restart_attempts_ >= 5 ||
++      is_interrupted_ || !audio_unit_ ||
++      (!playing_.load() && !recording_.load())) return;
++  audio_unit_restart_pending_ = true;
++  ++audio_unit_restart_attempts_;
++  const uint64_t generation = audio_unit_restart_generation_;
++  thread_->PostDelayedTask(SafeTask(safety_, [this, generation] {
++    if (generation != audio_unit_restart_generation_) return;
++    audio_unit_restart_pending_ = false;
++    if (is_interrupted_ || !audio_unit_ ||
++        (!playing_.load() && !recording_.load())) return;
++    RTC_OBJC_TYPE(RTCAudioSession)* session =
++        [RTC_OBJC_TYPE(RTCAudioSession) sharedInstance];
++    if (!session.canPlayOrRecord) return;
++    HandleSampleRateChange();
++    UpdateAudioUnit(session.canPlayOrRecord);
++    RTCLog(@"Route restart attempt %d, audio unit state %d",
++           audio_unit_restart_attempts_, audio_unit_->GetState());
++  }), TimeDelta::Millis(250));
++}
++
+ void AudioDeviceIOS::HandlePlayoutGlitchDetected(uint64_t glitch_duration_ms) {
+   RTC_DCHECK_RUN_ON(thread_);
+   // Don't update metrics if we're interrupted since a "glitch" is expected
+@@ -950,6 +984,7 @@ static void LogDeviceInfo() {
+     SetupAudioBuffersForActiveAudioSession();
+     if (!audio_unit_->Initialize(playout_parameters_.sample_rate(), recording_is_initialized_)) {
+       RTCLogError(@"Failed to initialize audio unit.");
++      ScheduleAudioUnitRestart();
+       return;
+     }
+   }
+@@ -964,10 +999,15 @@ static void LogDeviceInfo() {
+     if (result != noErr) {
+       [session notifyAudioUnitStartFailedWithError:result];
+       RTCLogError(@"Failed to start audio unit, reason %d", result);
++      ScheduleAudioUnitRestart();
+       return;
+     }
+   }
+ 
++  if (audio_unit_->GetState() == VoiceProcessingAudioUnit::kStarted) {
++    audio_unit_restart_attempts_ = 0;
++  }
++
+   if (should_stop_audio_unit) {
+     RTCLog(@"Stopping audio unit for UpdateAudioUnit");
+     if (!audio_unit_->Stop()) {
+@@ -1096,6 +1136,9 @@ static void LogDeviceInfo() {
+ void AudioDeviceIOS::ShutdownPlayOrRecord() {
+   LOGI() << "ShutdownPlayOrRecord";
+   RTC_DCHECK_RUN_ON(thread_);
++  ++audio_unit_restart_generation_;
++  audio_unit_restart_pending_ = false;
++  audio_unit_restart_attempts_ = 0;
+ 
+   // Stop callbacks only if initialization reached a playable state.
+   if (audio_unit_) {

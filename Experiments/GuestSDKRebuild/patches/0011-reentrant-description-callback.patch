@@ -1,0 +1,28 @@
+diff --git a/pc/webrtc_session_description_factory.cc b/pc/webrtc_session_description_factory.cc
+index 81e2cbe..ec4f0a0 100644
+--- a/pc/webrtc_session_description_factory.cc
++++ b/pc/webrtc_session_description_factory.cc
+@@ -190,8 +190,9 @@ WebRtcSessionDescriptionFactory::~WebRtcSessionDescriptionFactory() {
+   // will be cancelled. If we don't protect them, they might trigger after peer
+   // connection is destroyed, which might be surprising.
+   while (!callbacks_.empty()) {
+-    std::move(callbacks_.front())();
++    auto callback = std::move(callbacks_.front());
+     callbacks_.pop();
++    std::move(callback)();
+   }
+ }
+ 
+@@ -429,8 +430,11 @@ void WebRtcSessionDescriptionFactory::Post(
+       // Callbacks are pushed from the same thread, thus this task should
+       // corresond to the first entry in the queue.
+       RTC_DCHECK(!callbacks.empty());
+-      std::move(callbacks.front())();
++      // An observer may close its peer and destroy this factory reentrantly.
++      // Transfer ownership before invoking it, and never touch the queue after.
++      auto callback = std::move(callbacks.front());
+       callbacks.pop();
++      std::move(callback)();
+     }
+   });
+ }

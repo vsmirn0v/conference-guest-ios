@@ -47,8 +47,12 @@ for item in metadata['AvailableLibraries']:
 provenance = {
     'source_revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=source, text=True).strip(),
     'vendor_wrapper_revision': '6d5f92869690fa22bb489a9089aa554d733c6936',
-    'patches': [{'name': p.name, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
-                for p in sorted((experiment / 'patches').glob('*.patch'))],
+    'patches': [{'series': directory.parent.name, 'name': p.name,
+                 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
+                for directory in (experiment.parent / 'WebRTCHybrid' / 'patches', experiment / 'patches')
+                for p in sorted(directory.glob('*.patch'))],
+    'recipes': [{'name': name, 'sha256': hashlib.sha256((experiment / name).read_bytes()).hexdigest()}
+                for name in ('build-ios.sh', 'verify-source.sh', 'package-notices.sh', 'package-release.sh')],
     'slices': slices,
 }
 notice = supporting / 'GuestWebRTC-notices.txt'

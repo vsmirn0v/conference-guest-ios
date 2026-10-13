@@ -1,0 +1,31 @@
+--- a/sdk/objc/native/src/audio/voice_processing_audio_unit.mm
++++ b/sdk/objc/native/src/audio/voice_processing_audio_unit.mm
+@@ -246,6 +246,28 @@
+   RTC_DCHECK_GE(state_, kUninitialized);
+   RTCLog(@"Initializing audio unit with sample rate: %f", sample_rate);
+ 
++  // Accessory mute/unmute needs an active input bus. Mute stops recording
++  // samples into WebRTC, but retain the authorized HFP bus so a headset can
++  // request unmute through AVAudioApplication. Other output-only routes and
++  // the Mac compatibility runtime retain their no-input behavior.
++  bool accessory_input = false;
++  if (!IsIOSAppOnMac()) {
++    if (@available(iOS 17.0, *)) {
++      if ([AVAudioApplication sharedInstance].recordPermission ==
++          AVAudioApplicationRecordPermissionGranted) {
++        for (AVAudioSessionPortDescription* port in
++             [AVAudioSession sharedInstance].currentRoute.inputs) {
++          if ([port.portType isEqualToString:AVAudioSessionPortBluetoothHFP]) {
++            accessory_input = true;
++            break;
++          }
++        }
++      }
++    }
++  }
++  enable_input = enable_input || accessory_input;
++  RTCLog(@"Accessory input bus available=%d", accessory_input);
++
+   // The Mac compatibility Voice Processing I/O unit can fault in its downlink
+   // DSP when input is disabled, even with voice processing bypassed. Use a
+   // plain Remote I/O output unit in that case, and recreate the normal VPIO
