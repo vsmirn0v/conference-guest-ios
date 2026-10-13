@@ -62,6 +62,8 @@ Integrated checks passed on Mac (94 tests, three opt-in skips) and iOS 17.5 Simu
 
 Evidence is under `.build/quality-test` in the isolated checkout. Normal tests do not depend on live connectivity; live qualification is opt-in.
 
+The normal app package resolution was also checked: both resolved slices match the published provenance. The normal signed Mac Release build passed strict signature verification, with team `5V64BP2H3P` and both native extension symbols present. The normal iOS 17.5 Simulator project passed its sender-policy and Presenter compositor tests using that same published artifact. The release ZIP was downloaded again and its SHA-256 matched the dependency pin.
+
 ## Limits
 
 Mac Power Profiler rejected recording because it does not support macOS. Similar app CPU and confirmed hardware encoding do not establish equal or lower whole-device energy. No physical iPhone battery comparison was run for this change. The stricter encoder policy is intentionally Mac-only. Real packet-loss/reordering and slow external servers remain separate from the sender-budget test.
