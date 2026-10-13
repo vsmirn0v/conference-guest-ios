@@ -63,3 +63,12 @@ These checks establish resolution and text clarity, not battery use, motion
 quality at saturation, or limits imposed by another self-hosted server. Capture
 selection/resize mechanics remain covered by `MacScreenCaptureTests` and the
 separate system-selected-window test above.
+
+## Detail policy / codec comparison
+
+See `docs/screen-share-detail-policy-2026-10-14.md` for the selected hardware
+H.264 policy, native rebuild requirement and measured comparison. Set the
+screen benchmark flag to qualify scrolling and a constrained uplink as well as
+static/annotated text. Keep the independent browser visible with the bridge's
+`--keep-visible` flag; hidden Chromium presentation is not a decoder test.
+`measure-detail.py` consumes only explicitly generated reference/decoded charts.

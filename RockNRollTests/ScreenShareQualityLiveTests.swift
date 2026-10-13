@@ -1,5 +1,6 @@
 #if DEBUG
 import AVFoundation
+import Darwin
 import ConferenceCore
 import UIKit
 import XCTest
@@ -165,31 +166,75 @@ import XCTest
         model.makeScreenSource = { frame, _, selected, _ in
             source.frame = frame; source.selected = selected; return source
         }
-        studio.open(.presenter); model.includeCamera = false
+        model.includeCamera = false; studio.open(.presenter)
         model.selectScreen()
         try await wait { model.hasPreview || ended }
         await model.start()
         XCTAssertTrue(model.running, model.error ?? "Publication did not start")
-        for (index, width) in [1920, 2560, 3840, 3840].enumerated() {
-            let composed = index == 3
+        let label = environment["ROCKNROLL_TEST_SCREEN_LABEL"] ?? "qualification"
+        let benchmark = environment["ROCKNROLL_TEST_SCREEN_BENCHMARK"] == "1"
+        let widths = benchmark ? [3840, 3840, 3840, 3840, 3840] : [1920, 2560, 3840, 3840]
+        for (index, width) in widths.enumerated() {
+            let composed = benchmark ? index >= 2 : index == 3
+            let motion = benchmark && (index == 1 || index == 3)
             if composed { model.appendAnnotation([CGPoint(x: 0.01, y: 0.8), CGPoint(x: 0.9, y: 0.8)]) }
-            try source.resize(width: width)
+            try source.resize(width: width, scrolling: motion)
+            if benchmark && (index == 3 || index == 4) {
+                XCTAssertTrue(GuestMicrophoneProbe.constrainScreenForTesting(bitsPerSecond: index == 3 ? 300_000 : 2_500_000))
+            }
             _ = try await URLSession.shared.data(from: receiver.appendingPathComponent("reset"))
+            try await Task.sleep(for: .seconds(3))
+            let beforeStats = await GuestMicrophoneProbe.codecEvidenceForTesting()
+            let beforeCPU = processCPUTime(), beforeTime = ProcessInfo.processInfo.systemUptime
             try await Task.sleep(for: .seconds(15))
+            let stats = await GuestMicrophoneProbe.codecEvidenceForTesting()
+            let elapsed = ProcessInfo.processInfo.systemUptime - beforeTime, cpu = processCPUTime() - beforeCPU
             let (data, _) = try await URLSession.shared.data(from: receiver.appendingPathComponent("frames"))
             let report = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
             let frames = report["frames"] as? [[String: Any]] ?? []
+            XCTAssertGreaterThan(frames.count, benchmark && index == 3 ? 3 : 10, "Receiver must present a continuing stream; constrained uplink may reduce update rate")
             XCTAssertTrue(frames.suffix(10).contains { ($0["width"] as? NSNumber)?.intValue == width && ($0["height"] as? NSNumber)?.intValue == width * 9 / 16 },
                 "Independent receiver must decode source detail, including annotated Presenter output")
             print("SCREEN_DETAIL source=\(width)x\(width * 9 / 16) composed=\(composed) receiver=\(frames.suffix(2))")
-            let stats = await GuestMicrophoneProbe.codecEvidenceForTesting()
+            if motion { XCTAssertGreaterThan(Set(frames.compactMap { ($0["hash"] as? NSNumber)?.uint32Value }).count, 2, "Scrolling must produce distinct remotely decoded pixels") }
+            let phase = "\(label)-\(index)"
+            if benchmark {
+                if motion {
+                    for offset in 0..<3 {
+                        var request = URLRequest(url: receiver.appendingPathComponent("reference-moving\(offset)-" + phase))
+                        request.httpMethod = "POST"; request.httpBody = try XCTUnwrap(source.referencePNG(motionIndex: offset))
+                        _ = try await URLSession.shared.data(for: request)
+                    }
+                    _ = try await URLSession.shared.data(from: receiver.appendingPathComponent("snapshot-moving-" + phase))
+                }
+                try source.resize(width: width)
+                try await Task.sleep(for: .seconds(3))
+                do {
+                    let reference = try XCTUnwrap(source.referencePNG())
+                    var request = URLRequest(url: receiver.appendingPathComponent("reference-" + phase))
+                    request.httpMethod = "POST"; request.httpBody = reference
+                    _ = try await URLSession.shared.data(for: request)
+                }
+                var request = URLRequest(url: receiver.appendingPathComponent("report-" + phase))
+                request.httpMethod = "POST"
+                request.httpBody = try JSONSerialization.data(withJSONObject: ["label": label, "width": width, "scrolling": motion, "composed": composed, "constrained": index == 3,
+                    "duration": elapsed, "processCPUSeconds": cpu, "before": beforeStats, "after": stats, "receiver": report,
+                    "encoders": GuestH264ColorEncoder.evidenceForTesting()])
+                _ = try await URLSession.shared.data(for: request)
+            }
+            print("SCREEN_DETAIL cpu=\(cpu) wall=\(elapsed) phase=\(phase)")
             print("SCREEN_DETAIL stats=\(stats.filter { $0["type"] as? String == "outbound-rtp" })")
             print("SCREEN_DETAIL encoders=\(GuestH264ColorEncoder.evidenceForTesting())")
-            _ = try await URLSession.shared.data(from: receiver.appendingPathComponent("snapshot-\(width)\(composed ? "-composed" : "")"))
+            _ = try await URLSession.shared.data(from: receiver.appendingPathComponent(benchmark ? "snapshot-" + phase : "snapshot-\(width)\(composed ? "-composed" : "")"))
             XCTAssertFalse(ended); XCTAssertNil(model.error)
         }
         model.stop(); await model.waitForScreenStop()
         engine.leave(); try await wait { ended }
+    }
+    private func processCPUTime() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        return Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1_000_000
     }
     private func audioCaptureDuration(_ stats: [[String: Any]]) -> Double {
         stats.filter { $0["type"] as? String == "media-source" && $0["kind"] as? String == "audio" }
@@ -212,12 +257,14 @@ import XCTest
     var selected: ((PresenterScreenSelection) -> Void)?
     private var pixels: CVPixelBuffer?
     private var task: Task<Void, Never>?
+    private var motionPixels: [CVPixelBuffer] = []
+    private var sequence = 0
     func start() {
         selected?(.selected)
         try? resize(width: 1920)
         task = Task { [weak self] in
             while !Task.isCancelled {
-                if let self, let pixels = self.pixels,
+                if let self, let pixels = self.nextPixels(),
                    let sample = PresenterCompositor.sample(pixels, time: CMTime(seconds: ProcessInfo.processInfo.systemUptime, preferredTimescale: 1_000_000_000)) {
                     self.frame?(sample)
                 }
@@ -225,8 +272,27 @@ import XCTest
             }
         }
     }
-    func stop() async { task?.cancel(); task = nil; pixels = nil }
-    func resize(width: Int) throws {
+    func stop() async { task?.cancel(); task = nil; pixels = nil; motionPixels.removeAll() }
+    func nextPixels() -> CVPixelBuffer? {
+        guard !motionPixels.isEmpty else { return pixels }
+        let index = [0, 1, 2, 1][sequence % 4]; sequence += 1
+        return motionPixels[index]
+    }
+    func referencePNG(motionIndex: Int? = nil) -> Data? {
+        let selected = motionIndex.flatMap { motionPixels.indices.contains($0) ? motionPixels[$0] : nil } ?? pixels
+        guard let pixels = selected else { return nil }
+        let image = CIImage(cvPixelBuffer: pixels)
+        guard let cgImage = CIContext().createCGImage(image, from: image.extent) else { return nil }
+        return UIImage(cgImage: cgImage).pngData()
+    }
+    func resize(width: Int, scrolling: Bool = false) throws {
+        motionPixels.removeAll(); sequence = 0
+        pixels = try draw(width: width, scroll: 0, marker: 0)
+        // Change a small marker outside the measured text region. This proves
+        // that static-text phases are live rather than accepting a stale frame.
+        motionPixels = try [0, 1, 2].map { try draw(width: width, scroll: scrolling ? $0 * 48 : 0, marker: $0) }
+    }
+    private func draw(width: Int, scroll: Int, marker: Int) throws -> CVPixelBuffer {
         let height = width * 9 / 16
         var buffer: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA,
@@ -241,6 +307,9 @@ import XCTest
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
         UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 3840, height: 2160))
+        UIColor(red: CGFloat(marker) / 2, green: 0.2, blue: 0.7, alpha: 1).setFill()
+        context.fill(CGRect(x: 3620, y: 1960, width: 160, height: 100))
+        context.translateBy(x: 0, y: -CGFloat(scroll))
         for (index, size) in [16, 20, 24, 32, 48, 64].enumerated() {
             let text = "\(size) px • Screen detail / Чёткость текста • ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789"
             (text as NSString).draw(at: CGPoint(x: 80, y: 80 + index * 110), withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular), .foregroundColor: UIColor.black])
@@ -251,7 +320,7 @@ import XCTest
                 context.fill(CGRect(x: x, y: 850 + thickness * 200, width: thickness, height: 140))
             }
         }
-        pixels = output
+        return output
     }
 }
 #endif

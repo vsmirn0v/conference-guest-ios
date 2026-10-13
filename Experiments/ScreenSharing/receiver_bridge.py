@@ -12,6 +12,7 @@ parser.add_argument('--cli', required=True)
 parser.add_argument('--session', default='screen-resize')
 parser.add_argument('--port', type=int, default=18769)
 parser.add_argument('--evidence', type=Path, required=True)
+parser.add_argument('--keep-visible', action='store_true', help='Avoid Chromium presentation throttling during detail benchmarks')
 args = parser.parse_args()
 
 def evaluate(expression):
@@ -21,9 +22,33 @@ def evaluate(expression):
     return json.loads(payload)
 
 class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        # Explicit synthetic-chart qualification only, bounded and loopback-local.
+        try:
+            kind, label = self.path.lstrip('/').split('-', 1)
+            if kind not in ['reference', 'report'] or len(label) > 48 or not label.replace('-', '').isalnum():
+                self.send_error(404); return
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 0 < size <= 20_000_000:
+                self.send_error(413); return
+            payload = self.rfile.read(size)
+            if kind == 'reference':
+                if not payload.startswith(b'\x89PNG\r\n\x1a\n'):
+                    self.send_error(415); return
+                args.evidence.with_name(self.path[1:] + '.png').write_bytes(payload)
+            else:
+                result = json.loads(payload)
+                args.evidence.with_name(self.path[1:] + '.json').write_text(json.dumps(result, indent=2))
+            self.send_response(204); self.end_headers()
+        except Exception as error:
+            self.send_error(500, str(error))
     def do_GET(self):
         try:
             if self.path == '/reset':
+                # Keep the independent receiver visible: an occluded Chromium
+                # window can throttle presentation callbacks despite decoding.
+                if args.keep_visible:
+                    subprocess.run([args.cli, '--session', args.session, 'run-code', 'async page => { await page.bringToFront(); }'], capture_output=True, text=True, timeout=20, check=True)
                 result = evaluate('(() => { window.rockResizeReceiver.reset(); return {reset: true}; })()')
             elif self.path == '/frames':
                 result = evaluate('({frames: window.rockResizeReceiver.frames, error: window.rockResizeReceiver.error || null})')

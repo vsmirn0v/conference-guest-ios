@@ -6,7 +6,7 @@ import Darwin
 
 /// Observe the pinned SDK's bundled public WebRTC factory/stats surface.
 /// Forward every creation unchanged; never replace its audio device or touch mute.
-private enum GuestPeerRegistry {
+enum GuestPeerRegistry {
     private static let lock = NSLock()
     private static let peers = NSHashTable<RTCPeerConnection>.weakObjects()
     static func prepare() { _ = installed }
@@ -147,6 +147,20 @@ final class GuestMicrophoneProbe {
         }
         return records
     }
+    static func constrainScreenForTesting(bitsPerSecond: Int) -> Bool {
+        let identities = GuestScreenSharePolicy.shared.trackIDsForTesting
+        guard identities.count == 1, bitsPerSecond >= 100_000 else { return false }
+        for peer in GuestPeerRegistry.snapshot() where peer.connectionState == .connected {
+            guard let sender = peer.senders.first(where: { $0.track.map { identities.contains($0.trackId) } == true }) else { continue }
+            let parameters = sender.parameters
+            guard parameters.encodings.count == 1 else { return false }
+            parameters.encodings[0].minBitrateBps = 100_000
+            parameters.encodings[0].maxBitrateBps = NSNumber(value: bitsPerSecond)
+            sender.parameters = parameters
+            return sender.parameters.encodings.first?.maxBitrateBps?.intValue == bitsPerSecond
+        }
+        return false
+    }
     /// One-shot qualification only: never poll codec diagnostics in a release.
     static func codecEvidenceForTesting() async -> [[String: Any]] {
         var evidence: [[String: Any]] = []
@@ -159,9 +173,11 @@ final class GuestMicrophoneProbe {
                 let sender = (entry.values["mid"] as? String).flatMap { mid in peer.transceivers.first { $0.mid == mid }?.sender }
                 if entry.type == "outbound-rtp", let sender {
                     row["rawCamera"] = sender.track.map { GuestCaptureDeviceObserver.rawCaptureProgress(trackID: $0.trackId) != nil }
+                    row["degradationPreference"] = sender.parameters.degradationPreference
+                    row["encodingLimits"] = sender.parameters.encodings.map { ["maxBitrate": $0.maxBitrateBps ?? 0, "maxFramerate": $0.maxFramerate ?? 0, "scaleDown": $0.scaleResolutionDownBy ?? 1] }
                     row["negotiatedCodecs"] = sender.parameters.codecs.map { ["name": $0.name, "parameters": $0.parameters] }
                 }
-                let keys = ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "bytesSent", "bytesReceived", "totalAudioEnergy", "rid", "mediaSourceId", "qualityLimitationReason", "targetBitrate", "packetsSent", "totalSamplesDuration", "audioLevel", "packetsReceived", "packetsLost", "jitter", "concealedSamples", "totalSamplesReceived", "jitterBufferDelay", "jitterBufferEmittedCount"]
+                let keys = ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "bytesSent", "bytesReceived", "totalAudioEnergy", "rid", "mediaSourceId", "qualityLimitationReason", "qpSum", "totalEncodedBytesTarget", "qualityLimitationDurations", "targetBitrate", "packetsSent", "totalSamplesDuration", "audioLevel", "packetsReceived", "packetsLost", "jitter", "concealedSamples", "totalSamplesReceived", "jitterBufferDelay", "jitterBufferEmittedCount"]
                 for key in keys { row[key] = entry.values[key] }
                 if let codecID = entry.values["codecId"] as? String, let codec = report.statistics[codecID] {
                     row["mimeType"] = codec.values["mimeType"]; row["sdpFmtpLine"] = codec.values["sdpFmtpLine"]

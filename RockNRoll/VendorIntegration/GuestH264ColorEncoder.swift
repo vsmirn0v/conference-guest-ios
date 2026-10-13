@@ -41,7 +41,7 @@ final class GuestH264ColorEncoder: NSObject, RTCVideoEncoder {
     #endif
     init(base: any RTCVideoEncoder) {
         self.base = base
-        qualifiedDefaultBGRA = !ProcessInfo.processInfo.isiOSAppOnMac && base.implementationName() == "VideoToolbox"
+        qualifiedDefaultBGRA = base.implementationName() == "VideoToolbox"
         super.init()
         #if DEBUG
         Self.evidenceLock.lock(); Self.encoders.add(self); Self.evidenceLock.unlock()
@@ -106,7 +106,14 @@ final class GuestH264ColorEncoder: NSObject, RTCVideoEncoder {
     }
     func startEncode(with settings: RTCVideoEncoderSettings, numberOfCores: Int32) -> Int {
         signalling.reset()
-        return base.startEncode(with: settings, numberOfCores: numberOfCores)
+        let result = base.startEncode(with: settings, numberOfCores: numberOfCores)
+        if result == 0 {
+            let tuned = GuestScreenEncoderQuality.apply(to: base, mode: settings.mode)
+            #if DEBUG
+            print("GUEST_SCREEN_ENCODER mode=\(settings.mode.rawValue) detail=\(tuned) size=\(settings.width)x\(settings.height) fps=\(settings.maxFramerate)")
+            #endif
+        }
+        return result
     }
     func encode(_ frame: RTCVideoFrame, codecSpecificInfo info: (any RTCCodecSpecificInfo)?, frameTypes: [NSNumber]) -> Int {
         let stamp = UInt32(bitPattern: frame.timeStamp)
