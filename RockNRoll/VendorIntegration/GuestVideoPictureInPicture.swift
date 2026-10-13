@@ -27,6 +27,7 @@ final class GuestVideoPictureInPicture {
     private var inlineDelivery: SampleBufferFrameDelivery?
     var makeInlineFrameDelivery: ((Bool) -> SampleBufferFrameDelivery?)?
     private var isStageSource = true
+    private var isScreenShare = false
     var isMirrored: Bool { selectedViewport?.isCameraMirrored == true }
     var onAvailabilityChanged: ((Bool) -> Void)?
     var rendersSelectedViewport = true
@@ -35,6 +36,7 @@ final class GuestVideoPictureInPicture {
             guard oldValue != wantsInlineFrames else { return }
             refreshInlineDelivery()
             processor.setEnabled(shouldProcessFrames)
+            replayShareSnapshot()
             if let cameraPreview {
                 if rendersSelectedViewport {
                     if wantsInlineFrames { selectedViewport?.showCameraPreview(cameraPreview) }
@@ -121,6 +123,7 @@ final class GuestVideoPictureInPicture {
         cameraSink?.setWanted(true, fps: MediaEnergyBudget.shared.previewFPS)
         processor.setFrameRate(MediaEnergyBudget.shared.previewFPS)
         processor.setEnabled(shouldProcessFrames)
+        replayShareSnapshot()
     }
     private func didStopFloating() {
         presenting = false
@@ -134,6 +137,7 @@ final class GuestVideoPictureInPicture {
     func select(viewport: StreamViewport?, name: String, isScreenShare: Bool, isStageSource: Bool = true) {
         guard !floating.isEnded else { return }
         self.isStageSource = isStageSource
+        self.isScreenShare = isScreenShare
         #if DEBUG
         CameraBackgroundTrace.event("guest-select", ["hasViewport": viewport != nil, "presenting": presenting,
             "rendererChanged": selectedRenderer !== viewport?.rendererView, "hasFrame": hasFrame])
@@ -223,6 +227,11 @@ final class GuestVideoPictureInPicture {
         if hasFrame && frameTap != nil { floating.setSourceView(sourceView) }
         else if !presenting { floating.setSourceView(nil) }
         processor.setEnabled(shouldProcessFrames)
+        replayShareSnapshot()
+    }
+
+    private func replayShareSnapshot() {
+        if isScreenShare && shouldProcessFrames { frameTap?.replayLatestFrame() }
     }
 
     private func refreshInlineDelivery() {
@@ -247,6 +256,7 @@ final class GuestVideoPictureInPicture {
         refreshInlineDelivery()
         processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
         processor.setEnabled(shouldProcessFrames)
+        replayShareSnapshot()
     }
 
     func backgrounded() {
@@ -271,6 +281,7 @@ final class GuestVideoPictureInPicture {
         }
         refreshInlineDelivery()
         processor.setEnabled(shouldProcessFrames)
+        replayShareSnapshot()
         onAvailabilityChanged?(canShow)
     }
 

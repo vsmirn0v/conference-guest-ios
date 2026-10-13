@@ -63,6 +63,8 @@ final class GuestStreamViews {
     }
     private var viewports: [Key: StreamViewportState] = [:]
     private var renderedTiles: [Key: RenderedTile] = [:]
+    private var shareSnapshots: [String: GuestVideoFrameTap.Snapshot] = [:]
+    private var shareFrameTaps: [Key: GuestVideoFrameTap] = [:]
     private var participantSubscription: AnyCancellable?
     private var participants: [String: Participant]?
     private var participantOrder: [String] = []
@@ -89,6 +91,7 @@ final class GuestStreamViews {
     /// A rebuilt SDK session must not reuse renderers from the old transport.
     /// Keep view selection when reconnecting to the same room.
     func reset(preservingSelection: Bool = false) {
+        retainShareSnapshots(for: [])
         participantSubscription = nil
         participants = nil
         activeShares = nil
@@ -145,6 +148,7 @@ final class GuestStreamViews {
     }
 
     func updateActiveMedia(sharing: Set<String>, cameras: Set<String>, participants active: Set<String>) {
+        retainShareSnapshots(for: sharing.intersection(active))
         activeShares = sharing
         activeCameras = cameras
         publishLocalCamera()
@@ -174,8 +178,11 @@ final class GuestStreamViews {
         }
         // A renderer can retain its last frame after its camera track ends.
         // Hide it before dropping the tile, even if the SDK keeps that view onscreen.
-        for tile in renderedTiles.values {
+        for (key, tile) in renderedTiles {
             tile.view?.setMediaActive(active.contains(tile.model.id) && isActiveStream(tile.model))
+            if active.contains(tile.model.id), let video = tile.video {
+                retainShareFrame(model: tile.model, video: video, key: key)
+            }
         }
         viewports = viewports.filter { sharing.contains($0.key.participant) }
         renderedTiles = renderedTiles.filter {
@@ -195,6 +202,7 @@ final class GuestStreamViews {
 
     func makeView(model: JazzParticipantViewModel, video: UIView) -> UIView {
         let key = Key(participant: model.id, mode: model.displayMode, isShare: model.isSharingScreen)
+        retainShareFrame(model: model, video: video, key: key)
         let target = PinTarget(participant: model.id, isShare: model.isSharingScreen)
         let onPin: (() -> Void)? = model.isLocal && model.isSharingScreen ? nil : { [weak self] in
             self?.setPin(self?.pinnedTarget == target ? nil : target)
@@ -254,6 +262,24 @@ final class GuestStreamViews {
         view.onVisibilityChanged = { [weak self] in self?.updatePreferredVideo() }
         updatePreferredVideo()
         return view
+    }
+
+    private func retainShareFrame(model: JazzParticipantViewModel, video: UIView, key: Key) {
+        guard model.isSharingScreen, !model.isLocal, isActiveStream(model),
+              shareFrameTaps[key]?.matches(video) != true else { return }
+        let snapshot = shareSnapshots[model.id] ?? GuestVideoFrameTap.Snapshot()
+        shareSnapshots[model.id] = snapshot
+        shareFrameTaps.removeValue(forKey: key)?.invalidate()
+        shareFrameTaps[key] = GuestVideoFrameTap(view: video, snapshot: snapshot) { _ in }
+    }
+
+    private func retainShareSnapshots(for active: Set<String>) {
+        for id in shareSnapshots.keys.filter({ !active.contains($0) }) {
+            shareSnapshots.removeValue(forKey: id)?.retire()
+        }
+        for key in shareFrameTaps.keys.filter({ !active.contains($0.participant) }) {
+            shareFrameTaps.removeValue(forKey: key)?.invalidate()
+        }
     }
 
     func setPin(_ target: PinTarget?) {

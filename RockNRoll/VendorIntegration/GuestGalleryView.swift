@@ -78,7 +78,8 @@ private final class GuestGalleryTile: UIView {
             hasFrame = true; status.isHidden = true
             return
         }
-        if tap?.matches(renderer) != true {
+        let reattaching = tap?.matches(renderer) != true
+        if reattaching {
             stop()
             let delivery = video.makeFrameDelivery { [weak self] _, _ in
                 guard let self, self.visible, self.mediaActive else { return }
@@ -90,6 +91,7 @@ private final class GuestGalleryTile: UIView {
             tap = GuestVideoFrameTap(view: renderer) { [weak processor] frame in processor?.submit(frame, source: source) }
         }
         processor.setEnabled(tap != nil)
+        if reattaching { tap?.replayLatestFrame() }
     }
     private func stop() { processor.setEnabled(false); processor.setFrameDeliveries([]); video.clear(); tap?.invalidate(); tap = nil; video.setCameraPreview(nil) }
     override func layoutSubviews() {
