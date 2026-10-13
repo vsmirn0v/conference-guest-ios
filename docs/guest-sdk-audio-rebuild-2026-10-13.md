@@ -28,8 +28,12 @@ open-source WebRTC dependency is rebuilt. The normal project now uses the pinned
 wrappers prepared by `scripts/prepare-guest-sdk.sh` and an immutable WebRTC release
 through `Dependencies/guest-sdk/Package.swift`. The replacement artifact's checksum
 is `fb1a82d8eac658bc4d191d4bc7b9d888c06146602aeacbea8a00d09272d704fe`.
-**No TestFlight upload is part of this qualification task.** Final normal-project
-archive validation is recorded after the dependency pin is updated.
+**No TestFlight upload is part of this qualification task.** The normal-project
+Release archive passed deep/strict signature validation for team `5V64BP2H3P`.
+Its embedded native framework matched all 31 executable/data sections of the
+qualified immutable artifact after signing; provenance/notices and the output
+lifetime API were verified. The archive remains local at
+`.build/reverse-sdk/normal-r2-release.xcarchive` (version 0.2.0, build 81).
 
 ## Cause and source identity
 
@@ -136,6 +140,9 @@ logs are not committed.
 | `reset-final-sim.xcresult`, `reset-final-core-mac.xcresult` | Final reset lifecycle tests: 29 Simulator and 36 Mac tests passed, including duplicate reset while preparation is blocked and ten reentrant callback-close cycles on Mac |
 | `guest-bgra-presenter-qualified-mac.xcresult` | Private/live Presenter capture and audio profile/hold transitions; 14 independent H264 BGRA color cases passed with maximum decoded RGB error 4 |
 | `engine-switch-final.xcresult` | Guest → second native engine → third native engine → community room → guest auto-join switching passed |
+| `normal-r2-final-sim.xcresult` | Normal project/remote r2 dependency: all 66 selected lifecycle, mute, callback, presentation and camera-feed tests passed |
+| `normal-r2-switch-final-sim.xcresult` | Normal project/remote r2 dependency: five-room/all-engine auto-join sequence passed in 61.5 seconds |
+| `normal-r2-release.xcarchive`, `normal-r2-archive-verification.json` | Signed normal-project Release archive; intended native code/data, source provenance, linked notices, output-lifetime API and team verified |
 | Physical final reset/AirPods/PiP | User confirmed recovery, Mic remained off, AirPods gestures worked, PiP moved, Leave stopped audio; console showed completed media recovery and application mute true |
 
 The Presenter and repeated-join methods must run in separate XCTest processes.
@@ -145,6 +152,9 @@ passing; the receive/camera/microphone method passed separately. A UIKit test fi
 assumed a synthetic touch would leave a recognizer in `.failed`; UIKit resets it
 to `.possible` without a real touch sequence. The corrected check asserts that the
 observer never recognizes a competing gesture and does not delay/cancel touches.
+The first repeated normal-project switch attempt did not start because the
+Simulator device service temporarily stopped enumerating devices under build
+load; it is excluded. The subsequent run on the recovered service passed.
 
 ## Reproduce and package
 
