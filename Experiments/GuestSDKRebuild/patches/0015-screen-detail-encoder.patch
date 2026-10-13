@@ -24,26 +24,43 @@
  
      - (void)frameWasEncoded : (OSStatus)status flags
      : (VTEncodeInfoFlags)infoFlags sampleBuffer
-@@ -399,6 +402,9 @@
+@@ -399,6 +402,10 @@
    CVPixelBufferPoolRef _pixelBufferPool;
    RTC_OBJC_TYPE(RTCVideoCodecMode) _codecMode;
    unsigned int _maxQP;
 +  std::optional<int> _conferenceScreenMaxQP;
 +  BOOL _conferenceScreenPrioritizeSpeed;
 +  int _conferenceAppliedScreenQP;
++  BOOL _conferenceScreenNeedsSessionReset;
    unsigned int _minBitrate;
    unsigned int _maxBitrate;
    RTC_OBJC_TYPE(RTCVideoEncodeMode) _encodeMode;
-@@ -471,6 +477,8 @@
+@@ -471,6 +478,9 @@
    _width = settings.width;
    _height = settings.height;
    _codecMode = settings.mode;
 +  _conferenceScreenMaxQP.reset();
 +  _conferenceAppliedScreenQP = 0;
++  _conferenceScreenNeedsSessionReset = NO;
    _maxQP = settings.qpMax;
  
    _encodeMode = RTC_OBJC_TYPE(RTCVideoEncodeModeVariable);                    // Always variable mode for now
-@@ -835,7 +843,9 @@
+@@ -520,6 +530,14 @@
+   _previousPresentationTimeStamp = presentationTimeStamp;
+ 
+   BOOL isKeyframeRequired = NO;
++  if (_conferenceScreenNeedsSessionReset) {
++    _conferenceScreenNeedsSessionReset = NO;
++    // VideoToolbox can acknowledge a QP change without applying it to an
++    // already-prepared hardware session. Recreate only at a budget boundary.
++    if ([self resetCompressionSessionWithPixelFormat:[self pixelFormatOfFrame:frame]] !=
++        WEBRTC_VIDEO_CODEC_OK) return WEBRTC_VIDEO_CODEC_ERROR;
++    isKeyframeRequired = YES;
++  }
+   // Get a pixel buffer from the pool and copy frame data over.
+   if ([self resetCompressionSessionIfNeededWithFrame:frame]) {
+     isKeyframeRequired = YES;
+@@ -835,7 +853,9 @@
    // Sacrifice encoding speed over quality when necessary
    if (@available(iOS 14.0, macOS 11.0, *)) {
      SetVTSessionProperty(
@@ -54,17 +71,20 @@
    }
    // Set maximum QP for screen sharing mode, range must be within 1 to 51
    // https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_maxallowedframeqp
-@@ -845,7 +855,8 @@
+@@ -844,8 +864,10 @@
+     if (_codecMode == RTC_OBJC_TYPE(RTCVideoCodecModeScreensharing)) {
        RTC_LOG(LS_INFO) << "Configuring VideoToolbox to use maxQP: " << kHighH264QpThreshold
                         << " mode: " << _codecMode;
-       SetVTSessionProperty(
+-      SetVTSessionProperty(
 -          _compressionSession, kVTCompressionPropertyKey_MaxAllowedFrameQP, kHighH264QpThreshold);
-+          _compressionSession, kVTCompressionPropertyKey_MaxAllowedFrameQP,
-+          [self conferenceScreenQPForBitrate:_targetBitrateBps]);
++      const int effectiveQP = [self conferenceScreenQPForBitrate:_targetBitrateBps];
++      OSStatus quality = VTSessionSetProperty(_compressionSession,
++          kVTCompressionPropertyKey_MaxAllowedFrameQP, (__bridge CFNumberRef)@(effectiveQP));
++      if (quality == noErr) _conferenceAppliedScreenQP = effectiveQP;
      }
    }
    SetVTSessionProperty(
-@@ -873,6 +884,49 @@
+@@ -873,6 +895,49 @@
                         240);
  }
  
@@ -114,7 +134,7 @@
  - (void)destroyCompressionSession {
    if (_compressionSession) {
      VTCompressionSessionInvalidate(_compressionSession);
-@@ -897,6 +951,22 @@
+@@ -897,6 +962,25 @@
  
    // With zero `_maxAllowedFrameRate`, we fall back to automatic frame rate detection.
    uint32_t computedFrameRate = _maxAllowedFrameRate > 0 ? _targetFrameRate : 0;
@@ -127,6 +147,9 @@
 +        OSStatus quality = VTSessionSetProperty(_compressionSession,
 +            kVTCompressionPropertyKey_MaxAllowedFrameQP, (__bridge CFNumberRef)@(effectiveQP));
 +        if (quality == noErr) {
++          // Reapply to a fresh hardware session and reference picture. This
++          // bounded transition is not performed for ordinary bitrate updates.
++          _conferenceScreenNeedsSessionReset = YES;
 +          _conferenceAppliedScreenQP = effectiveQP;
 +          RTC_LOG(LS_INFO) << "Conference screen budget QP=" << effectiveQP
 +                           << " bitrate=" << computedBitrateBps;
@@ -137,7 +160,7 @@
  
    // Set frame rate
    if (computedFrameRate != _encoderFrameRate) {
-@@ -1023,3 +1093,10 @@
+@@ -1023,3 +1107,10 @@
  }
  
  @end

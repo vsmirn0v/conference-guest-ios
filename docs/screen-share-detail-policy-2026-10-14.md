@@ -9,9 +9,10 @@ The installed build 81 sends Mac screen shares through a 1920×1080 capture/comp
 - Bind a sender even when signaling precedes AddTrack or follows its first parameter write. Retry for at most two seconds; later SDK parameter writes retain the policy. Retired generations cannot configure a replacement meeting.
 - For Mac guest H.264 screen encoders, use VideoToolbox's quality preference and a normal-budget maximum frame QP of 24. Below 0.03125 bits per source pixel per second, permit the upstream QP 39 to prevent delivery stalls; a 25% recovery margin restores detail without boundary oscillation. Cameras, iPhone/iPad sending and other engines retain existing encoder settings. An annotated Presenter canvas qualifies as a screen share.
 - The native extension is per encoder, rejects camera mode, invalid limits and released sessions, and keeps settings across compression-session recreation. Unsupported properties roll back to the working upstream defaults. Older binaries without the extension keep working.
+- Recreate the hardware compression session once when crossing the budget boundary, with a fresh reference frame. VideoToolbox acknowledged a dynamic QP update in testing but did not restore sharp output until session recreation; ordinary bitrate updates do not recreate it.
 - Keep VP9 screen sending as a Debug-only experiment. Incoming codec negotiation is unchanged.
 
-The native extension is in `Experiments/GuestSDKRebuild/patches/0015-screen-detail-encoder.patch`. It must be included in both slices of the selected rebuilt WebRTC artifact before release. The normal dependency pin is not changed in this isolated feature checkout: parallel SDK/audio work is modifying the next artifact. Do not substitute an older feature-only binary for that newer artifact.
+The native extension is in `Experiments/GuestSDKRebuild/patches/0015-screen-detail-encoder.patch`. Both arm64 device and Simulator slices include the complete preceding audio/recovery patch series and this extension. The normal dependency selects `guest-native-webrtc-150.7871.03-r4`, SHA-256 `cc70d45677253e37d95220598a9643dfaad472384b4dc01b91e3f3c39d9e367a`. Embedded notices and provenance identify the source, every patch and recipe, and both binaries.
 
 ## Real SDK comparison
 
@@ -32,6 +33,18 @@ The fidelity metric is RGB PSNR in the chart's text region. It is a synthetic pi
 
 The initial hidden-browser VP9 failures were invalid presentation observations: Chromium can suppress presentation callbacks when occluded. Repeating with the receiver kept visible successfully delivered VP9. A tighter cap plus speed preference did not produce a useful CPU result; it is not selected.
 
+Final integrated hardware run, with a changing marker outside the text region:
+
+| Phase | Text PSNR | Encoded fps | Native process CPU |
+| --- | ---: | ---: | ---: |
+| Static 4K | 49.88 dB | 4.79 | 56.6% of one core |
+| Scrolling 4K, then settled | 49.85 dB | 4.87 | 56.3% |
+| Annotated Presenter 4K | 49.83 dB | 4.86 | 57.0% |
+| Scrolling Presenter, 300 kb/s sender ceiling | Not a settled-quality comparison | 0.60 | 51.3% |
+| Restored normal sender ceiling | 52.95 dB | 4.86 | 55.9% |
+
+The constrained phase retained 3840×2160 and presented five distinct updated frames in the 18-second observation. It did not freeze, but update rate was visibly low. A configured bitrate ceiling is not a packet-loss or fixed-byte-rate simulator: keyframes can burst above it, and measured transmission was 412 kb/s over the sampling interval. This policy trades motion cadence for legible source pixels; it cannot promise smooth 4K scrolling on such a limited uplink.
+
 ## Qualification and reproduction
 
 1. Build both device and Simulator slices with the source verifier and native patch series. Prepare the experimental project with the pinned vendor wrapper.
@@ -44,6 +57,8 @@ The initial hidden-browser VP9 failures were invalid presentation observations: 
 8. Leave both clients, close the owned browser and stop the loopback bridge.
 
 Mac/Simulator policy tests cover current-session ownership, late sender binding, subsequent SDK writes, bounded identifiers, camera/audio isolation, fallback, invalid native requests, release, capture sizing and resize lifecycle. The hardware encoder tests use the same baseline profile and fully initialized settings as live publishing.
+
+Integrated checks passed on Mac (94 tests, three opt-in skips) and iOS 17.5 Simulator (106 tests, four opt-in/platform skips), with zero failures. The native audio recovery regression suite passed all 11 cases with sanitizers. The final real-SDK benchmark passed all five phases through the independent browser decoder. A separate final Mac run passed all eight sender-policy tests, 20 capture/lifecycle tests (two opt-in skips), and live 1920→2560→3840→annotated 3840 reception, with zero failures.
 
 Evidence is under `.build/quality-test` in the isolated checkout. Normal tests do not depend on live connectivity; live qualification is opt-in.
 

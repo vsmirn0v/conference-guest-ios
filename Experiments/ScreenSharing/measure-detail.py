@@ -18,12 +18,13 @@ for path in sorted(args.directory.glob('report-*.json')):
         raise ValueError(f'{phase}: receiver dimensions {decoded.shape} != source {reference.shape}')
     text = (slice(50, 800), slice(50, 3700))
     received = report['receiver'].get('frames', [])
-    delivered = len(received) > 5 and any(f.get('width') == report['width'] for f in received[-10:])
+    minimum_frames = 3 if report.get('constrained') else 10
+    delivered = len(received) > minimum_frames and any(f.get('width') == report['width'] for f in received[-10:])
     mse = float(np.mean((reference[text] - decoded[text])**2))
     psnr = 10 * math.log10(255**2 / mse) if mse else None
     moving_psnr = None
     moving_path = args.directory / f'snapshot-moving-{phase}.png'
-    if moving_path.exists():
+    if delivered and moving_path.exists():
         moving = np.asarray(Image.open(moving_path).convert('RGB'), dtype=np.float32)
         errors = []
         for index in range(3):

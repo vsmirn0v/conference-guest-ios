@@ -16,8 +16,8 @@ let package = Package(
         .binaryTarget(name: "SDSoup", path: "VendorSources/SDSoup.xcframework"),
         .binaryTarget(
             name: "WebRTC",
-            url: "https://github.com/vsmirn0v/conference-guest-ios/releases/download/guest-native-webrtc-150.7871.03-r3/WebRTC.xcframework.zip",
-            checksum: "608473a0af243b899a7e201b5ed49fc2d0f35622ff089e4a74bfff9d30a78b7f"
+            url: "https://github.com/vsmirn0v/conference-guest-ios/releases/download/guest-native-webrtc-150.7871.03-r4/WebRTC.xcframework.zip",
+            checksum: "cc70d45677253e37d95220598a9643dfaad472384b4dc01b91e3f3c39d9e367a"
         )
     ]
 )

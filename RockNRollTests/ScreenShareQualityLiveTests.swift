@@ -195,9 +195,17 @@ import XCTest
             try await Task.sleep(for: .seconds(15))
             let stats = await GuestMicrophoneProbe.codecEvidenceForTesting()
             let elapsed = ProcessInfo.processInfo.systemUptime - beforeTime, cpu = processCPUTime() - beforeCPU
-            let (data, _) = try await URLSession.shared.data(from: receiver.appendingPathComponent("frames"))
-            let report = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            let frames = report["frames"] as? [[String: Any]] ?? []
+            var (data, _) = try await URLSession.shared.data(from: receiver.appendingPathComponent("frames"))
+            var report = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            var frames = report["frames"] as? [[String: Any]] ?? []
+            if !benchmark && frames.count <= 10 {
+                // A resolution change may renegotiate/restart the decoder.
+                // Keep the continuity requirement; allow a bounded settling period.
+                try await Task.sleep(for: .seconds(15))
+                (data, _) = try await URLSession.shared.data(from: receiver.appendingPathComponent("frames"))
+                report = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                frames = report["frames"] as? [[String: Any]] ?? []
+            }
             XCTAssertGreaterThan(frames.count, benchmark && index == 3 ? 3 : 10, "Receiver must present a continuing stream; constrained uplink may reduce update rate")
             XCTAssertTrue(frames.suffix(10).contains { ($0["width"] as? NSNumber)?.intValue == width && ($0["height"] as? NSNumber)?.intValue == width * 9 / 16 },
                 "Independent receiver must decode source detail, including annotated Presenter output")
