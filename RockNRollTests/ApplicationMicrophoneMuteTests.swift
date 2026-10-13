@@ -47,6 +47,41 @@ import Darwin
         XCTAssertTrue(intent); XCTAssertTrue(systemMuted)
     }
 
+    func testPrivateMuteGestureSurvivesNativeRecoveryWithoutChangingMeetingMute() {
+        var systemMuted = true, intent = true, reconfiguring = false, changes: [Bool] = []
+        let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 },
+            publishIntent: { intent = $0 }, isReconfiguring: { reconfiguring })
+        bridge.begin(owner: UUID(), muted: true) { changes.append($0); return true }
+        let first = bridge.beginPrivateCapture()
+        systemMuted = true; bridge.received(true)
+        XCTAssertTrue(intent); XCTAssertTrue(changes.isEmpty)
+        let second = bridge.beginPrivateCapture()
+        XCTAssertTrue(intent, "An overlapping private capture must not undo a private mute gesture")
+        reconfiguring = true; systemMuted = false; bridge.received(false)
+        systemMuted = intent; reconfiguring = false
+        XCTAssertTrue(systemMuted); XCTAssertTrue(changes.isEmpty)
+        bridge.endPrivateCapture(first); XCTAssertTrue(systemMuted)
+        bridge.endPrivateCapture(second); XCTAssertTrue(systemMuted)
+    }
+
+    func testPrivateInputKeepsItsObserverWhenMeetingEnds() {
+        var systemMuted = false, intent: Bool?, handler: ((Bool) -> Void)?
+        let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 },
+            observe: { callback in
+                handler = callback
+                return NotificationCenter.default.addObserver(forName: Notification.Name("PrivateMuteTest"),
+                    object: nil, queue: .main) { _ in }
+            }, publishIntent: { intent = $0 }, releaseIntent: { intent = nil })
+        let owner = UUID()
+        bridge.begin(owner: owner, muted: true) { _ in XCTFail("A private gesture must not change the meeting"); return false }
+        let capture = bridge.beginPrivateCapture()
+        bridge.end(owner: owner)
+        systemMuted = true; handler?(true)
+        XCTAssertEqual(intent, true)
+        bridge.endPrivateCapture(capture)
+        XCTAssertNil(intent)
+    }
+
     func testNativeIntentBridgeIsEmbeddedInTheGuestFramework() throws {
         XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCSetApplicationInputMuteIntent"))
         XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCApplicationInputMuteReconfiguring"))

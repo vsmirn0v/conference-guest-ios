@@ -31,6 +31,7 @@ final class ApplicationMicrophoneMute {
     private var meetingMuted = true
     private var changing = false
     private var privateCaptures = Set<UUID>()
+    private var privateInputMuted = false
     private var changed: ((Bool) -> Bool)?
 
     init(read: @escaping () -> Bool, write: @escaping (Bool) throws -> Void,
@@ -47,7 +48,7 @@ final class ApplicationMicrophoneMute {
     func begin(owner: UUID, muted: Bool, changed: @escaping (Bool) -> Bool) {
         if let observer { NotificationCenter.default.removeObserver(observer) }
         self.owner = owner; meetingMuted = muted; self.changed = changed
-        observer = observe { [weak self] in self?.received($0) }
+        observer = nil; updateObservation()
         synchronize()
         trace("begin")
     }
@@ -58,18 +59,20 @@ final class ApplicationMicrophoneMute {
     func end(owner: UUID) {
         guard self.owner == owner else { return }
         self.owner = nil; changed = nil; meetingMuted = true
-        if let observer { NotificationCenter.default.removeObserver(observer) }; observer = nil
+        updateObservation()
         synchronize()
     }
 
     /// verifyMuted has already confirmed that the network track is off. Private
     /// sound checks may read input, but their gestures must never publish audio.
     func beginPrivateCapture() -> UUID {
-        let token = UUID(); privateCaptures.insert(token); synchronize(); return token
+        if privateCaptures.isEmpty { privateInputMuted = false }
+        let token = UUID(); privateCaptures.insert(token)
+        updateObservation(); synchronize(); return token
     }
     func endPrivateCapture(_ token: UUID) {
         guard privateCaptures.remove(token) != nil else { return }
-        synchronize()
+        updateObservation(); synchronize()
     }
 
     func received(_ muted: Bool) {
@@ -79,8 +82,12 @@ final class ApplicationMicrophoneMute {
         // Native resets can clear the platform bit. Those notifications are
         // lifecycle changes, not accessory gestures. App actions still update
         // intent during recovery, and the native worker restores the latest one.
-        guard !changing, !isReconfiguring(), owner != nil, read() == muted, privateCaptures.isEmpty,
-              muted != meetingMuted else { return }
+        guard !changing, !isReconfiguring(), read() == muted else { return }
+        if !privateCaptures.isEmpty {
+            privateInputMuted = muted; publishIntent(muted)
+            return  // Accessory gestures affect private input, never the meeting.
+        }
+        guard owner != nil, muted != meetingMuted else { return }
         let previous = meetingMuted
         let notifiedOwner = owner
         meetingMuted = muted
@@ -92,7 +99,7 @@ final class ApplicationMicrophoneMute {
         if !accepted { meetingMuted = previous; synchronize() }
     }
     private func synchronize() {
-        let value = privateCaptures.isEmpty ? meetingMuted : false
+        let value = privateCaptures.isEmpty ? meetingMuted : privateInputMuted
         // Publish even if the platform already matches: the native layer may
         // still hold the previous owner's or private sound check's intent.
         if owner != nil || !privateCaptures.isEmpty { publishIntent(value) }
@@ -104,6 +111,14 @@ final class ApplicationMicrophoneMute {
             #if DEBUG
             print("Application microphone mute synchronization failed: \(error.localizedDescription)")
             #endif
+        }
+    }
+    private func updateObservation() {
+        if owner != nil || !privateCaptures.isEmpty {
+            if observer == nil { observer = observe { [weak self] in self?.received($0) } }
+        } else {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
         }
     }
     private func trace(_ event: String) {

@@ -270,6 +270,16 @@ The normal dependency is pinned to immutable release
 recipes are retained. Local evidence is under `.build/guest-audio-review/`.
 Astra's final read-only review found no additional concrete defect in this scope.
 
+The final Swift follow-up preserves private sound-check mute gestures through
+native recovery without changing meeting mute or publishing microphone audio.
+Overlapping private captures retain the latest intent; the gesture observer
+remains active until both the meeting owner and final private capture end.
+After that change, the normal project using the downloaded r3 binary passed all
+74 selected mute, native-output, audio-session and session-ownership tests on
+each of Mac and the iOS 27 simulator, with no failures or skips. Result bundles:
+`normal-final-private-mac.xcresult` and `normal-final-private-simulator.xcresult`
+under `.build/guest-audio-review/`.
+
 These injected failure tests are not physical iPhone fault reproductions. The
 earlier physical call/AirPods/media-reset qualification applies to r2; r3 still
 needs a physical interruption/accessory regression before its next beta delivery.
