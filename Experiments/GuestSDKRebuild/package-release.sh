@@ -18,8 +18,10 @@ metadata['AvailableLibraries'].sort(key=lambda item: item['LibraryIdentifier'])
 for item in metadata['AvailableLibraries']:
     binary = framework / item['LibraryIdentifier'] / item['LibraryPath'] / 'WebRTC'
     symbols = subprocess.check_output(['nm', '-gU', str(binary)], text=True)
-    if '_RTCSetConferencePlayoutReserved' not in symbols:
-        raise SystemExit('Required conference output API is missing')
+    for required in ('RTCSetConferencePlayoutReserved', 'RTCSetApplicationInputMuteIntent',
+                     'RTCApplicationInputMuteReconfiguring'):
+        if '_' + required not in symbols:
+            raise SystemExit(f'Required native API is missing: {required}')
 with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as target:
     for path in sorted(framework.rglob('*')):
         if path.is_symlink():

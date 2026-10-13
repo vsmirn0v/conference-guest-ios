@@ -230,3 +230,47 @@ processing plus internal/public TestFlight assignments.
 
 REA sources: [repository](https://github.com/morluto/rea),
 [native guide](https://rea.tools/guides/native/).
+
+## Review follow-up, October 14
+
+The r3 component addresses the two source-review findings:
+
+- Native input reconfiguration restores current app-owned mute intent on main,
+  with generation-checked completion. New UI intent, room ownership and private
+  sound checks cannot be overwritten by an earlier platform snapshot. Native
+  reconfiguration notifications are not treated as accessory gestures. Genuine
+  gestures publish current intent after recovery, and reentrant gesture callbacks
+  cannot overwrite a replacement owner.
+- Disposed audio units are recreated before reinitialization. Microphone-toggle
+  initialization/start failures schedule the existing bounded native recovery;
+  a failed start is uninitialized before retrying with current recording intent.
+  Existing interruption, retirement and Leave cancellation remain in place.
+
+Astra's follow-up identified and verified two additional safeguards: leaving the
+last app/private-input owner withdraws native authority before CallKit takes over;
+mute restoration coalesces and retries failures up to five times at 250 ms
+intervals, then releases accessory suppression. No platform calls occur under the
+native state lock. The SDK's network microphone mute remains independently owned.
+
+The exact shared production headers passed 11 native tests with injected platform
+creation/property/initialization/start and mute-write failures, including worker
+interleavings, current-owner restoration, nested scopes, retry coalescing and
+bounded exhaustion. AddressSanitizer and UndefinedBehaviorSanitizer were enabled.
+The app passed 88 selected tests on Mac and 80 on the iOS 27 simulator; eight PiP
+tests skipped there because that runtime could not create a video-call PiP
+controller. All nine PiP tests ran on Mac. Native output lifetime, replacement,
+session balance, callback teardown and successful Leave were included.
+The iOS 17.5 simulator also passed all 14 runnable selected mute/native-output
+regressions; the same eight PiP controller tests skipped on that runtime.
+
+Arm64 device and simulator frameworks rebuilt successfully. Artifact SHA-256:
+`608473a0af243b899a7e201b5ed49fc2d0f35622ff089e4a74bfff9d30a78b7f`.
+The normal dependency is pinned to immutable release
+`guest-native-webrtc-150.7871.03-r3`; notices, full cumulative patch hashes and build
+recipes are retained. Local evidence is under `.build/guest-audio-review/`.
+Astra's final read-only review found no additional concrete defect in this scope.
+
+These injected failure tests are not physical iPhone fault reproductions. The
+earlier physical call/AirPods/media-reset qualification applies to r2; r3 still
+needs a physical interruption/accessory regression before its next beta delivery.
+No TestFlight build was submitted as part of these fixes.

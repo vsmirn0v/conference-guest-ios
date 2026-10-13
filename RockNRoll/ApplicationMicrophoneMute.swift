@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import Darwin
 
 /// iOS 17 AirPods gestures without a registered CallKit call. All state changes
 /// belong to the main queue, like SystemCallCoordinator's delegates.
@@ -14,12 +15,17 @@ final class ApplicationMicrophoneMute {
                         guard let value = note.userInfo?[AVAudioApplication.muteStateKey] as? NSNumber else { return }
                         handler(value.boolValue)
                     }
-            })
+            }, publishIntent: NativeApplicationInputMute.publish,
+            releaseIntent: NativeApplicationInputMute.release,
+            isReconfiguring: NativeApplicationInputMute.isReconfiguring)
     }()
 
     private let read: () -> Bool
     private let write: (Bool) throws -> Void
     private let observe: (@escaping (Bool) -> Void) -> NSObjectProtocol?
+    private let publishIntent: (Bool) -> Void
+    private let releaseIntent: () -> Void
+    private let isReconfiguring: () -> Bool
     private var observer: NSObjectProtocol?
     private var owner: UUID?
     private var meetingMuted = true
@@ -28,8 +34,13 @@ final class ApplicationMicrophoneMute {
     private var changed: ((Bool) -> Bool)?
 
     init(read: @escaping () -> Bool, write: @escaping (Bool) throws -> Void,
-         observe: @escaping (@escaping (Bool) -> Void) -> NSObjectProtocol? = { _ in nil }) {
+         observe: @escaping (@escaping (Bool) -> Void) -> NSObjectProtocol? = { _ in nil },
+         publishIntent: @escaping (Bool) -> Void = { _ in },
+         releaseIntent: @escaping () -> Void = {},
+         isReconfiguring: @escaping () -> Bool = { false }) {
         self.read = read; self.write = write; self.observe = observe
+        self.publishIntent = publishIntent; self.isReconfiguring = isReconfiguring
+        self.releaseIntent = releaseIntent
     }
     deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
 
@@ -65,14 +76,27 @@ final class ApplicationMicrophoneMute {
         trace("notification-\(muted)")
         // Ignore our own writes and stale notifications queued before a newer
         // app action. While checking sound, gestures affect private input only.
-        guard !changing, owner != nil, read() == muted, privateCaptures.isEmpty,
+        // Native resets can clear the platform bit. Those notifications are
+        // lifecycle changes, not accessory gestures. App actions still update
+        // intent during recovery, and the native worker restores the latest one.
+        guard !changing, !isReconfiguring(), owner != nil, read() == muted, privateCaptures.isEmpty,
               muted != meetingMuted else { return }
         let previous = meetingMuted
+        let notifiedOwner = owner
         meetingMuted = muted
-        if changed?(muted) != true { meetingMuted = previous; synchronize() }
+        publishIntent(muted)
+        let accepted = changed?(muted) == true
+        // A callback can end or replace the meeting. Its new owner's intent
+        // must survive even if this old gesture was accepted or rejected.
+        guard owner == notifiedOwner else { return }
+        if !accepted { meetingMuted = previous; synchronize() }
     }
     private func synchronize() {
         let value = privateCaptures.isEmpty ? meetingMuted : false
+        // Publish even if the platform already matches: the native layer may
+        // still hold the previous owner's or private sound check's intent.
+        if owner != nil || !privateCaptures.isEmpty { publishIntent(value) }
+        else { releaseIntent() }
         guard read() != value else { return }
         changing = true; defer { changing = false }
         do { try write(value) }
@@ -89,4 +113,18 @@ final class ApplicationMicrophoneMute {
         }
         #endif
     }
+}
+
+private enum NativeApplicationInputMute {
+    private static let setter: (@convention(c) (Int32) -> Void)? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCSetApplicationInputMuteIntent") else { return nil }
+        return unsafeBitCast(symbol, to: (@convention(c) (Int32) -> Void).self)
+    }()
+    private static let reconfiguring: (@convention(c) () -> Int32)? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCApplicationInputMuteReconfiguring") else { return nil }
+        return unsafeBitCast(symbol, to: (@convention(c) () -> Int32).self)
+    }()
+    static func publish(_ muted: Bool) { setter?(muted ? 1 : 0) }
+    static func release() { setter?(-1) }
+    static func isReconfiguring() -> Bool { (reconfiguring?() ?? 0) != 0 }
 }

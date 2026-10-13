@@ -4,6 +4,87 @@ import Darwin
 @testable import RockNRoll
 
 @MainActor final class ApplicationMicrophoneMuteTests: XCTestCase {
+    func testNativeResetNotificationDoesNotBecomeAnAccessoryUnmute() {
+        var systemMuted = true, reconfiguring = false, intent = false, changes: [Bool] = []
+        let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 },
+            publishIntent: { intent = $0 }, isReconfiguring: { reconfiguring })
+        bridge.begin(owner: UUID(), muted: true) { changes.append($0); return true }
+        XCTAssertTrue(intent, "Publish app intent even when the platform bit already matches")
+        reconfiguring = true
+        systemMuted = false; bridge.received(false)
+        XCTAssertTrue(intent); XCTAssertTrue(changes.isEmpty)
+        systemMuted = intent; bridge.received(true)
+        reconfiguring = false
+        systemMuted = false; bridge.received(false)
+        XCTAssertFalse(intent); XCTAssertEqual(changes, [false], "Real accessory gestures must update native intent too")
+    }
+
+    func testNewAppActionAndReplacementOwnerWinDuringNativeRecovery() {
+        var systemMuted = true, intent = true, released = false
+        let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 },
+            publishIntent: { intent = $0 }, releaseIntent: { released = true }, isReconfiguring: { true })
+        let old = UUID(), replacement = UUID()
+        bridge.begin(owner: old, muted: true) { _ in true }
+        bridge.setMuted(false, owner: old)
+        XCTAssertFalse(intent); XCTAssertFalse(systemMuted)
+        bridge.begin(owner: replacement, muted: false) { _ in true }
+        bridge.setMuted(true, owner: old); bridge.end(owner: old)
+        XCTAssertFalse(intent, "A retired owner cannot change the replacement's native intent")
+        bridge.end(owner: replacement)
+        XCTAssertTrue(released); XCTAssertTrue(systemMuted)
+    }
+
+    func testPrivateCapturePublishesCurrentIntentAcrossNativeRecovery() {
+        var systemMuted = true, intent = true, changes: [Bool] = []
+        let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 },
+            publishIntent: { intent = $0 }, isReconfiguring: { true })
+        bridge.begin(owner: UUID(), muted: true) { changes.append($0); return true }
+        let token = bridge.beginPrivateCapture()
+        XCTAssertFalse(intent); XCTAssertFalse(systemMuted)
+        bridge.received(false)
+        XCTAssertTrue(changes.isEmpty)
+        bridge.endPrivateCapture(token)
+        XCTAssertTrue(intent); XCTAssertTrue(systemMuted)
+    }
+
+    func testNativeIntentBridgeIsEmbeddedInTheGuestFramework() throws {
+        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCSetApplicationInputMuteIntent"))
+        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCApplicationInputMuteReconfiguring"))
+    }
+
+    func testGestureCallbackCannotOverwriteReplacementOwnersIntent() {
+        for accepted in [false, true] {
+            var systemMuted = true, intent = true
+            var bridge: ApplicationMicrophoneMute!
+            bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 },
+                publishIntent: { intent = $0 })
+            bridge.begin(owner: UUID(), muted: true) { _ in
+                bridge.begin(owner: UUID(), muted: accepted) { _ in true }
+                return accepted
+            }
+            systemMuted = false; bridge.received(false)
+            XCTAssertEqual(intent, accepted); XCTAssertEqual(systemMuted, accepted)
+        }
+    }
+
+    func testLeavingWithdrawsNativeAuthorityBeforeCallKitOwnsTheNextMeeting() {
+        var systemMuted = true, intent: Bool?
+        let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 },
+            publishIntent: { intent = $0 }, releaseIntent: { intent = nil })
+        let owner = UUID()
+        bridge.begin(owner: owner, muted: true) { _ in true }
+        XCTAssertEqual(intent, true)
+        bridge.end(owner: owner)
+        XCTAssertNil(intent, "The next CallKit-owned meeting must not inherit this app owner's mute")
+        systemMuted = false  // The next meeting is unmuted by CallKit.
+        bridge.setMuted(true, owner: owner)
+        XCTAssertNil(intent); XCTAssertFalse(systemMuted)
+        let privateCheck = bridge.beginPrivateCapture()
+        XCTAssertEqual(intent, false)
+        bridge.endPrivateCapture(privateCheck)
+        XCTAssertNil(intent, "Private input also releases its native authority when finished")
+    }
+
     func testGestureAndAppMuteStaySynchronizedWithoutCallKit() {
         var systemMuted = false, changes: [Bool] = []
         let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 })

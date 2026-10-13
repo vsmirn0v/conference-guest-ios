@@ -1,0 +1,131 @@
+diff --git a/sdk/objc/native/src/audio/audio_unit_recovery.h b/sdk/objc/native/src/audio/audio_unit_recovery.h
+new file mode 100644
+--- /dev/null
++++ b/sdk/objc/native/src/audio/audio_unit_recovery.h
+@@ -0,0 +1,34 @@
++/* Copyright 2026 Rock'n'Roll contributors. BSD license: see LICENSE. */
++#ifndef SDK_OBJC_NATIVE_SRC_AUDIO_AUDIO_UNIT_RECOVERY_H_
++#define SDK_OBJC_NATIVE_SRC_AUDIO_AUDIO_UNIT_RECOVERY_H_
++
++namespace webrtc::ios_adm {
++// Shared by route updates and microphone transitions. Initialize can dispose an
++// AudioUnit after a property failure: recreate it before the next attempt.
++template <typename Unit>
++bool InitializeAudioUnitForRecovery(Unit& unit, double rate, bool input) {
++  if (unit.GetState() == Unit::kInitRequired && !unit.Init()) return false;
++  return unit.Initialize(rate, input);
++}
++
++template <typename Unit, typename Prepare>
++bool RestartAudioUnitForRecovery(Unit& unit, double rate, bool input,
++                                 Prepare prepare) {
++  const bool was_started = unit.GetState() == Unit::kStarted;
++  if (was_started) {
++    unit.Stop();
++    prepare();
++  }
++  if (unit.GetState() == Unit::kInitialized) unit.Uninitialize();
++  if (!InitializeAudioUnitForRecovery(unit, rate, input)) return false;
++  if (was_started && unit.Start() != 0) {
++    // The failed transition may have configured a new input bus. A delayed
++    // retry must reinitialize using the current recording intent, not retain
++    // a failed unmute's duplex configuration after InitRecording returns -1.
++    unit.Uninitialize();
++    return false;
++  }
++  return true;
++}
++}  // namespace webrtc::ios_adm
++#endif
+diff --git a/sdk/objc/native/src/audio/audio_device_ios.mm b/sdk/objc/native/src/audio/audio_device_ios.mm
+--- a/sdk/objc/native/src/audio/audio_device_ios.mm
++++ b/sdk/objc/native/src/audio/audio_device_ios.mm
+@@ -13,6 +13,7 @@
+ 
+ #include "audio_device_ios.h"
+ #include "application_input_mute_state.h"
++#include "audio_unit_recovery.h"
+ #import "api/peerconnection/RTCPeerConnectionFactory.h"
+ 
+ #include <mach/mach_time.h>
+@@ -763,7 +764,7 @@
+   SetupAudioBuffersForActiveAudioSession();
+ 
+   // Initialize the audio unit again with the new sample rate.
+-  if (!audio_unit_->Initialize(playout_parameters_.sample_rate(), recording_is_initialized_)) {
++  if (!InitializeAudioUnitForRecovery(*audio_unit_, playout_parameters_.sample_rate(), recording_is_initialized_)) {
+     RTCLogError(@"Failed to initialize the audio unit with sample rate: %d",
+                 playout_parameters_.sample_rate());
+     ScheduleAudioUnitRestart();
+@@ -859,32 +860,15 @@
+ 
+   // If we don't have an audio unit yet, or the audio unit is uninitialized,
+   // there is no work to do.
+-  if (!audio_unit_ || audio_unit_->GetState() < VoiceProcessingAudioUnit::kInitialized) {
+-    return false;
+-  }
+-
+-  bool restart_audio_unit = false;
+-  if (audio_unit_->GetState() == VoiceProcessingAudioUnit::kStarted) {
+-    audio_unit_->Stop();
+-    PrepareForNewStart();
+-    restart_audio_unit = true;
+-  }
+-
+-  if (audio_unit_->GetState() == VoiceProcessingAudioUnit::kInitialized) {
+-    audio_unit_->Uninitialize();
+-  }
+-
+-  // Initialize the audio unit again with the same sample rate.
+-  const double sample_rate = playout_parameters_.sample_rate();
+-
+-  if (!audio_unit_->Initialize(sample_rate, enable_input)) {
+-    RTCLogError(@"Failed to initialize the audio unit with sample rate: %f", sample_rate);
+-    return false;
+-  }
+-
+-  // Restart the audio unit if it was already running.
+-  if (restart_audio_unit && audio_unit_->Start() != noErr) {
+-    RTCLogError(@"Failed to start audio unit with sample rate: %f", sample_rate);
++  if (!audio_unit_) return false;
++
++  if (!RestartAudioUnitForRecovery(*audio_unit_, playout_parameters_.sample_rate(),
++                                   enable_input, [this] { PrepareForNewStart(); })) {
++    RTCLogError(@"Failed to restart audio unit. Scheduling playout recovery.");
++    // InitRecording publishes its initialized flag only on success. A failed
++    // unmute therefore restores existing output without starting capture.
++    // StopRecording clears its input flag before this delayed retry executes.
++    ScheduleAudioUnitRestart();
+     return false;
+   }
+ 
+@@ -1011,9 +995,8 @@
+ 
+   switch (audio_unit_->GetState()) {
+     case VoiceProcessingAudioUnit::kInitRequired:
+-      RTCLog(@"VPAU state: InitRequired");
+-      RTC_DCHECK_NOTREACHED();
+-      break;
++      RTCLog(@"VPAU state: InitRequired; recreating for recovery");
++      [[fallthrough]];
+     case VoiceProcessingAudioUnit::kUninitialized:
+       RTCLog(@"VPAU state: Uninitialized");
+       should_initialize_audio_unit = can_play_or_record;
+@@ -1038,7 +1021,7 @@
+     RTCLog(@"Initializing audio unit for UpdateAudioUnit");
+     ConfigureAudioSession();
+     SetupAudioBuffersForActiveAudioSession();
+-    if (!audio_unit_->Initialize(playout_parameters_.sample_rate(), recording_is_initialized_)) {
++    if (!InitializeAudioUnitForRecovery(*audio_unit_, playout_parameters_.sample_rate(), recording_is_initialized_)) {
+       RTCLogError(@"Failed to initialize audio unit.");
+       ScheduleAudioUnitRestart();
+       return;
+@@ -1178,7 +1161,7 @@
+       return false;
+     }
+     SetupAudioBuffersForActiveAudioSession();
+-    if (!audio_unit_->Initialize(playout_parameters_.sample_rate(), enable_input)) {
++    if (!InitializeAudioUnitForRecovery(*audio_unit_, playout_parameters_.sample_rate(), enable_input)) {
+       [session unlockForConfiguration];
+       ShutdownPlayOrRecord();
+       return false;
