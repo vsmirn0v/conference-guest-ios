@@ -1,0 +1,280 @@
+--- a/api/audio/audio_device.h
++++ b/api/audio/audio_device.h
+@@ -131,6 +131,11 @@
+   static scoped_refptr<AudioDeviceModule> Create(const Environment& env, AudioLayer audio_layer,
+                                                  bool bypass_voice_processing = false);
+ 
++  // Keep this conference's real mixer/output device across trackless intervals.
++  // Unsupported audio devices preserve their existing behavior.
++  virtual int32_t SetConferencePlayoutReserved(bool reserved) { return -1; }
++  virtual int32_t RetireConferencePlayout() { return StopPlayout(); }
++
+   // Retrieve the currently utilized audio layer
+   virtual int32_t ActiveAudioLayer(AudioLayer* audioLayer) const = 0;
+ 
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
+@@ -16,6 +16,10 @@
+ 
+ NS_ASSUME_NONNULL_BEGIN
+ 
++// Scoped to a user-joined conference; 0 releases, nonzero reserves real output.
++// Requests run asynchronously on each factory's native audio worker.
++RTC_EXTERN void RTCSetConferencePlayoutReserved(int reserved);
++
+ @class RTC_OBJC_TYPE(RTCRtpCapabilities);
+ @class RTC_OBJC_TYPE(RTCAudioSource);
+ @class RTC_OBJC_TYPE(RTCAudioTrack);
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
+@@ -8,6 +8,7 @@
+  *  be found in the AUTHORS file in the root of the source tree.
+  */
+ 
++#include <atomic>
+ #include <memory>
+ #include <optional>
+ 
+@@ -82,6 +83,35 @@
+   return webrtc::CreateEnvironment();
+ }
+ 
++namespace {
++std::atomic<bool> gConferencePlayoutReserved{false};
++__weak RTC_OBJC_TYPE(RTCPeerConnectionFactory) *gConferenceAudioFactory;
++NSHashTable *ConferenceAudioFactories() {
++  static NSHashTable *factories;
++  static dispatch_once_t once;
++  dispatch_once(&once, ^{ factories = [NSHashTable weakObjectsHashTable]; });
++  return factories;
++}
++}
++
++@interface RTC_OBJC_TYPE(RTCPeerConnectionFactory) (ConferencePlayout)
++- (void)registerConferencePlayout;
++- (void)setConferencePlayoutState:(int)state;
++@end
++
++void RTCSetConferencePlayoutReserved(int reserved) {
++  NSHashTable *factories = ConferenceAudioFactories();
++  @synchronized(factories) {
++    gConferencePlayoutReserved.store(reserved != 0, std::memory_order_release);
++    RTC_OBJC_TYPE(RTCPeerConnectionFactory) *current = gConferenceAudioFactory;
++    [current setConferencePlayoutState:reserved ? 1 : 0];
++    if (getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
++      NSLog(@"Conference output reservation=%d live-factories=%lu current=%p", reserved,
++            (unsigned long)factories.count, current);
++    }
++  }
++}
++
+ @implementation RTC_OBJC_TYPE (RTCPeerConnectionFactory) {
+   std::optional<webrtc::Environment> _env;
+   std::unique_ptr<webrtc::Thread> _networkThread;
+@@ -90,6 +120,7 @@
+   webrtc::scoped_refptr<webrtc::AudioDeviceModule> _nativeAudioDeviceModule;
+   RTC_OBJC_TYPE(RTCDefaultAudioProcessingModule) *_defaultAudioProcessingModule;
+ 
++  std::shared_ptr<std::atomic<int>> _conferencePlayoutState;
+   BOOL _hasStartedAecDump;
+ }
+ 
+@@ -408,8 +439,39 @@
+     NSAssert(_nativeFactory, @"Failed to initialize PeerConnectionFactory!");
+   }
+   return self;
++}
++
++- (void)registerConferencePlayout {
++  if (!_nativeAudioDeviceModule || !_workerThread) return;
++  NSHashTable *factories = ConferenceAudioFactories();
++  @synchronized(factories) {
++    if (!_conferencePlayoutState) _conferencePlayoutState = std::make_shared<std::atomic<int>>(0);
++    [factories addObject:self];
++    RTC_OBJC_TYPE(RTCPeerConnectionFactory) *previous = gConferenceAudioFactory;
++    gConferenceAudioFactory = self;
++    if (previous != self) [previous setConferencePlayoutState:-1];
++    [self setConferencePlayoutState:gConferencePlayoutReserved.load(std::memory_order_acquire) ? 1 : 0];
++  }
+ }
+ 
++- (void)setConferencePlayoutState:(int)state {
++  auto adm = _nativeAudioDeviceModule;
++  auto desired = _conferencePlayoutState;
++  if (!adm || !_workerThread || !desired) return;
++  desired->store(state, std::memory_order_release);
++  // Retain native state, not the factory: its last reference must not be
++  // released from a task running on the factory's own worker thread.
++  _workerThread->PostTask([adm, desired] {
++    const int requested = desired->load(std::memory_order_acquire);
++    const int result = requested < 0 ? adm->RetireConferencePlayout()
++                                    : adm->SetConferencePlayoutReserved(requested > 0);
++    if (result != 0 || getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
++      NSLog(@"Conference output ADM=%p state=%d result=%d playing=%d recording=%d",
++            adm.get(), requested, result, adm->Playing(), adm->Recording());
++    }
++  });
++}
++
+ - (RTC_OBJC_TYPE(RTCRtpCapabilities) *)rtpSenderCapabilitiesForKind:(NSString *)kind {
+   webrtc::MediaType mediaType = [[self class] mediaTypeForKind:kind];
+ 
+@@ -480,11 +542,13 @@
+                         constraints:(RTC_OBJC_TYPE(RTCMediaConstraints) *)constraints
+                            delegate:
+                                (nullable id<RTC_OBJC_TYPE(RTCPeerConnectionDelegate)>)delegate {
+-  return [[RTC_OBJC_TYPE(RTCPeerConnection) alloc] initWithFactory:self
++  RTC_OBJC_TYPE(RTCPeerConnection) *peer = [[RTC_OBJC_TYPE(RTCPeerConnection) alloc] initWithFactory:self
+                                                      configuration:configuration
+                                                        constraints:constraints
+                                                certificateVerifier:nil
+                                                           delegate:delegate];
++  if (peer) [self registerConferencePlayout];
++  return peer;
+ }
+ 
+ - (nullable RTC_OBJC_TYPE(RTCPeerConnection) *)
+@@ -494,11 +558,13 @@
+                     (id<RTC_OBJC_TYPE(RTCSSLCertificateVerifier)>)certificateVerifier
+                            delegate:
+                                (nullable id<RTC_OBJC_TYPE(RTCPeerConnectionDelegate)>)delegate {
+-  return [[RTC_OBJC_TYPE(RTCPeerConnection) alloc] initWithFactory:self
++  RTC_OBJC_TYPE(RTCPeerConnection) *peer = [[RTC_OBJC_TYPE(RTCPeerConnection) alloc] initWithFactory:self
+                                                      configuration:configuration
+                                                        constraints:constraints
+                                                certificateVerifier:certificateVerifier
+                                                           delegate:delegate];
++  if (peer) [self registerConferencePlayout];
++  return peer;
+ }
+ 
+ - (nullable RTC_OBJC_TYPE(RTCPeerConnection) *)
+@@ -506,11 +572,13 @@
+                        constraints:(RTC_OBJC_TYPE(RTCMediaConstraints) *)constraints
+                       dependencies:(std::unique_ptr<webrtc::PeerConnectionDependencies>)dependencies
+                           delegate:(id<RTC_OBJC_TYPE(RTCPeerConnectionDelegate)>)delegate {
+-  return [[RTC_OBJC_TYPE(RTCPeerConnection) alloc] initWithDependencies:self
++  RTC_OBJC_TYPE(RTCPeerConnection) *peer = [[RTC_OBJC_TYPE(RTCPeerConnection) alloc] initWithDependencies:self
+                                                           configuration:configuration
+                                                             constraints:constraints
+                                                            dependencies:std::move(dependencies)
+                                                                delegate:delegate];
++  if (peer) [self registerConferencePlayout];
++  return peer;
+ }
+ 
+ - (void)setOptions:
+--- a/sdk/objc/native/src/audio/audio_device_module_ios.h
++++ b/sdk/objc/native/src/audio/audio_device_module_ios.h
+@@ -74,6 +74,8 @@
+   // Audio transport control
+   int32_t StartPlayout() override;
+   int32_t StopPlayout() override;
++  int32_t SetConferencePlayoutReserved(bool reserved) override;
++  int32_t RetireConferencePlayout() override;
+   bool Playing() const override;
+   int32_t StartRecording() override;
+   int32_t StopRecording() override;
+@@ -140,12 +142,17 @@
+ 
+  private:
+   void ReportError(ADMError error) const;
++  int32_t StartPlayoutDevice();
++  int32_t StopPlayoutDevice();
+ 
+   const Environment env_;
+   const bool bypass_voice_processing_;
+   MutedSpeechEventHandler muted_speech_event_handler_;
+   ADMErrorHandler error_handler_;
+   bool initialized_ = false;
++  bool conference_playout_reserved_ = false;
++  bool conference_playout_retired_ = false;
++  bool media_playout_requested_ = false;
+   std::unique_ptr<AudioDeviceIOS> audio_device_;
+   std::unique_ptr<AudioDeviceBuffer> audio_device_buffer_;
+ };
+--- a/sdk/objc/native/src/audio/audio_device_module_ios.mm
++++ b/sdk/objc/native/src/audio/audio_device_module_ios.mm
+@@ -116,6 +116,9 @@
+ int32_t AudioDeviceModuleIOS::Terminate() {
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   if (!initialized_) return 0;
++  conference_playout_reserved_ = false;
++  // Retirement survives shutdown until an explicit current-owner reservation.
++  media_playout_requested_ = false;
+   if (audio_device_->Terminate() == -1) {
+     ReportError(kTerminateFailed);
+     return -1;
+@@ -555,6 +558,7 @@
+ }
+ 
+ int32_t AudioDeviceModuleIOS::InitPlayout() {
++  if (conference_playout_retired_) return 0;
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (PlayoutIsInitialized()) {
+@@ -571,6 +575,7 @@
+ }
+ 
+ int32_t AudioDeviceModuleIOS::InitRecording() {
++  if (conference_playout_retired_) return 0;
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (RecordingIsInitialized()) {
+@@ -599,6 +604,12 @@
+ }
+ 
+ int32_t AudioDeviceModuleIOS::StartPlayout() {
++  if (conference_playout_retired_) return 0;
++  media_playout_requested_ = true;
++  return StartPlayoutDevice();
++}
++
++int32_t AudioDeviceModuleIOS::StartPlayoutDevice() {
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (Playing()) {
+@@ -616,6 +627,35 @@
+ }
+ 
+ int32_t AudioDeviceModuleIOS::StopPlayout() {
++  media_playout_requested_ = false;
++  if (conference_playout_reserved_) return 0;
++  return StopPlayoutDevice();
++}
++
++int32_t AudioDeviceModuleIOS::SetConferencePlayoutReserved(bool reserved) {
++  conference_playout_reserved_ = reserved;
++  if (reserved) conference_playout_retired_ = false;
++  if (!reserved) {
++    return initialized_ && !media_playout_requested_ ? StopPlayoutDevice() : 0;
++  }
++  if (!initialized_ && Init() != 0) return -1;
++  if (InitPlayout() != 0) return -1;
++  return StartPlayoutDevice();
++}
++
++int32_t AudioDeviceModuleIOS::RetireConferencePlayout() {
++  conference_playout_reserved_ = false;
++  conference_playout_retired_ = true;
++  media_playout_requested_ = false;
++  if (!initialized_) return 0;
++  // Old receive/send callbacks cannot reactivate an obsolete factory. Stop
++  // output first so stopping input does not rebuild an output-only unit.
++  const int result = StopPlayoutDevice();
++  const int recording_result = StopRecording();
++  return result != 0 ? result : recording_result;
++}
++
++int32_t AudioDeviceModuleIOS::StopPlayoutDevice() {
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   int32_t result = audio_device_->StopPlayout();
+@@ -636,6 +676,7 @@
+ }
+ 
+ int32_t AudioDeviceModuleIOS::StartRecording() {
++  if (conference_playout_retired_) return 0;
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (Recording()) {

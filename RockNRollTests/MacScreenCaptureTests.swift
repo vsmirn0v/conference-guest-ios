@@ -31,11 +31,24 @@ final class MacScreenCaptureTests: XCTestCase {
     }
     func testWindowDimensionsPreserveAspectBoundPixelsAndDoNotUpscale() {
         XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 640, height: 480)), CGSize(width: 640, height: 480))
-        XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 3840, height: 2160)), CGSize(width: 1920, height: 1080))
-        XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 1600, height: 2400)), CGSize(width: 720, height: 1080))
+        XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 3840, height: 2160)), CGSize(width: 3840, height: 2160))
+        XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 2560, height: 1600)), CGSize(width: 2560, height: 1600))
+        XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 1600, height: 2400)), CGSize(width: 1600, height: 2400))
         XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 1201, height: 701)), CGSize(width: 1200, height: 700))
         for value in [CGSize.zero, CGSize(width: CGFloat.infinity, height: 100), CGSize(width: 10, height: CGFloat.nan)] {
             XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: value), .zero)
+        }
+    }
+    func testScreenDetailBudgetHandlesLargeSquarePortraitAndExtremeSources() {
+        for input in [CGSize(width: 5120, height: 2880), CGSize(width: 2880, height: 5120),
+                      CGSize(width: 4000, height: 4000), CGSize(width: 10000, height: 500),
+                      CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)] {
+            let output = MacScreenCaptureBridge.outputSize(for: input)
+            XCTAssertLessThanOrEqual(output.width, 3840); XCTAssertLessThanOrEqual(output.height, 3840)
+            XCTAssertLessThanOrEqual(output.width * output.height, 3840 * 2160)
+            XCTAssertEqual(output.width.truncatingRemainder(dividingBy: 2), 0)
+            XCTAssertEqual(output.height.truncatingRemainder(dividingBy: 2), 0)
+            XCTAssertEqual(output.width / output.height, input.width / input.height, accuracy: 0.1)
         }
     }
     func testWindowResizeCoalescesSerializesAndKeepsLatestAspect() async throws {
@@ -56,6 +69,20 @@ final class MacScreenCaptureTests: XCTestCase {
         stream.completions.removeFirst()(nil)
         try await Task.sleep(nanoseconds: 450_000_000)
         XCTAssertEqual(stream.requests.count, 2, "Stable frames do not reallocate surfaces")
+        bridge.invalidateWindowResize()
+    }
+    func testNativeDetailIsExplicitAndRetainedWhenWindowResizes() async throws {
+        let bridge = MacScreenCaptureBridge(), stream = ResizableStream()
+        let pixels = CGSize(width: 3840, height: 2160)
+        XCTAssertEqual(bridge.captureSize(for: pixels), CGSize(width: 1920, height: 1080),
+                       "Unqualified transports retain their previous capture budget")
+        bridge.preserveDetail = true
+        XCTAssertEqual(bridge.captureSize(for: pixels), pixels)
+        bridge.prepareWindowResize(forStream: stream, configuration: Configuration())
+        bridge.observeWindowContentRect(CGRect(x: 0, y: 0, width: 1920, height: 1080), scaleFactor: 2, contentScale: 1)
+        try await Task.sleep(nanoseconds: 450_000_000)
+        XCTAssertEqual(stream.requests, [pixels])
+        stream.completions.removeFirst()(nil)
         bridge.invalidateWindowResize()
     }
     func testWindowResizeRejectsInvalidGeometryAndRetiredCompletion() async throws {

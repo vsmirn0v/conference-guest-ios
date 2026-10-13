@@ -34,3 +34,32 @@ Do not select a display or a window containing personal content. No microphone,
 camera or physical iPhone is needed. Native transport loopback tests do not
 qualify the remote Telemost/TrueConf server implementations; those remain separate
 live service tests.
+
+
+## Text-detail qualification
+
+`ScreenShareQualityLiveTests` is opt-in. It never opens a capture chooser or
+accesses microphone/camera. Its generated text chart is published through the
+real guest Presenter transport into an explicitly supplied disposable room.
+
+1. Join that room from an independent receive-only browser and install
+   `receiver.js` as above. Start `receiver_bridge.py` with an evidence directory.
+2. Set `TEST_RUNNER_ROCKNROLL_TEST_SCREEN_QUALITY_INVITE` to the invitation and
+   `TEST_RUNNER_ROCKNROLL_TEST_SCREEN_RECEIVER=http://127.0.0.1:18769`.
+3. Run `ScreenShareQualityLiveTests/testGuestNativeScreenDetail` on Mac.
+   It checks 1920×1080, 2560×1440, 3840×2160, then annotated 3840×2160
+   Presenter output. Each phase requires the exact dimensions at the remote
+   browser decoder. The bridge saves full-resolution PNGs of the synthetic video.
+4. For the reverse direction, stop the native sender, evaluate `detail-chart.js`
+   in the disposable browser and press its ordinary Share Screen button. This
+   supplies a generated 4K canvas instead of accessing the desktop.
+5. Set `TEST_RUNNER_ROCKNROLL_TEST_SCREEN_QUALITY_RECEIVE_INVITE` and run
+   `testGuestReceivesNativeScreenDetail` on Mac or Simulator. It requires more
+   than ten decoded frames at 3840×2160 through the unmodified subscription path.
+6. Stop sharing, call `window.rockDetailChart.stop()` to remove the fixture,
+   leave the browser room, close the agent-owned browser, and stop the bridge.
+
+These checks establish resolution and text clarity, not battery use, motion
+quality at saturation, or limits imposed by another self-hosted server. Capture
+selection/resize mechanics remain covered by `MacScreenCaptureTests` and the
+separate system-selected-window test above.

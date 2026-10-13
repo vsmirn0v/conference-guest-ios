@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import ObjectiveC
 import WebRTC
+import Darwin
 
 /// Observe the pinned SDK's bundled public WebRTC factory/stats surface.
 /// Forward every creation unchanged; never replace its audio device or touch mute.
@@ -153,14 +154,14 @@ final class GuestMicrophoneProbe {
             let report: RTCStatisticsReport = await withCheckedContinuation { completion in
                 peer.statistics { completion.resume(returning: $0) }
             }
-            for entry in report.statistics.values where ["inbound-rtp", "outbound-rtp"].contains(entry.type) {
+            for entry in report.statistics.values where ["inbound-rtp", "outbound-rtp", "media-source"].contains(entry.type) {
                 var row: [String: Any] = ["id": entry.id, "type": entry.type]
                 let sender = (entry.values["mid"] as? String).flatMap { mid in peer.transceivers.first { $0.mid == mid }?.sender }
                 if entry.type == "outbound-rtp", let sender {
                     row["rawCamera"] = sender.track.map { GuestCaptureDeviceObserver.rawCaptureProgress(trackID: $0.trackId) != nil }
                     row["negotiatedCodecs"] = sender.parameters.codecs.map { ["name": $0.name, "parameters": $0.parameters] }
                 }
-                let keys = ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "bytesSent", "bytesReceived", "totalAudioEnergy", "rid", "mediaSourceId", "qualityLimitationReason", "targetBitrate", "packetsReceived", "packetsLost", "jitter", "concealedSamples", "totalSamplesReceived", "jitterBufferDelay", "jitterBufferEmittedCount"]
+                let keys = ["kind", "mid", "framesEncoded", "framesDecoded", "frameWidth", "frameHeight", "framesPerSecond", "totalEncodeTime", "totalDecodeTime", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder", "bytesSent", "bytesReceived", "totalAudioEnergy", "rid", "mediaSourceId", "qualityLimitationReason", "targetBitrate", "packetsSent", "totalSamplesDuration", "audioLevel", "packetsReceived", "packetsLost", "jitter", "concealedSamples", "totalSamplesReceived", "jitterBufferDelay", "jitterBufferEmittedCount"]
                 for key in keys { row[key] = entry.values[key] }
                 if let codecID = entry.values["codecId"] as? String, let codec = report.statistics[codecID] {
                     row["mimeType"] = codec.values["mimeType"]; row["sdpFmtpLine"] = codec.values["sdpFmtpLine"]
@@ -205,4 +206,89 @@ final class GuestMicrophoneProbe {
     }
     func stop() { task?.cancel(); task = nil }
     deinit { task?.cancel() }
+}
+
+#if DEBUG
+/// Observe public audio-device callbacks without changing SDK audio ownership.
+/// A worker heartbeat distinguishes whole-process suspension from a busy UI.
+final class GuestAudioIOTrace: NSObject, RTCAudioSessionDelegate, @unchecked Sendable {
+    private let queue = DispatchQueue(label: "dev.vsmirn0v.guest-audio-trace", qos: .utility)
+    private var timer: DispatchSourceTimer?
+    func start() {
+        guard ProcessInfo.processInfo.environment["CONFERENCE_TEST_MEDIA_TRACE"] == "1" else { return }
+        queue.async {
+            guard self.timer == nil else { return }
+            RTCAudioSession.sharedInstance().add(self)
+            let timer = DispatchSource.makeTimerSource(queue: self.queue)
+            timer.schedule(deadline: .now(), repeating: .seconds(5))
+            timer.setEventHandler { [weak self] in self?.write("heartbeat") }
+            self.timer = timer; timer.resume()
+        }
+    }
+    func stop() {
+        queue.async {
+            self.timer?.cancel(); self.timer = nil
+            RTCAudioSession.sharedInstance().remove(self)
+        }
+    }
+    private func record(_ event: String) { queue.async { if self.timer != nil { self.write(event) } } }
+    private func write(_ event: String) {
+        let rtc = RTCAudioSession.sharedInstance()
+        let row: [String: Any] = ["time": Date().timeIntervalSince1970, "event": event,
+            "active": rtc.isActive, "manual": rtc.useManualAudio, "enabled": rtc.isAudioEnabled,
+            "mode": rtc.mode, "outputs": rtc.currentRoute.outputs.map { $0.portType.rawValue }]
+        guard let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
+              var line = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]) else { return }
+        let file = directory.appendingPathComponent("guest-audio-io.jsonl")
+        var data = (try? Data(contentsOf: file)) ?? Data()
+        if data.count > 131_072 { data.removeAll(keepingCapacity: true) }
+        line.append(10); data.append(line); try? data.write(to: file, options: .atomic)
+    }
+    func audioSessionDidStartPlayOrRecord(_ session: RTCAudioSession) { record("io-start") }
+    func audioSessionDidStopPlayOrRecord(_ session: RTCAudioSession) { record("io-stop") }
+    func audioSession(_ session: RTCAudioSession, didChangeCanPlayOrRecord value: Bool) { record("permission-\(value)") }
+    func audioSession(_ session: RTCAudioSession, didSetActive active: Bool) { record("active-\(active)") }
+}
+#endif
+
+/// Controls only the rebuilt SDK's real conference output device. The stock
+/// binary has no extension and retains its original audio behavior.
+final class GuestConferencePlayoutReservation: @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var owner: UUID?
+    private let token = UUID()
+    private let write: ((Bool) -> Void)?
+    private var reserved = false
+    static var isSupported: Bool { nativeWriter != nil }
+    private static let nativeWriter: (@convention(c) (Int32) -> Void)? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCSetConferencePlayoutReserved") else { return nil }
+        return unsafeBitCast(symbol, to: (@convention(c) (Int32) -> Void).self)
+    }()
+    init(write: ((Bool) -> Void)? = nil) {
+        self.write = write ?? (ProcessInfo.processInfo.isiOSAppOnMac ? nil : Self.nativeWriter.map { api in { api($0 ? 1 : 0) } })
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_MEDIA_TRACE"] == "1" {
+            print("Guest conference output supported=\(Self.isSupported) enabled=\(self.write != nil) mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
+        }
+        #endif
+    }
+    /// Keep the interrupted device registered so iOS can deliver its resume
+    /// event. The native ADM pauses the unit itself; never start it during hold.
+    func update(joined: Bool, audioAvailable: Bool, refresh: Bool = false) {
+        if !joined { setReserved(false) }
+        else if audioAvailable { setReserved(true, refresh: refresh) }
+    }
+    func setReserved(_ value: Bool, refresh: Bool = false) {
+        Self.lock.lock(); defer { Self.lock.unlock() }
+        guard let write else { return }
+        if value {
+            guard refresh || !reserved || Self.owner != token else { return }
+            reserved = true; Self.owner = token; write(true)
+        } else {
+            reserved = false
+            guard Self.owner == token else { return }
+            Self.owner = nil; write(false)
+        }
+    }
+    deinit { setReserved(false) }
 }

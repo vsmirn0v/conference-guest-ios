@@ -1,0 +1,24 @@
+diff --git a/sdk/objc/helpers/RTCYUVHelper.h b/sdk/objc/helpers/RTCYUVHelper.h
+--- a/sdk/objc/helpers/RTCYUVHelper.h
++++ b/sdk/objc/helpers/RTCYUVHelper.h
+@@ -14,7 +14,7 @@
+ #import "RTCVideoFrame.h"
+ 
+ RTC_OBJC_EXPORT
+-@interface RTC_OBJC_TYPE (RTCYUVHelper) : NSObject
++@interface RTC_OBJC_TYPE (RTCConferenceYUVHelper) : NSObject
+ 
+ - (instancetype)init NS_UNAVAILABLE;
+ 
+diff --git a/sdk/objc/helpers/RTCYUVHelper.mm b/sdk/objc/helpers/RTCYUVHelper.mm
+--- a/sdk/objc/helpers/RTCYUVHelper.mm
++++ b/sdk/objc/helpers/RTCYUVHelper.mm
+@@ -12,7 +12,7 @@
+ 
+ #include "third_party/libyuv/include/libyuv.h"
+ 
+-@implementation RTC_OBJC_TYPE (RTCYUVHelper)
++@implementation RTC_OBJC_TYPE (RTCConferenceYUVHelper)
+ 
+ + (void)I420Rotate:(const uint8_t*)srcY
+         srcStrideY:(int)srcStrideY

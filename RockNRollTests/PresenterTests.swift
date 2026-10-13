@@ -955,7 +955,11 @@ final class PresenterModelTests: XCTestCase {
             model.acceptScreen(try screenSample(width: 640, height: 480))
             await waitUntil { model.hasPreview }
             await model.start(); XCTAssertTrue(model.running)
-            for size in [CGSize(width: 360, height: 640), CGSize(width: 1200, height: 450), CGSize(width: 550, height: 350)] {
+            var resizeSizes = [CGSize(width: 360, height: 640), CGSize(width: 1200, height: 450), CGSize(width: 550, height: 350)]
+            if ProcessInfo.processInfo.isiOSAppOnMac {
+                resizeSizes += [CGSize(width: 2560, height: 1600), CGSize(width: 3840, height: 2160)]
+            }
+            for size in resizeSizes {
                 model.acceptScreen(try screenSample(width: Int(size.width), height: Int(size.height)))
                 XCTAssertTrue(model.hasPreview, "Keep the visible preview until a resized frame is ready")
                 await waitUntil { sizes.last == size }

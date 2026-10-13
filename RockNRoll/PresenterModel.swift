@@ -530,8 +530,12 @@ final class PresenterModel: ObservableObject {
         guard width > 0, height > 0 else { return }
         if aspectRatio != width / height { aspectRatio = width / height }
         let scale = min(1, 1920 / max(width, height))
-        let size = CGSize(width: max(2, (width * scale / 2).rounded(.down) * 2),
-                          height: max(2, (height * scale / 2).rounded(.down) * 2))
+        // Drawing or adding a camera inset must not silently halve the detail
+        // of the same Mac screen that passes through unscaled without overlays.
+        let size = ProcessInfo.processInfo.isiOSAppOnMac
+            ? MacScreenCaptureBridge.outputSize(for: CGSize(width: width, height: height))
+            : CGSize(width: max(2, (width * scale / 2).rounded(.down) * 2),
+                     height: max(2, (height * scale / 2).rounded(.down) * 2))
         if firstFrame || canvasSize != size {
             canvasSize = size
             // A queued render with the old geometry must not replace the resized

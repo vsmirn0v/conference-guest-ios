@@ -52,11 +52,12 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
     private let deliveryExperiment = OutgoingShareExperiment.configured()
     #endif
 
-    init(preview: LocalSharePreview, onFrame: ((CMSampleBuffer) -> Void)? = nil,
+    init(preview: LocalSharePreview, preserveDetail: Bool = false, onFrame: ((CMSampleBuffer) -> Void)? = nil,
          onEffect: @escaping (Bool) -> Void = { _ in }, onSelection: @escaping (PresenterScreenSelection) -> Void = { _ in },
          onEnd: @escaping (String?) -> Void = { _ in }, onError: @escaping (String) -> Void) {
         self.preview = preview; self.onFrame = onFrame; self.onEffect = onEffect
         self.onSelection = onSelection; self.onEnd = onEnd; self.onError = onError
+        windowResize.preserveDetail = preserveDetail && ProcessInfo.processInfo.isiOSAppOnMac
     }
 
     func start() {
@@ -135,7 +136,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         let config = SCStreamConfiguration()
         let content = filter.contentRect.size
         let scale = CGFloat(filter.pointPixelScale)
-        let bounded = MacScreenCaptureBridge.outputSize(for: CGSize(width: content.width * scale, height: content.height * scale))
+        let bounded = windowResize.captureSize(for: CGSize(width: content.width * scale, height: content.height * scale))
         let size = bounded == .zero ? CGSize(width: 1920, height: 1080) : bounded
         config.width = Int(size.width); config.height = Int(size.height)
         // Meeting microphone/audio remains owned by the call engine.

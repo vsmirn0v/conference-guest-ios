@@ -1,0 +1,123 @@
+diff --git a/sdk/objc/native/src/audio/audio_device_ios.h b/sdk/objc/native/src/audio/audio_device_ios.h
+--- a/sdk/objc/native/src/audio/audio_device_ios.h
++++ b/sdk/objc/native/src/audio/audio_device_ios.h
+@@ -310,6 +310,8 @@
+ 
+   // Set to true if we've activated the audio session.
+   bool has_configured_session_ RTC_GUARDED_BY(thread_);
++  // Unit lifetime ownership, independent of temporary AV activation.
++  bool has_begun_session_ RTC_GUARDED_BY(thread_);
+ 
+   // Counts number of detected audio glitches on the playout side.
+   std::atomic<uint64_t> num_detected_playout_glitches_;
+diff --git a/sdk/objc/native/src/audio/audio_device_ios.mm b/sdk/objc/native/src/audio/audio_device_ios.mm
+--- a/sdk/objc/native/src/audio/audio_device_ios.mm
++++ b/sdk/objc/native/src/audio/audio_device_ios.mm
+@@ -114,6 +114,7 @@
+       initialized_(false),
+       is_interrupted_(false),
+       has_configured_session_(false),
++      has_begun_session_(false),
+       num_detected_playout_glitches_(0),
+       total_playout_glitches_duration_ms_(0),
+       last_playout_time_(0),
+@@ -186,6 +187,8 @@
+   }
+   StopPlayout();
+   StopRecording();
++  // Init may have succeeded without Start (or Start may have failed).
++  if (audio_unit_ || has_begun_session_) ShutdownPlayOrRecord();
+   initialized_ = false;
+   return 0;
+ }
+@@ -281,7 +284,7 @@
+ int32_t AudioDeviceIOS::StopPlayout() {
+   LOGI() << "StopPlayout";
+   RTC_DCHECK_RUN_ON(thread_);
+-  if (!playout_is_initialized_ || !playing_.load()) {
++  if (!playout_is_initialized_) {
+     return 0;
+   }
+   if (!recording_.load()) {
+@@ -346,7 +349,7 @@
+ int32_t AudioDeviceIOS::StopRecording() {
+   LOGI() << "StopRecording";
+   RTC_DCHECK_RUN_ON(thread_);
+-  if (!recording_is_initialized_ || !recording_.load()) {
++  if (!recording_is_initialized_) {
+     return 0;
+   }
+   if (!playing_.load()) {
+@@ -1033,7 +1036,6 @@
+       [RTC_OBJC_TYPE(RTCAudioSession) sharedInstance];
+   [session lockForConfiguration];
+   [session unconfigureWebRTCSession:nil];
+-  [session endWebRTCSession:nil];
+   [session unlockForConfiguration];
+   has_configured_session_ = false;
+   RTCLog(@"Unconfigured audio session.");
+@@ -1043,7 +1045,8 @@
+   LOGI() << "InitPlayOrRecord";
+   RTC_DCHECK_RUN_ON(thread_);
+ 
+-  // There should be no audio unit at this point.
++  // There should be no audio unit or session ownership at this point.
++  RTC_DCHECK(!has_begun_session_);
+   if (!CreateAudioUnit()) {
+     return false;
+   }
+@@ -1061,9 +1064,10 @@
+     [session unlockForConfiguration];
+     RTCLogError(@"Failed to begin WebRTC session: %@",
+                 error.localizedDescription);
+-    audio_unit_.reset();
++    ShutdownPlayOrRecord();
+     return false;
+   }
++  has_begun_session_ = true;
+ 
+   // If we are ready to play or record, and if the audio session can be
+   // configured, then initialize the audio unit.
+@@ -1073,7 +1077,7 @@
+       // audio session during or after a Media Services failure.
+       // See AVAudioSessionErrorCodeMediaServicesFailed for details.
+       [session unlockForConfiguration];
+-      audio_unit_.reset();
++      ShutdownPlayOrRecord();
+       return false;
+     }
+     SetupAudioBuffersForActiveAudioSession();
+@@ -1093,11 +1097,13 @@
+   LOGI() << "ShutdownPlayOrRecord";
+   RTC_DCHECK_RUN_ON(thread_);
+ 
+-  // Stop the audio unit to prevent any additional audio callbacks.
+-  audio_unit_->Stop();
+-
+-  // Close and delete the voice-processing I/O unit.
+-  audio_unit_.reset();
++  // Stop callbacks only if initialization reached a playable state.
++  if (audio_unit_) {
++    if (audio_unit_->GetState() >= VoiceProcessingAudioUnit::kInitialized) {
++      audio_unit_->Stop();
++    }
++    audio_unit_.reset();
++  }
+ 
+   // Detach thread checker for the AURemoteIO::IOThread to ensure that the
+   // next session uses a fresh thread id.
+@@ -1111,6 +1117,14 @@
+   // All I/O should be stopped or paused prior to deactivating the audio
+   // session, hence we deactivate as last action.
+   UnconfigureAudioSession();
++  // Balance begin even if AV activation was unavailable or configuration failed.
++  // Temporary UnconfigureAudioSession calls preserve this ownership for resume.
++  if (has_begun_session_) {
++    has_begun_session_ = false;
++    [session lockForConfiguration];
++    [session endWebRTCSession:nil];
++    [session unlockForConfiguration];
++  }
+ 
+   playout_is_initialized_ = false;
+   recording_is_initialized_ = false;

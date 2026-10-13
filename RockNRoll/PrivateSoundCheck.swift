@@ -15,6 +15,7 @@ final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
     private var standalone = false
     private let worker: AudioSessionWorker
     private var lease: AudioSessionLease?
+    private var inputMuteLease: UUID?
     init(worker: AudioSessionWorker = .shared) { self.worker = worker }
     func start(standalone: Bool, onBuffer: @escaping @Sendable (AVAudioPCMBuffer) -> Void) async throws {
         stop()
@@ -36,11 +37,12 @@ final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
             }
         }
         try Task.checkCancellation(); try expected.check()
+        inputMuteLease = ApplicationMicrophoneMute.shared?.beginPrivateCapture()
         let engine = AVAudioEngine()
         self.engine = engine
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0, format.commonFormat == .pcmFormatFloat32 else { throw SoundCheckError.input }
+        guard format.sampleRate > 0, format.channelCount > 0, format.commonFormat == .pcmFormatFloat32 else { stop(); throw SoundCheckError.input }
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
             onBuffer(buffer)
         }
@@ -51,6 +53,8 @@ final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
         lease?.invalidate(); lease = nil
         if tapped { engine?.inputNode.removeTap(onBus: 0); tapped = false }
         engine?.stop(); engine = nil
+        if let inputMuteLease { ApplicationMicrophoneMute.shared?.endPrivateCapture(inputMuteLease) }
+        inputMuteLease = nil
         if standalone { standalone = false; worker.deactivate() }
     }
 }

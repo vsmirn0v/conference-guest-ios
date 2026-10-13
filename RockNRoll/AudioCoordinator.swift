@@ -21,6 +21,9 @@ final class AudioCoordinator {
     private var mixingRevision = 0
     private var configurationLease: AudioSessionLease? = AudioSessionLease()
     private var routeLease: AudioSessionLease?
+    private var outputRecovery = BuiltInOutputRecovery()
+    private var outputRecoveryTask: Task<Void, Never>?
+    private var outputRecoveryRevision = 0
     private var observers: [NSObjectProtocol] = []
     private var audioWarning: String?
     private var cameraWarning: String?
@@ -57,7 +60,7 @@ final class AudioCoordinator {
 
     deinit {
         lease.invalidate(); configurationLease?.invalidate(); routeLease?.invalidate()
-        mixingTask?.cancel(); resetTask?.cancel(); startupTask?.cancel()
+        mixingTask?.cancel(); resetTask?.cancel(); startupTask?.cancel(); outputRecoveryTask?.cancel()
         observers.forEach(NotificationCenter.default.removeObserver)
     }
 
@@ -67,11 +70,85 @@ final class AudioCoordinator {
     }
     func endSession() {
         observingSession = false; lease.invalidate()
+        cancelOutputRestoration()
+        outputRecovery = BuiltInOutputRecovery()
         mixingTask?.cancel(); mixingTask = nil
         resetTask?.cancel(); resetTask = nil
         startupTask?.cancel(); startupTask = nil
         startupReady = nil; startupFailure = nil
         suspendConfiguration()
+    }
+
+    /// Transport replacement must not reset the selected built-in output.
+    func preserveOutputForReconnect() {
+        cancelOutputRestoration(preservingIntent: true)
+        outputRecovery.beginInterruption()
+    }
+
+    /// Preserve the pre-call route rather than the temporary Phone route.
+    func preserveOutputForInterruption() {
+        preserveOutputForReconnect()
+        suspendConfiguration()
+    }
+
+    /// Restore a built-in route once the replacement media transport is ready.
+    /// Headsets selected during the competing call remain authoritative.
+    func restoreOutputAfterInterruption() {
+        guard let speaker = outputRecovery.takeRestore(currentSpeaker: currentBuiltInSpeaker) else { return }
+        let expected = lease, revision = outputRecoveryRevision
+        outputRecoveryTask = Task { [weak self] in
+            guard let self, self.lease === expected, expected.isActive else { return }
+            defer {
+                if self.lease === expected, self.outputRecoveryRevision == revision {
+                    self.outputRecovery.finishRestoration(currentSpeaker: self.currentBuiltInSpeaker)
+                    self.outputRecoveryTask = nil
+                }
+            }
+            // SDK initialization can reconfigure the session again after media
+            // connects. Protect the route through that short, bounded window.
+            for delay in [0, 250, 500, 1_000, 2_000] {
+                do {
+                    if delay > 0 { try await Task.sleep(for: .milliseconds(delay)) }
+                    guard self.lease === expected, expected.isActive,
+                          self.outputRecoveryRevision == revision,
+                          let current = self.currentBuiltInSpeaker else { return }
+                    if current != speaker {
+                        try await self.applyBuiltInOutput(speaker: speaker, preservingExternalRoute: true)
+                    }
+                } catch is CancellationError { return }
+                catch {
+                    #if DEBUG
+                    print("Cannot restore pre-call audio output: \(error)")
+                    #endif
+                    return
+                }
+            }
+        }
+    }
+
+    /// Explicit route selection takes precedence over automatic call recovery.
+    func userWillSelectOutput() {
+        cancelOutputRestoration()
+        outputRecovery.cancelForUserSelection(currentSpeaker: currentBuiltInSpeaker)
+    }
+
+    private func cancelOutputRestoration(preservingIntent: Bool = false) {
+        outputRecoveryRevision &+= 1
+        outputRecoveryTask?.cancel(); outputRecoveryTask = nil
+        routeLease?.invalidate(); routeLease = nil
+        outputRecovery.finishRestoration(currentSpeaker: currentBuiltInSpeaker, preservingIntent: preservingIntent)
+    }
+
+    private var currentBuiltInSpeaker: Bool? {
+        Self.builtInSpeaker(AVAudioSession.sharedInstance())
+    }
+
+    private nonisolated static func builtInSpeaker(_ session: AVAudioSession) -> Bool? {
+        switch session.currentRoute.outputs.first?.portType {
+        case .builtInSpeaker: return true
+        case .builtInReceiver: return false
+        default: return nil
+        }
     }
 
     /// Hold retires optional category/route work without retiring the meeting.
@@ -111,7 +188,7 @@ final class AudioCoordinator {
         }
         guard lease === expected, expected.isActive else { throw CancellationError() }
         observingSession = true
-        // CallKit activates the session before the SDK starts media.
+        // The call owner activates the session before the SDK starts media.
         audioWarning = nil
         cameraWarning = nil
         publishStatus()
@@ -120,6 +197,12 @@ final class AudioCoordinator {
     /// Video-chat mode implies a speaker default. Clearing a port override alone
     /// cannot select the receiver, so choose the matching communication mode too.
     func selectBuiltInOutput(speaker: Bool) async throws {
+        userWillSelectOutput()
+        try await applyBuiltInOutput(speaker: speaker)
+        outputRecovery.observe(currentSpeaker: currentBuiltInSpeaker)
+    }
+
+    private func applyBuiltInOutput(speaker: Bool, preservingExternalRoute: Bool = false) async throws {
         guard let configuration = configurationLease, configuration.isActive else { throw CancellationError() }
         let expected = lease
         routeLease?.invalidate()
@@ -127,6 +210,7 @@ final class AudioCoordinator {
         try await worker.perform(lease: request) {
             try expected.check(); try configuration.check()
             let session = AVAudioSession.sharedInstance()
+            if preservingExternalRoute && Self.builtInSpeaker(session) == nil { return }
             var options = session.categoryOptions
             if !speaker { options.remove(.defaultToSpeaker) }
             let mode: AVAudioSession.Mode = [.voiceChat, .videoChat].contains(session.mode)
@@ -135,6 +219,7 @@ final class AudioCoordinator {
                 try session.setCategory(session.category, mode: mode, options: options)
             }
             try expected.check(); try request.check(); try configuration.check()
+            if preservingExternalRoute && Self.builtInSpeaker(session) == nil { return }
             if let input = session.availableInputs?.first(where: { $0.portType == .builtInMic }), session.preferredInput != input {
                 try session.setPreferredInput(input)
             }
@@ -174,12 +259,13 @@ final class AudioCoordinator {
         try session.setCategory(session.category, mode: session.mode, options: session.categoryOptions.union(.mixWithOthers))
     }
 
-    /// A new CallKit activation supersedes an earlier interruption warning.
+    /// A new audio activation supersedes an earlier interruption warning.
     func callAudioDidActivate() {
         guard observingSession, lease.isActive else { return }
         if configurationLease == nil { configurationLease = AudioSessionLease() }
         audioWarning = nil
         ensureMixing()
+        outputRecovery.observe(currentSpeaker: currentBuiltInSpeaker)
         logRoute()
         publishStatus()
     }
@@ -210,7 +296,7 @@ final class AudioCoordinator {
             let raw = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
             let type = raw.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
             if type == .began {
-                suspendConfiguration()
+                preserveOutputForInterruption()
                 audioWarning = L("Audio interrupted by iOS")
                 onInterruptionChanged?(true)
             } else if type == .ended {
@@ -232,7 +318,13 @@ final class AudioCoordinator {
         case AVCaptureSession.interruptionEndedNotification:
             cameraWarning = nil
         case AVAudioSession.routeChangeNotification:
-            // The provider's route picker and the current system route remain authoritative.
+            // Ignore Phone's temporary built-in route while an interruption is active.
+            let rawReason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            let reason = rawReason.flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+            if currentBuiltInSpeaker == nil { cancelOutputRestoration() }
+            if reason != .categoryChange && reason != .routeConfigurationChange {
+                outputRecovery.observe(currentSpeaker: currentBuiltInSpeaker)
+            }
             logRoute()
             ensureMixing()
             onRouteChanged?()
@@ -284,5 +376,33 @@ final class AudioCoordinator {
         let outputs = route.outputs.map { $0.portType.rawValue }.joined(separator: ",")
         print("Audio route types: input=[\(inputs)] output=[\(outputs)]")
         #endif
+    }
+}
+
+/// Stores only built-in output intent. A new external route wins over restoration.
+struct BuiltInOutputRecovery {
+    private var lastSpeaker: Bool?
+    private var interrupted = false
+    private var restoring = false
+    mutating func observe(currentSpeaker: Bool?) {
+        if !interrupted && !restoring { lastSpeaker = currentSpeaker }
+    }
+    mutating func beginInterruption() { interrupted = true }
+    mutating func takeRestore(currentSpeaker: Bool?) -> Bool? {
+        guard interrupted else { return nil }
+        interrupted = false
+        let restore = currentSpeaker == nil ? nil : lastSpeaker
+        lastSpeaker = restore ?? currentSpeaker
+        restoring = restore != nil
+        return restore
+    }
+    mutating func finishRestoration(currentSpeaker: Bool?, preservingIntent: Bool = false) {
+        guard restoring else { return }
+        restoring = false
+        if !preservingIntent { lastSpeaker = currentSpeaker }
+    }
+    mutating func cancelForUserSelection(currentSpeaker: Bool?) {
+        interrupted = false; restoring = false
+        lastSpeaker = currentSpeaker
     }
 }

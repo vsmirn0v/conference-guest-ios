@@ -39,6 +39,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private var navigationCount = 0
     private var stagePinned = false
     var onBrowse: ((Int) -> Void)?
+    var onChooseAudioOutput: (() -> Void)?
     var onAutomaticView: (() -> Void)?
     var onPinStage: (() -> Void)?
     var onPinParticipant: ((GuestStreamViews.PinTarget?) -> Void)?
@@ -412,6 +413,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         route.accessibilityIdentifier = "call.output"
         let picker: UIView = ProcessInfo.processInfo.isiOSAppOnMac ? MacAudioRouteButton()
             : (coordinator?.audioRoutePickerButton ?? UIButton(type: .system))
+        picker.addGestureRecognizer(AudioRouteInteractionObserver { [weak self] in
+            self?.onChooseAudioOutput?()
+        })
         picker.translatesAutoresizingMaskIntoConstraints = false
         route.addSubview(picker)
         let routeAppearance = AlignedCallButton(frame: .zero)
@@ -1378,5 +1382,22 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         configuration.baseForegroundColor = .white
         configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 19)
         return configuration
+    }
+}
+
+/// Observe intent before the SDK's route chooser opens, including UIView-based
+/// pickers. Failing immediately leaves their native touch handling untouched.
+final class AudioRouteInteractionObserver: UIGestureRecognizer {
+    private let onInteraction: () -> Void
+    init(onInteraction: @escaping () -> Void) {
+        self.onInteraction = onInteraction
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+    }
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        onInteraction()
+        state = .failed
     }
 }

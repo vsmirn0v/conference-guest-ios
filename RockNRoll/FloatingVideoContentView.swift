@@ -29,6 +29,7 @@ final class FloatingVideoContentView: UIView {
     private let icon = UIImageView()
     private let activityIcon = MicrophoneActivityView()
     private let label = UILabel()
+    private let waiting = UILabel()
     private let speaker = ActiveSpeakerIndicator(font: .systemFont(ofSize: 11, weight: .semibold))
     private(set) var microphoneStatus: PiPMicrophoneStatus = .unavailable
 
@@ -38,6 +39,15 @@ final class FloatingVideoContentView: UIView {
         backgroundColor = .black
         clipsToBounds = true
         addSubview(videoContent)
+        waiting.text = L("Waiting for video…")
+        waiting.textColor = UIColor.white.withAlphaComponent(0.75)
+        waiting.font = .preferredFont(forTextStyle: .caption1)
+        waiting.textAlignment = .center
+        waiting.numberOfLines = 2
+        waiting.backgroundColor = .black
+        waiting.isHidden = true
+        waiting.accessibilityIdentifier = "Floating video waiting"
+        addSubview(waiting)
         badge.backgroundColor = UIColor(white: 0.08, alpha: 0.9)
         badge.layer.cornerRadius = 7
         badge.isUserInteractionEnabled = false
@@ -75,6 +85,7 @@ final class FloatingVideoContentView: UIView {
         speaker.setSpeaker(value)
         setNeedsLayout()
     }
+    func setWaitingForVideo(_ value: Bool) { waiting.isHidden = !value }
 
     private func renderStatus() {
         // An unavailable microphone is still a microphone. Keep its disabled
@@ -101,6 +112,7 @@ final class FloatingVideoContentView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         videoContent.frame = bounds
+        waiting.frame = bounds
         let inset: CGFloat = bounds.width < 200 ? 6 : 8
         let available = max(0, bounds.width - 2 * inset)
         let fullTitle = microphoneStatus.title

@@ -1,0 +1,264 @@
+--- a/sdk/objc/native/src/audio/voice_processing_audio_unit.h
++++ b/sdk/objc/native/src/audio/voice_processing_audio_unit.h
+@@ -72,7 +72,8 @@
+   static const UInt32 kBytesPerSample;
+ 
+   // Initializes this class by creating the underlying audio unit instance.
+-  // Creates a Voice-Processing I/O unit and configures it for full-duplex
++  // Creates a Voice-Processing I/O unit (or output-only Remote I/O on Mac).
++  // Configures Voice-Processing I/O for full-duplex
+   // audio. The selected stream format is selected to avoid internal resampling
+   // and to match the 10ms callback rate for WebRTC as well as possible.
+   // Does not intialize the audio unit.
+@@ -103,6 +104,10 @@
+                   AudioBufferList* io_data);
+ 
+  private:
++  // Creates Remote I/O without an input bus for output-only playback on Mac,
++  // or the normal Voice Processing I/O unit for recording and all iOS devices.
++  bool CreateAudioUnit(bool use_remote_io);
++
+   // The C API used to set callbacks requires static functions. When these are
+   // called, they will invoke the relevant instance method by casting
+   // in_ref_con to VoiceProcessingAudioUnit*.
+@@ -143,6 +148,7 @@
+   const bool detect_mute_speech_;
+   VoiceProcessingAudioUnitObserver* observer_;
+   AudioUnit vpio_unit_;
++  bool uses_remote_io_;
+   VoiceProcessingAudioUnit::State state_;
+ };
+ }  // namespace ios_adm
+--- a/sdk/objc/native/src/audio/voice_processing_audio_unit.mm
++++ b/sdk/objc/native/src/audio/voice_processing_audio_unit.mm
+@@ -10,6 +10,8 @@
+ 
+ #import "voice_processing_audio_unit.h"
+ 
++#import <Foundation/Foundation.h>
++
+ #include "rtc_base/checks.h"
+ #include "system_wrappers/include/metrics.h"
+ 
+@@ -57,6 +59,13 @@
+ // A VP I/O unit's bus 0 connects to output hardware (speaker).
+ static const AudioUnitElement kOutputBus = 0;
+ 
++static bool IsIOSAppOnMac() {
++  if (@available(iOS 14.0, *)) {
++    return [NSProcessInfo processInfo].isiOSAppOnMac;
++  }
++  return false;
++}
++
+ // Returns the automatic gain control (AGC) state on the processed microphone
+ // signal. Should be on by default for Voice Processing audio units.
+ static OSStatus GetAGCState(AudioUnit audio_unit, UInt32* enabled) {
+@@ -81,6 +90,7 @@
+       detect_mute_speech_(detect_mute_speech),
+       observer_(observer),
+       vpio_unit_(nullptr),
++      uses_remote_io_(false),
+       state_(kInitRequired) {
+   RTC_DCHECK(observer);
+ }
+@@ -92,13 +102,20 @@
+ const UInt32 VoiceProcessingAudioUnit::kBytesPerSample = 2;
+ 
+ bool VoiceProcessingAudioUnit::Init() {
++  // Input is not requested until Initialize. Avoid constructing a duplex
++  // processor on Mac for the common, microphone-off receive path.
++  return CreateAudioUnit(IsIOSAppOnMac());
++}
++
++bool VoiceProcessingAudioUnit::CreateAudioUnit(bool use_remote_io) {
+   RTC_DCHECK_EQ(state_, kInitRequired);
+ 
+-  // Create an audio component description to identify the Voice Processing
+-  // I/O audio unit.
++  // Create an audio component description to identify the selected I/O unit.
+   AudioComponentDescription vpio_unit_description;
+   vpio_unit_description.componentType = kAudioUnitType_Output;
+-  vpio_unit_description.componentSubType = kAudioUnitSubType_VoiceProcessingIO;
++  vpio_unit_description.componentSubType =
++      use_remote_io ? static_cast<OSType>(kAudioUnitSubType_RemoteIO)
++                    : static_cast<OSType>(kAudioUnitSubType_VoiceProcessingIO);
+   vpio_unit_description.componentManufacturer = kAudioUnitManufacturer_Apple;
+   vpio_unit_description.componentFlags = 0;
+   vpio_unit_description.componentFlagsMask = 0;
+@@ -106,8 +123,13 @@
+   // Obtain an audio unit instance given the description.
+   AudioComponent found_vpio_unit_ref =
+       AudioComponentFindNext(nullptr, &vpio_unit_description);
++  if (!found_vpio_unit_ref) {
++    RTCLogError(@"Requested I/O audio component is unavailable. RemoteIO=%d",
++                use_remote_io);
++    return false;
++  }
+ 
+-  // Create a Voice Processing IO audio unit.
++  // Create the selected I/O audio unit.
+   OSStatus result = noErr;
+   result = AudioComponentInstanceNew(found_vpio_unit_ref, &vpio_unit_);
+   if (result != noErr) {
+@@ -115,9 +137,12 @@
+     RTCLogError(@"AudioComponentInstanceNew failed. Error=%ld.", (long)result);
+     return false;
+   }
++  uses_remote_io_ = use_remote_io;
++  RTCLog(@"Created I/O audio unit. RemoteIO=%d", uses_remote_io_);
+ 
+-  // Enable input on the input scope of the input element.
+-  UInt32 enable_input = 1;
++  // Remote I/O is strictly output-only. It never enables microphone input,
++  // even while being configured before AudioUnitInitialize.
++  UInt32 enable_input = uses_remote_io_ ? 0 : 1;
+   result = AudioUnitSetProperty(vpio_unit_,
+                                 kAudioOutputUnitProperty_EnableIO,
+                                 kAudioUnitScope_Input,
+@@ -167,6 +192,11 @@
+     return false;
+   }
+ 
++  if (uses_remote_io_) {
++    state_ = kUninitialized;
++    return true;
++  }
++
+   // Disable AU buffer allocation for the recorder, we allocate our own.
+   // TODO(henrika): not sure that it actually saves resource to make this call.
+   UInt32 flag = 0;
+@@ -216,6 +246,18 @@
+   RTC_DCHECK_GE(state_, kUninitialized);
+   RTCLog(@"Initializing audio unit with sample rate: %f", sample_rate);
+ 
++  // The Mac compatibility Voice Processing I/O unit can fault in its downlink
++  // DSP when input is disabled, even with voice processing bypassed. Use a
++  // plain Remote I/O output unit in that case, and recreate the normal VPIO
++  // unit before recording so the configured AEC/AGC policy remains intact.
++  const bool use_remote_io = IsIOSAppOnMac() && !enable_input;
++  if (use_remote_io != uses_remote_io_) {
++    DisposeAudioUnit();
++    if (!CreateAudioUnit(use_remote_io)) {
++      return false;
++    }
++  }
++
+   OSStatus result = noErr;
+   AudioStreamBasicDescription format = GetFormat(sample_rate);
+   UInt32 size = sizeof(format);
+@@ -236,18 +278,21 @@
+     return false;
+   }
+ 
+-  // Set the format on the output scope of the input element/bus.
+-  result = AudioUnitSetProperty(vpio_unit_,
+-                                kAudioUnitProperty_StreamFormat,
+-                                kAudioUnitScope_Output,
+-                                kInputBus,
+-                                &format,
+-                                size);
+-  if (result != noErr) {
+-    RTCLogError(@"Failed to set format on output scope of input bus. "
+-                 "Error=%ld.",
+-                (long)result);
+-    return false;
++  // Remote I/O has no recording callback or input format to configure.
++  if (!uses_remote_io_) {
++    // Set the format on the output scope of the input element/bus.
++    result = AudioUnitSetProperty(vpio_unit_,
++                                  kAudioUnitProperty_StreamFormat,
++                                  kAudioUnitScope_Output,
++                                  kInputBus,
++                                  &format,
++                                  size);
++    if (result != noErr) {
++      RTCLogError(@"Failed to set format on output scope of input bus. "
++                   "Error=%ld.",
++                  (long)result);
++      return false;
++    }
+   }
+ 
+   // Set the format on the input scope of the output element/bus.
+@@ -264,7 +309,7 @@
+     return false;
+   }
+ 
+-  // Initialize the Voice Processing I/O unit instance.
++  // Initialize the I/O unit instance.
+   // Calls to AudioUnitInitialize() can fail if called back-to-back on
+   // different ADM instances. The error message in this case is -66635 which is
+   // undocumented. Tests have shown that calling AudioUnitInitialize a second
+@@ -273,7 +318,7 @@
+   int failed_initalize_attempts = 0;
+   result = AudioUnitInitialize(vpio_unit_);
+   while (result != noErr) {
+-    RTCLogError(@"Failed to initialize the Voice Processing I/O unit. "
++    RTCLogError(@"Failed to initialize the I/O unit. "
+                  "Error=%ld.",
+                 (long)result);
+     ++failed_initalize_attempts;
+@@ -287,9 +332,16 @@
+     result = AudioUnitInitialize(vpio_unit_);
+   }
+   if (result == noErr) {
+-    RTCLog(@"Voice Processing I/O unit is now initialized.");
++    RTCLog(@"I/O unit is now initialized. RemoteIO=%d input=%d",
++           uses_remote_io_, enable_input);
+   }
+ 
++  // Remote I/O has no voice-processing properties or microphone to mute.
++  if (uses_remote_io_) {
++    state_ = kInitialized;
++    return true;
++  }
++
+   if (detect_mute_speech_) {
+     if (@available(iOS 15, *)) {
+       // Set listener for muted speech event.
+@@ -313,14 +365,13 @@
+   }
+ 
+   if (bypass_voice_processing_) {
+-    // Attempt to disable builtin voice processing.
+     UInt32 toggle = 1;
+     result = AudioUnitSetProperty(vpio_unit_,
+-                                  kAUVoiceIOProperty_BypassVoiceProcessing,
+-                                  kAudioUnitScope_Global,
+-                                  kInputBus,
+-                                  &toggle,
+-                                  sizeof(toggle));
++                                 kAUVoiceIOProperty_BypassVoiceProcessing,
++                                 kAudioUnitScope_Global,
++                                 kInputBus,
++                                 &toggle,
++                                 sizeof(toggle));
+     if (result == noErr) {
+       RTCLog(@"Successfully bypassed voice processing.");
+     } else {
+@@ -443,6 +494,15 @@
+ bool VoiceProcessingAudioUnit::SetMicrophoneMute(bool enable) {
+   RTC_DCHECK_GE(state_, kUninitialized);
+ 
++  if (uses_remote_io_) {
++    // An unmute request must go through InitRecording, which recreates VPIO
++    // with its input callback and processing. Never enable Remote I/O input.
++    if (!enable) {
++      RTCLogError(@"Cannot unmute an output-only audio unit before recording.");
++    }
++    return enable;
++  }
++
+   RTCLog(@"Setting microphone %s.", enable ? "mute" : "unmute");
+ 
+   OSStatus result = noErr;
+@@ -579,6 +639,8 @@
+     }
+     vpio_unit_ = nullptr;
+   }
++  uses_remote_io_ = false;
++  state_ = kInitRequired;
+ }
+ 
+ }  // namespace ios_adm

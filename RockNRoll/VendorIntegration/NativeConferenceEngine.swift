@@ -28,6 +28,7 @@ final class NativeConferenceEngine: CallEngine {
     private var accessSubscription: AnyCancellable?
     private var nameUpdateGeneration: UInt64 = 0
     private let audio = AudioCoordinator()
+    private let conferencePlayout = GuestConferencePlayoutReservation()
     let catchUp: CatchUpStore
     private let systemCall: SystemCallCoordinator
     private var networkMonitor: NWPathMonitor?
@@ -81,6 +82,16 @@ final class NativeConferenceEngine: CallEngine {
     var mediaAttemptForTesting: UUID { mediaAttemptEpoch }
     var mediaReadyForTesting: Bool { isSDKActive && mediaConnectionConfirmed && !isMediaReconnecting }
     func terminateTransportForTesting() { JazzSession.shared.terminateActiveConference() }
+    func setMicrophoneForTesting(_ enabled: Bool) {
+        microphoneIntentOn = enabled
+        if enabled { studio.releasePrivateMicrophone() }
+        systemCall.setMuted(!enabled)
+        activeCoordinator?.toggleMicrohone(isOn: enabled)
+    }
+    func setCameraForTesting(_ enabled: Bool) {
+        cameraIntentOn = enabled
+        activeCoordinator?.toggleCamera(isOn: enabled)
+    }
     #endif
     private var studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard)
     private var studioSubscription: AnyCancellable?
@@ -115,6 +126,7 @@ final class NativeConferenceEngine: CallEngine {
     private var testHoldScheduled = false
     private var testNetworkRecoveryScheduled = false
     private var recoveryTraceStarted = false
+    private let audioIOTrace = GuestAudioIOTrace()
     #endif
     private(set) var hasJoinStarted = false
     private var hasMediaJoinStarted = false
@@ -132,6 +144,7 @@ final class NativeConferenceEngine: CallEngine {
     }
     deinit {
         #if DEBUG
+        audioIOTrace.stop()
         VideoDecoderFactoryExperiment.shared.end(token: decoderExperimentToken)
         #endif
         codecChecks.values.forEach { $0.cancel() }
@@ -169,7 +182,13 @@ final class NativeConferenceEngine: CallEngine {
         floatingVideo?.setSuspended(!hasBecomeActive || leaveRequested || isSystemHeld || isAudioInterrupted)
     }
 
+    private func updateConferencePlayout(refresh: Bool = false) {
+        conferencePlayout.update(joined: hasMediaJoinStarted && !leaveRequested && finishing == nil,
+            audioAvailable: !isSystemHeld && !isAudioInterrupted && isCallAudioReady, refresh: refresh)
+    }
+
     private func updatePiPMicrophoneStatus() {
+        updateConferencePlayout()
         reactionsAdapter?.refresh()
         let available = isSDKActive && isNetworkAvailable && !leaveRequested &&
             !isSystemHeld && !isAudioInterrupted && !isMediaReconnecting
@@ -185,6 +204,9 @@ final class NativeConferenceEngine: CallEngine {
 
     private func updateSpeaker(local: JazzConferenceParticipant, remote: [String: JazzConferenceParticipant],
                                dominant: JazzConferenceParticipant?) {
+        #if DEBUG
+        remoteAudioEvidence = ["participants": remote.count, "microphonesOn": remote.values.filter { $0.microphone.isOn }.count]
+        #endif
         let member = dominant.flatMap { selected in
             selected.id == local.id ? local : remote.values.first { $0.id == selected.id }
         }
@@ -381,6 +403,7 @@ final class NativeConferenceEngine: CallEngine {
         }
         floating.bindMicrophoneActivity(studio.microphoneActivity)
         floating.onPresentationChanged = { [weak self] in self?.videoDemand.setFloating($0) }
+        floating.onRecoveryDemandChanged = { [weak self] in self?.videoDemand.setRecovering($0) }
         videoDemand.onChange = { [weak self] in self?.updateIncomingVideoDemand() }
         floatingVideo = floating
         updateFloatingSuspension()
@@ -395,7 +418,9 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func installCallHandlers() {
-        systemCall.onAudioYield = { [weak self] in self?.audio.suspendConfiguration() }
+        systemCall.onAudioYield = { [weak self] in
+            self?.audio.preserveOutputForInterruption()
+        }
         let epoch = sessionEpoch
         systemCall.onCallStateChanged = { [weak self] in
             Task { @MainActor [weak self] in
@@ -407,6 +432,7 @@ final class NativeConferenceEngine: CallEngine {
             Task { @MainActor [weak self] in
                 guard let self, self.sessionEpoch == epoch, self.hasJoinStarted, !self.leaveRequested else { return }
                 self.audioGate.activate()
+                self.updateConferencePlayout(refresh: true)
                 self.updateMediaRecoveryBudget()
                 self.traceMediaRecovery("audio-activated")
                 self.audio.callAudioDidActivate()
@@ -510,6 +536,7 @@ final class NativeConferenceEngine: CallEngine {
 
     private func beginMediaReconnect(forNetwork: Bool) {
         guard hasJoinStarted, !leaveRequested, finishing == nil, !isMediaReconnecting else { return }
+        audio.preserveOutputForReconnect()
         codecChecks.values.forEach { $0.cancel() }; codecChecks.removeAll(); codecCheckTokens.removeAll()
         needsMediaReconnect = false
         reconnectingForNetwork = forNetwork
@@ -575,6 +602,8 @@ final class NativeConferenceEngine: CallEngine {
         isAudioInterrupted = false
         needsMediaReconnect = false
         traceMediaRecovery("reconnect-complete")
+        audio.callAudioDidActivate()
+        audio.restoreOutputAfterInterruption()
         if !isSystemHeld { restoreMediaIntent() }
         // Media readiness can arrive after the active phase. Refresh rendering
         // here too, after clearing the interruption which suspended its frames.
@@ -810,6 +839,9 @@ final class NativeConferenceEngine: CallEngine {
         startNetworkMonitor()
         hasJoinStarted = true
         #if DEBUG
+        audioIOTrace.start()
+        #endif
+        #if DEBUG
         let decoderEpoch = sessionEpoch
         decoderExperimentToken = VideoDecoderFactoryExperiment.shared.begin(scope: .guest) { [weak self] in
             Task { @MainActor [weak self] in
@@ -854,6 +886,7 @@ final class NativeConferenceEngine: CallEngine {
               let room = pendingRoom else { return }
         pendingRoom = nil
         hasMediaJoinStarted = true
+        updateConferencePlayout()
         mediaAttemptEpoch = UUID()
         terminalEventTask?.cancel(); terminalEventTask = nil
         connectionSubscription?.cancel(); connectionSubscription = nil
@@ -886,6 +919,7 @@ final class NativeConferenceEngine: CallEngine {
 
     func leave() {
         guard hasJoinStarted, !leaveRequested else { return }
+        conferencePlayout.setReserved(false)
         audio.endSession()
         reactionTransport?.stop(); reactionTransport = nil
         receivedReactions?.stop(); receivedReactions = nil
@@ -927,7 +961,7 @@ final class NativeConferenceEngine: CallEngine {
         #if canImport(ScreenCaptureKit)
         if GuestScreenCaptureFactory.isAvailable {
             if screenCapture == nil {
-                screenCapture = GuestScreenCaptureFactory.make(preview: localSharePreview) { [weak self] message in
+                screenCapture = GuestScreenCaptureFactory.make(preview: localSharePreview, preserveDetail: true) { [weak self] message in
                     self?.activeControls?.showMediaStatus(message)
                 }
             }
@@ -1121,6 +1155,9 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     /// Opt-in device trace: flags only, bounded, and absent from Release builds.
+    #if DEBUG
+    private var remoteAudioEvidence: [String: Int] = [:]
+    #endif
     private func traceMediaRecovery(_ event: String, details: [String: Any] = [:]) {
         #if DEBUG
         guard ProcessInfo.processInfo.environment["CONFERENCE_TEST_MEDIA_TRACE"] == "1",
@@ -1156,6 +1193,8 @@ final class NativeConferenceEngine: CallEngine {
         entry["networkRecovery"] = networkRecovery.requiresRecovery
         entry["reconnectingForNetwork"] = reconnectingForNetwork
         entry["videoSinks"] = activeControls?.videoEvidenceForTesting
+        entry["remoteAudio"] = remoteAudioEvidence
+        entry["videoDemand"] = videoDemand.wantsVideo
         entry.merge(details) { _, value in value }
         entry.merge(systemCall.diagnosticState) { _, value in value }
         entry["vendorCallProxyEnabled"] = JMCallKitProxy.enabled
@@ -1294,7 +1333,7 @@ final class NativeConferenceEngine: CallEngine {
                     self.prepareMacShareTransport()
                 }
                 self.studio.presenter.makeScreenSource = { [weak self] onFrame, onEffect, onSelection, onEnd in
-                    GuestScreenCaptureFactory.make(preview: self?.localSharePreview ?? LocalSharePreview(),
+                    GuestScreenCaptureFactory.make(preview: self?.localSharePreview ?? LocalSharePreview(), preserveDetail: true,
                         onFrame: onFrame, onEffect: onEffect, onSelection: onSelection, onEnd: onEnd,
                         onError: { _ in })
                 }
@@ -1438,6 +1477,7 @@ final class NativeConferenceEngine: CallEngine {
                                         onDisplayMode: { [weak self] mode in
                                             guard let self, self.sessionEpoch == epoch else { return }
                                             self.displayMode = mode
+                                            if mode == .audioOnly { self.floatingVideo?.clear(preservingPresentation: false) }
                                             self.streamViews.displayMode = mode
                                             self.updateIncomingVideoDemand()
                                         },
@@ -1528,6 +1568,7 @@ final class NativeConferenceEngine: CallEngine {
                 self.streamViews.setPin(target)
             }
             controls.onBrowse = { [weak self] in self?.streamViews.browse($0) }
+            controls.onChooseAudioOutput = { [weak self] in self?.audio.userWillSelectOutput() }
             controls.onAutomaticView = { [weak self] in self?.streamViews.useAutomaticView() }
             controls.onPinStage = { [weak self] in self?.streamViews.toggleSelectedPin() }
             controls.onViewShare = { [weak self] in
@@ -1730,6 +1771,7 @@ final class NativeConferenceEngine: CallEngine {
             guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                   self.hasMediaJoinStarted, !self.leaveRequested, self.finishing == nil else { return }
             self.mediaConnectionConfirmed = true
+            self.updateConferencePlayout(refresh: true)
             self.reactionsAdapter?.refresh()
             self.traceMediaRecovery("media-connected")
             #if DEBUG
@@ -1778,6 +1820,10 @@ final class NativeConferenceEngine: CallEngine {
     private func finishSession(userEnded: Bool, event: CallEvent) {
         endCodecPolicy()
         guard finishing == nil, hasJoinStarted else { return }
+        #if DEBUG
+        audioIOTrace.stop()
+        #endif
+        conferencePlayout.setReserved(false)
         audio.endSession()
         terminalEventTask?.cancel(); terminalEventTask = nil
         connectionSubscription?.cancel(); connectionSubscription = nil

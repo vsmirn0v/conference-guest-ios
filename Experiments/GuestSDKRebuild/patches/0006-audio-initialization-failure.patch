@@ -1,0 +1,15 @@
+--- a/sdk/objc/native/src/audio/audio_device_ios.mm
++++ b/sdk/objc/native/src/audio/audio_device_ios.mm
+@@ -1077,7 +1077,11 @@
+       return false;
+     }
+     SetupAudioBuffersForActiveAudioSession();
+-    audio_unit_->Initialize(playout_parameters_.sample_rate(), enable_input);
++    if (!audio_unit_->Initialize(playout_parameters_.sample_rate(), enable_input)) {
++      [session unlockForConfiguration];
++      ShutdownPlayOrRecord();
++      return false;
++    }
+   }
+ 
+   // Release the lock.

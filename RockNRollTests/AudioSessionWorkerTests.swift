@@ -12,6 +12,52 @@ final class AudioSessionWorkerTests: XCTestCase {
         func increment() { lock.lock(); count += 1; lock.unlock() }
         var value: Int { lock.lock(); defer { lock.unlock() }; return count }
     }
+    func testPreCallBuiltInOutputSurvivesTemporaryPhoneRoute() {
+        for speaker in [true, false] {
+            var recovery = BuiltInOutputRecovery()
+            recovery.observe(currentSpeaker: speaker); recovery.beginInterruption()
+            recovery.observe(currentSpeaker: !speaker); recovery.beginInterruption()
+            XCTAssertEqual(recovery.takeRestore(currentSpeaker: !speaker), speaker)
+            XCTAssertNil(recovery.takeRestore(currentSpeaker: !speaker), "Restore only once")
+        }
+    }
+    func testNewHeadsetRouteWinsOverPreCallSpeaker() {
+        var recovery = BuiltInOutputRecovery()
+        recovery.observe(currentSpeaker: true); recovery.beginInterruption()
+        XCTAssertNil(recovery.takeRestore(currentSpeaker: nil))
+        recovery.beginInterruption()
+        XCTAssertNil(recovery.takeRestore(currentSpeaker: false), "An external route is not mapped to Speaker")
+    }
+    func testDelayedSDKRouteChangeDoesNotReplaceRecoveryIntent() {
+        var recovery = BuiltInOutputRecovery()
+        recovery.observe(currentSpeaker: true); recovery.beginInterruption()
+        XCTAssertEqual(recovery.takeRestore(currentSpeaker: false), true)
+        recovery.observe(currentSpeaker: false)
+        recovery.finishRestoration(currentSpeaker: false, preservingIntent: true)
+        recovery.beginInterruption()
+        XCTAssertEqual(recovery.takeRestore(currentSpeaker: false), true)
+        recovery.finishRestoration(currentSpeaker: true)
+        recovery.observe(currentSpeaker: false) // Explicit selection after recovery.
+        recovery.beginInterruption()
+        XCTAssertEqual(recovery.takeRestore(currentSpeaker: true), false)
+    }
+    func testExternalRouteDuringRestorationIsNotRestoredToSpeakerLater() {
+        var recovery = BuiltInOutputRecovery()
+        recovery.observe(currentSpeaker: true); recovery.beginInterruption()
+        XCTAssertEqual(recovery.takeRestore(currentSpeaker: false), true)
+        recovery.finishRestoration(currentSpeaker: nil)
+        recovery.beginInterruption()
+        XCTAssertNil(recovery.takeRestore(currentSpeaker: false))
+    }
+    func testExplicitRouteChoiceCancelsPendingReconnectRestoration() {
+        var recovery = BuiltInOutputRecovery()
+        recovery.observe(currentSpeaker: true); recovery.beginInterruption()
+        recovery.cancelForUserSelection(currentSpeaker: true)
+        recovery.observe(currentSpeaker: false)
+        XCTAssertNil(recovery.takeRestore(currentSpeaker: false))
+        recovery.beginInterruption()
+        XCTAssertEqual(recovery.takeRestore(currentSpeaker: true), false)
+    }
     func testSessionWorkDoesNotBlockMainActor() async throws {
         let worker = AudioSessionWorker(), entered = expectation(description: "worker entered")
         let release = DispatchSemaphore(value: 0)
@@ -181,6 +227,31 @@ final class AudioSessionWorkerTests: XCTestCase {
         audio.suspendConfiguration(); queue.resume()
         do { try await route.value; XCTFail("Held route was admitted") } catch is CancellationError { }
         audio.endSession()
+    }
+    func testManualRoutePickerRetiresQueuedRouteChange() async throws {
+        let queue = DispatchQueue(label: "test.audio-session.route-picker")
+        let audio = AudioCoordinator(worker: AudioSessionWorker(queue: queue))
+        audio.beginSession(); queue.suspend()
+        let route = Task { try await audio.selectBuiltInOutput(speaker: true) }
+        await Task.yield()
+        audio.userWillSelectOutput(); queue.resume()
+        do { try await route.value; XCTFail("Superseded route was admitted") } catch is CancellationError { }
+        audio.endSession()
+    }
+    func testUIViewRoutePickerObservationDoesNotConsumeTouches() {
+        let picker = UIView()
+        var choices = 0
+        let observer = AudioRouteInteractionObserver { choices += 1 }
+        picker.addGestureRecognizer(observer)
+        observer.touchesBegan([], with: UIEvent())
+        XCTAssertEqual(choices, 1)
+        XCTAssertEqual(observer.view, picker)
+        // UIKit may immediately reset .failed to .possible outside a real touch
+        // sequence. Observation must never recognize a competing gesture.
+        XCTAssertNotEqual(observer.state, .recognized)
+        XCTAssertFalse(observer.cancelsTouchesInView)
+        XCTAssertFalse(observer.delaysTouchesBegan)
+        XCTAssertFalse(observer.delaysTouchesEnded)
     }
     func testDismissedSpeakerCheckCannotStartQueuedPlayback() async throws {
         let queue = DispatchQueue(label: "test.audio-session.speaker-dismiss"), worker = AudioSessionWorker(queue: queue)

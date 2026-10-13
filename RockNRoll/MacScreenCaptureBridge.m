@@ -280,6 +280,18 @@ static NSError *CaptureError(NSString *message) {
 
 + (CGSize)outputSizeForContent:(CGSize)content {
     if (!isfinite(content.width) || !isfinite(content.height) || content.width < 2 || content.height < 2) return CGSizeZero;
+    // Text loses its fine strokes when Retina pixels are discarded before the
+    // encoder. Preserve native detail, bounded by a 4K pixel budget and edge.
+    // Divide square roots separately to avoid overflowing width * height.
+    double scale = MIN(1, MIN(3840 / MAX(content.width, content.height),
+                             sqrt(3840.0 * 2160.0) / sqrt(content.width) / sqrt(content.height)));
+    return CGSizeMake(MAX(2, floor(content.width * scale / 2) * 2),
+                      MAX(2, floor(content.height * scale / 2) * 2));
+}
+
+- (CGSize)captureSizeForContent:(CGSize)content {
+    if (self.preserveDetail) return [self.class outputSizeForContent:content];
+    if (!isfinite(content.width) || !isfinite(content.height) || content.width < 2 || content.height < 2) return CGSizeZero;
     double scale = MIN(1, MIN(1920 / content.width, 1080 / content.height));
     return CGSizeMake(MAX(2, floor(content.width * scale / 2) * 2),
                       MAX(2, floor(content.height * scale / 2) * 2));
@@ -323,7 +335,7 @@ static NSError *CaptureError(NSString *message) {
         !isfinite(contentScale) || contentScale <= 0) return;
     // Apple reports contentRect in surface points. Undo both backing scale and
     // hardware content scaling to recover the window's native pixel dimensions.
-    CGSize size = [self.class outputSizeForContent:CGSizeMake(rect.size.width * scaleFactor / contentScale,
+    CGSize size = [self captureSizeForContent:CGSizeMake(rect.size.width * scaleFactor / contentScale,
                                                              rect.size.height * scaleFactor / contentScale)];
     if (CGSizeEqualToSize(size, CGSizeZero)) return;
     _pendingSize = size;
@@ -437,7 +449,7 @@ static NSError *CaptureError(NSString *message) {
     NSObject *config = [[NSClassFromString(@"SCStreamConfiguration") alloc] init];
     CGSize content = [filter contentRect].size;
     double scale = [filter respondsToSelector:@selector(pointPixelScale)] ? [filter pointPixelScale] : 1;
-    CGSize size = [self.class outputSizeForContent:CGSizeMake(content.width * scale, content.height * scale)];
+    CGSize size = [self captureSizeForContent:CGSizeMake(content.width * scale, content.height * scale)];
     if (CGSizeEqualToSize(size, CGSizeZero)) size = CGSizeMake(1920, 1080);
     [config setWidth:(NSUInteger)size.width]; [config setHeight:(NSUInteger)size.height];
     [config setCapturesAudio:NO]; [config setPixelFormat:kCVPixelFormatType_32BGRA];

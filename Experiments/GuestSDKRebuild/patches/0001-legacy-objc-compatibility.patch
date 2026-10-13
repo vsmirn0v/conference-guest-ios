@@ -1,0 +1,52 @@
+diff --git a/sdk/BUILD.gn b/sdk/BUILD.gn
+--- a/sdk/BUILD.gn
++++ b/sdk/BUILD.gn
+@@ -1670,7 +1670,11 @@
+           ":videotoolbox_objc",
+         ]
+         if (target_environment != "xrdevice" && target_environment != "xrsimulator") {
+-          deps += [ ":metal_objc" ]
++          deps += [
++            ":metal_objc",
++            # Preserve the renderer class imported by older binary SDKs.
++            ":opengl_ui_objc",
++          ]
+         }
+         if (!build_with_chromium) {
+           deps += [
+diff --git a/sdk/objc/api/peerconnection/RTCCryptoOptions.h b/sdk/objc/api/peerconnection/RTCCryptoOptions.h
+--- a/sdk/objc/api/peerconnection/RTCCryptoOptions.h
++++ b/sdk/objc/api/peerconnection/RTCCryptoOptions.h
+@@ -73,6 +73,12 @@
+               sframeRequireFrameEncryption:(BOOL)sframeRequireFrameEncryption
+     NS_DESIGNATED_INITIALIZER;
+ 
++/** Compatibility initializer for SDKs built before the SRTP policy additions. */
++- (instancetype)initWithSrtpEnableGcmCryptoSuites:(BOOL)srtpEnableGcmCryptoSuites
++              srtpEnableAes128Sha1_32CryptoCipher:(BOOL)srtpEnableAes128Sha1_32CryptoCipher
++           srtpEnableEncryptedRtpHeaderExtensions:(BOOL)srtpEnableEncryptedRtpHeaderExtensions
++                     sframeRequireFrameEncryption:(BOOL)sframeRequireFrameEncryption;
++
+ - (instancetype)init NS_UNAVAILABLE;
+ 
+ @end
+diff --git a/sdk/objc/api/peerconnection/RTCCryptoOptions.mm b/sdk/objc/api/peerconnection/RTCCryptoOptions.mm
+--- a/sdk/objc/api/peerconnection/RTCCryptoOptions.mm
++++ b/sdk/objc/api/peerconnection/RTCCryptoOptions.mm
+@@ -45,4 +45,16 @@
+   return self;
+ }
+ 
++- (instancetype)initWithSrtpEnableGcmCryptoSuites:(BOOL)srtpEnableGcmCryptoSuites
++              srtpEnableAes128Sha1_32CryptoCipher:(BOOL)srtpEnableAes128Sha1_32CryptoCipher
++           srtpEnableEncryptedRtpHeaderExtensions:(BOOL)srtpEnableEncryptedRtpHeaderExtensions
++                     sframeRequireFrameEncryption:(BOOL)sframeRequireFrameEncryption {
++  return [self initWithSrtpEnableGcmCryptoSuites:srtpEnableGcmCryptoSuites
++                    srtpPreferGcmCryptoSuites:NO
++          srtpEnableAes128Sha1_32CryptoCipher:srtpEnableAes128Sha1_32CryptoCipher
++          srtpEnableAes128Sha1_80CryptoCipher:YES
++       srtpEnableEncryptedRtpHeaderExtensions:srtpEnableEncryptedRtpHeaderExtensions
++                 sframeRequireFrameEncryption:sframeRequireFrameEncryption];
++}
++
+ @end

@@ -1,4 +1,5 @@
 import UIKit
+import AVKit
 import JazzSDK
 import CoreMedia
 import WebRTC
@@ -7,6 +8,55 @@ import XCTest
 
 @MainActor
 final class GuestVideoDemandTests: XCTestCase {
+    func testBackgroundShareReplacementAndHoldPrimeFreshFramesWithoutForeground() async throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported(), "This runtime cannot create a video-call PiP controller")
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UIViewController(); window.makeKeyAndVisible()
+        let source = try XCTUnwrap(window.rootViewController?.view)
+        var state = UIApplication.State.active, starts = 0
+        let floating = GuestVideoPictureInPicture(sourceView: source, floatingEnvironment: .init(
+            applicationState: { state }, supported: { true }, possible: { _ in true }, start: { _ in starts += 1 }, stop: { _ in }))
+        defer { floating.end(); window.isHidden = true }
+        floating.rendersSelectedViewport = false
+        let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        let viewport = makeViewport(renderer)
+        // This is the production direct-delivery path, with no inline callback
+        // to accidentally prime PiP only because the test UI is visible.
+        floating.select(viewport: viewport, name: "Slides", isScreenShare: true)
+        renderer.renderFrame(staticFrame(luma: 70))
+        let ready = Date().addingTimeInterval(2)
+        while !floating.hasPreparedFrameForTesting && Date() < ready { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(floating.hasPreparedFrameForTesting)
+        floating.start()
+        let lifecycle = floating.lifecycleForTesting, controller = try XCTUnwrap(lifecycle.controllerForTesting)
+        lifecycle.pictureInPictureControllerWillStartPictureInPicture(controller)
+        lifecycle.pictureInPictureControllerDidStartPictureInPicture(controller)
+        state = .background; floating.backgrounded()
+        floating.select(viewport: nil, name: "", isScreenShare: false)
+        XCTAssertTrue(lifecycle.isPresenting)
+        floating.select(viewport: viewport, name: "Slides restarted", isScreenShare: true)
+        renderer.renderFrame(staticFrame(luma: 120))
+        let replaced = Date().addingTimeInterval(2)
+        while !floating.hasPreparedFrameForTesting && Date() < replaced { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(floating.hasPreparedFrameForTesting)
+        floating.setSuspended(true)
+        lifecycle.pictureInPictureControllerDidStopPictureInPicture(controller)
+        floating.setSuspended(false)
+        XCTAssertTrue(lifecycle.needsRecoveryFrames)
+        // A rebuilt SDK transport can replace the renderer before any new
+        // decoded frame arrives. That gap must not discard recovery intent.
+        let replacement = RTCEAGLVideoView(frame: renderer.bounds)
+        floating.select(viewport: makeViewport(replacement), name: "Slides recovered", isScreenShare: true)
+        XCTAssertTrue(lifecycle.needsRecoveryFrames)
+        XCTAssertTrue(lifecycle.controllerForTesting === controller)
+        let count = floating.convertedFramesForTesting
+        replacement.renderFrame(staticFrame(luma: 180))
+        let recovered = Date().addingTimeInterval(2)
+        while starts < 2 && Date() < recovered { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertGreaterThan(floating.convertedFramesForTesting, count)
+        XCTAssertEqual(starts, 2, "Fresh background media must rearm the retained PiP")
+        XCTAssertTrue(floating.hasPreparedFrameForTesting)
+    }
     func testStaticShareReappearsAfterTileSwitchAndRendererReplacementWithoutNewFrames() async throws {
         let streams = GuestStreamViews()
         defer { streams.reset() }

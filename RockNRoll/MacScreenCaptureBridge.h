@@ -7,8 +7,11 @@ NS_ASSUME_NONNULL_BEGIN
 /// Deliberately independent of the iOS 27 ScreenCaptureKit declarations.
 @interface MacScreenCaptureBridge : NSObject
 + (BOOL)isSupported;
-/// Native source pixels, fit within 1920x1080 without upscaling.
+/// Native pixels, capped at 3840 per edge and 3840*2160 pixels; never upscales.
 + (CGSize)outputSizeForContent:(CGSize)content NS_SWIFT_NAME(outputSize(for:));
+/// Enabled only for transports qualified with native Retina/4K input.
+@property(nonatomic) BOOL preserveDetail;
+- (CGSize)captureSizeForContent:(CGSize)content NS_SWIFT_NAME(captureSize(for:));
 /// Public Mac timing properties missing from UIKit's ScreenCaptureKit surface.
 + (void)configureTiming:(NSObject *)configuration fps:(NSInteger)fps queueDepth:(NSInteger)depth;
 /// Shared by the macOS compatibility and UIKit capture paths on the Mac host.

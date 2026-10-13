@@ -1,0 +1,20 @@
+--- a/sdk/objc/native/src/audio/audio_device_ios.mm
++++ b/sdk/objc/native/src/audio/audio_device_ios.mm
+@@ -241,7 +241,7 @@
+     }
+   } else {
+     // playout already initialized, restart audio unit with input
+-    RestartAudioUnit(true);
++    if (!RestartAudioUnit(true)) return -1;
+   }
+ 
+   recording_is_initialized_ = true;
+@@ -794,7 +794,7 @@
+   }
+ 
+   // Restart the audio unit if it was already running.
+-  if (restart_audio_unit && !audio_unit_->Start()) {
++  if (restart_audio_unit && audio_unit_->Start() != noErr) {
+     RTCLogError(@"Failed to start audio unit with sample rate: %f", sample_rate);
+     return false;
+   }

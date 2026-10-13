@@ -2,8 +2,8 @@
 set -euo pipefail
 
 search_dir="${BUILD_DIR}"
-packages_root=""
-while [[ "$search_dir" != / ]]; do
+packages_root="${CONFERENCE_SDK_SOURCE_DIR:-}"
+while [[ -z "$packages_root" && "$search_dir" != / ]]; do
   candidate="$search_dir/SourcePackages/checkouts/jazz-ios-sdk/Sources"
   if [[ -d "$candidate" ]]; then
     packages_root="$candidate"

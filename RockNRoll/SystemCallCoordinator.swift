@@ -51,6 +51,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private let callSnapshot: (() -> [ObservedCall])?
     private let activateAudioSession: (() throws -> Void)?
     private let sessionWorker: AudioSessionWorker
+    private let applicationMute: ApplicationMicrophoneMute?
     private var activationLease: AudioSessionLease?
     private var servicesAvailable = true
     private var ending = false
@@ -105,6 +106,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
          callSnapshot: (() -> [ObservedCall])? = nil,
          systemCallRegistration: Bool? = nil,
          activateAudioSession: (() throws -> Void)? = nil,
+         applicationMute: ApplicationMicrophoneMute? = nil,
          sessionWorker: AudioSessionWorker = .shared,
          recoveryWindow: Duration = .seconds(12), recoveryInterval: Duration = .milliseconds(500)) {
         self.transactionRequester = transactionRequester
@@ -112,6 +114,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         self.callSnapshot = callSnapshot
         self.activateAudioSession = activateAudioSession
         self.sessionWorker = sessionWorker
+        self.applicationMute = applicationMute ?? (transactionRequester == nil && callSnapshot == nil && activateAudioSession == nil ? ApplicationMicrophoneMute.shared : nil)
         self.recoveryWindow = recoveryWindow; self.recoveryInterval = recoveryInterval
         registrationOverride = systemCallRegistration
         var register = systemCallRegistration ?? (transactionRequester != nil ||
@@ -195,6 +198,12 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         servicesAvailable = true; ending = false
         transferHolding = false
         if !usesSystemCall {
+            applicationMute?.begin(owner: id, muted: isMuted) { [weak self] muted in
+                guard let self, self.callID == id, !self.ending, self.isConnected, self.canRestoreAudio else { return false }
+                self.isMuted = muted
+                self.onMuteChanged?(muted)
+                return true
+            }
             // Application-owned sessions use the same competitor/release guards,
             // without registering an internet call with the system Phone UI.
             #if DEBUG
@@ -213,6 +222,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
                     enqueueActivation(id: id, initial: true)
                 }
             } catch {
+                applicationMute?.end(owner: id)
                 callID = nil
                 onFailure?(error)
             }
@@ -240,7 +250,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     func markConnected() {
         guard let callID, !isConnected else { return }
         isConnected = true
-        guard usesSystemCall else { return }
+        guard usesSystemCall else { applicationMute?.setMuted(isMuted, owner: callID); return }
         reportCapabilities(for: callID)
         if transactionRequester == nil { provider.reportOutgoingCall(with: callID, connectedAt: nil) }
         log.notice("CallKit meeting connected; hold supported")
@@ -255,7 +265,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         guard let callID else { return }
         let changed = isMuted != muted
         isMuted = muted
-        guard usesSystemCall else { return }
+        guard usesSystemCall else { applicationMute?.setMuted(muted, owner: callID); return }
         guard isConnected, changed || force else { return }
         request(CXTransaction(action: CXSetMutedCallAction(call: callID, muted: muted))) { error in
             guard let error else { return }
@@ -290,6 +300,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
 
     func markEnded(reason: CXCallEndedReason) {
         guard let callID else { return }
+        applicationMute?.end(owner: callID)
         cancelActivation()
         cancelApplicationAudioRecovery()
         if !usesSystemCall {
@@ -546,7 +557,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
                     self.cancelApplicationAudioRecovery(); self.onActivated?()
                 case .failure(let error):
                     if error is CancellationError { return }
-                    if initial { self.callID = nil; self.onFailure?(error) }
+                    if initial { self.applicationMute?.end(owner: id); self.callID = nil; self.onFailure?(error) }
                     else { self.retryApplicationAudioRecovery() }
                 }
             }

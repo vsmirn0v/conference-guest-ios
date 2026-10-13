@@ -5,11 +5,12 @@ import UIKit
 final class MeetingVideoDemand {
     private(set) var foreground = true
     private(set) var floating = false
+    private var recovering = false
     private var backgroundGrace = false
     private var grace: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
     var onChange: (() -> Void)?
-    var wantsVideo: Bool { foreground || floating || backgroundGrace }
+    var wantsVideo: Bool { foreground || floating || recovering || backgroundGrace }
     init(observeLifecycle: Bool = true) {
         if observeLifecycle {
             foreground = UIApplication.shared.applicationState != .background
@@ -37,6 +38,10 @@ final class MeetingVideoDemand {
         floating = value
         if !value { backgroundGrace = false }
         onChange?()
+    }
+    func setRecovering(_ value: Bool) {
+        guard recovering != value else { return }
+        recovering = value; onChange?()
     }
     deinit { grace?.cancel(); observers.forEach(NotificationCenter.default.removeObserver) }
 }
