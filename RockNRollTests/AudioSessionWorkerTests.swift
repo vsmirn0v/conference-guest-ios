@@ -127,6 +127,63 @@ final class AudioSessionWorkerTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertTrue(events.isEmpty)
     }
+    func testResetRetriesTransientConfigurationFailureWithoutEndingMeeting() async throws {
+        let attempts = Counter()
+        let audio = AudioCoordinator(prepareSession: {
+            attempts.increment()
+            if (2...3).contains(attempts.value) { throw NSError(domain: NSOSStatusErrorDomain, code: -50) }
+        }, recoveryWindow: .seconds(1), recoveryInterval: .milliseconds(10))
+        let ready = expectation(description: "initial preparation"), recovered = expectation(description: "reset recovered")
+        audio.start(ready: { ready.fulfill() }, failure: { XCTFail("Unexpected end: \($0)") })
+        await fulfillment(of: [ready], timeout: 2)
+        var events: [Bool] = []
+        audio.onServicesChanged = { events.append($0); if $0 { recovered.fulfill() } }
+        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        await fulfillment(of: [recovered], timeout: 2)
+        XCTAssertEqual(attempts.value, 4)
+        XCTAssertEqual(events, [false, true], "Only successful preparation may grant recovered audio")
+        audio.endSession()
+    }
+    func testLeaveCancelsResetConfigurationRetry() async throws {
+        let attempts = Counter()
+        let audio = AudioCoordinator(prepareSession: {
+            attempts.increment()
+            if attempts.value > 1 { throw NSError(domain: NSOSStatusErrorDomain, code: -50) }
+        }, recoveryWindow: .seconds(1), recoveryInterval: .milliseconds(100))
+        let ready = expectation(description: "initial preparation")
+        audio.start(ready: { ready.fulfill() }, failure: { XCTFail("\($0)") })
+        await fulfillment(of: [ready], timeout: 2)
+        var recovered = false
+        audio.onServicesChanged = { if $0 { recovered = true } }
+        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        for _ in 0..<30 {
+            if attempts.value == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(attempts.value, 2)
+        audio.endSession()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(attempts.value, 2); XCTAssertFalse(recovered)
+    }
+    func testDuplicateResetRetiresBlockedPreparationAndGrantsOnlyLatestOwner() async throws {
+        let queue = DispatchQueue(label: "test.reset-ordering"), attempts = Counter()
+        let audio = AudioCoordinator(worker: AudioSessionWorker(queue: queue), prepareSession: { attempts.increment() })
+        let ready = expectation(description: "initial preparation"), recovered = expectation(description: "latest reset recovered")
+        audio.start(ready: { ready.fulfill() }, failure: { XCTFail("\($0)") })
+        await fulfillment(of: [ready], timeout: 2)
+        var events: [Bool] = []
+        audio.onServicesChanged = { events.append($0); if $0 { recovered.fulfill() } }
+        queue.suspend()
+        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        try await Task.sleep(for: .milliseconds(10))
+        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        try await Task.sleep(for: .milliseconds(10))
+        queue.resume()
+        await fulfillment(of: [recovered], timeout: 2)
+        XCTAssertEqual(attempts.value, 2, "The superseded worker request cannot reconfigure the session")
+        XCTAssertEqual(events, [false, false, true])
+        audio.endSession()
+    }
     func testMeterMailboxKeepsOnlyLatestAndRejectsRetiredSamples() {
         let levels = LatestMicrophoneLevel()
         levels.receive(1); XCTAssertNil(levels.take())

@@ -2,7 +2,7 @@
 
 <img src="RockNRoll/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="128" height="128" alt="Rock’n’Roll app icon">
 
-Rock’n’Roll helps small music groups in Yerevan meet between rehearsals. Musicians open a shared jam link, join with microphone and camera off, then choose when to share sound or video. The native iPhone app keeps a real system call for background audio and uses CallKit to hold and resume around another phone call. It can also open compatible guest meeting invitations through a separate integration. There is no account or in-app room creation.
+Rock’n’Roll helps small music groups in Yerevan meet between rehearsals. Musicians open a shared jam link, join with microphone and camera off, then choose when to share sound or video. The native iPhone app keeps conference audio running in the background and yields to phone calls before restoring media. Optional system call controls use CallKit; they are disabled by default for cellular compatibility. It can also open compatible guest meeting invitations through a separate integration. There is no account or in-app room creation.
 
 The public test jam is [rock.glowsoft.ru/jams/test](https://rock.glowsoft.ru/jams/test). The same page explains the group and lets a second participant join in a browser. The app also supports `conferenceguest://join?url=<percent-encoded HTTPS invitation>` from a web handoff. Only Rock links use the self-hosted room service; compatible guest invitations keep their existing endpoint-discovery flow.
 
@@ -21,7 +21,7 @@ meeting's share zoom. The focused stream uses consistent colour rendering in
 the call and PiP. See [floating video](docs/floating-video.md) and
 [colour validation](docs/color-rendering.md).
 
-A native app link opens its jam directly. If another jam is active or connecting, the latest native link replaces it after the current system call ends. A single CallKit provider coordinates the media engines, and service discovery is reused for later rooms on the same website during that app session.
+A native app link opens its jam directly. If another jam is active or connecting, the latest native link replaces it after the current meeting ends. A shared audio owner coordinates the media engines, and service discovery is reused for later rooms on the same website during that app session.
 
 The native jam engine uses LiveKit Swift, and the small Go service issues short-lived, room-scoped guest tokens for a single configured test room. The browser is an optional participant, not an embedded app view. Keys remain on the server. The server is isolated in two Podman containers behind a dedicated nginx virtual host; deployment inputs live in [RockServer](RockServer/).
 
@@ -34,12 +34,13 @@ Requires Xcode with an iOS 18+ SDK, XcodeGen and Git LFS. The project pins both 
 ```sh
 brew install xcodegen git-lfs
 git lfs install
+scripts/prepare-guest-sdk.sh
 xcodegen generate
 swift test --package-path ConferenceCore
 open RockNRoll.xcodeproj
 ```
 
-The app is signed with developer team `5V64BP2H3P`. `project.yml` generates the checked-in Xcode project. A build script copies resources required by the binary guest-integration SDK. SDK binaries are fetched through Swift Package Manager and are not committed.
+The app is signed with developer team `5V64BP2H3P`. `project.yml` generates the checked-in Xcode project. The guest integration uses unchanged pinned upstream wrappers and a checksum-pinned rebuilt open-source WebRTC artifact. A build script copies provider resources and verifies the rebuilt component is embedded. SDK binaries are not committed. See [dependency preparation](Dependencies/guest-sdk/README.md).
 
 `RockNRollUITests.testCommunityJamConnectsMuted` exercises the public test room on an attached iPhone. The test file also covers layout in both orientations, a saved display name, chat, and native link handoff. Live media and CallKit behavior need a device; the simulator is useful for the home screen and core logic. App Store screenshots are in [AppStore/Screenshots](AppStore/Screenshots/). See the [current validation](docs/validation-2026-09-24.md), [earlier device coverage](docs/validation-2026-09-23.md), and [App Store preparation](docs/app-store-preparation-plan.md).
 

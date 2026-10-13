@@ -1,0 +1,202 @@
+diff --git a/sdk/objc/native/src/audio/application_input_mute_state.h b/sdk/objc/native/src/audio/application_input_mute_state.h
+new file mode 100644
+--- /dev/null
++++ b/sdk/objc/native/src/audio/application_input_mute_state.h
+@@ -0,0 +1,83 @@
++/* Copyright 2026 Rock'n'Roll contributors. BSD license: see LICENSE. */
++#ifndef SDK_OBJC_NATIVE_SRC_AUDIO_APPLICATION_INPUT_MUTE_STATE_H_
++#define SDK_OBJC_NATIVE_SRC_AUDIO_APPLICATION_INPUT_MUTE_STATE_H_
++
++#include <cassert>
++#include <cstdint>
++#include <mutex>
++
++namespace webrtc::ios_adm {
++// No platform calls under this lock. Platform reconciliation and app writes run
++// on main; native lifecycle scopes only publish pending work from their workers.
++class ApplicationInputMuteState {
++ public:
++  struct Snapshot { int intent; uint64_t generation; unsigned attempt; };
++  enum class RestoreResult { kIdle, kComplete, kRetry };
++  void SetIntent(int muted) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    intent_ = muted < 0 ? -1 : (muted != 0 ? 1 : 0);
++    ++generation_;
++    attempts_ = 0;
++  }
++  void BeginReconfiguration() {
++    std::lock_guard<std::mutex> lock(mutex_);
++    ++depth_;
++    ++generation_;
++    attempts_ = 0;
++  }
++  void EndReconfiguration() {
++    std::lock_guard<std::mutex> lock(mutex_);
++    assert(depth_ != 0);
++    --depth_;
++    ++generation_;
++    attempts_ = 0;
++    pending_ = true;
++  }
++  bool IsReconfiguring() const {
++    std::lock_guard<std::mutex> lock(mutex_);
++    return depth_ != 0 || pending_;
++  }
++  bool QueueRestore() {
++    std::lock_guard<std::mutex> lock(mutex_);
++    if (queued_ || (!pending_ && depth_ == 0)) return false;
++    queued_ = true;
++    return true;
++  }
++  bool SnapshotForRestore(Snapshot* snapshot) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    queued_ = false;
++    if (depth_ != 0 || !pending_) return false;
++    *snapshot = {intent_, generation_, ++attempts_};
++    return true;
++  }
++  template <typename Apply>
++  RestoreResult Restore(Apply apply) {
++    Snapshot current;
++    if (!SnapshotForRestore(&current)) return RestoreResult::kIdle;
++    // Platform writes happen outside the state lock, on main. A released owner
++    // (-1) must not override CallKit or another engine's platform mute state.
++    if (current.intent < 0 || apply(current.intent != 0)) {
++      DidRestore(current.generation);
++      return RestoreResult::kComplete;
++    }
++    if (current.attempt < 5) return RestoreResult::kRetry;
++    // Do not permanently disable accessory gestures after exhausting a bounded
++    // restore. The SDK's network mute is independent and stays unchanged.
++    DidRestore(current.generation);
++    return RestoreResult::kComplete;
++  }
++  void DidRestore(uint64_t generation) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    if (depth_ == 0 && generation_ == generation) pending_ = false;
++  }
++ private:
++  mutable std::mutex mutex_;
++  int intent_ = -1;  // No app-owned intent before the first app write.
++  unsigned depth_ = 0;
++  uint64_t generation_ = 0;
++  bool pending_ = false;
++  bool queued_ = false;
++  unsigned attempts_ = 0;
++};
++}  // namespace webrtc::ios_adm
++#endif
+diff --git a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
+@@ -19,6 +19,10 @@
+ // Scoped to a user-joined conference; 0 releases, nonzero reserves real output.
+ // Requests run asynchronously on each factory's native audio worker.
+ RTC_EXTERN void RTCSetConferencePlayoutReserved(int reserved);
++// Main-queue app intent: -1 releases authority, 0 unmutes, 1 mutes.
++// Workers restore the latest value after reconfiguration.
++RTC_EXTERN void RTCSetApplicationInputMuteIntent(int muted);
++RTC_EXTERN int RTCApplicationInputMuteReconfiguring(void);
+ 
+ @class RTC_OBJC_TYPE(RTCRtpCapabilities);
+ @class RTC_OBJC_TYPE(RTCAudioSource);
+diff --git a/sdk/objc/native/src/audio/audio_device_ios.mm b/sdk/objc/native/src/audio/audio_device_ios.mm
+--- a/sdk/objc/native/src/audio/audio_device_ios.mm
++++ b/sdk/objc/native/src/audio/audio_device_ios.mm
+@@ -12,6 +12,8 @@
+ #import <Foundation/Foundation.h>
+ 
+ #include "audio_device_ios.h"
++#include "application_input_mute_state.h"
++#import "api/peerconnection/RTCPeerConnectionFactory.h"
+ 
+ #include <mach/mach_time.h>
+ #include <cmath>
+@@ -35,6 +37,47 @@
+ #import "components/audio/RTCNativeAudioSessionDelegateAdapter.h"
+ #import "helpers/AudioTimeStamp+Nanoseconds.h"
+ 
++namespace {
++webrtc::ios_adm::ApplicationInputMuteState& CurrentApplicationInputMute() {
++  // Process lifetime: audio workers/queued main work can outlive static teardown.
++  static auto* const state = new webrtc::ios_adm::ApplicationInputMuteState;
++  return *state;
++}
++void ScheduleApplicationInputMuteRestore(int delay_ms = 0) {
++  if (!CurrentApplicationInputMute().QueueRestore()) return;
++  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, delay_ms * NSEC_PER_MSEC),
++                 dispatch_get_main_queue(), ^{
++    auto result = CurrentApplicationInputMute().Restore([](bool muted) {
++      if (@available(iOS 17.0, *)) {
++        AVAudioApplication* application = [AVAudioApplication sharedInstance];
++        if (application.isInputMuted != muted) {
++          NSError* error = nil;
++          if (![application setInputMuted:muted error:&error]) {
++            RTCLogError(@"Could not restore application input mute: %@", error);
++            return false;
++          }
++        }
++      }
++      return true;
++    });
++    if (result == webrtc::ios_adm::ApplicationInputMuteState::RestoreResult::kRetry) {
++      ScheduleApplicationInputMuteRestore(250);
++    }
++  });
++}
++}
++
++void RTCSetApplicationInputMuteIntent(int muted) {
++  // ApplicationMicrophoneMute serializes ownership and platform writes on main.
++  RTC_DCHECK([NSThread isMainThread]);
++  auto& state = CurrentApplicationInputMute();
++  state.SetIntent(muted);
++  if (state.IsReconfiguring()) ScheduleApplicationInputMuteRestore();
++}
++int RTCApplicationInputMuteReconfiguring() {
++  return CurrentApplicationInputMute().IsReconfiguring() ? 1 : 0;
++}
++
+ namespace webrtc {
+ namespace ios_adm {
+ 
+@@ -67,31 +110,25 @@
+ constexpr double kSecondToMs = 1e3;
+ constexpr int kHwLatencyUpdatePeriodSeconds = 5;
+ 
+-// Recreating/activating an iOS input unit can clear the application mute bit.
+-// Preserve a muted user intent; never unmute from native device lifecycle work.
++// Native reconfiguration can clear the platform mute bit. Reconcile on main
++// using the latest owner-controlled intent, never a worker's historical snapshot.
+ class PreserveApplicationInputMute {
+  public:
+   PreserveApplicationInputMute() {
+     if (@available(iOS 17.0, *)) {
+       if (![NSProcessInfo processInfo].isiOSAppOnMac) {
+-        was_muted_ = [AVAudioApplication sharedInstance].isInputMuted;
++        active_ = true;
++        CurrentApplicationInputMute().BeginReconfiguration();
+       }
+     }
+   }
+   ~PreserveApplicationInputMute() {
+-    if (!was_muted_) return;
+-    if (@available(iOS 17.0, *)) {
+-      AVAudioApplication* application = [AVAudioApplication sharedInstance];
+-      if (was_muted_ && !application.isInputMuted) {
+-        NSError* error = nil;
+-        if (![application setInputMuted:YES error:&error]) {
+-          RTCLogError(@"Could not preserve application input mute: %@", error);
+-        }
+-      }
+-    }
++    if (!active_) return;
++    CurrentApplicationInputMute().EndReconfiguration();
++    ScheduleApplicationInputMuteRestore();
+   }
+  private:
+-  bool was_muted_ = false;
++  bool active_ = false;
+ };
+ 
+ using ios::CheckAndLogError;

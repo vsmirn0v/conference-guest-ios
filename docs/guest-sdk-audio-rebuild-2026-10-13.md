@@ -28,8 +28,12 @@ open-source WebRTC dependency is rebuilt. The normal project now uses the pinned
 wrappers prepared by `scripts/prepare-guest-sdk.sh` and an immutable WebRTC release
 through `Dependencies/guest-sdk/Package.swift`. The replacement artifact's checksum
 is `fb1a82d8eac658bc4d191d4bc7b9d888c06146602aeacbea8a00d09272d704fe`.
-**No TestFlight upload is part of this qualification task.** Final normal-project
-archive validation is recorded after the dependency pin is updated.
+**No TestFlight upload is part of this qualification task.** The normal-project
+Release archive passed deep/strict signature validation for team `5V64BP2H3P`.
+Its embedded native framework matched all 31 executable/data sections of the
+qualified immutable artifact after signing; provenance/notices and the output
+lifetime API were verified. The archive remains local at
+`.build/reverse-sdk/normal-r2-release.xcarchive` (version 0.2.0, build 81).
 
 ## Cause and source identity
 
@@ -136,6 +140,9 @@ logs are not committed.
 | `reset-final-sim.xcresult`, `reset-final-core-mac.xcresult` | Final reset lifecycle tests: 29 Simulator and 36 Mac tests passed, including duplicate reset while preparation is blocked and ten reentrant callback-close cycles on Mac |
 | `guest-bgra-presenter-qualified-mac.xcresult` | Private/live Presenter capture and audio profile/hold transitions; 14 independent H264 BGRA color cases passed with maximum decoded RGB error 4 |
 | `engine-switch-final.xcresult` | Guest → second native engine → third native engine → community room → guest auto-join switching passed |
+| `normal-r2-final-sim.xcresult` | Normal project/remote r2 dependency: all 66 selected lifecycle, mute, callback, presentation and camera-feed tests passed |
+| `normal-r2-switch-final-sim.xcresult` | Normal project/remote r2 dependency: five-room/all-engine auto-join sequence passed in 61.5 seconds |
+| `normal-r2-release.xcarchive`, `normal-r2-archive-verification.json` | Signed normal-project Release archive; intended native code/data, source provenance, linked notices, output-lifetime API and team verified |
 | Physical final reset/AirPods/PiP | User confirmed recovery, Mic remained off, AirPods gestures worked, PiP moved, Leave stopped audio; console showed completed media recovery and application mute true |
 
 The Presenter and repeated-join methods must run in separate XCTest processes.
@@ -145,6 +152,9 @@ passing; the receive/camera/microphone method passed separately. A UIKit test fi
 assumed a synthetic touch would leave a recognizer in `.failed`; UIKit resets it
 to `.possible` without a real touch sequence. The corrected check asserts that the
 observer never recognizes a competing gesture and does not delay/cancel touches.
+The first repeated normal-project switch attempt did not start because the
+Simulator device service temporarily stopped enumerating devices under build
+load; it is excluded. The subsequent run on the recovered service passed.
 
 ## Reproduce and package
 
@@ -220,3 +230,57 @@ processing plus internal/public TestFlight assignments.
 
 REA sources: [repository](https://github.com/morluto/rea),
 [native guide](https://rea.tools/guides/native/).
+
+## Review follow-up, October 14
+
+The r3 component addresses the two source-review findings:
+
+- Native input reconfiguration restores current app-owned mute intent on main,
+  with generation-checked completion. New UI intent, room ownership and private
+  sound checks cannot be overwritten by an earlier platform snapshot. Native
+  reconfiguration notifications are not treated as accessory gestures. Genuine
+  gestures publish current intent after recovery, and reentrant gesture callbacks
+  cannot overwrite a replacement owner.
+- Disposed audio units are recreated before reinitialization. Microphone-toggle
+  initialization/start failures schedule the existing bounded native recovery;
+  a failed start is uninitialized before retrying with current recording intent.
+  Existing interruption, retirement and Leave cancellation remain in place.
+
+Astra's follow-up identified and verified two additional safeguards: leaving the
+last app/private-input owner withdraws native authority before CallKit takes over;
+mute restoration coalesces and retries failures up to five times at 250 ms
+intervals, then releases accessory suppression. No platform calls occur under the
+native state lock. The SDK's network microphone mute remains independently owned.
+
+The exact shared production headers passed 11 native tests with injected platform
+creation/property/initialization/start and mute-write failures, including worker
+interleavings, current-owner restoration, nested scopes, retry coalescing and
+bounded exhaustion. AddressSanitizer and UndefinedBehaviorSanitizer were enabled.
+The app passed 88 selected tests on Mac and 80 on the iOS 27 simulator; eight PiP
+tests skipped there because that runtime could not create a video-call PiP
+controller. All nine PiP tests ran on Mac. Native output lifetime, replacement,
+session balance, callback teardown and successful Leave were included.
+The iOS 17.5 simulator also passed all 14 runnable selected mute/native-output
+regressions; the same eight PiP controller tests skipped on that runtime.
+
+Arm64 device and simulator frameworks rebuilt successfully. Artifact SHA-256:
+`608473a0af243b899a7e201b5ed49fc2d0f35622ff089e4a74bfff9d30a78b7f`.
+The normal dependency is pinned to immutable release
+`guest-native-webrtc-150.7871.03-r3`; notices, full cumulative patch hashes and build
+recipes are retained. Local evidence is under `.build/guest-audio-review/`.
+Astra's final read-only review found no additional concrete defect in this scope.
+
+The final Swift follow-up preserves private sound-check mute gestures through
+native recovery without changing meeting mute or publishing microphone audio.
+Overlapping private captures retain the latest intent; the gesture observer
+remains active until both the meeting owner and final private capture end.
+After that change, the normal project using the downloaded r3 binary passed all
+74 selected mute, native-output, audio-session and session-ownership tests on
+each of Mac and the iOS 27 simulator, with no failures or skips. Result bundles:
+`normal-final-private-mac.xcresult` and `normal-final-private-simulator.xcresult`
+under `.build/guest-audio-review/`.
+
+These injected failure tests are not physical iPhone fault reproductions. The
+earlier physical call/AirPods/media-reset qualification applies to r2; r3 still
+needs a physical interruption/accessory regression before its next beta delivery.
+No TestFlight build was submitted as part of these fixes.

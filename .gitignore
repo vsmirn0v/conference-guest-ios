@@ -10,3 +10,4 @@ GuestTokenBroker/.venv/
 GuestTokenBroker/__pycache__/
 RockServer/site-src/node_modules/
 /Marketing/
+/Dependencies/guest-sdk/VendorSources

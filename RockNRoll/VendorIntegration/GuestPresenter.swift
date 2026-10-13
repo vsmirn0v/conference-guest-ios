@@ -64,19 +64,54 @@ final class GuestPresenterSender: GuestScreenCapture {
 final class GuestPresenterCamera: PresenterCameraSource {
     private let processor = GuestVideoFrameProcessor()
     private var tap: GuestVideoFrameTap?
+    private var capture: CameraCapturePreview?
+    private var sink: RoomFloatingVideoSink?
+    private var captureObservation: NSObjectProtocol?
     private var observation: AnyCancellable?
     private var energySubscription: AnyCancellable?
-    init(streams: GuestStreamViews, onFrame: @escaping (CVPixelBuffer, Int) -> Void) {
+    private let cameraPreview: @MainActor () -> CameraCapturePreview?
+    init(streams: GuestStreamViews,
+         cameraPreview: @escaping @MainActor () -> CameraCapturePreview? = { GuestCaptureDeviceObserver.cameraPreview() },
+         onFrame: @escaping (CVPixelBuffer, Int) -> Void) {
+        self.cameraPreview = cameraPreview
         processor.setFrameRate(min(12, MediaEnergyBudget.shared.sharingFPS)); processor.setEnabled(true)
         processor.onSample = { sample, _, rotation in
             if let pixels = CMSampleBufferGetImageBuffer(sample) { onFrame(pixels, rotation) }
         }
-        energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak processor] _ in
-            DispatchQueue.main.async { processor?.setFrameRate(min(12, MediaEnergyBudget.shared.sharingFPS)) }
+        energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.updateCadence() }
         }
+        captureObservation = NotificationCenter.default.addObserver(forName: GuestCaptureDeviceObserver.changed, object: nil, queue: .main) { [weak self, weak streams] _ in
+            MainActor.assumeIsolated { self?.refresh(streams?.localCameraChanges.value) }
+        }
+        sink = RoomFloatingVideoSink { sample, rotation in
+            if let pixels = CMSampleBufferGetImageBuffer(sample) { onFrame(pixels, rotation) }
+        }
+        updateCadence()
         observation = streams.localCameraChanges.sink { [weak self] in self?.refresh($0) }
     }
+    deinit {
+        if let captureObservation { NotificationCenter.default.removeObserver(captureObservation) }
+        sink?.retire()
+        if let sink { capture?.frames.remove(sink) }
+    }
+    private func updateCadence() {
+        let fps = min(12, MediaEnergyBudget.shared.sharingFPS)
+        processor.setFrameRate(fps); sink?.setWanted(true, fps: fps)
+    }
     private func refresh(_ source: UIView?) {
+        // A live SDK camera can have no mounted renderer during private → live
+        // handover. Reuse its unencoded feed, including system camera effects,
+        // instead of depending on whether its hidden tile has rendered a frame.
+        if let preview = cameraPreview(), let sink {
+            tap?.invalidate(); tap = nil; processor.setEnabled(false)
+            if capture?.frames !== preview.frames {
+                capture?.frames.remove(sink)
+                capture = preview; preview.frames.add(sink)
+            }
+            return
+        }
+        if let sink { capture?.frames.remove(sink) }; capture = nil
         guard let renderer = source else { tap?.invalidate(); tap = nil; processor.setEnabled(false); return }
         guard tap?.matches(renderer) != true else { return }
         tap?.invalidate()
@@ -85,6 +120,9 @@ final class GuestPresenterCamera: PresenterCameraSource {
         tap = GuestVideoFrameTap(view: renderer) { [weak processor] in processor?.submit($0, source: generation) }
     }
     func stop() async {
+        if let captureObservation { NotificationCenter.default.removeObserver(captureObservation) }; captureObservation = nil
+        sink?.retire()
+        if let sink { capture?.frames.remove(sink) }; capture = nil; sink = nil
         observation = nil; energySubscription = nil; tap?.invalidate(); tap = nil
         processor.setEnabled(false)
     }

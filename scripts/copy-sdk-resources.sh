@@ -2,7 +2,8 @@
 set -euo pipefail
 
 search_dir="${BUILD_DIR}"
-packages_root="${CONFERENCE_SDK_SOURCE_DIR:-}"
+packages_root="${CONFERENCE_SDK_SOURCE_DIR:-$PROJECT_DIR/Dependencies/guest-sdk/VendorSources}"
+if [[ ! -d "$packages_root" ]]; then packages_root=""; fi
 while [[ -z "$packages_root" && "$search_dir" != / ]]; do
   candidate="$search_dir/SourcePackages/checkouts/jazz-ios-sdk/Sources"
   if [[ -d "$candidate" ]]; then
@@ -50,3 +51,13 @@ chmod -R u+w "$spench_destination"
 if [[ "${CODE_SIGNING_ALLOWED:-NO}" == "YES" && -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]]; then
   codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" --timestamp=none "$spench_destination"
 fi
+
+# Fail closed if package resolution or embedding selected the original binary.
+native_framework="$app_frameworks/WebRTC.framework"
+native_binary="$native_framework/WebRTC"
+[[ -f "$native_framework/GuestWebRTC-provenance.json" && -s "$native_framework/GuestWebRTC-notices.txt" ]] || {
+  echo "Rebuilt guest WebRTC provenance/notices are missing" >&2; exit 1;
+}
+nm -gU "$native_binary" | awk '$NF == "_RTCSetConferencePlayoutReserved" { found=1 } END { exit !found }' || {
+  echo "Rebuilt guest conference output API is missing" >&2; exit 1;
+}

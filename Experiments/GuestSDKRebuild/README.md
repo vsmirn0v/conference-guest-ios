@@ -1,11 +1,13 @@
 # Guest SDK native audio lifetime rebuild
 
 The vendor signaling/UI wrappers remain unchanged. Only their open-source
-WebRTC dependency is rebuilt. The candidate passed physical Speaker/AirPods
+WebRTC dependency is rebuilt. The r2 component passed physical Speaker/AirPods
 quiet-background, late-participant, accessory mute, call and media-services-reset
 recovery checks plus Mac/Simulator regressions. The normal project now consumes
 the rebuilt component through `Dependencies/guest-sdk`; TestFlight delivery is a
 separate step. Qualification and energy limits are recorded below.
+The r3 review follow-up adds mute-intent and audio-unit recovery fixes qualified
+on Mac and Simulator; its physical-device follow-up is recorded separately.
 
 ## Binary evidence
 
@@ -47,6 +49,14 @@ latest desired state read at execution. Activation/media-connect events can
 retry a failed start. DEBUG logs expose ADM identity, result, playing/recording
 state and factory count for qualification.
 
+Native input reconfiguration restores the latest app-owned mute intent on main,
+with generation-checked completion. It does not restore a historical platform
+snapshot over a newer app action, replacement owner or private sound check.
+Leaving releases that authority, including before an opt-in CallKit-owned call.
+Restoration jobs coalesce and retry transient failures up to five times, 250 ms
+apart. Disposed audio units are recreated on retry; failed microphone transitions
+also enter the bounded recovery path with the current recording intent.
+
 Compatibility changes restore the legacy crypto initializer, include the existing
 EAGL renderer, and give the newly exported YUV helper a distinct class name because
 the unchanged vendor core supplies its own `RTCYUVHelper`. All 37 imported RTC
@@ -66,6 +76,14 @@ Experiments/GuestSDKRebuild/build-ios.sh .build/guest-rebuild-new/src simulator
 
 `verify-source.sh` compares against the exact cumulative patch state using a
 separate index. It does not alter the source index, branch or base checkout.
+
+Run the production native helper regressions with fault-injected platform
+operations and AddressSanitizer/UndefinedBehaviorSanitizer:
+
+```sh
+Experiments/GuestSDKRebuild/test-audio-recovery.sh .build/guest-rebuild-new/src
+```
+
 Prepare the local package/project with the unchanged pinned wrapper checkout:
 
 ```sh
