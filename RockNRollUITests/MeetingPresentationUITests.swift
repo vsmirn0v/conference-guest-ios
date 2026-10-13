@@ -1,6 +1,56 @@
 import XCTest
 
 final class MeetingPresentationUITests: XCTestCase {
+    func testGuestParticipantStripSwipesOverButtonsAndKeepsTapSelection() {
+        let app = launch("ru", scenario: "gallery-many")
+        defer { app.terminate() }
+        let tile = app.otherElements["gallery.person-1.camera"]
+        XCTAssertTrue(tile.waitForExistence(timeout: 10)); tile.tap()
+        assertParticipantStripDrags(app)
+    }
+
+    func testNativeParticipantStripSwipesOverButtonsAndKeepsTapSelection() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "meeting-gallery"
+        app.launchArguments = ["-AppleLanguages", "(en)", "-automaticallyHideMeetingControls", "NO"]
+        app.launch()
+        defer { app.terminate() }
+        let tile = app.otherElements["camera-off.person-1"]
+        XCTAssertTrue(tile.waitForExistence(timeout: 10)); tile.tap()
+        assertParticipantStripDrags(app)
+    }
+
+    private func assertParticipantStripDrags(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let strip = app.scrollViews["Focus participants"]
+        XCTAssertTrue(strip.waitForExistence(timeout: 5), file: file, line: line)
+        let selected = app.buttons["Focus participant.person-1.camera"]
+        XCTAssertTrue(selected.isSelected, file: file, line: line)
+        // Begin on the label, top/bottom button edges and microphone, never a gutter.
+        for origin in [CGVector(dx: 0.65, dy: 0.5), CGVector(dx: 0.65, dy: 0.1),
+                       CGVector(dx: 0.65, dy: 0.9), CGVector(dx: 0.12, dy: 0.5)] {
+            let bounds = strip.frame
+            guard let button = strip.buttons.allElementsBoundByIndex.first(where: {
+                let frame = $0.frame
+                let point = CGPoint(x: frame.minX + frame.width * origin.dx, y: frame.minY + frame.height * origin.dy)
+                return bounds.insetBy(dx: 8, dy: 0).contains(point) && point.x >= bounds.minX + 160
+            }) else { return XCTFail("Need a visible button touch point with room to drag", file: file, line: line) }
+            let before = button.frame.minX
+            let start = button.coordinate(withNormalizedOffset: origin)
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: -140, dy: 0)))
+            XCTAssertLessThan(button.frame.minX, before - 50, "The entire button must scroll the strip", file: file, line: line)
+            XCTAssertTrue(selected.isSelected, "Dragging must not select or unpin a participant", file: file, line: line)
+        }
+        guard let target = strip.buttons.allElementsBoundByIndex.first(where: {
+            strip.frame.contains($0.frame.insetBy(dx: 1, dy: 1)) && !$0.isSelected
+        }) else { return XCTFail("A newly revealed participant must be tappable", file: file, line: line) }
+        target.tap()
+        XCTAssertTrue(target.isSelected, "A normal tap must still focus that participant", file: file, line: line)
+        XCTAssertFalse(selected.isSelected, file: file, line: line)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Participant strip after button drags"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
     func testGuestGalleryTapSelectsExactPersonAndPreservesPage() {
         let app = launch(scenario: "gallery-many")
         defer { app.terminate() }

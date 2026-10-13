@@ -160,6 +160,11 @@ final class MeetingParticipantStrip: UIScrollView {
         showsVerticalScrollIndicator = true; showsHorizontalScrollIndicator = true
     }
     required init?(coder: NSCoder) { nil }
+    override func touchesShouldCancel(in view: UIView) -> Bool {
+        // Buttons highlight immediately, but a drag must cancel their tap and
+        // scroll from anywhere on the chip, not only the gaps between chips.
+        view is UIButton || super.touchesShouldCancel(in: view)
+    }
     func update(_ items: [MeetingStripItem], selected: String?) {
         guard self.items != items || selectedID != selected else { return }
         self.items = items
