@@ -265,7 +265,12 @@ final class GuestConferencePlayoutReservation: @unchecked Sendable {
         return unsafeBitCast(symbol, to: (@convention(c) (Int32) -> Void).self)
     }()
     init(write: ((Bool) -> Void)? = nil) {
-        self.write = write ?? (ProcessInfo.processInfo.isiOSAppOnMac ? nil : Self.nativeWriter.map { api in { api($0 ? 1 : 0) } })
+        var selected = write ?? (ProcessInfo.processInfo.isiOSAppOnMac ? nil : Self.nativeWriter.map { api in { api($0 ? 1 : 0) } })
+        #if DEBUG
+        // Matched quiet-background energy control, never available in Release.
+        if write == nil, ProcessInfo.processInfo.environment["CONFERENCE_TEST_DISABLE_OUTPUT_RESERVATION"] == "1" { selected = nil }
+        #endif
+        self.write = selected
         #if DEBUG
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_MEDIA_TRACE"] == "1" {
             print("Guest conference output supported=\(Self.isSupported) enabled=\(self.write != nil) mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")

@@ -45,6 +45,26 @@ import Darwin
         XCTAssertFalse(systemMuted)
         bridge.end(owner: next); XCTAssertTrue(systemMuted)
     }
+    func testSystemAudioResetPreservesMutedAndUnmutedIntentBeforeAcceptingGestures() throws {
+        for muted in [true, false] {
+            var systemMuted = false, changes: [Bool] = []
+            let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 })
+            let calls = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false,
+                activateAudioSession: { systemMuted = false }, applicationMute: bridge)
+            calls.onMuteChanged = { changes.append($0) }
+            calls.start(); calls.markConnected(); calls.setMuted(muted)
+            calls.audioServicesChanged(false)
+            systemMuted = false; bridge.received(false)
+            XCTAssertTrue(changes.isEmpty, "A reset is not an accessory unmute")
+            calls.audioServicesChanged(true)
+            XCTAssertEqual(systemMuted, muted)
+            bridge.received(false)
+            XCTAssertTrue(changes.isEmpty, "Stale reset notifications must not alter restored intent")
+            systemMuted = !muted; bridge.received(!muted)
+            XCTAssertEqual(changes, [!muted], "Real gestures must work after recovery")
+            calls.end()
+        }
+    }
 }
 
 

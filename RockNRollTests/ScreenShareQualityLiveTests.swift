@@ -31,8 +31,14 @@ import XCTest
         for attempt in 1...3 {
             active = false; ended = false
             try engine.configure(container: container, networkURL: endpoint, displayName: "Rebuilt transport QA")
+            let joinStarted = ProcessInfo.processInfo.systemUptime
             try engine.join(target: target, displayName: "Rebuilt transport QA")
             try await wait { active || ended }; XCTAssertFalse(ended)
+            let activeAt = ProcessInfo.processInfo.systemUptime
+            try await wait { engine.hasReceivedVideoFrameForTesting || ended }
+            XCTAssertFalse(ended)
+            let videoAt = ProcessInfo.processInfo.systemUptime
+            print("GUEST_VIDEO_START attempt=\(attempt) join_to_first_frame_s=\(videoAt - joinStarted) active_to_first_frame_s=\(videoAt - activeAt)")
             var received = false
             var lastStats: [[String: Any]] = []
             for _ in 0..<20 {

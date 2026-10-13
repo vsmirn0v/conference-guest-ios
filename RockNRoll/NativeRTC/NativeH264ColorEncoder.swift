@@ -10,7 +10,7 @@ final class NativeH264ColorEncoder: NSObject, LKRTCVideoEncoder {
     private let qualifiedDefaultBGRA: Bool
     init(base: any LKRTCVideoEncoder) {
         self.base = base
-        qualifiedDefaultBGRA = !ProcessInfo.processInfo.isiOSAppOnMac && base.implementationName() == "VideoToolbox"
+        qualifiedDefaultBGRA = base.implementationName() == "VideoToolbox"
         super.init()
     }
     static func prepare() { _ = installed }

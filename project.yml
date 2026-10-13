@@ -8,8 +8,7 @@ options:
   createIntermediateGroups: true
 packages:
   JazzSDK:
-    url: https://github.com/salute-developers/jazz-ios-sdk.git
-    revision: 6d5f92869690fa22bb489a9089aa554d733c6936
+    path: Dependencies/guest-sdk
   ConferenceCore:
     path: ConferenceCore
   LiveKit:

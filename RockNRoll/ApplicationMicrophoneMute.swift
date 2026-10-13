@@ -38,6 +38,7 @@ final class ApplicationMicrophoneMute {
         self.owner = owner; meetingMuted = muted; self.changed = changed
         observer = observe { [weak self] in self?.received($0) }
         synchronize()
+        trace("begin")
     }
     func setMuted(_ value: Bool, owner: UUID) {
         guard self.owner == owner else { return }
@@ -61,6 +62,7 @@ final class ApplicationMicrophoneMute {
     }
 
     func received(_ muted: Bool) {
+        trace("notification-\(muted)")
         // Ignore our own writes and stale notifications queued before a newer
         // app action. While checking sound, gestures affect private input only.
         guard !changing, owner != nil, read() == muted, privateCaptures.isEmpty,
@@ -79,5 +81,12 @@ final class ApplicationMicrophoneMute {
             print("Application microphone mute synchronization failed: \(error.localizedDescription)")
             #endif
         }
+    }
+    private func trace(_ event: String) {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_MEDIA_TRACE"] == "1" {
+            print("Accessory mute event=\(event) owner=\(owner != nil) read=\(read()) meeting=\(meetingMuted) private=\(privateCaptures.count) changing=\(changing)")
+        }
+        #endif
     }
 }

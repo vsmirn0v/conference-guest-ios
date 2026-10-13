@@ -41,6 +41,8 @@ import XCTest
         }
         let output = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("codec-color-oracle.json")
         try JSONSerialization.data(withJSONObject: reports, options: [.sortedKeys]).write(to: output)
+        let attachment = try XCTAttachment(contentsOfFile: output)
+        attachment.lifetime = .keepAlways; add(attachment)
         print("CODEC_COLOR_ORACLE exported=\(reports.count) path=\(output.lastPathComponent)")
     }
 
@@ -63,6 +65,8 @@ import XCTest
         }
         let output = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("codec-untagged-color-oracle.json")
         try JSONSerialization.data(withJSONObject: reports, options: [.sortedKeys]).write(to: output)
+        let attachment = try XCTAttachment(contentsOfFile: output)
+        attachment.lifetime = .keepAlways; add(attachment)
         print("CODEC_UNTAGGED_COLOR_ORACLE exported=\(reports.count)")
     }
 

@@ -217,7 +217,9 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
                 }
                 if let activateAudioSession {
                     // Deterministic ownership tests inject a synchronous grant.
-                    try activateAudioSession(); isAudioSessionActive = true; onActivated?()
+                    try activateAudioSession()
+                    applicationMute?.setMuted(isMuted, owner: id)
+                    isAudioSessionActive = true; onActivated?()
                 } else {
                     enqueueActivation(id: id, initial: true)
                 }
@@ -506,6 +508,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             return false // onActivated fires only after the worker grants audio.
         }
         try activateAudioSession()
+        if !usesSystemCall { applicationMute?.setMuted(isMuted, owner: callID) }
         // Reconcile a missed unhold delegate callback against the current call,
         // only after the system actually grants activation.
         if isHeld {
@@ -552,6 +555,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
                       initial || !self.isHeld || self.audioYield?.releasedBySystem == true || self.audioYield?.observedCompetitor == true else { return }
                 switch result {
                 case .success:
+                    if !self.usesSystemCall { self.applicationMute?.setMuted(self.isMuted, owner: id) }
                     if self.isHeld { self.isHeld = false; self.resumeActionID = nil; self.onHoldChanged?(false) }
                     self.isAudioSessionActive = true; self.audioYield = nil
                     self.cancelApplicationAudioRecovery(); self.onActivated?()

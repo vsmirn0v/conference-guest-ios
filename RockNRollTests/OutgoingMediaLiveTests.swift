@@ -110,9 +110,16 @@ final class OutgoingMediaLiveTests: XCTestCase {
                 }
                 try await Task.sleep(for: .seconds(4))
                 if phase == "high" || phase == "high-return" {
-                    try await wait(seconds: 60) {
+                    do {
+                        try await wait(seconds: 60) {
+                            let value = sink.snapshot()
+                            return max(value.width, value.height) == longSide && min(value.width, value.height) == shortSide
+                        }
+                    } catch {
                         let value = sink.snapshot()
-                        return max(value.width, value.height) == longSide && min(value.width, value.height) == shortSide
+                        print("OUTGOING_NOT_READY,profile=\(profile.rawValue),phase=\(phase),decoded=\(value.count),size=\(value.width)x\(value.height),subscribed=\(remote.isSubscribed)")
+                        monitor.record(track: track)
+                        throw error
                     }
                     try await Task.sleep(for: .seconds(4))
                 }

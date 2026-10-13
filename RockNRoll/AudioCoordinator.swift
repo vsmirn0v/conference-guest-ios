@@ -11,6 +11,9 @@ final class AudioCoordinator {
     var onRouteChanged: (() -> Void)?
     var onServicesChanged: ((Bool) -> Void)?
     private let worker: AudioSessionWorker
+    private let prepareSession: @Sendable () throws -> Void
+    private let recoveryWindow: Duration
+    private let recoveryInterval: Duration
     private var lease = AudioSessionLease()
     private var observingSession = false
     private var mixingTask: Task<Void, Never>?
@@ -18,6 +21,7 @@ final class AudioCoordinator {
     private var startupTask: Task<Void, Never>?
     private var startupReady: (@MainActor () async throws -> Void)?
     private var startupFailure: (@MainActor (Error) -> Void)?
+    private var servicesNeedRecovery = false
     private var mixingRevision = 0
     private var configurationLease: AudioSessionLease? = AudioSessionLease()
     private var routeLease: AudioSessionLease?
@@ -39,8 +43,17 @@ final class AudioCoordinator {
         }
     }
 
-    init(worker: AudioSessionWorker = .shared) {
+    init(worker: AudioSessionWorker = .shared,
+         prepareSession: @escaping @Sendable () throws -> Void = {
+             let session = AVAudioSession.sharedInstance()
+             let options: AVAudioSession.CategoryOptions = [.mixWithOthers, .allowBluetoothHFP]
+             if session.category != .playAndRecord || session.mode != .videoChat || session.categoryOptions != options {
+                 try session.setCategory(.playAndRecord, mode: .videoChat, options: options)
+             }
+         }, recoveryWindow: Duration = .seconds(12), recoveryInterval: Duration = .milliseconds(500)) {
         self.worker = worker
+        self.prepareSession = prepareSession
+        self.recoveryWindow = recoveryWindow; self.recoveryInterval = recoveryInterval
         if ProcessInfo.processInfo.isiOSAppOnMac {
             macRouteSubscription = MacAudioDevices.shared.$snapshot.dropFirst()
                 .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.onRouteChanged?() }
@@ -50,6 +63,7 @@ final class AudioCoordinator {
                      AVAudioSession.routeChangeNotification,
                      AVAudioSession.mediaServicesWereLostNotification,
                      AVAudioSession.mediaServicesWereResetNotification,
+                     UIApplication.didBecomeActiveNotification,
                      AVCaptureSession.wasInterruptedNotification,
                      AVCaptureSession.interruptionEndedNotification] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
@@ -70,6 +84,7 @@ final class AudioCoordinator {
     }
     func endSession() {
         observingSession = false; lease.invalidate()
+        servicesNeedRecovery = false
         cancelOutputRestoration()
         outputRecovery = BuiltInOutputRecovery()
         mixingTask?.cancel(); mixingTask = nil
@@ -179,13 +194,7 @@ final class AudioCoordinator {
     /// The provider may reconfigure the shared session later; real-device validation is required.
     func prepareForJoin() async throws {
         let expected = lease
-        try await worker.perform(lease: expected) {
-            let session = AVAudioSession.sharedInstance()
-            let options: AVAudioSession.CategoryOptions = [.mixWithOthers, .allowBluetoothHFP]
-            if session.category != .playAndRecord || session.mode != .videoChat || session.categoryOptions != options {
-                try session.setCategory(.playAndRecord, mode: .videoChat, options: options)
-            }
-        }
+        try await worker.perform(lease: expected, operation: prepareSession)
         guard lease === expected, expected.isActive else { throw CancellationError() }
         observingSession = true
         // The call owner activates the session before the SDK starts media.
@@ -307,12 +316,15 @@ final class AudioCoordinator {
                 onInterruptionChanged?(false)
             }
         case AVAudioSession.mediaServicesWereLostNotification:
+            servicesNeedRecovery = true
             lease.invalidate(); suspendConfiguration()
             audioWarning = L("Audio service unavailable")
             onServicesChanged?(false)
             onInterruptionChanged?(true)
         case AVAudioSession.mediaServicesWereResetNotification:
             recoverServices()
+        case UIApplication.didBecomeActiveNotification:
+            if servicesNeedRecovery && resetTask == nil { recoverServices() }
         case AVCaptureSession.wasInterruptedNotification:
             cameraWarning = L("Camera paused by iOS")
         case AVCaptureSession.interruptionEndedNotification:
@@ -335,6 +347,7 @@ final class AudioCoordinator {
     }
 
     private func recoverServices() {
+        servicesNeedRecovery = true
         lease.invalidate(); lease = AudioSessionLease()
         mixingTask?.cancel(); mixingTask = nil; resetTask?.cancel()
         suspendConfiguration()
@@ -345,23 +358,46 @@ final class AudioCoordinator {
         onServicesChanged?(false); onInterruptionChanged?(true)
         resetTask = Task { [weak self] in
             guard let self else { return }
+            defer { if self.lease === expected { self.resetTask = nil } }
+            let deadline = ContinuousClock.now.advanced(by: self.recoveryWindow)
+            var prepared = false
+            while !Task.isCancelled, self.lease === expected, expected.isActive {
+                do {
+                    try await self.prepareForJoin()
+                    guard self.lease === expected, expected.isActive else { return }
+                    prepared = true; break
+                } catch is CancellationError { return }
+                catch {
+                    guard self.lease === expected, expected.isActive, !Task.isCancelled else { return }
+                    #if DEBUG
+                    let failure = error as NSError
+                    print("Audio service reconfiguration retry: \(failure.domain) code=\(failure.code)")
+                    #endif
+                    // The reset notification can precede usable category/route
+                    // services. A transient failure must not strand this owner.
+                    if ContinuousClock.now >= deadline {
+                        self.audioWarning = L("Audio could not resume: %@", error.localizedDescription); self.publishStatus()
+                        self.startupFailure?(error)
+                        return
+                    }
+                    do { try await Task.sleep(for: self.recoveryInterval) } catch { return }
+                }
+            }
+            guard prepared, !Task.isCancelled, self.lease === expected, expected.isActive else { return }
             do {
-                try await self.prepareForJoin()
-                guard self.lease === expected, expected.isActive else { return }
                 if let ready = self.startupReady {
                     try await ready()
                     guard self.lease === expected, expected.isActive else { return }
                     self.startupReady = nil; self.startupFailure = nil
                 }
+                self.servicesNeedRecovery = false
                 self.onServicesChanged?(true)
                 self.onInterruptionChanged?(false)
             } catch is CancellationError { }
             catch {
                 guard self.lease === expected, expected.isActive else { return }
-                self.audioWarning = L("Audio could not resume: %@", error.localizedDescription); self.publishStatus()
                 self.startupFailure?(error)
             }
-            if self.lease === expected { self.resetTask = nil }
         }
     }
 

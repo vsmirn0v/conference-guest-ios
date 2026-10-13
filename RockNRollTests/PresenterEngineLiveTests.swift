@@ -191,12 +191,10 @@ import XCTest
         case "guest":
             let selected = NativeConferenceEngine(systemCall: call, catchUp: catchUp)
             selected.onEvent = events; engine = selected; studio = selected.studioForTesting
-            ready = { selected.readyForPresenterForTesting }
+            ready = { selected.readyForPresenterForTesting && selected.mediaReadyForTesting }
             send = { microphone, camera in
-                for (enabled, on, off) in [(microphone, L("Mute microphone"), L("Unmute microphone")), (camera, L("Stop video"), L("Start video"))] {
-                    let label = enabled ? off : on
-                    self.descendants(container.view).compactMap { $0 as? UIButton }.first { $0.accessibilityLabel == label }?.sendActions(for: .touchUpInside)
-                }
+                selected.setMicrophoneForTesting(microphone)
+                selected.setCameraForTesting(camera)
             }
             stats = { await GuestMicrophoneProbe.codecEvidenceForTesting() }
             let target = try JoinTarget.parse(link), endpoint = try await VendorEndpointResolver.make().resolve(for: target)
@@ -211,8 +209,12 @@ import XCTest
             // Establish the SDK's ordinary publisher before its separate share transport.
             send(false, true)
             try await wait { studio.cameraOn || ended }
-            try await Task.sleep(for: .seconds(3))
-            let camera = await stats()
+            var camera = await stats()
+            let deadline = Date().addingTimeInterval(15)
+            while !camera.contains(where: { $0["kind"] as? String == "video" && ($0["framesEncoded"] as? NSNumber)?.intValue ?? 0 > 10 }), Date() < deadline {
+                try await Task.sleep(for: .milliseconds(250)); camera = await stats()
+            }
+            print("PRESENTER_GUEST_CAMERA streams=\(camera)")
             XCTAssertTrue(camera.contains { $0["mimeType"] as? String == "video/H264" &&
                 ($0["framesEncoded"] as? NSNumber)?.intValue ?? 0 > 10 }, "Actual guest camera must use hardware H264")
             send(false, false)
@@ -253,7 +255,7 @@ import XCTest
                 (row["inputFormat"] as? NSNumber)?.uint32Value == kCVPixelFormatType_32BGRA &&
                 (row["inputWidth"] as? NSNumber)?.intValue == 1280 && (row["inputHeight"] as? NSNumber)?.intValue == 720 &&
                 (row["knownInputs"] as? Int ?? 0) > 10 && (row["taggedKeyframes"] as? Int ?? 0) > 0
-            }, "The actual SDK sharing transport must preserve the qualified Presenter color contract")
+            }, "The actual SDK sharing transport must preserve its qualified BGRA conversion matrix")
         }
         print("PRESENTER_ENGINE name=\(name) stage=audio-changes streams=\(sending)")
         try await engine.setTransferHeld(true, restoreSending: true)
@@ -307,11 +309,11 @@ import XCTest
             (row["id"] as? String ?? row["mid"] as? String ?? "share", (row["framesEncoded"] as? NSNumber)?.intValue ?? 0)
         }, uniquingKeysWith: max)
     }
-    private func wait(_ predicate: () -> Bool) async throws {
+    private func wait(file: StaticString = #filePath, line: UInt = #line, _ predicate: () -> Bool) async throws {
         let end = Date().addingTimeInterval(30)
         while !predicate(), Date() < end { try await Task.sleep(for: .milliseconds(100)) }
-        XCTAssertTrue(predicate()); if !predicate() { throw NSError(domain: "PresenterQualification", code: 1) }
+        XCTAssertTrue(predicate(), file: file, line: line)
+        if !predicate() { throw NSError(domain: "PresenterQualification", code: Int(line)) }
     }
-    private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
 }
 #endif

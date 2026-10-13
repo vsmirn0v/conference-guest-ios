@@ -81,6 +81,11 @@ final class NativeConferenceEngine: CallEngine {
     func reconnectReactionsForTesting() { beginMediaReconnect(forNetwork: false) }
     var mediaAttemptForTesting: UUID { mediaAttemptEpoch }
     var mediaReadyForTesting: Bool { isSDKActive && mediaConnectionConfirmed && !isMediaReconnecting }
+    var hasReceivedVideoFrameForTesting: Bool {
+        if (floatingVideo?.convertedFramesForTesting ?? 0) > 0 { return true }
+        let gallery = activeControls?.videoEvidenceForTesting["gallery"] as? [[String: Any]] ?? []
+        return gallery.contains { $0["hasFrame"] as? Bool == true && $0["mediaActive"] as? Bool == true }
+    }
     func terminateTransportForTesting() { JazzSession.shared.terminateActiveConference() }
     func setMicrophoneForTesting(_ enabled: Bool) {
         microphoneIntentOn = enabled
@@ -103,6 +108,7 @@ final class NativeConferenceEngine: CallEngine {
     private var offeredShare: GuestStreamViews.PinTarget?
     private var floatingVideo: GuestVideoPictureInPicture?
     private weak var floatingSourceView: UIView?
+    private var screenPresenter: GuestScreenPresenter?
     private let meetingStatus = MeetingHeaderStatus()
     private var configuredNetworkURL: URL?
     private var leaveRequested = false { didSet { updatePiPMicrophoneStatus() } }
@@ -183,7 +189,9 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func updateConferencePlayout(refresh: Bool = false) {
-        conferencePlayout.update(joined: hasMediaJoinStarted && !leaveRequested && finishing == nil,
+        // A replaceable transport may be inactive during service/network recovery.
+        // Keep the logical meeting's native output reservation until Leave/end.
+        conferencePlayout.update(joined: hasJoinStarted && !leaveRequested && finishing == nil,
             audioAvailable: !isSystemHeld && !isAudioInterrupted && isCallAudioReady, refresh: refresh)
     }
 
@@ -245,7 +253,7 @@ final class NativeConferenceEngine: CallEngine {
         GuestPublishingCodecPolicy.prepare()
         GuestH264ColorEncoder.prepare()
         identity.setName(displayName)
-        floatingSourceView = container.view
+        floatingSourceView = screenPresenter?.sourceView ?? container.view
         if configuredNetworkURL != nil {
             // The SDK initializes only once, but each parsed JazzRoom carries its own host.
             // Joining that room connects to its host even when the initial network differs.
@@ -268,8 +276,17 @@ final class NativeConferenceEngine: CallEngine {
             self?.offeredShare = target
         }
         audio.onServicesChanged = { [weak self] available in
-            self?.traceMediaRecovery(available ? "media-services-ready" : "media-services-lost")
-            self?.systemCall.audioServicesChanged(available)
+            guard let self else { return }
+            if !available, self.hasBecomeActive {
+                // Publish recovery ownership before SDK terminal callbacks or the
+                // system owner's deferred deactivation can reach the main queue.
+                self.needsMediaReconnect = true
+                self.isAudioInterrupted = true
+                self.audioGate.markInterrupted()
+                self.screenPresenter?.beginRecovery()
+            }
+            self.traceMediaRecovery(available ? "media-services-ready" : "media-services-lost")
+            self.systemCall.audioServicesChanged(available)
         }
         audio.onStatus = { [weak self] message in self?.onMediaStatus?(message) }
         audio.onRouteChanged = { [weak self] in
@@ -301,10 +318,14 @@ final class NativeConferenceEngine: CallEngine {
             userNameService: identity,
             featureFlags: GuestCameraCapabilities.flags
         )
+        let presenter = GuestScreenPresenter(container: container)
+        presenter.onCancel = { [weak self] in self?.leave() }
+        screenPresenter = presenter
+        floatingSourceView = presenter.sourceView
         try Jazz.initialize(
             conferenceAuthorizationType: .jazzToken(tokenProvider: tokenProvider),
             container: container,
-            navigationType: .default,
+            navigationType: .custom(screenPresenter: presenter),
             settings: settings,
             eventsListener: events,
             shouldRateConference: false
@@ -541,6 +562,7 @@ final class NativeConferenceEngine: CallEngine {
         needsMediaReconnect = false
         reconnectingForNetwork = forNetwork
         isMediaReconnecting = true
+        screenPresenter?.beginRecovery()
         mediaRecoveryBudget = CallMediaRecoveryBudget(seconds: 12)
         updateMediaRecoveryBudget()
         isSDKActive = false
@@ -601,6 +623,7 @@ final class NativeConferenceEngine: CallEngine {
         hasScheduledMediaRestart = false
         isAudioInterrupted = false
         needsMediaReconnect = false
+        screenPresenter?.completeRecovery()
         traceMediaRecovery("reconnect-complete")
         audio.callAudioDidActivate()
         audio.restoreOutputAfterInterruption()
@@ -885,6 +908,7 @@ final class NativeConferenceEngine: CallEngine {
         guard hasJoinStarted, !leaveRequested, audioGate.canUseMedia, isCallAudioReady,
               let room = pendingRoom else { return }
         pendingRoom = nil
+        screenPresenter?.beginJoin()
         hasMediaJoinStarted = true
         updateConferencePlayout()
         mediaAttemptEpoch = UUID()
@@ -1697,26 +1721,36 @@ final class NativeConferenceEngine: CallEngine {
                   self.hasJoinStarted, !self.leaveRequested, self.finishing == nil else {
                 return JazzConferenceConnectionCustomRepresentation(view: view, canOpenNextScreen: true)
             }
+            let representation = JazzConferenceConnectionCustomRepresentation(view: view, canOpenNextScreen: true)
             self.connectionSubscription?.cancel()
-            self.connectionSubscription = state.$connectionStage.receive(on: DispatchQueue.main)
-                .sink { [weak self, weak label] stage in
+            let update: @MainActor (JazzConferenceConnectionStage) -> Void = { [weak self, weak label, weak representation] stage in
                     guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                           self.hasJoinStarted, self.finishing == nil else { return }
                     label?.text = self.isSystemHeld ? L("Jam on hold") :
                         (self.hasBecomeActive ? L("Restoring jam audio…") : L("Connecting…"))
                     if case .terminated(let reason) = stage {
+                        self.traceMediaRecovery("connection-terminated", details: ["reason": String(describing: reason)])
                         // Use the delivered value: @Published emits before its backing field changes.
                         if case .finish(let event) = self.terminationContext.resolve(.left, reason: reason) {
                             // A real host end/kick must not be overwritten by the
                             // later cancellation from our own transport teardown.
                             self.finishSession(userEnded: self.leaveRequested, event: event)
                         } else {
+                            // The SDK observes this published gate while routing its
+                            // terminal screen. Close it synchronously, before that
+                            // route can replace our recovery view with an end sheet.
+                            representation?.canOpenNextScreen = false
                             self.connectionTerminationReason = reason
+                            self.traceMediaRecovery("connection-terminated-recovering", details: ["reason": String(describing: reason)])
                             self.scheduleTerminalEvent(.left)
                         }
                     }
-                }
-            return JazzConferenceConnectionCustomRepresentation(view: view, canOpenNextScreen: true)
+            }
+            self.connectionSubscription = state.$connectionStage.sink { stage in
+                if Thread.isMainThread { MainActor.assumeIsolated { update(stage) } }
+                else { Task { @MainActor in update(stage) } }
+            }
+            return representation
         }
     }
 
@@ -1817,9 +1851,11 @@ final class NativeConferenceEngine: CallEngine {
         }
     }
 
-    private func finishSession(userEnded: Bool, event: CallEvent) {
+    private func finishSession(userEnded: Bool, event: CallEvent, source: String = #function) {
         endCodecPolicy()
         guard finishing == nil, hasJoinStarted else { return }
+        traceMediaRecovery("session-finish", details: ["eventResult": String(describing: event),
+            "source": source, "reason": connectionTerminationReason.map { String(describing: $0) } ?? "none"])
         #if DEBUG
         audioIOTrace.stop()
         #endif
@@ -1881,6 +1917,7 @@ final class NativeConferenceEngine: CallEngine {
             self.hasJoinStarted = false
             self.hasMediaJoinStarted = false
             if hadMediaJoin { JazzSession.shared.terminateActiveConference() }
+            self.screenPresenter?.end()
             self.activeCoordinator = nil
             self.leaveRequested = false
             self.mediaReconnectTimedOut = false

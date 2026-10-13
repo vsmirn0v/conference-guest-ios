@@ -41,7 +41,7 @@ final class GuestH264ColorEncoder: NSObject, RTCVideoEncoder {
     #endif
     init(base: any RTCVideoEncoder) {
         self.base = base
-        qualifiedDefaultBGRA = !ProcessInfo.processInfo.isiOSAppOnMac && base.implementationName() == "VideoToolbox"
+        qualifiedDefaultBGRA = base.implementationName() == "VideoToolbox"
         super.init()
         #if DEBUG
         Self.evidenceLock.lock(); Self.encoders.add(self); Self.evidenceLock.unlock()
@@ -53,6 +53,9 @@ final class GuestH264ColorEncoder: NSObject, RTCVideoEncoder {
         func wrapped(_ value: AnyObject?) -> AnyObject? {
             guard let factory = value as? any RTCVideoEncoderFactory,
                   !(factory is GuestColorEncoderFactory) else { return value }
+            #if DEBUG
+            print("GUEST_ENCODER_FACTORY wrapped=\(type(of: factory))")
+            #endif
             return GuestColorEncoderFactory(base: factory)
         }
         let selector = NSSelectorFromString("initWithEncoderFactory:decoderFactory:")
@@ -155,6 +158,9 @@ private final class GuestColorEncoderFactory: NSObject, RTCVideoEncoderFactory {
     func encoderSelector() -> (any RTCVideoEncoderSelector)? { base.encoderSelector?() }
     func createEncoder(_ info: RTCVideoCodecInfo) -> (any RTCVideoEncoder)? {
         guard let encoder = base.createEncoder(info) else { return nil }
+        #if DEBUG
+        print("GUEST_ENCODER_CREATED codec=\(info.name) implementation=\(encoder.implementationName())")
+        #endif
         guard info.name == "H264", !(encoder is GuestH264ColorEncoder) else { return encoder }
         return GuestH264ColorEncoder(base: encoder)
     }

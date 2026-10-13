@@ -58,6 +58,9 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
         lock.lock()
         guard self.generation == generation, !disabled else { lock.unlock(); return }
         disabled = true; lock.unlock()
+        #if DEBUG
+        print("GUEST_CODEC_FALLBACK generation=\(generation)")
+        #endif
         NotificationCenter.default.post(name: Self.fallbackNotification, object: self, userInfo: ["generation": generation])
     }
     func incoming(socket: UUID, data: Data) {
@@ -91,7 +94,7 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
             let h264 = sockets[socket]?.codecs.contains("video/h264") ?? false
             let formats = offered.compactMap { $0["codec"] as? String }
             let matchingCID = offered.first?["cid"] as? String == request["cid"] as? String
-            print("GUEST_CODEC_REQUEST hardware=\(hardwareH264) socket=\(qualified) h264=\(h264) formats=\(formats) matchingCID=\(matchingCID)")
+            print("GUEST_CODEC_REQUEST hardware=\(hardwareH264) socket=\(qualified) h264=\(h264) formats=\(formats) matchingCID=\(matchingCID) source=\(request["source"] ?? "unknown") cid=\(request["cid"] ?? "unknown")")
         }
         #endif
         guard hardwareH264, let state = sockets[socket], state.generation == generation,
