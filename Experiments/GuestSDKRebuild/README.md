@@ -1,10 +1,11 @@
 # Guest SDK native audio lifetime rebuild
 
 The vendor signaling/UI wrappers remain unchanged. Only their open-source
-WebRTC dependency is rebuilt. The local candidate passed physical Speaker
-quiet-background, late-participant and call-recovery checks plus Mac/Simulator
-media regressions. It remains isolated from the ordinary dependency pin and has
-not been published to TestFlight; remaining coverage is recorded below.
+WebRTC dependency is rebuilt. The candidate passed physical Speaker/AirPods
+quiet-background, late-participant, accessory mute, call and media-services-reset
+recovery checks plus Mac/Simulator regressions. The normal project now consumes
+the rebuilt component through `Dependencies/guest-sdk`; TestFlight delivery is a
+separate step. Qualification and energy limits are recorded below.
 
 ## Binary evidence
 
@@ -75,7 +76,11 @@ Experiments/GuestSDKRebuild/prepare-project.sh \
 The script creates an ARM64 device/simulator XCFramework and a separate Xcode
 project, embedding linked third-party notices and source/binary provenance. It
 preserves previous generated frameworks and leaves wrappers unchanged.
-The ordinary application dependency pin remains untouched.
+The normal build uses `scripts/prepare-guest-sdk.sh` for the pinned, unchanged
+vendor wrappers and an immutable remote WebRTC artifact/checksum. The local
+experiment project remains available for developing new native candidates.
+`package-release.sh` creates a deterministic ZIP, SHA256SUMS and full cumulative
+source/patch/build-recipe provenance. It refuses to overwrite an existing ZIP.
 
 Redistribution must retain WebRTC's LICENSE, PATENTS, AUTHORS and third-party
 notices. Vendor-wrapper distribution continues to require the existing permission.

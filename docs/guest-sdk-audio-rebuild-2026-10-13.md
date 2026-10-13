@@ -18,19 +18,18 @@ the app still backgrounded:
 - Leave stopped audible output. Native logs then showed the current ADM with
   `state=0`, `playing=0`, `recording=0`; the user confirmed no floating window.
 
+The final AirPods qualification also passed quiet-gap/late-join reception,
+unmute from an initially muted meeting, private sound-check isolation and actual
+media-services-reset recovery with audio, moving video, microphone still off,
+working accessory gestures and moving PiP. Leave stopped the output.
+
 The vendor signaling, UI and screen-broadcast wrappers are unchanged. Only their
-open-source WebRTC dependency is rebuilt. The candidate is installed locally on
-iVitalii. The final signed Release build was installed and launched normally
-after cleanup, without test invitation/name/diagnostic environment overrides.
-Both Debug and Release initially received a signature/entitlement/profile launch
-error during a phone network problem. After connectivity was restored and the
-app was reinstalled, both launched successfully. The profile was unexpired,
-included this device and allowed the inspected entitlements; no certificate or
-entitlement change was needed. Distribution export has not been performed.
-**It is not in TestFlight, and the ordinary
-project's remote SDK pin remains unchanged.** Use the generated local-package
-project below for the rebuilt candidate; a stock-project build does not acquire
-the new native output-lifetime API.
+open-source WebRTC dependency is rebuilt. The normal project now uses the pinned
+wrappers prepared by `scripts/prepare-guest-sdk.sh` and an immutable WebRTC release
+through `Dependencies/guest-sdk/Package.swift`. The replacement artifact's checksum
+is `fb1a82d8eac658bc4d191d4bc7b9d888c06146602aeacbea8a00d09272d704fe`.
+**No TestFlight upload is part of this qualification task.** Final normal-project
+archive validation is recorded after the dependency pin is updated.
 
 ## Cause and source identity
 
@@ -52,7 +51,7 @@ decoder changes and the cumulative patches under `Experiments/GuestSDKRebuild`.
 The unchanged wrapper revision is `6d5f92869690fa22bb489a9089aa554d733c6936`.
 The final unmodified device binary hash is:
 
-`1a2c0783a02eba9b421fe1a921ec0ab4152205691fc28d8a6e2b3b2dad45169a`
+`1b6686cabee67e0c7cb36829512d426f225b6e8390eecd5f9c11f90eb0195882`
 
 All 37 actual WebRTC-ordinal imports from the wrappers resolve. Canonical types
 for retained Objective-C methods match. The new YUV helper has a distinct class
@@ -91,6 +90,27 @@ recovery episode, and rechecks external routes on the worker. Headsets and expli
 route choices take precedence. The SDK's UIView-based picker is observed without
 consuming its native touch handling. CallKit registration remains disabled.
 
+AirPods need an available native input bus for accessory unmute even when the
+meeting track is muted. The physical iOS 17+ HFP path supplies that bus without
+starting WebRTC recording; the recording callback exits before reading input
+unless recording is requested. Private sound checks cannot enable the network
+microphone. Native device reconfiguration preserves a muted application intent,
+and the app reapplies the saved intent before accepting new accessory gestures.
+
+Route changes exposed an AudioUnit start failure while AirPods changed sample
+rate. Native recovery retries initialization/start on its worker with a bounded
+budget and invalidates retries on interruption, shutdown or replacement. The
+app also retries transient category preparation after media-services reset;
+Leave cancels queued work, and duplicate notifications retire older attempts.
+The logical meeting retains its output reservation across inactive transport
+replacement. App-owned presentation hides SDK teardown/end screens during local
+recovery and provides a stable PiP anchor; typed host end/kick still ends the room.
+
+A real reset crash exposed reentrant SDP callback destruction: closing a peer
+inside an offer callback could run the same queued callback again with a consumed
+description. Native code now removes the queue entry before invoking user code.
+The regression closes peers from their callbacks for ten repeated cycles.
+
 ## Validation
 
 Local evidence is under `.build/reverse-sdk/`; private invitations and raw device
@@ -111,6 +131,12 @@ logs are not committed.
 | `device-console-route-reviewed.log` | Replaced ADM stopped; final Leave released reservation and ended native playback/recording |
 | `choice-final-release-build.log` | Signed generic-iOS Release build |
 | `device-release-network-retry-launch.log` | Final Release candidate installed and launched normally on iVitalii after network restoration |
+| `reset-qualified-media-mac.xcresult` | Final native candidate: three real receive joins, three mic cycles, two camera restarts; passed in 49.2 seconds |
+| `reset-retry-sim.xcresult` | 63 tests passed, including transient reset preparation failure, mute intent, ownership and presentation |
+| `reset-final-sim.xcresult`, `reset-final-core-mac.xcresult` | Final reset lifecycle tests: 29 Simulator and 36 Mac tests passed, including duplicate reset while preparation is blocked and ten reentrant callback-close cycles on Mac |
+| `guest-bgra-presenter-qualified-mac.xcresult` | Private/live Presenter capture and audio profile/hold transitions; 14 independent H264 BGRA color cases passed with maximum decoded RGB error 4 |
+| `engine-switch-final.xcresult` | Guest → second native engine → third native engine → community room → guest auto-join switching passed |
+| Physical final reset/AirPods/PiP | User confirmed recovery, Mic remained off, AirPods gestures worked, PiP moved, Leave stopped audio; console showed completed media recovery and application mute true |
 
 The Presenter and repeated-join methods must run in separate XCTest processes.
 An attempted combined bundle passed Presenter and then failed when a second test
@@ -155,37 +181,42 @@ Enable `TEST_RUNNER_ROCKNROLL_TEST_REBUILT_SDK_MIC=1` or
 `testGuestNativeScreenDetail` with the independent browser receiver bridge for
 Presenter resolution checks.
 
+## Short battery check and limits
+
+Two unplugged quiet-background Power Profiler recordings on iVitalii with AirPods
+and microphone/camera off covered about two minutes each. The user confirmed
+speech returned without foregrounding afterward, including the post-reset run.
+Whole-phone duration-weighted readings were **4.21% battery/hour** over 120.01s and
+**3.41% battery/hour** over 120.95s. The first trace reported nominal thermal state.
+The post-reset thermal table had no samples. App-specific power tables had no
+usable samples. Debug diagnostics were enabled; there was no matched idle or
+original-SDK control. These are descriptive short whole-device measurements,
+not a battery-life forecast, SDK-only cost or evidence of an energy improvement.
+
+Local evidence: `quiet-route-fixed.trace`, `quiet-post-reset.trace` and exported
+results under `.build/reverse-sdk/`. USB charging produced zero whole-device
+power readings and those recordings are excluded.
+
 ## Remaining coverage and release boundary
 
-Before the next beta:
+The intended physical regressions above now pass. A future beta still requires
+incrementing the build, exporting/uploading the distribution archive and checking
+processing plus internal/public TestFlight assignments.
 
-1. Package the qualified WebRTC artifact with an immutable checksum, source/patch
-   provenance and notices, then connect it to the normal release dependency path.
-   Confirm the archive contains the intended binary and output-lifetime API; the
-   stock project currently does not.
-2. On the rebuilt component, check AirPods quiet-gap/late-join recovery, accessory
-   mute/unmute and private sound-check isolation, then media-services reset with
-   audio and moving video. These are the outstanding physical regression gates.
-3. Run a focused all-engine microphone/camera/Presenter smoke check on the final
-   dependency integration, including switching into and out of guest meetings.
-4. Increment the build, produce and verify the distribution archive, export/upload
-   it, and verify processing plus internal/public TestFlight group assignments.
-
-A short quiet-background energy comparison is recommended to quantify the new
-audio-lifetime cost. It is separate from the remaining functional gates; no battery
-improvement has been claimed.
-
-- Actual battery impact of retaining the real conference output through silence
-  was not measured. The fix intentionally keeps the joined conference active.
-- The rebuilt binary's quiet-gap path was physically qualified on Speaker;
-  AirPods quiet-gap, private-preview/accessory transitions and a fresh media-services
-  reset still need device qualification. Earlier stock-SDK PiP/AirPods results are
-  recorded separately and must not be treated as new-binary coverage.
+- App-specific battery cost remains unmeasured. The fix intentionally keeps the
+  joined conference's output active through silence.
+- Three final Mac joins showed first video 2.31–4.66s after Join, or 1.73–3.15s
+  after the active event. This measurement includes remote publication, network,
+  keyframe/decode and UI readiness; it does not identify the delaying stage.
+  Startup latency remains an improvement opportunity; no latency fix is claimed.
 - The newer WebRTC binary has not been qualified against every compatible server
   or every application engine. Existing wrappers are unchanged; binary compatibility
   checks cannot replace those live regressions.
-- The rebuilt package is local. No modified vendor wrapper repository or new
-  public binary artifact was published, and no beta was submitted in this task.
+- Community-room full-HD camera qualification hit the existing adaptive bandwidth
+  downgrade to 960×540 despite advancing encoded/decoded frames. It does not prove
+  a persistent full-HD camera stream; the community media dependency is unchanged.
+- Vendor wrappers are unmodified. Only the open-source native artifact is
+  published; no beta was submitted in this task.
 
 REA sources: [repository](https://github.com/morluto/rea),
 [native guide](https://rea.tools/guides/native/).
