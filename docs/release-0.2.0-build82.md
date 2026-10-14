@@ -64,5 +64,12 @@ Details: [quality policy](screen-share-detail-policy-2026-10-14.md),
   version 0.2.0/build 82, iOS 16.0 minimum, team 5V64BP2H3P. Export uses production
   iCloud and lacks debugger entitlement. Purpose strings, encryption declaration,
   and required native symbols were verified; application dSYM UUID matches.
-- Upload and App Store Connect group assignment are in progress.
-- Tester notes prepared: “Sharper screen sharing and improved stability.”
+- Xcode upload succeeded; App Store Connect received build 82 on October 14,
+  2026. Existing third-party missing-dSYM warnings remain; application symbols
+  match the executable.
+- Read back on October 14, 2026: build 82 is **Testing** in both Rock’n’Roll
+  Internal (1 tester) and Rock’n’Roll Public Beta (6 testers), confirmed on each
+  group’s Builds page. Public submission had automatic tester notification
+  enabled and immediately reached Testing.
+- Public invitation: https://testflight.apple.com/join/Hd13C9U3
+- Tester notes: “Sharper screen sharing and improved stability.”
