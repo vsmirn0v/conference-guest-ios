@@ -1,0 +1,51 @@
+--- a/sdk/objc/api/peerconnection/RTCRtpReceiver.mm
++++ b/sdk/objc/api/peerconnection/RTCRtpReceiver.mm
+@@ -18,6 +18,7 @@
+ #import "helpers/NSString+StdString.h"
+ 
+ #include "api/media_stream_interface.h"
++#include <atomic>
+ 
+ namespace webrtc {
+ 
+@@ -57,9 +58,21 @@
+   RTC_OBJC_TYPE(RTCPeerConnectionFactory) * _factory;
+   webrtc::scoped_refptr<webrtc::RtpReceiverInterface> _nativeRtpReceiver;
+   std::unique_ptr<webrtc::RtpReceiverDelegateAdapter> _observer;
++  std::atomic<bool> _observing;
+ }
+ 
+ @synthesize delegate = _delegate;
++
++- (void)setDelegate:(id<RTC_OBJC_TYPE(RTCRtpReceiverDelegate)>)delegate {
++  _delegate = delegate;
++  // Reading peer.receivers/transceivers creates temporary wrappers. Most never
++  // have a delegate: registering/unregistering them synchronously stalls their
++  // caller on the signaling thread and can replace a real observer elsewhere.
++  // Keep the adapter lifetime tied to this wrapper once observation is needed.
++  if (delegate && !_observing.exchange(true, std::memory_order_acq_rel)) {
++    _nativeRtpReceiver->SetObserver(_observer.get());
++  }
++}
+ 
+ - (NSString *)receiverId {
+   return [NSString stringForStdString:_nativeRtpReceiver->id()];
+@@ -100,7 +113,7 @@
+ }
+ 
+ - (void)dealloc {
+-  if (_nativeRtpReceiver) {
++  if (_nativeRtpReceiver && _observing.load(std::memory_order_acquire)) {
+     _nativeRtpReceiver->SetObserver(nullptr);
+   }
+ }
+@@ -148,8 +161,8 @@
+     RTCLogInfo(@"RTC_OBJC_TYPE(RTCRtpReceiver)(%p): created receiver: %@",
+                self,
+                self.description);
++    _observing.store(false, std::memory_order_relaxed);
+     _observer.reset(new webrtc::RtpReceiverDelegateAdapter(self));
+-    _nativeRtpReceiver->SetObserver(_observer.get());
+   }
+   return self;
+ }

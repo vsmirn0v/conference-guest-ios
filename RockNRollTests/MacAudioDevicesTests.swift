@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import RockNRoll
 
@@ -13,7 +14,11 @@ final class MacAudioDevicesTests: XCTestCase {
         var changed: (@MainActor () -> Void)?
         var fail = false
         var asynchronous = false
+        var reads = 0
+        var didRead: (() -> Void)?
         func snapshot() throws -> MacAudioSnapshot {
+            reads += 1
+            defer { didRead?() }
             if fail { throw MacAudioError.unavailable }
             return value
         }
@@ -63,23 +68,29 @@ final class MacAudioDevicesTests: XCTestCase {
         XCTAssertTrue(hardware.selected.isEmpty)
     }
 
-    func testAsynchronousCheckmarkFollowsHardwareNotification() throws {
+    func testAsynchronousCheckmarkFollowsHardwareNotification() async throws {
         let hardware = Hardware()
         hardware.asynchronous = true
         let devices = MacAudioDevices(isMac: true, hardware: hardware)
         try devices.select(20, for: .output)
         XCTAssertEqual(devices.snapshot.outputID, 10)
         hardware.value.outputID = 20
+        let refreshed = expectation(description: "Hardware refresh")
+        hardware.didRead = { refreshed.fulfill() }
         hardware.changed?()
+        await fulfillment(of: [refreshed], timeout: 2)
         XCTAssertEqual(devices.snapshot.outputID, 20)
     }
 
-    func testExternalRouteAndDeviceChangesRefreshTheList() {
+    func testExternalRouteAndDeviceChangesRefreshTheList() async {
         let hardware = Hardware()
         let devices = MacAudioDevices(isMac: true, hardware: hardware)
         hardware.value.devices.removeAll { $0.id == 10 }
         hardware.value.outputID = 20
+        let refreshed = expectation(description: "Hardware refresh")
+        hardware.didRead = { refreshed.fulfill() }
         hardware.changed?()
+        await fulfillment(of: [refreshed], timeout: 2)
         XCTAssertEqual(devices.snapshot.devices(for: .output).map(\.id), [20])
         XCTAssertEqual(devices.snapshot.outputName, "USB headset")
     }
@@ -102,5 +113,22 @@ final class MacAudioDevicesTests: XCTestCase {
         XCTAssertTrue(devices.snapshot.devices.isEmpty)
         XCTAssertThrowsError(try devices.select(20, for: .output))
         XCTAssertTrue(hardware.selected.isEmpty)
+    }
+
+    func testNotificationBurstReadsHardwareOnceAndDoesNotPublishFalseRouteChange() async {
+        let hardware = Hardware()
+        let devices = MacAudioDevices(isMac: true, hardware: hardware)
+        var publications = 0
+        let observation = devices.$snapshot.dropFirst().sink { _ in publications += 1 }
+        let refreshed = expectation(description: "Coalesced refresh")
+        hardware.didRead = { refreshed.fulfill() }
+        for _ in 0..<50 { hardware.changed?() }
+        await fulfillment(of: [refreshed], timeout: 2)
+        XCTAssertEqual(hardware.reads, 2)
+        XCTAssertEqual(publications, 0)
+        hardware.didRead = nil
+        devices.refresh()
+        XCTAssertEqual(publications, 0)
+        withExtendedLifetime(observation) {}
     }
 }

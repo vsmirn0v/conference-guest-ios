@@ -20,12 +20,35 @@ final class ApplicationMicrophoneMute {
             isReconfiguring: NativeApplicationInputMute.isReconfiguring)
     }()
 
+    // The guest native framework supplies the synchronous Mac PCM gate. Other
+    // engines retain their existing platform path until they expose the same gate.
+    static let macGuest: ApplicationMicrophoneMute? = {
+        guard #available(iOS 17.0, *), RockMacInputMuteAvailable() else { return nil }
+        let application = AVAudioApplication.shared
+        return ApplicationMicrophoneMute(read: { application.isInputMuted },
+            write: { try application.setInputMuted($0) },
+            observe: { MacGuestInputMuteObservation(changed: $0) },
+            publishIntent: { muted in
+                RockMacInputMuteSet(muted)
+                NativeApplicationInputMute.publish(muted)
+            }, releaseIntent: {
+                RockMacInputMuteSet(true)
+                NativeApplicationInputMute.release()
+            }, isReconfiguring: NativeApplicationInputMute.isReconfiguring,
+            reconcileCapture: { RockMacInputMuteSet($0) })
+    }()
+
+    static var privateCaptureBridge: ApplicationMicrophoneMute? {
+        ProcessInfo.processInfo.isiOSAppOnMac ? macGuest : shared
+    }
+
     private let read: () -> Bool
     private let write: (Bool) throws -> Void
     private let observe: (@escaping (Bool) -> Void) -> NSObjectProtocol?
     private let publishIntent: (Bool) -> Void
     private let releaseIntent: () -> Void
     private let isReconfiguring: () -> Bool
+    private let reconcileCapture: (Bool) -> Void
     private var observer: NSObjectProtocol?
     private var owner: UUID?
     private var meetingMuted = true
@@ -38,10 +61,12 @@ final class ApplicationMicrophoneMute {
          observe: @escaping (@escaping (Bool) -> Void) -> NSObjectProtocol? = { _ in nil },
          publishIntent: @escaping (Bool) -> Void = { _ in },
          releaseIntent: @escaping () -> Void = {},
-         isReconfiguring: @escaping () -> Bool = { false }) {
+         isReconfiguring: @escaping () -> Bool = { false },
+         reconcileCapture: @escaping (Bool) -> Void = { _ in }) {
         self.read = read; self.write = write; self.observe = observe
         self.publishIntent = publishIntent; self.isReconfiguring = isReconfiguring
         self.releaseIntent = releaseIntent
+        self.reconcileCapture = reconcileCapture
     }
     deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
 
@@ -82,7 +107,10 @@ final class ApplicationMicrophoneMute {
         // Native resets can clear the platform bit. Those notifications are
         // lifecycle changes, not accessory gestures. App actions still update
         // intent during recovery, and the native worker restores the latest one.
-        guard !changing, !isReconfiguring(), read() == muted else { return }
+        guard !changing, !isReconfiguring(), read() == muted else {
+            reconcileCapture(privateCaptures.isEmpty ? meetingMuted : privateInputMuted)
+            return
+        }
         if !privateCaptures.isEmpty {
             privateInputMuted = muted; publishIntent(muted)
             return  // Accessory gestures affect private input, never the meeting.
@@ -100,6 +128,7 @@ final class ApplicationMicrophoneMute {
     }
     private func synchronize() {
         let value = privateCaptures.isEmpty ? meetingMuted : privateInputMuted
+        defer { reconcileCapture(privateCaptures.isEmpty ? meetingMuted : privateInputMuted) }
         // Publish even if the platform already matches: the native layer may
         // still hold the previous owner's or private sound check's intent.
         if owner != nil || !privateCaptures.isEmpty { publishIntent(value) }

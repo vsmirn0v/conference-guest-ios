@@ -82,21 +82,32 @@ final class MacAudioDevices {
     @Published private(set) var snapshot = MacAudioSnapshot()
     @Published private(set) var unavailable = false
     private let hardware: MacAudioHardware?
+    private var refreshTask: Task<Void, Never>?
 
     init(isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac, hardware: MacAudioHardware? = nil) {
         self.hardware = isMac ? (hardware ?? MacCoreAudioHardware()) : nil
-        self.hardware?.observe { [weak self] in self?.refresh() }
+        self.hardware?.observe { [weak self] in self?.scheduleRefresh() }
         refresh()
+    }
+
+    private func scheduleRefresh() {
+        guard refreshTask == nil else { return }
+        refreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.refreshTask = nil
+            self.refresh()
+        }
     }
 
     func refresh() {
         do {
             guard let hardware else { unavailable = true; return }
-            snapshot = try hardware.snapshot()
-            unavailable = false
+            let current = try hardware.snapshot()
+            if snapshot != current { snapshot = current }
+            if unavailable { unavailable = false }
         } catch {
-            snapshot = MacAudioSnapshot()
-            unavailable = true
+            if snapshot != MacAudioSnapshot() { snapshot = MacAudioSnapshot() }
+            if !unavailable { unavailable = true }
         }
     }
 

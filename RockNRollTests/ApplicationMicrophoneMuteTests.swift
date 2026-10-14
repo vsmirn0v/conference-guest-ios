@@ -5,6 +5,69 @@ import Darwin
 @testable import RockNRoll
 
 @MainActor final class ApplicationMicrophoneMuteTests: XCTestCase {
+    func testMacPlatformCallbackGatesInputBeforeNotification() async throws {
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_MAC_INPUT_MUTE"] == "1",
+              ProcessInfo.processInfo.isiOSAppOnMac, #available(iOS 17.0, *) else { throw XCTSkip("Opt-in Mac microphone check") }
+        guard let bridge = ApplicationMicrophoneMute.macGuest else { throw XCTSkip("Requires rebuilt Mac capture gate") }
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw XCTSkip("Mac microphone permission") }
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.mixWithOthers])
+        try session.setActive(true)
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
+        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { _, _ in }
+        try engine.start()
+        defer { input.removeTap(onBus: 0); engine.stop(); try? session.setActive(false) }
+        let owner = UUID(), notified = expectation(description: "Mac mute notification")
+        let app = AVAudioApplication.shared
+        bridge.begin(owner: owner, muted: true) { muted in
+            if !muted { notified.fulfill() }
+            return true
+        }
+        defer { bridge.end(owner: owner) }
+        print("MAC_MUTE before platform=\(app.isInputMuted) gate=\(RockMacInputMuteIsMuted())")
+        XCTAssertTrue(RockMacInputMuteIsMuted())
+        try app.setInputMuted(false) // Same system callback used by the accessory.
+        print("MAC_MUTE after platform=\(app.isInputMuted) gate=\(RockMacInputMuteIsMuted())")
+        // Unmute is admitted by the current owner through its notification;
+        // a stale platform callback must never open microphone capture.
+        await fulfillment(of: [notified], timeout: 3)
+        XCTAssertFalse(RockMacInputMuteIsMuted())
+        bridge.setMuted(true, owner: owner)
+        XCTAssertTrue(RockMacInputMuteIsMuted())
+    }
+
+    func testStalePlatformUnmuteCannotOpenCapture() {
+        var systemMuted = true, captureMuted = true, changes = 0
+        let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 },
+            reconcileCapture: { captureMuted = $0 })
+        bridge.begin(owner: UUID(), muted: true) { _ in changes += 1; return true }
+        captureMuted = false // A delayed callback is followed by a stale notification.
+        bridge.received(false)
+        XCTAssertTrue(captureMuted)
+        XCTAssertEqual(changes, 0)
+    }
+
+    func testReentrantReplacementKeepsItsCaptureIntent() {
+        var systemMuted = false, captureMuted = false
+        let replacement = UUID()
+        var replace = false
+        var bridge: ApplicationMicrophoneMute!
+        bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { value in
+            systemMuted = value
+            if replace {
+                replace = false
+                bridge.begin(owner: replacement, muted: false) { _ in true }
+            }
+        }, reconcileCapture: { captureMuted = $0 })
+        let owner = UUID()
+        bridge.begin(owner: owner, muted: false) { _ in true }
+        replace = true
+        bridge.setMuted(true, owner: owner)
+        XCTAssertFalse(captureMuted)
+        bridge = nil
+    }
+
     func testNativeResetNotificationDoesNotBecomeAnAccessoryUnmute() {
         var systemMuted = true, reconfiguring = false, intent = false, changes: [Bool] = []
         let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 },
@@ -86,6 +149,8 @@ import Darwin
     func testNativeIntentBridgeIsEmbeddedInTheGuestFramework() throws {
         XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCSetApplicationInputMuteIntent"))
         XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCApplicationInputMuteReconfiguring"))
+        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCSetApplicationCaptureMuted"))
+        XCTAssertNotNil(dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCApplicationCaptureMuted"))
     }
 
     func testGestureCallbackCannotOverwriteReplacementOwnersIntent() {
@@ -135,6 +200,27 @@ import Darwin
         XCTAssertTrue(systemMuted); XCTAssertEqual(changes, [false], "App updates must not echo as accessory actions")
         calls.end(); systemMuted = false; bridge.received(false)
         XCTAssertEqual(changes, [false], "A departed meeting cannot receive a late gesture")
+    }
+    func testPerMeetingBridgeDoesNotLeakIntoNextEngine() {
+        var defaultMuted = false, guestMuted = false, changes: [Bool] = []
+        let original = ApplicationMicrophoneMute(read: { defaultMuted }, write: { defaultMuted = $0 })
+        let guest = ApplicationMicrophoneMute(read: { guestMuted }, write: { guestMuted = $0 })
+        let calls = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false,
+            activateAudioSession: {}, applicationMute: original,
+            sessionWorker: AudioSessionWorker(activate: {}, deactivate: {}))
+        calls.onMuteChanged = { changes.append($0) }
+        calls.start(accessoryMute: guest); calls.markConnected()
+        XCTAssertTrue(guestMuted); XCTAssertFalse(defaultMuted)
+        guestMuted = false; guest.received(false)
+        XCTAssertEqual(changes, [false])
+        calls.end()
+        calls.start(); calls.markConnected()
+        XCTAssertTrue(defaultMuted)
+        guestMuted = false; guest.received(false)
+        XCTAssertEqual(changes, [false], "The old engine no longer owns accessory gestures")
+        defaultMuted = false; original.received(false)
+        XCTAssertEqual(changes, [false, false])
+        calls.end()
     }
     func testPrivateSoundCheckGesturesNeverUnmuteTheMeeting() {
         var systemMuted = false, changes: [Bool] = []

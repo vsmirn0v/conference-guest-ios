@@ -4,6 +4,29 @@ import XCTest
 @testable import RockNRoll
 
 final class GuestReactionTransportTests: XCTestCase {
+    func testNativeReceptionDoesNotDeclareGapJustForBackgrounding() {
+        for foreground in [true, false] {
+            XCTAssertTrue(GuestReactionReception.isReceiving(modernProtocol: true, transportReady: true,
+                legacyObserving: false, foreground: foreground, networkAvailable: true, recovering: false))
+            XCTAssertFalse(GuestReactionReception.isReceiving(modernProtocol: true, transportReady: false,
+                legacyObserving: true, foreground: foreground, networkAvailable: true, recovering: false),
+                "A legacy observer cannot certify an unavailable authoritative native connection")
+            XCTAssertFalse(GuestReactionReception.isReceiving(modernProtocol: true, transportReady: true,
+                legacyObserving: true, foreground: foreground, networkAvailable: false, recovering: false))
+            XCTAssertFalse(GuestReactionReception.isReceiving(modernProtocol: true, transportReady: true,
+                legacyObserving: true, foreground: foreground, networkAvailable: true, recovering: true))
+        }
+    }
+
+    func testLegacyReceptionStillReportsBackgroundUncertainty() {
+        XCTAssertTrue(GuestReactionReception.isReceiving(modernProtocol: false, transportReady: false,
+            legacyObserving: true, foreground: true, networkAvailable: true, recovering: false))
+        XCTAssertFalse(GuestReactionReception.isReceiving(modernProtocol: false, transportReady: true,
+            legacyObserving: true, foreground: false, networkAvailable: true, recovering: false))
+        XCTAssertFalse(GuestReactionReception.isReceiving(modernProtocol: false, transportReady: true,
+            legacyObserving: false, foreground: true, networkAvailable: true, recovering: false))
+    }
+
     func testAllTwelveVerifiedCodesAndLegacyValuesDecode() throws {
         XCTAssertEqual(GuestReactionCode.allCases.count, 12)
         XCTAssertEqual(Set(GuestReactionCode.allCases.map(\.kind)), Set(MeetingReaction.allCases))

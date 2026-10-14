@@ -759,9 +759,18 @@
 "Not sent" = "Не отправлено";
 "New activity ↓" = "Новая активность ↓";
 "No reactions yet." = "Реакций пока нет.";
-"Reactions received on this device during this meeting." = "Реакции, полученные на этом устройстве во время этой встречи.";
+"Received on this device" = "Получены на этом устройстве";
+"Reaction history may be incomplete" = "История реакций может быть неполной";
+"About reaction history" = "Об истории реакций";
+"Reaction history" = "История реакций";
+"Only reactions received on this device are saved for this jam. Interruptions may leave gaps; this does not mean any reactions were sent or lost." = "Сохраняются только реакции, полученные на этом устройстве во время джема. Из-за прерываний история может быть неполной. Это не означает, что какие-либо реакции были отправлены или пропущены.";
+"Possible interruptions" = "Возможные прерывания";
+"Expanded" = "Развернуто";
+"Collapsed" = "Свернуто";
+"Showing recent interruptions" = "Показаны последние прерывания";
+"Reception not confirmed" = "Получение реакций не подтверждено";
+"Less than a second" = "Меньше секунды";
 "Showing recent reactions" = "Показаны последние реакции";
-"Some reactions may be missing while disconnected or backgrounded." = "Часть реакций могла быть пропущена при потере связи или в фоне.";
 
 "System call controls" = "Системные элементы звонка";
 

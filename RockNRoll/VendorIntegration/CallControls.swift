@@ -6,6 +6,19 @@ import UIKit
 
 final class CallControls: UIView, UIGestureRecognizerDelegate {
     override var canBecomeFirstResponder: Bool { true }
+    private let spacebarShortcut = CallSpacebarShortcut()
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let remaining = spacebarShortcut.began(presses, in: self) { self.keyToggleMicrophone() }
+        if !remaining.isEmpty { super.pressesBegan(remaining, with: event) }
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let remaining = spacebarShortcut.ended(presses)
+        if !remaining.isEmpty { super.pressesEnded(remaining, with: event) }
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        spacebarShortcut.reset()
+        super.pressesCancelled(presses, with: event)
+    }
     override var keyCommands: [UIKeyCommand]? {
         CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
             chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls)) +

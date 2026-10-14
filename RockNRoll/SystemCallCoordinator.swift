@@ -51,7 +51,8 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private let callSnapshot: (() -> [ObservedCall])?
     private let activateAudioSession: (() throws -> Void)?
     private let sessionWorker: AudioSessionWorker
-    private let applicationMute: ApplicationMicrophoneMute?
+    private let defaultApplicationMute: ApplicationMicrophoneMute?
+    private var applicationMute: ApplicationMicrophoneMute?
     private var activationLease: AudioSessionLease?
     private var servicesAvailable = true
     private var ending = false
@@ -114,7 +115,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         self.callSnapshot = callSnapshot
         self.activateAudioSession = activateAudioSession
         self.sessionWorker = sessionWorker
-        self.applicationMute = applicationMute ?? (transactionRequester == nil && callSnapshot == nil && activateAudioSession == nil ? ApplicationMicrophoneMute.shared : nil)
+        self.defaultApplicationMute = applicationMute ?? (transactionRequester == nil && callSnapshot == nil && activateAudioSession == nil ? ApplicationMicrophoneMute.shared : nil)
         self.recoveryWindow = recoveryWindow; self.recoveryInterval = recoveryInterval
         registrationOverride = systemCallRegistration
         var register = systemCallRegistration ?? (transactionRequester != nil ||
@@ -176,8 +177,9 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         else if transactionRequester == nil { (source ?? provider).reportCall(with: id, updated: update) }
     }
 
-    func start() {
+    func start(accessoryMute: ApplicationMicrophoneMute? = nil) {
         guard callID == nil else { return }
+        applicationMute = accessoryMute ?? defaultApplicationMute
         usesSystemCall = registrationOverride ?? (transactionRequester != nil ||
             (!ProcessInfo.processInfo.isiOSAppOnMac && UserDefaults.standard.bool(forKey: Self.controlsPreferenceKey)))
         #if DEBUG

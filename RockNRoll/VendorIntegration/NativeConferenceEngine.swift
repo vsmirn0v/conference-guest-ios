@@ -823,8 +823,8 @@ final class NativeConferenceEngine: CallEngine {
                 guard let self, self.sessionEpoch == reactionEpoch, !self.leaveRequested else { return }
                 if notification.name == UIApplication.didEnterBackgroundNotification {
                     self.chat?.reactionHistory.isReadingLatest = false
-                    self.chat?.reactionHistory.beginGap()
-                } else { self.updateReactionReceptionGap() }
+                }
+                self.updateReactionReceptionGap()
             }.store(in: &reactionHistorySubscriptions)
         }
         meetingStatus.reset()
@@ -895,7 +895,7 @@ final class NativeConferenceEngine: CallEngine {
                 return
             }
             #endif
-            self.systemCall.start()
+            self.systemCall.start(accessoryMute: ApplicationMicrophoneMute.macGuest)
         }, failure: { [weak self] error in
             self?.onMediaStatus?(error.localizedDescription)
             self?.finishSession(userEnded: false, event: .failed)
@@ -1051,8 +1051,11 @@ final class NativeConferenceEngine: CallEngine {
 
     private func updateReactionReceptionGap() {
         guard hasJoinStarted, hasBecomeActive, !leaveRequested else { return }
-        let receiving = (reactionTransport?.hasModernProtocol == true ? reactionTransport?.ready == true : receivedReactions?.isObserving == true)
-        if receiving && UIApplication.shared.applicationState == .active && isNetworkAvailable && !networkRecovery.requiresRecovery && !isMediaReconnecting {
+        let receiving = GuestReactionReception.isReceiving(modernProtocol: reactionTransport?.hasModernProtocol == true,
+            transportReady: reactionTransport?.ready == true, legacyObserving: receivedReactions?.isObserving == true,
+            foreground: UIApplication.shared.applicationState == .active, networkAvailable: isNetworkAvailable,
+            recovering: networkRecovery.requiresRecovery || isMediaReconnecting)
+        if receiving {
             chat?.reactionHistory.endGap()
         } else { chat?.reactionHistory.beginGap() }
     }

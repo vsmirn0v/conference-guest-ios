@@ -3,6 +3,41 @@ import XCTest
 final class ReactionHistoryUITests: XCTestCase {
     func testEnglishHistoryFiltersDetailsAndRotation() { checkHistory(language: "en") }
     func testRussianHistoryFiltersDetailsAndRotation() { checkHistory(language: "ru") }
+    func testThirtyInterruptionsStayOutOfTimelineAndDetailsAreOptional() {
+        let app = launch(language: "en")
+        defer { app.terminate() }
+        let filter = app.buttons["chat.activity-filter"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 8))
+        filter.tap(); app.buttons["Reactions"].firstMatch.tap()
+        let history = app.scrollViews["Jam chat messages"]
+        history.swipeDown(); history.swipeDown()
+        let rowsBefore = history.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reaction.details.")).allElementsBoundByIndex.map(\.identifier)
+        filter.tap(); app.buttons["Simulate 30 reception interruptions"].tap()
+        let info = app.buttons["reaction.history-info"]
+        XCTAssertEqual(info.label, "Reaction history may be incomplete")
+        XCTAssertFalse(history.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "reaction.gap.")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["New activity ↓"].exists)
+        XCTAssertEqual(history.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reaction.details.")).allElementsBoundByIndex.map(\.identifier), rowsBefore)
+        info.tap()
+        XCTAssertTrue(app.staticTexts["reaction.history-explanation"].waitForExistence(timeout: 5))
+        let interruptions = app.buttons["reaction.history-interruptions"]
+        XCTAssertTrue(interruptions.exists)
+        XCTAssertEqual(interruptions.value as? String, "Collapsed")
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reaction.interruption.")).firstMatch.exists)
+        interruptions.tap()
+        XCTAssertEqual(interruptions.value as? String, "Expanded")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reaction.interruption.")).firstMatch.waitForExistence(timeout: 5))
+        let detailShot = XCTAttachment(screenshot: app.screenshot())
+        detailShot.name = "Optional reaction interruption details"; detailShot.lifetime = .keepAlways; add(detailShot)
+        app.buttons["reaction.history-done"].tap()
+        XCTAssertTrue(filter.waitForExistence(timeout: 5))
+        // Real lifecycle transitions also keep the information control singular.
+        for _ in 0..<30 { XCUIDevice.shared.press(.home); app.activate() }
+        XCTAssertEqual(app.buttons.matching(identifier: "reaction.history-info").count, 1)
+        XCTAssertFalse(app.buttons["New activity ↓"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Reaction history after 30 interruptions"; shot.lifetime = .keepAlways; add(shot)
+    }
     func testHistoryWithUnavailableTextChat() {
         let app = launch(language: "en", fixture: "reactions-unavailable")
         defer { app.terminate() }
@@ -10,7 +45,7 @@ final class ReactionHistoryUITests: XCTestCase {
         XCTAssertTrue(filter.waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Chat isn't available right now."].exists)
         filter.tap(); app.buttons["Reactions"].firstMatch.tap()
-        XCTAssertTrue(app.staticTexts["reaction.history-scope"].exists)
+        XCTAssertTrue(app.buttons["reaction.history-info"].exists)
         XCTAssertTrue(app.segmentedControls["Conversation mode"].buttons["Chat"].isSelected)
     }
     func testPaletteShortcutOpensHistoryAndReactionOnlyBadgeIsQuiet() {
@@ -29,7 +64,7 @@ final class ReactionHistoryUITests: XCTestCase {
         XCTAssertTrue(shortcut.isHittable); shortcut.tap()
         XCTAssertTrue(app.buttons["chat.activity-filter"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["chat.activity-filter"].label, "Reactions")
-        XCTAssertTrue(app.staticTexts["reaction.history-scope"].exists)
+        XCTAssertTrue(app.buttons["reaction.history-info"].exists)
         app.buttons["Close conversation"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label == %@", "Chat")).firstMatch.waitForExistence(timeout: 5))
     }
@@ -59,10 +94,16 @@ final class ReactionHistoryUITests: XCTestCase {
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(filter.waitForExistence(timeout: 5)); XCTAssertTrue(filter.isHittable)
         filter.tap(); app.buttons[language == "ru" ? "Сообщения" : "Messages"].firstMatch.tap()
-        XCTAssertFalse(app.staticTexts["reaction.history-scope"].exists)
+        XCTAssertFalse(app.buttons["reaction.history-info"].exists)
         XCUIDevice.shared.orientation = .portrait
         filter.tap(); app.buttons[language == "ru" ? "Вся активность" : "All activity"].firstMatch.tap()
+        let info = app.buttons["reaction.history-info"]
+        info.tap()
+        let explanation = app.staticTexts["reaction.history-explanation"]
+        XCTAssertTrue(explanation.waitForExistence(timeout: 5))
+        if language == "ru" { XCTAssertTrue(explanation.label.contains("Сохраняются только реакции")) }
+        app.buttons["reaction.history-done"].tap()
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Reaction history \(language)"; shot.lifetime = .keepAlways; add(shot)
-        XCTAssertTrue(app.staticTexts["reaction.history-scope"].exists)
+        XCTAssertTrue(app.buttons["reaction.history-info"].exists)
     }
 }

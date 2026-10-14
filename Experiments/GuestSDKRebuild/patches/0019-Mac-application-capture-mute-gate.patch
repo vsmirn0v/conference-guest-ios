@@ -1,0 +1,48 @@
+--- a/sdk/objc/native/src/audio/audio_device_ios.mm
++++ b/sdk/objc/native/src/audio/audio_device_ios.mm
+@@ -39,6 +39,7 @@
+ #import "helpers/AudioTimeStamp+Nanoseconds.h"
+ 
+ namespace {
++std::atomic<bool> mac_application_capture_muted{false};
+ bool IsIOSAppOnMac() {
+   if (@available(iOS 14.0, *)) {
+     return [NSProcessInfo processInfo].isiOSAppOnMac;
+@@ -72,6 +73,15 @@
+     }
+   });
+ }
++}
++
++// macOS delegates per-application input muting to the app. This gate must
++// complete synchronously on its accessory callback, without a main/worker hop.
++void RTCSetApplicationCaptureMuted(int muted) {
++  mac_application_capture_muted.store(muted != 0, std::memory_order_release);
++}
++int RTCApplicationCaptureMuted() {
++  return mac_application_capture_muted.load(std::memory_order_acquire) ? 1 : 0;
+ }
+ 
+ void RTCSetApplicationInputMuteIntent(int muted) {
+@@ -510,7 +520,8 @@
+   RTC_DCHECK_RUN_ON(&io_thread_checker_);
+   OSStatus result = noErr;
+   // Simply return if recording is not enabled.
+-  if (!recording_.load(std::memory_order_acquire)) return result;
++  if (!recording_.load(std::memory_order_acquire) ||
++      mac_application_capture_muted.load(std::memory_order_acquire)) return result;
+ 
+   // Set the size of our own audio buffer and clear it first to avoid copying
+   // in combination with potential reallocations.
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
+@@ -18,6 +18,9 @@
+ 
+ // Scoped to a user-joined conference; 0 releases, nonzero reserves real output.
+ // Requests run asynchronously on each factory's native audio worker.
++// Synchronous PCM gate for macOS application/accessory mute handling.
++RTC_EXTERN void RTCSetApplicationCaptureMuted(int muted);
++RTC_EXTERN int RTCApplicationCaptureMuted(void);
+ RTC_EXTERN void RTCSetConferencePlayoutReserved(int reserved);
+ // Main-queue app intent: -1 releases authority, 0 unmutes, 1 mutes.
+ // Workers restore the latest value after reconfiguration.

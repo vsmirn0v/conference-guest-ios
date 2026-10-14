@@ -9,6 +9,19 @@ import UIKit
 final class RockCallViewController: UIViewController, UIScrollViewDelegate, UIContextMenuInteractionDelegate, UIGestureRecognizerDelegate {
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .allButUpsideDown }
     override var shouldAutorotate: Bool { true }
+    private let spacebarShortcut = CallSpacebarShortcut()
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let remaining = spacebarShortcut.began(presses, in: view) { self.keyToggleMicrophone() }
+        if !remaining.isEmpty { super.pressesBegan(remaining, with: event) }
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let remaining = spacebarShortcut.ended(presses)
+        if !remaining.isEmpty { super.pressesEnded(remaining, with: event) }
+    }
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        spacebarShortcut.reset()
+        super.pressesCancelled(presses, with: event)
+    }
     override var keyCommands: [UIKeyCommand]? {
         CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
             chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls)) +

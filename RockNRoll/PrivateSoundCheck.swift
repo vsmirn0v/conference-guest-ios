@@ -37,13 +37,15 @@ final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
             }
         }
         try Task.checkCancellation(); try expected.check()
-        inputMuteLease = ApplicationMicrophoneMute.shared?.beginPrivateCapture()
+        inputMuteLease = ApplicationMicrophoneMute.privateCaptureBridge?.beginPrivateCapture()
         let engine = AVAudioEngine()
         self.engine = engine
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0, format.commonFormat == .pcmFormatFloat32 else { stop(); throw SoundCheckError.input }
+        let usesMacMute = ProcessInfo.processInfo.isiOSAppOnMac
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+            if usesMacMute && RockMacInputMuteIsMuted() { return }
             onBuffer(buffer)
         }
         tapped = true
@@ -53,7 +55,7 @@ final class PrivateMicrophoneCapture: PrivateMicrophoneCapturing {
         lease?.invalidate(); lease = nil
         if tapped { engine?.inputNode.removeTap(onBus: 0); tapped = false }
         engine?.stop(); engine = nil
-        if let inputMuteLease { ApplicationMicrophoneMute.shared?.endPrivateCapture(inputMuteLease) }
+        if let inputMuteLease { ApplicationMicrophoneMute.privateCaptureBridge?.endPrivateCapture(inputMuteLease) }
         inputMuteLease = nil
         if standalone { standalone = false; worker.deactivate() }
     }

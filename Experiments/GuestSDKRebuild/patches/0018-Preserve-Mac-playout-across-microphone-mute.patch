@@ -1,0 +1,95 @@
+--- a/sdk/objc/native/src/audio/audio_device_ios.mm
++++ b/sdk/objc/native/src/audio/audio_device_ios.mm
+@@ -39,6 +39,12 @@
+ #import "helpers/AudioTimeStamp+Nanoseconds.h"
+ 
+ namespace {
++bool IsIOSAppOnMac() {
++  if (@available(iOS 14.0, *)) {
++    return [NSProcessInfo processInfo].isiOSAppOnMac;
++  }
++  return false;
++}
+ webrtc::ios_adm::ApplicationInputMuteState& CurrentApplicationInputMute() {
+   // Process lifetime: audio workers/queued main work can outlive static teardown.
+   static auto* const state = new webrtc::ios_adm::ApplicationInputMuteState;
+@@ -305,8 +311,11 @@
+       RTC_LOG_F(LS_ERROR) << "InitPlayOrRecord failed for InitRecording!";
+       return -1;
+     }
+-  } else {
+-    // playout already initialized, restart audio unit with input
++  } else if (!(IsIOSAppOnMac() && audio_unit_ &&
++               audio_unit_->HasInitializedInput())) {
++    // Reuse the authorized duplex unit across Mac mute/unmute transitions.
++    // Rebuilding it also interrupts every incoming stream and synchronously
++    // blocks the SDK caller. A route change or recovery may still need input.
+     if (!RestartAudioUnit(true)) return -1;
+   }
+ 
+@@ -420,16 +429,20 @@
+   if (!recording_is_initialized_) {
+     return 0;
+   }
++  // Close the PCM gate before any potentially blocking hardware work.
++  recording_.store(0, std::memory_order_release);
++  recording_is_initialized_ = false;
+   if (!playing_.load()) {
+     ShutdownPlayOrRecord();
+ 
+     playout_is_initialized_ = false;
+-  } else if (playout_is_initialized_) {
+-    // restart audio unit with no input
++  } else if (playout_is_initialized_ && !IsIOSAppOnMac()) {
+     RestartAudioUnit(false);
+   }
+-  recording_.store(0, std::memory_order_release);
+-  recording_is_initialized_ = false;
++  // On Mac retain an already-authorized input bus while playout is running.
++  // OnDeliverRecordedData drops all microphone callbacks while recording_ is
++  // false. StopPlayout still shuts down the entire unit when the meeting ends.
++
+   return 0;
+ }
+ 
+--- a/sdk/objc/native/src/audio/voice_processing_audio_unit.h
++++ b/sdk/objc/native/src/audio/voice_processing_audio_unit.h
+@@ -81,6 +81,11 @@
+ 
+   VoiceProcessingAudioUnit::State GetState() const;
+ 
++  // Whether this live unit can resume capture without reconfiguration.
++  bool HasInitializedInput() const {
++    return input_enabled_ && (state_ == kInitialized || state_ == kStarted);
++  }
++
+   // Initializes the underlying audio unit with the given sample rate.
+   bool Initialize(Float64 sample_rate, bool enable_input);
+ 
+@@ -149,6 +154,7 @@
+   VoiceProcessingAudioUnitObserver* observer_;
+   AudioUnit vpio_unit_;
+   bool uses_remote_io_;
++  bool input_enabled_ = false;
+   VoiceProcessingAudioUnit::State state_;
+ };
+ }  // namespace ios_adm
+--- a/sdk/objc/native/src/audio/voice_processing_audio_unit.mm
++++ b/sdk/objc/native/src/audio/voice_processing_audio_unit.mm
+@@ -358,6 +358,8 @@
+            uses_remote_io_, enable_input);
+   }
+ 
++  input_enabled_ = enable_input;
++
+   // Remote I/O has no voice-processing properties or microphone to mute.
+   if (uses_remote_io_) {
+     state_ = kInitialized;
+@@ -662,6 +664,7 @@
+     vpio_unit_ = nullptr;
+   }
+   uses_remote_io_ = false;
++  input_enabled_ = false;
+   state_ = kInitRequired;
+ }
+ 

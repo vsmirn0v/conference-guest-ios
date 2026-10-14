@@ -761,9 +761,18 @@
 "Not sent" = "Not sent";
 "New activity ↓" = "New activity ↓";
 "No reactions yet." = "No reactions yet.";
-"Reactions received on this device during this meeting." = "Reactions received on this device during this meeting.";
+"Received on this device" = "Received on this device";
+"Reaction history may be incomplete" = "Reaction history may be incomplete";
+"About reaction history" = "About reaction history";
+"Reaction history" = "Reaction history";
+"Only reactions received on this device are saved for this jam. Interruptions may leave gaps; this does not mean any reactions were sent or lost." = "Only reactions received on this device are saved for this jam. Interruptions may leave gaps; this does not mean any reactions were sent or lost.";
+"Possible interruptions" = "Possible interruptions";
+"Expanded" = "Expanded";
+"Collapsed" = "Collapsed";
+"Showing recent interruptions" = "Showing recent interruptions";
+"Reception not confirmed" = "Reception not confirmed";
+"Less than a second" = "Less than a second";
 "Showing recent reactions" = "Showing recent reactions";
-"Some reactions may be missing while disconnected or backgrounded." = "Some reactions may be missing while disconnected or backgrounded.";
 
 "System call controls" = "System call controls";
 

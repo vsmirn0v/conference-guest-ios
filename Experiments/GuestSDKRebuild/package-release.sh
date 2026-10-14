@@ -20,6 +20,7 @@ for item in metadata['AvailableLibraries']:
     symbols = subprocess.check_output(['nm', '-gU', str(binary)], text=True)
     for required in ('RTCSetConferencePlayoutReserved', 'RTCSetApplicationInputMuteIntent',
                      'RTCApplicationInputMuteReconfiguring',
+                     'RTCSetApplicationCaptureMuted', 'RTCApplicationCaptureMuted',
                      'RTCConfigureScreenShareEncoderQuality',
                      'RTCGetScreenShareEncoderRates',
                      'RTCSetScreenShareSenderResolution'):

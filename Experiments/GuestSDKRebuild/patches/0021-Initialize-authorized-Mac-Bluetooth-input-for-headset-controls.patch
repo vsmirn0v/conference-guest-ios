@@ -1,0 +1,64 @@
+--- a/sdk/objc/native/src/audio/voice_processing_audio_unit.mm
++++ b/sdk/objc/native/src/audio/voice_processing_audio_unit.mm
+@@ -11,6 +11,7 @@
+ #import "voice_processing_audio_unit.h"
+ 
+ #import <Foundation/Foundation.h>
++#include <dlfcn.h>
+ 
+ #include "rtc_base/checks.h"
+ #include "system_wrappers/include/metrics.h"
+@@ -66,6 +67,28 @@
+   return false;
+ }
+ 
++// Core Audio HAL is public on macOS but omitted from the iOS SDK. Query the
++// actual default input transport instead of relying on compatibility-runtime
++// AVAudioSession port strings (which differ from iOS HFP port identifiers).
++static bool MacHasBluetoothInput() {
++  struct PropertyAddress { UInt32 selector, scope, element; };
++  using GetProperty = OSStatus (*)(UInt32, const PropertyAddress*, UInt32,
++                                  const void*, UInt32*, void*);
++  auto get = reinterpret_cast<GetProperty>(
++      dlsym(RTLD_DEFAULT, "AudioObjectGetPropertyData"));
++  if (!get) return false;
++  PropertyAddress address{0x64496E20 /* dIn  */, 0x676C6F62 /* glob */, 0};
++  UInt32 device = 0, size = sizeof(device);
++  if (get(1 /* kAudioObjectSystemObject */, &address, 0, nullptr, &size,
++          &device) != noErr || size != sizeof(device) || !device) return false;
++  address.selector = 0x7472616E;  // kAudioDevicePropertyTransportType: tran
++  UInt32 transport = 0;
++  size = sizeof(transport);
++  if (get(device, &address, 0, nullptr, &size, &transport) != noErr ||
++      size != sizeof(transport)) return false;
++  return transport == 0x626C7565 /* blue */ || transport == 0x626C6561 /* blea */;
++}
++
+ // Returns the automatic gain control (AGC) state on the processed microphone
+ // signal. Should be on by default for Voice Processing audio units.
+ static OSStatus GetAGCState(AudioUnit audio_unit, UInt32* enabled) {
+@@ -246,15 +269,16 @@
+   RTC_DCHECK_GE(state_, kUninitialized);
+   RTCLog(@"Initializing audio unit with sample rate: %f", sample_rate);
+ 
+-  // Accessory mute/unmute needs an active input bus. Mute stops recording
+-  // samples into WebRTC, but retain the authorized HFP bus so a headset can
+-  // request unmute through AVAudioApplication. Other output-only routes and
+-  // the Mac compatibility runtime retain their no-input behavior.
++  // An authorized Bluetooth input must be active even for a meeting joined
++  // muted, otherwise the headset cannot request its first unmute. Recording
++  // and the application capture gate still independently block transmitted PCM.
+   bool accessory_input = false;
+-  if (!IsIOSAppOnMac()) {
+-    if (@available(iOS 17.0, *)) {
+-      if ([AVAudioApplication sharedInstance].recordPermission ==
+-          AVAudioApplicationRecordPermissionGranted) {
++  if (@available(iOS 17.0, *)) {
++    if ([AVAudioApplication sharedInstance].recordPermission ==
++        AVAudioApplicationRecordPermissionGranted) {
++      if (IsIOSAppOnMac()) {
++        accessory_input = MacHasBluetoothInput();
++      } else {
+         for (AVAudioSessionPortDescription* port in
+              [AVAudioSession sharedInstance].currentRoute.inputs) {
+           if ([port.portType isEqualToString:AVAudioSessionPortBluetoothHFP]) {

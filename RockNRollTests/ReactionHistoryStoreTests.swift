@@ -198,7 +198,8 @@ final class ReactionHistoryStoreTests: XCTestCase {
         receive(store, 3)
         store.beginGap(at: time(4)); store.endGap(at: time(5))
         XCTAssertEqual(store.gaps.count, 1)
-        XCTAssertTrue(store.hasTruncatedHistory)
+        XCTAssertTrue(store.hasTruncatedGapDetails)
+        XCTAssertFalse(store.hasTruncatedHistory, "Evicting diagnostics does not discard reactions")
         XCTAssertEqual(store.projection().map { $0.events.count }, [1, 1])
     }
 
@@ -219,6 +220,56 @@ final class ReactionHistoryStoreTests: XCTestCase {
         XCTAssertEqual(store.retainedIdentityCount, 0)
         XCTAssertTrue(store.gaps.isEmpty)
         XCTAssertFalse(store.hasTruncatedHistory)
+        XCTAssertFalse(store.hasTruncatedGapDetails)
+    }
+
+    func testInterruptionsNeverBecomeUnreadActivityOrEraseReceivedReactions() throws {
+        let store = store()
+        let event = try XCTUnwrap(receive(store))
+        store.markSeen(ids: [event.id])
+        let saved = store.events
+        var publications = 0
+        let subscription = store.$events.dropFirst().sink { _ in publications += 1 }
+        for index in 0..<30 {
+            store.beginGap(at: time(Double(index) * 2 + 1))
+            store.endGap(at: time(Double(index) * 2 + 2))
+        }
+        XCTAssertEqual(store.events, saved)
+        XCTAssertEqual(publications, 0)
+        XCTAssertFalse(store.hasUnseenReactions)
+        XCTAssertEqual(store.gaps.count, 30)
+        withExtendedLifetime(subscription) {}
+    }
+
+    func testInterruptionDetailsMergeOnlyOverlappingOrTouchingIntervals() {
+        let store = store()
+        store.beginGap(at: time(1)); store.endGap(at: time(2))
+        store.beginGap(at: time(2)); store.endGap(at: time(4))
+        store.beginGap(at: time(3)); store.endGap(at: time(5))
+        store.beginGap(at: time(6))
+        XCTAssertEqual(store.interruptionIntervals.map(\.start), [time(1), time(6)])
+        XCTAssertEqual(store.interruptionIntervals.map(\.end), [time(5), nil])
+        XCTAssertEqual(store.gaps.count, 4, "Presentation must not alter continuity boundaries")
+        store.endGap(at: time(7))
+        XCTAssertEqual(store.interruptionIntervals.map(\.end), [time(5), time(7)])
+    }
+
+    func testShortInterruptionShowsDurationInsteadOfIdenticalMinuteRange() throws {
+        let store = store()
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let start = time(0)
+        for locale in [Locale(identifier: "en_US"), Locale(identifier: "ru_RU")] {
+            store.beginGap(at: start); store.endGap(at: start.addingTimeInterval(2))
+            let gap = try XCTUnwrap(store.gaps.last)
+            let text = gap.summary(locale: locale, calendar: calendar)
+            XCTAssertTrue(text.contains(" · "))
+            XCTAssertFalse(text.contains("–"))
+            XCTAssertTrue(text.contains("2"))
+        }
+        store.beginGap(at: start)
+        XCTAssertTrue(try XCTUnwrap(store.gaps.last).summary().contains(L("Reception not confirmed")))
+        store.endGap(at: start)
+        XCTAssertTrue(try XCTUnwrap(store.gaps.last).summary().contains(L("Less than a second")))
     }
 
     func testInvalidInputCannotPoisonIdentityDedupOrRetainUnboundedNames() {

@@ -62,6 +62,7 @@ final class ReactionHistoryStore: ObservableObject {
     @Published private(set) var gaps: [ReactionHistoryGap] = []
     @Published private(set) var hasUnseenReactions = false
     @Published private(set) var hasTruncatedHistory = false
+    @Published private(set) var hasTruncatedGapDetails = false
     private(set) var meetingID: UUID?
     var isReadingLatest = false
 
@@ -187,7 +188,7 @@ final class ReactionHistoryStore: ObservableObject {
         gaps.append(.init(id: UUID().uuidString, start: time, end: nil))
         if gaps.count > maximumGaps {
             gaps.removeFirst(gaps.count - maximumGaps)
-            hasTruncatedHistory = true
+            hasTruncatedGapDetails = true
         }
     }
 
@@ -196,6 +197,18 @@ final class ReactionHistoryStore: ObservableObject {
         guard meetingID != nil, finite(time), let index = gaps.indices.last, gaps[index].end == nil else { return }
         continuity += 1
         gaps[index].end = max(gaps[index].start, time)
+    }
+
+    /// Union only overlapping/touching intervals. Never label healthy time as an outage.
+    /// Raw boundaries still split reaction groups independently of this presentation.
+    var interruptionIntervals: [ReactionHistoryGap] {
+        var result: [ReactionHistoryGap] = []
+        for gap in gaps.sorted(by: { $0.start < $1.start }) {
+            if let last = result.last, last.end.map({ gap.start <= $0 }) ?? true {
+                result[result.count - 1].end = last.end.flatMap { end in gap.end.map { max(end, $0) } }
+            } else { result.append(gap) }
+        }
+        return result
     }
 
     /// Receipt order is authoritative when the provider supplies no event sequence.
@@ -270,6 +283,7 @@ final class ReactionHistoryStore: ObservableObject {
     private func clear() {
         events = []; gaps = []; identities = []; identityOrder = []
         nextSequence = 0; continuity = 0; hasUnseenReactions = false; hasTruncatedHistory = false
+        hasTruncatedGapDetails = false
         isReadingLatest = false
     }
 }

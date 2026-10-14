@@ -64,3 +64,6 @@ nm -gU "$native_binary" | awk '$NF == "_RTCSetConferencePlayoutReserved" { found
 nm -gU "$native_binary" | awk '$NF == "_RTCConfigureScreenShareEncoderQuality" { quality=1 } $NF == "_RTCSetScreenShareSenderResolution" { sender=1 } END { exit !(quality && sender) }' || {
   echo "Rebuilt guest screen-detail APIs are missing" >&2; exit 1;
 }
+nm -gU "$native_binary" | awk '$NF == "_RTCSetApplicationCaptureMuted" { setter=1 } $NF == "_RTCApplicationCaptureMuted" { getter=1 } END { exit !(setter && getter) }' || {
+  echo "Rebuilt guest microphone capture gate is missing" >&2; exit 1;
+}

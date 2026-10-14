@@ -131,6 +131,14 @@ final class GuestReactionDeliveryWindow: @unchecked Sendable {
     func accepts(_ token: UUID?) -> Bool { token != nil && token == self.token }
 }
 
+/// Native receipt remains independent of UI visibility; legacy receipt is UI-dependent.
+enum GuestReactionReception {
+    static func isReceiving(modernProtocol: Bool, transportReady: Bool, legacyObserving: Bool,
+                            foreground: Bool, networkAvailable: Bool, recovering: Bool) -> Bool {
+        networkAvailable && !recovering && (modernProtocol ? transportReady : foreground && legacyObserving)
+    }
+}
+
 @MainActor
 final class GuestReactionTransport {
     private var tap: GuestWebSocketTap?
