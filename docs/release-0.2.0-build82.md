@@ -41,12 +41,12 @@ Details: [quality policy](screen-share-detail-policy-2026-10-14.md),
   match the published r5 provenance; a fresh release ZIP download matches its
   checksum. Normal iOS 17.5 Simulator integration passed 101 cases with five
   expected skips and zero failures.
-- Publication gate still pending: real Mac receive-only audio plus microphone
-  toggle validation. The run stalls inside AudioOutputUnitStart → CoreAudio HAL
-  property IPC. Independent Chrome capture also stalled in AudioUnitSetProperty
-  → CoreAudio HAL property IPC. Generated browser tracks bypassed its capture
-  stall and qualified the phone, but not the Mac's actual output device. The host
-  audio service must recover before this acceptance can be completed.
+- Final Mac live audio acceptance passed after restarting the host audio service:
+  three incoming-media joins plus three microphone on/off cycles, 24.9 seconds,
+  zero failures. Each cycle sent Opus/captured PCM and continued consuming
+  incoming audio; every join received moving video. The generated browser source
+  bypassed fake-device near-silence in the initial post-restart attempt. This
+  final passing run uses unchanged production/native code and actual Mac I/O.
 - No battery-life claim follows from process CPU. Real packet loss/reordering
   and all possible server configurations are outside this synthetic test.
 
@@ -64,6 +64,5 @@ Details: [quality policy](screen-share-detail-policy-2026-10-14.md),
   version 0.2.0/build 82, iOS 16.0 minimum, team 5V64BP2H3P. Export uses production
   iCloud and lacks debugger entitlement. Purpose strings, encryption declaration,
   and required native symbols were verified; application dSYM UUID matches.
-- Signed IPA remains local. Not uploaded or assigned to TestFlight groups while
-  the Mac live audio acceptance is blocked by the host CoreAudio service.
+- Upload and App Store Connect group assignment are in progress.
 - Tester notes prepared: “Sharper screen sharing and improved stability.”
