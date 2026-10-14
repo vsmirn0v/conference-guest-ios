@@ -43,4 +43,20 @@ Implementation and limits: [participant hosting](participant-sheet-hosting-2026-
 - Version 0.2.0/build 83; iOS 16.0 minimum, team 5V64BP2H3P.
 - Existing native release remains `guest-native-webrtc-150.7871.03-r5`, with ZIP
   SHA-256 `ca2a0bbc319d1a9ea5cf9937339784139c8f59e362d4211ebec8d2a30ba49be3`.
-- Publication pending final qualification.
+- Product commit: `5137d2a`.
+- Archive: `2026-10-14/RockNRoll-0.2.0-b83.xcarchive`.
+- App/dSYM UUID: `CB56FA64-A607-3B8C-B382-8A7E85230C59`.
+- Exported IPA SHA-256: `9097621140f8904a0e2168375ae20c550cb0f5a6d2b781665410507c3fceabfd`.
+- Archive/export succeeded; exported app and both extensions passed strict/deep
+  signature validation. All bundles use build 83/iOS 16 minimum/team 5V64BP2H3P.
+  Export uses production iCloud without debugger entitlement; the application
+  dSYM matches its executable. Native r5 binaries are unchanged.
+- Xcode upload succeeded on October 14, 2026; Apple processing completed.
+- Read back on October 14, 2026: build 83 is **Testing** in both Rock’n’Roll
+  Internal (1 tester) and Rock’n’Roll Public Beta (6 testers), confirmed on each
+  group's Builds page. Public submission had automatic notification enabled
+  and immediately reached Testing.
+- Tester notes: “Improved meeting controls and screen sharing stability.”
+- Public invitation: https://testflight.apple.com/join/Hd13C9U3
+- Existing third-party missing-dSYM upload warnings remain; the application
+  executable and symbols match.
