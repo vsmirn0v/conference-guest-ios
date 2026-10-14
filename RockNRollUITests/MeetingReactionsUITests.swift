@@ -2,6 +2,29 @@ import XCTest
 import UIKit
 
 final class MeetingReactionsUITests: XCTestCase {
+    func testOwnReactionUsesFloatingOverlayBelowMeetingHeader() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
+        app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "reactions"
+        app.launchArguments = ["-AppleLanguages", "(en)"]
+        app.launch(); defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            let more = app.buttons["call.more"]
+            XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
+            let send = app.buttons["reactions.send.like"]
+            XCTAssertTrue(send.waitForExistence(timeout: 5)); send.tap()
+            app.buttons["reactions.done"].tap()
+            let reaction = app.staticTexts["reactions.received.like"]
+            XCTAssertTrue(reaction.waitForExistence(timeout: 2))
+            XCTAssertTrue(reaction.label.contains("You"))
+            let compact = app.otherElements["Compact meeting header"]
+            let header = compact.exists ? compact : app.buttons["Meeting status"]
+            XCTAssertGreaterThan(reaction.frame.minY, header.frame.maxY)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Own floating reaction below header"; screenshot.lifetime = .keepAlways; add(screenshot)
+        }
+    }
     /// Drives the real SDK while an independent client verifies receipt.
     /// Submission counts alone are not remote-delivery confirmation.
     func testLiveGuestManualReactionsWithReceiver() throws {

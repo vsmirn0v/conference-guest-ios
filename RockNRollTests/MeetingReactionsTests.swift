@@ -5,6 +5,21 @@ import XCTest
 
 @MainActor
 final class MeetingReactionsTests: XCTestCase {
+    func testReactionFeedbackTracksCompletionByIDAndDoesNotClaimQueuedSendSucceeded() {
+        let model = MeetingReactionsModel()
+        model.available = true; model.ready = true
+        model.sender = { kind in model.trackSubmission(kind, id: "first"); return true }
+        XCTAssertTrue(model.send(.heart)); XCTAssertEqual(model.feedback, .queued(.heart))
+        model.finishSubmission(id: "first", succeeded: false)
+        XCTAssertEqual(model.feedback, .failed(.heart))
+        model.trackSubmission(.like, id: "second")
+        model.finishSubmission(id: "first", succeeded: true)
+        XCTAssertEqual(model.feedback, .queued(.like), "Old completion cannot replace the newer feedback")
+        model.finishSubmission(id: "second", succeeded: true)
+        XCTAssertEqual(model.feedback, .transmitted(.like))
+        model.end(); model.finishSubmission(id: "second", succeeded: true)
+        XCTAssertNil(model.feedback)
+    }
     func testManualSendingDoesNotRequireCameraAndUnreadyEventsAreDropped() {
         let model = MeetingReactionsModel()
         var sent: [MeetingReaction] = []

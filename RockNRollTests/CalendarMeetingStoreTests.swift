@@ -1,4 +1,5 @@
 import ConferenceCore
+import Combine
 import XCTest
 @testable import RockNRoll
 
@@ -9,15 +10,19 @@ final class CalendarMeetingStoreTests: XCTestCase {
         var requests = 0
         var selections: [Set<String>] = []
         var events: [CalendarMeeting]
+        var delay: Duration = .zero
         init(events: [CalendarMeeting]) { self.events = events }
         func access() -> CalendarAccess { authorization }
         func requestAccess() -> Bool { requests += 1; authorization = .allowed; return true }
         func setAccess(_ value: CalendarAccess) { authorization = value }
-        func read(selected: Set<String>, now: Date, knownOrigins: Set<String>, aliases: [String: URL]) -> CalendarSnapshot {
+        func setEvents(_ value: [CalendarMeeting], delay: Duration) { events = value; self.delay = delay }
+        func read(selected: Set<String>, now: Date, knownOrigins: Set<String>, aliases: [String: URL]) async -> CalendarSnapshot {
             selections.append(selected)
-            return .init(calendars: [.init(id: "work", name: "Work", source: "Account"),
+            let result = CalendarSnapshot(calendars: [.init(id: "work", name: "Work", source: "Account"),
                                     .init(id: "personal", name: "Personal", source: "Account")],
                          meetings: events.filter { selected.contains($0.calendarID) })
+            try? await Task.sleep(for: delay)
+            return result
         }
     }
     final class Response: URLProtocol {
@@ -52,6 +57,8 @@ final class CalendarMeetingStoreTests: XCTestCase {
             calendarTitle: meeting.calendarTitle, title: meeting.title, start: meeting.start,
             end: meeting.start.addingTimeInterval(86_400))
         XCTAssertTrue(CalendarMeetingPresentation.timeRange(overnight).contains(overnight.end.formatted(date: .abbreviated, time: .shortened)))
+        XCTAssertEqual(HomeMeetingCard.timing(meeting, at: meeting.end.addingTimeInterval(1)), L("Ended"))
+        XCTAssertTrue(CalendarMeetingPresentation.subtitle(meeting, at: meeting.end.addingTimeInterval(1), roomTitle: "Room").contains(L("Ended")))
     }
     private func make(_ reader: Reader, storage: RoomHistoryStorage = RoomSyncCoordinatorTests.Storage()) -> (CalendarMeetingStore, UserDefaults) {
         let preferences = UserDefaults(suiteName: "CalendarTests-" + UUID().uuidString)!
@@ -65,6 +72,38 @@ final class CalendarMeetingStoreTests: XCTestCase {
         let end = Date().addingTimeInterval(timeout)
         while store.loading, Date() < end { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertFalse(store.loading)
+    }
+    func testRefreshRetainsResolvedRowsAndPublishesOnlyTheCompletedSnapshot() async throws {
+        let reader = Reader(events: [event()]); let (store, _) = make(reader)
+        store.foregrounded(allowAutomaticJoin: false); try await ready(store)
+        let previous = store.meetings
+        await reader.setEvents([event("updated")], delay: .milliseconds(250))
+        var emissions: [[CalendarMeeting]] = []
+        let subscription = store.$meetings.dropFirst().sink { emissions.append($0) }
+        defer { subscription.cancel() }
+        store.refresh()
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(store.meetings, previous)
+        XCTAssertTrue(emissions.isEmpty)
+        try await ready(store)
+        XCTAssertEqual(emissions.count, 1, "Do not publish a provisional unresolved list")
+        XCTAssertEqual(emissions.first?.first?.id, "updated")
+        XCTAssertTrue(emissions.flatMap { $0 }.allSatisfy(\.hasResolvedInvitation))
+    }
+    func testDeselectRevokesRowsImmediatelyAndCancelledRefreshCannotRepublishThem() async throws {
+        let reader = Reader(events: [event()]); let (store, _) = make(reader)
+        store.refresh(); try await ready(store)
+        await reader.setEvents([event("stale")], delay: .milliseconds(200))
+        store.refresh()
+        store.select("work", included: false)
+        XCTAssertTrue(store.upcoming.isEmpty)
+        try await ready(store)
+        XCTAssertTrue(store.meetings.isEmpty)
+        await reader.setEvents([event()], delay: .milliseconds(200))
+        store.select("work", included: true)
+        store.setEnabled(false)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(store.meetings.isEmpty)
     }
     func testSelectedCalendarsOnlyAndDisableRemovesDerivedDataWithoutTouchingFavorites() async throws {
         let reader = Reader(events: [event(), event("private", calendar: "personal")])

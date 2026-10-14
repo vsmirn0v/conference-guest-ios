@@ -811,3 +811,8 @@
 "Audio device selections also affect other apps." = "Выбор аудиоустройства влияет и на другие приложения.";
 
 "Hide meeting" = "Скрыть встречу";
+
+"Show updated meeting suggestions" = "Показать новые предложения встреч";
+"Ended" = "Завершена";
+"Sending %@…" = "Отправка: %@…";
+"Could not send %@" = "Не удалось отправить: %@";

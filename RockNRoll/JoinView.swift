@@ -17,8 +17,8 @@ struct JoinView: View {
     @State private var showingDevices = false
     @State private var agendaSettings = false
     @State private var homeSnapshot = HomeMeetingSnapshot()
+    @State private var homeVisible = false
     @State private var homeNow = Date()
-    @State private var homeAtTop = true
     @State private var foreground = true
     @State private var showingSettings = false
     @AppStorage(SystemCallCoordinator.controlsPreferenceKey) private var systemCallControls = false
@@ -56,7 +56,6 @@ struct JoinView: View {
                     urgentSection
                     Section {
                         joinPanel(width: window.size.width - (wide ? min(320, window.size.width * 0.32) : 0))
-                            .background(homeSnapshot.items.isEmpty ? topMarker : nil)
                     }
                     if !wide { library(wide: false) }
                     CalendarAgendaView(calendar: calendar, history: history, continuation: continuation,
@@ -66,12 +65,6 @@ struct JoinView: View {
                     secondarySections
                 }
                 .coordinateSpace(name: "home.main")
-                .onPreferenceChange(HomeTopPreference.self) { position in
-                    if let position {
-                        let atTop = position > -12
-                        if atTop != homeAtTop { homeAtTop = atTop; if atTop { refreshHome() } }
-                    }
-                }
                 .scrollContentBackground(.hidden)
                 .background(Color(uiColor: .systemGroupedBackground))
                 .accessibilityIdentifier("home.main")
@@ -79,12 +72,22 @@ struct JoinView: View {
             .navigationTitle(ProcessInfo.processInfo.isiOSAppOnMac ? L("Home") : "Rock’n’Roll")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if homeSnapshot.hasUpdates {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { homeSnapshot.acceptUpdates() } label: { Image(systemName: "calendar.badge.clock") }
+                            .disabled(homeInteracting)
+                            .accessibilityLabel(L("Show updated meeting suggestions"))
+                            .accessibilityIdentifier("home.show-updates")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel(L("Settings"))
                 }
             }
             .safeAreaInset(edge: .bottom) {
+              VStack(spacing: 4) {
+                automaticJoinBanner
                 if showingUndo {
                     Button(L("Room removed · Undo")) {
                         history.undoRemoval()
@@ -93,6 +96,7 @@ struct JoinView: View {
                     .padding(12)
                     .background(.regularMaterial, in: Capsule())
                 }
+              }
             }
             .sheet(isPresented: $showingSavedHistory) {
                 SavedCatchUpView(store: catchUp)
@@ -142,8 +146,8 @@ struct JoinView: View {
             .onChange(of: model.isNameRequiredForJoin) { required in
                 if required { nameFocused = true }
             }
-            .onAppear { refreshHome(); if model.isNameRequiredForJoin { nameFocused = true } }
-            .onDisappear { favoriteDrag.cancel(); sync.endNameEditing() }
+            .onAppear { homeVisible = false; refreshHome(); homeVisible = true; if model.isNameRequiredForJoin { nameFocused = true } }
+            .onDisappear { homeVisible = false; favoriteDrag.cancel(); sync.endNameEditing() }
             .alert(L("Join here without moving the other device?"),
                                 isPresented: $confirmingStaleContinuation,
                                 presenting: staleContinuation) { jam in
@@ -224,35 +228,31 @@ struct JoinView: View {
         homeNow = Date()
         homeSnapshot.update(HomeMeetingPolicy.candidates(meetings: meetings ?? calendar.upcoming,
                             handoffs: handoffs ?? continuation.candidates, at: homeNow),
-                            allowChanges: homeAtTop && !homeInteracting)
-    }
-    private var topMarker: some View {
-        GeometryReader { geometry in
-            Color.clear.preference(key: HomeTopPreference.self, value: geometry.frame(in: .named("home.main")).minY)
-        }
+                            allowChanges: !homeVisible)
     }
     @ViewBuilder private var urgentSection: some View {
-        if let meeting = calendar.joiningMeeting, let seconds = calendar.countdown {
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(meeting.title).font(.headline)
-                    Text(L("Joining in %ld seconds with mic and camera off", seconds)).font(.subheadline)
-                    HStack {
-                        Button(L("Join now")) { model.joinCalendarMeeting(meeting) }
-                        Spacer()
-                        Button(L("Cancel")) { calendar.cancelAutomaticJoin(suppress: true) }
-                    }.buttonStyle(.borderless)
-                }.background(topMarker)
-            }
-        } else if !homeSnapshot.items.isEmpty {
+        if !homeSnapshot.items.isEmpty {
             Section {
                 ForEach(homeSnapshot.items) { item in
                     HomeMeetingCard(item: item, now: homeNow, calendar: calendar, history: history,
                         continuation: continuation, busy: busy, onJoin: model.joinCalendarMeeting,
                         onStale: { staleContinuation = $0; confirmingStaleContinuation = true })
-                        .background(item.id == homeSnapshot.items.first?.id ? topMarker : nil)
                 }
             }
+        }
+    }
+    @ViewBuilder private var automaticJoinBanner: some View {
+        if let meeting = calendar.joiningMeeting, let seconds = calendar.countdown {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(meeting.title).font(.headline).lineLimit(2)
+                Text(L("Joining in %ld seconds with mic and camera off", seconds)).font(.subheadline)
+                HStack {
+                    Button(L("Join now")) { model.joinCalendarMeeting(meeting) }
+                    Spacer()
+                    Button(L("Cancel")) { calendar.cancelAutomaticJoin(suppress: true) }
+                }.buttonStyle(.borderless)
+            }.padding(12).background(.regularMaterial)
+                .accessibilityIdentifier("calendar.countdown-banner")
         }
     }
     private func joinPanel(width: CGFloat) -> some View {
@@ -268,14 +268,17 @@ struct JoinView: View {
             }
             row {
                 nameEntry.frame(minWidth: 90, maxWidth: .infinity)
-                studioButton.fixedSize(horizontal: true, vertical: true)
+                studioButton.fixedSize(horizontal: !stacked, vertical: true)
+                    .frame(maxWidth: stacked ? .infinity : nil, alignment: .leading)
             }
             if (model.isNameRequiredForJoin || !model.displayName.isEmpty) && !validDisplayName {
                 Text(L("Enter a name of up to %ld characters before joining.", model.namePolicy.maximumNameScalars))
                     .font(.footnote).foregroundStyle(.red)
             }
-            Label(L("Microphone and camera start off"), systemImage: "mic.slash")
-                .font(.caption).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "mic.slash").accessibilityHidden(true)
+                Text(L("Microphone and camera start off")).fixedSize(horizontal: false, vertical: true)
+            }.font(.caption).foregroundStyle(.secondary)
             if model.status != L("Enter a jam link to begin.") {
                 Text(model.status).font(.footnote).foregroundStyle(model.statusIsError ? .red : .secondary)
             }
@@ -413,7 +416,7 @@ struct JoinView: View {
         Section {
             let rooms = favoriteDrag.displayedRooms(favorites)
             ForEach(wide || showingAllFavorites ? rooms : Array(rooms.prefix(3))) { room in
-                FavoriteRoomRow(room: room, subtitle: roomSubtitle(room), tint: UIColor(linkAccent),
+                FavoriteRoomRow(room: room, presentation: RoomRowPresentation(room: room, calendar: calendar), tint: UIColor(linkAccent),
                     history: history, drag: favoriteDrag,
                     onJoin: { model.rejoin(room) }, onRename: { startRename(room) },
                     onStar: { model.toggleStar(room) }, onOriginalName: { model.setAlias(nil, for: room) })
@@ -424,8 +427,10 @@ struct JoinView: View {
                 }
             }
         } header: {
-            HStack {
-                Text(L("Favorites")); Spacer()
+            let layout = textSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout())
+            layout {
+                Text(L("Favorites"))
+                if !textSize.isAccessibilitySize { Spacer() }
                 if !wide && favorites.count > 3 {
                     Button(showingAllFavorites ? L("Show fewer") : L("Show all")) { showingAllFavorites.toggle() }
                         .textCase(nil).accessibilityIdentifier("favorites.expand")
@@ -439,18 +444,13 @@ struct JoinView: View {
             ForEach(rooms) { room in
                 HStack(spacing: 10) {
                     Button { model.rejoin(room) } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(room.displayTitle).font(.body.weight(.semibold))
-                            Text(roomSubtitle(room))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        RoomRowText(presentation: RoomRowPresentation(room: room, calendar: calendar))
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(L("Rejoin %@ on %@", room.displayTitle, room.invitationURL.host() ?? L("meeting website")))
+                    .accessibilityValue(RoomRowPresentation(room: room, calendar: calendar).details)
                     .contextMenu {
                         Button { startRename(room) } label: {
                             Label(L("Rename"), systemImage: "pencil")
@@ -500,12 +500,6 @@ struct JoinView: View {
     private func startRename(_ room: RecentRoom) {
         roomAlias = room.alias ?? ""
         editingRoom = room
-    }
-
-    private func roomSubtitle(_ room: RecentRoom) -> String {
-        if let metadata = calendar.subtitle(for: room) { return metadata }
-        let visit = room.lastVisit?.formatted(.relative(presentation: .named)) ?? L("Saved · Not joined yet")
-        return "\(room.identifier) · \(room.joinURL.host() ?? L("Meeting")) · \(visit)"
     }
 
     private var settingsSheet: some View {

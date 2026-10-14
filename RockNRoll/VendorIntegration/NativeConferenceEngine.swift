@@ -1502,11 +1502,13 @@ final class NativeConferenceEngine: CallEngine {
                 })
             self.reactionsAdapter?.onAccepted = { [weak self, weak state] kind, submissionID in
                 guard let self, let state, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                self.reactions.trackSubmission(kind, id: submissionID)
                 self.chat?.reactionHistory.recordLocalSubmission(kind: kind, participantID: state.localParticipant.id,
                     displayName: state.localParticipant.userName ?? L("You"), submissionID: submissionID)
             }
             self.reactionsAdapter?.onFailed = { [weak self] id in
-                guard let self, self.sessionEpoch == epoch else { return }
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                self.reactions.finishSubmission(id: id, succeeded: false)
                 self.chat?.reactionHistory.setLocalDelivery(.failed, submissionID: id)
             }
             let controls = CallControls(localPreview: self.localSharePreview, state: state, coordinator: coordinator, router: router,
@@ -1555,6 +1557,12 @@ final class NativeConferenceEngine: CallEngine {
             self.receivedReactions?.stop()
             let reactionOverlay = ReceivedReactionOverlay()
             controls.installReactionOverlay(reactionOverlay)
+            self.reactionsAdapter?.onTransmitted = { [weak self, weak reactionOverlay] kind, id in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
+                self.reactions.finishSubmission(id: id, succeeded: true)
+                guard self.chat?.reactionHistory.isReadingLatest != true else { return }
+                reactionOverlay?.show(kind, from: L("You"))
+            }
             let receiver = GuestReceivedReactions(valid: { [weak self] in
                 guard let self else { return false }
                 return self.sessionEpoch == epoch && self.mediaAttemptEpoch == attempt &&

@@ -17,7 +17,7 @@ final class MeetingHeaderStatusTests: XCTestCase {
         model.expire(at: start.addingTimeInterval(4))
         XCTAssertNil(model.snapshot.noticeTitle)
         XCTAssertFalse(model.snapshot.announcingPrivacy)
-        XCTAssertEqual(model.snapshot.privacySymbol, "text.bubble")
+        XCTAssertEqual(model.snapshot.privacySymbol, "doc.text")
         model.updatePrivacy(transcribing: true, recording: false, at: start.addingTimeInterval(10))
         XCTAssertFalse(model.snapshot.announcingPrivacy)
     }
@@ -52,7 +52,7 @@ final class MeetingHeaderStatusTests: XCTestCase {
         model.updatePrivacy(transcribing: true, recording: true, at: start)
         model.updatePrivacy(transcribing: true, recording: false, at: start.addingTimeInterval(1))
         XCTAssertNil(model.snapshot.noticeTitle)
-        XCTAssertEqual(model.snapshot.privacySymbol, "text.bubble")
+        XCTAssertEqual(model.snapshot.privacySymbol, "doc.text")
         model.updatePrivacy(transcribing: false, recording: false, at: start.addingTimeInterval(2))
         XCTAssertNil(model.snapshot.privacySymbol)
         XCTAssertFalse(model.snapshot.announcingPrivacy)

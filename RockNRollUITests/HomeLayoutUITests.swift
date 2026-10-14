@@ -10,7 +10,11 @@ final class HomeLayoutUITests: XCTestCase {
         if large { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
         app.launch()
         XCTAssertTrue(app.buttons["join.start"].waitForExistence(timeout: 10))
-        if mode != "home-later" { XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 10)) }
+        if mode != "home-later" {
+            let updates = app.buttons["home.show-updates"]
+            if !app.descendants(matching: .any)["home.title.daily"].firstMatch.exists, updates.waitForExistence(timeout: 10), updates.isEnabled { updates.tap() }
+            XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 10))
+        }
     }
     private var favorites: XCUIElementQuery {
         app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "favorite.order."))
@@ -21,6 +25,48 @@ final class HomeLayoutUITests: XCTestCase {
     }
     private func attach(_ title: String) {
         let capture = XCTAttachment(screenshot: app.screenshot()); capture.name = title; capture.lifetime = .keepAlways; add(capture)
+    }
+    func testLateCalendarEnrichmentDoesNotMoveJoinOrFavoriteTapTargets() {
+        for language in ["en", "ru"] {
+            app.launchEnvironment["CONFERENCE_TEST_CALENDAR"] = "home-delayed"
+            app.launchEnvironment["CONFERENCE_TEST_CALENDAR_DELAY"] = "8"
+            app.launchArguments = ["-AppleLanguages", "(\(language))", "-AppleLocale", language == "ru" ? "ru_RU" : "en_US"]
+            app.launch()
+            XCTAssertTrue(app.buttons["join.start"].waitForExistence(timeout: 10))
+            let first = favorites.element(boundBy: 0), second = favorites.element(boundBy: 1)
+            let frames = [app.buttons["join.start"].frame, first.frame, second.frame]
+            let identity = first.identifier
+            let updates = app.buttons["home.show-updates"]
+            expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: updates)
+            waitForExpectations(timeout: 12)
+            XCTAssertEqual(app.buttons["join.start"].frame, frames[0])
+            XCTAssertEqual(first.frame, frames[1]); XCTAssertEqual(second.frame, frames[2])
+            XCTAssertEqual(first.identifier, identity)
+            XCTAssertTrue((first.value as? String ?? "").contains("Daily rehearsal"))
+            XCTAssertFalse(app.descendants(matching: .any)["home.title.daily"].exists)
+            attach("Stable rows after delayed enrichment · " + language)
+            updates.tap()
+            XCTAssertTrue(app.buttons["calendar.join.daily"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.descendants(matching: .any)["home.title.daily"].exists)
+            app.terminate()
+        }
+        app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_CALENDAR_DELAY")
+    }
+    func testDelayedAutomaticJoinCountdownDoesNotShiftTopRows() {
+        app.launchEnvironment["CONFERENCE_TEST_CALENDAR"] = "home-countdown"
+        app.launchEnvironment["CONFERENCE_TEST_CALENDAR_DELAY"] = "8"
+        app.launchArguments = ["-AppleLanguages", "(en)"]
+        app.launch()
+        XCTAssertTrue(app.buttons["join.start"].waitForExistence(timeout: 10))
+        let before = app.buttons["join.start"].frame
+        let firstFrame = favorites.element(boundBy: 0).frame
+        let banner = app.descendants(matching: .any)["calendar.countdown-banner"].firstMatch
+        XCTAssertTrue(banner.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons["join.start"].frame, before)
+        XCTAssertEqual(favorites.element(boundBy: 0).frame, firstFrame)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["join.start"].isHittable)
+        app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_CALENDAR_DELAY")
     }
     func testCompactHomeShowsJoinAndTwoFavoritesBeforeScrolling() {
         launch()
@@ -55,7 +101,7 @@ final class HomeLayoutUITests: XCTestCase {
             XCTAssertTrue(calendarDetail.contains("Daily rehearsal"), "Calendar title must remain visible in favorites")
             XCTAssertTrue(calendarDetail.contains(String(Calendar.current.component(.year, from: Date()))),
                           "Calendar date must remain visible in favorites")
-            XCTAssertTrue(savedDetail.contains("favorite1 · meeting.example.test"))
+            XCTAssertTrue(savedDetail.contains("meeting.example.test · favorite1"))
             XCTAssertTrue(savedDetail.contains(language == "en" ? "Saved" : "Сохранено"))
             XCTAssertTrue(calendarRoom.isHittable); XCTAssertTrue(savedRoom.isHittable)
             attach("Favorites with details · " + language)
@@ -71,8 +117,8 @@ final class HomeLayoutUITests: XCTestCase {
                 let schedule = app.staticTexts["home.schedule.daily"]
                 XCTAssertTrue(schedule.isHittable)
                 XCTAssertTrue(schedule.label.contains(" – "), "Both start and end times must be visible")
-                XCTAssertTrue(app.staticTexts["home.calendar.daily"].label.contains("Work"))
-                XCTAssertTrue(app.staticTexts["home.calendar.daily"].label.contains("Our rehearsal room"))
+                XCTAssertTrue(title.label.contains("Work"))
+                XCTAssertTrue(title.label.contains("Our rehearsal room"))
                 XCTAssertTrue(title.label.contains("meeting.example.test"))
                 XCTAssertFalse(title.label.contains("psw="))
                 if mode == "home-preview-current" {
@@ -141,7 +187,12 @@ final class HomeLayoutUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1) // Let the window rotation finish before capturing its pixels.
         attach("Wide home · saved rooms alongside Join")
         XCUIDevice.shared.orientation = .portrait
-        XCTAssertTrue(app.buttons["favorites.expand"].waitForExistence(timeout: 5))
+        if app.frame.width >= 820 {
+            XCTAssertTrue(library.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["favorites.expand"].exists)
+        } else {
+            XCTAssertTrue(app.buttons["favorites.expand"].waitForExistence(timeout: 5))
+        }
         XCTAssertTrue(app.textFields["invitation.input"].isHittable)
     }
 }

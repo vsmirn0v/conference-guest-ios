@@ -6,7 +6,7 @@ import UIKit
 /// tracking on lift. The trailing star remains a separate tap target.
 struct FavoriteRoomRow: UIViewRepresentable {
     let room: RecentRoom
-    let subtitle: String
+    let presentation: RoomRowPresentation
     let tint: UIColor
     let history: RoomHistoryStore
     let drag: FavoriteDragState
@@ -26,24 +26,32 @@ struct FavoriteRoomRow: UIViewRepresentable {
 
 @MainActor
 final class FavoriteRoomControl: UIView, UIDragInteractionDelegate, UIDropInteractionDelegate, UIContextMenuInteractionDelegate {
+    private final class JoinControl: UIControl {
+        var activate: (() -> Bool)?
+        override func accessibilityActivate() -> Bool { activate?() ?? false }
+    }
     private struct DragToken { let id: UUID; let owner: ObjectIdentifier }
-    private let join = UIControl()
+    private let join = JoinControl()
     private let title = UILabel()
     private let subtitle = UILabel()
+    private let location = UILabel()
     private let star = UIButton(type: .system)
     private var content: FavoriteRoomRow?
+    private var pressedContent: FavoriteRoomRow?
+    private var cancelledPress = false
+    private var slotHeights: [NSLayoutConstraint] = []
     private lazy var dragInteraction = UIDragInteraction(delegate: self)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        title.numberOfLines = 0; title.adjustsFontForContentSizeCategory = true
-        let descriptor = UIFont.preferredFont(forTextStyle: .body).fontDescriptor
-            .addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: UIFont.Weight.semibold]])
-        title.font = UIFont(descriptor: descriptor, size: 0)
-        subtitle.font = .preferredFont(forTextStyle: .caption1)
-        subtitle.adjustsFontForContentSizeCategory = true; subtitle.textColor = .secondaryLabel
-        subtitle.numberOfLines = 0
-        let text = UIStackView(arrangedSubviews: [title, subtitle])
+        for label in [title, subtitle, location] {
+            label.adjustsFontForContentSizeCategory = true; label.lineBreakMode = .byTruncatingTail
+        }
+        subtitle.textColor = .secondaryLabel; location.textColor = .secondaryLabel
+        slotHeights = [title, subtitle, location].map { $0.heightAnchor.constraint(equalToConstant: 1) }
+        NSLayoutConstraint.activate(slotHeights)
+        updateTypography()
+        let text = UIStackView(arrangedSubviews: [title, subtitle, location])
         text.axis = .vertical; text.spacing = 3; text.isUserInteractionEnabled = false
         join.addSubview(text)
         let row = UIStackView(arrangedSubviews: [join, star])
@@ -59,8 +67,15 @@ final class FavoriteRoomControl: UIView, UIDragInteractionDelegate, UIDropIntera
             star.widthAnchor.constraint(equalToConstant: 44), star.heightAnchor.constraint(equalToConstant: 44)
         ])
         join.addTarget(self, action: #selector(joinTapped), for: .touchUpInside)
+        join.addTarget(self, action: #selector(joinPressed), for: .touchDown)
+        join.addTarget(self, action: #selector(joinCancelled), for: [.touchCancel, .touchUpOutside])
         star.addTarget(self, action: #selector(starTapped), for: .touchUpInside)
         join.isAccessibilityElement = true; join.accessibilityTraits = .button
+        join.activate = { [weak self] in
+            guard let self, let content = self.content, content.drag.session == nil,
+                  content.history.rooms.contains(where: { $0.id == content.room.id }) else { return false }
+            content.onJoin(); return true
+        }
         join.addInteraction(dragInteraction)
         join.addInteraction(UIContextMenuInteraction(delegate: self))
         addInteraction(UIDropInteraction(delegate: self))
@@ -69,13 +84,14 @@ final class FavoriteRoomControl: UIView, UIDragInteractionDelegate, UIDropIntera
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func configure(_ content: FavoriteRoomRow) {
+        if let pressedContent, pressedContent.room.id != content.room.id { joinCancelled() }
         self.content = content
-        title.text = content.room.displayTitle; subtitle.text = content.subtitle
-        subtitle.isHidden = content.subtitle.isEmpty
+        title.text = content.presentation.title; subtitle.text = content.presentation.timing
+        location.text = content.presentation.location
         star.setImage(UIImage(systemName: "star.fill"), for: .normal); star.tintColor = content.tint
         join.accessibilityLabel = L("Rejoin %@ on %@", content.room.displayTitle,
                                     content.room.invitationURL.host() ?? L("meeting website"))
-        join.accessibilityValue = content.subtitle
+        join.accessibilityValue = content.presentation.details
         join.accessibilityIdentifier = "favorite.order.\(content.room.id)"
         star.accessibilityLabel = L("Unstar %@", content.room.displayTitle)
         star.isUserInteractionEnabled = content.drag.session == nil
@@ -90,8 +106,31 @@ final class FavoriteRoomControl: UIView, UIDragInteractionDelegate, UIDropIntera
         join.accessibilityCustomActions = actions
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            updateTypography(); invalidateIntrinsicContentSize()
+        }
+    }
+    private func updateTypography() {
+        let descriptor = UIFont.preferredFont(forTextStyle: .body, compatibleWith: traitCollection).fontDescriptor
+            .addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: UIFont.Weight.semibold]])
+        title.font = UIFont(descriptor: descriptor, size: 0)
+        subtitle.font = .preferredFont(forTextStyle: .caption1, compatibleWith: traitCollection)
+        location.font = subtitle.font
+        let lines = traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? 2 : 1
+        for (index, label) in [title, subtitle, location].enumerated() {
+            label.numberOfLines = lines
+            slotHeights[index].constant = ceil(label.font.lineHeight) * CGFloat(lines) + 2
+        }
+    }
+    @objc private func joinPressed() { pressedContent = content; cancelledPress = false }
+    @objc private func joinCancelled() { pressedContent = nil; cancelledPress = true }
+
     @objc private func joinTapped() {
-        guard let content, content.drag.session == nil else { return }
+        defer { pressedContent = nil; cancelledPress = false }
+        guard !cancelledPress, let content = pressedContent ?? content, content.drag.session == nil,
+              content.history.rooms.contains(where: { $0.id == content.room.id }) else { return }
         content.onJoin()
     }
     @objc private func starTapped() {

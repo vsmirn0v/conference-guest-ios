@@ -27,7 +27,7 @@ final class FloatingVideoContentView: UIView {
     private let videoContent: UIView
     private let badge = UIView()
     private let icon = UIImageView()
-    private let activityIcon = MicrophoneActivityView(compactMeter: true)
+    private let activityIcon = MicrophoneActivityView()
     private let label = UILabel()
     private let waiting = UILabel()
     private let speaker = ActiveSpeakerIndicator(font: .systemFont(ofSize: 11, weight: .semibold))
@@ -119,7 +119,7 @@ final class FloatingVideoContentView: UIView {
         let fullWidth = (fullTitle as NSString).size(withAttributes: [.font: label.font!]).width
         // Leave most of a small PiP window clear; retain "You" to distinguish
         // the local microphone from the participant whose video is displayed.
-        let iconWidth: CGFloat = activityIcon.isHidden ? 14 : 25
+        let iconWidth: CGFloat = 14
         let labelX = iconWidth + 12
         let padding = labelX + 7
         label.text = fullWidth + padding <= available * (speaker.isHidden ? 0.72 : 0.46) ? fullTitle : L("You")

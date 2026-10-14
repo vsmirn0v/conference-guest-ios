@@ -46,6 +46,18 @@ final class MeetingReactionsModel: ObservableObject {
         didSet { preferences?.set(shareCameraReactions, forKey: Self.preferenceKey); onPreferenceChanged?() }
     }
     @Published private(set) var submitted: MeetingReaction?
+    enum Feedback: Equatable {
+        case queued(MeetingReaction), transmitted(MeetingReaction), failed(MeetingReaction)
+        var title: String {
+            switch self {
+            case .queued(let kind): return L("Sending %@…", kind.title)
+            case .transmitted(let kind): return L("Sent %@", kind.title)
+            case .failed(let kind): return L("Could not send %@", kind.title)
+            }
+        }
+    }
+    @Published private(set) var feedback: Feedback?
+    private var latestSubmission: (id: String, kind: MeetingReaction)?
     var onViewHistory: (() -> Void)?
     var sender: ((MeetingReaction) -> Bool)?
     var onPreferenceChanged: (() -> Void)?
@@ -67,16 +79,27 @@ final class MeetingReactionsModel: ObservableObject {
         guard canSend, supportedReactions.contains(reaction),
               source == .manual || (shareCameraReactions && (cameraStatus == .ready || cameraStatus == .systemDisabled)) else { return false }
         // Mark camera events even when throttled; extending an effect must not replay it.
-        guard gate.accept(source: source, now: clock(), effectID: effectID), sender?(reaction) == true else { return false }
+        guard gate.accept(source: source, now: clock(), effectID: effectID) else { return false }
+        let previousID = latestSubmission?.id
+        guard sender?(reaction) == true else { return false }
+        if previousID == latestSubmission?.id { trackSubmission(reaction, id: UUID().uuidString) }
         submitted = reaction
         return true
     }
+    func trackSubmission(_ kind: MeetingReaction, id: String) {
+        latestSubmission = (id, kind); feedback = .queued(kind)
+    }
+    func finishSubmission(id: String, succeeded: Bool) {
+        guard active, let latestSubmission, latestSubmission.id == id else { return }
+        feedback = succeeded ? .transmitted(latestSubmission.kind) : .failed(latestSubmission.kind)
+    }
     func begin() {
         generation = UUID(); active = true; available = false; ready = false
-        gate = ReactionSendGate(); submitted = nil; cameraStatus = .off; sender = nil
+        gate = ReactionSendGate(); submitted = nil; feedback = nil; latestSubmission = nil; cameraStatus = .off; sender = nil
     }
     func end() {
         generation = UUID(); active = false; available = false; ready = false
         sender = nil; onPreferenceChanged = nil; onViewHistory = nil; gate = ReactionSendGate(); cameraStatus = .paused
+        feedback = nil; latestSubmission = nil
     }
 }

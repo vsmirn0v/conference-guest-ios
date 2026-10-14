@@ -200,7 +200,7 @@ final class GuestReactionTransport {
         guard let data = try? JSONEncoder().encode(envelope), let text = String(data: data, encoding: .utf8) else { return false }
         task.send(.string(text)) { [weak self] error in
             Task { @MainActor [weak self] in
-                completion?(error == nil)
+                completion?(error == nil && self?.scope.taskID == taskID && self?.ready == true)
                 guard let self, self.scope.taskID == taskID, self.valid() else { return }
                 if error != nil { self.scope.retire(taskID); self.onStateChanged?() }
             }

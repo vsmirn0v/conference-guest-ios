@@ -35,8 +35,8 @@ private struct ReactionPalette: View {
         if !model.canSend {
             Text(model.available ? L("Reactions will be ready when the meeting reconnects.") : L("Reactions are unavailable in this meeting."))
                 .font(.footnote).foregroundStyle(.secondary)
-        } else if let submitted = model.submitted {
-            Text(L("Sent %@", submitted.title)).font(.footnote).foregroundStyle(.secondary)
+        } else if let feedback = model.feedback {
+            Text(feedback.title).font(.footnote).foregroundStyle(.secondary)
                 .accessibilityIdentifier("reactions.confirmation")
         }
     }

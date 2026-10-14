@@ -10,41 +10,39 @@ struct HomeMeetingCard: View {
     let busy: Bool
     let onJoin: (CalendarMeeting) -> Void
     let onStale: (ActiveJam) -> Void
+    @Environment(\.dynamicTypeSize) private var textSize
+    @ScaledMetric(relativeTo: .body) private var titleHeight = 23.0
+    @ScaledMetric(relativeTo: .caption) private var detailHeight = 17.0
+    private var lines: Int { textSize.isAccessibilitySize ? 2 : 1 }
 
     private var meeting: CalendarMeeting? {
-        item.calendar.flatMap { value in calendar.upcoming.first { $0.id == value.id } }
+        item.currentCalendar(in: calendar.upcoming)
     }
     private var source: ActiveJam? {
-        item.handoff.flatMap { value in
-            continuation.candidates.first { $0.deviceID == value.deviceID && $0.sessionID == value.sessionID && $0.isRecent(at: now) }
-        }
+        item.currentHandoff(in: continuation.candidates, at: now)
     }
     private var title: String {
-        meeting?.title ?? history.matching(item.invitation, engine: item.id.engine)?.alias ?? item.handoff?.title ?? item.calendar?.title ?? ""
+        item.calendar?.title ?? history.matching(item.invitation, engine: item.id.engine)?.alias ?? item.handoff?.title ?? ""
     }
     private var roomAlias: String? {
         history.matching(item.invitation, engine: item.id.engine)?.alias.flatMap { $0 == title ? nil : $0 }
     }
     private var action: String {
-        if let source { return source.isSharingScreen ? L("Move here and stop sharing") : L("Continue") }
-        return item.handoff != nil ? L("Join here") : L("Join")
+        if item.handoff != nil { return L("Continue") }
+        return L("Join")
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { description.frame(minWidth: 100, maxWidth: .infinity, alignment: .leading); actions }
-                VStack(alignment: .leading, spacing: 4) {
+        Group {
+            if textSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
                     description
-                    HStack { joinButton; Spacer(minLength: 0); starButton }
+                    HStack { joinButton; Spacer(); starButton }
                 }
-            }
-            if let meeting {
-                Text(CalendarMeetingPresentation.timeRange(meeting)).font(.subheadline).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("home.schedule." + meeting.id)
-                Text([roomAlias, meeting.calendarTitle].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("home.calendar." + meeting.id)
+            } else {
+                HStack(spacing: 8) {
+                    description.frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(spacing: 0) { joinButton; starButton }.frame(width: 92)
+                }
             }
         }
         .padding(.vertical, 2)
@@ -64,37 +62,41 @@ struct HomeMeetingCard: View {
     }
     private var description: some View {
         VStack(alignment: .leading, spacing: 3) {
-            if let handoff = item.handoff {
-                Label(source != nil ? L("Jam on %@", handoff.deviceLabel) : L("Recently active"),
-                      systemImage: "laptopcomputer.and.iphone").font(.caption).foregroundStyle(.secondary)
-            } else if let meeting {
-                Label(HomeMeetingCard.timing(meeting, at: now), systemImage: "clock")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                Text(L("Calendar event is no longer available.")).font(.caption).foregroundStyle(.secondary)
-            }
-            Text(title).font(.body.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+            Text(title).font(.body.weight(.semibold)).lineLimit(lines)
+                .frame(height: titleHeight * Double(lines), alignment: .leading)
+            Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                .frame(height: detailHeight * 2, alignment: .leading)
+                .accessibilityIdentifier("home.schedule." + (item.calendar?.id ?? ""))
             Label(item.id.displayDetails, systemImage: "link")
-                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                .font(.caption).foregroundStyle(.secondary).lineLimit(lines)
+                .frame(height: detailHeight * Double(lines), alignment: .leading)
                 .accessibilityElement(children: .ignore).accessibilityLabel(item.id.displayDetails)
                 .accessibilityIdentifier("home.room." + (item.calendar?.id ?? item.handoff?.deviceID ?? ""))
-            if meeting?.tentative == true { Text(L("Tentative")).font(.caption).foregroundStyle(.secondary) }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel([
-            item.handoff.map { source != nil ? L("Jam on %@", $0.deviceLabel) : L("Recently active") } ??
-                meeting.map { HomeMeetingCard.timing($0, at: now) } ?? "",
-            title, item.id.displayDetails
+            status,
+            title, item.id.displayDetails,
+            item.calendar.map { CalendarMeetingPresentation.subtitle($0, at: now, roomTitle: title) } ?? "",
+            roomAlias ?? ""
         ].filter { !$0.isEmpty }.joined(separator: ". "))
         .accessibilityIdentifier("home.title." + (item.calendar?.id ?? item.handoff?.deviceID ?? ""))
     }
-    private var actions: some View { HStack(spacing: 0) { joinButton; starButton }.fixedSize(horizontal: true, vertical: false) }
+    private var status: String {
+        if let handoff = item.handoff { return source != nil ? L("Jam on %@", handoff.deviceLabel) : L("Recently active") }
+        if let meeting = item.calendar {
+            if meeting.end <= now { return L("Ended") }
+            if self.meeting == nil { return L("Calendar event is no longer available.") }
+            return HomeMeetingCard.timing(meeting, at: now) + " · " + CalendarMeetingPresentation.compactTimeRange(meeting)
+        }
+        return L("Calendar event is no longer available.")
+    }
     private var joinButton: some View {
         Button {
             if let source { continuation.begin(source) }
             else if let handoff = item.handoff { onStale(handoff) }
             else if let meeting { onJoin(meeting) }
-        } label: { Text(action).fixedSize(horizontal: false, vertical: true).frame(minHeight: 36) }
+        } label: { Text(action).lineLimit(2).frame(minHeight: 36) }
         .buttonStyle(.borderedProminent)
         .tint(Color(red: 1, green: 0.60, blue: 0.33)).foregroundStyle(.black)
         .disabled(busy || continuation.moving || (item.handoff == nil && meeting == nil))
@@ -114,12 +116,17 @@ struct HomeMeetingCard: View {
         .accessibilityIdentifier(item.calendar.map { "calendar.star." + $0.id } ?? "handoff.star." + (item.handoff?.deviceID ?? ""))
     }
     static func timing(_ meeting: CalendarMeeting, at now: Date) -> String {
-        meeting.isScheduledNow(now) ? L("Scheduled now") :
+        if meeting.end <= now { return L("Ended") }
+        return meeting.isScheduledNow(now) ? L("Scheduled now") :
             L("Starts in %ld min", max(1, Int(ceil(meeting.start.timeIntervalSince(now) / 60))))
     }
 }
 
 enum CalendarMeetingPresentation {
+    static func compactTimeRange(_ meeting: CalendarMeeting) -> String {
+        guard !meeting.allDay, Calendar.current.isDate(meeting.start, inSameDayAs: meeting.end) else { return timeRange(meeting) }
+        return meeting.start.formatted(date: .omitted, time: .shortened) + " – " + meeting.end.formatted(date: .omitted, time: .shortened)
+    }
     static func timeRange(_ meeting: CalendarMeeting) -> String {
         let start = meeting.start.formatted(date: .abbreviated, time: meeting.allDay ? .omitted : .shortened)
         if meeting.allDay { return start + " · " + L("All day") }
@@ -128,16 +135,9 @@ enum CalendarMeetingPresentation {
         return start + " – " + end
     }
     static func subtitle(_ meeting: CalendarMeeting, at now: Date, roomTitle: String) -> String {
-        let timing = meeting.isScheduledNow(now) ? L("Scheduled now") : L("Upcoming")
+        let timing = meeting.end <= now ? L("Ended") : meeting.isScheduledNow(now) ? L("Scheduled now") : L("Upcoming")
         return ([timing + " · " + timeRange(meeting)] +
                 (meeting.title == roomTitle ? [] : [meeting.title]) +
                 (meeting.calendarTitle.isEmpty ? [] : [meeting.calendarTitle])).joined(separator: "\n")
-    }
-}
-
-struct HomeTopPreference: PreferenceKey {
-    static var defaultValue: CGFloat? = nil
-    static func reduce(value: inout CGFloat?, nextValue: () -> CGFloat?) {
-        if let next = nextValue() { value = next }
     }
 }

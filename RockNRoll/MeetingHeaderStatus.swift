@@ -20,7 +20,7 @@ final class MeetingHeaderStatus: ObservableObject {
         var actionTitle: String?
         var announcingPrivacy = false
         var privacySymbol: String? {
-            recording ? "record.circle" : transcribing ? "text.bubble" : nil
+            recording ? "record.circle" : transcribing ? "doc.text" : nil
         }
         var privacySummary: String? {
             let parts = [recording ? L("Recording") : nil, transcribing ? L("Transcription on") : nil].compactMap { $0 }

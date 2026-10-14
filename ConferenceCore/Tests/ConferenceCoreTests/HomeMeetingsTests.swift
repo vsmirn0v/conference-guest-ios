@@ -53,17 +53,35 @@ final class HomeMeetingsTests: XCTestCase {
         XCTAssertEqual(items.count, 2)
         XCTAssertEqual(items.first?.handoff?.deviceID, "Mac")
     }
-    func testPreviewIsBoundedAndFreezesUntilInteractionEnds() {
+    func testPreviewIsBoundedAndLateChangesRequireExplicitAcceptance() {
         let items = HomeMeetingPolicy.candidates(meetings: (1...4).map { meeting("room\($0)", start: Double($0 * 60)) },
                                                 handoffs: [], at: now)
         var snapshot = HomeMeetingSnapshot()
         snapshot.update(items, allowChanges: true)
         XCTAssertEqual(snapshot.items.count, 2)
-        let before = snapshot
+        let before = snapshot.items
         snapshot.update([], allowChanges: false)
-        XCTAssertEqual(snapshot, before)
-        snapshot.update([], allowChanges: true)
+        XCTAssertEqual(snapshot.items, before)
+        XCTAssertTrue(snapshot.hasUpdates)
+        snapshot.acceptUpdates()
         XCTAssertTrue(snapshot.items.isEmpty)
+        XCTAssertFalse(snapshot.hasUpdates)
+        snapshot.update(items, allowChanges: false)
+        XCTAssertTrue(snapshot.items.isEmpty, "Returning to the top must not insert a card under an approaching tap")
+        snapshot.acceptUpdates()
+        XCTAssertEqual(snapshot.items, before)
+    }
+    func testEnrichmentKeepsDisplayedSuggestionIdentityAndMetadataUntilAccepted() {
+        let original = HomeMeetingPolicy.candidates(meetings: [meeting("daily", start: 60)], handoffs: [], at: now)
+        var snapshot = HomeMeetingSnapshot(); snapshot.update(original, allowChanges: true)
+        let enriched = HomeMeetingPolicy.candidates(meetings: [meeting("daily", start: 120)],
+                                                   handoffs: [handoff("Mac", room: "daily")], at: now)
+        snapshot.update(enriched, allowChanges: false)
+        XCTAssertEqual(snapshot.items, original)
+        XCTAssertNil(snapshot.items.first?.handoff)
+        XCTAssertTrue(snapshot.hasUpdates)
+        snapshot.acceptUpdates()
+        XCTAssertEqual(snapshot.items, enriched)
     }
     func testTodaySeparatesTomorrowAndRetainsOngoingOvernightEvents() {
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -72,5 +90,29 @@ final class HomeMeetingsTests: XCTestCase {
                      meeting("ended", start: -300, end: -1)]
         XCTAssertEqual(HomeMeetingPolicy.today(meetings: items, at: now, excluding: ["promoted"], calendar: calendar)
             .map(\.id), ["overnight", "today"])
+    }
+    func testFrozenCardCannotJoinReplacedInvitationAndHeartbeatDoesNotAnnounceAnUpdate() throws {
+        let event = meeting("daily", start: 0), source = handoff("Mac", room: "daily")
+        let candidates = HomeMeetingPolicy.candidates(meetings: [event], handoffs: [source], at: now)
+        let item = try XCTUnwrap(candidates.first)
+        var changed = event; changed.invitation = URL(string: "https://other.example.test/new-room")!
+        XCTAssertNil(item.currentCalendar(in: [changed]))
+        XCTAssertEqual(item.currentCalendar(in: [event]), event)
+        let moved = ActiveJam(deviceID: source.deviceID, sessionID: source.sessionID,
+            invitation: changed.invitation!, title: source.title, name: source.name, deviceLabel: source.deviceLabel, updatedAt: now)
+        XCTAssertNil(item.currentHandoff(in: [moved], at: now))
+        var heartbeat = source; heartbeat.updatedAt = now.addingTimeInterval(10)
+        var snapshot = HomeMeetingSnapshot(); snapshot.update(candidates, allowChanges: true)
+        snapshot.update(HomeMeetingPolicy.candidates(meetings: [event], handoffs: [heartbeat], at: now.addingTimeInterval(10)), allowChanges: false)
+        XCTAssertFalse(snapshot.hasUpdates, "A heartbeat is not a new suggestion")
+        XCTAssertNil(item.currentCalendar(in: []), "Permission revocation disables the frozen action")
+        var rescheduled = CalendarMeeting(id: event.id, seriesID: event.seriesID, calendarID: event.calendarID,
+            calendarTitle: event.calendarTitle, title: "Updated title", start: now.addingTimeInterval(300), end: event.end)
+        rescheduled.invitation = event.invitation; rescheduled.engine = event.engine
+        snapshot.update(HomeMeetingPolicy.candidates(meetings: [rescheduled], handoffs: [heartbeat], at: now.addingTimeInterval(10)), allowChanges: false)
+        XCTAssertTrue(snapshot.hasUpdates, "Same-room event metadata updates must be revealable")
+        XCTAssertEqual(snapshot.items.first?.calendar?.title, event.title)
+        snapshot.acceptUpdates()
+        XCTAssertEqual(snapshot.items.first?.calendar?.title, rescheduled.title)
     }
 }

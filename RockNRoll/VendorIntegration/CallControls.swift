@@ -1165,7 +1165,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         for control in [shareOffer, focusButton, navigation, compactHeader, localShareCard] { surface.bringSubviewToFront(control) }
         if let reactionOverlay { surface.bringSubviewToFront(reactionOverlay) }
         reactionOverlay?.frame = surface.bounds
-        (reactionOverlay as? ReceivedReactionOverlay)?.suppressed = focus.hidden
+        if let overlay = reactionOverlay as? ReceivedReactionOverlay {
+            overlay.suppressed = focus.hidden
+            overlay.presentationRect = ReactionOverlayGeometry.contentRect(stage: stage,
+                header: geometry.header, headerVisible: !header.isHidden || !compactHeader.isHidden)
+        }
         reactionsButton.isHidden = !hasReactionShortcut || focus.hidden
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop] {
             backdrop.isAccessibilityElement = focus.hidden
@@ -1343,6 +1347,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         surface.addSubview(overlay)
         reactionOverlay = overlay
+        layoutPresentation()
     }
     private func updateDisplayBackdrops() {
         let previousStageDemand = wantsStageFrames

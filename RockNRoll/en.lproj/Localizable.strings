@@ -813,3 +813,8 @@
 "Audio device selections also affect other apps." = "Audio device selections also affect other apps.";
 
 "Hide meeting" = "Hide meeting";
+
+"Show updated meeting suggestions" = "Show updated meeting suggestions";
+"Ended" = "Ended";
+"Sending %@…" = "Sending %@…";
+"Could not send %@" = "Could not send %@";

@@ -15,6 +15,7 @@ final class GuestCallLayoutFixture: UIViewController {
     private let meetingStatus = MeetingHeaderStatus()
     private let reactions = MeetingReactionsModel()
     private let chat = ChatStore()
+    private let reactionSubmission = ReactionSubmission(valid: { true })
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -30,9 +31,12 @@ final class GuestCallLayoutFixture: UIViewController {
             reactions.available = true; reactions.ready = true; studio?.reactions = reactions
             chat.reactionHistoryAvailable = true; chat.reactionHistory.beginMeeting()
             chat.reactionHistory.receive(kind: .heart, participantID: "ani", displayName: "Ani", isOwn: false)
-            reactions.sender = { [weak chat] kind in
-                chat?.reactionHistory.recordLocalSubmission(kind: kind, participantID: "self", displayName: "You", submissionID: UUID().uuidString)
-                return true
+            reactionSubmission.onAccepted = { [weak chat, weak reactions] kind, id in
+                reactions?.trackSubmission(kind, id: id)
+                chat?.reactionHistory.recordLocalSubmission(kind: kind, participantID: "self", displayName: "You", submissionID: id)
+            }
+            reactions.sender = { [weak self] kind in
+                self?.reactionSubmission.send(kind) { done in done(true); return true } ?? false
             }
         }
         studio?.soundCheck.verifyMuted = { [weak self] in self?.controls.setFixtureMedia(microphone: false) }
@@ -138,6 +142,15 @@ final class GuestCallLayoutFixture: UIViewController {
             view.addSubview(controls)
         }
         controls.setWaitingForOthers(solo)
+        if scenario == "reactions" {
+            let overlay = ReceivedReactionOverlay()
+            controls.installReactionOverlay(overlay)
+            overlay.accessibilityElementsHidden = false // Inspect cards in UI tests only.
+            reactionSubmission.onTransmitted = { [weak overlay, weak reactions] kind, id in
+                reactions?.finishSubmission(id: id, succeeded: true); overlay?.show(kind, from: "You")
+            }
+            controls.fixtureActions = [UIAction(title: "Fixture incoming Heart") { [weak overlay] _ in overlay?.show(.heart, from: "Ani") }]
+        }
         if solo {
             // A late SDK self-tile update must not cover the invitation.
             controls.setStagePresentation(.init(target: .init(participant: "self", isShare: false),

@@ -11,7 +11,10 @@ enum CalendarUIFixture {
     actor Reader: CalendarReading {
         func access() -> CalendarAccess { .allowed }
         func requestAccess() -> Bool { true }
-        func read(selected: Set<String>, now: Date, knownOrigins: Set<String>, aliases: [String: URL]) -> CalendarSnapshot {
+        func read(selected: Set<String>, now: Date, knownOrigins: Set<String>, aliases: [String: URL]) async -> CalendarSnapshot {
+            if let delay = Double(ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR_DELAY"] ?? ""), delay > 0 {
+                try? await Task.sleep(for: .seconds(min(delay, 10)))
+            }
             func event(_ id: String, title: String, offset: Double, link: String?, series: String? = nil,
                        quoted: String? = nil) -> CalendarMeeting {
                 .init(id: id, seriesID: series ?? id, calendarID: "work", calendarTitle: "Work",
@@ -67,7 +70,7 @@ enum CalendarUIFixture {
         if mode != "restore" { preferences.removePersistentDomain(forName: "CalendarUIFixture") }
         preferences.set(true, forKey: "calendarMeetings.enabled")
         preferences.set(["work"], forKey: "calendarMeetings.selected")
-        preferences.set(mode == "countdown", forKey: "calendarMeetings.automaticJoin")
+        preferences.set(mode == "countdown" || mode == "home-countdown", forKey: "calendarMeetings.automaticJoin")
         preferences.set("Calendar QA", forKey: "savedDisplayName")
         preferences.set(true, forKey: "iCloudSyncOfferSeen")
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [Response.self]
@@ -79,7 +82,7 @@ enum CalendarUIFixture {
         if mode.hasPrefix("home") {
             let titles = ["Warm-up", "Thursday rehearsal", "Songwriting circle", "Quartet", "Arrangement", "Practice"]
             let favorites = titles.enumerated().map { index, title in
-                var room = RecentRoom(invitationURL: URL(string: (mode == "home-details" || mode.hasPrefix("home-preview")) && index == 0 ?
+                var room = RecentRoom(invitationURL: URL(string: (mode == "home-details" || mode == "home-delayed" || mode.hasPrefix("home-preview")) && index == 0 ?
                     "https://meeting.example.test/team?psw=fixture" : "https://meeting.example.test/favorite\(index)")!,
                     title: title, identifier: "favorite\(index)", isStarred: true,
                     lastJoined: Date().addingTimeInterval(Double(-index * 60)))

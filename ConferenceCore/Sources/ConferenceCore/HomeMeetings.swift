@@ -5,6 +5,15 @@ public struct HomeMeeting: Identifiable, Equatable, Sendable {
     public let invitation: URL
     public let calendar: CalendarMeeting?
     public let handoff: ActiveJam?
+    public func currentCalendar(in meetings: [CalendarMeeting]) -> CalendarMeeting? {
+        calendar.flatMap { original in meetings.first { $0.id == original.id && $0.roomIdentity == id } }
+    }
+    public func currentHandoff(in handoffs: [ActiveJam], at now: Date) -> ActiveJam? {
+        handoff.flatMap { original in handoffs.first {
+            $0.deviceID == original.deviceID && $0.sessionID == original.sessionID &&
+            $0.isRecent(at: now) && MeetingRoomIdentity($0.invitation) == id
+        } }
+    }
 }
 
 /// Room identity, time and connection freshness determine suggestions.
@@ -53,13 +62,25 @@ public enum HomeMeetingPolicy {
     }
 }
 
-/// Defer changes above the user's current position until interaction ends or
-/// the user returns to the top. The underlying calendar remains authoritative.
+/// Keep suggestions in place for the visible home session. Late discoveries
+/// are applied explicitly, so an approaching tap cannot land on another room.
 public struct HomeMeetingSnapshot: Equatable, Sendable {
     public private(set) var items: [HomeMeeting] = []
+    public private(set) var pending: [HomeMeeting] = []
+    private struct Key: Equatable {
+        let room: MeetingRoomIdentity; let calendar: CalendarMeeting?; let device: String?; let session: UUID?
+        let title: String?; let deviceLabel: String?; let sharing: Bool?; let companion: Bool?
+        init(_ item: HomeMeeting) {
+            room = item.id; calendar = item.calendar; device = item.handoff?.deviceID; session = item.handoff?.sessionID
+            title = item.handoff?.title; deviceLabel = item.handoff?.deviceLabel
+            sharing = item.handoff?.isSharingScreen; companion = item.handoff?.supportsCompanion
+        }
+    }
+    public var hasUpdates: Bool { pending.map(Key.init) != items.map(Key.init) }
     public init() {}
     public mutating func update(_ candidates: [HomeMeeting], allowChanges: Bool) {
-        guard allowChanges else { return }
-        items = Array(candidates.prefix(HomeMeetingPolicy.previewLimit))
+        pending = Array(candidates.prefix(HomeMeetingPolicy.previewLimit))
+        if allowChanges { acceptUpdates() }
     }
+    public mutating func acceptUpdates() { items = pending }
 }

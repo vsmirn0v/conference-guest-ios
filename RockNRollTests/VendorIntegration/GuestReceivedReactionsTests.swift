@@ -149,6 +149,7 @@ final class GuestReceivedReactionsTests: XCTestCase {
         window.rootViewController = host; window.isHidden = false
         defer { window.isHidden = true }
         let overlay = ReceivedReactionOverlay(frame: host.view.bounds)
+        overlay.presentationRect = CGRect(x: 8, y: 180, width: 304, height: 340)
         host.view.addSubview(overlay)
         host.view.layoutIfNeeded()
         for kind in MeetingReaction.allCases { overlay.show(kind, from: "Remote participant") }
@@ -156,6 +157,7 @@ final class GuestReceivedReactionsTests: XCTestCase {
         let stack = try XCTUnwrap(overlay.subviews.first as? UIStackView)
         XCTAssertEqual(stack.arrangedSubviews.count, 3)
         XCTAssertFalse(stack.bounds.isEmpty)
+        XCTAssertEqual(stack.frame.minY, 180, accuracy: 0.1)
         for card in stack.arrangedSubviews {
             XCTAssertTrue(card.superview === stack)
             XCTAssertLessThanOrEqual(card.frame.maxX, stack.bounds.maxX + 0.5)

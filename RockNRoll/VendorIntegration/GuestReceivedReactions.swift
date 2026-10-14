@@ -312,14 +312,14 @@ final class GuestReceivedReactions {
     deinit { refreshTask?.cancel(); tap?.invalidate(); lifecycle.forEach(NotificationCenter.default.removeObserver) }
 }
 
-/// Transient receive feedback only. No history, replay, taps, or queued events.
+/// Transient reaction feedback only. No history, replay, taps, or queued events.
 @MainActor
 final class ReceivedReactionOverlay: UIView {
     private let stack = UIStackView()
     private var rows: [(id: UUID, view: UIView, expiry: Task<Void, Never>)] = []
     private var observer: NSObjectProtocol?
     var suppressed = false { didSet { if suppressed { clear() } } }
-    var contentInsets = UIEdgeInsets(top: 92, left: 16, bottom: 96, right: 16) { didSet { setNeedsLayout() } }
+    var presentationRect: CGRect = .zero { didSet { if oldValue != presentationRect { setNeedsLayout() } } }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -382,7 +382,8 @@ final class ReceivedReactionOverlay: UIView {
     func clear() { announcementTask?.cancel(); announcementTask = nil; announcementCount = 0; while let row = rows.first { remove(row.id) } }
     override func layoutSubviews() {
         super.layoutSubviews()
-        let area = bounds.inset(by: contentInsets)
+        let area = bounds.intersection(presentationRect)
+        guard !area.isNull, !area.isEmpty else { stack.frame = .zero; return }
         let width = min(320, max(0, area.width))
         let height = stack.systemLayoutSizeFitting(CGSize(width: width, height: 0),
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height

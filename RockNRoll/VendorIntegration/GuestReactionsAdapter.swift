@@ -7,8 +7,20 @@ import UIKit
 @MainActor
 final class GuestReactionsAdapter {
     let model: MeetingReactionsModel
-    var onAccepted: ((MeetingReaction, String) -> Void)?
-    var onFailed: ((String) -> Void)?
+    var onAccepted: ((MeetingReaction, String) -> Void)? {
+        get { submission.onAccepted }
+        set { submission.onAccepted = newValue }
+    }
+    /// Transport acceptance, not proof of delivery to another participant.
+    var onTransmitted: ((MeetingReaction, String) -> Void)? {
+        get { submission.onTransmitted }
+        set { submission.onTransmitted = newValue }
+    }
+    var onFailed: ((String) -> Void)? {
+        get { submission.onFailed }
+        set { submission.onFailed = newValue }
+    }
+    private let submission: ReactionSubmission
     private let state: JazzActiveConferenceState
     private let studio: StudioModel
     private let reactionTransport: GuestReactionTransport?
@@ -29,16 +41,11 @@ final class GuestReactionsAdapter {
         self.model = model; self.state = state; self.studio = studio
         self.reactionTransport = reactionTransport
         self.valid = valid; self.transportReady = transportReady; self.cameraAllowed = cameraAllowed
+        submission = ReactionSubmission(valid: valid)
         model.sender = { [weak self] kind in
             guard let self, self.valid(), self.transportReady(), self.state.isToggleReactionsVisible else { return false }
-            let submissionID = UUID().uuidString
             if let transport = self.reactionTransport, transport.hasModernProtocol {
-                let failed = self.onFailed
-                guard transport.send(kind, completion: { accepted in
-                    if !accepted { failed?(submissionID) }
-                }) else { return false }
-                self.onAccepted?(kind, submissionID)
-                return true
+                return self.submission.send(kind) { completion in transport.send(kind, completion: completion) }
             }
             let reaction: JazzConferenceReaction
             switch kind {
@@ -46,9 +53,10 @@ final class GuestReactionsAdapter {
             case .applause: reaction = .applause; case .smile: reaction = .smile; case .surprise: reaction = .surprise
             default: return false
             }
-            coordinator.sendReaction(reaction: reaction)
-            self.onAccepted?(kind, submissionID)
-            return true
+            return self.submission.send(kind) { completion in
+                // The legacy API has no acknowledgement beyond submission.
+                coordinator.sendReaction(reaction: reaction); completion(true); return true
+            }
         }
         cameraObserver.onReaction = { [weak self] kind, id in
             #if DEBUG
@@ -145,6 +153,7 @@ final class GuestReactionsAdapter {
         cameraObserver.stop(); observedSourceID = nil; capabilityObservation = nil; capabilityDeviceID = nil
     }
     func stop() {
+        submission.stop()
         stopCameraObservation(); subscriptions = []
         notifications.forEach(NotificationCenter.default.removeObserver); notifications = []
         model.sender = nil; model.onPreferenceChanged = nil

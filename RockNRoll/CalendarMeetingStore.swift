@@ -76,6 +76,7 @@ final class CalendarMeetingStore: ObservableObject {
     }
     func select(_ id: String, included: Bool) {
         if included { selected.insert(id) } else { selected.remove(id) }
+        meetings.removeAll { !selected.contains($0.calendarID) }
         preferences.set(selected.sorted(), forKey: "calendarMeetings.selected")
         state.visits = [:]; persist(); cancelAutomaticJoin(); refresh()
     }
@@ -119,6 +120,9 @@ final class CalendarMeetingStore: ObservableObject {
                 // Removed calendars and new accounts never silently widen selection.
                 let available = Set(calendars.map(\.id))
                 selected.formIntersection(available)
+                if meetings.contains(where: { !selected.contains($0.calendarID) }) {
+                    meetings.removeAll { !selected.contains($0.calendarID) }
+                }
                 preferences.set(selected.sorted(), forKey: "calendarMeetings.selected")
                 var incoming = snapshot.meetings.filter { selected.contains($0.calendarID) }
                 let candidateGroups = incoming.map { meeting -> [[URL]] in
@@ -131,7 +135,7 @@ final class CalendarMeetingStore: ObservableObject {
                         }
                     }
                 }
-                meetings = incoming; now = Date()
+                // Keep the resolved snapshot until the whole refresh is ready.
                 let proofs = await probe(candidateGroups.flatMap { $0.flatMap { $0 } })
                 guard !Task.isCancelled, revision == token else { return }
                 for index in incoming.indices {
@@ -223,6 +227,14 @@ final class CalendarMeetingStore: ObservableObject {
             return L("Scheduled: %@ · %@", visit.start.formatted(date: .abbreviated, time: .shortened), visit.title)
         }
         return nil
+    }
+    func timing(for room: RecentRoom) -> String? {
+        guard enabled, access == .allowed,
+              let key = MeetingRoomIdentity(room.joinURL, engine: room.engine) else { return nil }
+        if let meeting = upcoming.first(where: { $0.roomIdentity == key }) {
+            return CalendarMeetingPresentation.timeRange(meeting)
+        }
+        return state.visits[room.id].map { $0.start.formatted(date: .abbreviated, time: .shortened) }
     }
     func noteJoined(_ room: RecentRoom, invitation: URL) {
         guard let key = MeetingRoomIdentity(invitation, engine: room.engine),
