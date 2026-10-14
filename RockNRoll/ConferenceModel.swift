@@ -90,7 +90,7 @@ final class ConferenceModel: ObservableObject {
     private struct PendingInvitation { let target: JoinDestination; let autoJoin: Bool }
     private var replacementAfterLeave: PendingInvitation?
     private var activeRoute: JoinDestination?
-    private var activeRoomTitle: String?
+    @Published private var activeRoomTitle: String?
     private var joinTask: Task<Void, Never>?
     private var terminalEventHandled = false
     private var sessionGeneration: UInt64 = 0
@@ -152,6 +152,11 @@ final class ConferenceModel: ObservableObject {
         }
         self.calendar.onAutomaticJoin = { [weak self] in self?.joinCalendarMeeting($0) }
     }
+
+    var desktopMeetingActive: Bool { phase != .idle }
+    var desktopSessionToken: String { String(sessionGeneration) }
+    var desktopMeetingTitle: String { activeRoomTitle ?? activeRoute?.invitationURL.lastPathComponent ?? L("Joining…") }
+    var desktopEngine: (any CallEngine)? { activeEngine }
 
     private var activeEngine: (any CallEngine)? {
         switch activeRoute {

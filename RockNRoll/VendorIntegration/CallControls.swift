@@ -133,7 +133,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private var unreadChatCount = 0
     private var unseenReactions = false
     private let reactionHistory: ReactionHistoryStore
-    private let workspace = CallWorkspaceControls()
+    let workspace = CallWorkspaceControls()
     private let onFloat: () -> Void
     private let onFloatingPreferenceChanged: () -> Void
     private var floatingVideoAvailable = false
@@ -572,6 +572,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.microphone.configuration?.baseForegroundColor = media == .on ?
                 UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
             self.microphone.isEnabled = media != .disabled
+            self.workspace.microphoneAvailable = media != .disabled
             self.microphone.accessibilityLabel = media == .on ? L("Mute microphone") : L("Unmute microphone")
             self.microphone.largeContentTitle = self.microphone.accessibilityLabel
             self.workspace.microphoneOn = media == .on

@@ -806,3 +806,10 @@
 
 "No screen preview arrived. Choose the source again." = "No screen preview arrived. Choose the source again.";
 "Waiting for video…" = "Waiting for video…";
+
+"Show meeting" = "Show meeting";
+"Quit Rock’n’Roll" = "Quit Rock’n’Roll";
+"Audio device unavailable" = "Audio device unavailable";
+"Audio device selections also affect other apps." = "Audio device selections also affect other apps.";
+
+"Hide meeting" = "Hide meeting";

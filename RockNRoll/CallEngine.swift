@@ -1,8 +1,10 @@
+import Combine
 import Foundation
 import UIKit
 
 @MainActor
 protocol CallEngine: AnyObject {
+    var callWorkspacePublisher: AnyPublisher<CallWorkspaceControls?, Never> { get }
     var hasJoinStarted: Bool { get }
     func leave()
     func resumeSystemCallIfPossible()

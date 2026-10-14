@@ -130,7 +130,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private var tileOrder: [ObjectIdentifier: String] = [:]
     private let store: CatchUpStore
     private let chat: ChatStore
-    private let workspace = CallWorkspaceControls()
+    let workspace = CallWorkspaceControls()
     var localCameraPreview: CameraCapturePreview?
     private var displayedSnapshot: CallMediaSnapshot?
     var supportsChat = true

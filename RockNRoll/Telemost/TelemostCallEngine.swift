@@ -16,7 +16,7 @@ final class TelemostCallEngine: CallEngine {
     private let audio = AudioCoordinator()
     private let studio = StudioModel(audioControl: .fullProcessing, preferences: .standard)
     private var microphoneProbe: NativeMicrophoneProbe?
-    private var view: RockCallViewController?
+    @Published private var view: RockCallViewController?
     private var target: TelemostTarget?
     private var name = ""
     private var bootstrap: TelemostBootstrap?
@@ -61,6 +61,9 @@ final class TelemostCallEngine: CallEngine {
     private lazy var callAudio = NativeCallAudio(owner: systemCall, audio: audio)
     private var cameraRequest = UUID()
     private var microphoneRequest = UUID()
+    var callWorkspacePublisher: AnyPublisher<CallWorkspaceControls?, Never> {
+        $view.map { $0?.workspace }.eraseToAnyPublisher()
+    }
     private(set) var hasJoinStarted = false
     var isSharingScreen: Bool { sharingActive }
     var continuationHostView: UIView? { view?.viewIfLoaded }

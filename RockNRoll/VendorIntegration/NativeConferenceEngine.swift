@@ -69,7 +69,10 @@ final class NativeConferenceEngine: CallEngine {
     private var transcriptSubscription: AnyCancellable?
     private var roomTitleSubscription: AnyCancellable?
     private var toastSubscription: AnyCancellable?
-    private weak var activeControls: CallControls?
+    @Published private var callWorkspace: CallWorkspaceControls?
+    private weak var activeControls: CallControls? {
+        didSet { callWorkspace = activeControls?.workspace }
+    }
     private let reactions = MeetingReactionsModel(preferences: .standard)
     private var reactionsAdapter: GuestReactionsAdapter?
     private var receivedReactions: GuestReceivedReactions?
@@ -134,6 +137,9 @@ final class NativeConferenceEngine: CallEngine {
     private var recoveryTraceStarted = false
     private let audioIOTrace = GuestAudioIOTrace()
     #endif
+    var callWorkspacePublisher: AnyPublisher<CallWorkspaceControls?, Never> {
+        $callWorkspace.eraseToAnyPublisher()
+    }
     private(set) var hasJoinStarted = false
     private var hasMediaJoinStarted = false
     var isSharingScreen: Bool { localSharePreview.active }
@@ -884,7 +890,7 @@ final class NativeConferenceEngine: CallEngine {
         installCodecRecovery()
         beginFloatingVideoSession()
         installCallHandlers()
-        audio.start(ready: { [weak self] in
+        audio.start(takeAudioFocus: true, ready: { [weak self] in
             guard let self, self.hasJoinStarted, !self.leaveRequested else { return }
             #if DEBUG && targetEnvironment(simulator)
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
@@ -895,7 +901,8 @@ final class NativeConferenceEngine: CallEngine {
                 return
             }
             #endif
-            self.systemCall.start(accessoryMute: ApplicationMicrophoneMute.macGuest)
+            self.systemCall.start(accessoryMute: ApplicationMicrophoneMute.macGuest,
+                                  acquiringAudioFocus: self.audio.acquiringJoinAudioFocus)
         }, failure: { [weak self] error in
             self?.onMediaStatus?(error.localizedDescription)
             self?.finishSession(userEnded: false, event: .failed)

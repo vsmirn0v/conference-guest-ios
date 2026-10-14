@@ -804,3 +804,10 @@
 
 "No screen preview arrived. Choose the source again." = "Предпросмотр экрана не появился. Выберите источник ещё раз.";
 "Waiting for video…" = "Ожидание видео…";
+
+"Show meeting" = "Открыть встречу";
+"Quit Rock’n’Roll" = "Завершить Rock’n’Roll";
+"Audio device unavailable" = "Аудиоустройство недоступно";
+"Audio device selections also affect other apps." = "Выбор аудиоустройства влияет и на другие приложения.";
+
+"Hide meeting" = "Скрыть встречу";

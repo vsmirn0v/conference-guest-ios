@@ -18,7 +18,7 @@ final class TrueConfCallEngine: CallEngine {
     private let studio = StudioModel(audioControl: .fullProcessing, preferences: .standard)
     private var microphoneProbe: NativeMicrophoneProbe?
     private var activityObservation: AnyCancellable?
-    private var view: RockCallViewController?
+    @Published private var view: RockCallViewController?
     private var target: TrueConfTarget?
     private var name = ""
     private var bootstrap: TrueConfBootstrap?
@@ -61,6 +61,9 @@ final class TrueConfCallEngine: CallEngine {
     private lazy var callAudio = NativeCallAudio(owner: systemCall, audio: audio)
     private var cameraRequest = UUID()
     private var microphoneRequest = UUID()
+    var callWorkspacePublisher: AnyPublisher<CallWorkspaceControls?, Never> {
+        $view.map { $0?.workspace }.eraseToAnyPublisher()
+    }
     private(set) var hasJoinStarted = false
     var isSharingScreen: Bool { sharingActive }
     var continuationHostView: UIView? { view?.viewIfLoaded }

@@ -1,3 +1,4 @@
+import Combine
 import AVFoundation
 import ConferenceCore
 import LiveKit
@@ -15,7 +16,7 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private let chat: ChatStore
     private var room: Room?
     private weak var container: UIViewController?
-    private var callView: RockCallViewController?
+    @Published private var callView: RockCallViewController?
     private var credentials: JamCredentials?
     private var joinTask: Task<Void, Never>?
     private var microphoneIntentOn = false
@@ -52,6 +53,9 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     private let receiveMonitor = ReceiveDelayMonitor()
     private var decoderExperimentToken: UUID?
     #endif
+    var callWorkspacePublisher: AnyPublisher<CallWorkspaceControls?, Never> {
+        $callView.map { $0?.workspace }.eraseToAnyPublisher()
+    }
     private(set) var hasJoinStarted = false
     private var receptionPaused = false
     var isSharingScreen: Bool { room?.localParticipant.isScreenShareEnabled() == true }

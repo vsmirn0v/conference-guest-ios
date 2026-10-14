@@ -5,6 +5,7 @@ import UIKit
 /// Shared actions and visible media state for the call and its conversation view.
 @MainActor
 final class CallWorkspaceControls: ObservableObject {
+    @Published var microphoneAvailable = true
     @Published var microphoneOn = false
     @Published var cameraOn = false
     @Published var onHold = false

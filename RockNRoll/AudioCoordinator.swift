@@ -12,6 +12,10 @@ final class AudioCoordinator {
     var onServicesChanged: ((Bool) -> Void)?
     private let worker: AudioSessionWorker
     private let prepareSession: @Sendable () throws -> Void
+    private let prepareInitialSession: @Sendable () throws -> Void
+    private let restoreMixingSession: @Sendable () throws -> Void
+    private var initialPreparationPending = true
+    private(set) var acquiringJoinAudioFocus = false
     private let recoveryWindow: Duration
     private let recoveryInterval: Duration
     private let notifications: NotificationCenter
@@ -45,16 +49,15 @@ final class AudioCoordinator {
     }
 
     init(worker: AudioSessionWorker = .shared,
-         prepareSession: @escaping @Sendable () throws -> Void = {
-             let session = AVAudioSession.sharedInstance()
-             let options: AVAudioSession.CategoryOptions = [.mixWithOthers, .allowBluetoothHFP]
-             if session.category != .playAndRecord || session.mode != .videoChat || session.categoryOptions != options {
-                 try session.setCategory(.playAndRecord, mode: .videoChat, options: options)
-             }
-         }, recoveryWindow: Duration = .seconds(12), recoveryInterval: Duration = .milliseconds(500),
+         prepareSession: (@Sendable () throws -> Void)? = nil,
+         prepareInitialSession: (@Sendable () throws -> Void)? = nil,
+         restoreMixingSession: @escaping @Sendable () throws -> Void = AudioCoordinator.restoreMixing,
+         recoveryWindow: Duration = .seconds(12), recoveryInterval: Duration = .milliseconds(500),
          notifications: NotificationCenter = .default) {
         self.worker = worker
-        self.prepareSession = prepareSession
+        self.prepareSession = prepareSession ?? { try Self.prepareCommunicationSession(mixing: true) }
+        self.prepareInitialSession = prepareInitialSession ?? prepareSession ?? { try Self.prepareCommunicationSession(mixing: false) }
+        self.restoreMixingSession = restoreMixingSession
         self.recoveryWindow = recoveryWindow; self.recoveryInterval = recoveryInterval
         self.notifications = notifications
         if ProcessInfo.processInfo.isiOSAppOnMac {
@@ -84,9 +87,11 @@ final class AudioCoordinator {
     func beginSession() {
         endSession()
         lease = AudioSessionLease(); configurationLease = AudioSessionLease(); observingSession = true
+        initialPreparationPending = true
     }
     func endSession() {
         observingSession = false; lease.invalidate()
+        acquiringJoinAudioFocus = false
         servicesNeedRecovery = false
         cancelOutputRestoration()
         outputRecovery = BuiltInOutputRecovery()
@@ -176,9 +181,11 @@ final class AudioCoordinator {
         mixingTask?.cancel(); mixingTask = nil
     }
 
-    func start(ready: @escaping @MainActor () async throws -> Void,
+    func start(takeAudioFocus: Bool = false, ready: @escaping @MainActor () async throws -> Void,
                failure: @escaping @MainActor (Error) -> Void) {
         beginSession()
+        acquiringJoinAudioFocus = takeAudioFocus && !ProcessInfo.processInfo.isiOSAppOnMac &&
+            UIApplication.shared.applicationState != .background
         startupReady = ready; startupFailure = failure
         let expected = lease
         startupTask = Task { [weak self] in
@@ -197,8 +204,10 @@ final class AudioCoordinator {
     /// The provider may reconfigure the shared session later; real-device validation is required.
     func prepareForJoin() async throws {
         let expected = lease
-        try await worker.perform(lease: expected, operation: prepareSession)
+        let preparation = acquiringJoinAudioFocus && initialPreparationPending ? prepareInitialSession : prepareSession
+        try await worker.perform(lease: expected, operation: preparation)
         guard lease === expected, expected.isActive else { throw CancellationError() }
+        initialPreparationPending = false
         observingSession = true
         // The call owner activates the session before the SDK starts media.
         audioWarning = nil
@@ -245,16 +254,17 @@ final class AudioCoordinator {
     /// The SDK changes the shared session after join; restore coexistence without
     /// replacing its selected voice-chat mode or route options.
     func ensureMixing() {
-        guard lease.isActive, let configuration = configurationLease, configuration.isActive else { return }
+        guard !acquiringJoinAudioFocus, lease.isActive, let configuration = configurationLease, configuration.isActive else { return }
         mixingRevision &+= 1
         guard mixingTask == nil else { return }
         let expected = lease
+        let restore = restoreMixingSession
         mixingTask = Task { [weak self, worker] in
             guard let self else { return }
             defer { if self.lease === expected, self.configurationLease === configuration { self.mixingTask = nil } }
             while self.lease === expected, expected.isActive, configuration.isActive, !Task.isCancelled {
                 let revision = self.mixingRevision
-                do { try await worker.perform(lease: configuration) { try expected.check(); try Self.restoreMixing() } }
+                do { try await worker.perform(lease: configuration) { try expected.check(); try restore() } }
                 catch is CancellationError { return }
                 catch {
                     guard self.lease === expected, expected.isActive else { return }
@@ -262,6 +272,17 @@ final class AudioCoordinator {
                 }
                 if self.mixingRevision == revision { return }
             }
+        }
+    }
+
+    nonisolated static func communicationOptions(mixing: Bool) -> AVAudioSession.CategoryOptions {
+        mixing ? [.mixWithOthers, .allowBluetoothHFP] : [.allowBluetoothHFP]
+    }
+
+    private nonisolated static func prepareCommunicationSession(mixing: Bool) throws {
+        let session = AVAudioSession.sharedInstance(), options = communicationOptions(mixing: mixing)
+        if session.category != .playAndRecord || session.mode != .videoChat || session.categoryOptions != options {
+            try session.setCategory(.playAndRecord, mode: .videoChat, options: options)
         }
     }
 
@@ -274,6 +295,7 @@ final class AudioCoordinator {
     /// A new audio activation supersedes an earlier interruption warning.
     func callAudioDidActivate() {
         guard observingSession, lease.isActive else { return }
+        acquiringJoinAudioFocus = false
         if configurationLease == nil { configurationLease = AudioSessionLease() }
         audioWarning = nil
         ensureMixing()
@@ -287,11 +309,13 @@ final class AudioCoordinator {
     /// Reactivate only once the call owner confirms there is no competing call.
     func reactivateAfterInterruption() async throws {
         let expected = lease
+        let restore = restoreMixingSession
         try await worker.perform(lease: expected) {
             try AVAudioSession.sharedInstance().setActive(true)
-            try expected.check(); try Self.restoreMixing()
+            try expected.check(); try restore()
         }
         guard lease === expected, expected.isActive else { throw CancellationError() }
+        acquiringJoinAudioFocus = false
         audioWarning = nil
         logRoute()
         publishStatus()
@@ -350,6 +374,9 @@ final class AudioCoordinator {
     }
 
     private func recoverServices() {
+        // A reset rebuilds audio services; it must not repeat an explicit join's
+        // interruption of another app, even if that join was still preparing.
+        initialPreparationPending = false; acquiringJoinAudioFocus = false
         servicesNeedRecovery = true
         lease.invalidate(); lease = AudioSessionLease()
         mixingTask?.cancel(); mixingTask = nil; resetTask?.cancel()

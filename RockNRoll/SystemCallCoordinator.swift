@@ -44,6 +44,8 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private var applicationRecoveryTask: Task<Void, Never>?
     private var applicationRecoveryToken: UUID?
     private var recoveryDeadline: ContinuousClock.Instant?
+    private var initialFocusDeadline: ContinuousClock.Instant?
+    private var initialActivationError: Error?
     private let recoveryWindow: Duration
     private let recoveryInterval: Duration
     private let transactionRequester: ((CXTransaction, @escaping (Error?) -> Void) -> Void)?
@@ -66,6 +68,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         var observedCompetitor = false
         var releasedBySystem = false
         var activationAttempted = false
+        var initialFocusDeadline: ContinuousClock.Instant?
     }
     private var audioYield: AudioYield?
     private var resumeActionID: UUID?
@@ -149,11 +152,17 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         guard !usesSystemCall, callID != nil else { return }
         if interrupted {
             cancelApplicationAudioRecovery()
+            let initialFocus = takeInitialFocusPermission()
             let wasActive = isAudioSessionActive
             isAudioSessionActive = false
             beginAudioYield()
-            if !isHeld { isHeld = true; onHoldChanged?(true) }
+            if let initialFocus { audioYield?.initialFocusDeadline = initialFocus }
+            // An AVAudioSession interruption alone is not proof of a phone call.
+            if observedCalls.contains(where: { $0.id != callID && !$0.ended }), !isHeld {
+                isHeld = true; onHoldChanged?(true)
+            }
             if wasActive { onDeactivated?() }
+            if canProbeInitialFocus { retryApplicationAudioRecovery() }
         } else {
             audioYield?.releasedBySystem = true
             resumeIfPossible()
@@ -177,7 +186,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         else if transactionRequester == nil { (source ?? provider).reportCall(with: id, updated: update) }
     }
 
-    func start(accessoryMute: ApplicationMicrophoneMute? = nil) {
+    func start(accessoryMute: ApplicationMicrophoneMute? = nil, acquiringAudioFocus: Bool = false) {
         guard callID == nil else { return }
         applicationMute = accessoryMute ?? defaultApplicationMute
         usesSystemCall = registrationOverride ?? (transactionRequester != nil ||
@@ -199,6 +208,9 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         isAudioSessionActive = false
         servicesAvailable = true; ending = false
         transferHolding = false
+        initialFocusDeadline = acquiringAudioFocus && !usesSystemCall
+            ? ContinuousClock.now.advanced(by: recoveryWindow) : nil
+        initialActivationError = nil
         if !usesSystemCall {
             applicationMute?.begin(owner: id, muted: isMuted) { [weak self] muted in
                 guard let self, self.callID == id, !self.ending, self.isConnected, self.canRestoreAudio else { return false }
@@ -213,6 +225,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             #endif
             do {
                 if observedCalls.contains(where: { !$0.ended }) {
+                    revokeInitialFocusPermission()
                     beginAudioYield()
                     onDeactivated?()
                     return
@@ -226,6 +239,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
                     enqueueActivation(id: id, initial: true)
                 }
             } catch {
+                if deferInitialFocusFailure(error) { return }
                 applicationMute?.end(owner: id)
                 callID = nil
                 onFailure?(error)
@@ -307,6 +321,8 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         applicationMute?.end(owner: callID)
         cancelActivation()
         cancelApplicationAudioRecovery()
+        revokeInitialFocusPermission()
+        initialActivationError = nil
         if !usesSystemCall {
             sessionWorker.deactivate()
         }
@@ -355,6 +371,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         cancelActivation()
         log.notice("CallKit audio activated")
         isAudioSessionActive = true
+        initialActivationError = nil
         audioYield = nil
         onActivated?()
     }
@@ -425,7 +442,9 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
 
     func observedCallChanged(_ call: ObservedCall) {
         guard let callID else { return }
-        if observedCalls.contains(where: { $0.id != callID && !$0.ended }) { cancelActivation() }
+        if observedCalls.contains(where: { $0.id != callID && !$0.ended }) {
+            revokeInitialFocusPermission(); cancelActivation()
+        }
         log.notice("Call state: meeting=\(call.id == callID, privacy: .public), connected=\(call.connected, privacy: .public), held=\(call.held, privacy: .public), ended=\(call.ended, privacy: .public)")
         if !usesSystemCall, observedCalls.contains(where: { $0.id != callID && !$0.ended }) {
             audioSessionInterrupted(true)
@@ -501,7 +520,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             observeYield(in: calls)
             guard !calls.contains(where: { $0.id != callID && !$0.ended }) else { return false }
             if isHeld && audioYield == nil { return false }
-            if let audioYield, !audioYield.releasedBySystem && !audioYield.observedCompetitor { return false }
+            if let audioYield, !audioYield.releasedBySystem && !audioYield.observedCompetitor && !canProbeInitialFocus { return false }
             if isAudioSessionActive && !isHeld && audioYield == nil { return true }
         }
         audioYield?.activationAttempted = true
@@ -531,6 +550,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         guard callID != nil else { return }
         servicesAvailable = available
         if !available {
+            revokeInitialFocusPermission()
             cancelActivation(); isAudioSessionActive = false
             beginAudioYield(); onDeactivated?()
         } else {
@@ -554,16 +574,22 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
                 guard !self.ending, self.servicesAvailable, !self.transferHolding,
                       !self.usesSystemCall || self.observedCalls.contains(where: { $0.id == id && $0.connected && !$0.held && !$0.ended }),
                       !self.observedCalls.contains(where: { $0.id == id ? ($0.held || $0.ended) : !$0.ended }),
-                      initial || !self.isHeld || self.audioYield?.releasedBySystem == true || self.audioYield?.observedCompetitor == true else { return }
+                      initial || self.audioYield == nil || self.audioYield?.releasedBySystem == true ||
+                        self.audioYield?.observedCompetitor == true || self.canProbeInitialFocus else { return }
                 switch result {
                 case .success:
                     if !self.usesSystemCall { self.applicationMute?.setMuted(self.isMuted, owner: id) }
                     if self.isHeld { self.isHeld = false; self.resumeActionID = nil; self.onHoldChanged?(false) }
                     self.isAudioSessionActive = true; self.audioYield = nil
+                    self.initialActivationError = nil
                     self.cancelApplicationAudioRecovery(); self.onActivated?()
                 case .failure(let error):
                     if error is CancellationError { return }
-                    if initial { self.applicationMute?.end(owner: id); self.callID = nil; self.onFailure?(error) }
+                    if initial {
+                        if !self.deferInitialFocusFailure(error) {
+                            self.applicationMute?.end(owner: id); self.callID = nil; self.onFailure?(error)
+                        }
+                    }
                     else { self.retryApplicationAudioRecovery() }
                 }
             }
@@ -573,7 +599,11 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private func retryApplicationAudioRecovery() {
         guard applicationRecoveryTask == nil, let id = callID,
               !usesSystemCall || audioYield?.releasedBySystem == true else { return }
-        let deadline = recoveryDeadline ?? ContinuousClock.now.advanced(by: recoveryWindow)
+        var deadline = recoveryDeadline ?? ContinuousClock.now.advanced(by: recoveryWindow)
+        if let focusDeadline = audioYield?.initialFocusDeadline,
+           audioYield?.releasedBySystem != true, audioYield?.observedCompetitor != true {
+            deadline = min(deadline, focusDeadline)
+        }
         recoveryDeadline = deadline
         guard ContinuousClock.now < deadline else { return }
         let token = UUID(); applicationRecoveryToken = token
@@ -586,12 +616,19 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             while ContinuousClock.now < deadline {
                 guard let interval = self?.recoveryInterval else { return }
                 do { try await Task.sleep(for: interval) } catch { return }
-                guard let self, self.callID == id, !self.ending, ContinuousClock.now < deadline else { return }
+                guard let self, self.callID == id, !self.ending else { return }
+                if ContinuousClock.now >= deadline { break }
                 do {
                     if try self.reactivateAudioIfPossible() { return }
                     if self.audioYield == nil { return }
                 }
                 catch { /* The competing session may still be finishing teardown. */ }
+            }
+            if let self, self.callID == id, !self.ending, !Task.isCancelled,
+               let error = self.initialActivationError,
+               !self.observedCalls.contains(where: { $0.id != id && !$0.ended }) {
+                self.markEnded(reason: .failed)
+                self.onFailure?(error)
             }
         }
     }
@@ -599,6 +636,32 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     private func cancelApplicationAudioRecovery() {
         applicationRecoveryToken = nil; recoveryDeadline = nil
         applicationRecoveryTask?.cancel(); applicationRecoveryTask = nil
+    }
+
+    /// One explicit join may probe a transient route handoff without an ended
+    /// notification. A later interruption cannot reuse this startup permission.
+    private func takeInitialFocusPermission() -> ContinuousClock.Instant? {
+        let deadline = initialFocusDeadline
+        initialFocusDeadline = nil
+        guard !usesSystemCall, !ending, servicesAvailable, !transferHolding,
+              let deadline, ContinuousClock.now < deadline,
+              !observedCalls.contains(where: { $0.id != callID && !$0.ended }) else { return nil }
+        return deadline
+    }
+    private var canProbeInitialFocus: Bool {
+        guard !usesSystemCall, let deadline = audioYield?.initialFocusDeadline else { return false }
+        return ContinuousClock.now < deadline
+    }
+    private func revokeInitialFocusPermission() {
+        initialFocusDeadline = nil; audioYield?.initialFocusDeadline = nil
+    }
+    private func deferInitialFocusFailure(_ error: Error) -> Bool {
+        guard let deadline = takeInitialFocusPermission() else { return false }
+        initialActivationError = error
+        beginAudioYield(); audioYield?.initialFocusDeadline = deadline
+        onDeactivated?()
+        retryApplicationAudioRecovery()
+        return true
     }
 
     #if DEBUG
@@ -615,6 +678,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     @MainActor func setTransferHeld(_ held: Bool) async throws {
         guard let id = callID, transferHoldCompletion == nil else { throw NSError(domain: "JamTransfer", code: 1) }
         transferHolding = held
+        if held { revokeInitialFocusPermission() }
         let generation = UUID(); transferHoldGeneration = generation
         transferSessionLease?.invalidate()
         let sessionLease = AudioSessionLease(); transferSessionLease = sessionLease

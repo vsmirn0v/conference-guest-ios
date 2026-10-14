@@ -4,8 +4,11 @@ import ConferenceCore
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
+    private var macMeeting: MacMeetingCoordinator?
     private var conference: ConferenceModel?
     #if DEBUG
+    var meetingForTesting: ConferenceModel? { conference }
+    var macMeetingForTesting: MacMeetingCoordinator? { macMeeting }
     private var presenterExperiment: MacPresenterQualification?
     private var previewExperiment: PreviewCadenceExperiment?
     #endif
@@ -54,7 +57,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                                                             sync: model.sync,
                                                             continuation: model.continuation,
                                                             calendar: model.calendar))
-        let controller = UIViewController()
+        let controller = MeetingContainerViewController()
         controller.addChild(hosting)
         controller.view.addSubview(hosting.view)
         hosting.view.translatesAutoresizingMaskIntoConstraints = false
@@ -71,6 +74,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         self.window = window
         self.conference = model
         model.configure(container: controller)
+        if ProcessInfo.processInfo.isiOSAppOnMac { macMeeting = MacMeetingCoordinator(model: model, window: window) }
+        controller.canHideMeeting = { [weak self] in self?.macMeeting?.canHideMeeting == true }
+        controller.hideMeeting = { [weak self] in self?.macMeeting?.hideMeeting() }
 
         #if DEBUG
         if RoomSyncLiveProbe.runIfRequested(window: window) { return }
@@ -96,6 +102,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
+        macMeeting?.becameActive()
         conference?.calendarForegrounded()
         conference?.sync.foregrounded()
         conference?.continuation.setForeground(true)
@@ -114,4 +121,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         conference?.backgroundedWithoutFloatingVideo()
     }
 
+    func sceneDidDisconnect(_ scene: UIScene) {
+        macMeeting?.invalidate()
+        macMeeting = nil
+    }
 }
