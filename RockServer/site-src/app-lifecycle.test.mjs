@@ -115,6 +115,42 @@ function fixture() {
   assert.ok(old.disconnects >= 2); assert.equal(f.rooms[1].disconnects, 0);
 }
 {
+  const f = fixture(), gate = f.delayFetch();
+  const pending = f.click('join-browser'), room = f.rooms[0];
+  room.connectGate = deferred(); gate.resolve(f.response); await flush();
+  room.emit('Disconnected');
+  room.connectGate.reject(new Error('Signal connection failed')); await pending;
+  assert.equal(f.get('status').textContent, 'Could not join: Signal connection failed');
+  room.emit('Disconnected');
+  assert.equal(f.get('status').textContent, 'Could not join: Signal connection failed');
+}
+{
+  const f = fixture(), gate = f.delayFetch();
+  const pending = f.click('join-browser'), room = f.rooms[0];
+  room.connectGate = deferred(); gate.resolve(f.response); await flush();
+  f.click('leave'); room.emit('Disconnected');
+  room.connectGate.reject(new Error('Signal connection failed')); await pending;
+  assert.equal(f.get('status').textContent, 'Left the jam.');
+}
+for (const replacementState of ['connecting', 'connected', 'ended']) {
+  const f = fixture(), gate = f.delayFetch();
+  const pending = f.click('join-browser'), old = f.rooms[0];
+  old.connectGate = deferred(); gate.resolve(f.response); await flush();
+  old.emit('Disconnected');
+  const replacement = f.click('join-browser'), fresh = f.rooms[1];
+  fresh.connectGate = deferred(); await flush();
+  if (replacementState !== 'connecting') {
+    fresh.connectGate.resolve(); await replacement;
+    if (replacementState === 'ended') f.click('leave');
+  }
+  const expected = f.get('status').textContent;
+  old.connectGate.reject(new Error('Old connection failed')); await pending;
+  assert.equal(f.get('status').textContent, expected, replacementState);
+  if (replacementState === 'connecting') {
+    fresh.connectGate.resolve(); await replacement;
+  }
+}
+{
   const f = fixture(); const old = await f.join();
   await f.click('camera'); await f.click('microphone');
   assert.equal(f.get('camera').textContent, 'Turn camera off');

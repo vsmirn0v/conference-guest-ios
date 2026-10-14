@@ -14,7 +14,7 @@ const shareButton = document.getElementById('screen-share');
 const demoButton = document.getElementById('demo-share');
 const toneButton = document.getElementById('demo-tone');
 import { chatTopic, encodeChat, decodeChat } from './chat-packet.js';
-let session;
+let session, pendingJoin;
 const microphoneButton = document.getElementById('microphone');
 const cameraButton = document.getElementById('camera');
 function current(value) { return session === value && !value.closed; }
@@ -40,6 +40,7 @@ function finishSession(value) {
   microphoneButton.textContent = 'Turn microphone on'; cameraButton.textContent = 'Turn camera on';
 }
 function disconnect(value) {
+  if (pendingJoin === value) pendingJoin = undefined;
   finishSession(value);
   void Promise.resolve(value.room.disconnect()).catch(() => {});
 }
@@ -154,6 +155,7 @@ document.getElementById('join-browser').addEventListener('click', async () => {
     videos: [], audio: new Map(), seenChatIDs: new Set(),
     microphonePending: false, cameraPending: false, sharePending: false};
   session = value;
+  pendingJoin = value;
   const room = value.room;
   status.textContent = 'Connecting…';
   try {
@@ -208,8 +210,9 @@ document.getElementById('join-browser').addEventListener('click', async () => {
     toneButton.hidden = typeof (window.AudioContext || window.webkitAudioContext) !== 'function';
     chat.hidden = false;
     updateOwnMediaStatus(value);
+    if (pendingJoin === value) pendingJoin = undefined;
   } catch (error) {
-    const report = current(value);
+    const report = pendingJoin === value;
     disconnect(value);
     if (report) status.textContent = 'Could not join: ' + (error.message || String(error));
   }

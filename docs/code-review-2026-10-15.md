@@ -1,7 +1,7 @@
 # Whole-codebase review and qualification
 
 Baseline: `af28bbaa746b9ad5be5ba5f0ce733754ac114c1b` (build 88), `main`.
-Two independent GPT-6 Astra ultra reviews inspected the application, core data
+Three independent GPT-6 Astra ultra reviews inspected the application, core data
 model, engine adapters, media/lifecycle code, browser service, tests and native
 packaging. The first reviewer also delegated core/server and native/media review.
 Accepted fixes were reviewed again, with subsequent routing and native-test
@@ -26,6 +26,7 @@ acceptance, not a claim that every dependency or device scenario is bug-free.
 | Stream pruning | Membership sets are built once per refresh instead of repeatedly scanning ordered ID arrays. |
 | Cleanup | Removed an unused synchronous image decoder and unused reaction state; moved test hooks and diagnostic counters behind DEBUG. Added three missing English/Russian copy keys. |
 | Browser ownership | Async join/media operations and callbacks are bound to their originating session. Leave invalidates admission immediately; rejected cleanup still releases tracks. Replaced tile attachments are detached and button labels follow actual publication state. |
+| Browser startup errors | A pending join has ownership separate from the live session. SDK disconnection before promise rejection cannot hide the error; explicit Leave and newer attempts still suppress stale failures. Tests cover those orders and duplicate callbacks. |
 | Native package identity | Packaging requires a clean Ninja dependency graph, correct evaluated GN arguments and matching linked, bundled and assembled binaries. It rechecks after notices and before ZIP creation. |
 | Native test assertions | The hybrid decoder's Objective-C++ iOS XCTest patch now uses XCTest assertions, with explicit failure returns, instead of gtest macros that could miss XCTest failures. |
 
@@ -43,7 +44,8 @@ Evidence is under ignored `.build/review89/`:
   (`mac-final.xcresult`, 795 total).
 - iOS 17.5 compatibility: 109 passed, three skips, zero failures
   (`compatibility-17.xcresult`).
-- Final iOS 27 unit qualification passed (`simulator-final.xcresult`); the
+- Final iOS 27 units: 705 passed, 91 skips, zero failures
+  (`simulator-final.xcresult`); the
   corrected control fixture and final localization resources are included.
 - iOS 27 UI coverage: home, reaction overlays/palette, name entry and participant
   media badges passed in `simulator-full.xcresult`; the opt-in
@@ -74,9 +76,15 @@ ReplayKit qualification is claimed by this review.
 Only the `rock-web` binary/container was updated. Its previous binary is retained
 as `/opt/rocknroll/bin/rock-web-linux-amd64.before-build89`; restart policy remains
 `always`. No nginx or other service configuration changed. Public health,
-generated JavaScript SHA-256 and the cache-busting `/app.js?v=8` reference were
+generated JavaScript SHA-256 and the cache-busting `/app.js?v=9` reference were
 read back after restart. Server binary SHA-256:
-`1b8be109f9207fb50e0c8482df5701a5b5f46f90e979d86f90f3703ca61842aa`.
+`b541897a3731f9184712c015ef8de999ce326b653cf7d93100b64a4eb36f5da3`.
+
+A live in-app-browser attempt confirmed that startup failures now display their
+original reason. It failed on an unsupported RTCPeerConnection configuration
+operation, so this is not live browser-media acceptance. The unchanged baseline
+uses the same Room constructor and connection API; no transport workaround was
+introduced. The late error-reporting fix received another independent review.
 
 Signed artifact and TestFlight acceptance are recorded separately in the build
 89 release record.
