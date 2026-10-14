@@ -10,6 +10,10 @@ final class MacScreenCaptureTests: XCTestCase {
         @objc var height: UInt = 720
         @objc var minimumFrameInterval = CMTime.zero
         @objc var queueDepth = 0
+        @objc var scalesToFit = false
+        @objc var preservesAspectRatio = false
+        @objc var ignoreShadowsSingleWindow = false
+        @objc var ignoreGlobalClipSingleWindow = false
     }
     private final class ResizableStream: NSObject {
         var requests = [CGSize]()
@@ -28,6 +32,49 @@ final class MacScreenCaptureTests: XCTestCase {
         MacScreenCaptureBridge.configureTiming(config, fps: 0, queueDepth: 0)
         XCTAssertEqual(config.minimumFrameInterval, CMTime(value: 1, timescale: 1))
         XCTAssertEqual(config.queueDepth, 3)
+    }
+    func testWindowCaptureFitsContentWithoutChangingOtherCaptureStyles() {
+        let config = Configuration()
+        for style in [0, 2, 3] {
+            MacScreenCaptureBridge.configureWindow(config, sourceStyle: style)
+            XCTAssertFalse(config.scalesToFit); XCTAssertFalse(config.preservesAspectRatio)
+            XCTAssertFalse(config.ignoreShadowsSingleWindow); XCTAssertFalse(config.ignoreGlobalClipSingleWindow)
+        }
+        MacScreenCaptureBridge.configureWindow(config, sourceStyle: 1)
+        XCTAssertTrue(config.scalesToFit); XCTAssertTrue(config.preservesAspectRatio)
+        XCTAssertTrue(config.ignoreShadowsSingleWindow); XCTAssertTrue(config.ignoreGlobalClipSingleWindow)
+        XCTAssertEqual(config.width, 1280); XCTAssertEqual(config.height, 720)
+        // UIKit runtimes may lack every Mac-only selector.
+        MacScreenCaptureBridge.configureWindow(NSObject(), sourceStyle: 1)
+    }
+    func testWindowConfigurationUsesPublicSelectorsOnMac() throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Mac-only framework contract") }
+        XCTAssertTrue(MacScreenCaptureBridge.isSupported())
+        let type = try XCTUnwrap(NSClassFromString("SCStreamConfiguration") as? NSObject.Type)
+        let config = type.init()
+        MacScreenCaptureBridge.configureWindow(config, sourceStyle: 1)
+        for property in ["scalesToFit", "preservesAspectRatio", "ignoreShadowsSingleWindow", "ignoreGlobalClipSingleWindow"] {
+            XCTAssertEqual(config.value(forKey: property) as? Bool, true, property)
+        }
+    }
+    func testWindowDesktopTransformsDoNotResizeButRealResizeStillDoes() async throws {
+        let bridge = MacScreenCaptureBridge(), stream = ResizableStream(), config = Configuration()
+        MacScreenCaptureBridge.configureWindow(config, sourceStyle: 1)
+        bridge.prepareWindowResize(forStream: stream, configuration: config)
+        // A desktop animation may move/scale content inside a surface without
+        // changing the source window. Translation is irrelevant to its size.
+        for factor in [1.0, 0.75, 0.5, 1.25, 1.0] {
+            bridge.observeWindowContentRect(CGRect(x: 120, y: 80, width: 640 * factor, height: 360 * factor),
+                                            scaleFactor: 2, contentScale: factor)
+            try await Task.sleep(nanoseconds: 400_000_000)
+        }
+        XCTAssertTrue(stream.requests.isEmpty, "Desktop transforms must not reallocate the encoder/capture surfaces")
+        bridge.observeWindowContentRect(CGRect(x: 0, y: 0, width: 480, height: 320), scaleFactor: 2, contentScale: 1)
+        try await Task.sleep(nanoseconds: 450_000_000)
+        XCTAssertEqual(stream.requests, [CGSize(width: 960, height: 640)])
+        XCTAssertTrue(config.scalesToFit); XCTAssertTrue(config.ignoreGlobalClipSingleWindow)
+        stream.completions.removeFirst()(nil)
+        bridge.invalidateWindowResize()
     }
     func testWindowDimensionsPreserveAspectBoundPixelsAndDoNotUpscale() {
         XCTAssertEqual(MacScreenCaptureBridge.outputSize(for: CGSize(width: 640, height: 480)), CGSize(width: 640, height: 480))

@@ -13,14 +13,20 @@ final class GuestScreenPresenter: NSObject, JazzMainScreenPresenter {
     private var ended = true
     private let progress = UIActivityIndicatorView(style: .medium)
     private let status = UILabel()
+    private let recoveryStack = UIStackView()
+    private struct Underlay {
+        weak var view: UIView?
+        let accessibilityHidden: Bool
+    }
+    private var underlays: [Underlay] = []
     var onCancel: (() -> Void)?
     var sourceView: UIView { host.view }
+    var sdkContainer: UIViewController { host }
 
     init(container: UIViewController) {
         self.container = container
         super.init()
-        host.modalPresentationStyle = .fullScreen
-        host.isModalInPresentation = true
+        host.view.frame = container.view.bounds
         host.view.backgroundColor = .systemBackground
         status.text = L("Restoring jam audio…")
         status.textAlignment = .center; status.numberOfLines = 0
@@ -29,7 +35,9 @@ final class GuestScreenPresenter: NSObject, JazzMainScreenPresenter {
         cancel.setTitle(L("Cancel"), for: .normal)
         cancel.addAction(UIAction { [weak self] _ in self?.onCancel?() }, for: .touchUpInside)
         cancel.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        let stack = UIStackView(arrangedSubviews: [progress, status, cancel])
+        let stack = recoveryStack
+        [progress, status, cancel].forEach(stack.addArrangedSubview)
+        stack.isHidden = true
         stack.axis = .vertical; stack.alignment = .center; stack.spacing = 16
         stack.translatesAutoresizingMaskIntoConstraints = false; host.view.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -39,16 +47,16 @@ final class GuestScreenPresenter: NSObject, JazzMainScreenPresenter {
             stack.trailingAnchor.constraint(lessThanOrEqualTo: host.view.safeAreaLayoutGuide.trailingAnchor, constant: -24)
         ])
     }
-    func beginJoin() { ended = false; if !recovering { progress.stopAnimating() } }
+    func beginJoin() { ended = false; if !recovering { progress.stopAnimating(); recoveryStack.isHidden = true } }
     func beginRecovery() {
         guard !ended, !recovering else { return }
         recoveryScreen = screen
-        recovering = true; progress.startAnimating()
+        recovering = true; recoveryStack.isHidden = false; progress.startAnimating()
         detachScreen()
     }
     func completeRecovery() {
         guard !ended, recovering else { return }
-        recovering = false; progress.stopAnimating()
+        recovering = false; recoveryStack.isHidden = true; progress.stopAnimating()
         let replacement = recoveryScreen; recoveryScreen = nil
         if let replacement { presentScreen(screen: replacement) }
     }
@@ -62,8 +70,17 @@ final class GuestScreenPresenter: NSObject, JazzMainScreenPresenter {
         screen.view.frame = host.view.bounds
         screen.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         host.view.addSubview(screen.view); screen.didMove(toParent: host)
-        if host.presentingViewController == nil, let container {
-            container.present(host, animated: false)
+        // The persistent SDK container sits above the home page. Main content
+        // and SDK subsidiary sheets remain siblings inside that container.
+        if host.parent == nil, let container {
+            // Child containment does not isolate VoiceOver like a modal. Hide
+            // only the existing underlay, leaving later SDK sheets accessible.
+            underlays = container.view.subviews.map { Underlay(view: $0, accessibilityHidden: $0.accessibilityElementsHidden) }
+            underlays.forEach { $0.view?.accessibilityElementsHidden = true }
+            container.addChild(host)
+            host.view.frame = container.view.bounds
+            host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            container.view.addSubview(host.view); host.didMove(toParent: container)
         }
     }
     func removeScreen(screen: UIViewController) {
@@ -72,12 +89,15 @@ final class GuestScreenPresenter: NSObject, JazzMainScreenPresenter {
     }
     func end() {
         ended = true; recovering = false; recoveryScreen = nil; detachScreen(); progress.stopAnimating()
-        host.dismiss(animated: false)
+        host.presentedViewController?.dismiss(animated: false)
+        host.willMove(toParent: nil); host.view.removeFromSuperview(); host.removeFromParent()
+        underlays.forEach { $0.view?.accessibilityElementsHidden = $0.accessibilityHidden }
+        underlays.removeAll(); recoveryStack.isHidden = true
     }
     private func detachScreen() {
         guard let screen else { return }
         self.screen = nil
-        if screen.presentedViewController != nil { screen.dismiss(animated: false) }
+        screen.presentedViewController?.dismiss(animated: false)
         screen.willMove(toParent: nil); screen.view.removeFromSuperview(); screen.removeFromParent()
     }
     #if DEBUG

@@ -324,7 +324,7 @@ final class NativeConferenceEngine: CallEngine {
         floatingSourceView = presenter.sourceView
         try Jazz.initialize(
             conferenceAuthorizationType: .jazzToken(tokenProvider: tokenProvider),
-            container: container,
+            container: presenter.sdkContainer,
             navigationType: .custom(screenPresenter: presenter),
             settings: settings,
             eventsListener: events,

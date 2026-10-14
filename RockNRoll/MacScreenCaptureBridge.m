@@ -30,6 +30,10 @@ static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatus
 - (void)setPixelFormat:(OSType)format;
 - (void)setMinimumFrameInterval:(CMTime)interval;
 - (void)setQueueDepth:(NSInteger)depth;
+- (void)setScalesToFit:(BOOL)enabled;
+- (void)setPreservesAspectRatio:(BOOL)enabled;
+- (void)setIgnoreShadowsSingleWindow:(BOOL)enabled;
+- (void)setIgnoreGlobalClipSingleWindow:(BOOL)enabled;
 - (id)initWithFilter:(id)filter configuration:(id)configuration delegate:(id)delegate;
 - (BOOL)addStreamOutput:(id)output type:(NSInteger)type sampleHandlerQueue:(dispatch_queue_t)queue error:(NSError **)error;
 - (BOOL)removeStreamOutput:(id)output type:(NSInteger)type error:(NSError **)error;
@@ -429,6 +433,16 @@ static NSError *CaptureError(NSString *message) {
         [configuration setQueueDepth:MAX(3, MIN(8, depth))];
     }
 }
++ (void)configureWindow:(NSObject *)configuration sourceStyle:(NSInteger)sourceStyle {
+    if (sourceStyle != 1) return; // SCShareableContentStyleWindow
+    // Keep the picker-authorized window filter. Fit its content rather than
+    // forwarding desktop placement/shadow padding during window transitions.
+    // These public macOS selectors are absent from UIKit's declarations.
+    if ([configuration respondsToSelector:@selector(setScalesToFit:)]) [configuration setScalesToFit:YES];
+    if ([configuration respondsToSelector:@selector(setPreservesAspectRatio:)]) [configuration setPreservesAspectRatio:YES];
+    if ([configuration respondsToSelector:@selector(setIgnoreShadowsSingleWindow:)]) [configuration setIgnoreShadowsSingleWindow:YES];
+    if ([configuration respondsToSelector:@selector(setIgnoreGlobalClipSingleWindow:)]) [configuration setIgnoreGlobalClipSingleWindow:YES];
+}
 - (void)selectFilter:(NSObject *)filter {
     if (!_picking && !_stream) return;
     NSUInteger generation = _generation, selection = ++_selection;
@@ -454,6 +468,7 @@ static NSError *CaptureError(NSString *message) {
     [config setWidth:(NSUInteger)size.width]; [config setHeight:(NSUInteger)size.height];
     [config setCapturesAudio:NO]; [config setPixelFormat:kCVPixelFormatType_32BGRA];
     [self.class configureTiming:config fps:30 queueDepth:3];
+    [self.class configureWindow:config sourceStyle:_sourceStyle];
     if (self.onSelection) self.onSelection([filter style]);
     if (generation != _generation || selection != _selection || _stopping) return;
     NSObject *capture = [[NSClassFromString(@"SCStream") alloc] initWithFilter:filter configuration:config delegate:self];

@@ -72,3 +72,25 @@ screen benchmark flag to qualify scrolling and a constrained uplink as well as
 static/annotated text. Keep the independent browser visible with the bridge's
 `--keep-visible` flag; hidden Chromium presentation is not a decoder test.
 `measure-detail.py` consumes only explicitly generated reference/decoded charts.
+
+## Window geometry / Mission Control probe
+
+Run `bash Experiments/ScreenSharing/build-geometry-probe.sh` to build an ad-hoc
+signed native Mac fixture linked to the production geometry helper. Then run
+`.build/screen-sharing-geometry/WindowGeometryProbe.app/Contents/MacOS/WindowGeometryProbe`
+and redirect stdout to a JSONL evidence file. Add `--baseline` to omit the new
+window-fitting flags for comparison. No meeting or media hardware is involved.
+
+The probe obtains only its own generated window through Apple's
+`getCurrentProcessShareableContentWithCompletionHandler`; if unavailable it exits
+without requesting broader capture permission. It logs metadata, never pixels.
+It resizes the window, moves it partly off-display, then emits a
+`manual-mission-control` phase at 20 seconds. Open Mission Control during that
+phase and leave it before 40 seconds. Normal completion is at 45 seconds; startup
+and shutdown timeouts bound the entire run below one minute. Compare frame sizes,
+content rectangles/scales, phase counts and the final summary. Record whether
+Mission Control was actually exercised; the interval alone is not proof.
+
+Run on each affected macOS version. A macOS 27 pass does not establish macOS 26.2
+behavior. This direct own-window filter validates capture geometry; it does not
+validate picker authorization or replace the live meeting receiver checks.

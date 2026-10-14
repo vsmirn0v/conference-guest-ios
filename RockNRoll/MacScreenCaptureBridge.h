@@ -14,6 +14,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (CGSize)captureSizeForContent:(CGSize)content NS_SWIFT_NAME(captureSize(for:));
 /// Public Mac timing properties missing from UIKit's ScreenCaptureKit surface.
 + (void)configureTiming:(NSObject *)configuration fps:(NSInteger)fps queueDepth:(NSInteger)depth;
+/// Fit a selected window independently of its desktop placement; leave other styles unchanged.
++ (void)configureWindow:(NSObject *)configuration sourceStyle:(NSInteger)sourceStyle;
 /// Shared by the macOS compatibility and UIKit capture paths on the Mac host.
 - (void)prepareWindowResizeForStream:(NSObject *)stream configuration:(NSObject *)configuration;
 - (void)observeWindowSample:(CMSampleBufferRef)sample;

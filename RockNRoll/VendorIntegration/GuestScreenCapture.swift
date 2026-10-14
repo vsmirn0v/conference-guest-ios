@@ -143,7 +143,10 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         config.capturesAudio = false
         // Mac defaults are 60 fps/eight surfaces. Our visible preview tops out
         // at 30 fps and outgoing sharing at 15; keep capture bounded accordingly.
-        if ProcessInfo.processInfo.isiOSAppOnMac { MacScreenCaptureBridge.configureTiming(config, fps: 30, queueDepth: 3) }
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            MacScreenCaptureBridge.configureTiming(config, fps: 30, queueDepth: 3)
+            MacScreenCaptureBridge.configureWindow(config, sourceStyle: filter.style.rawValue)
+        }
         #if DEBUG
         if ProcessInfo.processInfo.isiOSAppOnMac,
            let fps = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAPTURE_FPS"].flatMap(Int.init) {

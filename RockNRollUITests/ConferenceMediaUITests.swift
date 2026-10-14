@@ -782,8 +782,10 @@ final class ConferenceMediaUITests: XCTestCase {
             throw XCTSkip("Provide a live guest invitation in the test environment.")
         }
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Phone Guest QA"
+        app.launchEnvironment["CONFERENCE_TEST_NETWORK_RECOVERY"] = "offline"
         #if targetEnvironment(simulator)
         app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
         #endif
@@ -791,19 +793,73 @@ final class ConferenceMediaUITests: XCTestCase {
         defer {
             XCUIDevice.shared.orientation = .portrait
             if app.buttons["Leave"].exists { app.buttons["Leave"].tap() }
+            app.terminate()
         }
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
         let musicians = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Musicians")).firstMatch
         musicians.tap()
         XCTAssertTrue(app.buttons["Phone Guest QA (you)"].waitForExistence(timeout: 10))
         let list = app.collectionViews["ParticipantsListView.listContainer"]
-        let remote = list.buttons.element(boundBy: 1)
-        if remote.exists {
-            remote.tap()
-            let pin = app.buttons["JazzMenu.pin"]
-            XCTAssertTrue(pin.waitForExistence(timeout: 5))
-            pin.tap()
+        XCTAssertTrue(list.isHittable, "The SDK sheet must be above the visible meeting host.")
+        XCTAssertTrue(app.buttons["Phone Guest QA (you)"].isHittable)
+        XCTAssertFalse(app.buttons["join.start"].exists, "VoiceOver must not reach the home page behind the meeting.")
+        XCTAssertFalse(app.textFields["name.input"].exists)
+        XCTAssertFalse(app.buttons["Cancel"].exists, "Recovery controls must stay hidden during an active meeting.")
+        let close = app.buttons["close"]
+        XCTAssertTrue(close.isHittable)
+        close.tap()
+        XCTAssertFalse(list.exists)
+        XCTAssertFalse(app.buttons["join.start"].exists, "SDK dismissal must preserve meeting accessibility isolation.")
+        // The SDK removes its list before the dismissal animation finishes.
+        // Rotate after that animation, then allow UIKit to commit the new layout.
+        Thread.sleep(forTimeInterval: 0.6)
+        XCUIDevice.shared.orientation = .landscapeLeft
+        Thread.sleep(forTimeInterval: 0.6)
+        musicians.tap()
+        guard list.waitForExistence(timeout: 5) else {
+            attachScreenshot(of: app, named: "Missing SDK panel after landscape rotation")
+            XCTFail(app.debugDescription); return
         }
+        XCTAssertTrue(list.isHittable)
+        // Keep the SDK sheet open through the opt-in network interruption. Its
+        // own modal stack must dismiss it when the transport screen is replaced.
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: list)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 45), .completed)
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 45))
+        musicians.tap()
+        XCTAssertTrue(list.waitForExistence(timeout: 10)); XCTAssertTrue(list.isHittable)
+        XCTAssertTrue(app.buttons["Phone Guest QA (you)"].isHittable)
+        close.tap()
+        Thread.sleep(forTimeInterval: 0.6)
+        XCUIDevice.shared.orientation = .portrait
+        Thread.sleep(forTimeInterval: 0.6)
+        musicians.tap()
+        guard list.waitForExistence(timeout: 5) else {
+            attachScreenshot(of: app, named: "Missing SDK panel after portrait rotation")
+            XCTFail(app.debugDescription); return
+        }
+        XCTAssertTrue(list.isHittable)
+        close.tap()
+        XCTAssertTrue(app.buttons["Leave"].isHittable)
+        attachScreenshot(of: app, named: "Guest participants reopen after SDK media recovery")
+        app.buttons["Leave"].tap()
+        let join = app.buttons["join.start"]
+        XCTAssertTrue(join.waitForExistence(timeout: 15)); XCTAssertTrue(join.isHittable)
+        XCTAssertFalse(musicians.exists, "Leaving must uncover the home page.")
+        // The automatic test invitation intentionally bypasses the persisted
+        // profile; enter a name for this ordinary, user-initiated second join.
+        let name = app.textFields["name.input"]
+        if (name.value as? String) == name.placeholderValue || (name.value as? String ?? "").isEmpty {
+            name.tap()
+            if app.buttons["Continue"].waitForExistence(timeout: 2) { app.buttons["Continue"].tap() }
+            name.typeText("Phone Guest QA")
+        }
+        join.tap()
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
+        musicians.tap()
+        XCTAssertTrue(list.waitForExistence(timeout: 10)); XCTAssertTrue(list.isHittable)
+        XCTAssertTrue(list.buttons.matching(NSPredicate(format: "label ENDSWITH %@", "(you)")).firstMatch.isHittable)
+        close.tap()
     }
 
     func testGuestNavigationSwitchesBetweenLiveRemoteParticipants() throws {
