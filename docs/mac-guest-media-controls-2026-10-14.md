@@ -78,7 +78,8 @@ The normal dependency is pinned to native r6, SHA256
 `6d9655dad8e0ad9fb5a77e47a43e9064b5f6c6ee40c1eeaca53d1632cb0ef789`.
 The uploaded ZIP was downloaded and its checksum verified. Its release includes
 the exact cumulative source recipe, provenance and third-party notices. No new
-TestFlight app build was submitted as part of this work.
+TestFlight app build was submitted during initial qualification; subsequent app
+distribution is recorded in [build 84](release-0.2.0-build84.md).
 The regular project then built against that remote artifact and passed 58 checks;
 one opt-in Mac microphone test was skipped (it passed in the preceding dedicated
 Mac run). Evidence: `normal-project-r6.log` and `normal-project-r6.xcresult`.
