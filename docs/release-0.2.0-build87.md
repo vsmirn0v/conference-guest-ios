@@ -36,8 +36,31 @@ Reproduction and detailed evidence: [Audio coexistence regression](../Experiment
 ## Source and artifact
 
 - Version 0.2.0/build 87; minimum iOS 16.0; team 5V64BP2H3P.
+- Product commit: `16d79ff4a5375ad6f4871a883f239ac2b7d5829a`, pushed before archive.
 - Native dependency remains `guest-native-webrtc-150.7871.03-r6`.
-- Archive, export, upload and TestFlight distribution verification pending.
+- Archive: `2026-10-14/RockNRoll-0.2.0-b87.xcarchive`.
+- App/dSYM UUID: `6967A47F-AE1C-3B98-BD92-AE32FA93354B`; both extension symbols
+  also match their executables.
+- Exported IPA SHA256: `be4211280bcd40c7855e1f64ffb4c6a01f8009437f11345aa4a47e4106a51e24`.
+- Archive/export succeeded. App and both extensions passed strict/deep signature
+  checks, build/minimum OS/team checks and absence of debugger entitlements.
+  iCloud is Production; permission purpose strings and encryption declaration
+  are present. Native r6 provenance matches all 23 cumulative patches and
+  required APIs. Rejected selector and DEBUG qualification helpers are absent
+  from the Release executable. No direct AppKit framework linkage.
+
+## Distribution
+
+- Upload succeeded on October 14, 2026 at 21:53 MSK. Apple accepted the package
+  with existing dependency missing-dSYM warnings; app and both extension symbols
+  were verified and uploaded.
+- Apple processing completed successfully. On October 14, 2026 at 22:02 MSK,
+  both Rock’n’Roll Internal (one tester) and Rock’n’Roll Public Beta (six testers)
+  were read back as **Testing**, expiring in 90 days.
+- Build detail confirms both group assignments and saved tester notes. App Store
+  Connect build ID: `50a1d6b7-0871-418c-994d-30073d920156`.
+- Public beta submission completed with automatic tester notifications enabled.
+  Public link: https://testflight.apple.com/join/Hd13C9U3.
 
 ## Tester notes
 
