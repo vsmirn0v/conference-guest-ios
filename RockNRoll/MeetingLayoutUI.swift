@@ -151,6 +151,9 @@ final class MeetingParticipantStrip: UIScrollView {
     private var buttons: [String: UIButton] = [:]
     private var items: [MeetingStripItem] = []
     private var selectedID: String?
+    #if DEBUG
+    private(set) var buttonUpdateCount = 0
+    #endif
     var onSelect: ((String) -> Void)?
     var vertical = false { didSet { if oldValue != vertical { setNeedsLayout() } } }
     override init(frame: CGRect) {
@@ -167,6 +170,9 @@ final class MeetingParticipantStrip: UIScrollView {
     }
     func update(_ items: [MeetingStripItem], selected: String?) {
         guard self.items != items || selectedID != selected else { return }
+        let previous = Dictionary(self.items.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        let previousSelection = selectedID
+        let layoutChanged = self.items.map(\.id) != items.map(\.id)
         self.items = items
         selectedID = selected
         let current = Set(items.map(\.id))
@@ -180,6 +186,10 @@ final class MeetingParticipantStrip: UIScrollView {
                 button.addAction(UIAction { [weak self] _ in self?.onSelect?(item.id) }, for: .touchUpInside)
                 buttons[item.id] = button; addSubview(button)
             }
+            guard previous[item.id] != item || (previousSelection == item.id) != (selected == item.id) else { continue }
+            #if DEBUG
+            buttonUpdateCount += 1
+            #endif
             button.configuration?.title = item.name
             button.configuration?.titleLineBreakMode = .byTruncatingTail
             button.configuration?.image = UIImage(systemName: item.isShare ? "rectangle.on.rectangle" : !item.audio.microphoneOn ? "mic.slash.fill" : item.audio.speaking ? "waveform" : "mic.fill")
@@ -191,7 +201,14 @@ final class MeetingParticipantStrip: UIScrollView {
             button.accessibilityLabel = L("Focus %@", item.name) + (item.isShare ? " · " + L("Screen share") : "")
             button.accessibilityTraits = selected == item.id ? [.button, .selected] : .button
         }
-        setNeedsLayout()
+        if layoutChanged { setNeedsLayout() }
+    }
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard previousTraitCollection?.hasDifferentColorAppearance(comparedTo: traitCollection) != false else { return }
+        for (id, button) in buttons {
+            button.layer.borderColor = (selectedID == id ? UIColor.systemOrange : UIColor.separator).resolvedColor(with: traitCollection).cgColor
+        }
     }
     override func layoutSubviews() {
         super.layoutSubviews()

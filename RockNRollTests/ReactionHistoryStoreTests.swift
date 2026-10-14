@@ -5,6 +5,19 @@ import XCTest
 
 @MainActor
 final class ReactionHistoryStoreTests: XCTestCase {
+    func testAlreadySeenScrollDoesNotPublishOrChangeUnseenEvents() throws {
+        let store = store()
+        receive(store, 1); receive(store, 2)
+        let first = try XCTUnwrap(store.events.first?.id)
+        store.markSeen(ids: [first])
+        var publications = 0
+        let token = store.$events.dropFirst().sink { _ in publications += 1 }
+        defer { token.cancel() }
+        for _ in 0..<100 { store.markSeen(ids: [first]); store.markSeen(ids: []) }
+        XCTAssertEqual(publications, 0)
+        XCTAssertTrue(store.hasUnseenReactions)
+        XCTAssertEqual(store.events.filter(\.isSeen).count, 1)
+    }
     func testGroupingSearchPreservesInclusiveUnsortedDuplicateBoundariesAtHistoryLimit() {
         let store = store()
         for index in 0..<2_000 { receive(store, Double(index)) }

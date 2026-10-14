@@ -1,9 +1,28 @@
 import AVFoundation
+import JazzSDK
 import WebRTC
 import XCTest
 @testable import RockNRoll
 
 final class GuestAudioSessionPolicyTests: XCTestCase {
+    func testActiveExternalOutputSuppressesTheSDKStartupSpeakerOverride() {
+        for output: AVAudioSession.Port in [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE,
+                                            .headphones, .usbAudio, .airPlay, .lineOut, .carAudio] {
+            XCTAssertEqual(NativeConferenceEngine.joinSpeakerPreference(outputTypes: [output], isMac: false), .receiver)
+        }
+        XCTAssertEqual(NativeConferenceEngine.joinSpeakerPreference(outputTypes: [.builtInSpeaker, .bluetoothHFP], isMac: false), .receiver)
+    }
+
+    func testJoinSpeakerPreferenceIsRecomputedFromTheCurrentRoute() {
+        XCTAssertEqual(NativeConferenceEngine.joinSpeakerPreference(outputTypes: [.bluetoothHFP], isMac: false), .receiver)
+        for outputs: [AVAudioSession.Port] in [[], [.builtInSpeaker], [.builtInReceiver]] {
+            XCTAssertNil(NativeConferenceEngine.joinSpeakerPreference(outputTypes: outputs, isMac: false),
+                "An earlier headset must not leave a preference on a fresh built-in join")
+        }
+        XCTAssertNil(NativeConferenceEngine.joinSpeakerPreference(outputTypes: [.bluetoothA2DP], isMac: true),
+            "Mac audio-device ownership remains unchanged")
+    }
+
     func testEveryPlaybackConfigurationPreservesRoutesAndMixes() {
         for category in [AVAudioSession.Category.playAndRecord, .playback] {
             for requested: AVAudioSession.CategoryOptions in [[], [.allowBluetoothHFP, .allowBluetoothA2DP], [.defaultToSpeaker]] {

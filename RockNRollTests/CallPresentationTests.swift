@@ -4,6 +4,53 @@ import XCTest
 
 @MainActor
 final class CallPresentationTests: XCTestCase {
+    func testParticipantStripUpdatesOnlyChangedChipsAndKeepsActionsAndSelection() throws {
+        let strip = MeetingParticipantStrip(frame: CGRect(x: 0, y: 0, width: 390, height: 46))
+        var items = (0..<100).map { index in
+            MeetingStripItem(id: String(index), name: "Participant \(index)", isShare: false,
+                audio: .init(microphoneOn: true, speaking: false))
+        }
+        strip.update(items, selected: "0")
+        strip.layoutIfNeeded()
+        let original = Dictionary(uniqueKeysWithValues: strip.subviews.compactMap { view -> (String, UIButton)? in
+            guard let button = view as? UIButton, let id = button.accessibilityIdentifier else { return nil }
+            return (id, button)
+        })
+        let first = try XCTUnwrap(original["Focus participant.0"])
+        let second = try XCTUnwrap(original["Focus participant.1"])
+        let originalFrame = second.frame
+        XCTAssertEqual(strip.buttonUpdateCount, 100)
+        strip.update(items, selected: "0")
+        XCTAssertEqual(strip.buttonUpdateCount, 100)
+        items[1] = .init(id: "1", name: "Participant 1", isShare: false,
+            audio: .init(microphoneOn: true, speaking: true))
+        strip.update(items, selected: "0")
+        XCTAssertEqual(strip.buttonUpdateCount, 101, "One speaker update must not rewrite the other 99 chips")
+        XCTAssertEqual(second.configuration?.baseForegroundColor, .systemGreen)
+        XCTAssertEqual(second.frame, originalFrame)
+        strip.update(items, selected: "1")
+        XCTAssertEqual(strip.buttonUpdateCount, 103, "Only the old and new selection need to change")
+        XCTAssertFalse(first.accessibilityTraits.contains(.selected))
+        XCTAssertTrue(second.accessibilityTraits.contains(.selected))
+        XCTAssertEqual(second.accessibilityLabel, L("Focus %@", "Participant 1"))
+        var selected: String?
+        strip.onSelect = { selected = $0 }
+        second.sendActions(for: .touchUpInside)
+        XCTAssertEqual(selected, "1")
+        items.swapAt(0, 1)
+        strip.update(items, selected: "1"); strip.layoutIfNeeded()
+        XCTAssertEqual(strip.buttonUpdateCount, 103, "Reordering retains the controls and their content")
+        XCTAssertEqual(second.frame.minX, 0)
+        XCTAssertEqual(first.frame.minX, 160)
+        for button in strip.subviews.compactMap({ $0 as? UIButton }) {
+            XCTAssertTrue(original[button.accessibilityIdentifier ?? ""] === button)
+        }
+        items.removeLast()
+        strip.update(items, selected: "1")
+        XCTAssertNil(original["Focus participant.99"]?.superview)
+        XCTAssertEqual(strip.buttonUpdateCount, 103)
+    }
+
     func testNativeSwipesStartAtCameraOffSelectionAndResetAfterStripSelection() throws {
         let call = RockCallViewController(title: "Meeting", catchUp: CatchUpStore(), chat: ChatStore())
         call.loadViewIfNeeded()

@@ -1,3 +1,4 @@
+import AVFoundation
 import Combine
 import CallKit
 import ConferenceCore
@@ -916,6 +917,14 @@ final class NativeConferenceEngine: CallEngine {
 
     private var pendingRoom: JazzRoom?
 
+    nonisolated static func joinSpeakerPreference(outputTypes: [AVAudioSession.Port], isMac: Bool) -> ConferencePreferredSpeaker? {
+        guard !isMac, outputTypes.contains(where: { $0 != .builtInSpeaker && $0 != .builtInReceiver }) else { return nil }
+        // The SDK's nil default applies a speaker override during startup, even
+        // with an active headset. Its receiver preference disables that override;
+        // AVAudioSession still chooses the actual external device and profile.
+        return .receiver
+    }
+
     private func startMediaAfterActivation() {
         guard hasJoinStarted, !leaveRequested, audioGate.canUseMedia, isCallAudioReady,
               let room = pendingRoom else { return }
@@ -948,7 +957,9 @@ final class NativeConferenceEngine: CallEngine {
             joinConferenceType: .skipIntermidiateScreen(room: room),
             mediaSettings: .allOff,
             analyticsConferenceType: nil,
-            preferredSpeaker: nil,
+            preferredSpeaker: Self.joinSpeakerPreference(
+                outputTypes: AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType),
+                isMac: ProcessInfo.processInfo.isiOSAppOnMac),
             customRepresentation: minimalRepresentation()
         )
     }

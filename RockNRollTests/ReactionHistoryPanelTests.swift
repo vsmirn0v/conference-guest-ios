@@ -5,6 +5,73 @@ import XCTest
 
 @MainActor
 final class ReactionHistoryPanelTests: XCTestCase {
+    func testHiddenAndInactiveModesDeferWorkAndAppearanceUsesLatestSnapshot() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let chat = ChatStore(); chat.reactionHistoryAvailable = true; chat.reactionHistory.beginMeeting()
+        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
+        window.rootViewController = panel; window.makeKeyAndVisible()
+        defer { window.isHidden = true; previous?.makeKey() }
+        await drainUpdates()
+        panel.viewDidDisappear(false)
+        let before = panel.messageRenderCount
+        let start = Date()
+        for index in 0..<30 {
+            chat.append(.init(id: String(index), sender: "Ani", text: "Message \(index)",
+                sentAt: start.addingTimeInterval(Double(index)), isOwn: false))
+            chat.reactionHistory.receive(kind: .wave, participantID: "ani", displayName: "Ani",
+                receivedAt: start.addingTimeInterval(Double(index) * 20))
+        }
+        await drainUpdates()
+        XCTAssertEqual(panel.messageRenderCount, before)
+        XCTAssertEqual(chat.unreadCount, 30)
+        panel.viewWillAppear(true); await drainUpdates()
+        XCTAssertGreaterThan(panel.messageRenderCount, before, "Content must be ready during presentation, before didAppear")
+        XCTAssertEqual(chat.unreadCount, 30, "Preparing content must not acknowledge it before presentation")
+        panel.viewDidAppear(true); await drainUpdates()
+        XCTAssertLessThanOrEqual(panel.messageRenderCount, before + 2, "Seen-state feedback may add one render")
+        XCTAssertEqual(find(UITextView.self, in: panel.view).filter { $0.text?.hasPrefix("Message ") == true }.count, 30)
+        let modes = try XCTUnwrap(find(UISegmentedControl.self, in: panel.view).first)
+        modes.selectedSegmentIndex = ConversationMode.catchUp.rawValue; modes.sendActions(for: .valueChanged)
+        await drainUpdates()
+        let chatRenders = panel.messageRenderCount
+        chat.setDelivery(.failed, for: "29")
+        await drainUpdates()
+        XCTAssertEqual(panel.messageRenderCount, chatRenders)
+        modes.selectedSegmentIndex = ConversationMode.chat.rawValue; modes.sendActions(for: .valueChanged)
+        await drainUpdates()
+        XCTAssertLessThanOrEqual(panel.messageRenderCount, chatRenders + 2)
+        XCTAssertTrue(find(UIButton.self, in: panel.view).contains { $0.configuration?.title == L("Not sent · Retry") })
+    }
+
+    func testReactionBurstCoalescesAndBackgroundUpdatesFlushOnActivation() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let window = UIWindow(windowScene: scene)
+        let chat = ChatStore(); chat.reactionHistoryAvailable = true; chat.reactionHistory.beginMeeting()
+        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
+        window.rootViewController = panel; window.makeKeyAndVisible()
+        defer { window.isHidden = true; previous?.makeKey() }
+        await drainUpdates()
+        let before = panel.messageRenderCount
+        for _ in 0..<30 { chat.reactionHistory.receive(kind: .wave, participantID: "ani", displayName: "Ani") }
+        await drainUpdates()
+        XCTAssertLessThanOrEqual(panel.messageRenderCount - before, 2, "Seen-state feedback may add one render")
+        let background = panel.messageRenderCount
+        chat.reactionHistory.receive(kind: .heart, participantID: "new", displayName: "New")
+        // Resign while the newest snapshot is still queued for rendering.
+        NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+        await drainUpdates()
+        XCTAssertEqual(panel.messageRenderCount, background)
+        XCTAssertFalse(try XCTUnwrap(chat.reactionHistory.events.last).isSeen)
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        await drainUpdates()
+        XCTAssertGreaterThan(panel.messageRenderCount, background)
+        XCTAssertEqual(chat.reactionHistory.events.count, 31)
+        XCTAssertTrue(find(ReactionHistoryRowView.self, in: panel.view).contains { $0.group.events.contains { $0.kind == .heart } })
+    }
     func testHistoryRemainsAvailableWithTextChatDisabled() throws {
         let chat = ChatStore(); chat.reactionHistoryAvailable = true
         chat.reactionHistory.beginMeeting()
@@ -74,7 +141,7 @@ final class ReactionHistoryPanelTests: XCTestCase {
         XCTAssertTrue(find(UIButton.self, in: row).first?.isHidden == true)
         XCTAssertEqual(find(UIButton.self, in: row).first?.accessibilityLabel, L("Show reaction details"))
     }
-    func testWidePanelFiltersActivityAndKeepsHistoryWithoutComposer() throws {
+    func testWidePanelFiltersActivityAndKeepsHistoryWithoutComposer() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first { $0.isKeyWindow }
         let window = UIWindow(windowScene: scene)
@@ -85,15 +152,16 @@ final class ReactionHistoryPanelTests: XCTestCase {
         window.rootViewController = panel; window.makeKeyAndVisible(); panel.view.layoutIfNeeded()
         defer { window.isHidden = true; previous?.makeKey() }
         let filter = try XCTUnwrap(find(UIButton.self, in: panel.view).first { $0.accessibilityIdentifier == "chat.activity-filter" })
-        func choose(_ title: String) throws {
+        func choose(_ title: String) async throws {
             let action = try XCTUnwrap(filter.menu?.children.compactMap { $0 as? UIAction }.first { $0.title == title })
             let trigger = UIButton(primaryAction: action); trigger.sendActions(for: .touchUpInside)
+            await drainUpdates()
             panel.view.layoutIfNeeded()
         }
-        try choose(L("Messages"))
+        try await choose(L("Messages"))
         let info = try XCTUnwrap(find(UIButton.self, in: panel.view).first { $0.accessibilityIdentifier == "reaction.history-info" })
         XCTAssertTrue(info.isHidden)
-        try choose(L("Reactions"))
+        try await choose(L("Reactions"))
         XCTAssertFalse(info.isHidden)
         XCTAssertTrue(find(ReactionHistoryRowView.self, in: panel.view).contains { $0.group.events.count == 2 })
         let history = try XCTUnwrap(find(UIScrollView.self, in: panel.view).first { $0.accessibilityLabel == L("Jam chat messages") })

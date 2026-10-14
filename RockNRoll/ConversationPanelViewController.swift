@@ -26,6 +26,16 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private var renderedReactionIDs = [String]()
     private var renderingMessages = false
     private var panelVisible = false
+    private var contentVisible = false
+    private var applicationActive = UIApplication.shared.applicationState == .active
+    private var contentIsActive: Bool { applicationActive && UIApplication.shared.applicationState == .active }
+    private var messagesDirty = true
+    private var transcriptDirty = true
+    private var contentRenderScheduled = false
+    #if DEBUG
+    private(set) var messageRenderCount = 0
+    private(set) var transcriptRenderCount = 0
+    #endif
     private let call: CallWorkspaceControls?
     private var subscriptions = Set<AnyCancellable>()
 
@@ -174,11 +184,11 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
                 self.timeline = timeline
                 self.canViewTranscript = canView
                 self.transcriptionEnabled = enabled
-                self.renderTranscript()
+                self.requestContentRender(messages: false)
             }
             .store(in: &subscriptions)
         chat.$items.receive(on: DispatchQueue.main)
-            .sink { [weak self] in self?.renderMessages($0) }
+            .sink { [weak self] _ in self?.requestContentRender(transcript: false) }
             .store(in: &subscriptions)
         Publishers.CombineLatest(chat.$canSend, chat.$unavailableReason).receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.updateComposer() }
@@ -188,7 +198,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             .sink { [weak self] _ in self?.updateComposer() }
             .store(in: &subscriptions)
         chat.reactionHistory.$events.removeDuplicates().receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in self?.renderMessages(self?.chat.items ?? []) }
+            .sink { [weak self] _ in self?.requestContentRender(transcript: false) }
             .store(in: &subscriptions)
         Publishers.CombineLatest(chat.reactionHistory.$gaps, chat.reactionHistory.$hasTruncatedHistory)
             .map { gaps, truncated in !gaps.isEmpty || truncated }
@@ -198,11 +208,15 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             .store(in: &subscriptions)
         chat.$reactionHistoryAvailable.removeDuplicates().receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.renderMessages(self?.chat.items ?? []); self?.renderMode()
+                self?.requestContentRender(transcript: false); self?.renderMode()
             }.store(in: &subscriptions)
         for name in [UIApplication.didBecomeActiveNotification, UIApplication.willResignActiveNotification] {
             NotificationCenter.default.publisher(for: name).sink { [weak self] _ in
-                DispatchQueue.main.async { [weak self] in self?.markVisibleReactions() }
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated { self?.applicationActivityChanged(name) }
+                } else {
+                    DispatchQueue.main.async { [weak self] in self?.applicationActivityChanged(name) }
+                }
             }.store(in: &subscriptions)
         }
         if let call {
@@ -231,15 +245,30 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         updateComposer()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        contentVisible = true
+        applicationActive = UIApplication.shared.applicationState == .active
+        renderMode()
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        panelVisible = true
-        renderMode(); markVisibleReactions()
+        panelVisible = true; contentVisible = true
+        applicationActive = UIApplication.shared.applicationState == .active
+        requestContentRender(messages: false, transcript: false); markVisibleReactions()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        contentVisible = false; panelVisible = false
+        chat.isConversationOpen = false
+        chat.reactionHistory.isReadingLatest = false
     }
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        panelVisible = false
+        panelVisible = false; contentVisible = false
         chat.isConversationOpen = false
         chat.reactionHistory.isReadingLatest = false
     }
@@ -559,7 +588,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private func renderMode() {
         let selected = ConversationMode(rawValue: mode.selectedSegmentIndex) ?? .chat
         chat.isConversationOpen = selected == .chat && activityFilter != .reactions && panelVisible &&
-            UIApplication.shared.applicationState == .active && presentedViewController == nil
+            contentIsActive && presentedViewController == nil
         activityFilterButton.isHidden = selected != .chat || !chat.reactionHistoryAvailable
         reactionHistoryInfo.isHidden = selected != .chat || activityFilter == .messages || !chat.reactionHistoryAvailable
         messageList.isHidden = selected != .chat
@@ -569,7 +598,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         if selected != .chat { composer.resignFirstResponder() }
         newMessagesButton.isHidden = selected != .chat || !hasNewMessages
         if selected != .liveText { followButton.isHidden = true }
-        renderTranscript()
+        requestContentRender()
         updateComposer()
         markVisibleReactions()
     }
@@ -584,7 +613,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
                 self.activityFilter = filter; self.updateActivityFilter()
                 self.hasNewMessages = false
                 self.messageList.setContentOffset(.zero, animated: false)
-                self.renderMessages(self.chat.items); self.renderMode()
+                self.requestContentRender(transcript: false); self.renderMode()
             }
         }
         #if DEBUG
@@ -625,8 +654,43 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) { renderMode() }
 
+    private func applicationActivityChanged(_ name: Notification.Name) {
+        applicationActive = name == UIApplication.didBecomeActiveNotification
+        renderMode(); markVisibleReactions()
+    }
+
+    /// Combine can deliver many snapshots in one UI turn. Read the latest model
+    /// once, and defer expensive layout while this content cannot be seen.
+    private func requestContentRender(messages: Bool = true, transcript: Bool = true) {
+        messagesDirty = messagesDirty || messages
+        transcriptDirty = transcriptDirty || transcript
+        guard !contentRenderScheduled else { return }
+        contentRenderScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.contentRenderScheduled = false
+            guard self.isViewLoaded, self.contentVisible, self.contentIsActive else { return }
+            switch ConversationMode(rawValue: self.mode.selectedSegmentIndex) ?? .chat {
+            case .chat:
+                if self.messagesDirty {
+                    self.messagesDirty = false
+                    self.renderMessages(self.chat.items)
+                }
+            case .liveText:
+                if self.transcriptDirty {
+                    self.transcriptDirty = false
+                    self.renderTranscript()
+                }
+            case .catchUp: break
+            }
+        }
+    }
+
     private func renderMessages(_ items: [ChatEntry]) {
         guard isViewLoaded, !renderingMessages else { return }
+        #if DEBUG
+        messageRenderCount += 1
+        #endif
         renderingMessages = true
         defer { renderingMessages = false }
         let oldIDs = lastMessageIDs, oldReactionIDs = renderedReactionIDs
@@ -700,10 +764,10 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     }
 
     private func markVisibleReactions() {
-        chat.isConversationOpen = panelVisible && UIApplication.shared.applicationState == .active &&
+        chat.isConversationOpen = panelVisible && contentIsActive &&
             mode.selectedSegmentIndex == ConversationMode.chat.rawValue && activityFilter != .reactions &&
             presentedViewController == nil
-        let reading = panelVisible && UIApplication.shared.applicationState == .active &&
+        let reading = panelVisible && contentIsActive &&
             mode.selectedSegmentIndex == ConversationMode.chat.rawValue && activityFilter != .messages &&
             viewIfLoaded?.window != nil && presentedViewController == nil
         let nearBottom = messageList.contentSize.height - messageList.contentOffset.y - messageList.bounds.height < 60
@@ -770,6 +834,9 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     private func renderTranscript() {
         guard isViewLoaded, mode.selectedSegmentIndex == ConversationMode.liveText.rawValue else { return }
+        #if DEBUG
+        transcriptRenderCount += 1
+        #endif
         let nearBottom = transcript.contentSize.height - transcript.contentOffset.y - transcript.bounds.height < 60
         let offset = transcript.contentOffset
         isRenderingTranscript = true

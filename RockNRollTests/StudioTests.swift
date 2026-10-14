@@ -8,6 +8,97 @@ import XCTest
 
 @MainActor
 final class StudioTests: XCTestCase {
+    private final class InventoryCamera: NSObject {
+        let id: String
+        @objc dynamic var connected = true
+        @objc dynamic var suspended: Bool
+        init(_ id: String, suspended: Bool = false) { self.id = id; self.suspended = suspended }
+    }
+
+    func testCameraInventoryObservesSuspendedDevicesWithoutRediscovery() async {
+        let shutter = InventoryCamera("shutter", suspended: true), external = InventoryCamera("external")
+        var discovered = [shutter, external], scans = 0
+        let inventory = CameraDeviceInventory<InventoryCamera>(discover: { scans += 1; return discovered },
+            identifier: \.id, connected: \.connected, suspended: \.suspended)
+        inventory.refresh()
+        XCTAssertEqual(inventory.available.map(\.id), ["external"])
+        XCTAssertEqual(scans, 1)
+
+        // The device excluded from the initial available list must stay observed.
+        shutter.suspended = false
+        await waitUntil { inventory.available.count == 2 }
+        XCTAssertEqual(inventory.available.map(\.id), ["shutter", "external"])
+        external.suspended = true
+        await waitUntil { inventory.available.count == 1 }
+        XCTAssertEqual(inventory.available.map(\.id), ["shutter"])
+        external.connected = false
+        external.suspended = false
+        for _ in 0..<3 { await Task.yield() }
+        XCTAssertEqual(inventory.available.map(\.id), ["shutter"], "An unsuspended disconnected device is still unavailable")
+        external.connected = true
+        await waitUntil { inventory.available.count == 2 }
+        XCTAssertEqual(scans, 1, "Availability changes filter the retained inventory without discovery")
+
+        let replacement = InventoryCamera("replacement")
+        shutter.suspended = true // Queue a change from the inventory being retired.
+        discovered = [replacement]
+        inventory.refresh()
+        for _ in 0..<3 { await Task.yield() }
+        XCTAssertEqual(inventory.available.map(\.id), ["replacement"])
+        XCTAssertEqual(scans, 2)
+    }
+
+    func testSystemEffectsPollingKeepsCameraInventoryUntilAnExplicitRefresh() {
+        let suite = "StudioInventory-" + UUID().uuidString
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        var scans = 0
+        let framing = CameraFramingPolicy(preferences: preferences, read: { false }, write: { _ in }, cooperate: {})
+        let model = StudioModel(audioControl: .fullProcessing, privateCamera: Capture(),
+            preferences: preferences, framingPolicy: framing, cameraDevices: { scans += 1; return [] })
+        XCTAssertEqual(scans, 1)
+        for _ in 0..<60 {
+            model.refreshSystemSelection(refreshDevices: false)
+            XCTAssertFalse(model.canFlipCamera)
+        }
+        XCTAssertEqual(scans, 1, "The one-second effects poll must not create camera discovery sessions")
+        model.refreshSystemSelection()
+        XCTAssertEqual(scans, 2)
+        NotificationCenter.default.post(name: AVCaptureDevice.wasConnectedNotification, object: nil)
+        NotificationCenter.default.post(name: AVCaptureDevice.wasDisconnectedNotification, object: nil)
+        XCTAssertEqual(scans, 4, "Camera availability changes must still refresh the inventory")
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        XCTAssertEqual(scans, 5)
+        model.open(.sound)
+        XCTAssertEqual(scans, 6, "Opening Studio refreshes even when device notifications were missed")
+        model.flipCamera()
+        XCTAssertEqual(scans, 7, "An explicit flip must refresh once and use the same snapshot")
+        model.end()
+    }
+
+    func testPresenterCameraAvailabilityDoesNotDiscoverFromViewReads() {
+        let suite = "PresenterInventory-" + UUID().uuidString
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        var scans = 0
+        let model = PresenterModel(preferences: preferences, cameraDevices: { scans += 1; return [] })
+        XCTAssertEqual(scans, 0, "Unused Presenter must not add camera discovery to app startup")
+        for _ in 0..<60 { XCTAssertFalse(model.canFlipCamera) }
+        XCTAssertEqual(scans, 0)
+        model.open()
+        XCTAssertEqual(scans, 1)
+        model.open()
+        XCTAssertEqual(scans, 1, "Refreshing an already-open Presenter must reuse its inventory")
+        NotificationCenter.default.post(name: AVCaptureDevice.wasConnectedNotification, object: nil)
+        NotificationCenter.default.post(name: AVCaptureDevice.wasDisconnectedNotification, object: nil)
+        XCTAssertEqual(scans, 3)
+        model.setForeground(true)
+        XCTAssertEqual(scans, 4)
+        model.flipCamera()
+        XCTAssertEqual(scans, 5)
+        model.end()
+    }
+
     func testMacCapturePlanUsesNativePreviewQuarterTurnWithoutChangingFrames() {
         let maximum = CMVideoDimensions(width: 1280, height: 720)
         let portrait = MacCameraCapturePlan.rawTarget(maximum: maximum, quarterTurn: true)

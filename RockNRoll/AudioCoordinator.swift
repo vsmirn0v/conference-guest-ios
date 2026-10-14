@@ -12,6 +12,8 @@ final class AudioCoordinator {
     var onServicesChanged: ((Bool) -> Void)?
     private let worker: AudioSessionWorker
     private let prepareSession: @Sendable () throws -> Void
+    private let prepareInitialSession: @Sendable () throws -> Void
+    private var needsInitialPreparation = true
     private let restoreMixingSession: @Sendable () throws -> Void
     private let recoveryWindow: Duration
     private let recoveryInterval: Duration
@@ -47,11 +49,13 @@ final class AudioCoordinator {
 
     init(worker: AudioSessionWorker = .shared,
          prepareSession: (@Sendable () throws -> Void)? = nil,
+         prepareInitialSession: (@Sendable () throws -> Void)? = nil,
          restoreMixingSession: @escaping @Sendable () throws -> Void = AudioCoordinator.restoreMixing,
          recoveryWindow: Duration = .seconds(12), recoveryInterval: Duration = .milliseconds(500),
          notifications: NotificationCenter = .default) {
         self.worker = worker
         self.prepareSession = prepareSession ?? { try Self.prepareCommunicationSession() }
+        self.prepareInitialSession = prepareInitialSession ?? prepareSession ?? { try Self.prepareCommunicationSession(resetBuiltInRoute: true) }
         self.restoreMixingSession = restoreMixingSession
         self.recoveryWindow = recoveryWindow; self.recoveryInterval = recoveryInterval
         self.notifications = notifications
@@ -85,6 +89,7 @@ final class AudioCoordinator {
     }
     func endSession() {
         observingSession = false; lease.invalidate()
+        needsInitialPreparation = true
         servicesNeedRecovery = false
         cancelOutputRestoration()
         outputRecovery = BuiltInOutputRecovery()
@@ -195,8 +200,10 @@ final class AudioCoordinator {
     /// The provider may reconfigure the shared session later; real-device validation is required.
     func prepareForJoin() async throws {
         let expected = lease
-        try await worker.perform(lease: expected, operation: prepareSession)
+        let prepare = needsInitialPreparation ? prepareInitialSession : prepareSession
+        try await worker.perform(lease: expected, operation: prepare)
         guard lease === expected, expected.isActive else { throw CancellationError() }
+        needsInitialPreparation = false
         observingSession = true
         // The call owner activates the session before the SDK starts media.
         audioWarning = nil
@@ -268,10 +275,17 @@ final class AudioCoordinator {
         [.mixWithOthers, .allowBluetoothHFP, .allowBluetoothA2DP]
     }
 
-    private nonisolated static func prepareCommunicationSession() throws {
+    private nonisolated static func prepareCommunicationSession(resetBuiltInRoute: Bool = false) throws {
         let session = AVAudioSession.sharedInstance(), options = communicationOptions
         if session.category != .playAndRecord || session.mode != .videoChat || session.categoryOptions != options {
             try session.setCategory(.playAndRecord, mode: .videoChat, options: options)
+        }
+        if resetBuiltInRoute && !ProcessInfo.processInfo.isiOSAppOnMac {
+            // A built-in choice belongs to its meeting. Release its pins before
+            // fresh activation so the system can keep the selected headset.
+            // Recovery retains the current meeting's explicit route instead.
+            if session.preferredInput?.portType == .builtInMic { try session.setPreferredInput(nil) }
+            try session.overrideOutputAudioPort(.none)
         }
         // A preference, not a forced hardware format: narrow-band Bluetooth
         // routes retain their supported rate and the native device resamples.

@@ -75,6 +75,8 @@ final class StudioModel: ObservableObject {
     }
     var makeLivePreview: (() -> StudioLivePreview?)?
     private let privateCamera: PrivateCameraPreviewing
+    private let cameraInventory: CameraDeviceInventory<AVCaptureDevice>
+    private var cameraInventoryObservation: AnyCancellable?
     private let preferences: UserDefaults?
     private static let profileKey = "studio.audio-profile"
     private var livePreview: StudioLivePreview?
@@ -88,16 +90,21 @@ final class StudioModel: ObservableObject {
     }
     private var change: Task<Void, Never>?
 
-    init(audioControl: AudioControl, privateCamera: PrivateCameraPreviewing? = nil, preferences: UserDefaults? = nil, privateMicrophone: PrivateMicrophoneCapturing? = nil, framingPolicy: CameraFramingPolicy? = nil) {
+    init(audioControl: AudioControl, privateCamera: PrivateCameraPreviewing? = nil, preferences: UserDefaults? = nil, privateMicrophone: PrivateMicrophoneCapturing? = nil, framingPolicy: CameraFramingPolicy? = nil,
+         cameraDevices: @escaping () -> [AVCaptureDevice] = CameraDevices.discovered) {
         self.audioControl = audioControl
         soundCheck = PrivateSoundCheck(capture: privateMicrophone)
         self.privateCamera = privateCamera ?? PrivateCameraPreview()
+        cameraInventory = CameraDeviceInventory(discover: cameraDevices)
         self.preferences = preferences
         self.framingPolicy = framingPolicy ?? .shared
         automaticFramingEnabled = self.framingPolicy.synchronize()
-        let devices = CameraDevices.available()
+        let devices = cameraInventory.refresh()
         availableCameraCount = devices.count
         selectedCameraDevice = CameraDevices.preferred(in: devices)
+        cameraInventoryObservation = cameraInventory.$available.dropFirst().sink { [weak self] devices in
+            self?.applyCameraInventory(devices)
+        }
         presenter.openCameraEffects = { [weak self] in self?.showSystemSettings(.videoEffects) }
         if let raw = preferences?.string(forKey: Self.profileKey), let saved = StudioAudioProfile(rawValue: raw) {
             profile = saved
@@ -105,7 +112,7 @@ final class StudioModel: ObservableObject {
         }
         for notification in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
             cameraDeviceObservers.append(NotificationCenter.default.addObserver(forName: notification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshCameraDevices() }
+                MainActor.assumeIsolated { _ = self?.refreshCameraDevices() }
             })
         }
         cameraDeviceObservers.append(NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -223,9 +230,8 @@ final class StudioModel: ObservableObject {
     }
 
     func flipCamera() {
-        refreshCameraDevices()
+        let devices = refreshCameraDevices()
         guard canFlipCamera else { return }
-        let devices = CameraDevices.available()
         let current = (cameraOn ? liveCaptureDevice?() : nil) ?? selectedCameraDevice
         guard let nextID = CameraDevices.nextID(in: devices.map(\.uniqueID), current: current?.uniqueID),
               let next = devices.first(where: { $0.uniqueID == nextID }) else { return }
@@ -259,8 +265,13 @@ final class StudioModel: ObservableObject {
             self.cameraSelectionTask = nil
         }
     }
-    private func refreshCameraDevices() {
-        let devices = CameraDevices.available()
+    @discardableResult
+    private func refreshCameraDevices() -> [AVCaptureDevice] {
+        let devices = cameraInventory.refresh()
+        applyCameraInventory(devices)
+        return devices
+    }
+    private func applyCameraInventory(_ devices: [AVCaptureDevice]) {
         if availableCameraCount != devices.count { availableCameraCount = devices.count }
         let selected = devices.first { $0.uniqueID == selectedCameraDevice?.uniqueID } ?? CameraDevices.preferred(in: devices)
         if selectedCameraDevice?.uniqueID != selected?.uniqueID || selectedCameraDevice?.isConnected == false {
@@ -333,8 +344,8 @@ final class StudioModel: ObservableObject {
 
     func reportUpdateFailure() { error = L("Sound settings could not update. Try again.") }
 
-    func refreshSystemSelection() {
-        refreshCameraDevices()
+    func refreshSystemSelection(refreshDevices: Bool = true) {
+        if refreshDevices { refreshCameraDevices() }
         let device = !held && active ? (presenter.cameraDevice ?? (cameraOn ? liveCaptureDevice?() : (previewRunning ? privateCamera.device : nil))) : nil
         let selectedFraming = framingPolicy.synchronize()
         if automaticFramingEnabled != selectedFraming { automaticFramingEnabled = selectedFraming }

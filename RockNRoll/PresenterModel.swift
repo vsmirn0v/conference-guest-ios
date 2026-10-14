@@ -95,7 +95,10 @@ final class PresenterModel: ObservableObject {
     var makePrivateCamera: (AVCaptureDevice.Position) -> PrivateCameraPreviewing = { PrivateCameraPreview(position: $0, framesPerSecond: Double(MediaEnergyBudget.shared.sharingFPS)) }
     private var cameraPosition: AVCaptureDevice.Position = .front
     private var selectedCameraDevice: AVCaptureDevice?
-    var canFlipCamera: Bool { active && !held && !cameraOn && CameraDevices.available().count > 1 }
+    private let cameraInventory: CameraDeviceInventory<AVCaptureDevice>
+    private var cameraInventoryObservation: AnyCancellable?
+    @Published private(set) var availableCameraCount = 0
+    var canFlipCamera: Bool { active && !held && !cameraOn && availableCameraCount > 1 }
     func selectPrivateCamera(_ device: AVCaptureDevice) {
         guard selectedCameraDevice?.uniqueID != device.uniqueID else { return }
         selectedCameraDevice = device
@@ -161,10 +164,15 @@ final class PresenterModel: ObservableObject {
 
     init(observeLifecycle: Bool = true, preferences: UserDefaults = .standard, screenPreparationTimeout: TimeInterval = 15,
          backgroundCompositionSupported: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
-         energyBudget: MediaEnergyBudget = .shared) {
+         energyBudget: MediaEnergyBudget = .shared,
+         cameraDevices: @escaping () -> [AVCaptureDevice] = CameraDevices.discovered) {
         self.screenPreparationTimeout = screenPreparationTimeout
         self.backgroundCompositionSupported = backgroundCompositionSupported
         self.preferences = preferences; self.energyBudget = energyBudget
+        cameraInventory = CameraDeviceInventory(discover: cameraDevices)
+        cameraInventoryObservation = cameraInventory.$available.sink { [weak self] devices in
+            if self?.availableCameraCount != devices.count { self?.availableCameraCount = devices.count }
+        }
         if preferences.object(forKey: "presenter.mirror-camera.v1") != nil {
             mirrorCamera = preferences.bool(forKey: "presenter.mirror-camera.v1")
         }
@@ -180,6 +188,11 @@ final class PresenterModel: ObservableObject {
         }
         if let value = preferences.string(forKey: "presenter.layout.v1"), let layout = PresenterScene.Layout(rawValue: value) { scene.layout = layout }
         if observeLifecycle {
+            for name in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { _ = self?.refreshCameraAvailability() }
+                })
+            }
             foreground = UIApplication.shared.applicationState != .background
             observers.append(NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
                 object: nil, queue: .main) { [weak self] _ in MainActor.assumeIsolated { self?.setForeground(false) } })
@@ -190,6 +203,7 @@ final class PresenterModel: ObservableObject {
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 
     func open() {
+        if !presented { refreshCameraAvailability() }
         if !presented && !running && cameraOn && canCompose { includeCamera = true }
         presented = true; onPreviewVisibilityChanged?(true); error = nil; refresh()
     }
@@ -200,12 +214,16 @@ final class PresenterModel: ObservableObject {
         else { requestRender() }
     }
     func flipCamera() {
+        let devices = refreshCameraAvailability()
         guard includeCamera, canFlipCamera else { return }
-        let devices = CameraDevices.available()
         let current = cameraDevice ?? selectedCameraDevice ?? CameraDevices.preferred(in: devices)
         guard let nextID = CameraDevices.nextID(in: devices.map(\.uniqueID), current: current?.uniqueID),
               let next = devices.first(where: { $0.uniqueID == nextID }) else { return }
         selectPrivateCamera(next)
+    }
+    @discardableResult
+    private func refreshCameraAvailability() -> [AVCaptureDevice] {
+        cameraInventory.refresh()
     }
     func showCameraEffects() {
         #if !targetEnvironment(simulator)
@@ -229,6 +247,7 @@ final class PresenterModel: ObservableObject {
     }
     func setForeground(_ value: Bool) {
         foreground = value
+        if value { refreshCameraAvailability() }
         if !value {
             screenPreparation?.cancel(); screenPreparation = nil
             if compositionAllowed {

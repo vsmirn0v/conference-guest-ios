@@ -39,6 +39,68 @@ final class AudioAcquisitionTests: XCTestCase {
         XCTAssertEqual(preparations.value, 2)
     }
 
+    func testFreshMeetingReleasesPreviousRouteButRecoveryKeepsCurrentChoice() async throws {
+        let center = NotificationCenter(), initial = Counter(), recovery = Counter()
+        let audio = AudioCoordinator(prepareSession: { recovery.increment() },
+            prepareInitialSession: { initial.increment() }, notifications: center)
+        let first = expectation(description: "first meeting prepared")
+        audio.start(ready: { first.fulfill() }, failure: { XCTFail("\($0)") })
+        defer { audio.endSession() }
+        await fulfillment(of: [first], timeout: 2)
+        XCTAssertEqual(initial.value, 1); XCTAssertEqual(recovery.value, 0)
+
+        // Replacing media or recovering the audio service is still this meeting.
+        audio.preserveOutputForReconnect()
+        try await audio.prepareForJoin()
+        let reset = expectation(description: "same meeting recovered")
+        audio.onServicesChanged = { if $0 { reset.fulfill() } }
+        center.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        await fulfillment(of: [reset], timeout: 2)
+        XCTAssertEqual(initial.value, 1, "Recovery must not clear a route selected during this meeting")
+        XCTAssertEqual(recovery.value, 2)
+
+        audio.endSession()
+        let replacement = expectation(description: "replacement meeting prepared")
+        audio.start(ready: { replacement.fulfill() }, failure: { XCTFail("\($0)") })
+        await fulfillment(of: [replacement], timeout: 2)
+        XCTAssertEqual(initial.value, 2, "A fresh meeting must release the previous built-in route again")
+        XCTAssertEqual(recovery.value, 2)
+    }
+
+    func testResetBeforeInitialPreparationStillReleasesPreviousMeetingRoute() async throws {
+        let queue = DispatchQueue(label: "test.join.initial-route-reset")
+        let center = NotificationCenter(), initial = Counter(), recovery = Counter()
+        let worker = AudioSessionWorker(queue: queue)
+        let audio = AudioCoordinator(worker: worker, prepareSession: { recovery.increment() },
+            prepareInitialSession: { XCTAssertFalse(Thread.isMainThread); initial.increment() }, notifications: center)
+        let ready = expectation(description: "initial route prepared after reset")
+        queue.suspend()
+        audio.start(ready: { ready.fulfill() }, failure: { XCTFail("\($0)") })
+        center.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        queue.resume()
+        defer { audio.endSession() }
+        await fulfillment(of: [ready], timeout: 2)
+        XCTAssertEqual(initial.value, 1)
+        XCTAssertEqual(recovery.value, 0, "A cancelled startup cannot turn first preparation into recovery")
+    }
+
+    func testRetiredInitialRoutePreparationCannotChangeNextMeeting() async throws {
+        let queue = DispatchQueue(label: "test.join.initial-route-retirement")
+        let initial = Counter(), worker = AudioSessionWorker(queue: queue)
+        let audio = AudioCoordinator(worker: worker, prepareSession: {},
+            prepareInitialSession: { initial.increment() }, notifications: NotificationCenter())
+        queue.suspend()
+        audio.start(ready: { XCTFail("Retired meeting became ready") }, failure: { XCTFail("\($0)") })
+        await Task.yield()
+        audio.endSession()
+        let replacement = expectation(description: "replacement route prepared")
+        audio.start(ready: { replacement.fulfill() }, failure: { XCTFail("\($0)") })
+        queue.resume()
+        defer { audio.endSession() }
+        await fulfillment(of: [replacement], timeout: 2)
+        XCTAssertEqual(initial.value, 1, "Only the live meeting may reset the initial route")
+    }
+
     func testBeganOnlyJoinTransitionCanRecoverOnceWithoutReportingCallHold() async throws {
         var attempts = 0, holds = 0
         let owner = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false,

@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import UIKit
 
 @MainActor
@@ -24,6 +25,10 @@ extension PrivateCameraPreviewing {
 /// Actual devices, not front/back positions: several Mac cameras share a position.
 enum CameraDevices {
     static func available() -> [AVCaptureDevice] {
+        var seen = Set<String>()
+        return discovered().filter { $0.isConnected && !$0.isSuspended && seen.insert($0.uniqueID).inserted }
+    }
+    static func discovered() -> [AVCaptureDevice] {
         // UIKit-on-Mac also exposes rear-facing compatibility aliases for the
         // same cameras. Discover its front-facing devices once; real external
         // cameras use their own device types without a position restriction.
@@ -34,8 +39,7 @@ enum CameraDevices {
             discovered += AVCaptureDevice.DiscoverySession(deviceTypes: [.external, .continuityCamera],
                 mediaType: .video, position: .unspecified).devices
         }
-        var seen = Set<String>()
-        return discovered.filter { $0.isConnected && !$0.isSuspended && seen.insert($0.uniqueID).inserted }
+        return discovered
     }
     static func preferred(in devices: [AVCaptureDevice]) -> AVCaptureDevice? {
         if ProcessInfo.processInfo.isiOSAppOnMac, let system = AVCaptureDevice.default(for: .video),
@@ -47,6 +51,57 @@ enum CameraDevices {
         guard unique.count > 1 else { return nil }
         guard let current, let index = unique.firstIndex(of: current) else { return unique.first }
         return unique[(index + 1) % unique.count]
+    }
+}
+
+/// Keep unavailable devices observable: closing a lid or privacy shutter can
+/// suspend a connected camera without changing the discovery membership.
+@MainActor
+final class CameraDeviceInventory<Device: NSObject>: ObservableObject {
+    @Published private(set) var available: [Device] = []
+    private var devices: [Device] = []
+    private var observations: [NSKeyValueObservation] = []
+    private var generation = UUID()
+    private let discover: () -> [Device]
+    private let identifier: KeyPath<Device, String>
+    private let connected: KeyPath<Device, Bool>
+    private let suspended: KeyPath<Device, Bool>
+
+    init(discover: @escaping () -> [Device], identifier: KeyPath<Device, String>,
+         connected: KeyPath<Device, Bool>, suspended: KeyPath<Device, Bool>) {
+        self.discover = discover; self.identifier = identifier
+        self.connected = connected; self.suspended = suspended
+    }
+    @discardableResult
+    func refresh() -> [Device] {
+        let generation = UUID(); self.generation = generation
+        observations.removeAll()
+        devices = discover()
+        let changed: @Sendable () -> Void = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.generation == generation else { return }
+                self.updateAvailability()
+            }
+        }
+        observations = devices.flatMap { device in
+            [device.observe(connected) { _, _ in changed() },
+             device.observe(suspended) { _, _ in changed() }]
+        }
+        updateAvailability()
+        return available
+    }
+    private func updateAvailability() {
+        var seen = Set<String>()
+        let current = devices.filter {
+            $0[keyPath: connected] && !$0[keyPath: suspended] && seen.insert($0[keyPath: identifier]).inserted
+        }
+        if current.map(ObjectIdentifier.init) != available.map(ObjectIdentifier.init) { available = current }
+    }
+}
+
+extension CameraDeviceInventory where Device == AVCaptureDevice {
+    convenience init(discover: @escaping () -> [AVCaptureDevice]) {
+        self.init(discover: discover, identifier: \.uniqueID, connected: \.isConnected, suspended: \.isSuspended)
     }
 }
 

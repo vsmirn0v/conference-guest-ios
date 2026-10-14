@@ -175,12 +175,15 @@ final class ReactionHistoryStore: ObservableObject {
 
     /// The presentation supplies IDs that were actually visible in the foreground.
     func markSeen(ids: [String]) {
+        guard !ids.isEmpty else { return }
         let visible = Set(ids)
+        let changed = events.indices.filter { !events[$0].isSeen && visible.contains(events[$0].id) }
+        guard !changed.isEmpty else { return }
         var updated = events
-        for index in updated.indices where visible.contains(updated[index].id) {
+        for index in changed {
             updated[index].isSeen = true
         }
-        if updated != events { events = updated; updateUnseen() }
+        events = updated; updateUnseen()
     }
 
     func beginGap(at: Date? = nil) {

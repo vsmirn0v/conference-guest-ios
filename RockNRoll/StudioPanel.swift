@@ -84,7 +84,7 @@ struct StudioPanel: View {
             .onAppear { model.refreshSystemSelection() }
             .onChange(of: model.presented) { if !$0 { if let onDismiss { onDismiss() } else { dismiss() } } }
             .onChange(of: model.audioSection) { _ in model.releasePrivateMicrophone() }
-            .onReceive(refresh) { _ in model.refreshSystemSelection() }
+            .onReceive(refresh) { _ in model.refreshSystemSelection(refreshDevices: false) }
             .background(GeometryReader { size in
                 Color.clear.onAppear { compact = size.size.height < 500 }
                     .onChange(of: size.size) { compact = $0.height < 500 }
