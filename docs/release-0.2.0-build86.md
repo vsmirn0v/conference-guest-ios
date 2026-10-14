@@ -54,10 +54,14 @@ Details: [window lifecycle and audio focus](mac-meeting-background-2026-10-14.md
 
 ## Distribution
 
-- Upload succeeded on October 14, 2026 at approximately 19:40 MSK.
-- App Store Connect processing and internal/public group assignments are pending
-  verification: Safari's session expired and a fresh sign-in was requested.
-  Upload success alone is not a claim that build 86 is available to testers.
+- Upload succeeded on October 14, 2026 at 19:41 MSK.
+- Apple processing completed successfully. On October 14, 2026 at 19:55 MSK,
+  both Rock’n’Roll Internal (1 tester) and Rock’n’Roll Public Beta (6 testers)
+  were read back as **Testing**, expiring in 90 days.
+- Build detail readback confirms both group assignments and saved tester notes.
+  App Store Connect build ID: `c4e9d33b-b936-4691-8c5f-0d46837ac883`.
+- Public beta submission completed with automatic tester notifications enabled.
+  Public link: https://testflight.apple.com/join/Hd13C9U3.
 - Apple accepted upload with existing third-party missing-dSYM warnings; app and
   both extensions' symbols were verified and uploaded.
-- Intended What to Test: “Improved Mac meeting controls and audio startup reliability.”
+- Saved What to Test: “Improved Mac meeting controls and audio startup reliability.”
