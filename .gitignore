@@ -7,7 +7,7 @@ xcuserdata/
 *.env
 *.local.xcconfig
 GuestTokenBroker/.venv/
-GuestTokenBroker/__pycache__/
+__pycache__/
 RockServer/site-src/node_modules/
 /Marketing/
 /Dependencies/guest-sdk/VendorSources

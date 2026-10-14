@@ -13,15 +13,36 @@ const chatInput = document.getElementById('chat-input');
 const shareButton = document.getElementById('screen-share');
 const demoButton = document.getElementById('demo-share');
 const toneButton = document.getElementById('demo-tone');
-let demoTrack;
-let demoTimer;
-let toneTrack;
-let toneContext;
-let toneOscillator;
-let toneTimer;
-const seenChatIDs = new Set();
 import { chatTopic, encodeChat, decodeChat } from './chat-packet.js';
-let room;
+let session;
+const microphoneButton = document.getElementById('microphone');
+const cameraButton = document.getElementById('camera');
+function current(value) { return session === value && !value.closed; }
+function clearVideos(value) {
+  for (const [track, element] of value.videos) { track.detach(element); element.remove(); }
+  value.videos = [];
+}
+function finishSession(value) {
+  if (value.closed) return;
+  value.closed = true;
+  value.abort.abort();
+  void stopDemoCard(value);
+  void stopTone(value);
+  clearVideos(value);
+  for (const [track, element] of value.audio) { track.detach(element); element.remove(); }
+  value.audio.clear();
+  if (session !== value) return;
+  session = undefined;
+  controls.hidden = true; chat.hidden = true;
+  chatMessages.textContent = 'No messages yet.';
+  status.textContent = 'Left the jam.';
+  people.replaceChildren(); count.textContent = '0 participants';
+  microphoneButton.textContent = 'Turn microphone on'; cameraButton.textContent = 'Turn camera on';
+}
+function disconnect(value) {
+  finishSession(value);
+  void Promise.resolve(value.room.disconnect()).catch(() => {});
+}
 
 function addChat(sender, text) {
   if (chatMessages.textContent === 'No messages yet.') chatMessages.replaceChildren();
@@ -37,16 +58,18 @@ function addChat(sender, text) {
 }
 
 async function sendChat() {
-  if (!room) return;
+  const value = session;
+  if (!value || value.closed) return;
   const text = chatInput.value.trim();
   if (!text || [...text].length > 2000) return;
   const packet = {id: crypto.randomUUID(), text};
   try {
-    await room.localParticipant.publishData(encodeChat(packet),
+    await value.room.localParticipant.publishData(encodeChat(packet),
       {reliable:true, topic:chatTopic});
-    addChat(room.localParticipant.name || 'You', text);
-    chatInput.value = '';
-  } catch (error) { status.textContent = 'Chat could not send: ' + error.message; }
+    if (!current(value)) return;
+    addChat(value.room.localParticipant.name || 'You', text);
+    if (chatInput.value.trim() === text) chatInput.value = '';
+  } catch (error) { if (current(value)) status.textContent = 'Chat could not send: ' + error.message; }
 }
 
 document.getElementById('chat-send').addEventListener('click', sendChat);
@@ -61,8 +84,10 @@ document.getElementById('join-app').addEventListener('click', () => {
   status.textContent = 'If the app did not open, paste this jam address into Rock’n’Roll on iPhone.';
 });
 
-function updatePeople() {
-  if (!room) return;
+function updatePeople(value) {
+  if (!current(value)) return;
+  const room = value.room;
+  clearVideos(value);
   const remote = [...room.remoteParticipants.values()];
   count.textContent = `${remote.length + 1} participant${remote.length ? 's' : ''}`;
   people.replaceChildren();
@@ -88,6 +113,7 @@ function updatePeople() {
     for (const publication of participant.videoTrackPublications.values()) {
       if (publication.track && !publication.isMuted) {
         const video = publication.track.attach();
+        value.videos.push([publication.track, video]);
         video.autoplay = true;
         video.playsInline = true;
         if (participant === room.localParticipant) video.muted = true;
@@ -98,16 +124,22 @@ function updatePeople() {
   }
 }
 
-function updateOwnMediaStatus() {
-  if (!room) return;
-  const microphone = room.localParticipant.isMicrophoneEnabled ? 'on' : 'off';
-  const camera = room.localParticipant.isCameraEnabled ? 'on' : 'off';
-  const sharing = room.localParticipant.isScreenShareEnabled;
+function updateOwnMediaStatus(value) {
+  if (!current(value)) return;
+  const participant = value.room.localParticipant;
+  const microphone = participant.isMicrophoneEnabled ? 'on' : 'off';
+  const camera = participant.isCameraEnabled ? 'on' : 'off';
+  const sharing = participant.isScreenShareEnabled;
+  microphoneButton.textContent = `Turn microphone ${microphone === 'on' ? 'off' : 'on'}`;
+  cameraButton.textContent = `Turn camera ${camera === 'on' ? 'off' : 'on'}`;
+  microphoneButton.disabled = value.microphonePending;
+  cameraButton.disabled = value.cameraPending;
+  shareButton.disabled = value.sharePending;
   shareButton.textContent = sharing ? 'Stop screen share' : 'Share screen';
-  demoButton.textContent = demoTrack ? 'Stop demo card' : 'Share demo card';
-  toneButton.textContent = toneTrack ? 'Stop test tone' : 'Send test tone';
+  demoButton.textContent = value.demo ? 'Stop demo card' : 'Share demo card';
+  toneButton.textContent = value.tone ? 'Stop test tone' : 'Send test tone';
   status.textContent = `You are in the jam. Microphone ${microphone}; camera ${camera}${sharing ? '; sharing screen' : ''}.`;
-  updatePeople();
+  updatePeople(value);
 }
 
 document.getElementById('join-browser').addEventListener('click', async () => {
@@ -116,150 +148,186 @@ document.getElementById('join-browser').addEventListener('click', async () => {
     status.textContent = 'Enter a name of up to 60 characters.';
     return;
   }
-  if (room) return;
+  if (session) return;
+  // Own this attempt before the first await. Every callback retains its room.
+  const value = {room: new Room(), abort: new AbortController(), closed: false,
+    videos: [], audio: new Map(), seenChatIDs: new Set(),
+    microphonePending: false, cameraPending: false, sharePending: false};
+  session = value;
+  const room = value.room;
   status.textContent = 'Connecting…';
   try {
-    const response = await fetch('/api/jams/test/join', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({name: displayName}), cache: 'no-store'
-    });
-    if (!response.ok) throw new Error(await response.text());
-    const credentials = await response.json();
-    room = new Room();
-    room.on(RoomEvent.ParticipantConnected, updatePeople);
-    room.on(RoomEvent.ParticipantDisconnected, updatePeople);
+    room.on(RoomEvent.ParticipantConnected, () => updatePeople(value));
+    room.on(RoomEvent.ParticipantDisconnected, () => updatePeople(value));
     room.on(RoomEvent.TrackSubscribed, (track) => {
-      if (track.kind === Track.Kind.Audio) {
+      if (!current(value)) return;
+      if (track.kind === Track.Kind.Audio && !value.audio.has(track)) {
         const element = track.attach();
         element.dataset.audioTrack = track.sid;
+        value.audio.set(track, element);
         document.body.append(element);
       }
-      updatePeople();
+      updatePeople(value);
     });
     room.on(RoomEvent.TrackUnsubscribed, (track) => {
       track.detach().forEach(element => element.remove());
-      updatePeople();
+      value.audio.delete(track);
+      updatePeople(value);
     });
-    room.on(RoomEvent.TrackPublished, updatePeople);
-    room.on(RoomEvent.TrackUnpublished, updatePeople);
-    room.on(RoomEvent.TrackMuted, updatePeople);
-    room.on(RoomEvent.TrackUnmuted, updatePeople);
-    room.on(RoomEvent.LocalTrackPublished, updateOwnMediaStatus);
-    room.on(RoomEvent.LocalTrackUnpublished, updateOwnMediaStatus);
+    for (const event of [RoomEvent.TrackPublished, RoomEvent.TrackUnpublished,
+      RoomEvent.TrackMuted, RoomEvent.TrackUnmuted, RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished]) {
+      room.on(event, () => updateOwnMediaStatus(value));
+    }
     room.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
-      if (topic !== chatTopic) return;
+      if (!current(value) || topic !== chatTopic) return;
       try {
         const packet = decodeChat(payload);
         const identity = (participant?.identity || '') + ':' + packet.id;
-        if (seenChatIDs.has(identity)) return;
-        seenChatIDs.add(identity);
-        if (seenChatIDs.size > 2048) seenChatIDs.delete(seenChatIDs.values().next().value);
+        if (value.seenChatIDs.has(identity)) return;
+        value.seenChatIDs.add(identity);
+        if (value.seenChatIDs.size > 2048) value.seenChatIDs.delete(value.seenChatIDs.values().next().value);
         addChat(participant?.name || 'Musician', packet.text);
       } catch { /* Ignore malformed room data. */ }
     });
-    room.on(RoomEvent.Disconnected, () => { room = undefined; seenChatIDs.clear(); void stopDemoCard(); void stopTone(); controls.hidden = true; chat.hidden = true; chatMessages.textContent = 'No messages yet.'; status.textContent = 'Left the jam.'; people.replaceChildren(); count.textContent = '0 participants'; });
+    room.on(RoomEvent.Disconnected, () => finishSession(value));
+    const response = await fetch('/api/jams/test/join', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name: displayName}), cache: 'no-store', signal: value.abort.signal
+    });
+    if (!current(value)) return;
+    if (!response.ok) throw new Error(await response.text());
+    const credentials = await response.json();
+    if (!current(value)) return;
     await room.connect(credentials.server_url, credentials.participant_token);
+    if (!current(value)) { disconnect(value); return; }
     await room.startAudio();
+    if (!current(value)) { disconnect(value); return; }
     controls.hidden = false;
     shareButton.hidden = !navigator.mediaDevices?.getDisplayMedia;
     demoButton.hidden = typeof HTMLCanvasElement.prototype.captureStream !== 'function';
     toneButton.hidden = typeof (window.AudioContext || window.webkitAudioContext) !== 'function';
     chat.hidden = false;
-    updateOwnMediaStatus();
+    updateOwnMediaStatus(value);
   } catch (error) {
-    room?.disconnect(); room = undefined;
-    status.textContent = 'Could not join: ' + (error.message || String(error));
+    const report = current(value);
+    disconnect(value);
+    if (report) status.textContent = 'Could not join: ' + (error.message || String(error));
   }
 });
 
-document.getElementById('microphone').addEventListener('click', async (event) => {
-  if (!room) return;
-  try {
-    const enabled = !room.localParticipant.isMicrophoneEnabled;
-    await room.localParticipant.setMicrophoneEnabled(enabled);
-    event.target.textContent = enabled ? 'Turn microphone off' : 'Turn microphone on';
-    updateOwnMediaStatus();
-  } catch (error) { status.textContent = 'Microphone unavailable: ' + error.message; }
-});
-document.getElementById('camera').addEventListener('click', async (event) => {
-  if (!room) return;
-  try {
-    const enabled = !room.localParticipant.isCameraEnabled;
-    await room.localParticipant.setCameraEnabled(enabled);
-    event.target.textContent = enabled ? 'Turn camera off' : 'Turn camera on';
-    updateOwnMediaStatus();
-  } catch (error) { status.textContent = 'Camera unavailable: ' + error.message; }
-});
-async function stopTone() {
-  if (toneTimer) clearTimeout(toneTimer);
-  toneTimer = undefined;
-  const track = toneTrack;
-  toneTrack = undefined;
-  try {
-    if (track && room) await room.localParticipant.unpublishTrack(track);
-  } finally {
-    track?.stop();
-    try { toneOscillator?.stop(); } catch { /* Already stopped. */ }
-    toneOscillator = undefined;
-    if (toneContext) await toneContext.close();
-    toneContext = undefined;
-    if (room) updateOwnMediaStatus();
+function mediaToggle(button, property, method, pending, label) {
+  button.addEventListener('click', async () => {
+    const value = session;
+    if (!value || value.closed || value[pending]) return;
+    const participant = value.room.localParticipant;
+    const enabled = !participant[property];
+    value[pending] = true; updateOwnMediaStatus(value);
+    try {
+      await participant[method](enabled);
+      // A permission prompt can outlive Leave. Retire capture on that room only.
+      if (!current(value) && enabled) await participant[method](false);
+    } catch (error) {
+      if (current(value)) {
+        updateOwnMediaStatus(value);
+        status.textContent = label + ' unavailable: ' + error.message;
+      }
+      return;
+    } finally {
+      value[pending] = false;
+      if (current(value)) button.disabled = false;
+    }
+    updateOwnMediaStatus(value);
+  });
+}
+mediaToggle(microphoneButton, 'isMicrophoneEnabled', 'setMicrophoneEnabled', 'microphonePending', 'Microphone');
+mediaToggle(cameraButton, 'isCameraEnabled', 'setCameraEnabled', 'cameraPending', 'Camera');
+async function stopTone(value) {
+  const resource = value.tone;
+  if (!resource) return;
+  value.tone = undefined;
+  resource.stopped = true;
+  if (resource.timer) clearTimeout(resource.timer);
+  resource.track?.stop();
+  try { resource.oscillator?.stop(); } catch { /* Already stopped. */ }
+  if (resource.context) void resource.context.close().catch(() => {});
+  updateOwnMediaStatus(value);
+  if (resource.published) {
+    try { await value.room.localParticipant.unpublishTrack(resource.track); } catch { /* Track is already stopped. */ }
   }
 }
 toneButton.addEventListener('click', async () => {
-  if (!room) return;
+  const value = session;
+  if (!value || value.closed) return;
+  if (value.tone) { await stopTone(value); return; }
+  if (value.room.localParticipant.isMicrophoneEnabled) {
+    status.textContent = 'Turn off your microphone before sending the test tone.';
+    return;
+  }
+  const resource = {stopped: false, published: false};
+  value.tone = resource;
   try {
-    if (toneTrack) { await stopTone(); return; }
-    if (room.localParticipant.isMicrophoneEnabled) {
-      status.textContent = 'Turn off your microphone before sending the test tone.';
+    const AudioContextType = window.AudioContext || window.webkitAudioContext;
+    resource.context = new AudioContextType();
+    const destination = resource.context.createMediaStreamDestination();
+    const volume = resource.context.createGain();
+    volume.gain.value = 0.08;
+    resource.oscillator = resource.context.createOscillator();
+    resource.oscillator.frequency.value = 440;
+    resource.oscillator.connect(volume);
+    volume.connect(destination);
+    resource.oscillator.start();
+    const track = destination.stream.getAudioTracks()[0];
+    resource.track = track;
+    await value.room.localParticipant.publishTrack(track,
+      {source: Track.Source.Microphone, name: 'Test tone'});
+    resource.published = true;
+    if (!current(value) || resource.stopped || value.tone !== resource) {
+      track.stop();
+      try { await value.room.localParticipant.unpublishTrack(track); } catch { /* Retired room. */ }
       return;
     }
-    const AudioContextType = window.AudioContext || window.webkitAudioContext;
-    toneContext = new AudioContextType();
-    const destination = toneContext.createMediaStreamDestination();
-    const volume = toneContext.createGain();
-    volume.gain.value = 0.08;
-    toneOscillator = toneContext.createOscillator();
-    toneOscillator.frequency.value = 440;
-    toneOscillator.connect(volume);
-    volume.connect(destination);
-    toneOscillator.start();
-    const track = destination.stream.getAudioTracks()[0];
-    await room.localParticipant.publishTrack(track,
-      {source: Track.Source.Microphone, name: 'Test tone'});
-    toneTrack = track;
-    toneTimer = setTimeout(() => { void stopTone(); }, 12000);
-    updateOwnMediaStatus();
+    resource.timer = setTimeout(() => { if (value.tone === resource) void stopTone(value); }, 12000);
+    updateOwnMediaStatus(value);
   } catch (error) {
-    await stopTone();
-    status.textContent = 'Test tone unavailable: ' + error.message;
+    if (value.tone === resource) await stopTone(value);
+    if (current(value)) status.textContent = 'Test tone unavailable: ' + error.message;
   }
 });
 shareButton.addEventListener('click', async () => {
-  if (!room) return;
+  const value = session;
+  if (!value || value.closed || value.sharePending) return;
+  if (value.demo) { await stopDemoCard(value); return; }
+  value.sharePending = true; updateOwnMediaStatus(value);
   try {
-    if (demoTrack) { await stopDemoCard(); updateOwnMediaStatus(); return; }
-    await room.localParticipant.setScreenShareEnabled(!room.localParticipant.isScreenShareEnabled);
-    updateOwnMediaStatus();
-  } catch (error) { status.textContent = 'Screen share unavailable: ' + error.message; }
+    await value.room.localParticipant.setScreenShareEnabled(!value.room.localParticipant.isScreenShareEnabled);
+    if (!current(value)) await value.room.localParticipant.setScreenShareEnabled(false);
+    updateOwnMediaStatus(value);
+  } catch (error) { if (current(value)) status.textContent = 'Screen share unavailable: ' + error.message; }
+  finally { value.sharePending = false; if (current(value)) shareButton.disabled = false; }
 });
-async function stopDemoCard() {
-  if (demoTimer) clearInterval(demoTimer);
-  demoTimer = undefined;
-  if (!demoTrack) return;
-  const track = demoTrack;
-  demoTrack = undefined;
-  if (room) await room.localParticipant.unpublishTrack(track);
-  track.stop();
-  if (room) updateOwnMediaStatus();
+async function stopDemoCard(value) {
+  const resource = value.demo;
+  if (!resource) return;
+  value.demo = undefined;
+  resource.stopped = true;
+  if (resource.timer) clearInterval(resource.timer);
+  resource.track?.stop();
+  updateOwnMediaStatus(value);
+  if (resource.published) {
+    try { await value.room.localParticipant.unpublishTrack(resource.track); } catch { /* Track is already stopped. */ }
+  }
 }
 
 demoButton.addEventListener('click', async () => {
-  if (!room) return;
+  const value = session;
+  if (!value || value.closed || value.sharePending) return;
+  if (value.demo) { await stopDemoCard(value); return; }
+  const resource = {stopped: false, published: false};
+  value.demo = resource;
   try {
-    if (demoTrack) { await stopDemoCard(); return; }
-    if (room.localParticipant.isScreenShareEnabled) {
-      await room.localParticipant.setScreenShareEnabled(false);
+    if (value.room.localParticipant.isScreenShareEnabled) {
+      await value.room.localParticipant.setScreenShareEnabled(false);
+      if (!current(value) || resource.stopped) return;
     }
     const canvas = document.createElement('canvas');
     canvas.width = 1280;
@@ -290,11 +358,20 @@ demoButton.addEventListener('click', async () => {
     };
     draw();
     const track = canvas.captureStream(10).getVideoTracks()[0];
-    await room.localParticipant.publishTrack(track,
+    resource.track = track;
+    await value.room.localParticipant.publishTrack(track,
       {source: Track.Source.ScreenShare, name: 'Demo score', simulcast: false});
-    demoTrack = track;
-    demoTimer = setInterval(draw, 100);
-    updateOwnMediaStatus();
-  } catch (error) { status.textContent = 'Demo card unavailable: ' + error.message; }
+    resource.published = true;
+    if (!current(value) || resource.stopped || value.demo !== resource) {
+      track.stop();
+      try { await value.room.localParticipant.unpublishTrack(track); } catch { /* Retired room. */ }
+      return;
+    }
+    resource.timer = setInterval(draw, 100);
+    updateOwnMediaStatus(value);
+  } catch (error) {
+    if (value.demo === resource) await stopDemoCard(value);
+    if (current(value)) status.textContent = 'Demo card unavailable: ' + error.message;
+  }
 });
-document.getElementById('leave').addEventListener('click', () => room?.disconnect());
+document.getElementById('leave').addEventListener('click', () => { if (session) disconnect(session); });

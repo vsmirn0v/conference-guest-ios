@@ -752,6 +752,7 @@ final class NativeConferenceEngine: CallEngine {
         codecChecks[trackID] = Task { @MainActor [weak self] in
             defer { self?.finishCodecCheck(trackID: trackID, token: token) }
             var health = VideoPublicationHealth()
+            var startup = VideoPublicationStartup()
             var first = true, startupCheckPending = true
             while !Task.isCancelled {
                 // No engine is retained across the polling interval.
@@ -760,21 +761,23 @@ final class NativeConferenceEngine: CallEngine {
                 guard let self, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,
                       !self.leaveRequested else { return }
                 guard self.canCheckVideoPublication else {
-                    health.reset(); continue
+                    health.reset(); startup.reset(); continue
                 }
                 switch GuestMicrophoneProbe.publicationState(trackID: trackID) {
                 case .retired: return
-                case .paused: health.reset(); continue
+                case .paused: health.reset(); startup.reset(); continue
                 case .publishing: break
                 }
                 if startupCheckPending {
-                    let works = await GuestMicrophoneProbe.publicationWorks(trackID: trackID)
+                    let sample = await GuestMicrophoneProbe.publicationStartupSample(trackID: trackID)
                     guard !Task.isCancelled, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,
                           !self.leaveRequested else { return }
-                    guard self.canCheckVideoPublication else { health.reset(); continue }
-                    guard let works else { health.reset(); continue }
-                    startupCheckPending = false
-                    if !works { GuestPublishingCodecPolicy.shared.disable(generation: generation); return }
+                    guard self.canCheckVideoPublication, let sample else { health.reset(); startup.reset(); continue }
+                    switch startup.observe(sample, at: ProcessInfo.processInfo.systemUptime) {
+                    case .waiting: continue
+                    case .working: startupCheckPending = false
+                    case .stalled: GuestPublishingCodecPolicy.shared.disable(generation: generation); return
+                    }
                 }
                 let sample = await GuestMicrophoneProbe.publicationProgress(trackID: trackID)
                 guard !Task.isCancelled, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,
@@ -1964,7 +1967,7 @@ final class NativeConferenceEngine: CallEngine {
 
     private func canChangeMedia(epoch: UUID, attempt: UUID) -> Bool {
         sessionEpoch == epoch && mediaAttemptEpoch == attempt && hasJoinStarted &&
-            !leaveRequested && finishing == nil && !isMediaReconnecting && cameraCaptureStop == nil
+            !leaveRequested && finishing == nil && !isSystemHeld && !isMediaReconnecting && cameraCaptureStop == nil
     }
 
     private static func map(_ phase: JazzConferencePhase) -> CallEvent {

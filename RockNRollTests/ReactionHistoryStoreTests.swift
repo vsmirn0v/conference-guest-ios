@@ -5,6 +5,31 @@ import XCTest
 
 @MainActor
 final class ReactionHistoryStoreTests: XCTestCase {
+    func testGroupingSearchPreservesInclusiveUnsortedDuplicateBoundariesAtHistoryLimit() {
+        let store = store()
+        for index in 0..<2_000 { receive(store, Double(index)) }
+        let boundaries = (0..<200).reversed().flatMap { [time(Double($0 * 10)), time(Double($0 * 10))] }
+        let groups = store.projection(chatBoundaries: boundaries + [Date(timeIntervalSince1970: .nan)])
+        XCTAssertEqual(groups.count, 400)
+        XCTAssertEqual(groups.flatMap(\.events).map(\.sequence), Array(0..<2_000))
+        for group in groups {
+            for (previous, event) in zip(group.events, group.events.dropFirst()) {
+                XCTAssertFalse(boundaries.contains { previous.timestamp <= $0 && $0 <= event.timestamp },
+                               "Every inclusive chat boundary must split a reaction group")
+            }
+        }
+        for index in 1..<groups.count {
+            guard let event = groups[index].events.first, let previous = groups[index - 1].events.last else { continue }
+            let crossesChat = boundaries.contains { previous.timestamp <= $0 && $0 <= event.timestamp }
+            let timedOut = event.receivedAt.timeIntervalSince(previous.receivedAt) > 5 ||
+                event.receivedAt.timeIntervalSince(groups[index - 1].events.first!.receivedAt) > 10
+            XCTAssertTrue(crossesChat || timedOut)
+        }
+        let started = ContinuousClock.now
+        for _ in 0..<100 { XCTAssertEqual(store.projection(chatBoundaries: boundaries).count, groups.count) }
+        print("REACTION_PROJECTION 2000_events_400_boundaries_100_runs=\(started.duration(to: .now))")
+    }
+
     private let origin = Date(timeIntervalSince1970: 1_800_000_000)
     private func time(_ seconds: Double) -> Date { origin.addingTimeInterval(seconds) }
     private func store(maximumEvents: Int = 2_000, maximumIdentityCount: Int = 8_000,

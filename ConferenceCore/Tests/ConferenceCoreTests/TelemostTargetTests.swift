@@ -27,7 +27,7 @@ final class TelemostTargetTests: XCTestCase {
         history.record(url: url, title: "Team", identifier: "12345678901234", engine: .telemost)
         history.toggleStar(for: url)
         let restored = try JSONDecoder().decode(RecentRooms.self, from: JSONEncoder().encode(history))
-        XCTAssertNil(restored.items.first?.engine, "New engines must not invalidate older clients' cloud decoding")
+        XCTAssertEqual(restored.items.first?.engine, .telemost)
         XCTAssertEqual(try JoinDestination.parse(restored.items.first!.joinURL.absoluteString).engineKind, .telemost)
         XCTAssertEqual(restored.items.first?.joinURL, url)
         XCTAssertEqual(MeetingRoomIdentity(url)?.engine, .telemost)
@@ -37,7 +37,8 @@ final class TelemostTargetTests: XCTestCase {
         var rooms = RecentRooms(); rooms.saveFavorite(url: url, title: "Team", identifier: "12345678901234", engine: .telemost)
         let record = SyncedRoom(rooms.items[0], version: .init(counter: 1, device: "fixture"))
         let data = try JSONEncoder().encode(record)
-        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("\"telemost\""))
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(payload["engine"], "Keep the old enum field decodable by older clients")
         XCTAssertEqual(MeetingRoomIdentity(try JSONDecoder().decode(SyncedRoom.self, from: data).room.joinURL)?.engine, .telemost)
     }
     func testDetectionDoesNotJoinOrSendDisplayName() async throws {

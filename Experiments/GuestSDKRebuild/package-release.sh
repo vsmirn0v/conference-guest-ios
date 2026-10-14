@@ -5,9 +5,11 @@ source_dir="$(cd "${1:?Pass patched native source}" && pwd)"
 framework_dir="$(cd "${2:?Pass assembled WebRTC.xcframework}" && pwd)"
 output_dir="${3:?Pass immutable output directory}"
 "$experiment_dir/package-notices.sh" "$source_dir" "$framework_dir"
-python3 - "$framework_dir" "$output_dir" <<'PY'
+python3 - "$framework_dir" "$output_dir" "$source_dir" "$experiment_dir" <<'PY'
 import hashlib, json, os, pathlib, plistlib, stat, subprocess, sys, zipfile
-framework, output = map(pathlib.Path, sys.argv[1:])
+framework, output, source, experiment = map(pathlib.Path, sys.argv[1:])
+sys.path.insert(0, str(experiment))
+from verify_package_inputs import verify_inputs
 output.mkdir(parents=True, exist_ok=True)
 archive = output / 'WebRTC.xcframework.zip'
 if archive.exists():
@@ -26,6 +28,10 @@ for item in metadata['AvailableLibraries']:
                      'RTCSetScreenShareSenderResolution'):
         if '_' + required not in symbols:
             raise SystemExit(f'Required native API is missing: {required}')
+provenance = json.loads((framework / 'Supporting/provenance.json').read_text())
+if sorted(verify_inputs(source, framework, metadata), key=lambda item: item['identifier']) != sorted(
+        provenance['slices'], key=lambda item: item['identifier']):
+    raise SystemExit('Packaging inputs differ from recorded provenance')
 with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as target:
     for path in sorted(framework.rglob('*')):
         if path.is_symlink():

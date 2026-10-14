@@ -7,7 +7,7 @@ The test room is public, capped at 12 participants, and intentionally has no org
 ## Build
 
 ```sh
-cd site-src && pnpm install --frozen-lockfile && pnpm run build && cd ..
+cd site-src && pnpm install --frozen-lockfile && pnpm test && pnpm run build && cd ..
 gzip -n -9 -c site/app.js > site/app.js.gz
 go test ./...
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o rock-web .

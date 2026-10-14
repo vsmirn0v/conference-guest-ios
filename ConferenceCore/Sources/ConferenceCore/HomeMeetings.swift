@@ -11,7 +11,7 @@ public struct HomeMeeting: Identifiable, Equatable, Sendable {
     public func currentHandoff(in handoffs: [ActiveJam], at now: Date) -> ActiveJam? {
         handoff.flatMap { original in handoffs.first {
             $0.deviceID == original.deviceID && $0.sessionID == original.sessionID &&
-            $0.isRecent(at: now) && MeetingRoomIdentity($0.invitation) == id
+            $0.isRecent(at: now) && MeetingRoomIdentity($0.invitation, engine: $0.engine) == id
         } }
     }
 }
@@ -42,7 +42,7 @@ public enum HomeMeetingPolicy {
         var result: [HomeMeeting] = []
         var seen: Set<MeetingRoomIdentity> = []
         for handoff in fresh {
-            guard let key = MeetingRoomIdentity(handoff.invitation), seen.insert(key).inserted else { continue }
+            guard let key = MeetingRoomIdentity(handoff.invitation, engine: handoff.engine), seen.insert(key).inserted else { continue }
             result.append(HomeMeeting(id: key, invitation: handoff.invitation, calendar: byRoom[key], handoff: handoff))
         }
         for meeting in scheduled {

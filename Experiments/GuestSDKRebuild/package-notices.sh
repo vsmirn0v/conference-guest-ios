@@ -16,6 +16,11 @@ import subprocess
 import sys
 
 source, framework, experiment = map(pathlib.Path, sys.argv[1:])
+sys.path.insert(0, str(experiment))
+from verify_package_inputs import verify_inputs
+
+metadata = plistlib.loads((framework / 'Info.plist').read_bytes())
+slices = verify_inputs(source, framework, metadata)
 supporting = framework / 'Supporting'
 supporting.mkdir(exist_ok=True)
 licenses = supporting / 'licenses'
@@ -24,11 +29,7 @@ notices = ['Modified WebRTC — WebRTC and linked third-party notices\n']
 for name in ('LICENSE', 'PATENTS', 'AUTHORS'):
     shutil.copy2(source / name, licenses / name)
     notices.extend([f'\n===== WebRTC {name} =====\n', (source / name).read_text()])
-slices = []
-metadata = plistlib.loads((framework / 'Info.plist').read_bytes())
 for item in metadata['AvailableLibraries']:
-    if item['SupportedPlatform'] != 'ios' or item['SupportedArchitectures'] != ['arm64']:
-        raise RuntimeError(f'Unexpected framework slice: {item}')
     environment = 'simulator' if item.get('SupportedPlatformVariant') == 'simulator' else 'device'
     output = source / f'out/rock-hybrid-ios-{environment}'
     license_dir = licenses / environment
@@ -40,10 +41,8 @@ for item in metadata['AvailableLibraries']:
     if not linked.strip():
         raise RuntimeError(f'Empty linked notices: {environment}')
     notices.extend([f'\n===== {environment}: linked dependencies =====\n', html.unescape(linked)])
-    binary = framework / item['LibraryIdentifier'] / item['LibraryPath'] / 'WebRTC'
-    slices.append({'identifier': item['LibraryIdentifier'],
-                   'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
-                   'gn_args': (output / 'args.gn').read_text()})
+if verify_inputs(source, framework, metadata) != slices:
+    raise RuntimeError('Packaging inputs changed while generating notices')
 provenance = {
     'source_revision': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=source, text=True).strip(),
     'vendor_wrapper_revision': '6d5f92869690fa22bb489a9089aa554d733c6936',
@@ -52,7 +51,8 @@ provenance = {
                 for directory in (experiment.parent / 'WebRTCHybrid' / 'patches', experiment / 'patches')
                 for p in sorted(directory.glob('*.patch'))],
     'recipes': [{'name': name, 'sha256': hashlib.sha256((experiment / name).read_bytes()).hexdigest()}
-                for name in ('build-ios.sh', 'verify-source.sh', 'package-notices.sh', 'package-release.sh')],
+                for name in ('build-ios.sh', 'verify-source.sh', 'verify_package_inputs.py',
+                             'package-notices.sh', 'package-release.sh')],
     'slices': slices,
 }
 notice = supporting / 'GuestWebRTC-notices.txt'

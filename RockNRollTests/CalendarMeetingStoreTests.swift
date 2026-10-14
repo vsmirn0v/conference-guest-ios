@@ -29,8 +29,12 @@ final class CalendarMeetingStoreTests: XCTestCase {
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
-            let data = Data("{\"fixture\":{\"serverUrl\":\"https://backend.example.test\"}}".utf8)
-            let status = request.url?.host == "unsupported.example.test" ? 404 : 200
+            let trueconf = request.url?.host == "trueconf.example.test"
+            let data = Data((trueconf ?
+                "{\"conference\":{\"id\":\"team\",\"web_client_url\":\"https://trueconf.example.test/webrtc/team\",\"allow_guests\":true}}" :
+                "{\"fixture\":{\"serverUrl\":\"https://backend.example.test\"}}").utf8)
+            let status = request.url?.host == "unsupported.example.test" ||
+                (trueconf && request.url?.path != "/api/v4/conferences/team") ? 404 : 200
             client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status,
                 httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
@@ -232,6 +236,34 @@ final class CalendarMeetingStoreTests: XCTestCase {
         XCTAssertEqual(store.upcoming.map(\.id), ["one"])
         XCTAssertEqual(store.meetings.first(where: { $0.id == "ambiguous" })?.requiresChoice, true)
     }
+    func testPersistedNativeEngineMatchesCalendarCredentialsAndSuppressesReentry() async throws {
+        for (engine, text) in [(MeetingEngineKind.trueconf, "https://trueconf.example.test/c/team"),
+                               (.telemost, "https://telemost.yandex.ru/j/12345678901234")] {
+            let original = URL(string: text + "?psw=old")!, latest = URL(string: text + "?psw=new")!
+            var history = RecentRooms()
+            history.record(url: original, title: "My room", identifier: "team", engine: engine)
+            let restored = try JSONDecoder().decode(RecentRooms.self, from: JSONEncoder().encode(history))
+            let room = try XCTUnwrap(restored.items.first)
+            let meeting = CalendarMeeting(id: "native", seriesID: "series", calendarID: "work", calendarTitle: "Work",
+                title: "Planning", start: Date().addingTimeInterval(-30), end: Date().addingTimeInterval(3600), links: [latest])
+            let (store, _) = make(Reader(events: [meeting]))
+            store.refresh(); try await ready(store)
+            XCTAssertEqual(store.upcoming.first?.engine, engine)
+            XCTAssertEqual(store.preferredInvitation(for: room), latest)
+            XCTAssertNotNil(store.subtitle(for: room))
+            var legacy = room; legacy.engine = nil
+            XCTAssertEqual(store.preferredInvitation(for: legacy), latest)
+            XCTAssertEqual(store.preferredEngine(for: legacy), engine)
+            XCTAssertNotNil(store.subtitle(for: legacy))
+            store.noteJoined(room, invitation: original)
+            store.canAutomaticallyJoin = { _ in true }
+            store.setAutomaticJoin(true)
+            store.foregrounded(allowAutomaticJoin: true); try await ready(store)
+            XCTAssertNil(store.countdown)
+            store.backgrounded()
+        }
+    }
+
     func testPreviouslyKnownRoomStaysAvailableDuringDiscoveryFailure() async throws {
         let url = URL(string: "https://unsupported.example.test/room")!
         let (store, _) = make(Reader(events: [grouped([.init(source: .location, links: [url])])]))

@@ -65,5 +65,5 @@ struct MicrophoneLevelStrip: View {
 private struct MicrophoneGlyph: UIViewRepresentable {
     let activity: MicrophoneActivity
     func makeUIView(context: Context) -> MicrophoneActivityView { let view = MicrophoneActivityView(); view.bind(activity); return view }
-    func updateUIView(_ uiView: MicrophoneActivityView, context: Context) {}
+    func updateUIView(_ uiView: MicrophoneActivityView, context: Context) { uiView.bind(activity) }
 }

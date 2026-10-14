@@ -80,7 +80,9 @@ final class ReactionHistoryStore: ObservableObject {
     private var continuity = 0
     private var identities = Set<Identity>()
     private var identityOrder: [Identity] = []
+    #if DEBUG
     var retainedIdentityCount: Int { identities.count }
+    #endif
 
     init(maximumEvents: Int = 2_000, maximumIdentityCount: Int = 8_000,
          maximumGaps: Int = 128, clock: @escaping () -> Date = Date.init) {
@@ -215,6 +217,16 @@ final class ReactionHistoryStore: ObservableObject {
     /// A timestamp tie with a chat boundary is split conservatively.
     func projection(chatBoundaries: [Date] = []) -> [ReactionHistoryGroup] {
         let boundaries = chatBoundaries.filter(finite).sorted()
+        func hasChatBoundary(from start: Date, through end: Date) -> Bool {
+            guard start <= end else { return false }
+            var lower = 0, upper = boundaries.count
+            while lower < upper {
+                let middle = lower + (upper - lower) / 2
+                if boundaries[middle] < start { lower = middle + 1 }
+                else { upper = middle }
+            }
+            return lower < boundaries.count && boundaries[lower] <= end
+        }
         var groups: [ReactionHistoryGroup] = []
         var current: [MeetingReactionEvent] = []
         for event in events {
@@ -223,7 +235,7 @@ final class ReactionHistoryStore: ObservableObject {
                 let span = event.receivedAt.timeIntervalSince(first.receivedAt)
                 let displayInterval = event.timestamp.timeIntervalSince(previous.timestamp)
                 let displaySpan = event.timestamp.timeIntervalSince(first.timestamp)
-                let crossesChat = boundaries.contains { previous.timestamp <= $0 && $0 <= event.timestamp }
+                let crossesChat = hasChatBoundary(from: previous.timestamp, through: event.timestamp)
                 let crossesGap = previous.continuity != event.continuity
                 if interval < 0 || interval > 5 || span > 10 || displayInterval < 0 ||
                     displayInterval > 5 || displaySpan > 10 || crossesChat || crossesGap {

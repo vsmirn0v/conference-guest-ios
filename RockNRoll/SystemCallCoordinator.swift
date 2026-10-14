@@ -510,17 +510,13 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
             observeYield(in: calls)
             guard calls.contains(where: { $0.id == callID && $0.connected && !$0.held && !$0.ended }),
                   !calls.contains(where: { $0.id != callID && !$0.ended }) else { return false }
-            if let audioYield {
-                guard audioYield.releasedBySystem || audioYield.observedHold || audioYield.observedCompetitor else {
-                    return false
-                }
-            }
+            guard hasAudioRecoveryEvidence else { return false }
         } else {
             let calls = observedCalls
             observeYield(in: calls)
             guard !calls.contains(where: { $0.id != callID && !$0.ended }) else { return false }
             if isHeld && audioYield == nil { return false }
-            if let audioYield, !audioYield.releasedBySystem && !audioYield.observedCompetitor && !canProbeInitialFocus { return false }
+            guard hasAudioRecoveryEvidence else { return false }
             if isAudioSessionActive && !isHeld && audioYield == nil { return true }
         }
         audioYield?.activationAttempted = true
@@ -562,6 +558,14 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
 
     private func cancelActivation() { activationLease?.invalidate(); activationLease = nil }
 
+    /// Admission and completion use the same evidence, while completion also
+    /// rechecks the current call snapshot and activation lease.
+    private var hasAudioRecoveryEvidence: Bool {
+        guard let audioYield else { return true }
+        return audioYield.releasedBySystem || audioYield.observedCompetitor ||
+            (usesSystemCall ? audioYield.observedHold : canProbeInitialFocus)
+    }
+
     private func enqueueActivation(id: UUID, initial: Bool) {
         guard !ending, activationLease == nil else { return }
         let lease = AudioSessionLease(); activationLease = lease
@@ -574,8 +578,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
                 guard !self.ending, self.servicesAvailable, !self.transferHolding,
                       !self.usesSystemCall || self.observedCalls.contains(where: { $0.id == id && $0.connected && !$0.held && !$0.ended }),
                       !self.observedCalls.contains(where: { $0.id == id ? ($0.held || $0.ended) : !$0.ended }),
-                      initial || self.audioYield == nil || self.audioYield?.releasedBySystem == true ||
-                        self.audioYield?.observedCompetitor == true || self.canProbeInitialFocus else { return }
+                      initial || self.hasAudioRecoveryEvidence else { return }
                 switch result {
                 case .success:
                     if !self.usesSystemCall { self.applicationMute?.setMuted(self.isMuted, owner: id) }

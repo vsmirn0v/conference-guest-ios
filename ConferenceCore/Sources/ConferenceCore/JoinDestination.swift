@@ -49,6 +49,38 @@ public enum JoinDestination: Equatable, Sendable {
         }
         return .guest(try JoinTarget.parse(candidate, joinLinkHost: joinLinkHost))
     }
+
+    /// Use only engine evidence already verified by discovery or a prior join.
+    /// The provider's formal invitation parser still validates the destination.
+    public static func verified(_ invitation: URL, engine: MeetingEngineKind) throws -> JoinDestination {
+        switch engine {
+        case .guest: return .guest(try JoinTarget.parse(invitation.absoluteString))
+        case .community: return .jam(try JamTarget.parseCompatibleInvitation(invitation.absoluteString))
+        case .telemost: return .telemost(try TelemostTarget.parse(invitation.absoluteString))
+        case .trueconf: return .trueconf(try TrueConfTarget.parse(invitation.absoluteString))
+        }
+    }
+
+    /// Fresh positive evidence wins. Missing evidence can reuse a verified kind;
+    /// ambiguous evidence without a known kind requires an explicit choice (nil).
+    public static func resolve(_ invitation: URL, detection: MeetingEngineDetection,
+                               knownEngine: MeetingEngineKind?) throws -> JoinDestination? {
+        switch detection {
+        case .verified(.guest): return try verified(invitation, engine: .guest)
+        case .verified(.community): return try verified(invitation, engine: .community)
+        case .verified(.telemost): return try verified(invitation, engine: .telemost)
+        case .verified(.trueconf): return try verified(invitation, engine: .trueconf)
+        case .ambiguous:
+            return try knownEngine.map { try verified(invitation, engine: $0) }
+        case .unknown:
+            return try knownEngine.map { try verified(invitation, engine: $0) } ?? parse(invitation.absoluteString)
+        }
+    }
+
+    public static func guestInvitations(in rooms: [RecentRoom]) -> [URL] {
+        rooms.filter { ($0.engine == nil || $0.engine == .guest) &&
+            (try? TelemostTarget.parse($0.joinURL.absoluteString)) == nil }.map(\.joinURL)
+    }
 }
 
 public extension JoinDestination {

@@ -586,7 +586,6 @@ final class PresenterModel: ObservableObject {
         guard active, !Task.isCancelled else { return }
         applyImage(result.value, framing: framing)
     }
-    func importImage(_ data: Data) { applyImage(Self.decode(data)) }
     private func applyImage(_ image: CGImage?, framing: PresenterScene.ImageFraming = .fit) {
         guard let image else { error = L("Choose an image smaller than 25 MB."); return }
         error = nil; selectCanvas(); scene.image = image; scene.imageFraming = framing

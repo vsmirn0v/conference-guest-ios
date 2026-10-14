@@ -43,7 +43,7 @@ struct CalendarAgendaView: View {
     private func compactRow(_ meeting: CalendarMeeting) -> some View {
         HStack(spacing: 4) {
             Button {
-                if let active = continuation.candidates.first(where: { $0.isRecent(at: Date()) && MeetingRoomIdentity($0.invitation) == meeting.roomIdentity }) {
+                if let active = continuation.candidates.first(where: { $0.isRecent(at: Date()) && MeetingRoomIdentity($0.invitation, engine: $0.engine) == meeting.roomIdentity }) {
                     continuation.begin(active)
                 } else { onJoin(meeting) }
             } label: {
@@ -111,7 +111,7 @@ struct CalendarAgendaView: View {
         }
     }
     private func row(_ meeting: CalendarMeeting, prominent: Bool = false) -> some View {
-        let active = continuation.candidates.first { $0.isRecent(at: Date()) && MeetingRoomIdentity($0.invitation) == meeting.roomIdentity }
+        let active = continuation.candidates.first { $0.isRecent(at: Date()) && MeetingRoomIdentity($0.invitation, engine: $0.engine) == meeting.roomIdentity }
         return VStack(alignment: .leading, spacing: prominent ? 10 : 6) {
             HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 4) {

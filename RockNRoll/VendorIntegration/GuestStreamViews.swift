@@ -81,7 +81,9 @@ final class GuestStreamViews {
     private(set) var selectedTarget: PinTarget?
     let localCameraChanges = CurrentValueSubject<UIView?, Never>(nil)
     var onStagePresentation: ((Presentation) -> Void)?
+    #if DEBUG
     var onPreferredVideo: ((StreamViewport?, String, Bool) -> Void)?
+    #endif
     var onFloatingVideo: ((StreamViewport?, String, Bool, Bool) -> Void)?
     var onShareOffer: ((String?, PinTarget?) -> Void)?
     var displayMode: ConferenceDisplayMode = .all {
@@ -113,7 +115,9 @@ final class GuestStreamViews {
         onGalleryPresentation?([])
         renderedTiles.removeAll()
         localCameraChanges.send(nil)
+        #if DEBUG
         onPreferredVideo?(nil, "", false)
+        #endif
         onFloatingVideo?(nil, "", false, false)
         onShareOffer?(nil, nil)
     }
@@ -138,12 +142,12 @@ final class GuestStreamViews {
 
     func updateParticipants(_ roster: [Participant]) {
         let ids = roster.map(\.id), existing = Set(participantOrder)
-        participantOrder.removeAll { !ids.contains($0) }
+        let active = Set(ids)
+        participantOrder.removeAll { !active.contains($0) }
         participantOrder.append(contentsOf: ids.filter { !existing.contains($0) }.sorted())
         participants = Dictionary(uniqueKeysWithValues: roster.map { ($0.id, $0) })
         let sharing = Set(roster.filter { $0.sharing }.map(\.id))
         let cameras = Set(roster.filter { $0.cameraOn }.map(\.id))
-        let active = Set(roster.map(\.id))
         updateActiveMedia(sharing: sharing, cameras: cameras, participants: active)
     }
 
@@ -416,8 +420,10 @@ final class GuestStreamViews {
             active: active, automatic: eligiblePin == nil,
             count: orderedTargets.count, browsing: browsedTarget != nil))
         renderedTiles.values.forEach { $0.view?.accessibilityElementsHidden = onStagePresentation != nil }
+        #if DEBUG
         onPreferredVideo?(preferred?.view, preferred == nil ? "" : stageName ?? "",
                           preferred?.model.isSharingScreen == true)
+        #endif
         // An automatic gallery can select an idle remote tile while the local
         // camera remains visible. Its live self view may keep this call in PiP,
         // without changing the foreground stage or its participant caption.

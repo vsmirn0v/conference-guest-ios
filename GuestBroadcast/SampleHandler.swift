@@ -8,18 +8,13 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
                    ? L("The meeting has ended.") : error.localizedDescription)
     }
     private let preview = LocalSharePreviewSender()
-    private let stopLock = NSLock()
-    private var stopped = false
+    private let lifecycle = BroadcastLifecycle()
     private var cadence = OutgoingVideoCadence()
-    private let cadenceLock = NSLock()
     #if DEBUG
     private var deliveryExperiment: OutgoingShareExperiment?
     #endif
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
-        #if DEBUG
-        deliveryExperiment = OutgoingShareExperiment.configuredForBroadcast()
-        #endif
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
             Unmanaged.passUnretained(self).toOpaque(), { _, observer, _, _, _ in
                 guard let observer else { return }
@@ -30,40 +25,37 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
             stop(reason: L("The meeting is no longer sharing. Open Rock’n’Roll to start a new share."))
             return
         }
-        screenShare.broadcastStarted(withSetupInfo: setupInfo)
+        lifecycle.start {
+            #if DEBUG
+            deliveryExperiment = OutgoingShareExperiment.configuredForBroadcast()
+            #endif
+            screenShare.broadcastStarted(withSetupInfo: setupInfo)
+        }
     }
 
     override func broadcastFinished() {
-        #if DEBUG
-        if let deliveryExperiment, deliveryExperiment.received > 0 { print(deliveryExperiment.summary) }
-        deliveryExperiment?.reset()
-        #endif
-        removeObserver()
-        screenShare.broadcastFinished()
+        finish(reason: nil, wait: true)
     }
 
     override func processSampleBuffer(_ sampleBuffer: CMSampleBuffer,
                                       with sampleBufferType: RPSampleBufferType) {
-        stopLock.lock()
-        let shouldStop = stopped
-        stopLock.unlock()
-        guard !shouldStop else { return }
-        #if DEBUG
-        if sampleBufferType == .video, let deliveryExperiment {
-            deliveryExperiment.deliver(sampleBuffer,
-                send: { screenShare.processSampleBuffer(sampleBuffer, with: sampleBufferType) },
-                preview: { sendPreview(sampleBuffer) })
-            return
+        lifecycle.send {
+            #if DEBUG
+            if sampleBufferType == .video, let deliveryExperiment {
+                deliveryExperiment.deliver(sampleBuffer,
+                    send: { screenShare.processSampleBuffer(sampleBuffer, with: sampleBufferType) },
+                    preview: { sendPreview(sampleBuffer) })
+                return
+            }
+            #endif
+            if sampleBufferType == .video {
+                let process = ProcessInfo.processInfo
+                let fps = process.thermalState == .critical ? 5 : (process.isLowPowerModeEnabled || process.thermalState == .serious ? 10 : 15)
+                guard cadence.accept(sampleBuffer, fps: fps) else { return }
+            }
+            if sampleBufferType == .video { sendPreview(sampleBuffer) }
+            screenShare.processSampleBuffer(sampleBuffer, with: sampleBufferType)
         }
-        #endif
-        if sampleBufferType == .video {
-            let process = ProcessInfo.processInfo
-            let fps = process.thermalState == .critical ? 5 : (process.isLowPowerModeEnabled || process.thermalState == .serious ? 10 : 15)
-            cadenceLock.lock(); let wanted = cadence.accept(sampleBuffer, fps: fps); cadenceLock.unlock()
-            guard wanted else { return }
-        }
-        if sampleBufferType == .video { sendPreview(sampleBuffer) }
-        screenShare.processSampleBuffer(sampleBuffer, with: sampleBufferType)
     }
 
     private func sendPreview(_ sampleBuffer: CMSampleBuffer) {
@@ -75,21 +67,24 @@ final class SampleHandler: RPBroadcastSampleHandler, @unchecked Sendable {
     }
 
     private func stop(reason: String) {
-        stopLock.lock()
-        let alreadyStopped = stopped
-        stopped = true
-        stopLock.unlock()
-        guard !alreadyStopped else { return }
-        #if DEBUG
-        if let deliveryExperiment, deliveryExperiment.received > 0 { print(deliveryExperiment.summary) }
-        deliveryExperiment?.reset()
-        #endif
-        removeObserver()
-        screenShare.broadcastFinished()
-        // ReplayKit exposes only error-based termination to upload extensions.
-        // Supply a useful explanation instead of the SDK's empty error string.
-        finishBroadcastWithError(NSError(domain: "GuestBroadcast", code: 1,
-                                        userInfo: [NSLocalizedDescriptionKey: reason]))
+        finish(reason: reason)
+    }
+
+    private func finish(reason: String?, wait: Bool = false) {
+        lifecycle.finish(wait: wait) { [self] started in
+            #if DEBUG
+            if let deliveryExperiment, deliveryExperiment.received > 0 { print(deliveryExperiment.summary) }
+            deliveryExperiment?.reset()
+            #endif
+            removeObserver()
+            if started { screenShare.broadcastFinished() }
+            // ReplayKit exposes only error-based termination to upload extensions.
+            // Supply a useful explanation instead of the SDK's empty error string.
+            if let reason {
+                finishBroadcastWithError(NSError(domain: "GuestBroadcast", code: 1,
+                                                userInfo: [NSLocalizedDescriptionKey: reason]))
+            }
+        }
     }
 
     private func removeObserver() {

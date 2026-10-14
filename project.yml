@@ -27,6 +27,7 @@ targets:
     sources:
       - path: RockNRoll
       - path: Shared/GuestBroadcastStop.swift
+      - path: Shared/BroadcastLifecycle.swift
       - path: Shared/Localization.swift
       - path: Shared/LocalSharePreviewTransport.swift
       - path: Shared/OutgoingShareExperiment.swift
@@ -98,6 +99,7 @@ targets:
         excludes: [VendorSDK]
       - path: Shared/Localization.swift
       - path: Shared/GuestBroadcastStop.swift
+      - path: Shared/BroadcastLifecycle.swift
       - path: Shared/LocalSharePreviewTransport.swift
       - path: Shared/OutgoingShareExperiment.swift
       - path: Shared/OutgoingVideoCadence.swift

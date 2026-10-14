@@ -12,15 +12,19 @@ public struct ActiveJam: Codable, Equatable, Identifiable, Sendable {
     public var isSharingScreen: Bool
     public var supportsCompanion: Bool
     public var audioPaused: Bool?
+    public var engineIdentifier: String?
+    public var engine: MeetingEngineKind? { engineIdentifier.flatMap(MeetingEngineKind.init(rawValue:)) }
     public var id: String { deviceID }
     public init(deviceID: String, sessionID: UUID = UUID(), invitation: URL, title: String,
                 name: String, deviceLabel: String, updatedAt: Date = Date(), connected: Bool = true,
-                isSharingScreen: Bool = false, supportsCompanion: Bool = false, audioPaused: Bool? = nil) {
+                isSharingScreen: Bool = false, supportsCompanion: Bool = false, audioPaused: Bool? = nil,
+                engine: MeetingEngineKind? = nil) {
         self.deviceID = deviceID; self.sessionID = sessionID; self.invitation = invitation
         self.title = title; self.name = name; self.deviceLabel = deviceLabel
         self.updatedAt = updatedAt; self.connected = connected; self.isSharingScreen = isSharingScreen
         self.supportsCompanion = supportsCompanion
         self.audioPaused = audioPaused
+        self.engineIdentifier = engine?.rawValue
     }
     public func isRecent(at now: Date) -> Bool {
         connected && now.timeIntervalSince(updatedAt) >= -60 && now.timeIntervalSince(updatedAt) < 180

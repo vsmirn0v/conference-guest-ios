@@ -20,7 +20,7 @@ struct RoomSyncSettingsView: View {
             }
             if let warning = sync.storageWarning {
                 Text(warning).font(.footnote).foregroundStyle(.orange)
-                Button(L("Retry saving sync changes")) { sync.requestSync(immediate: true) }
+                Button(L("Retry saving sync changes")) { sync.retryLocalSave() }
             }
             if let choice = sync.nameChoice {
                 Text(L("Your devices have different saved names. Choose the name to use for future joins."))

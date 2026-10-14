@@ -80,4 +80,52 @@ final class MeetingEngineRoutingTests: XCTestCase {
         XCTAssertEqual(ConferenceJoinOptionsTests.FailedJoin.requestedNames, ["Short name"])
         withExtendedLifetime(container) {}
     }
+
+    func testCalendarAndHandoffKeepVerifiedRoutesBeforeRequestingAName() {
+        for (kind, text) in [(MeetingEngineKind.trueconf, "https://custom.example.test/c/team"),
+                             (.telemost, "https://telemost.yandex.ru/j/12345678901234"),
+                             (.community, "https://custom.example.test/jams/team")] {
+            let url = URL(string: text)!
+            let (calendarModel, calendarContainer) = make()
+            calendarModel.displayName = ""
+            var meeting = CalendarMeeting(id: "event", seriesID: "series", calendarID: "work", calendarTitle: "Work",
+                title: "Room", start: Date(), end: Date().addingTimeInterval(60))
+            meeting.invitation = url; meeting.engine = kind
+            calendarModel.joinCalendarMeeting(meeting)
+            XCTAssertEqual(calendarModel.awaitingNameEngineForTesting, kind)
+            XCTAssertEqual(calendarModel.invite, url.absoluteString)
+            XCTAssertTrue(calendarModel.isNameRequiredForJoin)
+            XCTAssertFalse(calendarModel.isJoining)
+
+            let (handoffModel, handoffContainer) = make()
+            let jam = ActiveJam(deviceID: "mac", invitation: url, title: "Room", name: "", deviceLabel: "Mac", engine: kind)
+            XCTAssertNil(handoffModel.joinFromContinuation(jam, quiet: false))
+            XCTAssertEqual(handoffModel.awaitingNameEngineForTesting, kind)
+            XCTAssertEqual(handoffModel.invite, url.absoluteString)
+            XCTAssertTrue(handoffModel.isNameRequiredForJoin)
+            XCTAssertTrue(ConferenceJoinOptionsTests.FailedJoin.requestedNames.isEmpty)
+            withExtendedLifetime([calendarContainer, handoffContainer]) {}
+        }
+    }
+
+    func testGuestAppLinkHistoryExcludesKnownTrueConfButKeepsUntypedLegacy() {
+        let link = URL(string: "jcp://jazz?code=team&psw=secret")!
+        let (model, container) = make()
+        model.displayName = ""
+        model.history.saveFavorite(url: URL(string: "https://trueconf.example.test/c/team?psw=secret")!, title: "Native", engine: .trueconf)
+        model.receive(url: link)
+        XCTAssertNotNil(model.siteSelection)
+        XCTAssertFalse(model.isNameRequiredForJoin)
+
+        let (legacyModel, legacyContainer) = make()
+        legacyModel.displayName = ""
+        let legacy = URL(string: "https://legacy.example.test/c/team?psw=secret")!
+        legacyModel.history.saveFavorite(url: legacy, title: "Legacy")
+        legacyModel.receive(url: link)
+        XCTAssertNil(legacyModel.siteSelection)
+        XCTAssertEqual(legacyModel.awaitingNameEngineForTesting, .guest)
+        XCTAssertTrue(legacyModel.isNameRequiredForJoin)
+        XCTAssertEqual(legacyModel.invite, legacy.absoluteString)
+        withExtendedLifetime([container, legacyContainer]) {}
+    }
 }

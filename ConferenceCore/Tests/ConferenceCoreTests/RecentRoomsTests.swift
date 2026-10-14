@@ -3,6 +3,31 @@ import XCTest
 @testable import ConferenceCore
 
 final class RecentRoomsTests: XCTestCase {
+    func testReturningToOriginalInvitationReplacesRotatedCredentialsLocallyAndInSync() throws {
+        let original = URL(string: "https://meet.example.test/calls/room?psw=first")!
+        let rotated = URL(string: "https://meet.example.test/calls/room?psw=second")!
+        var history = RecentRooms(), phone = RoomSyncDocument(device: "phone")
+        history.record(url: original, title: "Room", identifier: "room", at: Date(timeIntervalSince1970: 1))
+        history.toggleStar(for: original); history.setAlias("My room", for: original)
+        phone.upsert(try XCTUnwrap(history.items.first), visited: true)
+        history.record(url: rotated, title: "Room", identifier: "room", at: Date(timeIntervalSince1970: 2))
+        phone.upsert(try XCTUnwrap(history.items.first), visited: true)
+        var mac = RoomSyncDocument(device: "mac"); mac.merge(phone.records)
+        XCTAssertEqual(mac.visibleRooms.first?.joinURL, rotated)
+
+        history.record(url: original, title: "Room", identifier: "room", at: Date(timeIntervalSince1970: 3))
+        history = try JSONDecoder().decode(RecentRooms.self, from: JSONEncoder().encode(history))
+        let latest = try XCTUnwrap(history.items.first)
+        XCTAssertEqual(history.items.count, 1); XCTAssertEqual(latest.id, original.absoluteString)
+        XCTAssertEqual(latest.joinURL, original); XCTAssertEqual(latest.latestInvitationURL, original)
+        XCTAssertTrue(latest.isStarred); XCTAssertEqual(latest.alias, "My room")
+        phone.upsert(latest, visited: true)
+        phone = try JSONDecoder().decode(RoomSyncDocument.self, from: JSONEncoder().encode(phone))
+        mac.merge(phone.records); phone.merge(mac.records)
+        XCTAssertEqual(mac.visibleRooms.first?.joinURL, original)
+        XCTAssertEqual(mac.visibleRooms, phone.visibleRooms)
+    }
+
     func testFavoriteOrderSurvivesVisitsRenamesAndRestarts() throws {
         var history = RecentRooms()
         let urls = (0..<3).map { URL(string: "https://example.test/\($0)")! }

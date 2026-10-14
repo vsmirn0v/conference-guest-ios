@@ -6,6 +6,25 @@ import XCTest
 
 @MainActor
 final class GuestReceivedReactionsTests: XCTestCase {
+    func testModernTransportSkipsLegacyViewDiscoveryAndRestoresFallback() {
+        class CountingView: UIView {
+            var traversals = 0
+            override var subviews: [UIView] { traversals += 1; return super.subviews }
+        }
+        let root = CountingView(), observer = GuestReceivedReactions(valid: { true },
+            participant: { _ in nil }, onReaction: { _, _ in })
+        observer.start(in: root)
+        defer { observer.stop() }
+        let legacy = root.traversals
+        XCTAssertGreaterThan(legacy, 0)
+        observer.setTransportObserving(true, modernProtocol: true)
+        for _ in 0..<20 { observer.refresh() }
+        XCTAssertEqual(root.traversals, legacy); XCTAssertTrue(observer.isObserving)
+        observer.setTransportObserving(false, modernProtocol: false)
+        observer.refresh()
+        XCTAssertGreaterThan(root.traversals, legacy)
+    }
+
     func testAllPinnedSDKWireValuesAndDocumentedEnumValues() {
         let pairs: [(MeetingReaction, JitsiReaction)] = [(.applause, .applause), (.like, .like),
             (.dislike, .dislike), (.smile, .smile), (.surprise, .surprise)]

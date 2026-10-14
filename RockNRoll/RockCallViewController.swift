@@ -877,7 +877,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     func render(snapshot: CallMediaSnapshot) {
         displayedSnapshot = snapshot
         let ids = snapshot.participants.map(\.id), existing = Set(rosterOrder)
-        rosterOrder.removeAll { !ids.contains($0) }
+        let activeIDs = Set(ids)
+        rosterOrder.removeAll { !activeIDs.contains($0) }
         rosterOrder.append(contentsOf: ids.filter { !existing.contains($0) })
         let ranks = Dictionary(uniqueKeysWithValues: rosterOrder.enumerated().map { ($1, $0) })
         let participants = snapshot.participants.sorted { ranks[$0.id, default: .max] < ranks[$1.id, default: .max] }
@@ -894,8 +895,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         participantsButton.accessibilityLabel = L("Musicians, %ld", participants.count)
         tiles.arrangedSubviews.forEach { $0.removeFromSuperview() }
         participantBadges.removeAll(); speakingTiles.removeAll(); tileOrder.removeAll(); tileSelections.removeAll()
-        identityTiles = identityTiles.filter { ids.contains($0.key) }
-        identityViews = identityViews.filter { ids.contains($0.key) }
+        identityTiles = identityTiles.filter { activeIDs.contains($0.key) }
+        identityViews = identityViews.filter { activeIDs.contains($0.key) }
         var streams: [(CallParticipant, CallVideoStream, CallVideoSource)] = []
         orderedStreams = []
         for participant in participants {

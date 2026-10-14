@@ -13,7 +13,7 @@ struct MeetingContinuationView: View {
                         Label(L("Jam on %@", jam.deviceLabel), systemImage: "laptopcomputer.and.iphone")
                             .font(.subheadline).foregroundStyle(.secondary)
                         Text(jam.title).font(.headline)
-                        if let identity = MeetingRoomIdentity(jam.invitation) {
+                        if let identity = MeetingRoomIdentity(jam.invitation, engine: jam.engine) {
                             Label(identity.displayDetails, systemImage: "link").font(.caption).foregroundStyle(.secondary)
                         }
                         if jam.audioPaused == true {

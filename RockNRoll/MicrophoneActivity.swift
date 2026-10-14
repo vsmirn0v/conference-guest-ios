@@ -108,6 +108,7 @@ final class MicrophoneActivityView: UIView {
     private let fill = CAGradientLayer()
     private let maskLayer = CALayer()
     private var observation: AnyCancellable?
+    private weak var activity: MicrophoneActivity?
     private var level: CGFloat = 0
     private var status: PiPMicrophoneStatus = .muted
     private var hasSignal = false
@@ -125,6 +126,8 @@ final class MicrophoneActivityView: UIView {
     }
     required init?(coder: NSCoder) { nil }
     func bind(_ model: MicrophoneActivity) {
+        guard activity !== model else { return }
+        activity = model
         observation = Publishers.CombineLatest3(model.$level, model.$status, model.$hasSignal)
             .sink { [weak self] level, status, hasSignal in
                 // Published emits before the model stores the new value.

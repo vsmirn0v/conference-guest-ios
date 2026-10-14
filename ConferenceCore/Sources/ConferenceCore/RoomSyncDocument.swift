@@ -27,6 +27,8 @@ public struct SyncedRoom: Codable, Equatable, Sendable {
     public var lastJoined: SyncValue<Date>
     public var hasBeenJoined: SyncValue<Bool>?
     public var engine: SyncValue<MeetingEngineKind>?
+    /// Raw identifiers preserve new engine evidence without breaking older enum decoders.
+    public var engineIdentifier: SyncValue<String>?
     public var latestInvitationURL: SyncValue<URL>?
     // Editing a stale room cannot revive a deletion. Only an explicit visit/undo can.
     public var exists: SyncValue<Bool>
@@ -35,6 +37,7 @@ public struct SyncedRoom: Codable, Equatable, Sendable {
         ([title.version, alias.version, starred.version, lastJoined.version, exists.version] +
             (favoritePosition.map { [$0.version] } ?? []) +
             (hasBeenJoined.map { [$0.version] } ?? []) + (engine.map { [$0.version] } ?? []) +
+            (engineIdentifier.map { [$0.version] } ?? []) +
             (latestInvitationURL.map { [$0.version] } ?? []))
             .map(\.counter).max() ?? 0
     }
@@ -46,6 +49,7 @@ public struct SyncedRoom: Codable, Equatable, Sendable {
         lastJoined = .init(room.lastJoined, version: version); exists = .init(true, version: version)
         hasBeenJoined = room.hasBeenJoined.map { .init($0, version: version) }
         engine = room.engine?.persistenceHint.map { .init($0, version: version) }
+        engineIdentifier = room.engine.map { .init($0.rawValue, version: version) }
         latestInvitationURL = room.latestInvitationURL.map { .init($0, version: version) }
     }
     public var room: RecentRoom {
@@ -53,9 +57,14 @@ public struct SyncedRoom: Codable, Equatable, Sendable {
                                 identifier: identifier, isStarred: starred.value, lastJoined: lastJoined.value)
         result.alias = alias.value
         result.favoritePosition = favoritePosition?.value
-        result.hasBeenJoined = hasBeenJoined?.value; result.engine = engine?.value
+        result.hasBeenJoined = hasBeenJoined?.value; result.engine = resolvedEngine
         result.latestInvitationURL = latestInvitationURL?.value
         return result
+    }
+    private var resolvedEngine: MeetingEngineKind? {
+        guard let raw = engineIdentifier, let known = MeetingEngineKind(rawValue: raw.value) else { return engine?.value }
+        if let engine, raw.version < engine.version { return engine.value }
+        return known
     }
     public func merging(_ other: Self) -> Self {
         guard id == other.id else { return self }
@@ -73,6 +82,9 @@ public struct SyncedRoom: Codable, Equatable, Sendable {
             result.hasBeenJoined = .init(true, version: other.lastJoined.version)
         }
         if let incoming = other.engine { result.engine = engine?.merging(incoming) ?? incoming }
+        if let incoming = other.engineIdentifier {
+            result.engineIdentifier = engineIdentifier?.merging(incoming) ?? incoming
+        }
         if let incoming = other.latestInvitationURL {
             result.latestInvitationURL = latestInvitationURL?.merging(incoming) ?? incoming
         }
@@ -140,6 +152,9 @@ public struct RoomSyncDocument: Codable, Equatable, Sendable {
             if let position = room.favoritePosition { existing.favoritePosition = .init(position, version: version) }
         }
         if let engine = room.engine?.persistenceHint, engine != existing.engine?.value { existing.engine = .init(engine, version: version) }
+        if let engine = room.engine, engine != existing.room.engine || existing.engineIdentifier == nil {
+            existing.engineIdentifier = .init(engine.rawValue, version: version)
+        }
         if let url = room.latestInvitationURL, url != existing.latestInvitationURL?.value {
             existing.latestInvitationURL = .init(url, version: version)
         }

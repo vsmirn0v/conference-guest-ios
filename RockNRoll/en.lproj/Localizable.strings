@@ -818,3 +818,6 @@
 "Ended" = "Ended";
 "Sending %@…" = "Sending %@…";
 "Could not send %@" = "Could not send %@";
+"Jam %@" = "Jam %@";
+"OK" = "OK";
+"Try again" = "Try again";

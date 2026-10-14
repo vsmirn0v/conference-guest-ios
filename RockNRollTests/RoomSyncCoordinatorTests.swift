@@ -270,4 +270,24 @@ final class RoomSyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(room.alias.value, "Changed during upload")
         XCTAssertEqual(coordinator.status, "Up to date")
     }
+
+    func testLocalSaveRetryPersistsWhileCloudSyncIsOff() throws {
+        let cloud = Cloud(), state = Storage()
+        let (history, coordinator) = replica(cloud, state: state)
+        state.failing = true
+        let url = visit(history)
+        XCTAssertNotNil(coordinator.storageWarning)
+        XCTAssertNil(state.data)
+        state.failing = false
+        coordinator.retryLocalSave()
+        XCTAssertNil(coordinator.storageWarning)
+        let restored = try XCTUnwrap(state.data)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: restored) as? [String: Any])
+        let document = try XCTUnwrap(payload["document"] as? [String: Any])
+        let rooms = try XCTUnwrap(document["rooms"] as? [String: Any])
+        XCTAssertNotNil(rooms[url.absoluteString])
+        XCTAssertFalse(coordinator.enabled)
+        XCTAssertEqual(cloud.saves, 0)
+        XCTAssertTrue(cloud.receivedTokens.isEmpty)
+    }
 }

@@ -7,6 +7,40 @@ import XCTest
 
 @MainActor
 final class SessionOwnershipTests: XCTestCase {
+    func testObservedHoldCompletesWorkerRecoveryWhenUnholdDelegateIsMissing() async throws {
+        for competitorArrives in [false, true] {
+            let queue = DispatchQueue(label: "test.held-audio-recovery")
+            let worker = AudioSessionWorker(queue: queue, activate: {}, deactivate: {})
+            var snapshot: [SystemCallCoordinator.ObservedCall] = []
+            let calls = SystemCallCoordinator(transactionRequester: { _, done in done(nil) },
+                callSnapshot: { snapshot }, sessionWorker: worker)
+            var holds: [Bool] = [], muteChanges = 0
+            calls.onHoldChanged = { holds.append($0) }; calls.onMuteChanged = { _ in muteChanges += 1 }
+            calls.start(); calls.markConnected()
+            let id = try XCTUnwrap(calls.callID)
+            let provider = CXProvider(configuration: SystemCallCoordinator.providerConfiguration())
+            snapshot = [.init(id: id, connected: true, held: false)]
+            calls.provider(provider, didActivate: .sharedInstance())
+            snapshot = [.init(id: id, connected: true, held: true)]
+            calls.provider(provider, perform: HoldAction(call: id, onHold: true))
+            calls.provider(provider, didDeactivate: .sharedInstance())
+            XCTAssertEqual(holds, [true]); XCTAssertFalse(calls.canRestoreAudio)
+            snapshot = [.init(id: id, connected: true, held: false)]
+            let activated = expectation(description: "worker recovery")
+            activated.isInverted = competitorArrives
+            calls.onActivated = { activated.fulfill() }
+            queue.suspend()
+            XCTAssertFalse(try calls.reactivateAudioIfPossible(), "Grant is asynchronous")
+            if competitorArrives { snapshot.append(.init(id: UUID(), connected: true, held: false)) }
+            queue.resume()
+            await fulfillment(of: [activated], timeout: competitorArrives ? 0.15 : 2)
+            XCTAssertEqual(calls.canRestoreAudio, !competitorArrives)
+            XCTAssertEqual(holds, competitorArrives ? [true] : [true, false])
+            XCTAssertEqual(calls.callID, id); XCTAssertEqual(muteChanges, 0)
+            calls.end(); provider.invalidate()
+        }
+    }
+
     func testFreshNativeInterruptionCannotReuseFailedCompetitorRecovery() throws {
         var snapshot: [SystemCallCoordinator.ObservedCall] = []
         var reject = false

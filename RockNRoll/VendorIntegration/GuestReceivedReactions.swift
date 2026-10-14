@@ -144,11 +144,10 @@ final class GuestReceivedReactions {
     enum Source { case delegate, transport }
     private(set) var isObserving = false
     private var transportObserving = false
-    private(set) var receivedCount = 0
-    private(set) var lastReceived: GuestReceivedReaction?
-    private(set) var receivedByKind: [MeetingReaction: Int] = [:]
     var onCapabilityChanged: ((Bool) -> Void)?
     #if DEBUG
+    private(set) var receivedCount = 0
+    private(set) var receivedByKind: [MeetingReaction: Int] = [:]
     static weak var currentForTesting: GuestReceivedReactions?
     func knowsRemoteParticipantForTesting(_ id: String) -> Bool { participant(id)?.isLocal == false }
     private var publicViewCount = 0
@@ -187,6 +186,12 @@ final class GuestReceivedReactions {
     }
     func refresh() {
         guard valid(), let root else { detach(); return }
+        // Modern transport is authoritative. Rediscover legacy delegates only
+        // after it ends, so a connected room does not rescan UIKit every 2s.
+        if preferModernProtocol {
+            if tap != nil { detach() }
+            return
+        }
         var matches: [ObjectIdentifier: NSObject] = [:]
         #if DEBUG
         publicViewCount = 0
@@ -245,9 +250,9 @@ final class GuestReceivedReactions {
         }
         #if DEBUG
         if sender == nil { unknownParticipantCount += 1 }
-        #endif
-        receivedCount += 1; lastReceived = reaction
+        receivedCount += 1
         receivedByKind[reaction.kind, default: 0] += 1
+        #endif
         // Receipt precedes presentation. Unknown names may be resolved by exact ID later.
         onEvent?(reaction, sender?.name)
         if present { onReaction(reaction.kind, sender?.name ?? L("Participant")) }

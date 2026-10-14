@@ -29,6 +29,41 @@ public struct RecentRoom: Codable, Equatable, Identifiable, Sendable {
         self.favoritePosition = nil
         self.hasBeenJoined = nil; self.engine = nil; self.latestInvitationURL = nil
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case invitationURL, title, alias, identifier, isStarred, lastJoined, favoritePosition
+        case hasBeenJoined, engine, engineIdentifier, latestInvitationURL
+    }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        invitationURL = try values.decode(URL.self, forKey: .invitationURL)
+        title = try values.decode(String.self, forKey: .title)
+        alias = try values.decodeIfPresent(String.self, forKey: .alias)
+        identifier = try values.decode(String.self, forKey: .identifier)
+        isStarred = try values.decode(Bool.self, forKey: .isStarred)
+        lastJoined = try values.decode(Date.self, forKey: .lastJoined)
+        favoritePosition = try values.decodeIfPresent(Int64.self, forKey: .favoritePosition)
+        hasBeenJoined = try values.decodeIfPresent(Bool.self, forKey: .hasBeenJoined)
+        latestInvitationURL = try values.decodeIfPresent(URL.self, forKey: .latestInvitationURL)
+        let raw = try values.decodeIfPresent(String.self, forKey: .engineIdentifier)
+        let legacy = try values.decodeIfPresent(MeetingEngineKind.self, forKey: .engine)
+        engine = raw.flatMap(MeetingEngineKind.init(rawValue:)) ?? legacy
+    }
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(invitationURL, forKey: .invitationURL)
+        try values.encode(title, forKey: .title)
+        try values.encodeIfPresent(alias, forKey: .alias)
+        try values.encode(identifier, forKey: .identifier)
+        try values.encode(isStarred, forKey: .isStarred)
+        try values.encode(lastJoined, forKey: .lastJoined)
+        try values.encodeIfPresent(favoritePosition, forKey: .favoritePosition)
+        try values.encodeIfPresent(hasBeenJoined, forKey: .hasBeenJoined)
+        try values.encodeIfPresent(latestInvitationURL, forKey: .latestInvitationURL)
+        // Old readers only know two enum cases; they ignore the new raw field.
+        try values.encodeIfPresent(engine?.persistenceHint, forKey: .engine)
+        try values.encodeIfPresent(engine?.rawValue, forKey: .engineIdentifier)
+    }
 }
 
 public struct RecentRooms: Codable, Equatable, Sendable {
@@ -47,13 +82,14 @@ public struct RecentRooms: Codable, Equatable, Sendable {
 
     public mutating func record(url: URL, title: String, identifier: String,
                                 at date: Date = Date(), engine: MeetingEngineKind? = nil) {
-        let engine = engine?.persistenceHint
         let cleanTitle = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
         if let index = matchingIndex(url, engine: engine) {
             items[index].lastJoined = date
             items[index].hasBeenJoined = true
             items[index].engine = engine ?? items[index].engine
-            if items[index].invitationURL != url { items[index].latestInvitationURL = url }
+            // Keep the successful invitation even when it returns to the
+            // immutable identity URL, so cloud replicas can replace old tokens.
+            items[index].latestInvitationURL = url
             if !cleanTitle.isEmpty { items[index].title = cleanTitle }
         } else {
             items.append(RecentRoom(invitationURL: url,
@@ -68,8 +104,8 @@ public struct RecentRooms: Codable, Equatable, Sendable {
     /// stores the real save time for schema-1 readers; lastVisit stays nil.
     public mutating func saveFavorite(url: URL, title: String, identifier: String,
                                       engine: MeetingEngineKind? = nil, at date: Date = Date()) {
-        let engine = engine?.persistenceHint
         if let index = matchingIndex(url, engine: engine) {
+            items[index].engine = engine ?? items[index].engine
             if !items[index].isStarred { toggleStar(for: items[index].invitationURL) }
             return
         }
@@ -87,8 +123,16 @@ public struct RecentRooms: Codable, Equatable, Sendable {
 
     private func matchingIndex(_ url: URL, engine: MeetingEngineKind?) -> Int? {
         if let index = items.firstIndex(where: { $0.invitationURL == url || $0.joinURL == url }) { return index }
-        guard let identity = MeetingRoomIdentity(url, engine: engine) else { return nil }
-        return items.firstIndex { MeetingRoomIdentity($0.joinURL, engine: $0.engine) == identity }
+        // Legacy records did not retain newer engines. A caller's verified
+        // engine can match their room without guessing an engine from its path.
+        let matches = items.indices.filter { index in
+            let room = items[index]
+            guard let identity = MeetingRoomIdentity(url, engine: engine ?? room.engine) else { return false }
+            return MeetingRoomIdentity(room.joinURL, engine: room.engine ?? engine) == identity
+        }
+        let kinds = Set(matches.compactMap { MeetingRoomIdentity(items[$0].joinURL, engine: items[$0].engine)?.engine })
+        guard engine != nil || kinds.count <= 1 else { return nil }
+        return matches.first
     }
 
     public mutating func updateTitle(for url: URL, title: String) {
@@ -143,7 +187,6 @@ public struct RecentRooms: Codable, Equatable, Sendable {
     }
 
     private mutating func normalize() {
-        for index in items.indices { items[index].engine = items[index].engine?.persistenceHint }
         items.sort {
             if $0.isStarred != $1.isStarred { return $0.isStarred }
             if $0.isStarred {

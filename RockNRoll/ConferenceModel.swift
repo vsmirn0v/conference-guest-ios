@@ -67,6 +67,7 @@ final class ConferenceModel: ObservableObject {
         applyingSyncedName = false
     }
     #if DEBUG
+    var awaitingNameEngineForTesting: MeetingEngineKind? { joinAwaitingName?.engineKind }
     func installSyncFixture(_ coordinator: RoomSyncCoordinator) {
         sync = coordinator
         coordinator.onRemoteName = { [weak self] name in self?.applySyncedName(name) }
@@ -84,7 +85,10 @@ final class ConferenceModel: ObservableObject {
         let target: JoinDestination
         let name: String
         let quiet: Bool
+        let knownEngine: MeetingEngineKind?
     }
+    /// History rejoin may substitute a rotated calendar invitation before discovery.
+    private var rejoinEvidence: (invitation: URL, engine: MeetingEngineKind)?
     private weak var container: UIViewController?
     private var pendingTarget: JoinDestination?
     private struct PendingInvitation { let target: JoinDestination; let autoJoin: Bool }
@@ -96,7 +100,7 @@ final class ConferenceModel: ObservableObject {
     private var sessionGeneration: UInt64 = 0
     private var endpointCache: [URL: URL] = [:]
     private var guestInvitations: [URL] {
-        history.rooms.filter { $0.engine != .community && (try? TelemostTarget.parse($0.joinURL.absoluteString)) == nil }.map(\.joinURL)
+        JoinDestination.guestInvitations(in: history.rooms)
     }
     private let websitePresenter = MeetingWebsitePresenter()
     private var websiteLinkAwaitingSelection: URL?
@@ -341,7 +345,10 @@ final class ConferenceModel: ObservableObject {
             statusIsError = true
             return
         }
-        let request = JoinRequest(target: target, name: name, quiet: quiet)
+        let knownEngine = rejoinEvidence.flatMap { $0.invitation == target.invitationURL ? $0.engine : nil } ??
+            history.matching(target.invitationURL)?.engine
+        let request = JoinRequest(target: target, name: name, quiet: quiet, knownEngine: knownEngine)
+        rejoinEvidence = nil
         sessionGeneration &+= 1
         let generation = sessionGeneration
         terminalEventHandled = false
@@ -365,35 +372,21 @@ final class ConferenceModel: ObservableObject {
                     let detection = try await engineDetector.detect(guest.invitationURL)
                     try Task.checkCancellation()
                     guard sessionGeneration == generation else { return }
-                    switch detection {
-                    case .verified(.guest(let endpoint)):
-                        endpointCache[guest.originURL] = endpoint
-                    case .verified(.community):
-                        destination = .jam(try JamTarget.parseCompatibleInvitation(guest.invitationURL.absoluteString))
-                    case .verified(.telemost):
-                        destination = .telemost(try TelemostTarget.parse(guest.invitationURL.absoluteString))
-                    case .verified(.trueconf):
-                        destination = .trueconf(try TrueConfTarget.parse(guest.invitationURL.absoluteString))
-                    case .ambiguous:
-                        if let known = history.matching(guest.invitationURL)?.engine {
-                            if known == .community {
-                                destination = .jam(try JamTarget.parseCompatibleInvitation(guest.invitationURL.absoluteString))
-                            } else { endpointCache[guest.originURL] = try await resolver.resolve(for: guest) }
-                        } else {
-                            joinTask = nil; phase = .idle; activeRoute = nil
-                            companionAudioPaused = false; liveSessionID = nil
-                            engineChoiceRequest = request
-                            endpointCache.removeValue(forKey: guest.originURL)
-                            engineSelection = MeetingEngineSelection(invitation: guest.invitationURL)
-                            status = L("This website supports two meeting engines. Choose how to join.")
-                            return
-                        }
-                    case .unknown:
-                        // Foreground guest joins retain their existing, longer discovery
-                        // retry window. A failed short probe never proves another engine.
-                        if history.matching(guest.invitationURL)?.engine == .community {
-                            destination = .jam(try JamTarget.parseCompatibleInvitation(guest.invitationURL.absoluteString))
-                        } else { endpointCache[guest.originURL] = try await resolver.resolve(for: guest) }
+                    guard let resolved = try JoinDestination.resolve(guest.invitationURL, detection: detection,
+                                                                     knownEngine: request.knownEngine) else {
+                        joinTask = nil; phase = .idle; activeRoute = nil
+                        companionAudioPaused = false; liveSessionID = nil
+                        engineChoiceRequest = request
+                        endpointCache.removeValue(forKey: guest.originURL)
+                        engineSelection = MeetingEngineSelection(invitation: guest.invitationURL)
+                        status = L("This website supports two meeting engines. Choose how to join.")
+                        return
+                    }
+                    destination = resolved
+                    if case .verified(.guest(let endpoint)) = detection { endpointCache[guest.originURL] = endpoint }
+                    else if case .guest(let target) = resolved {
+                        // An unresolved guest route keeps the longer discovery retry.
+                        endpointCache[target.originURL] = try await resolver.resolve(for: target)
                     }
                 }
                 try Task.checkCancellation()
@@ -564,7 +557,9 @@ final class ConferenceModel: ObservableObject {
     }
 
     func rejoin(_ room: RecentRoom) {
-        receive(url: calendar.preferredInvitation(for: room))
+        let invitation = calendar.preferredInvitation(for: room)
+        rejoinEvidence = calendar.preferredEngine(for: room).map { (invitation, $0) }
+        receive(url: invitation)
         if !isJoining && !isInConference && !isLeaving { join() }
     }
 
@@ -574,8 +569,7 @@ final class ConferenceModel: ObservableObject {
         guard let invitation = meeting.invitation else { calendar.choosingMeeting = meeting; return }
         calendar.suppressAutomaticJoin(for: meeting)
         do {
-            let target: JoinDestination = meeting.engine == .community ?
-                .jam(try JamTarget.parseCompatibleInvitation(invitation.absoluteString)) : try destination(for: invitation.absoluteString)
+            let target = try destination(for: invitation.absoluteString, verifiedEngine: meeting.engine)
             receive(target: target, autoJoin: true)
         } catch { status = error.localizedDescription; statusIsError = true }
     }
@@ -702,7 +696,13 @@ final class ConferenceModel: ObservableObject {
         return value?.isEmpty == false ? value : nil
     }
 
-    private func destination(for text: String) throws -> JoinDestination {
+    private func destination(for text: String, verifiedEngine: MeetingEngineKind? = nil) throws -> JoinDestination {
+        if let verifiedEngine {
+            guard let invitation = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                throw JoinDestinationError.invalidLink
+            }
+            return try JoinDestination.verified(invitation, engine: verifiedEngine)
+        }
         if let pending = joinAwaitingName,
            pending.invitationURL.absoluteString == text.trimmingCharacters(in: .whitespacesAndNewlines) { return pending }
         let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -737,7 +737,7 @@ final class ConferenceModel: ObservableObject {
                          name: liveName, deviceLabel: continuation.deviceLabel,
                          isSharingScreen: activeEngine?.isSharingScreen == true,
                          supportsCompanion: { if case .jam = activeRoute { return true }; return false }(),
-                         audioPaused: companionAudioPaused)
+                         audioPaused: companionAudioPaused, engine: activeRoute?.engineKind)
     }
     func holdForContinuation(_ id: UUID, held: Bool, restoreSending: Bool) async throws {
         guard liveSessionID == id, let activeEngine else { throw ContinuationError.expired }
@@ -760,7 +760,7 @@ final class ConferenceModel: ObservableObject {
             continuation.targetDidFail(); return nil
         }
         do {
-            let target = try destination(for: jam.invitation.absoluteString)
+            let target = try destination(for: jam.invitation.absoluteString, verifiedEngine: jam.engine)
             set(target: target); startJoin(target, nameOverride: jam.name, quiet: quiet)
         } catch { status = error.localizedDescription; statusIsError = true; continuation.targetDidFail() }
         return isJoining ? liveSessionID : nil

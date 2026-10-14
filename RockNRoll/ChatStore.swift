@@ -31,7 +31,9 @@ final class ChatStore: ObservableObject {
     private var hasSnapshot = false
     private var newestTimestamp: Date?
     @Published private(set) var unreadCoverageIsLimited = false
+    #if DEBUG
     var retainedIdentityCount: Int { seenMessageIDs.count }
+    #endif
 
     private func remember(_ id: String) -> Bool {
         guard seenMessageIDs.insert(id).inserted else { return false }

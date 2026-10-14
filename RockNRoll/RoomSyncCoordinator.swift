@@ -208,6 +208,10 @@ final class RoomSyncCoordinator: ObservableObject {
         if persist() { requestSync() }
     }
 
+    func retryLocalSave() {
+        if persist() { requestSync(immediate: true) }
+    }
+
     @discardableResult private func persist() -> Bool {
         do {
             try storage.write(JSONEncoder().encode(state))

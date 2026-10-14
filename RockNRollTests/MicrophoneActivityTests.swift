@@ -4,6 +4,25 @@ import XCTest
 
 @MainActor
 final class MicrophoneActivityTests: XCTestCase {
+    func testGlyphRebindsFromPrivateToLiveModelWithoutOldModelUpdates() {
+        let privateMeter = MicrophoneActivity(), liveMeter = MicrophoneActivity()
+        privateMeter.setStatus(.on); privateMeter.receive(rms: 1)
+        let view = MicrophoneActivityView(); view.frame = CGRect(x: 0, y: 0, width: 28, height: 36)
+        view.bind(privateMeter); view.layoutIfNeeded()
+        let renderer = UIGraphicsImageRenderer(bounds: view.bounds)
+        func pixels() -> Data? { renderer.image { view.layer.render(in: $0.cgContext) }.pngData() }
+        let privatePixels = pixels()
+        view.bind(liveMeter)
+        let mutedPixels = pixels()
+        XCTAssertNotEqual(privatePixels, mutedPixels)
+        privateMeter.setStatus(.unavailable); privateMeter.receive(rms: 1)
+        XCTAssertEqual(pixels(), mutedPixels, "Old activity cannot render after rebinding")
+        view.bind(liveMeter) // SwiftUI may update repeatedly for the same model.
+        liveMeter.setStatus(.on)
+        for _ in 0..<8 { liveMeter.receive(rms: 1) }
+        XCTAssertNotEqual(pixels(), mutedPixels)
+    }
+
     func testSignalRequiresPublishedAvailabilityAndResetsOnMuteOrHold() async {
         let meter = MicrophoneActivity()
         meter.receive(rms: 0.5)

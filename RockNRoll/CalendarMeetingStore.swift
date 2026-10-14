@@ -143,15 +143,15 @@ final class CalendarMeetingStore: ObservableObject {
                         var unresolvedConflict = false
                         let supported = group.compactMap { url -> (URL, MeetingEngineKind)? in
                             let kind: MeetingEngineKind?
-                            switch proofs[probeKey(url)] ?? .unknown {
+                            switch proofs[self.probeKey(url)] ?? .unknown {
                             case .verified(.guest): kind = .guest
                             case .verified(.community): kind = .community
                             case .verified(.telemost): kind = .telemost
                             case .verified(.trueconf): kind = .trueconf
                             case .ambiguous:
-                                kind = knownEngine(url)
+                                kind = self.knownEngine(url)
                                 unresolvedConflict = unresolvedConflict || kind == nil
-                            case .unknown: kind = knownEngine(url)
+                            case .unknown: kind = self.knownEngine(url)
                             }
                             return kind.map { (url, $0) }
                         }
@@ -218,9 +218,15 @@ final class CalendarMeetingStore: ObservableObject {
         persist(); choosingMeeting = nil; refresh()
     }
     func forgetBindings() { state.bindings = [:]; persist(); refresh() }
+    private func meeting(matching invitation: URL, engine: MeetingEngineKind?, in candidates: [CalendarMeeting]) -> CalendarMeeting? {
+        candidates.first { candidate in
+            candidate.hasResolvedInvitation &&
+                MeetingRoomIdentity(invitation, engine: engine ?? candidate.engine) == candidate.roomIdentity
+        }
+    }
     func subtitle(for room: RecentRoom) -> String? {
-        guard enabled, access == .allowed, let key = MeetingRoomIdentity(room.joinURL, engine: room.engine) else { return nil }
-        if let meeting = upcoming.first(where: { $0.roomIdentity == key }) {
+        guard enabled, access == .allowed else { return nil }
+        if let meeting = meeting(matching: room.joinURL, engine: room.engine, in: upcoming) {
             return CalendarMeetingPresentation.subtitle(meeting, at: now, roomTitle: room.displayTitle)
         }
         if let visit = state.visits[room.id] {
@@ -229,24 +235,24 @@ final class CalendarMeetingStore: ObservableObject {
         return nil
     }
     func timing(for room: RecentRoom) -> String? {
-        guard enabled, access == .allowed,
-              let key = MeetingRoomIdentity(room.joinURL, engine: room.engine) else { return nil }
-        if let meeting = upcoming.first(where: { $0.roomIdentity == key }) {
+        guard enabled, access == .allowed else { return nil }
+        if let meeting = meeting(matching: room.joinURL, engine: room.engine, in: upcoming) {
             return CalendarMeetingPresentation.timeRange(meeting)
         }
         return state.visits[room.id].map { $0.start.formatted(date: .abbreviated, time: .shortened) }
     }
     func noteJoined(_ room: RecentRoom, invitation: URL) {
-        guard let key = MeetingRoomIdentity(invitation, engine: room.engine),
-              let meeting = meetings.first(where: { $0.isScheduledNow(Date()) &&
-                  $0.roomIdentity == key }) else { return }
+        guard let meeting = meeting(matching: invitation, engine: room.engine,
+                                    in: meetings.filter { $0.isScheduledNow(Date()) }) else { return }
         state.visits[room.id] = Visit(title: meeting.title, start: meeting.start, end: meeting.end)
         state.suppressed[meeting.id] = meeting.end
         persist()
     }
     func preferredInvitation(for room: RecentRoom) -> URL {
-        guard let key = MeetingRoomIdentity(room.joinURL, engine: room.engine) else { return room.joinURL }
-        return upcoming.first { $0.roomIdentity == key }?.invitation ?? room.joinURL
+        meeting(matching: room.joinURL, engine: room.engine, in: upcoming)?.invitation ?? room.joinURL
+    }
+    func preferredEngine(for room: RecentRoom) -> MeetingEngineKind? {
+        meeting(matching: room.joinURL, engine: room.engine, in: upcoming)?.engine ?? room.engine
     }
     func cancelAutomaticJoin(suppress: Bool = false) {
         if suppress, let meeting = joiningMeeting { state.suppressed[meeting.id] = meeting.end; persist() }

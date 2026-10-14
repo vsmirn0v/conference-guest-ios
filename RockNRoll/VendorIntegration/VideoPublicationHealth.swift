@@ -1,5 +1,25 @@
 import Foundation
 
+/// A freshly resumed active encoder may report zero before its first frame.
+/// Require stable, repeated evidence rather than treating one sample as failure.
+struct VideoPublicationStartup {
+    struct Sample { let stream: String; let encoded: Int64; var bandwidthLimited = false }
+    enum Result: Equatable { case waiting, working, stalled }
+    private var zeroStream: String?
+    private var zeroSince: TimeInterval?
+    mutating func reset() { zeroStream = nil; zeroSince = nil }
+    mutating func observe(_ sample: Sample, at now: TimeInterval) -> Result {
+        guard now.isFinite, sample.encoded >= 0, !sample.stream.isEmpty else { reset(); return .waiting }
+        if sample.encoded > 0 { reset(); return .working }
+        if sample.bandwidthLimited { reset(); return .waiting }
+        guard zeroStream == sample.stream, let previous = zeroSince, now >= previous else {
+            zeroStream = sample.stream; zeroSince = now
+            return .waiting
+        }
+        return now - previous >= 4 ? .stalled : .waiting
+    }
+}
+
 /// Require advancing input and a sustained encoding stall. Capture pauses,
 /// bandwidth suspension, retired streams and counter resets are not failures.
 struct VideoPublicationHealth {

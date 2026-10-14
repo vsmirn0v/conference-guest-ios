@@ -355,9 +355,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         leave.configuration?.baseForegroundColor = .systemRed
 
         microphone.addAction(UIAction { [weak self] _ in
-            guard canChangeMedia() else { return }
-            let turnOn = state.map { $0.microphoneState != .on } ?? !(self?.workspace.microphoneOn ?? false)
-            self?.studio?.releasePrivateMicrophone()
+            guard let self, canChangeMedia(), !self.isHeld,
+                  self.studio?.held != true, self.microphone.isEnabled else { return }
+            let turnOn = state.map { $0.microphoneState != .on } ?? !self.workspace.microphoneOn
+            self.studio?.releasePrivateMicrophone()
             onMicrophoneState(turnOn)
             coordinator?.toggleMicrohone(isOn: turnOn)
         }, for: .touchUpInside)
@@ -731,6 +732,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         return delivery
     }
 
+    #if DEBUG
     func showStageFrame(_ sample: CMSampleBuffer, rotation: Int, mirrored: Bool = false) {
         guard stageName != nil, stageActive, !stageView.isHidden else { return }
         stageVideo.mirrored = mirrored
@@ -739,6 +741,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             stageStatus.isHidden = true
         }
     }
+    #endif
 
     func setWaitingForOthers(_ waiting: Bool) {
         isWaitingForOthers = waiting
@@ -844,9 +847,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         return hit
     }
 
+    #if DEBUG
     func showNotices(_ items: [InCallNotice]) {
         meetingStatus.updateNotices(items)
     }
+    #endif
 
     func setHeld(_ held: Bool) {
         studio?.held = held
