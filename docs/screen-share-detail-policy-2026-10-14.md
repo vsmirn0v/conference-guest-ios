@@ -5,14 +5,14 @@ The installed build 81 sends Mac screen shares through a 1920×1080 capture/comp
 ## Selected implementation
 
 - Identify screen tracks from the current joined publisher's `SCREEN_SHARE` signaling, independently of camera dimensions, participant names or viewing mode.
-- Set their public RTP degradation preference to `maintainResolution`. Retain codec, bitrate limits, active layers, network priority and transaction identity. Congestion control may lower update rate to retain text pixels.
+- Atomically set their native RTP degradation preference to `maintainResolution`. Retain codec, bitrate limits, active layers, network priority and transaction identity. Congestion control may lower update rate to retain text pixels.
 - Bind a sender even when signaling precedes AddTrack or follows its first parameter write. Retry for at most two seconds; later SDK parameter writes retain the policy. Retired generations cannot configure a replacement meeting.
-- For Mac guest H.264 screen encoders, use VideoToolbox's quality preference and a normal-budget maximum frame QP of 24. Below 0.03125 bits per source pixel per second, permit the upstream QP 39 to prevent delivery stalls; a 25% recovery margin restores detail without boundary oscillation. Cameras, iPhone/iPad sending and other engines retain existing encoder settings. An annotated Presenter canvas qualifies as a screen share.
+- For Mac guest H.264 screen encoders, use VideoToolbox's quality preference and a normal-budget maximum frame QP of 24. Below 0.0625 bits per source pixel per second, permit the upstream QP 39 to prevent delivery stalls; a 25% recovery margin restores detail without boundary oscillation. Cameras, iPhone/iPad sending and other engines retain existing encoder settings. An annotated Presenter canvas qualifies as a screen share.
 - The native extension is per encoder, rejects camera mode, invalid limits and released sessions, and keeps settings across compression-session recreation. Unsupported properties roll back to the working upstream defaults. Older binaries without the extension keep working.
 - Recreate the hardware compression session once when crossing the budget boundary, with a fresh reference frame. VideoToolbox acknowledged a dynamic QP update in testing but did not restore sharp output until session recreation; ordinary bitrate updates do not recreate it.
 - Keep VP9 screen sending as a Debug-only experiment. Incoming codec negotiation is unchanged.
 
-The native extension is in `Experiments/GuestSDKRebuild/patches/0015-screen-detail-encoder.patch`. Both arm64 device and Simulator slices include the complete preceding audio/recovery patch series and this extension. The normal dependency selects `guest-native-webrtc-150.7871.03-r4`, SHA-256 `cc70d45677253e37d95220598a9643dfaad472384b4dc01b91e3f3c39d9e367a`. Embedded notices and provenance identify the source, every patch and recipe, and both binaries.
+The native extension is in `Experiments/GuestSDKRebuild/patches/0015-screen-detail-encoder.patch`. Both arm64 device and Simulator slices include the complete preceding audio/recovery patch series and this extension, the atomic sender API and serialized audio ownership. The normal dependency selects `guest-native-webrtc-150.7871.03-r5`, SHA-256 `ca2a0bbc319d1a9ea5cf9937339784139c8f59e362d4211ebec8d2a30ba49be3`. Embedded notices and provenance identify the source, every patch and recipe, and both binaries.
 
 ## Real SDK comparison
 
@@ -69,3 +69,19 @@ The normal app package resolution was also checked: both resolved slices match t
 Mac Power Profiler rejected recording because it does not support macOS. Similar app CPU and confirmed hardware encoding do not establish equal or lower whole-device energy. No physical iPhone battery comparison was run for this change. The stricter encoder policy is intentionally Mac-only. Real packet-loss/reordering and slow external servers remain separate from the sender-budget test.
 
 Parallel development uses the normal app bundle identifier. The final isolated Mac test uses a separate identifier but retains the App Group entitlements: the SDK's share sender needs its shared transport container. Removing those entitlements causes a ReplayKit transport startup failure and does not qualify encoding.
+
+## Final integration review
+
+See [review and corrections](screen-share-review-2026-10-14.md) and
+[build 82 qualification](release-0.2.0-build82.md). The final calibrated native
+trial improved static/scrolling/annotated text to 54.46/54.57/54.20 dB with
+4.86 fps and 56-58% of one CPU core. The matched upstream hardware reference
+measured 36-37 dB and similar CPU. The 300 kb/s phase retained 4K, delivered
+1.53 encoded fps at 264 kb/s, and restored 53.56 dB/4.46 fps after the cap
+was lifted. These supersede the earlier constrained-policy results above.
+
+The final extension reapplies actual VT rate properties on every reset and
+preserves outstanding SDK RTP transactions. Native RemoteIO lifecycle tests
+are qualified on physical iOS: the Simulator's host CoreAudio stalled during
+those tests, and the Mac production runtime disables trackless reservation.
+The ordinary Mac receiving/publishing path is qualified separately.

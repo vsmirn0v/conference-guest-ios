@@ -14,6 +14,7 @@ final class AudioCoordinator {
     private let prepareSession: @Sendable () throws -> Void
     private let recoveryWindow: Duration
     private let recoveryInterval: Duration
+    private let notifications: NotificationCenter
     private var lease = AudioSessionLease()
     private var observingSession = false
     private var mixingTask: Task<Void, Never>?
@@ -50,15 +51,17 @@ final class AudioCoordinator {
              if session.category != .playAndRecord || session.mode != .videoChat || session.categoryOptions != options {
                  try session.setCategory(.playAndRecord, mode: .videoChat, options: options)
              }
-         }, recoveryWindow: Duration = .seconds(12), recoveryInterval: Duration = .milliseconds(500)) {
+         }, recoveryWindow: Duration = .seconds(12), recoveryInterval: Duration = .milliseconds(500),
+         notifications: NotificationCenter = .default) {
         self.worker = worker
         self.prepareSession = prepareSession
         self.recoveryWindow = recoveryWindow; self.recoveryInterval = recoveryInterval
+        self.notifications = notifications
         if ProcessInfo.processInfo.isiOSAppOnMac {
             macRouteSubscription = MacAudioDevices.shared.$snapshot.dropFirst()
                 .receive(on: DispatchQueue.main).sink { [weak self] _ in self?.onRouteChanged?() }
         }
-        let center = NotificationCenter.default
+        let center = notifications
         for name in [AVAudioSession.interruptionNotification,
                      AVAudioSession.routeChangeNotification,
                      AVAudioSession.mediaServicesWereLostNotification,
@@ -75,7 +78,7 @@ final class AudioCoordinator {
     deinit {
         lease.invalidate(); configurationLease?.invalidate(); routeLease?.invalidate()
         mixingTask?.cancel(); resetTask?.cancel(); startupTask?.cancel(); outputRecoveryTask?.cancel()
-        observers.forEach(NotificationCenter.default.removeObserver)
+        observers.forEach(notifications.removeObserver)
     }
 
     func beginSession() {

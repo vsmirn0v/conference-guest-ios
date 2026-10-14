@@ -19,7 +19,10 @@ for item in metadata['AvailableLibraries']:
     binary = framework / item['LibraryIdentifier'] / item['LibraryPath'] / 'WebRTC'
     symbols = subprocess.check_output(['nm', '-gU', str(binary)], text=True)
     for required in ('RTCSetConferencePlayoutReserved', 'RTCSetApplicationInputMuteIntent',
-                     'RTCApplicationInputMuteReconfiguring'):
+                     'RTCApplicationInputMuteReconfiguring',
+                     'RTCConfigureScreenShareEncoderQuality',
+                     'RTCGetScreenShareEncoderRates',
+                     'RTCSetScreenShareSenderResolution'):
         if '_' + required not in symbols:
             raise SystemExit(f'Required native API is missing: {required}')
 with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as target:

@@ -64,7 +64,11 @@ final class OutgoingMediaExperimentTests: XCTestCase {
             XCTAssertEqual(options.defaultAudioCaptureOptions, baseline.defaultAudioCaptureOptions)
             XCTAssertEqual(options.defaultAudioPublishOptions, baseline.defaultAudioPublishOptions)
             XCTAssertEqual(options.defaultScreenShareCaptureOptions, baseline.defaultScreenShareCaptureOptions)
-            XCTAssertEqual(options.suspendLocalVideoTracksInBackground, baseline.suspendLocalVideoTracksInBackground)
+            if profile == .production {
+                XCTAssertFalse(options.suspendLocalVideoTracksInBackground, "Production camera must continue in active PiP")
+            } else {
+                XCTAssertEqual(options.suspendLocalVideoTracksInBackground, baseline.suspendLocalVideoTracksInBackground)
+            }
             XCTAssertFalse(options.adaptiveStream)
             XCTAssertEqual(options.defaultVideoPublishOptions.simulcast, profile != .h264SingleLayer)
             XCTAssertEqual(options.dynacast, profile != .reference)

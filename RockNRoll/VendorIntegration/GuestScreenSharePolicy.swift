@@ -31,7 +31,7 @@ final class GuestScreenSharePolicy: @unchecked Sendable {
         lock.lock()
         guard self.generation == generation, tracks.count < 128, tracks.insert(trackID).inserted else { lock.unlock(); return }
         lock.unlock()
-        if bindSenders { bind(trackID, generation: generation, attempts: 10) }
+        if bindSenders && preserveResolution { bind(trackID, generation: generation, attempts: 10) }
     }
     private func bind(_ trackID: String, generation: UUID, attempts: Int) {
         // Signaling may identify the track before AddTrack, or after its first
@@ -43,12 +43,22 @@ final class GuestScreenSharePolicy: @unchecked Sendable {
             guard current else { return }
             for peer in GuestPeerRegistry.snapshot() where peer.connectionState != .closed {
                 guard let sender = peer.senders.first(where: { $0.track?.trackId == trackID && $0.track?.kind == "video" }) else { continue }
-                let parameters = sender.parameters
-                if self.apply(to: parameters, trackID: trackID) { sender.parameters = parameters }
-                return
+                // Native serialization preserves outstanding SDK transactions.
+                // A public parameters getter here would invalidate the SDK's
+                // earlier snapshot, even if our subsequent setter succeeds.
+                if Self.applyNative(to: sender, trackID: trackID) { return }
             }
             if attempts > 1 { self.bind(trackID, generation: generation, attempts: attempts - 1) }
         }
+    }
+    typealias NativeApply = @convention(c) (UnsafeMutableRawPointer, UnsafePointer<CChar>) -> Int32
+    private static let nativeApply: NativeApply? = {
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "RTCSetScreenShareSenderResolution") else { return nil }
+        return unsafeBitCast(symbol, to: NativeApply.self)
+    }()
+    static func applyNative(to sender: RTCRtpSender, trackID: String) -> Bool {
+        guard let nativeApply else { return false }
+        return trackID.withCString { nativeApply(Unmanaged.passUnretained(sender).toOpaque(), $0) == 1 }
     }
     #if DEBUG
     var trackIDsForTesting: Set<String> { lock.lock(); defer { lock.unlock() }; return tracks }

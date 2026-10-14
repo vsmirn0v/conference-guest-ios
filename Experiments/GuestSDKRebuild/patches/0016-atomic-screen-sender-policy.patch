@@ -1,0 +1,111 @@
+diff --git a/pc/BUILD.gn b/pc/BUILD.gn
+index c4847e0..9287c9f 100644
+--- a/pc/BUILD.gn
++++ b/pc/BUILD.gn
+@@ -580,7 +580,7 @@ rtc_source_set("rtp_receiver_proxy") {
+ }
+ 
+ rtc_source_set("rtp_sender_proxy") {
+-  visibility = [ ":*" ]
++  visibility = [ ":*", "//sdk:peerconnectionfactory_base_objc" ]
+   sources = [ "rtp_sender_proxy.h" ]
+   deps = [
+     ":proxy",
+@@ -2046,7 +2046,7 @@ rtc_library("remote_audio_source") {
+ }
+ 
+ rtc_library("rtp_sender") {
+-  visibility = [ ":*" ]
++  visibility = [ ":*", "//sdk:peerconnectionfactory_base_objc" ]
+   sources = [
+     "rtp_sender.cc",
+     "rtp_sender.h",
+diff --git a/sdk/objc/api/peerconnection/RTCRtpSender.h b/sdk/objc/api/peerconnection/RTCRtpSender.h
+index 3609b67..87e5f45 100644
+--- a/sdk/objc/api/peerconnection/RTCRtpSender.h
++++ b/sdk/objc/api/peerconnection/RTCRtpSender.h
+@@ -17,6 +17,10 @@
+ 
+ NS_ASSUME_NONNULL_BEGIN
+ 
++/** Atomic screen-resolution preference update, preserving public transactions.
++ * The expected current track ID guards replacement, audio, and stopped senders. */
++RTC_EXTERN int RTCSetScreenShareSenderResolution(void *sender, const char *track_id);
++
+ RTC_OBJC_EXPORT
+ @protocol RTC_OBJC_TYPE
+ (RTCRtpSender)<NSObject>
+diff --git a/sdk/objc/api/peerconnection/RTCRtpSender.mm b/sdk/objc/api/peerconnection/RTCRtpSender.mm
+index f3135c6..26c9322 100644
+--- a/sdk/objc/api/peerconnection/RTCRtpSender.mm
++++ b/sdk/objc/api/peerconnection/RTCRtpSender.mm
+@@ -9,6 +9,7 @@
+  */
+ 
+ #import "RTCRtpSender+Private.h"
++#import "RTCPeerConnectionFactory+Private.h"
+ 
+ #import "RTCDtmfSender+Private.h"
+ #import "RTCMediaStreamTrack+Private.h"
+@@ -18,6 +19,8 @@
+ #import "helpers/NSString+StdString.h"
+ 
+ #include "api/media_stream_interface.h"
++#include "pc/rtp_sender.h"
++#include "pc/rtp_sender_proxy.h"
+ 
+ @implementation RTC_OBJC_TYPE (RTCRtpSender) {
+   RTC_OBJC_TYPE(RTCPeerConnectionFactory) * _factory;
+@@ -30,6 +33,28 @@ - (NSString *)senderId {
+   return [NSString stringForStdString:_nativeRtpSender->id()];
+ }
+ 
++- (BOOL)conferencePreserveScreenResolution:(NSString *)expectedTrackID {
++  auto native = _nativeRtpSender;
++  auto* thread = _factory.signalingThread;
++  if (!native || !thread || !expectedTrackID.length) return NO;
++  auto* proxy = dynamic_cast<webrtc::RtpSenderProxyWithInternal<webrtc::RtpSenderInternal>*>(native.get());
++  if (!proxy) return NO;
++  std::string expected = [expectedTrackID stdString];
++  return thread->BlockingCall([proxy, expected = std::move(expected)] {
++    auto* sender = proxy->internal();
++    if (sender->media_type() != webrtc::MediaType::VIDEO) return false;
++    auto track = sender->track();
++    if (!track || track->id() != expected) return false;
++    // These internal methods preserve outstanding public parameter transactions.
++    // Execute the entire read/change/write on the sender's signaling thread.
++    auto parameters = sender->GetParametersInternal(false, true);
++    if (parameters.encodings.empty()) return false;  // Includes stopped senders.
++    if (parameters.degradation_preference == webrtc::DegradationPreference::MAINTAIN_RESOLUTION) return true;
++    parameters.degradation_preference = webrtc::DegradationPreference::MAINTAIN_RESOLUTION;
++    return sender->SetParametersInternalWithAllLayers(parameters).ok();
++  });
++}
++
+ - (RTC_OBJC_TYPE(RTCRtpParameters) *)parameters {
+   return [[RTC_OBJC_TYPE(RTCRtpParameters) alloc]
+       initWithNativeParameters:_nativeRtpSender->GetParameters()];
+@@ -144,3 +169,12 @@ - (void)setFrameEncryptor:
+ }
+ 
+ @end
++
++int RTCSetScreenShareSenderResolution(void *sender, const char *track_id) {
++  if (!sender || !track_id) return 0;
++  id object = (__bridge id)sender;
++  if (![object isKindOfClass:[RTC_OBJC_TYPE(RTCRtpSender) class]]) return 0;
++  NSString* expected = [NSString stringWithUTF8String:track_id];
++  if (!expected || !expected.length) return 0;
++  return [object conferencePreserveScreenResolution:expected] ? 1 : 0;
++}
+--- a/sdk/BUILD.gn
++++ b/sdk/BUILD.gn
+@@ -1288,6 +1288,8 @@
+         ":videosource_objc",
+         ":videotoolbox_objc",
+         "../api:create_modular_peer_connection_factory",
++        "../pc:rtp_sender",
++        "../pc:rtp_sender_proxy",
+         "../api:data_channel_interface",
+         "../api/crypto:frame_crypto_transformer",
+         "../api:dtmf_sender_interface",

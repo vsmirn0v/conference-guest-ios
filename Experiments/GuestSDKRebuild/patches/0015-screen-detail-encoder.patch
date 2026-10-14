@@ -1,30 +1,39 @@
+diff --git a/sdk/objc/base/RTCVideoEncoder.h b/sdk/objc/base/RTCVideoEncoder.h
+index 82de79c..48c9dd2 100644
 --- a/sdk/objc/base/RTCVideoEncoder.h
 +++ b/sdk/objc/base/RTCVideoEncoder.h
-@@ -18,6 +18,11 @@
- #import "sdk/objc/base/RTCMacros.h"
+@@ -19,6 +19,15 @@
  
  NS_ASSUME_NONNULL_BEGIN
-+
+ 
 +/** Optional conference screen-detail extension. Call on the encoder queue after
 + * startEncode. Only active H.264 screen encoders accept it; cameras are unchanged.
 + * max_qp is the normal-budget ceiling; starved links may relax it for delivery. */
 +RTC_EXTERN int RTCConfigureScreenShareEncoderQuality(void *encoder, int max_qp, int prioritize_speed);
- 
++/** Read actual VT rate properties on the encoder queue, for qualification.
++ * rates: average bits/sec, expected fps, then each byte-limit/seconds pair.
++ * count is the buffer capacity; returns values written (>=4), or zero. */
++RTC_EXTERN int RTCGetScreenShareEncoderRates(void *encoder, uint32_t *rates, int count);
++
  /** Callback block for encoder. */
  typedef BOOL (^RTCVideoEncoderCallback)(
+     RTC_OBJC_TYPE(RTCEncodedImage) * frame,
+diff --git a/sdk/objc/components/video_codec/RTCVideoEncoderH264.mm b/sdk/objc/components/video_codec/RTCVideoEncoderH264.mm
+index 2f48de6..2f4f7c6 100644
 --- a/sdk/objc/components/video_codec/RTCVideoEncoderH264.mm
 +++ b/sdk/objc/components/video_codec/RTCVideoEncoderH264.mm
-@@ -42,6 +42,9 @@
- 
+@@ -43,6 +43,10 @@
  @interface RTC_OBJC_TYPE (RTCVideoEncoderH264)
  ()
-+
+ 
 +- (int)configureConferenceScreenMaxQP:(int)maxQP prioritizeSpeed:(BOOL)prioritizeSpeed;
 +- (int)conferenceScreenQPForBitrate:(uint32_t)bitrate;
- 
++- (int)conferenceScreenRates:(uint32_t *)rates count:(int)count;
++
      - (void)frameWasEncoded : (OSStatus)status flags
      : (VTEncodeInfoFlags)infoFlags sampleBuffer
-@@ -399,6 +402,10 @@
+     : (CMSampleBufferRef)sampleBuffer codecSpecificInfo
+@@ -399,6 +403,10 @@ @implementation RTC_OBJC_TYPE (RTCVideoEncoderH264) {
    CVPixelBufferPoolRef _pixelBufferPool;
    RTC_OBJC_TYPE(RTCVideoCodecMode) _codecMode;
    unsigned int _maxQP;
@@ -35,7 +44,7 @@
    unsigned int _minBitrate;
    unsigned int _maxBitrate;
    RTC_OBJC_TYPE(RTCVideoEncodeMode) _encodeMode;
-@@ -471,6 +478,9 @@
+@@ -471,6 +479,9 @@ - (NSInteger)startEncodeWithSettings:
    _width = settings.width;
    _height = settings.height;
    _codecMode = settings.mode;
@@ -45,7 +54,7 @@
    _maxQP = settings.qpMax;
  
    _encodeMode = RTC_OBJC_TYPE(RTCVideoEncodeModeVariable);                    // Always variable mode for now
-@@ -520,6 +530,14 @@
+@@ -520,6 +531,14 @@ - (NSInteger)encode:(RTC_OBJC_TYPE(RTCVideoFrame) *)frame
    _previousPresentationTimeStamp = presentationTimeStamp;
  
    BOOL isKeyframeRequired = NO;
@@ -60,7 +69,21 @@
    // Get a pixel buffer from the pool and copy frame data over.
    if ([self resetCompressionSessionIfNeededWithFrame:frame]) {
      isKeyframeRequired = YES;
-@@ -835,7 +853,9 @@
+@@ -826,6 +845,13 @@ - (int)resetCompressionSessionWithPixelFormat:(OSType)framePixelFormat {
+   }
+   [self configureCompressionSession];
+ 
++  // Applied-rate caches belong to the old VT session, not to this encoder.
++  // Restore every rate property before the replacement's first frame, even
++  // when the requested budget is identical to the last applied value.
++  _encoderBitrateBps = UINT32_MAX;
++  _encoderFrameRate = UINT32_MAX;
++  [self updateEncoderBitrateAndFrameRate];
++
+   return WEBRTC_VIDEO_CODEC_OK;
+ }
+ 
+@@ -835,7 +861,9 @@ - (void)configureCompressionSession {
    // Sacrifice encoding speed over quality when necessary
    if (@available(iOS 14.0, macOS 11.0, *)) {
      SetVTSessionProperty(
@@ -71,7 +94,7 @@
    }
    // Set maximum QP for screen sharing mode, range must be within 1 to 51
    // https://developer.apple.com/documentation/videotoolbox/kvtcompressionpropertykey_maxallowedframeqp
-@@ -844,8 +864,10 @@
+@@ -844,8 +872,10 @@ - (void)configureCompressionSession {
      if (_codecMode == RTC_OBJC_TYPE(RTCVideoCodecModeScreensharing)) {
        RTC_LOG(LS_INFO) << "Configuring VideoToolbox to use maxQP: " << kHighH264QpThreshold
                         << " mode: " << _codecMode;
@@ -84,7 +107,7 @@
      }
    }
    SetVTSessionProperty(
-@@ -873,6 +895,49 @@
+@@ -873,6 +903,70 @@ - (void)configureCompressionSession {
                         240);
  }
  
@@ -120,25 +143,45 @@
 +}
 +
 +// Calibration uses bits per source pixel per second, not display size or
-+// device names. Below 0.03125 the strict floor can starve full-resolution text
++// device names. Below 0.0625 the strict floor can starve full-resolution text
 +// updates. Keep resolution and quality preference, but allow upstream QP 39.
 +// A 25% recovery margin prevents oscillation around the budget boundary.
 +- (int)conferenceScreenQPForBitrate:(uint32_t)bitrate {
 +  if (!_conferenceScreenMaxQP.has_value()) return kHighH264QpThreshold;
 +  const int requested = *_conferenceScreenMaxQP;
-+  uint64_t threshold = static_cast<uint64_t>(_width) * _height / 32;
++  uint64_t threshold = static_cast<uint64_t>(_width) * _height / 16;
 +  if (_conferenceAppliedScreenQP > requested) threshold += threshold / 4;
 +  return bitrate < threshold ? std::max(requested, kHighH264QpThreshold) : requested;
++}
++
++- (int)conferenceScreenRates:(uint32_t *)rates count:(int)count {
++  if (!_compressionSession || !rates || count < 4 ||
++      _codecMode != RTC_OBJC_TYPE(RTCVideoCodecModeScreensharing)) return 0;
++  CFTypeRef average = nullptr, frameRate = nullptr, limits = nullptr;
++  VTSessionCopyProperty(_compressionSession, kVTCompressionPropertyKey_AverageBitRate,
++                        kCFAllocatorDefault, &average);
++  VTSessionCopyProperty(_compressionSession, kVTCompressionPropertyKey_ExpectedFrameRate,
++                        kCFAllocatorDefault, &frameRate);
++  VTSessionCopyProperty(_compressionSession, kVTCompressionPropertyKey_DataRateLimits,
++                        kCFAllocatorDefault, &limits);
++  id a = CFBridgingRelease(average), f = CFBridgingRelease(frameRate), l = CFBridgingRelease(limits);
++  if (![a isKindOfClass:[NSNumber class]] || ![f isKindOfClass:[NSNumber class]] ||
++      ![l isKindOfClass:[NSArray class]]) return 0;
++  NSArray* pairs = l;
++  if (!pairs.count || pairs.count % 2 != 0 || pairs.count > static_cast<NSUInteger>(count - 2)) return 0;
++  for (id value in pairs) if (![value isKindOfClass:[NSNumber class]]) return 0;
++  rates[0] = [a unsignedIntValue]; rates[1] = [f unsignedIntValue];
++  for (NSUInteger i = 0; i < pairs.count; ++i) rates[i + 2] = [pairs[i] unsignedIntValue];
++  return static_cast<int>(pairs.count + 2);
 +}
 +
  - (void)destroyCompressionSession {
    if (_compressionSession) {
      VTCompressionSessionInvalidate(_compressionSession);
-@@ -897,6 +962,25 @@
- 
+@@ -898,6 +992,25 @@ - (void)updateEncoderBitrateAndFrameRate {
    // With zero `_maxAllowedFrameRate`, we fall back to automatic frame rate detection.
    uint32_t computedFrameRate = _maxAllowedFrameRate > 0 ? _targetFrameRate : 0;
-+
+ 
 +  if (_codecMode == RTC_OBJC_TYPE(RTCVideoCodecModeScreensharing) &&
 +      _conferenceScreenMaxQP.has_value()) {
 +    const int effectiveQP = [self conferenceScreenQPForBitrate:computedBitrateBps];
@@ -157,10 +200,11 @@
 +      }
 +    }
 +  }
- 
++
    // Set frame rate
    if (computedFrameRate != _encoderFrameRate) {
-@@ -1023,3 +1107,10 @@
+     status = VTSessionSetProperty(_compressionSession,
+@@ -1023,3 +1136,17 @@ - (void)frameWasEncoded:(OSStatus)status
  }
  
  @end
@@ -170,4 +214,11 @@
 +  id object = (__bridge id)encoder;
 +  if (![object isKindOfClass:[RTC_OBJC_TYPE(RTCVideoEncoderH264) class]]) return 0;
 +  return [object configureConferenceScreenMaxQP:max_qp prioritizeSpeed:prioritize_speed != 0];
++}
++
++int RTCGetScreenShareEncoderRates(void *encoder, uint32_t *rates, int count) {
++  if (!encoder) return 0;
++  id object = (__bridge id)encoder;
++  if (![object isKindOfClass:[RTC_OBJC_TYPE(RTCVideoEncoderH264) class]]) return 0;
++  return [object conferenceScreenRates:rates count:count];
 +}

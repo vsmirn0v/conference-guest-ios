@@ -1,4 +1,5 @@
 import XCTest
+import AVFoundation
 import WebRTC
 import Darwin
 @testable import RockNRoll
@@ -124,7 +125,7 @@ import Darwin
         var systemMuted = false, changes: [Bool] = []
         let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 })
         let calls = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false,
-            activateAudioSession: {}, applicationMute: bridge)
+            activateAudioSession: {}, applicationMute: bridge, sessionWorker: AudioSessionWorker(activate: {}, deactivate: {}))
         calls.onMuteChanged = { changes.append($0) }
         calls.start(); calls.markConnected()
         XCTAssertTrue(systemMuted)
@@ -166,7 +167,7 @@ import Darwin
             var systemMuted = false, changes: [Bool] = []
             let bridge = ApplicationMicrophoneMute(read: { systemMuted }, write: { systemMuted = $0 })
             let calls = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false,
-                activateAudioSession: { systemMuted = false }, applicationMute: bridge)
+                activateAudioSession: { systemMuted = false }, applicationMute: bridge, sessionWorker: AudioSessionWorker(activate: {}, deactivate: {}))
             calls.onMuteChanged = { changes.append($0) }
             calls.start(); calls.markConnected(); calls.setMuted(muted)
             calls.audioServicesChanged(false)
@@ -226,7 +227,32 @@ final class GuestConferencePlayoutReservationTests: XCTestCase {
 }
 
 @MainActor final class GuestConferenceOutputDeviceTests: XCTestCase {
+    private var previousConfiguration: RTCAudioSessionConfiguration?
+    private var previousCategory: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
+    override func setUp() async throws {
+        try await super.setUp()
+        try requirePhysicalOutputDevice()
+        let session = AVAudioSession.sharedInstance()
+        previousCategory = (session.category, session.mode, session.categoryOptions)
+        // Match the product's preparation before a factory snapshots WebRTC
+        // configuration. SoloAmbient combined with Bluetooth HFP is invalid.
+        try await AudioCoordinator().prepareForJoin()
+        previousConfiguration = RTCAudioSessionConfiguration.webRTC()
+        let configuration = RTCAudioSessionConfiguration()
+        configuration.category = AVAudioSession.Category.playAndRecord.rawValue
+        configuration.mode = AVAudioSession.Mode.videoChat.rawValue
+        configuration.categoryOptions = [.mixWithOthers, .allowBluetoothHFP]
+        RTCAudioSessionConfiguration.setWebRTC(configuration)
+    }
+    override func tearDown() async throws {
+        if let previousConfiguration { RTCAudioSessionConfiguration.setWebRTC(previousConfiguration) }
+        if let previousCategory {
+            try AVAudioSession.sharedInstance().setCategory(previousCategory.0, mode: previousCategory.1, options: previousCategory.2)
+        }
+        try await super.tearDown()
+    }
     func testUnavailableAudioReservationReleaseBalancesNativeSession() async throws {
+        try requirePhysicalOutputDevice()
         guard GuestConferencePlayoutReservation.isSupported else {
             throw XCTSkip("Requires the opt-in rebuilt native audio device")
         }
@@ -257,6 +283,7 @@ final class GuestConferencePlayoutReservationTests: XCTestCase {
         try await wait { conferenceSessionCount(session) == baseline }
     }
     func testFactoryReplacementRetiresOldOutputEvenIfSDKRetainsOldPeer() async throws {
+        try requirePhysicalOutputDevice()
         guard GuestConferencePlayoutReservation.isSupported else {
             throw XCTSkip("Requires the opt-in rebuilt native audio device")
         }
@@ -278,10 +305,17 @@ final class GuestConferencePlayoutReservationTests: XCTestCase {
             withExtendedLifetime((first, replacement)) {}
         }
         lease.setReserved(true)
-        try await wait { observer.startCount == 1 }
+        try await wait("First output session begins") { observer.startCount == 1 }
         newPeer = try XCTUnwrap(replacement.peerConnection(with: configuration, constraints: constraints, delegate: nil))
-        try await wait { observer.startCount == 2 && observer.stopCount == 1 }
+        try await wait("Replacement output begins and old output retires") { observer.startCount == 2 && observer.stopCount == 1 }
         await fulfillment(of: [started, stopped], timeout: 1)
+        // Retained obsolete SDK factories cannot reclaim output by creating
+        // another peer after the replacement has begun.
+        let stalePeer = try XCTUnwrap(first.peerConnection(with: configuration, constraints: constraints, delegate: nil))
+        stalePeer.close()
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(observer.startCount, 2)
+        XCTAssertEqual(observer.stopCount, 1)
         // The obsolete factory remains strongly retained, as during SDK reconnect.
         lease.setReserved(true, refresh: true)
         oldPeer.close()
@@ -296,14 +330,26 @@ final class GuestConferencePlayoutReservationTests: XCTestCase {
         try await wait { observer.startCount == 3 }
         lease.setReserved(false)
         try await wait { observer.stopCount == 3 }
+        XCTAssertLessThanOrEqual(observer.maxSessionCount, 1, "Replacement cannot overlap native session ownership")
     }
-    private func wait(_ predicate: () -> Bool) async throws {
+    private func requirePhysicalOutputDevice() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Native RemoteIO lifecycle requires physical iOS hardware; the Simulator uses host CoreAudio")
+        #else
+        guard !ProcessInfo.processInfo.isiOSAppOnMac else {
+            throw XCTSkip("Trackless output reservation is disabled in the production Mac runtime; qualify it on iOS")
+        }
+        #endif
+    }
+    private func wait(_ phase: String = "Native output lifecycle", file: StaticString = #filePath, line: UInt = #line,
+                      _ predicate: () -> Bool) async throws {
         let end = Date().addingTimeInterval(10)
         while !predicate(), Date() < end { try await Task.sleep(for: .milliseconds(50)) }
-        XCTAssertTrue(predicate())
-        if !predicate() { throw NSError(domain: "ConferenceOutputReplacement", code: 1) }
+        XCTAssertTrue(predicate(), "\(phase): active=\(RTCAudioSession.sharedInstance().isActive) audioEnabled=\(RTCAudioSession.sharedInstance().isAudioEnabled)", file: file, line: line)
+        if !predicate() { throw NSError(domain: "ConferenceOutputReplacement", code: 1, userInfo: [NSLocalizedDescriptionKey: phase]) }
     }
     func testRebuiltOutputKeepsTracklessSessionRunningAndReleasesOnLeave() async throws {
+        try requirePhysicalOutputDevice()
         guard GuestConferencePlayoutReservation.isSupported else {
             throw XCTSkip("Requires the opt-in rebuilt native audio device")
         }
@@ -349,11 +395,14 @@ private final class ConferenceOutputObserver: NSObject, RTCAudioSessionDelegate 
     private let lock = NSLock()
     private let started: XCTestExpectation, stopped: XCTestExpectation
     private var starts = 0, stops = 0
+    private var maxSessions = 0
     var startCount: Int { lock.lock(); defer { lock.unlock() }; return starts }
     var stopCount: Int { lock.lock(); defer { lock.unlock() }; return stops }
+    var maxSessionCount: Int { lock.lock(); defer { lock.unlock() }; return maxSessions }
     init(started: XCTestExpectation, stopped: XCTestExpectation) { self.started = started; self.stopped = stopped }
     func audioSessionDidStartPlayOrRecord(_ session: RTCAudioSession) {
-        lock.lock(); starts += 1; let first = starts == 1; lock.unlock()
+        let sessions = conferenceSessionCount(session)
+        lock.lock(); starts += 1; maxSessions = max(maxSessions, sessions); let first = starts == 1; lock.unlock()
         if first { started.fulfill() }
     }
     func audioSessionDidStopPlayOrRecord(_ session: RTCAudioSession) {

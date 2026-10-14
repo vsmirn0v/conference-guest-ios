@@ -7,6 +7,7 @@ import UIKit
 
 @MainActor
 final class AudioSessionWorkerTests: XCTestCase {
+    private let notifications = NotificationCenter()
     private final class Counter: @unchecked Sendable {
         private let lock = NSLock(); private var count = 0
         func increment() { lock.lock(); count += 1; lock.unlock() }
@@ -89,7 +90,9 @@ final class AudioSessionWorkerTests: XCTestCase {
     }
     func testLeaveRejectsDelayedActivationAndNextMeetingGetsFreshGrant() async throws {
         let queue = DispatchQueue(label: "test.audio-session.call")
-        let activations = Counter(), worker = AudioSessionWorker(queue: queue, activate: { activations.increment() })
+        let activations = Counter(), deactivations = Counter()
+        let worker = AudioSessionWorker(queue: queue, activate: { activations.increment() },
+                                        deactivate: { deactivations.increment() })
         let owner = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false, sessionWorker: worker)
         let granted = expectation(description: "replacement activated")
         queue.suspend()
@@ -99,11 +102,14 @@ final class AudioSessionWorkerTests: XCTestCase {
         await fulfillment(of: [granted], timeout: 2)
         XCTAssertTrue(owner.canRestoreAudio)
         XCTAssertEqual(activations.value, 1)
+        XCTAssertEqual(deactivations.value, 1, "Retirement precedes the replacement activation")
         owner.end()
+        try await worker.perform(lease: AudioSessionLease(), operation: {})
+        XCTAssertEqual(deactivations.value, 2, "Both owners release only their injected audio session")
     }
     func testCompetingCallRetiresActivationBeforeWorkerRuns() async throws {
         let queue = DispatchQueue(label: "test.audio-session.competitor")
-        let activations = Counter(), worker = AudioSessionWorker(queue: queue, activate: { activations.increment() })
+        let activations = Counter(), worker = AudioSessionWorker(queue: queue, activate: { activations.increment() }, deactivate: {})
         let owner = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false, sessionWorker: worker)
         queue.suspend()
         owner.onActivated = { XCTFail("Audio must not resume across a competing call") }
@@ -113,17 +119,17 @@ final class AudioSessionWorkerTests: XCTestCase {
         owner.end()
     }
     func testServiceResetReconfiguresBeforeRecoveryAndLeaveRejectsIt() async throws {
-        let audio = AudioCoordinator(), ready = expectation(description: "session prepared")
+        let audio = AudioCoordinator(prepareSession: {}, notifications: notifications), ready = expectation(description: "session prepared")
         audio.start(ready: { ready.fulfill() }, failure: { XCTFail("\($0)") })
         await fulfillment(of: [ready], timeout: 3)
         var events: [Bool] = []
         let recovered = expectation(description: "reset ready")
         audio.onServicesChanged = { events.append($0); if $0 { recovered.fulfill() } }
-        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        notifications.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
         await fulfillment(of: [recovered], timeout: 3)
         XCTAssertEqual(events, [false, true])
         audio.endSession(); events = []
-        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        notifications.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertTrue(events.isEmpty)
     }
@@ -132,13 +138,13 @@ final class AudioSessionWorkerTests: XCTestCase {
         let audio = AudioCoordinator(prepareSession: {
             attempts.increment()
             if (2...3).contains(attempts.value) { throw NSError(domain: NSOSStatusErrorDomain, code: -50) }
-        }, recoveryWindow: .seconds(1), recoveryInterval: .milliseconds(10))
+        }, recoveryWindow: .seconds(1), recoveryInterval: .milliseconds(10), notifications: notifications)
         let ready = expectation(description: "initial preparation"), recovered = expectation(description: "reset recovered")
         audio.start(ready: { ready.fulfill() }, failure: { XCTFail("Unexpected end: \($0)") })
         await fulfillment(of: [ready], timeout: 2)
         var events: [Bool] = []
         audio.onServicesChanged = { events.append($0); if $0 { recovered.fulfill() } }
-        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        notifications.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
         await fulfillment(of: [recovered], timeout: 2)
         XCTAssertEqual(attempts.value, 4)
         XCTAssertEqual(events, [false, true], "Only successful preparation may grant recovered audio")
@@ -149,13 +155,13 @@ final class AudioSessionWorkerTests: XCTestCase {
         let audio = AudioCoordinator(prepareSession: {
             attempts.increment()
             if attempts.value > 1 { throw NSError(domain: NSOSStatusErrorDomain, code: -50) }
-        }, recoveryWindow: .seconds(1), recoveryInterval: .milliseconds(100))
+        }, recoveryWindow: .seconds(1), recoveryInterval: .milliseconds(100), notifications: notifications)
         let ready = expectation(description: "initial preparation")
         audio.start(ready: { ready.fulfill() }, failure: { XCTFail("\($0)") })
         await fulfillment(of: [ready], timeout: 2)
         var recovered = false
         audio.onServicesChanged = { if $0 { recovered = true } }
-        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        notifications.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
         for _ in 0..<30 {
             if attempts.value == 2 { break }
             try await Task.sleep(for: .milliseconds(10))
@@ -167,16 +173,16 @@ final class AudioSessionWorkerTests: XCTestCase {
     }
     func testDuplicateResetRetiresBlockedPreparationAndGrantsOnlyLatestOwner() async throws {
         let queue = DispatchQueue(label: "test.reset-ordering"), attempts = Counter()
-        let audio = AudioCoordinator(worker: AudioSessionWorker(queue: queue), prepareSession: { attempts.increment() })
+        let audio = AudioCoordinator(worker: AudioSessionWorker(queue: queue), prepareSession: { attempts.increment() }, notifications: notifications)
         let ready = expectation(description: "initial preparation"), recovered = expectation(description: "latest reset recovered")
         audio.start(ready: { ready.fulfill() }, failure: { XCTFail("\($0)") })
         await fulfillment(of: [ready], timeout: 2)
         var events: [Bool] = []
         audio.onServicesChanged = { events.append($0); if $0 { recovered.fulfill() } }
         queue.suspend()
-        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        notifications.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
         try await Task.sleep(for: .milliseconds(10))
-        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        notifications.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
         try await Task.sleep(for: .milliseconds(10))
         queue.resume()
         await fulfillment(of: [recovered], timeout: 2)
@@ -205,7 +211,7 @@ final class AudioSessionWorkerTests: XCTestCase {
         probe.stop(); activity.setStatus(.on); XCTAssertFalse(probe.isAttachedForTesting)
     }
     func testApplicationHandoffUnholdWaitsForAsynchronousGrant() async throws {
-        let worker = AudioSessionWorker(activate: {}), ready = expectation(description: "activated")
+        let worker = AudioSessionWorker(activate: {}, deactivate: {}), ready = expectation(description: "activated")
         let owner = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false, sessionWorker: worker)
         owner.onActivated = { ready.fulfill() }; owner.start()
         await fulfillment(of: [ready], timeout: 2)
@@ -216,18 +222,18 @@ final class AudioSessionWorkerTests: XCTestCase {
     }
     func testServiceResetDuringStartupDoesNotStrandJoin() async throws {
         let queue = DispatchQueue(label: "test.audio-session.startup-reset")
-        let audio = AudioCoordinator(worker: AudioSessionWorker(queue: queue))
+        let audio = AudioCoordinator(worker: AudioSessionWorker(queue: queue), prepareSession: {}, notifications: notifications)
         let ready = expectation(description: "join remains admitted after reset")
         queue.suspend()
         audio.start(ready: { ready.fulfill() }, failure: { XCTFail("\($0)") })
-        NotificationCenter.default.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
+        notifications.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
         queue.resume()
         await fulfillment(of: [ready], timeout: 3)
         audio.endSession()
     }
     func testStaleTransferHoldCannotOutliveLeaveAndReplacementGrant() async throws {
         let queue = DispatchQueue(label: "test.audio-session.transfer-retirement")
-        let activations = Counter(), worker = AudioSessionWorker(queue: queue, activate: { activations.increment() })
+        let activations = Counter(), worker = AudioSessionWorker(queue: queue, activate: { activations.increment() }, deactivate: {})
         let owner = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false, sessionWorker: worker)
         let first = expectation(description: "initial grant")
         owner.onActivated = { first.fulfill() }; owner.start()
@@ -246,7 +252,7 @@ final class AudioSessionWorkerTests: XCTestCase {
     }
     func testCallKitEndRetiresActivationBeforeEndActionArrives() async throws {
         let queue = DispatchQueue(label: "test.audio-session.pending-callkit-end")
-        let activations = Counter(), worker = AudioSessionWorker(queue: queue, activate: { activations.increment() })
+        let activations = Counter(), worker = AudioSessionWorker(queue: queue, activate: { activations.increment() }, deactivate: {})
         var snapshot: [SystemCallCoordinator.ObservedCall] = []
         let owner = SystemCallCoordinator(transactionRequester: { _, done in done(nil) },
             callSnapshot: { snapshot }, systemCallRegistration: true, sessionWorker: worker)
@@ -263,7 +269,7 @@ final class AudioSessionWorkerTests: XCTestCase {
         let activations = Counter(), worker = AudioSessionWorker(activate: {
             activations.increment()
             if activations.value == 1 { throw NSError(domain: "TransientAudio", code: 1) }
-        })
+        }, deactivate: {})
         var snapshot: [SystemCallCoordinator.ObservedCall] = []
         let owner = SystemCallCoordinator(transactionRequester: { _, done in done(nil) },
             callSnapshot: { snapshot }, systemCallRegistration: true, sessionWorker: worker)
@@ -277,7 +283,7 @@ final class AudioSessionWorkerTests: XCTestCase {
         owner.markEnded(reason: .remoteEnded)
     }
     func testHoldRetiresQueuedRouteChange() async throws {
-        let queue = DispatchQueue(label: "test.audio-session.route-hold"), audio = AudioCoordinator(worker: AudioSessionWorker(queue: queue))
+        let queue = DispatchQueue(label: "test.audio-session.route-hold"), audio = AudioCoordinator(worker: AudioSessionWorker(queue: queue), prepareSession: {}, notifications: notifications)
         audio.beginSession(); queue.suspend()
         let route = Task { try await audio.selectBuiltInOutput(speaker: true) }
         await Task.yield()
@@ -287,7 +293,7 @@ final class AudioSessionWorkerTests: XCTestCase {
     }
     func testManualRoutePickerRetiresQueuedRouteChange() async throws {
         let queue = DispatchQueue(label: "test.audio-session.route-picker")
-        let audio = AudioCoordinator(worker: AudioSessionWorker(queue: queue))
+        let audio = AudioCoordinator(worker: AudioSessionWorker(queue: queue), prepareSession: {}, notifications: notifications)
         audio.beginSession(); queue.suspend()
         let route = Task { try await audio.selectBuiltInOutput(speaker: true) }
         await Task.yield()
@@ -311,7 +317,7 @@ final class AudioSessionWorkerTests: XCTestCase {
         XCTAssertFalse(observer.delaysTouchesEnded)
     }
     func testDismissedSpeakerCheckCannotStartQueuedPlayback() async throws {
-        let queue = DispatchQueue(label: "test.audio-session.speaker-dismiss"), worker = AudioSessionWorker(queue: queue)
+        let queue = DispatchQueue(label: "test.audio-session.speaker-dismiss"), worker = AudioSessionWorker(queue: queue, activate: {}, deactivate: {})
         let speaker = SpeakerCheck(worker: worker)
         queue.suspend(); speaker.play(standalone: true)
         await Task.yield()
@@ -321,7 +327,7 @@ final class AudioSessionWorkerTests: XCTestCase {
     }
 
     func testLeaveDuringRoomPreparationFinishesWithoutCallOwner() async throws {
-        let owner = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false, activateAudioSession: {})
+        let owner = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false, activateAudioSession: {}, sessionWorker: AudioSessionWorker(activate: {}, deactivate: {}))
         let engine = RockRoomEngine(catchUp: CatchUpStore(), chat: ChatStore(), systemCall: owner)
         let target = try JamTarget.parse("https://rock.glowsoft.ru/jams/test")
         let credentials = JamCredentials(serverURL: URL(string: "wss://example.invalid")!, participantToken: "unused",
@@ -339,7 +345,7 @@ final class AudioSessionWorkerTests: XCTestCase {
     func testPersistentActivationFailureStopsAtEpisodeDeadline() async throws {
         let attempts = Counter(), worker = AudioSessionWorker(activate: {
             attempts.increment(); throw NSError(domain: "PersistentAudio", code: 1)
-        })
+        }, deactivate: {})
         // The production worker seam is required for asynchronous failure.
         var snapshot: [SystemCallCoordinator.ObservedCall] = []
         let systemOwner = SystemCallCoordinator(transactionRequester: { _, done in done(nil) },
@@ -360,7 +366,7 @@ final class AudioSessionWorkerTests: XCTestCase {
     func testOverlappingTransferUnholdWaitsForReplacementGrant() async throws {
         let queue = DispatchQueue(label: "test.audio-session.overlapping-transfer")
         let owner = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false,
-            sessionWorker: AudioSessionWorker(queue: queue, activate: {}))
+            sessionWorker: AudioSessionWorker(queue: queue, activate: {}, deactivate: {}))
         let ready = expectation(description: "initial audio"), held = expectation(description: "hold entered")
         owner.onActivated = { ready.fulfill() }; owner.start()
         await fulfillment(of: [ready], timeout: 2)
@@ -395,7 +401,7 @@ final class AudioSessionWorkerTests: XCTestCase {
     func testNewServiceResetGetsFreshRetryWindowNearOldDeadline() async throws {
         let attempts = Counter(), worker = AudioSessionWorker(activate: {
             attempts.increment(); throw NSError(domain: "RepeatedReset", code: 1)
-        })
+        }, deactivate: {})
         var snapshot: [SystemCallCoordinator.ObservedCall] = []
         let owner = SystemCallCoordinator(transactionRequester: { _, done in done(nil) },
             callSnapshot: { snapshot }, systemCallRegistration: true, sessionWorker: worker,

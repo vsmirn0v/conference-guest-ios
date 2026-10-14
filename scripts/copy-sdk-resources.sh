@@ -61,3 +61,6 @@ native_binary="$native_framework/WebRTC"
 nm -gU "$native_binary" | awk '$NF == "_RTCSetConferencePlayoutReserved" { found=1 } END { exit !found }' || {
   echo "Rebuilt guest conference output API is missing" >&2; exit 1;
 }
+nm -gU "$native_binary" | awk '$NF == "_RTCConfigureScreenShareEncoderQuality" { quality=1 } $NF == "_RTCSetScreenShareSenderResolution" { sender=1 } END { exit !(quality && sender) }' || {
+  echo "Rebuilt guest screen-detail APIs are missing" >&2; exit 1;
+}

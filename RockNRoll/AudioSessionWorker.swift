@@ -17,9 +17,13 @@ final class AudioSessionWorker: @unchecked Sendable {
     static let shared = AudioSessionWorker()
     private let queue: DispatchQueue
     private let activate: @Sendable () throws -> Void
+    private let deactivateSession: @Sendable () throws -> Void
     init(queue: DispatchQueue = DispatchQueue(label: "dev.vsmirn0v.audio-session", qos: .userInitiated),
-         activate: @escaping @Sendable () throws -> Void = { try AVAudioSession.sharedInstance().setActive(true) }) {
-        self.queue = queue; self.activate = activate
+         activate: @escaping @Sendable () throws -> Void = { try AVAudioSession.sharedInstance().setActive(true) },
+         deactivate: @escaping @Sendable () throws -> Void = {
+             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+         }) {
+        self.queue = queue; self.activate = activate; self.deactivateSession = deactivate
     }
     func enqueue(lease: AudioSessionLease? = nil, operation: @escaping @Sendable () throws -> Void,
                  completion: @escaping @Sendable (Result<Void, Error>) -> Void = { _ in }) {
@@ -41,6 +45,9 @@ final class AudioSessionWorker: @unchecked Sendable {
     func deactivate() {
         // Enqueued synchronously at retirement, before a replacement can enqueue
         // activation. It must run even after the retired lease is invalidated.
-        enqueue(operation: { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) })
+        enqueue(operation: deactivateSession)
+    }
+    func deactivate(lease: AudioSessionLease) async throws {
+        try await perform(lease: lease, operation: deactivateSession)
     }
 }

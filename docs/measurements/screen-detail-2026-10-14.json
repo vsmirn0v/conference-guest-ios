@@ -1,0 +1,517 @@
+{
+  "source": "Synthetic 3840x2160 chart at 5fps through real guest service and independent Chrome decoder",
+  "runtime": "Mac16,12 / macOS 27.0.1",
+  "note": "Final calibrated and initial reference/detail trials. Process CPU does not establish battery consumption; sender caps are not fixed network throughput.",
+  "samples": [
+    {
+      "phase": "r5-calibrated-0",
+      "scrolling": false,
+      "composed": false,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": null,
+      "textPSNRdB": 54.457908349820336,
+      "cpuPercentOfOneCore": 57.64867981127308,
+      "encodedFPS": 4.8659334380780885,
+      "actualKbps": 221.88016574060663,
+      "encodeMsPerFrame": 21.424657534246574,
+      "meanQP": 20.63013698630137,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "maxBitrate": 0,
+            "scaleDown": 1,
+            "maxFramerate": 0
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-calibrated-1",
+      "scrolling": true,
+      "composed": false,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": 54.64581676996647,
+      "textPSNRdB": 54.573456795123015,
+      "cpuPercentOfOneCore": 57.119898809919235,
+      "encodedFPS": 4.865741459445087,
+      "actualKbps": 414.87044687036285,
+      "encodeMsPerFrame": 22.780821917808215,
+      "meanQP": 19.205479452054796,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "scaleDown": 1,
+            "maxFramerate": 0,
+            "maxBitrate": 0
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-calibrated-2",
+      "scrolling": false,
+      "composed": true,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": null,
+      "textPSNRdB": 54.19676505257152,
+      "cpuPercentOfOneCore": 56.20459878552263,
+      "encodedFPS": 4.861002774763987,
+      "actualKbps": 288.25879632508656,
+      "encodeMsPerFrame": 21.60273972602741,
+      "meanQP": 20.273972602739725,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "maxBitrate": 0,
+            "maxFramerate": 0,
+            "scaleDown": 1
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-calibrated-3",
+      "scrolling": true,
+      "composed": true,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": 36.41467620943313,
+      "textPSNRdB": 34.61407559206639,
+      "cpuPercentOfOneCore": 52.99028784735071,
+      "encodedFPS": 1.533160541881088,
+      "actualKbps": 263.5207004849853,
+      "encodeMsPerFrame": 22.999999999999996,
+      "meanQP": 39.0,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "scaleDown": 1,
+            "maxFramerate": 0,
+            "maxBitrate": 300000
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-calibrated-4",
+      "scrolling": false,
+      "composed": true,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": null,
+      "textPSNRdB": 53.56403786896753,
+      "cpuPercentOfOneCore": 56.683036398139585,
+      "encodedFPS": 4.460588619053345,
+      "actualKbps": 372.6527525522111,
+      "encodeMsPerFrame": 22.283582089552244,
+      "meanQP": 21.611940298507463,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "scaleDown": 1,
+            "maxBitrate": 2500000,
+            "maxFramerate": 0
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-detail-0",
+      "scrolling": false,
+      "composed": false,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": null,
+      "textPSNRdB": 52.986347496249486,
+      "cpuPercentOfOneCore": 58.133240304431006,
+      "encodedFPS": 4.85989793582284,
+      "actualKbps": 77.99803317274026,
+      "encodeMsPerFrame": 20.73972602739726,
+      "meanQP": 20.383561643835616,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "maxBitrate": 0,
+            "maxFramerate": 0,
+            "scaleDown": 1
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-detail-1",
+      "scrolling": true,
+      "composed": false,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": 55.01329976122206,
+      "textPSNRdB": 53.467678135377746,
+      "cpuPercentOfOneCore": 58.13344534495554,
+      "encodedFPS": 4.863955686918857,
+      "actualKbps": 536.3288045147347,
+      "encodeMsPerFrame": 21.61643835616438,
+      "meanQP": 19.136986301369863,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "maxBitrate": 0,
+            "maxFramerate": 0,
+            "scaleDown": 1
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-detail-2",
+      "scrolling": false,
+      "composed": true,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": null,
+      "textPSNRdB": 54.27383680934254,
+      "cpuPercentOfOneCore": 58.32668037246378,
+      "encodedFPS": 4.860408000291609,
+      "actualKbps": 230.75033330831005,
+      "encodeMsPerFrame": 20.21917808219178,
+      "meanQP": 23.068493150684933,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "maxFramerate": 0,
+            "scaleDown": 1,
+            "maxBitrate": 0
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-detail-3",
+      "scrolling": true,
+      "composed": true,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": 36.592489298196384,
+      "textPSNRdB": 12.701991583762428,
+      "cpuPercentOfOneCore": 50.360770658540424,
+      "encodedFPS": 0.1332884210593553,
+      "actualKbps": 108.17528307072004,
+      "encodeMsPerFrame": 26.00000000000069,
+      "meanQP": 39.0,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "maxBitrate": 300000,
+            "scaleDown": 1,
+            "maxFramerate": 0
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-detail-4",
+      "scrolling": false,
+      "composed": true,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": null,
+      "textPSNRdB": 48.16176251922243,
+      "cpuPercentOfOneCore": 53.728811504334,
+      "encodedFPS": 2.4642339406927065,
+      "actualKbps": 324.89419327302,
+      "encodeMsPerFrame": 24.702702702702695,
+      "meanQP": 24.972972972972972,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "scaleDown": 1,
+            "maxBitrate": 2500000,
+            "maxFramerate": 0
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-reference-0",
+      "scrolling": false,
+      "composed": false,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": null,
+      "textPSNRdB": 36.34994161898953,
+      "cpuPercentOfOneCore": 57.94777250685079,
+      "encodedFPS": 4.861672459615839,
+      "actualKbps": 188.38514593241277,
+      "encodeMsPerFrame": 20.82191780821918,
+      "meanQP": 37.78082191780822,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "maxFramerate": 0,
+            "maxBitrate": 0,
+            "scaleDown": 1
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-reference-1",
+      "scrolling": true,
+      "composed": false,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": 36.23734904772796,
+      "textPSNRdB": 36.64728727759589,
+      "cpuPercentOfOneCore": 57.253776493084594,
+      "encodedFPS": 4.8624561983111105,
+      "actualKbps": 230.3994272693008,
+      "encodeMsPerFrame": 19.520547945205475,
+      "meanQP": 39.0,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "maxBitrate": 0,
+            "maxFramerate": 0,
+            "scaleDown": 1
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-reference-2",
+      "scrolling": false,
+      "composed": true,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": null,
+      "textPSNRdB": 36.40070483640973,
+      "cpuPercentOfOneCore": 57.59898756844445,
+      "encodedFPS": 4.861823965874645,
+      "actualKbps": 215.89109141352773,
+      "encodeMsPerFrame": 21.630136986301366,
+      "meanQP": 38.986301369863014,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "scaleDown": 1,
+            "maxFramerate": 0,
+            "maxBitrate": 0
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-reference-3",
+      "scrolling": true,
+      "composed": true,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": 35.05796742869148,
+      "textPSNRdB": 34.72877412284445,
+      "cpuPercentOfOneCore": 51.53155117509112,
+      "encodedFPS": 0.93209403663726,
+      "actualKbps": 242.33379702241172,
+      "encodeMsPerFrame": 21.28571428571429,
+      "meanQP": 39.0,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "maxBitrate": 300000,
+            "maxFramerate": 0,
+            "scaleDown": 1
+          }
+        ]
+      ]
+    },
+    {
+      "phase": "r5-reference-4",
+      "scrolling": false,
+      "composed": true,
+      "freshFramesReceived": true,
+      "movingTextPSNRdB": null,
+      "textPSNRdB": 36.34994161898953,
+      "cpuPercentOfOneCore": 60.21431252568899,
+      "encodedFPS": 4.8619333989334,
+      "actualKbps": 150.71727129384007,
+      "encodeMsPerFrame": 20.520547945205497,
+      "meanQP": 39.0,
+      "codec": [
+        "video/H264"
+      ],
+      "encoder": [
+        "VideoToolbox"
+      ],
+      "powerEfficient": [
+        true
+      ],
+      "degradationPreference": [
+        2
+      ],
+      "encodingLimits": [
+        [
+          {
+            "maxFramerate": 0,
+            "scaleDown": 1,
+            "maxBitrate": 2500000
+          }
+        ]
+      ]
+    }
+  ]
+}

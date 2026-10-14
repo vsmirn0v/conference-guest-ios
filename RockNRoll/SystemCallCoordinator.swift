@@ -622,9 +622,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
                 beginAudioYield()
                 onHoldChanged?(true)
                 cancelApplicationAudioRecovery()
-                try await sessionWorker.perform(lease: sessionLease) {
-                    try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-                }
+                try await sessionWorker.deactivate(lease: sessionLease)
                 guard callID == id, transferHoldGeneration == generation else { throw CancellationError() }
                 isAudioSessionActive = false
                 onDeactivated?()

@@ -6,7 +6,9 @@ source_dir="$(cd "${1:?Pass the patched native source}" && pwd)"
 output_dir="$(mktemp -d /tmp/rock-audio-recovery.XXXXXX)"
 trap 'rm -rf "$output_dir"' EXIT
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
-xcrun clang++ -std=c++20 -Wall -Wextra -Werror -pthread -I "$source_dir" \
-  -fsanitize=address,undefined "$experiment_dir/tests/audio-recovery-tests.cc" \
-  -o "$output_dir/audio-recovery-tests"
-"$output_dir/audio-recovery-tests"
+for name in audio-recovery-tests conference-audio-ownership-tests; do
+  xcrun clang++ -std=c++20 -Wall -Wextra -Werror -pthread -I "$source_dir" \
+    -fsanitize=address,undefined "$experiment_dir/tests/$name.cc" \
+    -o "$output_dir/$name"
+  "$output_dir/$name"
+done

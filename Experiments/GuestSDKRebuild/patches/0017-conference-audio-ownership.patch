@@ -1,0 +1,789 @@
+diff --git a/sdk/BUILD.gn b/sdk/BUILD.gn
+--- a/sdk/BUILD.gn
++++ b/sdk/BUILD.gn
+@@ -353,6 +353,7 @@
+           "objc/native/src/audio/audio_device_ios.mm",
+           "objc/native/src/audio/audio_device_module_ios.h",
+           "objc/native/src/audio/audio_device_module_ios.mm",
++          "objc/native/src/audio/conference_audio_ownership.h",
+           "objc/native/src/audio/helpers.h",
+           "objc/native/src/audio/helpers.mm",
+           "objc/native/src/audio/voice_processing_audio_unit.h",
+@@ -1191,6 +1192,7 @@
+         "objc/api/peerconnection/RTCPeerConnectionFactory+Private.h",
+         "objc/api/peerconnection/RTCPeerConnectionFactory.h",
+         "objc/api/peerconnection/RTCPeerConnectionFactory.mm",
++        "objc/native/src/audio/conference_audio_ownership.h",
+         "objc/api/peerconnection/RTCPeerConnectionFactoryBuilder+DefaultComponents.h",
+         "objc/api/peerconnection/RTCPeerConnectionFactoryBuilder+DefaultComponents.mm",
+         "objc/api/peerconnection/RTCPeerConnectionFactoryBuilder.h",
+diff --git a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
+@@ -9,6 +9,7 @@
+  */
+ 
+ #include <atomic>
++#include <map>
+ #include <memory>
+ #include <optional>
+ 
+@@ -65,6 +66,7 @@
+ #include "sdk/objc/native/src/objc_video_decoder_factory.h"
+ #include "sdk/objc/native/src/objc_video_encoder_factory.h"
+ #include "sdk/objc/native/src/objc_video_track_source.h"
++#include "sdk/objc/native/src/audio/conference_audio_ownership.h"
+ 
+ #import "components/audio/RTCAudioProcessingModule.h"
+ #import "components/audio/RTCDefaultAudioProcessingModule+Private.h"
+@@ -84,32 +86,108 @@
+ }
+ 
+ namespace {
+-std::atomic<bool> gConferencePlayoutReserved{false};
+-__weak RTC_OBJC_TYPE(RTCPeerConnectionFactory) *gConferenceAudioFactory;
+-NSHashTable *ConferenceAudioFactories() {
+-  static NSHashTable *factories;
++using ConferenceOwnership = webrtc::ios_adm::ConferenceAudioOwnership;
++using namespace webrtc::ios_adm;
++
++// The coordinator retains only the current/in-flight and latest desired factory.
++// Keeping the old factory alive through worker completion also prevents its
++// destructor from disposing CoreAudio concurrently with replacement startup.
++struct ConferenceAudioOwner {
++  __strong RTC_OBJC_TYPE(RTCPeerConnectionFactory) *factory;
++  webrtc::Thread *worker;
++  webrtc::scoped_refptr<webrtc::AudioDeviceModule> adm;
++  std::shared_ptr<std::atomic<int>> admission;
++};
++struct ConferenceAudioCoordinator {
++  ConferenceOwnership ownership;
++  std::map<ConferenceOwnership::Owner, ConferenceAudioOwner> owners;
++};
++ConferenceAudioCoordinator &ConferenceCoordinator() {
++  static auto *coordinator = new ConferenceAudioCoordinator;
++  return *coordinator;
++}
++dispatch_queue_t ConferenceControlQueue() {
++  static dispatch_queue_t queue;
+   static dispatch_once_t once;
+-  dispatch_once(&once, ^{ factories = [NSHashTable weakObjectsHashTable]; });
+-  return factories;
++  dispatch_once(&once, ^{
++    queue = dispatch_queue_create("org.webrtc.conference-audio-ownership", DISPATCH_QUEUE_SERIAL);
++  });
++  return queue;
++}
++std::atomic<uint64_t> gNextConferenceAudioOwner{0};
++
++void DriveConferenceAudio();
++
++// Revoke before posting retirement. SDK tasks already queued on an old worker
++// see the atomic gate and cannot start hardware while retirement is pending.
++void UpdateConferenceAdmissions() {
++  auto &coordinator = ConferenceCoordinator();
++  auto &ownership = coordinator.ownership;
++  for (auto &[owner, record] : coordinator.owners) {
++    int state = kConferenceAudioRetired;
++    if (owner == ownership.desired_owner()) {
++      const bool retiring = ownership.in_flight() &&
++          ownership.in_flight()->kind == ConferenceOwnership::Kind::kRetire;
++      state = owner == ownership.active_owner() && !retiring
++          ? (ownership.desired_reserved() ? kConferenceAudioReserved : kConferenceAudioAdmitted)
++          : kConferenceAudioPending;
++    }
++    record.admission->store(state, std::memory_order_release);
++  }
++}
++
++void DriveConferenceAudio() {
++  auto &coordinator = ConferenceCoordinator();
++  auto &ownership = coordinator.ownership;
++  auto action = ownership.Next();
++  UpdateConferenceAdmissions();
++  // Dropping a coalesced pending owner or a fully retired owner is safe here:
++  // this is never one of the factories' worker threads.
++  for (auto it = coordinator.owners.begin(); it != coordinator.owners.end();) {
++    if (it->first != ownership.active_owner() &&
++        it->first != ownership.desired_owner() &&
++        it->first != ownership.in_flight_owner()) {
++      it = coordinator.owners.erase(it);
++    } else {
++      ++it;
++    }
++  }
++  if (!action) return;
++  auto &owner = coordinator.owners.at(action->owner);
++  auto adm = owner.adm;
++  auto admission = owner.admission;
++  const auto operation = *action;
++  // Do not capture the record/factory. Its final release must not happen on its
++  // own worker. Workers never wait for the coordinator or another worker.
++  owner.worker->PostTask([adm, admission, operation] {
++    const int state = admission->load(std::memory_order_acquire);
++    const bool retire = operation.kind == ConferenceOwnership::Kind::kRetire || state < 0;
++    const int result = retire ? adm->RetireConferencePlayout()
++                              : adm->SetConferencePlayoutReserved(state == kConferenceAudioReserved);
++    if (result != 0 || getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
++      NSLog(@"Conference audio owner=%llu operation=%llu retire=%d state=%d result=%d",
++            (unsigned long long)operation.owner, (unsigned long long)operation.id,
++            retire, state, result);
++    }
++    dispatch_async(ConferenceControlQueue(), ^{
++      if (ConferenceCoordinator().ownership.Complete(operation.id, result == 0)) {
++        DriveConferenceAudio();
++      }
++    });
++  });
+ }
+ }
+ 
+ @interface RTC_OBJC_TYPE(RTCPeerConnectionFactory) (ConferencePlayout)
++- (void)prepareConferencePlayout;
+ - (void)registerConferencePlayout;
+-- (void)setConferencePlayoutState:(int)state;
+ @end
+ 
+ void RTCSetConferencePlayoutReserved(int reserved) {
+-  NSHashTable *factories = ConferenceAudioFactories();
+-  @synchronized(factories) {
+-    gConferencePlayoutReserved.store(reserved != 0, std::memory_order_release);
+-    RTC_OBJC_TYPE(RTCPeerConnectionFactory) *current = gConferenceAudioFactory;
+-    [current setConferencePlayoutState:reserved ? 1 : 0];
+-    if (getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
+-      NSLog(@"Conference output reservation=%d live-factories=%lu current=%p", reserved,
+-            (unsigned long)factories.count, current);
+-    }
+-  }
++  dispatch_async(ConferenceControlQueue(), ^{
++    ConferenceCoordinator().ownership.SetReserved(reserved != 0);
++    DriveConferenceAudio();
++  });
+ }
+ 
+ @implementation RTC_OBJC_TYPE (RTCPeerConnectionFactory) {
+@@ -121,6 +199,8 @@
+   RTC_OBJC_TYPE(RTCDefaultAudioProcessingModule) *_defaultAudioProcessingModule;
+ 
+   std::shared_ptr<std::atomic<int>> _conferencePlayoutState;
++  uint64_t _conferencePlayoutOwner;
++  BOOL _ownsConferenceAudioDevice;
+   BOOL _hasStartedAecDump;
+ }
+ 
+@@ -141,6 +221,7 @@
+   dependencies.env = CreateDefaultEnvironment();
+ #ifdef WEBRTC_IOS
+   dependencies.adm = webrtc::CreateAudioDeviceModule(*dependencies.env);
++  _ownsConferenceAudioDevice = YES;
+ #endif
+   return [self initWithMediaAndDependencies:dependencies];
+ }
+@@ -172,11 +253,13 @@
+   }
+   webrtc::scoped_refptr<webrtc::AudioDeviceModule> audio_device_module;
+   if (audioDevice) {
++    _ownsConferenceAudioDevice = NO;
+     dependencies.adm =
+         webrtc::CreateAudioDeviceModule(*dependencies.env, audioDevice);
+ #ifdef WEBRTC_IOS
+   } else {
+     dependencies.adm = webrtc::CreateAudioDeviceModule(*dependencies.env);
++    _ownsConferenceAudioDevice = YES;
+ #endif
+   }
+   return [self initWithMediaAndDependencies:dependencies];
+@@ -258,6 +341,7 @@
+       _nativeAudioDeviceModule = dependencies.adm;
+     }
+ 
++    [self prepareConferencePlayout];
+     _env = dependencies.env;
+     _nativeFactory =
+         webrtc::CreateModularPeerConnectionFactory(std::move(dependencies));
+@@ -398,6 +482,7 @@
+     dependencies.signaling_thread = _signalingThread.get();
+     dependencies.network_monitor_factory = webrtc::CreateNetworkMonitorFactory();
+ 
++    _ownsConferenceAudioDevice = audioDeviceModule == nullptr;
+     if (audioDeviceModule != nullptr) {
+       _nativeAudioDeviceModule = audioDeviceModule;
+     } else if (audioDeviceModuleType == RTC_OBJC_TYPE(RTCAudioDeviceModuleTypeAudioEngine)) {
+@@ -434,6 +519,7 @@
+     webrtc::EnableMedia(dependencies);
+     dependencies.event_log_factory = std::make_unique<webrtc::RtcEventLogFactory>();
+     dependencies.network_controller_factory = std::move(networkControllerFactory);
++    [self prepareConferencePlayout];
+     _env = dependencies.env;
+     _nativeFactory = webrtc::CreateModularPeerConnectionFactory(std::move(dependencies));
+     NSAssert(_nativeFactory, @"Failed to initialize PeerConnectionFactory!");
+@@ -441,34 +527,51 @@
+   return self;
+ }
+ 
++- (void)prepareConferencePlayout {
++#if defined(WEBRTC_IOS)
++  // Only factory-created built-in iOS/Catalyst ADMs participate. Caller-owned
++  // native/ObjC devices preserve their lifecycle and public ADM vtable.
++  if (!_ownsConferenceAudioDevice) {
++    if (getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
++      NSLog(@"Conference audio factory=%p unmanaged caller-owned ADM=%p", self,
++            _nativeAudioDeviceModule.get());
++    }
++    return;
++  }
++  auto adm = _nativeAudioDeviceModule;
++  if (!adm || !_workerThread) return;
++  auto admission = std::make_shared<std::atomic<int>>(kConferenceAudioPending);
++  const bool prepared = _workerThread->BlockingCall([adm, admission] {
++    return webrtc::ios_adm::PrepareConferenceAudio(adm.get(), admission);
++  });
++  if (getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
++    NSLog(@"Conference audio factory=%p built-in ADM=%p managed=%d", self, adm.get(), prepared);
++  }
++  if (!prepared) return;
++  _conferencePlayoutState = std::move(admission);
++  _conferencePlayoutOwner = ++gNextConferenceAudioOwner;
++#endif
++}
++
+ - (void)registerConferencePlayout {
+-  if (!_nativeAudioDeviceModule || !_workerThread) return;
+-  NSHashTable *factories = ConferenceAudioFactories();
+-  @synchronized(factories) {
+-    if (!_conferencePlayoutState) _conferencePlayoutState = std::make_shared<std::atomic<int>>(0);
+-    [factories addObject:self];
+-    RTC_OBJC_TYPE(RTCPeerConnectionFactory) *previous = gConferenceAudioFactory;
+-    gConferenceAudioFactory = self;
+-    if (previous != self) [previous setConferencePlayoutState:-1];
+-    [self setConferencePlayoutState:gConferencePlayoutReserved.load(std::memory_order_acquire) ? 1 : 0];
+-  }
+-}
+-
+-- (void)setConferencePlayoutState:(int)state {
+-  auto adm = _nativeAudioDeviceModule;
+-  auto desired = _conferencePlayoutState;
+-  if (!adm || !_workerThread || !desired) return;
+-  desired->store(state, std::memory_order_release);
+-  // Retain native state, not the factory: its last reference must not be
+-  // released from a task running on the factory's own worker thread.
+-  _workerThread->PostTask([adm, desired] {
+-    const int requested = desired->load(std::memory_order_acquire);
+-    const int result = requested < 0 ? adm->RetireConferencePlayout()
+-                                    : adm->SetConferencePlayoutReserved(requested > 0);
+-    if (result != 0 || getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
+-      NSLog(@"Conference output ADM=%p state=%d result=%d playing=%d recording=%d",
+-            adm.get(), requested, result, adm->Playing(), adm->Recording());
+-    }
++  if (!_conferencePlayoutState) return;
++  // Capturing self here transfers a lifetime lease to the control queue, not to
++  // the worker. There is no synchronous wait for hardware on the caller.
++  dispatch_async(ConferenceControlQueue(), ^{
++    // A retained obsolete SDK factory may create another publisher/subscriber.
++    // Its new peer must not take ownership back from the replacement factory.
++    if (self->_conferencePlayoutState->load(std::memory_order_acquire) == kConferenceAudioRetired) {
++      if (getenv("CONFERENCE_TEST_MEDIA_TRACE")) {
++        NSLog(@"Conference audio ignores retired factory=%p owner=%llu", self,
++              (unsigned long long)self->_conferencePlayoutOwner);
++      }
++      return;
++    }
++    auto &coordinator = ConferenceCoordinator();
++    coordinator.owners.try_emplace(self->_conferencePlayoutOwner, ConferenceAudioOwner{
++        self, self->_workerThread.get(), self->_nativeAudioDeviceModule, self->_conferencePlayoutState});
++    coordinator.ownership.Select(self->_conferencePlayoutOwner);
++    DriveConferenceAudio();
+   });
+ }
+ 
+diff --git a/sdk/objc/native/src/audio/audio_device_module_ios.h b/sdk/objc/native/src/audio/audio_device_module_ios.h
+--- a/sdk/objc/native/src/audio/audio_device_module_ios.h
++++ b/sdk/objc/native/src/audio/audio_device_module_ios.h
+@@ -15,6 +15,7 @@
+ 
+ #include "api/audio/audio_device.h"
+ #include "audio_device_ios.h"
++#include "conference_audio_ownership.h"
+ #include "modules/audio_device/audio_device_buffer.h"
+ #include "rtc_base/checks.h"
+ #include "sdk/objc/native/api/audio_device_module_error_handler.h"
+@@ -28,6 +29,9 @@
+ class AudioDeviceModuleIOS : public AudioDeviceModule {
+  public:
+   int32_t AttachAudioBuffer();
++
++  // Internal, nonvirtual factory hook; standalone/custom ADMs remain unmanaged.
++  bool PrepareConferenceAudio(std::shared_ptr<std::atomic<int>> admission);
+ 
+   explicit AudioDeviceModuleIOS(
+       const Environment& env,
+@@ -142,14 +146,20 @@
+ 
+  private:
+   void ReportError(ADMError error) const;
++  int32_t InitPlayoutDevice();
++  int32_t InitRecordingDevice();
+   int32_t StartPlayoutDevice();
+   int32_t StopPlayoutDevice();
++  int32_t StartRecordingDevice();
++  int32_t StopRecordingDevice();
++  int32_t ReconcileConferenceAudio();
+ 
+   const Environment env_;
+   const bool bypass_voice_processing_;
+   MutedSpeechEventHandler muted_speech_event_handler_;
+   ADMErrorHandler error_handler_;
+   bool initialized_ = false;
++  ConferenceAudioAdmissionState conference_audio_;
+   bool conference_playout_reserved_ = false;
+   bool conference_playout_retired_ = false;
+   bool media_playout_requested_ = false;
+diff --git a/sdk/objc/native/src/audio/audio_device_module_ios.mm b/sdk/objc/native/src/audio/audio_device_module_ios.mm
+--- a/sdk/objc/native/src/audio/audio_device_module_ios.mm
++++ b/sdk/objc/native/src/audio/audio_device_module_ios.mm
+@@ -55,6 +55,31 @@
+   RTC_LOG(LS_INFO) << "iPhone Audio APIs will be utilized.";
+ }
+ 
++bool PrepareConferenceAudio(AudioDeviceModule* module,
++                            std::shared_ptr<std::atomic<int>> admission) {
++  auto* adm = dynamic_cast<AudioDeviceModuleIOS*>(module);
++  return adm && adm->PrepareConferenceAudio(std::move(admission));
++}
++
++bool AudioDeviceModuleIOS::PrepareConferenceAudio(
++    std::shared_ptr<std::atomic<int>> admission) {
++  // Called on this ADM's worker before the native factory can request media.
++  if (initialized_) return false;
++  return conference_audio_.Prepare(std::move(admission));
++}
++
++int32_t AudioDeviceModuleIOS::ReconcileConferenceAudio() {
++  if (!conference_audio_.managed()) return 0;
++  // A revoke can arrive during a synchronous CoreAudio Init/Start. Complete the
++  // stop on this worker before the coordinator can admit another factory.
++  if (!conference_audio_.admitted()) return RetireConferencePlayout();
++  if (conference_playout_reserved_ && !conference_audio_.reserved()) {
++    conference_playout_reserved_ = false;
++    if (!conference_audio_.wants_playout_start()) return StopPlayoutDevice();
++  }
++  return 0;
++}
++
+ int32_t AudioDeviceModuleIOS::AttachAudioBuffer() {
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   audio_device_->AttachAudioBuffer(audio_device_buffer_.get());
+@@ -117,7 +142,9 @@
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   if (!initialized_) return 0;
+   conference_playout_reserved_ = false;
+-  // Retirement survives shutdown until an explicit current-owner reservation.
++  // Termination clears media intent but does not grant a pending/retired ADM.
++  conference_audio_.StopPlayout();
++  conference_audio_.StopRecording();
+   media_playout_requested_ = false;
+   if (audio_device_->Terminate() == -1) {
+     ReportError(kTerminateFailed);
+@@ -558,7 +585,16 @@
+ }
+ 
+ int32_t AudioDeviceModuleIOS::InitPlayout() {
+-  if (conference_playout_retired_) return 0;
++  if (conference_audio_.managed()) {
++    if (!conference_audio_.RequestPlayoutInit()) return 0;
++  } else if (conference_playout_retired_) {
++    return 0;
++  }
++  return InitPlayoutDevice();
++}
++
++int32_t AudioDeviceModuleIOS::InitPlayoutDevice() {
++  if (conference_audio_.managed() && !conference_audio_.admitted()) return 0;
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (PlayoutIsInitialized()) {
+@@ -571,11 +607,21 @@
+   RTC_DLOG(LS_INFO) << "output: " << result;
+   RTC_HISTOGRAM_BOOLEAN("WebRTC.Audio.InitPlayoutSuccess",
+                         static_cast<int>(result == 0));
+-  return result;
++  const int reconcile_result = ReconcileConferenceAudio();
++  return result != 0 ? result : reconcile_result;
+ }
+ 
+ int32_t AudioDeviceModuleIOS::InitRecording() {
+-  if (conference_playout_retired_) return 0;
++  if (conference_audio_.managed()) {
++    if (!conference_audio_.RequestRecordingInit()) return 0;
++  } else if (conference_playout_retired_) {
++    return 0;
++  }
++  return InitRecordingDevice();
++}
++
++int32_t AudioDeviceModuleIOS::InitRecordingDevice() {
++  if (conference_audio_.managed() && !conference_audio_.admitted()) return 0;
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (RecordingIsInitialized()) {
+@@ -588,7 +634,8 @@
+   RTC_DLOG(LS_INFO) << "output: " << result;
+   RTC_HISTOGRAM_BOOLEAN("WebRTC.Audio.InitRecordingSuccess",
+                         static_cast<int>(result == 0));
+-  return result;
++  const int reconcile_result = ReconcileConferenceAudio();
++  return result != 0 ? result : reconcile_result;
+ }
+ 
+ bool AudioDeviceModuleIOS::PlayoutIsInitialized() const {
+@@ -604,12 +651,18 @@
+ }
+ 
+ int32_t AudioDeviceModuleIOS::StartPlayout() {
+-  if (conference_playout_retired_) return 0;
++  if (conference_audio_.managed()) {
++    if (!conference_audio_.RequestPlayoutStart()) return 0;
++    if (InitPlayoutDevice() != 0) return -1;
++  } else if (conference_playout_retired_) {
++    return 0;
++  }
+   media_playout_requested_ = true;
+   return StartPlayoutDevice();
+ }
+ 
+ int32_t AudioDeviceModuleIOS::StartPlayoutDevice() {
++  if (conference_audio_.managed() && !conference_audio_.should_play()) return 0;
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (Playing()) {
+@@ -623,16 +676,41 @@
+   RTC_DLOG(LS_INFO) << "output: " << result;
+   RTC_HISTOGRAM_BOOLEAN("WebRTC.Audio.StartPlayoutSuccess",
+                         static_cast<int>(result == 0));
+-  return result;
++  const int reconcile_result = ReconcileConferenceAudio();
++  return result != 0 ? result : reconcile_result;
+ }
+ 
+ int32_t AudioDeviceModuleIOS::StopPlayout() {
+   media_playout_requested_ = false;
+-  if (conference_playout_reserved_) return 0;
++  conference_audio_.StopPlayout();
++  if (conference_audio_.managed()) {
++    if (!conference_audio_.admitted() || conference_audio_.reserved()) return 0;
++  } else if (conference_playout_reserved_) {
++    return 0;
++  }
+   return StopPlayoutDevice();
+ }
+ 
+ int32_t AudioDeviceModuleIOS::SetConferencePlayoutReserved(bool reserved) {
++  if (conference_audio_.managed()) {
++    // Both reservation values grant ownership. Only explicit SDK intent starts
++    // input; an output reservation must never manufacture microphone intent.
++    if (!conference_audio_.Grant()) return RetireConferencePlayout();
++    conference_playout_retired_ = false;
++    conference_playout_reserved_ = conference_audio_.reserved();
++    if (!initialized_ && Init() != 0) return -1;
++    if ((conference_audio_.wants_playout_init() || conference_audio_.reserved()) &&
++        InitPlayoutDevice() != 0) return -1;
++    if (conference_audio_.wants_recording_init() && InitRecordingDevice() != 0) return -1;
++    if (conference_audio_.should_play()) {
++      if (StartPlayoutDevice() != 0) return -1;
++    } else if ((Playing() || !conference_audio_.wants_playout_init()) &&
++               StopPlayoutDevice() != 0) {
++      return -1;
++    }
++    if (conference_audio_.wants_recording_start() && StartRecordingDevice() != 0) return -1;
++    return ReconcileConferenceAudio();
++  }
+   conference_playout_reserved_ = reserved;
+   if (reserved) conference_playout_retired_ = false;
+   if (!reserved) {
+@@ -646,12 +724,13 @@
+ int32_t AudioDeviceModuleIOS::RetireConferencePlayout() {
+   conference_playout_reserved_ = false;
+   conference_playout_retired_ = true;
++  conference_audio_.Retire();
+   media_playout_requested_ = false;
+   if (!initialized_) return 0;
+   // Old receive/send callbacks cannot reactivate an obsolete factory. Stop
+   // output first so stopping input does not rebuild an output-only unit.
+   const int result = StopPlayoutDevice();
+-  const int recording_result = StopRecording();
++  const int recording_result = StopRecordingDevice();
+   return result != 0 ? result : recording_result;
+ }
+ 
+@@ -676,7 +755,17 @@
+ }
+ 
+ int32_t AudioDeviceModuleIOS::StartRecording() {
+-  if (conference_playout_retired_) return 0;
++  if (conference_audio_.managed()) {
++    if (!conference_audio_.RequestRecordingStart()) return 0;
++    if (InitRecordingDevice() != 0) return -1;
++  } else if (conference_playout_retired_) {
++    return 0;
++  }
++  return StartRecordingDevice();
++}
++
++int32_t AudioDeviceModuleIOS::StartRecordingDevice() {
++  if (conference_audio_.managed() && !conference_audio_.admitted()) return 0;
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   if (Recording()) {
+@@ -690,10 +779,17 @@
+   RTC_DLOG(LS_INFO) << "output: " << result;
+   RTC_HISTOGRAM_BOOLEAN("WebRTC.Audio.StartRecordingSuccess",
+                         static_cast<int>(result == 0));
+-  return result;
++  const int reconcile_result = ReconcileConferenceAudio();
++  return result != 0 ? result : reconcile_result;
+ }
+ 
+ int32_t AudioDeviceModuleIOS::StopRecording() {
++  conference_audio_.StopRecording();
++  if (conference_audio_.managed() && !conference_audio_.admitted()) return 0;
++  return StopRecordingDevice();
++}
++
++int32_t AudioDeviceModuleIOS::StopRecordingDevice() {
+   RTC_DLOG(LS_INFO) << __FUNCTION__;
+   CHECKinitialized_();
+   int32_t result = audio_device_->StopRecording();
+diff --git a/sdk/objc/native/src/audio/conference_audio_ownership.h b/sdk/objc/native/src/audio/conference_audio_ownership.h
+new file mode 100644
+--- /dev/null
++++ b/sdk/objc/native/src/audio/conference_audio_ownership.h
+@@ -0,0 +1,229 @@
++/* Copyright 2026 Rock'n'Roll contributors. BSD license: see LICENSE. */
++#ifndef SDK_OBJC_NATIVE_SRC_AUDIO_CONFERENCE_AUDIO_OWNERSHIP_H_
++#define SDK_OBJC_NATIVE_SRC_AUDIO_CONFERENCE_AUDIO_OWNERSHIP_H_
++
++#include <atomic>
++#include <cstdint>
++#include <memory>
++#include <optional>
++#include <utility>
++
++namespace webrtc {
++class AudioDeviceModule;
++}
++
++namespace webrtc::ios_adm {
++
++bool PrepareConferenceAudio(AudioDeviceModule* module,
++                            std::shared_ptr<std::atomic<int>> authority);
++
++enum ConferenceAudioAdmission : int {
++  kConferenceAudioPending = -2,
++  kConferenceAudioRetired = -1,
++  kConferenceAudioAdmitted = 0,
++  kConferenceAudioReserved = 1,
++};
++
++// Intent and local admission belong to the ADM worker. Only `authority` is
++// written by the coordinator. A null authority leaves standalone ADMs unmanaged.
++class ConferenceAudioAdmissionState {
++ public:
++  // Prepare before the managed ADM is exposed to SDK media requests.
++  bool Prepare(std::shared_ptr<std::atomic<int>> authority) {
++    if (authority_ || !authority) return false;
++    authority_ = std::move(authority);
++    phase_ = Phase::kPending;
++    ClearIntent();
++    ++generation_;
++    return true;
++  }
++
++  bool managed() const { return authority_ != nullptr; }
++  bool admitted() const {
++    return !authority_ ||
++           (phase_ == Phase::kAdmitted &&
++            authority_->load(std::memory_order_acquire) >= 0);
++  }
++  // Desired reservation, not permission to touch hardware; check admitted too.
++  bool reserved() const {
++    return authority_ && authority_->load(std::memory_order_acquire) ==
++                             kConferenceAudioReserved;
++  }
++  bool should_play() const {
++    return admitted() && (reserved() || wants_playout_start());
++  }
++
++  bool Grant() {
++    if (!authority_) return true;
++    ObserveRevocation();
++    if (authority_->load(std::memory_order_acquire) < 0) return false;
++    if (phase_ != Phase::kAdmitted) ++generation_;
++    phase_ = Phase::kAdmitted;
++    return true;
++  }
++
++  void Retire() {
++    if (!authority_) return;
++    if (phase_ != Phase::kRetired) ++generation_;
++    phase_ = Phase::kRetired;
++    ClearIntent();
++  }
++
++  // Return whether the caller may perform the native operation now. Deferred
++  // SDK requests must be replayed on grant, without recording new SDK intent.
++  bool RequestPlayoutInit() {
++    return Request(playout_init_, playout_start_, false);
++  }
++  bool RequestPlayoutStart() {
++    return Request(playout_init_, playout_start_, true);
++  }
++  bool RequestRecordingInit() {
++    return Request(recording_init_, recording_start_, false);
++  }
++  bool RequestRecordingStart() {
++    return Request(recording_init_, recording_start_, true);
++  }
++  void StopPlayout() {
++    ObserveRevocation();
++    playout_init_ = playout_start_ = false;
++  }
++  void StopRecording() {
++    ObserveRevocation();
++    recording_init_ = recording_start_ = false;
++  }
++
++  bool wants_playout_init() const { return playout_init_; }
++  bool wants_playout_start() const { return playout_start_; }
++  bool wants_recording_init() const { return recording_init_; }
++  bool wants_recording_start() const { return recording_start_; }
++  uint64_t generation() const { return generation_; }
++  bool AllowsCallback(uint64_t generation) const {
++    return generation == generation_ && admitted();
++  }
++
++ private:
++  enum class Phase { kPending, kAdmitted, kRetired };
++
++  void ObserveRevocation() {
++    if (authority_ && authority_->load(std::memory_order_acquire) ==
++                          kConferenceAudioRetired) {
++      Retire();
++    }
++  }
++
++  bool Request(bool& initialized, bool& started, bool start) {
++    ObserveRevocation();
++    if (phase_ == Phase::kRetired) return false;
++    initialized = true;
++    if (start) started = true;
++    return admitted();
++  }
++
++  void ClearIntent() {
++    playout_init_ = playout_start_ = false;
++    recording_init_ = recording_start_ = false;
++  }
++
++  std::shared_ptr<std::atomic<int>> authority_;
++  Phase phase_ = Phase::kAdmitted;
++  bool playout_init_ = false;
++  bool playout_start_ = false;
++  bool recording_init_ = false;
++  bool recording_start_ = false;
++  uint64_t generation_ = 0;
++};
++
++// Called only by the ownership coordinator's serial queue. The driver owns
++// factory lifetimes and executes actions asynchronously on their worker threads.
++class ConferenceAudioOwnership {
++ public:
++  using Owner = uint64_t;
++  enum class Kind { kApply, kRetire };
++  struct Action {
++    uint64_t id;
++    Owner owner;
++    Kind kind;
++    bool reserved;
++    uint64_t revision;
++  };
++
++  // Zero selects no owner. Reselecting the same owner requests a refresh.
++  void Select(Owner owner) {
++    desired_owner_ = owner;
++    RequestChanged();
++  }
++
++  // Reservation and ownership are separate: an unreserved owner is admitted
++  // for ordinary SDK media. Repeating a value explicitly retries or refreshes.
++  void SetReserved(bool reserved) {
++    desired_reserved_ = reserved;
++    RequestChanged();
++  }
++
++  std::optional<Action> Next() {
++    if (in_flight_ || paused_) return std::nullopt;
++    if (active_owner_ && active_owner_ != desired_owner_) {
++      return Issue(active_owner_, Kind::kRetire, false);
++    }
++    if (desired_owner_ && applied_revision_ != revision_) {
++      // An issued apply may already own hardware even before it completes,
++      // fails, or becomes obsolete. Only successful retirement releases it.
++      active_owner_ = desired_owner_;
++      return Issue(desired_owner_, Kind::kApply, desired_reserved_);
++    }
++    return std::nullopt;
++  }
++
++  // Ignore duplicate and stale completions, including completions arriving
++  // while another owner's action is in flight.
++  bool Complete(uint64_t action_id, bool success) {
++    if (!in_flight_ || in_flight_->id != action_id) return false;
++    const Action completed = *in_flight_;
++    in_flight_.reset();
++    if (success) {
++      if (completed.kind == Kind::kRetire) {
++        active_owner_ = 0;
++        applied_revision_ = 0;
++      } else {
++        applied_revision_ = completed.revision;
++      }
++    } else {
++      // One failed attempt per request. A newer request received while the
++      // operation ran already authorizes another attempt; never spin on failure.
++      paused_ = completed.revision == revision_;
++    }
++    return true;
++  }
++
++  Owner active_owner() const { return active_owner_; }
++  Owner desired_owner() const { return desired_owner_; }
++  Owner in_flight_owner() const {
++    return in_flight_ ? in_flight_->owner : 0;
++  }
++  bool desired_reserved() const { return desired_reserved_; }
++  uint64_t revision() const { return revision_; }
++  const std::optional<Action>& in_flight() const { return in_flight_; }
++
++ private:
++  void RequestChanged() {
++    ++revision_;
++    paused_ = false;
++  }
++
++  Action Issue(Owner owner, Kind kind, bool reserved) {
++    in_flight_ = Action{++next_action_id_, owner, kind, reserved, revision_};
++    return *in_flight_;
++  }
++
++  Owner active_owner_ = 0;
++  Owner desired_owner_ = 0;
++  bool desired_reserved_ = false;
++  bool paused_ = false;
++  uint64_t revision_ = 0;
++  uint64_t applied_revision_ = 0;
++  uint64_t next_action_id_ = 0;
++  std::optional<Action> in_flight_;
++};
++
++}  // namespace webrtc::ios_adm
++#endif
