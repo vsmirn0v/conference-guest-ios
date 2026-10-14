@@ -27,7 +27,7 @@ final class FloatingVideoContentView: UIView {
     private let videoContent: UIView
     private let badge = UIView()
     private let icon = UIImageView()
-    private let activityIcon = MicrophoneActivityView()
+    private let activityIcon = MicrophoneActivityView(compactMeter: true)
     private let label = UILabel()
     private let waiting = UILabel()
     private let speaker = ActiveSpeakerIndicator(font: .systemFont(ofSize: 11, weight: .semibold))
@@ -119,16 +119,19 @@ final class FloatingVideoContentView: UIView {
         let fullWidth = (fullTitle as NSString).size(withAttributes: [.font: label.font!]).width
         // Leave most of a small PiP window clear; retain "You" to distinguish
         // the local microphone from the participant whose video is displayed.
-        label.text = fullWidth + 33 <= available * (speaker.isHidden ? 0.72 : 0.46) ? fullTitle : L("You")
+        let iconWidth: CGFloat = activityIcon.isHidden ? 14 : 25
+        let labelX = iconWidth + 12
+        let padding = labelX + 7
+        label.text = fullWidth + padding <= available * (speaker.isHidden ? 0.72 : 0.46) ? fullTitle : L("You")
         let textSize = label.sizeThatFits(CGSize(width: available, height: 24))
-        let width = min(available, ceil(textSize.width) + 33)
+        let width = min(available, ceil(textSize.width) + padding)
         let height: CGFloat = 26
         badge.frame = CGRect(x: bounds.width - inset - width, y: max(0, bounds.height - inset - height),
                              width: width, height: height)
         speaker.frame = CGRect(x: inset, y: badge.frame.minY,
             width: min(speaker.intrinsicContentSize.width, max(0, available - width - 4)), height: height)
         icon.frame = CGRect(x: 7, y: 6, width: 14, height: 14)
-        activityIcon.frame = icon.frame
-        label.frame = CGRect(x: 26, y: 0, width: max(0, width - 33), height: height)
+        activityIcon.frame = CGRect(x: 7, y: 6, width: iconWidth, height: 14)
+        label.frame = CGRect(x: labelX, y: 0, width: max(0, width - padding), height: height)
     }
 }

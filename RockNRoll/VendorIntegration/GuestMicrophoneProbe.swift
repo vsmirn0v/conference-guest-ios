@@ -252,7 +252,10 @@ final class GuestAudioIOTrace: NSObject, RTCAudioSessionDelegate, @unchecked Sen
         let rtc = RTCAudioSession.sharedInstance()
         let row: [String: Any] = ["time": Date().timeIntervalSince1970, "event": event,
             "active": rtc.isActive, "manual": rtc.useManualAudio, "enabled": rtc.isAudioEnabled,
-            "mode": rtc.mode, "outputs": rtc.currentRoute.outputs.map { $0.portType.rawValue }]
+            "mode": rtc.mode, "options": rtc.categoryOptions.rawValue,
+            "configurationOptions": RTCAudioSessionConfiguration.webRTC().categoryOptions.rawValue,
+            "otherAudioPlaying": AVAudioSession.sharedInstance().isOtherAudioPlaying,
+            "outputs": rtc.currentRoute.outputs.map { $0.portType.rawValue }]
         guard let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
               var line = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]) else { return }
         let file = directory.appendingPathComponent("guest-audio-io.jsonl")

@@ -2,6 +2,30 @@ import XCTest
 import Vision
 
 final class PiPMicrophoneUITests: XCTestCase {
+    func testMicrophoneLevelActuallyRedrawsInBackgroundPiP() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("System video-call PiP requires a physical iPhone")
+        #endif
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment = ["CONFERENCE_TEST_UI_FIXTURE": "pip-microphone",
+            "CONFERENCE_TEST_RESET_FLOATING_VIDEO": "1", "CONFERENCE_TEST_PIP_LEVELS": "1"]
+        app.launch(); defer { app.terminate() }
+        app.buttons["Test microphone in PiP"].tap()
+        XCUIDevice.shared.press(.home)
+        let pip = XCUIApplication(bundleIdentifier: "com.apple.springboard").windows["PIP-SBInteractionPassThroughView"]
+        XCTAssertTrue(pip.waitForExistence(timeout: 10))
+        Thread.sleep(forTimeInterval: 3)
+        var captures: [Data] = []
+        for index in 0..<6 {
+            if let pixels = badgePixels(in: pip) { captures.append(pixels) }
+            let attachment = XCTAttachment(screenshot: pip.screenshot())
+            attachment.name = "PiP input level phase \(index)"; attachment.lifetime = .keepAlways; add(attachment)
+            Thread.sleep(forTimeInterval: 2)
+        }
+        XCTAssertEqual(captures.count, 6)
+        XCTAssertGreaterThan(Set(captures).count, 1, "Changing microphone samples must change the visible PiP badge while backgrounded")
+    }
     func testRoomTrackPiPStartsMovesAndNeverReturnsAfterLeave() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("AVKit video-call PiP requires a physical iPhone")
@@ -101,8 +125,8 @@ final class PiPMicrophoneUITests: XCTestCase {
     private func badgePixels(in pip: XCUIElement) -> Data? {
         guard let image = pip.screenshot().image.cgImage else { return nil }
         let width = CGFloat(image.width), height = CGFloat(image.height)
-        return image.cropping(to: CGRect(x: width * 0.76, y: height * 0.77,
-                                        width: width * 0.2, height: height * 0.17))
+        return image.cropping(to: CGRect(x: width * 0.53, y: height * 0.77,
+                                        width: width * 0.43, height: height * 0.17))
             .map { UIImage(cgImage: $0).pngData() } ?? nil
     }
 

@@ -256,6 +256,7 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     func configure(container: UIViewController, networkURL: URL, displayName: String) throws {
+        GuestAudioSessionPolicy.prepare()
         GuestPublishingCodecPolicy.prepare()
         GuestH264ColorEncoder.prepare()
         identity.setName(displayName)
@@ -890,7 +891,7 @@ final class NativeConferenceEngine: CallEngine {
         installCodecRecovery()
         beginFloatingVideoSession()
         installCallHandlers()
-        audio.start(takeAudioFocus: true, ready: { [weak self] in
+        audio.start(ready: { [weak self] in
             guard let self, self.hasJoinStarted, !self.leaveRequested else { return }
             #if DEBUG && targetEnvironment(simulator)
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
@@ -902,7 +903,8 @@ final class NativeConferenceEngine: CallEngine {
             }
             #endif
             self.systemCall.start(accessoryMute: ApplicationMicrophoneMute.macGuest,
-                                  acquiringAudioFocus: self.audio.acquiringJoinAudioFocus)
+                allowInitialActivationRetry: !ProcessInfo.processInfo.isiOSAppOnMac &&
+                    UIApplication.shared.applicationState != .background)
         }, failure: { [weak self] error in
             self?.onMediaStatus?(error.localizedDescription)
             self?.finishSession(userEnded: false, event: .failed)
@@ -1222,6 +1224,11 @@ final class NativeConferenceEngine: CallEngine {
         entry["audioCategory"] = audioSession.category.rawValue
         entry["audioMode"] = audioSession.mode.rawValue
         entry["audioOptions"] = audioSession.categoryOptions.rawValue
+        entry["otherAudioPlaying"] = audioSession.isOtherAudioPlaying
+        entry["microphoneSampling"] = studio.microphoneActivity.samplingNeeded
+        entry["microphoneLevel"] = studio.microphoneActivity.level
+        entry["microphoneSignal"] = studio.microphoneActivity.hasSignal
+        entry["floatingPresenting"] = floatingVideo?.lifecycleForTesting.isPresenting ?? false
         entry["outputTypes"] = audioSession.currentRoute.outputs.map { $0.portType.rawValue }
         entry["sampleRate"] = audioSession.sampleRate
         entry["networkRecovery"] = networkRecovery.requiresRecovery

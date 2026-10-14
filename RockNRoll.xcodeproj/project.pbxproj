@@ -89,6 +89,7 @@
 		3105BBAF8F219BE9BF7F0D11 /* GuestReactionTransportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8336F58FB63F2BB0C7F1B379 /* GuestReactionTransportTests.swift */; };
 		31E028D55499DB31084579D1 /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 57D559C6B683E448E9EF28F5 /* JazzSDK */; };
 		328C37B40535A23BCCF8F29C /* MacAudioDeviceUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6054155B3110878C5C33029 /* MacAudioDeviceUITests.swift */; };
+		33415AD6F0859269ADC2F672 /* AudioMixingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8A3FD31F0E9E7B3898695F /* AudioMixingUITests.swift */; };
 		3506EE7FF946AD19F4E3CB1E /* RoomMediaPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64E5E3314F0E275BAD71BC0B /* RoomMediaPolicyTests.swift */; };
 		380277071DCDE8182BEE081F /* GuestSiteLinkAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAB474DA91D3DC74B6A0A6CE /* GuestSiteLinkAdapter.swift */; };
 		3817326D77B842EADF739460 /* MeetingEngineRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0223068B027DDDC76D88BA4F /* MeetingEngineRoutingTests.swift */; };
@@ -145,6 +146,7 @@
 		5E84CD6427E69C7AF97FE516 /* GuestCameraPublishingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2477FC1F12F2F4A5906D63D4 /* GuestCameraPublishingTests.swift */; };
 		5EB749AEE0A7D2CAA504D0B1 /* LocalSharePreviewTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444F8FD4CEF81440C78F64E4 /* LocalSharePreviewTransport.swift */; };
 		5F64DAC22A14144A6758CE7F /* SystemCallCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5F280C9F27221EB0AEAE300 /* SystemCallCoordinator.swift */; };
+		600847A7BC179937D41B5E2D /* GuestAudioSessionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A186758D88BC07E2EF8241DF /* GuestAudioSessionPolicy.swift */; };
 		6196B268768A343A42E76EE6 /* RoomFloatingVideoSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4173C407195C3F116F3EC5D /* RoomFloatingVideoSink.swift */; };
 		62CA0CDBD84BFC0C18D633FA /* GuestScreenPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A5ED55E3846BED5560B4E72 /* GuestScreenPresenterTests.swift */; };
 		63349913ADE097BA69743188 /* VideoSubscriptionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C4CA635B347F09002064FE5 /* VideoSubscriptionCoordinatorTests.swift */; };
@@ -230,6 +232,7 @@
 		99F9ECA0B113E4AD26EF0A5A /* GuestH264ColorEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8046E95305835491140965F0 /* GuestH264ColorEncoder.swift */; };
 		9B56B9DA3A239DD6387606AA /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 19B3E6CDE87195F16EC34103 /* JazzSDK */; };
 		9CCE48644093871FF57DB377 /* BackgroundGuestAudioUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D0F7328BD21D63D97010C97 /* BackgroundGuestAudioUITests.swift */; };
+		9D0D72E20C95BB7895E237E6 /* GuestAudioSessionPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA0A49CF55FD4B1E8AB5546E /* GuestAudioSessionPolicyTests.swift */; };
 		9D7C69CF01DFB0398F2B832E /* CameraEffectStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = F76550791D2144E46F371781 /* CameraEffectStatus.swift */; };
 		9DFA58C919E7493ACE1BCEC1 /* GuestCallLayoutFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1741E6D891EBA9FB108E4AE0 /* GuestCallLayoutFixture.swift */; };
 		9EE248ECB6559A277078B246 /* CompositeVideoSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F147F9054614E0ED80B168 /* CompositeVideoSource.swift */; };
@@ -631,6 +634,7 @@
 		8CF21F89911BC05A681CEAF5 /* CameraPreviewPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreviewPresentationTests.swift; sourceTree = "<group>"; };
 		8D515F3060E9EAB3AB128908 /* MeetingHeaderStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingHeaderStatusTests.swift; sourceTree = "<group>"; };
 		8EE31B7E83BA253BE1AD08B4 /* OutgoingMediaLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutgoingMediaLiveTests.swift; sourceTree = "<group>"; };
+		8F8A3FD31F0E9E7B3898695F /* AudioMixingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioMixingUITests.swift; sourceTree = "<group>"; };
 		8FF52EAA23F3B290DCC84B43 /* GuestCaptureDeviceObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestCaptureDeviceObserver.swift; sourceTree = "<group>"; };
 		908B7BD8621D56B596FE8550 /* GuestVideoFrameTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestVideoFrameTests.swift; sourceTree = "<group>"; };
 		912ED3A027AB9D2DFD1EBBC9 /* NSLayoutConstraint+Priority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NSLayoutConstraint+Priority.swift"; sourceTree = "<group>"; };
@@ -655,6 +659,7 @@
 		9DFBCFFFF0467A7FB265789F /* MeetingReactionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingReactionsTests.swift; sourceTree = "<group>"; };
 		9E3B24AA609A4EED0C2E8B77 /* GuestDescriptionCallbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestDescriptionCallbackTests.swift; sourceTree = "<group>"; };
 		9F111C19BEF411D95F3B20A8 /* MacGuestScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacGuestScreenCapture.swift; sourceTree = "<group>"; };
+		A186758D88BC07E2EF8241DF /* GuestAudioSessionPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestAudioSessionPolicy.swift; sourceTree = "<group>"; };
 		A1AD2EC5120D62DAFB52BA47 /* MediaServicesResetUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaServicesResetUITests.swift; sourceTree = "<group>"; };
 		A3D56ADB9C4C008AF8FFBAB9 /* SampleHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleHandler.swift; sourceTree = "<group>"; };
 		A4173C407195C3F116F3EC5D /* RoomFloatingVideoSink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomFloatingVideoSink.swift; sourceTree = "<group>"; };
@@ -684,6 +689,7 @@
 		B809BB80707B957EA275127D /* PresenterEngineLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterEngineLiveTests.swift; sourceTree = "<group>"; };
 		B8CD56A3FCF389EEAC237654 /* MeetingActionsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingActionsPanel.swift; sourceTree = "<group>"; };
 		B9CD858D9C42BF13EBDB3F9C /* AdditionalRootTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdditionalRootTrust.swift; sourceTree = "<group>"; };
+		BA0A49CF55FD4B1E8AB5546E /* GuestAudioSessionPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestAudioSessionPolicyTests.swift; sourceTree = "<group>"; };
 		BB369290564963B920E5DB8A /* PresenterCanvasTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterCanvasTests.swift; sourceTree = "<group>"; };
 		BB8E0EEDC3368BC36F144A68 /* Extension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Extension.entitlements; sourceTree = "<group>"; };
 		BB9F78F51F928A3AE8E2561B /* ru */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ru; path = ru.lproj/Localizable.strings; sourceTree = "<group>"; };
@@ -1138,6 +1144,7 @@
 				C0FE1D94F395F80D8C32450B /* BoundedScreenShareUpload.swift */,
 				E0DDC3D21920474CDC247639 /* CallControls.swift */,
 				E5DD3C92B147421C014181FA /* EventRelay.swift */,
+				A186758D88BC07E2EF8241DF /* GuestAudioSessionPolicy.swift */,
 				1741E6D891EBA9FB108E4AE0 /* GuestCallLayoutFixture.swift */,
 				211078F27AB22D02C05618FC /* GuestCameraCapabilities.swift */,
 				0ABB4E8E269830AABC6FA5A6 /* GuestCameraFrameDelegate.swift */,
@@ -1208,6 +1215,7 @@
 				3FA2265A1EF1A16DA32A9BA7 /* FavoriteDragStateTests.swift */,
 				0C9FECFED16879ABE8E529D2 /* FloatingVideoContentTests.swift */,
 				B26E4AD6F9F712673B9CC7C1 /* FloatingVideoRecoveryTests.swift */,
+				BA0A49CF55FD4B1E8AB5546E /* GuestAudioSessionPolicyTests.swift */,
 				3F7A8F59787FB9FB78206745 /* GuestSiteLinkAdapterTests.swift */,
 				68D3C4DDB56704BF9DFC37E2 /* GuestVideoDemandTests.swift */,
 				908B7BD8621D56B596FE8550 /* GuestVideoFrameTests.swift */,
@@ -1284,6 +1292,7 @@
 			isa = PBXGroup;
 			children = (
 				42DB179B2A478433FFCDB714 /* ActiveSpeakerUITests.swift */,
+				8F8A3FD31F0E9E7B3898695F /* AudioMixingUITests.swift */,
 				0D0F7328BD21D63D97010C97 /* BackgroundGuestAudioUITests.swift */,
 				A7BECE92323383F955297BF7 /* CalendarPermissionUITests.swift */,
 				B1E05D0AC6C01910B81BEDBE /* CalendarUITests.swift */,
@@ -1646,6 +1655,7 @@
 				772D6857C9D1ADD26D37C906 /* FloatingVideoContentView.swift in Sources */,
 				CA2328A007DE4223C0D0CA82 /* FloatingVideoController.swift in Sources */,
 				1F35805A29943F09662AEB20 /* FloatingVideoPreference.swift in Sources */,
+				600847A7BC179937D41B5E2D /* GuestAudioSessionPolicy.swift in Sources */,
 				7ECAE69B4571F80DBEE4733F /* GuestBroadcastStop.swift in Sources */,
 				9DFA58C919E7493ACE1BCEC1 /* GuestCallLayoutFixture.swift in Sources */,
 				81DFD5827AC690D19BC5D716 /* GuestCameraCapabilities.swift in Sources */,
@@ -1808,6 +1818,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5D4888CED1DEF9DBF5A94C4B /* ActiveSpeakerUITests.swift in Sources */,
+				33415AD6F0859269ADC2F672 /* AudioMixingUITests.swift in Sources */,
 				9CCE48644093871FF57DB377 /* BackgroundGuestAudioUITests.swift in Sources */,
 				5DF65B79056EB8986462049D /* CalendarPermissionUITests.swift in Sources */,
 				6B05F37A71D4665918704EE3 /* CalendarUITests.swift in Sources */,
@@ -1876,6 +1887,7 @@
 				8902C1DFF76FCC904281725C /* FixtureSupport.swift in Sources */,
 				A0ED65C0456B8BC3BD5A2E05 /* FloatingVideoContentTests.swift in Sources */,
 				F244D229CACF2266DC21DD5C /* FloatingVideoRecoveryTests.swift in Sources */,
+				9D0D72E20C95BB7895E237E6 /* GuestAudioSessionPolicyTests.swift in Sources */,
 				5E84CD6427E69C7AF97FE516 /* GuestCameraPublishingTests.swift in Sources */,
 				30210406FF4C35BF1CC91BC6 /* GuestDecoderExperimentLiveTests.swift in Sources */,
 				1550DB6384B1833A70E1DB08 /* GuestDescriptionCallbackTests.swift in Sources */,

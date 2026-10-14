@@ -186,7 +186,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         else if transactionRequester == nil { (source ?? provider).reportCall(with: id, updated: update) }
     }
 
-    func start(accessoryMute: ApplicationMicrophoneMute? = nil, acquiringAudioFocus: Bool = false) {
+    func start(accessoryMute: ApplicationMicrophoneMute? = nil, allowInitialActivationRetry: Bool = false) {
         guard callID == nil else { return }
         applicationMute = accessoryMute ?? defaultApplicationMute
         usesSystemCall = registrationOverride ?? (transactionRequester != nil ||
@@ -208,7 +208,7 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
         isAudioSessionActive = false
         servicesAvailable = true; ending = false
         transferHolding = false
-        initialFocusDeadline = acquiringAudioFocus && !usesSystemCall
+        initialFocusDeadline = allowInitialActivationRetry && !usesSystemCall
             ? ContinuousClock.now.advanced(by: recoveryWindow) : nil
         initialActivationError = nil
         if !usesSystemCall {

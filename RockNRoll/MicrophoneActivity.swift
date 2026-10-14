@@ -107,13 +107,16 @@ final class MicrophoneActivityView: UIView {
     private let outline = UIImageView()
     private let fill = CAGradientLayer()
     private let maskLayer = CALayer()
+    private let compactMeter: Bool
+    private let bars = (0..<3).map { _ in CALayer() }
     private var observation: AnyCancellable?
     private var level: CGFloat = 0
     private var status: PiPMicrophoneStatus = .muted
     private var hasSignal = false
     private var renderedStatus: PiPMicrophoneStatus?
     private var presentationStatus: PiPMicrophoneStatus?
-    init() {
+    init(compactMeter: Bool = false) {
+        self.compactMeter = compactMeter
         super.init(frame: .zero)
         isUserInteractionEnabled = false
         outline.contentMode = .scaleAspectFit
@@ -122,6 +125,13 @@ final class MicrophoneActivityView: UIView {
         fill.startPoint = CGPoint(x: 0.5, y: 1); fill.endPoint = CGPoint(x: 0.5, y: 0)
         layer.addSublayer(fill)
         fill.mask = maskLayer
+        if compactMeter {
+            for bar in bars {
+                bar.backgroundColor = UIColor.white.cgColor
+                bar.cornerRadius = 1
+                layer.addSublayer(bar)
+            }
+        }
     }
     required init?(coder: NSCoder) { nil }
     func bind(_ model: MicrophoneActivity) {
@@ -149,15 +159,25 @@ final class MicrophoneActivityView: UIView {
             outline.tintColor = displayedStatus == .on ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
         }
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        fill.isHidden = displayedStatus != .on || status != .on || !hasSignal
+        let active = displayedStatus == .on && status == .on && hasSignal
+        fill.isHidden = compactMeter || !active
         let h = bounds.height * level
         fill.frame = CGRect(x: 0, y: bounds.height - h, width: bounds.width, height: h)
         maskLayer.frame = CGRect(x: 0, y: -(bounds.height - h), width: bounds.width, height: bounds.height)
+        if compactMeter {
+            for (index, bar) in bars.enumerated() {
+                let height = max(1, bounds.height * level * [CGFloat(0.65), 1, 0.8][index])
+                bar.frame = CGRect(x: bounds.width - 8 + CGFloat(index) * 3,
+                    y: (bounds.height - height) / 2, width: 2, height: height)
+                bar.opacity = Float(0.3 + 0.7 * level)
+                bar.isHidden = !active
+            }
+        }
         CATransaction.commit()
     }
     override func layoutSubviews() {
         super.layoutSubviews()
-        outline.frame = bounds
+        outline.frame = compactMeter ? CGRect(x: 0, y: 0, width: max(0, bounds.width - 11), height: bounds.height) : bounds
         let image = UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: max(8, bounds.height), weight: .regular))
         maskLayer.contents = image?.cgImage
         maskLayer.contentsGravity = .resizeAspect

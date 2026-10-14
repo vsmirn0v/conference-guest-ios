@@ -7,6 +7,8 @@ final class PiPMicrophoneFixtureViewController: UIViewController {
     private let speaker = ActiveSpeakerStore()
     private var foregroundObservation: NSObjectProtocol?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private let microphone = MicrophoneActivity()
+    private var levelTimer: Timer?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -21,6 +23,9 @@ final class PiPMicrophoneFixtureViewController: UIViewController {
         card.backgroundColor = UIColor(white: 0.18, alpha: 1)
         card.textColor = .white
         floating = FloatingVideoController(contentView: card, speaker: speaker)
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_PIP_LEVELS"] == "1" {
+            floating?.bindMicrophoneActivity(microphone)
+        }
         floating?.setMicrophoneStatus(.muted)
         speaker.update(CallSpeaker(id: "aram", name: "Aram", isLocal: false))
         let start = UIButton(type: .system)
@@ -56,6 +61,19 @@ final class PiPMicrophoneFixtureViewController: UIViewController {
             self.backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "PiP status fixture") {
                 self.finishBackgroundTask()
             }
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_PIP_LEVELS"] == "1" {
+                self.floating?.setMicrophoneStatus(.on)
+                self.microphone.setStatus(.on)
+                self.speaker.update(nil)
+                self.levelTimer?.invalidate()
+                let start = ProcessInfo.processInfo.systemUptime
+                self.levelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        self?.microphone.receive(rms: Int(ProcessInfo.processInfo.systemUptime - start) / 3 % 2 == 0 ? 0 : 1)
+                    }
+                }
+                return
+            }
             for (delay, status) in [(12.0, PiPMicrophoneStatus.on), (24.0, .unavailable), (36.0, .muted)] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                     self?.floating?.setMicrophoneStatus(status)
@@ -74,6 +92,7 @@ final class PiPMicrophoneFixtureViewController: UIViewController {
     }
 
     private func finishBackgroundTask() {
+        levelTimer?.invalidate(); levelTimer = nil
         guard backgroundTask != .invalid else { return }
         UIApplication.shared.endBackgroundTask(backgroundTask)
         backgroundTask = .invalid

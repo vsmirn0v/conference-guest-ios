@@ -11,41 +11,32 @@ final class AudioAcquisitionTests: XCTestCase {
         var value: Int { lock.lock(); defer { lock.unlock() }; return count }
     }
 
-    func testJoinFocusOptionsPauseExistingAudioAndKeepHandsFreeRouting() {
-        let exclusive = AudioCoordinator.communicationOptions(mixing: false)
-        XCTAssertTrue(exclusive.contains(.allowBluetoothHFP))
-        XCTAssertFalse(exclusive.contains(.mixWithOthers))
-        XCTAssertFalse(exclusive.contains(.duckOthers))
-        XCTAssertFalse(exclusive.contains(.interruptSpokenAudioAndMixWithOthers))
-        XCTAssertTrue(AudioCoordinator.communicationOptions(mixing: true).contains(.mixWithOthers))
+    func testJoinOptionsMixExistingAudioAndKeepHandsFreeRouting() {
+        let options = AudioCoordinator.communicationOptions
+        XCTAssertTrue(options.contains(.allowBluetoothHFP))
+        XCTAssertTrue(options.contains(.mixWithOthers))
+        XCTAssertTrue(options.contains(.allowBluetoothA2DP))
+        XCTAssertFalse(options.contains(.duckOthers))
+        XCTAssertFalse(options.contains(.interruptSpokenAudioAndMixWithOthers))
     }
 
-    func testRouteNotificationsCannotRestoreMixingBeforeInitialGrantAndResetDoesNotRetakeFocus() async throws {
-        let center = NotificationCenter(), normal = Counter(), initial = Counter(), mixing = Counter()
-        let audio = AudioCoordinator(prepareSession: { normal.increment() },
-            prepareInitialSession: { initial.increment() }, restoreMixingSession: { mixing.increment() }, notifications: center)
+    func testJoinAndMediaServiceResetUseTheSameMixingPolicy() async throws {
+        let center = NotificationCenter(), preparations = Counter(), mixing = Counter()
+        let audio = AudioCoordinator(prepareSession: { preparations.increment() },
+            restoreMixingSession: { mixing.increment() }, notifications: center)
         let ready = expectation(description: "prepared")
-        audio.start(takeAudioFocus: true, ready: { ready.fulfill() }, failure: { XCTFail("\($0)") })
+        audio.start(ready: { ready.fulfill() }, failure: { XCTFail("\($0)") })
         defer { audio.endSession() }
         await fulfillment(of: [ready], timeout: 2)
-        let acquiring = !ProcessInfo.processInfo.isiOSAppOnMac
-        XCTAssertEqual(audio.acquiringJoinAudioFocus, acquiring)
-        XCTAssertEqual(initial.value, acquiring ? 1 : 0)
-        center.post(name: AVAudioSession.routeChangeNotification, object: AVAudioSession.sharedInstance(),
-                    userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.categoryChange.rawValue])
-        audio.ensureMixing()
-        try await Task.sleep(for: .milliseconds(60))
-        if acquiring { XCTAssertEqual(mixing.value, 0, "Category change cannot defeat the exclusive join activation") }
+        XCTAssertEqual(preparations.value, 1)
         audio.callAudioDidActivate()
         try await Task.sleep(for: .milliseconds(60))
-        XCTAssertFalse(audio.acquiringJoinAudioFocus)
         XCTAssertGreaterThan(mixing.value, 0)
         let recovered = expectation(description: "reset prepared")
         audio.onServicesChanged = { if $0 { recovered.fulfill() } }
         center.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
         await fulfillment(of: [recovered], timeout: 2)
-        XCTAssertEqual(initial.value, acquiring ? 1 : 0)
-        XCTAssertEqual(normal.value, acquiring ? 1 : 2)
+        XCTAssertEqual(preparations.value, 2)
     }
 
     func testBeganOnlyJoinTransitionCanRecoverOnceWithoutReportingCallHold() async throws {
@@ -53,7 +44,7 @@ final class AudioAcquisitionTests: XCTestCase {
         let owner = SystemCallCoordinator(callSnapshot: { [] }, systemCallRegistration: false,
             activateAudioSession: { attempts += 1 }, recoveryWindow: .seconds(1), recoveryInterval: .milliseconds(20))
         owner.onHoldChanged = { if $0 { holds += 1 } }
-        owner.start(acquiringAudioFocus: true); owner.markConnected()
+        owner.start(allowInitialActivationRetry: true); owner.markConnected()
         defer { owner.end() }
         owner.audioSessionInterrupted(true)
         XCTAssertFalse(owner.canRestoreAudio)
@@ -67,22 +58,19 @@ final class AudioAcquisitionTests: XCTestCase {
         XCTAssertEqual(attempts, 2)
     }
 
-    func testResetBeforeInitialPreparationRunsUsesMixedRecoveryAndRetiresQueuedFocus() async throws {
-        let queue = DispatchQueue(label: "test.join-focus.reset"), normal = Counter(), initial = Counter()
+    func testResetRetiresQueuedPreparationAndRestartsOnce() async throws {
+        let queue = DispatchQueue(label: "test.join.reset"), preparations = Counter()
         let center = NotificationCenter()
         let audio = AudioCoordinator(worker: AudioSessionWorker(queue: queue),
-            prepareSession: { normal.increment() }, prepareInitialSession: { initial.increment() },
-            restoreMixingSession: {}, notifications: center)
+            prepareSession: { preparations.increment() }, restoreMixingSession: {}, notifications: center)
         let ready = expectation(description: "reset startup ready")
         queue.suspend()
-        audio.start(takeAudioFocus: true, ready: { ready.fulfill() }, failure: { XCTFail("\($0)") })
+        audio.start(ready: { ready.fulfill() }, failure: { XCTFail("\($0)") })
         try await Task.sleep(for: .milliseconds(20))
         center.post(name: AVAudioSession.mediaServicesWereResetNotification, object: AVAudioSession.sharedInstance())
-        XCTAssertFalse(audio.acquiringJoinAudioFocus)
         queue.resume()
         await fulfillment(of: [ready], timeout: 2)
-        XCTAssertEqual(initial.value, 0)
-        XCTAssertEqual(normal.value, 1)
+        XCTAssertEqual(preparations.value, 1)
         audio.endSession()
     }
 
@@ -94,7 +82,7 @@ final class AudioAcquisitionTests: XCTestCase {
                 if attempts == 1 { throw NSError(domain: NSOSStatusErrorDomain, code: 561017449) }
             }, recoveryWindow: .seconds(1), recoveryInterval: .milliseconds(20))
         owner.onFailure = { _ in failures += 1 }
-        owner.start(acquiringAudioFocus: true)
+        owner.start(allowInitialActivationRetry: true)
         defer { owner.end() }
         await waitForAudio(owner)
         XCTAssertTrue(owner.canRestoreAudio)
@@ -108,7 +96,7 @@ final class AudioAcquisitionTests: XCTestCase {
             recoveryWindow: .milliseconds(80), recoveryInterval: .milliseconds(20))
         let failed = expectation(description: "startup timed out")
         owner.onFailure = { _ in failures += 1; failed.fulfill() }
-        owner.start(acquiringAudioFocus: true)
+        owner.start(allowInitialActivationRetry: true)
         await fulfillment(of: [failed], timeout: 1)
         XCTAssertEqual(failures, 1); XCTAssertNil(owner.callID)
         XCTAssertFalse(owner.canRestoreAudio)
@@ -121,7 +109,7 @@ final class AudioAcquisitionTests: XCTestCase {
                 var snapshot: [SystemCallCoordinator.ObservedCall] = [], attempts = 0
                 let owner = SystemCallCoordinator(callSnapshot: { snapshot }, systemCallRegistration: false,
                     activateAudioSession: { attempts += 1 }, recoveryWindow: .seconds(1), recoveryInterval: .milliseconds(20))
-                owner.start(acquiringAudioFocus: true); owner.markConnected()
+                owner.start(allowInitialActivationRetry: true); owner.markConnected()
                 owner.audioSessionInterrupted(true)
                 snapshot = [.init(id: UUID(), connected: connected, held: held)]
                 owner.observedCallChanged(snapshot[0])
@@ -138,7 +126,7 @@ final class AudioAcquisitionTests: XCTestCase {
         var snapshot: [SystemCallCoordinator.ObservedCall] = []
         let owner = SystemCallCoordinator(callSnapshot: { snapshot }, systemCallRegistration: false, sessionWorker: worker,
             recoveryWindow: .seconds(1), recoveryInterval: .milliseconds(20))
-        owner.start(acquiringAudioFocus: true)
+        owner.start(allowInitialActivationRetry: true)
         defer { owner.end() }
         await waitForAudio(owner); XCTAssertTrue(owner.canRestoreAudio)
         queue.suspend()
@@ -159,14 +147,14 @@ final class AudioAcquisitionTests: XCTestCase {
                 attempts += 1
                 if reject { throw NSError(domain: "TransientActivation", code: 1) }
             }, recoveryWindow: .milliseconds(80), recoveryInterval: .milliseconds(20))
-        owner.start(acquiringAudioFocus: true); owner.markConnected()
+        owner.start(allowInitialActivationRetry: true); owner.markConnected()
         reject = true; owner.audioSessionInterrupted(true)
         try await Task.sleep(for: .milliseconds(120))
         let expiredAttempts = attempts
         reject = false
         XCTAssertFalse(try owner.reactivateAudioIfPossible())
         XCTAssertFalse(owner.canRestoreAudio); XCTAssertEqual(attempts, expiredAttempts)
-        owner.end(); owner.start(acquiringAudioFocus: true); owner.markConnected()
+        owner.end(); owner.start(allowInitialActivationRetry: true); owner.markConnected()
         owner.audioSessionInterrupted(true); owner.end()
         owner.start(); owner.markConnected(); owner.audioSessionInterrupted(true)
         let replacementAttempts = attempts

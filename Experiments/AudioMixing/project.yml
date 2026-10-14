@@ -1,0 +1,23 @@
+name: AudioMixingHarness
+options:
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  AudioMixingHarness:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    info:
+      path: Info.plist
+      properties:
+        UIBackgroundModes: [audio]
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.audio-mixing-harness
+        DEVELOPMENT_TEAM: 5V64BP2H3P
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
