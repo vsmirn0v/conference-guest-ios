@@ -24,7 +24,7 @@ final class HomeLayoutUITests: XCTestCase {
         XCTAssertTrue(element.waitForExistence(timeout: 5)); XCTAssertTrue(element.isHittable)
     }
     private func attach(_ title: String) {
-        let capture = XCTAttachment(screenshot: app.screenshot()); capture.name = title; capture.lifetime = .keepAlways; add(capture)
+        let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); capture.name = title; capture.lifetime = .keepAlways; add(capture)
     }
     func testLateCalendarEnrichmentDoesNotMoveJoinOrFavoriteTapTargets() {
         for language in ["en", "ru"] {

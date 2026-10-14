@@ -21,7 +21,7 @@ final class MeetingReactionsUITests: XCTestCase {
             let compact = app.otherElements["Compact meeting header"]
             let header = compact.exists ? compact : app.buttons["Meeting status"]
             XCTAssertGreaterThan(reaction.frame.minY, header.frame.maxY)
-            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             screenshot.name = "Own floating reaction below header"; screenshot.lifetime = .keepAlways; add(screenshot)
         }
     }
