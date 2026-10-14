@@ -14,7 +14,6 @@
 @protocol RockNativeWindow <NSObject>
 - (id)delegate;
 - (void)setDelegate:(id)delegate;
-- (void)makeKeyAndOrderFront:(id)sender;
 - (void)deminiaturize:(id)sender;
 - (BOOL)isMiniaturized;
 - (BOOL)isVisible;
@@ -23,7 +22,6 @@
 - (id)sheetParent;
 - (id)parentWindow;
 - (id)standardWindowButton:(NSUInteger)button;
-- (void)makeMainWindow;
 - (void)performClose:(id)sender;
 @end
 @interface NSObject (RockPublicAppKit)
@@ -121,6 +119,7 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
 @property(nonatomic, weak) id closeButton;
 @property(nonatomic, weak) id closeTarget;
 @property(nonatomic) SEL closeAction;
+@property(nonatomic) NSUInteger visibilityRevision;
 @property(nonatomic, readwrite) BOOL hiddenForMeeting;
 @end
 
@@ -144,6 +143,8 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
             name:@"NSApplicationWillTerminateNotification" object:app];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(nativeWindowReady:)
             name:@"NSWindowDidBecomeMainNotification" object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(nativeWindowReady:)
+            name:@"NSWindowDidDeminiaturizeNotification" object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(nativeWindowReady:)
             name:@"NSApplicationDidBecomeActiveNotification" object:app];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(windowUpdated:)
@@ -178,7 +179,7 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
         window = RockUniqueMeetingWindow([self.application windows]);
     }
     if (!RockEligibleMeetingWindow(window)) return NO;
-    for (NSString *name in @[@"delegate", @"setDelegate:", @"makeKeyAndOrderFront:", @"deminiaturize:", @"isMiniaturized"]) {
+    for (NSString *name in @[@"delegate", @"setDelegate:", @"deminiaturize:", @"isMiniaturized"]) {
         if (![window respondsToSelector:NSSelectorFromString(name)]) return NO;
     }
     self.window = window;
@@ -220,6 +221,7 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
 - (BOOL)hideMeeting {
     if (!self.active || !self.statusItem || !self.window || [self.window delegate] != self.proxy) return NO;
     self.hiddenForMeeting = YES;
+    self.visibilityRevision++;
     [self.application hide:nil];
     if (self.action) self.action(@"hidden");
     return YES;
@@ -235,7 +237,8 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
     });
 }
 - (void)nativeWindowReady:(NSNotification *)notification {
-    if ([notification.name isEqualToString:@"NSWindowDidBecomeMainNotification"] &&
+    if (([notification.name isEqualToString:@"NSWindowDidBecomeMainNotification"] ||
+         [notification.name isEqualToString:@"NSWindowDidDeminiaturizeNotification"]) &&
         notification.object != (self.window ?: [self.application mainWindow])) return;
     if (self.action) self.action(@"binding");
 }
@@ -289,12 +292,24 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
 }
 - (void)showMeeting {
     if (!self.window) return;
-    self.hiddenForMeeting = NO;
+    NSUInteger revision = ++self.visibilityRevision;
     [self.application unhide:nil];
     if ([self.window isMiniaturized]) [self.window deminiaturize:nil];
-    [self.window makeKeyAndOrderFront:nil];
+    [self.owningWindow makeKeyAndVisible];
     [self.application activateIgnoringOtherApps:YES];
-    if (![self.application isHidden] && [self.window isVisible] && self.action) self.action(@"visible");
+    [self completeVisibility:revision attempt:0];
+}
+- (void)completeVisibility:(NSUInteger)revision attempt:(NSUInteger)attempt {
+    if (self.invalidated || self.visibilityRevision != revision || !self.window || [self.window delegate] != self.proxy) return;
+    if (![self.application isHidden] && [self.window isVisible]) {
+        self.hiddenForMeeting = NO;
+        if (self.action) self.action(@"visible");
+    } else if (attempt < 10) {
+        __weak typeof(self) weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            [weakSelf completeVisibility:revision attempt:attempt + 1];
+        });
+    }
 }
 - (void)markVisible {
     if (self.window && ![self.application isHidden] && [self.window isVisible]) self.hiddenForMeeting = NO;
@@ -305,6 +320,7 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
 }
 - (void)invalidate {
     self.invalidated = YES;
+    self.visibilityRevision++;
     self.active = NO; self.action = nil; self.hiddenForMeeting = NO;
     [self restoreCloseButton];
     if (self.window && [self.window delegate] == self.proxy) [self.window setDelegate:self.proxy.original];
@@ -388,6 +404,7 @@ NSDictionary *RockMacMeetingBridgeDiagnostics(void) {
 @end
 @interface RockCloseTestApplication : NSObject
 @property(nonatomic) NSUInteger hides;
+@property(nonatomic) BOOL isHidden;
 @end
 @implementation RockCloseTestApplication
 - (void)hide:(id)sender { self.hides++; }
@@ -398,6 +415,31 @@ NSDictionary *RockMacMeetingBridgeDiagnostics(void) {
     return YES;
 }
 @end
+BOOL RockMacMeetingVisibilityQualification(void) {
+    RockProxyTestWindow *window = [RockProxyTestWindow new];
+    RockWindowDelegateProxy *proxy = [RockWindowDelegateProxy new]; window.delegate = proxy;
+    RockCloseTestApplication *app = [RockCloseTestApplication new];
+    RockMacMeetingWindowBridge *bridge = [[RockMacMeetingWindowBridge alloc] initWithWindow:nil action:^(NSString *action) {}];
+    [bridge invalidate]; bridge.invalidated = NO;
+    bridge.application = (id)app; bridge.window = (id)window; bridge.proxy = proxy;
+    bridge.hiddenForMeeting = YES;
+    __block NSUInteger visible = 0;
+    bridge.action = ^(NSString *action) { if ([action isEqualToString:@"visible"]) visible++; };
+    NSUInteger revision = ++bridge.visibilityRevision;
+    [bridge completeVisibility:revision attempt:10];
+    [bridge markVisible];
+    BOOL correct = bridge.hiddenForMeeting && visible == 0;
+    window.isVisible = YES;
+    [bridge completeVisibility:revision attempt:10];
+    correct &= !bridge.hiddenForMeeting && visible == 1;
+    bridge.hiddenForMeeting = YES; bridge.visibilityRevision++;
+    [bridge completeVisibility:revision attempt:10];
+    correct &= bridge.hiddenForMeeting && visible == 1;
+    revision = bridge.visibilityRevision;
+    [bridge invalidate];
+    [bridge completeVisibility:revision attempt:10];
+    return correct && visible == 1;
+}
 BOOL RockMacMeetingCloseButtonQualification(void) {
     RockProxyTestDelegate *original = [RockProxyTestDelegate new];
     RockCloseTestButton *button = [RockCloseTestButton new];

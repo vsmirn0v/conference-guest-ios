@@ -26,5 +26,6 @@ NS_ASSUME_NONNULL_BEGIN
 FOUNDATION_EXPORT NSDictionary *RockMacMeetingBridgeDiagnostics(void);
 FOUNDATION_EXPORT BOOL RockMacMeetingProxyQualification(void);
 FOUNDATION_EXPORT BOOL RockMacMeetingCloseButtonQualification(void);
+FOUNDATION_EXPORT BOOL RockMacMeetingVisibilityQualification(void);
 #endif
 NS_ASSUME_NONNULL_END

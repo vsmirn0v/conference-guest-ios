@@ -13,6 +13,10 @@ final class MacMeetingTests: XCTestCase {
         XCTAssertTrue(RockMacMeetingCloseButtonQualification())
     }
 
+    func testAsynchronousShowWaitsForActualVisibilityAndRetiresStaleCompletions() {
+        XCTAssertTrue(RockMacMeetingVisibilityQualification())
+    }
+
     func testCachedCloseShortcutRefreshesIdleStateBeforeDispatch() async {
         let model = MeetingSessionStub(), presentation = MeetingPresentationStub()
         let coordinator = makeCoordinator(model, presentation)

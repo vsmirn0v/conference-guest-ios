@@ -11,7 +11,12 @@ meeting-scoped UIKit command; the forwarding native window delegate also protect
 the normal AppKit Close path. Idle Close and ordinary Quit retain normal behavior.
 The native menu-bar item offers Show meeting, microphone mute/unmute, input/output
 selection, Leave and Quit. Leave reveals the home screen and removes the item.
-Show explicitly restores incoming video demand without creating another session.
+Show uses the owning UIKit window's `makeKeyAndVisible()` after unhiding the
+application, and restores incoming video demand without creating another session.
+Visibility confirmation is bounded and rejects completions from an older hide,
+show or invalidated coordinator. The hidden marker clears only when the actual
+native window is visible. Apple processing rejected `makeKeyAndOrderFront:` in
+build 85; that selector is entirely absent from build 86.
 
 The bridge resolves public AppKit APIs only on the Designed-for-iPad Mac runtime.
 It does not link AppKit directly, inspect private UIKit internals, or swizzle classes.
