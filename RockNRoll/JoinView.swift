@@ -268,8 +268,6 @@ struct JoinView: View {
                         .homeAnchor("urgent." + item.id.homeAnchorID)
                 }
             }
-        } else if homeSnapshot.calendarState.enabled && homeSnapshot.calendarState.hasSelection && homeSnapshot.calendarState.loading {
-            Section { HomeMeetingLoadingCard() }
         }
     }
     @ViewBuilder private var automaticJoinBanner: some View {

@@ -25,9 +25,38 @@ final class HomeLayoutUITests: XCTestCase {
     private func attach(_ title: String) {
         let capture = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); capture.name = title; capture.lifetime = .keepAlways; add(capture)
     }
+    func testEmptyStartupCalendarCheckIsSilentAndDoesNotMoveQuickActions() {
+        for language in ["en", "ru"] {
+            app.launchEnvironment["CONFERENCE_TEST_CALENDAR"] = "home-empty"
+            app.launchEnvironment["CONFERENCE_TEST_CALENDAR_DELAY"] = "8"
+            app.launchArguments = ["-AppleLanguages", "(\(language))", "-AppleLocale", language == "ru" ? "ru_RU" : "en_US"]
+            app.launch()
+            let join = app.buttons["join.start"]
+            XCTAssertTrue(join.waitForExistence(timeout: 10))
+            let first = favorites.element(boundBy: 0), second = favorites.element(boundBy: 1)
+            let frames = [join.frame, first.frame, second.frame]
+            let checking = language == "ru" ? "Проверяем календарь…" : "Checking calendar…"
+            XCTAssertFalse(app.descendants(matching: .any)["home.calendar-loading"].exists)
+            XCTAssertFalse(app.staticTexts[checking].exists, "Background calendar work must not occupy Home")
+            XCTAssertTrue(first.isHittable); XCTAssertTrue(second.isHittable)
+            attach("Silent startup calendar check · " + language)
+            // The fixture holds the read for eight seconds. Verify the completed
+            // empty state below as well, so a failed scan cannot satisfy geometry.
+            Thread.sleep(forTimeInterval: 9)
+            XCTAssertEqual(join.frame, frames[0])
+            XCTAssertEqual(first.frame, frames[1]); XCTAssertEqual(second.frame, frames[2])
+            let agenda = app.buttons["calendar.agenda"]
+            reveal(agenda); agenda.tap()
+            let empty = language == "ru" ? "В выбранных календарях нет предстоящих встреч со ссылкой для подключения." :
+                "No upcoming meetings with a join link in your selected calendars."
+            XCTAssertTrue(app.staticTexts[empty].waitForExistence(timeout: 5), "The calendar scan must actually finish")
+            app.terminate()
+        }
+        app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_CALENDAR_DELAY")
+    }
     func testLateCalendarEnrichmentDoesNotMoveJoinOrFavoriteTapTargets() {
         for language in ["en", "ru"] {
-            app.launchEnvironment["CONFERENCE_TEST_CALENDAR"] = "home-delayed"
+            app.launchEnvironment["CONFERENCE_TEST_CALENDAR"] = "home-delayed-later"
             app.launchEnvironment["CONFERENCE_TEST_CALENDAR_DELAY"] = "8"
             app.launchArguments = ["-AppleLanguages", "(\(language))", "-AppleLocale", language == "ru" ? "ru_RU" : "en_US"]
             app.launch()
@@ -35,12 +64,14 @@ final class HomeLayoutUITests: XCTestCase {
             let first = favorites.element(boundBy: 0), second = favorites.element(boundBy: 1)
             let frames = [app.buttons["join.start"].frame, first.frame, second.frame]
             let identity = first.identifier
-            XCTAssertTrue(app.buttons["calendar.join.daily"].waitForExistence(timeout: 12))
+            let enriched = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "Daily rehearsal"), object: first)
+            XCTAssertEqual(XCTWaiter.wait(for: [enriched], timeout: 12), .completed)
             XCTAssertEqual(app.buttons["join.start"].frame, frames[0])
             XCTAssertEqual(first.frame, frames[1]); XCTAssertEqual(second.frame, frames[2])
             XCTAssertEqual(first.identifier, identity)
             XCTAssertTrue((first.value as? String ?? "").contains("Daily rehearsal"))
-            XCTAssertTrue(app.descendants(matching: .any)["home.title.daily"].exists)
+            XCTAssertFalse(app.descendants(matching: .any)["home.title.daily"].exists, "Later meetings must not occupy an urgent slot")
+            XCTAssertFalse(app.descendants(matching: .any)["home.calendar-loading"].exists)
             XCTAssertFalse(app.buttons["home.show-updates"].exists, "Discoveries must appear without an acceptance gate")
             attach("Stable rows after delayed enrichment · " + language)
             app.terminate()
@@ -63,19 +94,21 @@ final class HomeLayoutUITests: XCTestCase {
         XCTAssertTrue((name.value as? String ?? "").contains("edited"))
         app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_CALENDAR_DELAY")
     }
-    func testDelayedAutomaticJoinCountdownDoesNotShiftTopRows() {
+    func testAutomaticJoinCountdownStaysBelowQuickActions() {
         app.launchEnvironment["CONFERENCE_TEST_CALENDAR"] = "home-countdown"
         app.launchEnvironment["CONFERENCE_TEST_CALENDAR_DELAY"] = "8"
         app.launchArguments = ["-AppleLanguages", "(en)"]
         app.launch()
         XCTAssertTrue(app.buttons["join.start"].waitForExistence(timeout: 10))
-        let before = app.buttons["join.start"].frame
-        let firstFrame = favorites.element(boundBy: 0).frame
         let banner = app.descendants(matching: .any)["calendar.countdown-banner"].firstMatch
         XCTAssertTrue(banner.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["calendar.join.daily"].exists)
+        let before = app.buttons["join.start"].frame
+        let firstFrame = favorites.element(boundBy: 0).frame
+        XCTAssertGreaterThanOrEqual(banner.frame.minY, before.maxY)
+        app.buttons["Cancel"].tap()
         XCTAssertEqual(app.buttons["join.start"].frame, before)
         XCTAssertEqual(favorites.element(boundBy: 0).frame, firstFrame)
-        app.buttons["Cancel"].tap()
         XCTAssertTrue(app.buttons["join.start"].isHittable)
         app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_CALENDAR_DELAY")
     }

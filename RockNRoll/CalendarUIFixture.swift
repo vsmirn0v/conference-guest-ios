@@ -27,7 +27,7 @@ enum CalendarUIFixture {
             let home = mode.hasPrefix("home")
             let preview = mode.hasPrefix("home-preview")
             var events = [event("daily", title: preview ? "Rehearsal and arrangements for the upcoming community concert" : "Daily rehearsal",
-                                offset: mode == "home-later" ? 1200 : mode == "home-preview-current" || mode == "home-overlap" ? -300 : 30,
+                                offset: mode == "home-later" || mode == "home-delayed-later" ? 1200 : mode == "home-preview-current" || mode == "home-overlap" ? -300 : 30,
                                 link: choice ? "https://music.example.test/jams/team" :
                                     mode == "home-handoff" ? "https://meeting.example.test/calls/quartet?psw=calendar" : "https://meeting.example.test/team?psw=fixture",
                                 quoted: ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] == "forwarded" ?
@@ -45,7 +45,7 @@ enum CalendarUIFixture {
             }
             return .init(calendars: [.init(id: "work", name: "Work", source: "Test account"),
                                      .init(id: "personal", name: "Personal", source: "Test account")],
-                         meetings: selected.contains("work") ? events : [])
+                         meetings: selected.contains("work") && mode != "home-empty" ? events : [])
         }
     }
     final class Response: URLProtocol {
@@ -88,7 +88,7 @@ enum CalendarUIFixture {
         if mode.hasPrefix("home") {
             let titles = ["Warm-up", "Thursday rehearsal", "Songwriting circle", "Quartet", "Arrangement", "Practice"]
             let favorites = titles.enumerated().map { index, title in
-                var room = RecentRoom(invitationURL: URL(string: (mode == "home-details" || mode == "home-delayed" || mode.hasPrefix("home-preview")) && index == 0 ?
+                var room = RecentRoom(invitationURL: URL(string: (mode == "home-details" || mode.hasPrefix("home-delayed") || mode.hasPrefix("home-preview")) && index == 0 ?
                     "https://meeting.example.test/team?psw=fixture" : "https://meeting.example.test/favorite\(index)")!,
                     title: title, identifier: "favorite\(index)", isStarred: true,
                     lastJoined: Date().addingTimeInterval(Double(-index * 60)))
