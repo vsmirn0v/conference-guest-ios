@@ -272,6 +272,13 @@ final class MeetingContinuationCoordinator: ObservableObject {
         Task { await resumePreparedSource(prepared) }
         show(nil)
     }
+    /// An ordinary additional connection must never claim a transfer or pause
+    /// the source. This also works with engines without quiet-companion support.
+    func joinHere(_ jam: ActiveJam) {
+        guard !moving else { return }
+        _ = onJoinTarget?(jam, false)
+    }
+
     func begin(_ jam: ActiveJam, companion: Bool = false) {
         guard enabled, account != nil, !moving else { return }
         if companion {

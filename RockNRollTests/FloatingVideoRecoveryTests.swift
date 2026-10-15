@@ -51,6 +51,30 @@ import XCTest
         XCTAssertTrue(fixture.floating.controllerForTesting === controller)
         XCTAssertEqual(fixture.starts, 1, "A share restart needs no new PiP activation")
     }
+    func testLateMeterBindingInBackgroundKeepsSamplingAndReleasesOldModel() throws {
+        let fixture = Fixture()
+        defer { fixture.floating.end() }
+        let old = MicrophoneActivity(observeLifecycle: false), current = MicrophoneActivity(observeLifecycle: false)
+        old.setStatus(.on); current.setStatus(.on)
+        old.setForeground(false); current.setForeground(false)
+        let controller = try fixture.present()
+        fixture.floating.bindMicrophoneActivity(old)
+        XCTAssertTrue(old.samplingNeeded)
+        fixture.floating.bindMicrophoneActivity(current)
+        XCTAssertFalse(old.samplingNeeded)
+        XCTAssertTrue(current.samplingNeeded, "Rebinding during active PiP retains background meter demand")
+        current.receive(rms: 0.2)
+        XCTAssertTrue(current.hasSignal)
+        fixture.floating.setSuspended(true)
+        fixture.floating.pictureInPictureControllerDidStopPictureInPicture(controller)
+        XCTAssertFalse(current.samplingNeeded)
+        fixture.floating.setSuspended(false)
+        fixture.floating.pictureInPictureControllerWillStartPictureInPicture(controller)
+        fixture.floating.pictureInPictureControllerDidStartPictureInPicture(controller)
+        XCTAssertTrue(current.samplingNeeded)
+        fixture.floating.end()
+        XCTAssertFalse(current.samplingNeeded)
+    }
     func testCallRecoveryRequestsFreshFramesAndRestartsRetainedControllerInBackground() throws {
         let fixture = Fixture()
         defer { fixture.floating.end() }

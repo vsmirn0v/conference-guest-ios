@@ -642,6 +642,8 @@
 "Starts in %ld min" = "Начало через %ld мин";
 
 "Continue" = "Продолжить";
+"Move here" = "Перенести сюда";
+"Keep %@ connected. Microphone and camera start off." = "%@ останется в джеме. Микрофон и камера сначала выключены.";
 
 "Join %@" = "Войти: %@";
 

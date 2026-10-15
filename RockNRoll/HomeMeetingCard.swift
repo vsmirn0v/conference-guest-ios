@@ -31,12 +31,27 @@ struct HomeMeetingCard: View {
         history.matching(item.invitation, engine: item.id.engine)?.alias.flatMap { $0 == title ? nil : $0 }
     }
     private var action: String {
-        if item.handoff != nil { return L("Continue") }
+        if item.handoff != nil { return source == nil ? L("Join here") : L("Move here") }
         return L("Join")
     }
     var body: some View {
         Group {
-            if textSize.isAccessibilitySize {
+            if item.handoff != nil {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
+                        description.frame(maxWidth: .infinity, alignment: .leading)
+                        starButton
+                    }
+                    if textSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 8) { handoffButtons }
+                    } else {
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: 12) { handoffButtons }.fixedSize(horizontal: true, vertical: false)
+                            VStack(alignment: .leading, spacing: 8) { handoffButtons }
+                        }
+                    }
+                }
+            } else if textSize.isAccessibilitySize {
                 VStack(alignment: .leading, spacing: 8) {
                     description
                     HStack { joinButton; Spacer(); starButton }
@@ -62,6 +77,10 @@ struct HomeMeetingCard: View {
         .accessibilityAction(named: L("Choose another room")) {
             if let meeting { calendar.choosingMeeting = meeting }
         }
+    }
+    @ViewBuilder private var handoffButtons: some View {
+        joinButton
+        if let source { joinHereButton(source) }
     }
     private var description: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -99,12 +118,25 @@ struct HomeMeetingCard: View {
             if let source { continuation.begin(source) }
             else if let handoff = item.handoff { onStale(handoff) }
             else if let meeting { onJoin(meeting) }
-        } label: { Text(action).lineLimit(2).frame(minHeight: 36) }
+        } label: {
+            Text(action).lineLimit(textSize.isAccessibilitySize ? 2 : 1)
+                .fixedSize(horizontal: !textSize.isAccessibilitySize, vertical: true).frame(minHeight: 36)
+        }
         .buttonStyle(.borderedProminent)
         .tint(Color(red: 1, green: 0.60, blue: 0.33)).foregroundStyle(.black)
         .disabled(busy || continuation.moving || (item.handoff == nil && meeting == nil))
         .accessibilityLabel(source.map { $0.isSharingScreen ? L("Move here and stop sharing") : L("Continue on this device") } ?? action)
         .accessibilityIdentifier(item.calendar.map { "calendar.join." + $0.id } ?? "handoff.join." + (item.handoff?.deviceID ?? ""))
+    }
+    private func joinHereButton(_ source: ActiveJam) -> some View {
+        Button { continuation.joinHere(source) } label: {
+            Text(L("Join here")).lineLimit(textSize.isAccessibilitySize ? 2 : 1)
+                .fixedSize(horizontal: !textSize.isAccessibilitySize, vertical: true).frame(minHeight: 36)
+        }
+        .buttonStyle(.bordered)
+        .disabled(busy || continuation.moving)
+        .accessibilityHint(L("Keep %@ connected. Microphone and camera start off.", source.deviceLabel))
+        .accessibilityIdentifier("handoff.join-alongside." + source.deviceID)
     }
     private var starButton: some View {
         let favorite = history.matching(item.invitation, engine: item.id.engine)
@@ -113,7 +145,8 @@ struct HomeMeetingCard: View {
             else { history.saveFavorite(url: source?.invitation ?? meeting?.invitation ?? item.invitation,
                                         title: title, engine: item.id.engine) }
         } label: {
-            Image(systemName: favorite?.isStarred == true ? "star.fill" : "star").frame(width: 44, height: 44)
+            Image(systemName: favorite?.isStarred == true ? "star.fill" : "star")
+                .font(.system(size: 20)).frame(width: 44, height: 44)
         }.buttonStyle(.borderless)
         .accessibilityLabel(favorite?.isStarred == true ? L("Unstar %@", title) : L("Star %@", title))
         .accessibilityIdentifier(item.calendar.map { "calendar.star." + $0.id } ?? "handoff.star." + (item.handoff?.deviceID ?? ""))

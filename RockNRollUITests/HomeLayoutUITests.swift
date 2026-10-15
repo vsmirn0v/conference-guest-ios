@@ -9,7 +9,8 @@ final class HomeLayoutUITests: XCTestCase {
         app.launchArguments = ["-AppleLanguages", "(\(language))", "-AppleLocale", language == "ru" ? "ru_RU" : "en_US"]
         if large { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
         app.launch()
-        XCTAssertTrue(app.buttons["join.start"].waitForExistence(timeout: 10))
+        let ready = large && handoff ? app.buttons["handoff.join-alongside.fixture-mac"] : app.buttons["join.start"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 10))
         if mode != "home-later" {
             XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 10))
         }
@@ -208,6 +209,50 @@ final class HomeLayoutUITests: XCTestCase {
         XCTAssertTrue(app.buttons["calendar.star.daily"].isHittable)
         XCTAssertTrue(favorites.element(boundBy: 1).isHittable)
         attach("Merged calendar and handoff")
+    }
+    func testHandoffActionsFitAndJoinHereKeepsSourceAvailable() {
+        for language in ["en", "ru"] {
+            launch("home-handoff", language: language, handoff: true)
+            let move = app.buttons["calendar.join.daily"]
+            let join = app.buttons["handoff.join-alongside.fixture-mac"]
+            XCTAssertTrue(move.waitForExistence(timeout: 10))
+            XCTAssertTrue(join.isHittable)
+            let title = language == "ru" ? "Перенести сюда" : "Move here"
+            let textWidth = (title as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: 17)]).width
+            XCTAssertGreaterThanOrEqual(move.frame.width, ceil(textWidth) + 20,
+                                        "The action must have room for its full title and padding")
+            XCTAssertLessThanOrEqual(move.frame.height, 64, "Normal text must not hyphenate onto two lines")
+            XCTAssertFalse(move.frame.intersects(join.frame))
+            join.tap()
+            XCTAssertTrue(move.isHittable, "An independent join must not withdraw the original device's card")
+            for orientation in [UIDeviceOrientation.landscapeLeft, .portrait] {
+                XCUIDevice.shared.orientation = orientation
+                var previous: CGRect?
+                let settled = expectation(for: NSPredicate { _, _ in
+                    let frame = join.frame
+                    let matchesOrientation = (self.app.frame.width > self.app.frame.height) == orientation.isLandscape
+                    defer { previous = frame }
+                    return matchesOrientation && !frame.isEmpty && previous == frame
+                }, evaluatedWith: app)
+                wait(for: [settled], timeout: 8)
+                reveal(join)
+                XCTAssertTrue(move.isHittable)
+                XCTAssertFalse(move.frame.intersects(join.frame))
+            }
+            attach("Handoff and independent join · " + language)
+            app.terminate()
+        }
+    }
+    func testHandoffActionsFitLargerText() {
+        launch("home-handoff", language: "ru", large: true, handoff: true)
+        let move = app.buttons["calendar.join.daily"]
+        let join = app.buttons["handoff.join-alongside.fixture-mac"]
+        reveal(move); reveal(join)
+        XCTAssertGreaterThanOrEqual(move.frame.minX, 0)
+        XCTAssertLessThanOrEqual(move.frame.maxX, app.frame.maxX)
+        XCTAssertLessThanOrEqual(join.frame.maxX, app.frame.maxX)
+        XCTAssertFalse(move.frame.intersects(join.frame))
+        attach("Handoff actions · Russian accessibility text")
     }
     func testWideLayoutKeepsLibraryAndJoinVisibleTogether() throws {
         try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad)

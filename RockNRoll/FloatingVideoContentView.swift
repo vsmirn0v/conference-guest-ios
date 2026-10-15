@@ -1,3 +1,4 @@
+import Combine
 import UIKit
 
 enum PiPMicrophoneStatus: CaseIterable {
@@ -31,6 +32,7 @@ final class FloatingVideoContentView: UIView {
     private let label = UILabel()
     private let waiting = UILabel()
     private let speaker = ActiveSpeakerIndicator(font: .systemFont(ofSize: 11, weight: .semibold))
+    private var microphoneObservation: AnyCancellable?
     private(set) var microphoneStatus: PiPMicrophoneStatus = .unavailable
 
     init(videoContent: UIView) {
@@ -80,6 +82,11 @@ final class FloatingVideoContentView: UIView {
     func bindMicrophoneActivity(_ activity: MicrophoneActivity) {
         icon.isHidden = true; activityIcon.isHidden = false
         activityIcon.bind(activity)
+        // PiP can be created after the microphone is already on. Read the
+        // initial emitted status too, rather than waiting for another toggle.
+        microphoneObservation = activity.$status.removeDuplicates().sink { [weak self] in
+            self?.setMicrophoneStatus($0)
+        }
     }
     func setSpeaker(_ value: CallSpeaker?) {
         speaker.setSpeaker(value)

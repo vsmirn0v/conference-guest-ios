@@ -61,6 +61,15 @@ final class ControlChromeIntegrationTests: XCTestCase {
             let backgrounds = descendants(MeetingChromeSurface.self, in: panel.view)
             XCTAssertEqual(backgrounds.count, 2, "Resizing must retain the header and call-strip backgrounds")
             XCTAssertTrue(backgrounds.allSatisfy { !$0.isUserInteractionEnabled && $0.accessibilityElementsHidden })
+            let title = try XCTUnwrap(descendants(UILabel.self, in: panel.view).first {
+                $0.accessibilityIdentifier == "conversation.title"
+            })
+            let header = try XCTUnwrap(title.superview)
+            XCTAssertGreaterThanOrEqual(title.frame.minX, 16, "Header text needs an inset inside its rounded chrome")
+            XCTAssertTrue(header.bounds.contains(title.frame), "The title must stay inside the header after rotation")
+            XCTAssertEqual(title.frame.midY, header.bounds.midY, accuracy: 1)
+            XCTAssertEqual(header.bounds.height, max(44, ceil(title.intrinsicContentSize.height + 8)), accuracy: 1,
+                           "Unused reading space must not stretch the header")
             let composer = try XCTUnwrap(descendants(UITextView.self, in: panel.view).first { $0.isEditable })
             XCTAssertEqual(composer.text, "Keep the arrangement")
             XCTAssertFalse(backgrounds.contains { $0.isDescendant(of: composer) })

@@ -50,6 +50,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private var panelSideWidth: NSLayoutConstraint!
     private var isSidePanel = false
     private let header = UIStackView()
+    private var headerHeight: NSLayoutConstraint!
     private let mode = UISegmentedControl(items: [L("Chat"), L("Live text"), L("Catch up")])
     private let messageList = UIScrollView()
     private let messageRows = UIStackView()
@@ -143,12 +144,14 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         column.spacing = 6
         column.translatesAutoresizingMaskIntoConstraints = false
         panel.addSubview(column)
+        headerHeight = header.heightAnchor.constraint(equalToConstant: 44)
+        headerHeight.priority = .defaultHigh
         NSLayoutConstraint.activate([
             column.topAnchor.constraint(equalTo: panel.safeAreaLayoutGuide.topAnchor, constant: 5),
             column.leadingAnchor.constraint(equalTo: panel.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             column.trailingAnchor.constraint(equalTo: panel.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             column.bottomAnchor.constraint(equalTo: panel.keyboardLayoutGuide.topAnchor, constant: -5),
-            header.heightAnchor.constraint(equalToConstant: 44),
+            headerHeight,
             mode.heightAnchor.constraint(equalToConstant: 38),
             content.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).withPriority(.defaultHigh),
             callStrip.heightAnchor.constraint(equalToConstant: 50)
@@ -282,6 +285,11 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // A vertical stack must not donate unused reading space to its header.
+        // Grow only for the actual title font, including accessibility sizes.
+        let titleHeight = header.arrangedSubviews.first?.intrinsicContentSize.height ?? 0
+        let desiredHeaderHeight = max(44, ceil(titleHeight + 8))
+        if headerHeight.constant != desiredHeaderHeight { headerHeight.constant = desiredHeaderHeight }
         let sidePanel = !docked && view.bounds.width >= 700
         if sidePanel != isSidePanel {
             isSidePanel = sidePanel
@@ -349,6 +357,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         addControlBackground(to: header, cornerRadius: 20, fallbackColor: dark)
         let title = UILabel()
         title.text = L("Conversation")
+        title.accessibilityIdentifier = "conversation.title"
         title.textColor = .white
         title.font = .preferredFont(forTextStyle: .title2)
         title.adjustsFontForContentSizeCategory = true
@@ -362,8 +371,11 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
             else { self.dismiss(animated: true) }
         }, for: .touchUpInside)
         close.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        close.heightAnchor.constraint(equalToConstant: 44).isActive = true
         header.axis = .horizontal
         header.alignment = .center
+        header.isLayoutMarginsRelativeArrangement = true
+        header.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 4)
         header.addArrangedSubview(title)
         header.addArrangedSubview(close)
     }

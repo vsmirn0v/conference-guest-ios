@@ -29,6 +29,11 @@ struct MeetingContinuationView: View {
                             .disabled(busy || continuation.moving)
                             Text(L("Connect here first, then leave the other device. Microphone and camera start off."))
                                 .font(.footnote).foregroundStyle(.secondary)
+                            Button(L("Join here")) { continuation.joinHere(jam) }
+                                .buttonStyle(.bordered)
+                                .disabled(busy || continuation.moving)
+                                .accessibilityHint(L("Keep %@ connected. Microphone and camera start off.", jam.deviceLabel))
+                                .accessibilityIdentifier("handoff.join-alongside." + jam.deviceID)
                             if jam.supportsCompanion {
                                 Button(L("Join as a second device")) { continuation.begin(jam, companion: true) }
                                     .buttonStyle(.borderless)

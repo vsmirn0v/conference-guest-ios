@@ -86,6 +86,28 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         XCTAssertNil(cloud.records["mac"])
         XCTAssertEqual(cloud.records["phone"]?.name, "Ani")
     }
+    func testJoinHereDoesNotTransferHoldOrLeaveOriginalDevice() async {
+        let cloud = Cloud(), source = make(cloud, "mac"), target = make(cloud, "phone")
+        let active = jam()
+        XCTAssertFalse(active.supportsCompanion, "Joining normally works for every engine")
+        source.onPrepareSource = { _ in XCTFail("Join here must not hold the source") }
+        source.onLeaveSource = { _, _ in XCTFail("Join here must not leave the source"); return false }
+        source.updateCurrent(active); await source.refresh(); await target.refresh()
+        var joined: ActiveJam?
+        target.onJoinTarget = { value, quiet in
+            joined = value
+            XCTAssertFalse(quiet, "Join here plays audio like an ordinary join")
+            return UUID()
+        }
+        target.joinHere(active)
+        XCTAssertEqual(joined, active)
+        XCTAssertFalse(target.moving)
+        XCTAssertFalse(target.waitingForMove)
+        XCTAssertTrue(cloud.requests.isEmpty)
+        await source.refresh()
+        XCTAssertEqual(source.current?.sessionID, active.sessionID)
+        XCTAssertEqual(cloud.records["mac"]?.sessionID, active.sessionID)
+    }
     func testFailedDestinationEndsWithoutChangingOriginalAudio() async throws {
         let cloud = Cloud(), source = make(cloud, "mac"), target = make(cloud, "phone")
         let active = jam(); var cancelledTarget = false; var resumed = false

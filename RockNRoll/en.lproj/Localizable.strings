@@ -642,6 +642,8 @@
 "Starts in %ld min" = "Starts in %ld min";
 
 "Continue" = "Continue";
+"Move here" = "Move here";
+"Keep %@ connected. Microphone and camera start off." = "Keep %@ connected. Microphone and camera start off.";
 
 "Join %@" = "Join %@";
 

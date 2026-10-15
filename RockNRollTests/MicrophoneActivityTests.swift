@@ -4,6 +4,46 @@ import XCTest
 
 @MainActor
 final class MicrophoneActivityTests: XCTestCase {
+    func testPiPBindingToAlreadyLiveMeterShowsLevelWithoutAnotherStatusEvent() throws {
+        let meter = MicrophoneActivity(observeLifecycle: false)
+        meter.setStatus(.on)
+        let surface = FloatingVideoContentView(videoContent: UIView())
+        surface.frame = CGRect(x: 0, y: 0, width: 240, height: 135)
+        surface.bindMicrophoneActivity(meter)
+        surface.layoutIfNeeded()
+        XCTAssertEqual(surface.microphoneStatus, .on)
+        let badge = try XCTUnwrap(surface.subviews.first { $0.accessibilityIdentifier == "Floating microphone status" })
+        let glyph = try XCTUnwrap(badge.subviews.first { $0 is MicrophoneActivityView })
+        let renderer = UIGraphicsImageRenderer(bounds: glyph.bounds)
+        func pixels() -> Data? { renderer.image { glyph.layer.render(in: $0.cgContext) }.pngData() }
+        let quiet = pixels()
+        meter.setFloating(true); meter.setForeground(false)
+        meter.receive(rms: 0.2)
+        XCTAssertNotEqual(pixels(), quiet, "A recreated PiP must show live input without waiting for a mic toggle")
+        meter.setStatus(.muted)
+        XCTAssertEqual(surface.microphoneStatus, .muted)
+        XCTAssertEqual(badge.accessibilityValue, L("Muted"))
+    }
+
+    func testPiPRebindingStopsOldStatusAndUsesNewLiveLevels() throws {
+        let old = MicrophoneActivity(observeLifecycle: false), current = MicrophoneActivity(observeLifecycle: false)
+        let surface = FloatingVideoContentView(videoContent: UIView())
+        surface.frame = CGRect(x: 0, y: 0, width: 144, height: 81)
+        surface.bindMicrophoneActivity(old)
+        current.setStatus(.on)
+        surface.bindMicrophoneActivity(current)
+        surface.layoutIfNeeded()
+        old.setStatus(.unavailable)
+        XCTAssertEqual(surface.microphoneStatus, .on)
+        let badge = try XCTUnwrap(surface.subviews.first { $0.accessibilityIdentifier == "Floating microphone status" })
+        let glyph = try XCTUnwrap(badge.subviews.first { $0 is MicrophoneActivityView })
+        let renderer = UIGraphicsImageRenderer(bounds: glyph.bounds)
+        let quiet = renderer.image { glyph.layer.render(in: $0.cgContext) }.pngData()
+        current.receive(rms: 0.1)
+        XCTAssertNotEqual(quiet, renderer.image { glyph.layer.render(in: $0.cgContext) }.pngData())
+        XCTAssertEqual(badge.accessibilityValue, L("On"))
+    }
+
     func testGlyphRebindsFromPrivateToLiveModelWithoutOldModelUpdates() {
         let privateMeter = MicrophoneActivity(), liveMeter = MicrophoneActivity()
         privateMeter.setStatus(.on); privateMeter.receive(rms: 1)
@@ -147,7 +187,7 @@ final class MicrophoneActivityTests: XCTestCase {
         let muted = pixels()
         meter.setStatus(.unavailable)
         XCTAssertEqual(pixels(), muted, "Sampling teardown must not replace the muted badge with a warning")
-        XCTAssertEqual(badge.accessibilityValue, L("Muted"))
+        XCTAssertEqual(badge.accessibilityValue, L("Unavailable"), "The badge follows the same availability as its meter")
         XCTAssertTrue(outline.image?.isEqual(UIImage(systemName: "mic.slash.fill")) == true)
         surface.setMicrophoneStatus(.on); surface.layoutIfNeeded()
         meter.setStatus(.on)
