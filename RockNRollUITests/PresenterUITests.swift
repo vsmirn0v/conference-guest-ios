@@ -118,11 +118,20 @@ final class PresenterUITests: XCTestCase {
         app.buttons["presenter.fit"].tap()
         XCTAssertTrue(app.buttons["presenter.redo"].isEnabled)
         if nativePinch {
+            let fitted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                canvas.value as? String == "100%" && !app.buttons["presenter.fit"].exists
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [fitted], timeout: 5), .completed)
             // Keep both touches inside the composition, excluding letterboxed space.
             let composition = canvas.descendants(matching: .any)["presenter.composition"].firstMatch
             XCTAssertTrue(composition.waitForExistence(timeout: 5))
             XCTAssertTrue(composition.isHittable)
             composition.pinch(withScale: 2, velocity: 1)
+            let zoomed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                (canvas.value as? String).flatMap { Double($0.replacingOccurrences(of: "%", with: "")) }.map { $0 > 110 } == true
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [zoomed], timeout: 5), .completed,
+                           "Pinch must change the actual workspace scale, not only leave a Fit button visible")
         } else {
             app.buttons["presenter.actions"].tap()
             app.buttons[russian ? "Увеличить" : "Zoom in"].tap()
