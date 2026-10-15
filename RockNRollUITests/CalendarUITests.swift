@@ -13,8 +13,6 @@ final class CalendarUITests: XCTestCase {
         else if mode == "engine-choice" {
             XCTAssertTrue(app.buttons["calendar.agenda"].waitForExistence(timeout: 10))
         } else {
-            let updates = app.buttons["home.show-updates"]
-            if !app.descendants(matching: .any)["home.title.daily"].firstMatch.exists, updates.waitForExistence(timeout: 10) { updates.tap() }
             XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 10))
         }
     }

@@ -52,8 +52,7 @@ final class MeetingRecording: ObservableObject {
         // Leaving this client does not stop a room-wide server recording.
     }
     func present(from view: UIView) {
-        guard var host = view.window?.rootViewController else { return }
-        while let presented = host.presentedViewController { host = presented }
+        guard let host = view.callActionPresenter else { return }
         let panel = UIAlertController(title: L("Recording"),
             message: error ?? (state == .unavailable ? L("Recording is unavailable in this meeting.") :
                 L("Recordings are stored by the meeting service. The organizer manages access and downloads on the meeting website.")),
@@ -64,8 +63,9 @@ final class MeetingRecording: ObservableObject {
         }
         if canStop { panel.addAction(UIAlertAction(title: L("Stop recording"), style: .destructive) { [weak self] _ in self?.requestStop() }) }
         panel.addAction(UIAlertAction(title: L("Cancel"), style: .cancel))
-        panel.popoverPresentationController?.sourceView = view
-        panel.popoverPresentationController?.sourceRect = view.bounds
+        let anchor = view.callActionPresentationAnchor
+        panel.popoverPresentationController?.sourceView = anchor
+        panel.popoverPresentationController?.sourceRect = anchor.bounds
         host.present(panel, animated: true)
     }
 }

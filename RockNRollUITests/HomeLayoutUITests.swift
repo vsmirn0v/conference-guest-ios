@@ -11,8 +11,6 @@ final class HomeLayoutUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["join.start"].waitForExistence(timeout: 10))
         if mode != "home-later" {
-            let updates = app.buttons["home.show-updates"]
-            if !app.descendants(matching: .any)["home.title.daily"].firstMatch.exists, updates.waitForExistence(timeout: 10), updates.isEnabled { updates.tap() }
             XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 10))
         }
     }
@@ -36,20 +34,32 @@ final class HomeLayoutUITests: XCTestCase {
             let first = favorites.element(boundBy: 0), second = favorites.element(boundBy: 1)
             let frames = [app.buttons["join.start"].frame, first.frame, second.frame]
             let identity = first.identifier
-            let updates = app.buttons["home.show-updates"]
-            expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: updates)
-            waitForExpectations(timeout: 12)
+            XCTAssertTrue(app.buttons["calendar.join.daily"].waitForExistence(timeout: 12))
             XCTAssertEqual(app.buttons["join.start"].frame, frames[0])
             XCTAssertEqual(first.frame, frames[1]); XCTAssertEqual(second.frame, frames[2])
             XCTAssertEqual(first.identifier, identity)
             XCTAssertTrue((first.value as? String ?? "").contains("Daily rehearsal"))
-            XCTAssertFalse(app.descendants(matching: .any)["home.title.daily"].exists)
-            attach("Stable rows after delayed enrichment · " + language)
-            updates.tap()
-            XCTAssertTrue(app.buttons["calendar.join.daily"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.descendants(matching: .any)["home.title.daily"].exists)
+            XCTAssertFalse(app.buttons["home.show-updates"].exists, "Discoveries must appear without an acceptance gate")
+            attach("Stable rows after delayed enrichment · " + language)
             app.terminate()
         }
+        app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_CALENDAR_DELAY")
+    }
+    func testDelayedCalendarWaitsForTextEditingThenAppearsAutomatically() {
+        app.launchEnvironment["CONFERENCE_TEST_CALENDAR"] = "home-delayed"
+        app.launchEnvironment["CONFERENCE_TEST_CALENDAR_DELAY"] = "3"
+        app.launchArguments = ["-AppleLanguages", "(en)"]
+        app.launch()
+        let name = app.textFields["name.input"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10)); name.tap(); name.typeText(" edited")
+        Thread.sleep(forTimeInterval: 4)
+        XCTAssertFalse(app.descendants(matching: .any)["home.title.daily"].exists,
+                       "Typing protects existing controls from structural replacement")
+        name.typeText("\n")
+        XCTAssertTrue(app.buttons["calendar.join.daily"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["home.show-updates"].exists)
+        XCTAssertTrue((name.value as? String ?? "").contains("edited"))
         app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_CALENDAR_DELAY")
     }
     func testDelayedAutomaticJoinCountdownDoesNotShiftTopRows() {
@@ -142,6 +152,33 @@ final class HomeLayoutUITests: XCTestCase {
         reveal(app.buttons["calendar.agenda"]); app.buttons["calendar.agenda"].tap()
         XCTAssertTrue(app.buttons["calendar.star.community"].waitForExistence(timeout: 5))
         attach("Full agenda · future meetings")
+    }
+    func testConcurrentAndSoonMeetingsStayInlineWhenPromotedSlotsAreFull() {
+        launch("home-overlap")
+        XCTAssertTrue(app.descendants(matching: .any)["home.title.daily"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["home.title.overlap1"].exists)
+        let ongoing = app.buttons["calendar.join.overlap2"], soon = app.buttons["calendar.join.soon"]
+        reveal(ongoing)
+        XCTAssertTrue((ongoing.value as? String ?? "").contains("meeting.example.test · overlap2"))
+        reveal(soon)
+        XCTAssertTrue(soon.isEnabled)
+        reveal(app.buttons["calendar.join.later2"])
+        XCTAssertFalse(app.buttons["calendar.join.later3"].exists)
+        reveal(app.buttons["calendar.today.expand"])
+        app.buttons["calendar.today.expand"].tap()
+        reveal(app.buttons["calendar.join.later3"])
+        XCTAssertTrue(ongoing.exists); XCTAssertTrue(soon.exists)
+    }
+    func testSettingsKeepsGroupedDestinationsAndSyncPrivacyAccessible() {
+        launch()
+        app.buttons["Settings"].tap()
+        XCTAssertTrue(app.buttons["calendar.settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["settings.devices"].exists)
+        XCTAssertTrue(app.buttons["settings.websites"].exists)
+        XCTAssertTrue(app.buttons["settings.about"].exists)
+        app.buttons["settings.devices"].tap()
+        XCTAssertTrue(app.staticTexts["Names and saved invitations, including invitation passwords, stay in your private iCloud storage."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.switches["Sync with iCloud"].exists)
     }
     func testRussianHomeSurvivesRotationAndReturnsToReachableFavorites() {
         launch(language: "ru")

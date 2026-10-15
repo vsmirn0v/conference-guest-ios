@@ -116,6 +116,16 @@ final class StudioWorkflowTests: XCTestCase {
         XCTAssertTrue(model.microphoneOn); XCTAssertEqual(model.soundCheck.state, .idle)
         model.end()
     }
+    func testDirectDevicesEntryDoesNotStartHiddenMicrophoneCheck() {
+        let model = StudioModel(audioControl: .noiseSuppression)
+        model.audioSection = .devices
+        model.open(.sound)
+        model.soundCheck.verifyMuted = { XCTFail("Devices navigation requested microphone capture") }
+        model.testMicrophone()
+        XCTAssertEqual(model.soundCheck.state, .idle)
+        XCTAssertFalse(model.microphoneOn)
+        model.end()
+    }
     func testDetachedPreviewReattachesAndRestoresPixelsAfterLayout() {
         let video = UIView()
         var restored = 0

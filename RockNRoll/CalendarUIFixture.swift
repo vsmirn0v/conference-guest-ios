@@ -26,8 +26,8 @@ enum CalendarUIFixture {
             let mode = ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] ?? ""
             let home = mode.hasPrefix("home")
             let preview = mode.hasPrefix("home-preview")
-            let events = [event("daily", title: preview ? "Rehearsal and arrangements for the upcoming community concert" : "Daily rehearsal",
-                                offset: mode == "home-later" ? 1200 : mode == "home-preview-current" ? -300 : 30,
+            var events = [event("daily", title: preview ? "Rehearsal and arrangements for the upcoming community concert" : "Daily rehearsal",
+                                offset: mode == "home-later" ? 1200 : mode == "home-preview-current" || mode == "home-overlap" ? -300 : 30,
                                 link: choice ? "https://music.example.test/jams/team" :
                                     mode == "home-handoff" ? "https://meeting.example.test/calls/quartet?psw=calendar" : "https://meeting.example.test/team?psw=fixture",
                                 quoted: ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] == "forwarded" ?
@@ -37,6 +37,12 @@ enum CalendarUIFixture {
                                 link: "https://meeting.example.test/calls/team?psw=new"),
                           event("community", title: "Open rehearsal", offset: 90_000,
                                 link: "https://music.example.test/jams/team")]
+            if mode == "home-overlap" {
+                events += [("overlap1", -240.0), ("overlap2", -180.0), ("soon", 180.0),
+                           ("later1", 1200.0), ("later2", 1800.0), ("later3", 2700.0)].map { id, offset in
+                    event(id, title: id, offset: offset, link: "https://meeting.example.test/" + id)
+                }
+            }
             return .init(calendars: [.init(id: "work", name: "Work", source: "Test account"),
                                      .init(id: "personal", name: "Personal", source: "Test account")],
                          meetings: selected.contains("work") ? events : [])

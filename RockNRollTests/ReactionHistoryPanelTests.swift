@@ -198,13 +198,13 @@ final class ReactionHistoryPanelTests: XCTestCase {
         let rows = find(ReactionHistoryRowView.self, in: history).map(ObjectIdentifier.init)
         let unseen = chat.reactionHistory.hasUnseenReactions
         let info = try XCTUnwrap(find(UIButton.self, in: panel.view).first { $0.accessibilityIdentifier == "reaction.history-info" })
-        XCTAssertEqual(info.configuration?.title, L("Received on this device"))
+        XCTAssertEqual(info.accessibilityLabel, L("Received on this device"))
         for index in 0..<30 {
             chat.reactionHistory.beginGap(at: Date().addingTimeInterval(Double(index) * 2))
             chat.reactionHistory.endGap(at: Date().addingTimeInterval(Double(index) * 2 + 1))
         }
         await drainUpdates(); panel.view.layoutIfNeeded()
-        XCTAssertEqual(info.configuration?.title, L("Reaction history may be incomplete"))
+        XCTAssertEqual(info.accessibilityLabel, L("Reaction history may be incomplete"))
         XCTAssertEqual(history.contentOffset, offset)
         XCTAssertEqual(history.contentSize, size)
         XCTAssertEqual(find(ReactionHistoryRowView.self, in: history).map(ObjectIdentifier.init), rows)
@@ -238,11 +238,11 @@ final class ReactionHistoryPanelTests: XCTestCase {
         XCTAssertTrue(info.isHidden)
         modes.selectedSegmentIndex = ConversationMode.chat.rawValue; modes.sendActions(for: .valueChanged)
         chat.reactionHistory.beginGap(); await drainUpdates()
-        XCTAssertEqual(info.configuration?.title, L("Reaction history may be incomplete"))
+        XCTAssertEqual(info.accessibilityLabel, L("Reaction history may be incomplete"))
         XCTAssertFalse(chat.reactionHistory.hasUnseenReactions)
         XCTAssertFalse(find(UILabel.self, in: panel.view).contains { $0.accessibilityIdentifier?.hasPrefix("reaction.gap.") == true })
         chat.reactionHistory.beginMeeting(); await drainUpdates()
-        XCTAssertEqual(info.configuration?.title, L("Received on this device"))
+        XCTAssertEqual(info.accessibilityLabel, L("Received on this device"))
         chat.reactionHistoryAvailable = false; await drainUpdates()
         XCTAssertTrue(info.isHidden)
     }
@@ -267,6 +267,65 @@ final class ReactionHistoryPanelTests: XCTestCase {
         await drainUpdates()
         XCTAssertEqual(chat.unreadCount, 1)
         XCTAssertTrue(chat.reactionHistory.hasUnseenReactions)
+    }
+
+    func testComposerReactionsKeepsDraftAndUsesVisibleAnchor() throws {
+        let chat = ChatStore()
+        chat.draft = "Start at the bridge"
+        chat.canSend = true
+        let controls = CallWorkspaceControls()
+        var selectedAnchor: UIView?
+        controls.openReactions = { anchor, visibility in selectedAnchor = anchor; visibility(false) }
+        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat, call: controls)
+        panel.loadViewIfNeeded()
+        let composer = try XCTUnwrap(find(UITextView.self, in: panel.view).first { $0.accessibilityLabel == L("Chat message") })
+        let button = try XCTUnwrap(find(UIButton.self, in: panel.view).first { $0.accessibilityIdentifier == "chat.reactions" })
+        XCTAssertFalse(button.isHidden)
+        button.sendActions(for: .touchUpInside)
+        XCTAssertTrue(selectedAnchor === button)
+        XCTAssertEqual(composer.text, "Start at the bridge")
+        XCTAssertEqual(chat.draft, "Start at the bridge")
+        XCTAssertFalse(controls.microphoneOn)
+        XCTAssertFalse(controls.cameraOn)
+    }
+
+    func testPresentedComposerPaletteSuspendsReadStateAndRestoresOnDismissal() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let animations = UIView.areAnimationsEnabled
+        UIView.setAnimationsEnabled(false)
+        defer { window.isHidden = true; previous?.makeKey(); UIView.setAnimationsEnabled(animations) }
+        let chat = ChatStore()
+        chat.reactionHistoryAvailable = true
+        chat.reactionHistory.beginMeeting()
+        let controls = CallWorkspaceControls()
+        controls.openReactions = { anchor, visibility in
+            MeetingActionsController.show(model: nil, menu: nil, from: anchor,
+                                          openChat: {}, onVisibilityChanged: visibility)
+        }
+        let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat, call: controls)
+        window.rootViewController = panel; window.makeKeyAndVisible()
+        panel.view.layoutIfNeeded(); await drainUpdates()
+        XCTAssertTrue(chat.isConversationOpen)
+        XCTAssertTrue(chat.reactionHistory.isReadingLatest)
+        let button = try XCTUnwrap(find(UIButton.self, in: panel.view).first { $0.accessibilityIdentifier == "chat.reactions" })
+        button.sendActions(for: .touchUpInside)
+        await drainUpdates()
+        XCTAssertFalse(chat.isConversationOpen)
+        XCTAssertFalse(chat.reactionHistory.isReadingLatest)
+        let palette = try XCTUnwrap(panel.presentedViewController as? MeetingActionsController)
+        for _ in 0..<40 where palette.isBeingPresented {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertFalse(palette.isBeingPresented)
+        let dismissed = expectation(description: "Palette dismissal completed")
+        palette.dismiss(animated: false) { dismissed.fulfill() }
+        await fulfillment(of: [dismissed], timeout: 3)
+        await drainUpdates()
+        XCTAssertNil(panel.presentedViewController)
+        XCTAssertTrue(chat.isConversationOpen)
+        XCTAssertTrue(chat.reactionHistory.isReadingLatest)
     }
 
     private func drainUpdates() async {

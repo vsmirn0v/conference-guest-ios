@@ -16,10 +16,13 @@ struct HomeMeetingCard: View {
     private var lines: Int { textSize.isAccessibilitySize ? 2 : 1 }
 
     private var meeting: CalendarMeeting? {
-        item.currentCalendar(in: calendar.upcoming)
+        guard calendar.enabled, calendar.access == .allowed,
+              let meeting = item.currentCalendar(in: calendar.upcoming),
+              calendar.selected.contains(meeting.calendarID), meeting.end > Date() else { return nil }
+        return meeting
     }
     private var source: ActiveJam? {
-        item.currentHandoff(in: continuation.candidates, at: now)
+        item.currentHandoff(in: continuation.candidates, at: Date())
     }
     private var title: String {
         item.calendar?.title ?? history.matching(item.invitation, engine: item.id.engine)?.alias ?? item.handoff?.title ?? ""
@@ -120,6 +123,37 @@ struct HomeMeetingCard: View {
         return meeting.isScheduledNow(now) ? L("Scheduled now") :
             L("Starts in %ld min", max(1, Int(ceil(meeting.start.timeIntervalSince(now) / 60))))
     }
+}
+
+/// One bounded placeholder reserves the usual first suggestion while an
+/// uncached calendar scan resolves, without creating persistent event storage.
+struct HomeMeetingLoadingCard: View {
+    @Environment(\.dynamicTypeSize) private var textSize
+    @ScaledMetric(relativeTo: .body) private var titleHeight = 23.0
+    @ScaledMetric(relativeTo: .caption) private var detailHeight = 17.0
+    var body: some View {
+        let lines = textSize.isAccessibilitySize ? 2.0 : 1.0
+        let description = Color.clear.frame(height: titleHeight * lines + detailHeight * (2 + lines) + 6)
+        Group {
+            if textSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    description
+                    HStack { button; Spacer(); star }
+                }
+            } else {
+                HStack(spacing: 8) {
+                    description.frame(maxWidth: .infinity)
+                    VStack(spacing: 0) { button; star }.frame(width: 92)
+                }
+            }
+        }.overlay(alignment: .leading) { ProgressView(L("Checking calendar…")) }
+        .padding(.vertical, 2).accessibilityIdentifier("home.calendar-loading")
+    }
+    private var button: some View {
+        Button {} label: { Text(L("Join")).lineLimit(2).frame(minHeight: 36) }
+            .buttonStyle(.borderedProminent).hidden().accessibilityHidden(true)
+    }
+    private var star: some View { Image(systemName: "star").frame(width: 44, height: 44).hidden().accessibilityHidden(true) }
 }
 
 enum CalendarMeetingPresentation {

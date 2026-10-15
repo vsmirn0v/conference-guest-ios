@@ -48,7 +48,7 @@ final class ReactionHistoryUITests: XCTestCase {
         XCTAssertTrue(app.buttons["reaction.history-info"].exists)
         XCTAssertTrue(app.segmentedControls["Conversation mode"].buttons["Chat"].isSelected)
     }
-    func testPaletteShortcutOpensHistoryAndReactionOnlyBadgeIsQuiet() {
+    func testPaletteOpensUnifiedChatAndReactionOnlyBadgeIsQuiet() {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(en)"]
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
@@ -57,13 +57,13 @@ final class ReactionHistoryUITests: XCTestCase {
         let chat = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Chat, New reactions")).firstMatch
         XCTAssertTrue(chat.waitForExistence(timeout: 8))
         XCTAssertFalse(chat.label.contains("unread"))
-        app.buttons["call.more"].tap()
+        app.buttons["call.reactions"].tap()
         app.buttons["reactions.send.like"].tap()
-        let shortcut = app.buttons["reactions.history"]
+        let shortcut = app.buttons["reactions.chat"]
         for _ in 0..<3 where !shortcut.isHittable { app.swipeUp() }
         XCTAssertTrue(shortcut.isHittable); shortcut.tap()
         XCTAssertTrue(app.buttons["chat.activity-filter"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.buttons["chat.activity-filter"].label, "Reactions")
+        XCTAssertEqual(app.buttons["chat.activity-filter"].label, "All activity")
         XCTAssertTrue(app.buttons["reaction.history-info"].exists)
         app.buttons["Close conversation"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label == %@", "Chat")).firstMatch.waitForExistence(timeout: 5))

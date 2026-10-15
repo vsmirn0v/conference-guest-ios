@@ -29,7 +29,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     @objc private func keyToggleCamera() { camera.sendActions(for: .touchUpInside) }
     @objc private func keyOpenStudio() {
         guard let studio else { return }
-        StudioPresentation.show(studio, from: moreButton)
+        StudioPresentation.show(studio, from: reactionsButton)
     }
     @objc private func keyOpenChat() { catchUpButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
@@ -73,7 +73,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private let catchUpButton = UIButton(type: .system)
     private let missedButton = UIButton(type: .system)
     private let participantsButton = UIButton(type: .system)
-    private let moreButton = AlignedCallButton(frame: .zero)
+    private var actionsMenu: UIMenu?
     private let reactionsButton = AlignedCallButton(frame: .zero)
     private var reactions: MeetingReactionsModel?
     private let titleLabel = UILabel()
@@ -317,27 +317,20 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         missedButton.configuration = Self.iconConfiguration("clock.arrow.circlepath")
         missedButton.accessibilityLabel = L("Catch up")
         missedButton.isHidden = true
-        moreButton.configuration = Self.iconConfiguration("ellipsis.circle.fill", title: L("More"))
-        moreButton.accessibilityLabel = L("More call options")
-        moreButton.accessibilityIdentifier = "call.more"
-        moreButton.showsMenuAsPrimaryAction = true
-        if let reactions {
-            moreButton.showsMenuAsPrimaryAction = false
-            moreButton.addAction(UIAction { [weak self, weak reactions] _ in
-                guard let self, let reactions else { return }
-                self.focus.interaction()
-                self.refreshMoreMenu?()
-                MeetingActionsController.show(model: reactions, menu: self.moreButton.menu, from: self.moreButton)
-            }, for: .touchUpInside)
-            reactionsButton.configuration = Self.iconConfiguration("face.smiling", title: L("Reactions"))
-            reactionsButton.accessibilityLabel = L("Reactions")
-            reactionsButton.accessibilityIdentifier = "call.reactions"
-            reactionsButton.addAction(UIAction { [weak self, weak reactions] _ in
-                guard let self, let reactions else { return }
-                MeetingActionsController.show(model: reactions, menu: nil,
-                    from: self.reactionsButton.window == nil ? self.moreButton : self.reactionsButton)
-            }, for: .touchUpInside)
+        reactionsButton.configuration = Self.iconConfiguration("face.smiling", title: L("Reactions"))
+        reactionsButton.accessibilityLabel = L("Reactions")
+        reactionsButton.accessibilityIdentifier = "call.reactions"
+        let showActions: (Bool) -> Void = { [weak self] more in
+            guard let self else { return }
+            self.focus.interaction()
+            self.refreshMoreMenu?()
+            MeetingActionsController.show(model: self.reactions, menu: self.actionsMenu, from: self.reactionsButton,
+                startsWithMore: more, openChat: { [weak self] in
+                    self?.openConversation(catchUp: catchUp, chat: chat, selected: .chat)
+                }, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
         }
+        reactionsButton.addAction(UIAction { _ in showActions(false) }, for: .touchUpInside)
+        MeetingActionsShortcut.install(on: reactionsButton) { showActions(true) }
         participantsButton.configuration = Self.iconConfiguration("person.2.fill")
         participantsButton.accessibilityLabel = L("Musicians")
         configureMoreMenu(coordinator: coordinator, onChange: onDisplayMode)
@@ -347,7 +340,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         camera.accessibilityLabel = L("Start video")
         share.configuration = Self.iconConfiguration("rectangle.on.rectangle", title: L("Share"))
         share.accessibilityLabel = L("Share screen")
-        for button in [microphone, camera, share, catchUpButton, missedButton, moreButton, participantsButton] {
+        for button in [microphone, camera, share, catchUpButton, missedButton, reactionsButton, participantsButton] {
             button.showsLargeContentViewer = true
             button.largeContentTitle = button.accessibilityLabel
             button.largeContentImage = button.configuration?.image
@@ -407,6 +400,15 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         for button in [microphone, camera, share, participantsButton, catchUpButton, missedButton] {
             button.addAction(UIAction { [weak self] _ in self?.focus.interaction() }, for: .touchUpInside)
         }
+        workspace.openReactions = { [weak self] anchor, visibility in
+            guard let self else { return }
+            self.refreshMoreMenu?()
+            MeetingActionsController.show(model: self.reactions, menu: self.actionsMenu, from: anchor,
+                openChat: {}, onVisibilityChanged: { [weak self] shown in
+                    self?.focus.menuVisible = shown
+                    visibility(shown)
+                })
+        }
         workspace.toggleMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
         workspace.toggleCamera = { [weak self] in self?.camera.sendActions(for: .touchUpInside) }
         workspace.leave = { leave.sendActions(for: .touchUpInside) }
@@ -450,7 +452,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             routeAppearance.bottomAnchor.constraint(equalTo: route.bottomAnchor)
         ])
 
-        let bar = CallToolbar(items: [microphone, camera, share, route, moreButton, leave])
+        let bar = CallToolbar(items: [microphone, camera, share, route, reactionsButton, leave])
         toolbar = bar
         bar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bar)
@@ -528,7 +530,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         reactionHistory.$hasUnseenReactions.receive(on: DispatchQueue.main).sink { [weak self] unseen in
             self?.unseenReactions = unseen; self?.updateChatBadge()
         }.store(in: &subscriptions)
-        reactionsButton.isHidden = true
+        reactionsButton.isHidden = false
         if let reactions {
             reactions.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] in self?.layoutPresentation() }
                 .store(in: &subscriptions)
@@ -881,7 +883,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     func setFloatingVideoAvailable(_ available: Bool) {
         guard floatingVideoAvailable != available else { return }
         floatingVideoAvailable = available
-        moreButton.accessibilityValue = available ? L("Floating video available") : nil
+        reactionsButton.accessibilityValue = available ? L("Floating video available") : nil
         refreshMoreMenu?()
     }
 
@@ -929,7 +931,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             return (title, action)
         }
         if headerStatus.transcribing, transcriptStore?.canViewTranscript == true, let onViewTranscript { actions.insert((L("View transcript"), onViewTranscript), at: 0) }
-        workspace.showDetails(from: source, presenter: presentationContainer,
+        workspace.showDetails(from: source, presenter: source.callActionPresenter ?? presentationContainer,
             title: titleLabel.text ?? L("Jam"), lines: lines, actions: actions)
     }
 
@@ -1056,7 +1058,6 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             guard let self else { return }
             self.showMeetingDetails(from: self.compactHeader.details)
         }, for: .touchUpInside)
-        moreButton.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
     }
 
     private var presenter: UIViewController? {
@@ -1094,8 +1095,6 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         if let host = surfaceHost(in: window), surface.superview !== host { host.addSubview(surface) }
         if let host = surface.superview { surface.frame = host.convert(window.bounds, from: window) }
         let large = traitCollection.preferredContentSizeCategory.isAccessibilityCategory
-        let hasReactionShortcut = reactions != nil && !large && surface.bounds.width >= 700
-        toolbar.setAccessory(hasReactionShortcut ? reactionsButton : nil)
         toolbar.arrange(rail: false, largeText: large)
         let headerHeight = max(58, header.systemLayoutSizeFitting(CGSize(width: min(440, window.bounds.width - 16), height: 0),
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height)
@@ -1175,7 +1174,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             overlay.presentationRect = ReactionOverlayGeometry.contentRect(stage: stage,
                 header: geometry.header, headerVisible: !header.isHidden || !compactHeader.isHidden)
         }
-        reactionsButton.isHidden = !hasReactionShortcut || focus.hidden
+        reactionsButton.isHidden = focus.hidden
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop] {
             backdrop.isAccessibilityElement = focus.hidden
             backdrop.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
@@ -1207,7 +1206,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 self.updateDisplayBackdrops(); self.layoutPresentation()
             }
         })
-        let viewMenu = UIMenu(title: L("View"), identifier: UIMenu.Identifier("call.view-mode"), children: [layout] + ConferenceDisplayMode.allCases.map { option in
+        let viewMenu = UIMenu(title: L("Incoming media"), identifier: UIMenu.Identifier("call.view-mode"), options: .displayInline, children: ConferenceDisplayMode.allCases.map { option in
             UIAction(title: option.title, image: UIImage(systemName: option.symbol),
                      state: option == displayMode ? .on : .off) { [weak self] _ in
                 guard let self else { return }
@@ -1244,41 +1243,55 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.refreshMoreMenu?()
         }
         let details = UIAction(title: L("Meeting details"), image: UIImage(systemName: "info.circle")) { [weak self] _ in
-            guard let self else { return }; self.showMeetingDetails(from: self.moreButton)
+            guard let self else { return }; self.showMeetingDetails(from: self.reactionsButton)
         }
-        var actions: [UIMenuElement] = [details, focusAction, autoHide, float, automatic, viewMenu, fit, flip]
+        let followSpeaker = UIAction(title: L("Automatic view"), state: stagePinned ? .off : .on) { [weak self] _ in
+            self?.onAutomaticView?()
+        }
+        let sharing = UIAction(title: L("Share screen"), image: UIImage(systemName: "rectangle.on.rectangle"),
+            attributes: share.isEnabled ? [] : [.disabled]) { [weak self] _ in
+                self?.share.sendActions(for: .touchUpInside)
+            }
+        var cameraSound: [UIMenuElement] = []
+        var sharePresenter: [UIMenuElement] = [sharing]
+        var invite: [UIMenuElement] = []
+        var meeting: [UIMenuElement] = [details]
         if workspace.invitationURL != nil {
-            actions.insert(UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
+            invite = [UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
                 [weak self] _ in guard let self else { return }
-                self.workspace.shareInvitation(from: self.moreButton)
-            }, at: 0)
-            actions.insert(UIAction(title: L("Copy link"), image: UIImage(systemName: "doc.on.doc")) {
+                self.workspace.shareInvitation(from: self.reactionsButton)
+            }, UIAction(title: L("Copy link"), image: UIImage(systemName: "doc.on.doc")) {
                 [weak self] _ in self?.workspace.copyInvitation()
-            }, at: 1)
+            }]
         }
         if let studio {
-            actions.insert(UIAction(title: L("Audio devices"), image: UIImage(systemName: "headphones")) { [weak self] _ in
+            cameraSound = [UIAction(title: L("Camera & sound"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
+                guard let self else { return }
+                StudioPresentation.show(studio, from: self.reactionsButton)
+            }, UIAction(title: L("Audio devices"), image: UIImage(systemName: "headphones")) { [weak self] _ in
                 guard let self else { return }
                 studio.audioSection = .devices
-                StudioPresentation.show(studio, from: self.moreButton, pane: .sound)
-            }, at: 0)
-            actions.insert(UIAction(title: studio.recording.isRecording ? L("Recording") : L("Record meeting"),
+                StudioPresentation.show(studio, from: self.reactionsButton, pane: .sound)
+            }, flip]
+            sharePresenter.append(UIAction(title: L("Presenter"), image: UIImage(systemName: "person.crop.rectangle"),
+                attributes: studio.presenter.available ? [] : [.disabled]) { [weak self] _ in
+                    guard let self else { return }
+                    StudioPresentation.show(studio, from: self.reactionsButton, pane: .presenter)
+                })
+            meeting.append(UIAction(title: studio.recording.isRecording ? L("Recording") : L("Record meeting"),
                 image: UIImage(systemName: "record.circle"), attributes: studio.recording.state == .unavailable ? [.disabled] : []) { [weak self] _ in
-                    guard let self else { return }; studio.recording.present(from: self.moreButton)
-                }, at: 0)
-            actions.insert(UIAction(title: L("Presenter"), image: UIImage(systemName: "person.crop.rectangle")) { [weak self] _ in
-                guard let self else { return }
-                StudioPresentation.show(studio, from: self.moreButton, pane: .presenter)
-            }, at: 0)
-            actions.insert(UIAction(title: L("Camera & sound"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
-                guard let self else { return }
-                StudioPresentation.show(studio, from: self.moreButton)
-            }, at: 0)
+                    guard let self else { return }; studio.recording.present(from: self.reactionsButton)
+                })
         }
         #if DEBUG
-        actions = fixtureActions + actions
+        meeting = fixtureActions + meeting
         #endif
-        moreButton.menu = UIMenu(children: actions)
+        let viewActions: [UIMenuElement] = [layout, viewMenu,
+            UIMenu(title: L("Control visibility"), options: .displayInline, children: [focusAction, autoHide]),
+            UIMenu(title: L("Screen sharing"), options: .displayInline, children: [fit, followSpeaker]),
+            UIMenu(title: L("Floating video"), options: .displayInline, children: [float, automatic])]
+        actionsMenu = MeetingActionGroup.make(cameraSound: cameraSound, sharePresenter: sharePresenter,
+            view: viewActions, invite: invite, meeting: meeting)
     }
 
     #if DEBUG

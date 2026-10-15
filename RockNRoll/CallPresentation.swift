@@ -59,8 +59,8 @@ final class AlignedCallButton: UIButton {
         symbolView.contentMode = .scaleAspectFit
         symbolView.isUserInteractionEnabled = false
         caption.textAlignment = .center
-        caption.numberOfLines = 1
-        caption.lineBreakMode = .byTruncatingTail
+        caption.numberOfLines = 2
+        caption.lineBreakMode = .byWordWrapping
         caption.adjustsFontForContentSizeCategory = true
         caption.isUserInteractionEnabled = false
         addSubview(symbolView); addSubview(caption)
@@ -97,7 +97,8 @@ final class AlignedCallButton: UIButton {
         caption.alpha = isEnabled ? 1 : 0.4; symbolView.alpha = caption.alpha
         caption.isHidden = !showsCaption
         symbolView.image = configuration?.image?.withConfiguration(UIImage.SymbolConfiguration(pointSize: 22, weight: .medium))
-        let captionHeight = max(17, ceil(font.lineHeight))
+        let textHeight = caption.sizeThatFits(CGSize(width: max(1, bounds.width - 2), height: .greatestFiniteMagnitude)).height
+        let captionHeight = max(17, min(ceil(textHeight), max(17, bounds.height - 34)))
         let groupHeight: CGFloat = showsCaption ? 26 + 4 + captionHeight : 26
         let top = max(2, (bounds.height - groupHeight) / 2)
         symbolView.frame = CGRect(x: bounds.midX - 13, y: top, width: 26, height: 26)
@@ -121,7 +122,7 @@ final class CallToolbar: UIView {
     var largeText = false { didSet { if oldValue != largeText { setNeedsLayout() } } }
     var preferredHeight: CGFloat {
         let font = UIFontMetrics(forTextStyle: .caption2).scaledFont(for: .systemFont(ofSize: 12, weight: .medium), compatibleWith: traitCollection)
-        return largeText ? 2 * max(69, ceil(font.lineHeight) + 40) + 10 : 68
+        return largeText ? CGFloat((items.count + 1) / 2) * max(69, ceil(font.lineHeight) * 2 + 40) + 10 : 68
     }
     init(items: [UIView]) {
         self.baseItems = items
@@ -141,7 +142,7 @@ final class CallToolbar: UIView {
     func arrange(rail: Bool, largeText: Bool) { self.rail = rail; self.largeText = largeText }
     override func layoutSubviews() {
         super.layoutSubviews()
-        let columns = rail ? (largeText ? 2 : 1) : largeText ? 3 : items.count
+        let columns = rail ? (largeText ? 2 : 1) : largeText ? 2 : items.count
         let rows = (items.count + columns - 1) / columns
         let area = bounds.insetBy(dx: 4, dy: 5)
         let width = area.width / CGFloat(columns), height = area.height / CGFloat(rows)

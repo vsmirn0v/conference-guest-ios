@@ -23,7 +23,7 @@ final class BackgroundGuestAudioUITests: XCTestCase {
         defer { app.activate(); if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 50))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Floating video available"),
-                                             object: app.buttons["More call options"])
+                                             object: app.buttons["call.reactions"])
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 35), .completed)
         XCUIDevice.shared.press(.home)
         let pip = XCUIApplication(bundleIdentifier: "com.apple.springboard").windows["PIP-SBInteractionPassThroughView"]

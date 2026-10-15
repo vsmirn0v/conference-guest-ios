@@ -120,7 +120,7 @@ final class PresenterUITests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait; app.terminate() }
         XCUIDevice.shared.orientation = .portrait
         app.launch()
-        XCTAssertTrue(app.buttons["More call options"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["call.reactions"].firstMatch.waitForExistence(timeout: 10))
         open(app)
         let start = app.buttons["presenter.start"]
         XCTAssertTrue(start.waitForExistence(timeout: 10)); XCTAssertTrue(start.isHittable)
@@ -197,7 +197,7 @@ final class PresenterUITests: XCTestCase {
         }
     }
     private func open(_ app: XCUIApplication, russian: Bool = false) {
-        app.buttons[russian ? "Другие действия" : "More call options"].firstMatch.tap()
+        app.openMeetingMore(.sharePresenter)
         app.buttons[russian ? "Презентация" : "Presenter"].firstMatch.tap()
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
         let source = app.buttons["presenter.source"]

@@ -44,10 +44,10 @@ final class TrueConfUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Unmute microphone"].waitForExistence(timeout: 35))
         app.buttons["Unmute microphone"].tap()
         XCTAssertTrue(app.buttons["Mute microphone"].waitForExistence(timeout: 8))
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Floating video available"), object: app.buttons["More call options"])
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Floating video available"), object: app.buttons["call.reactions"])
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
         let main = XCTAttachment(screenshot: app.screenshot()); main.name = "TrueConf live microphone meter"; main.lifetime = .keepAlways; add(main)
-        app.buttons["More call options"].tap(); app.buttons["Show floating video"].tap()
+        app.openMeetingMore(.view); app.buttons["Show floating video"].tap()
         XCUIDevice.shared.press(.home)
         let pip = XCUIApplication(bundleIdentifier: "com.apple.springboard").windows["PIP-SBInteractionPassThroughView"]
         XCTAssertTrue(pip.waitForExistence(timeout: 8))

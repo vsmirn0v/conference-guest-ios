@@ -30,7 +30,9 @@ final class StudioModel: ObservableObject {
     @Published private(set) var active = true
     enum Pane: String, CaseIterable { case camera, sound, presenter }
     enum AudioSection { case sound, devices }
-    @Published var audioSection: AudioSection = .sound
+    @Published var audioSection: AudioSection = .sound {
+        didSet { if audioSection == .devices && oldValue != audioSection { releasePrivateMicrophone() } }
+    }
     @Published var canvasExpanded = false
     let presenter = PresenterModel()
     let recording = MeetingRecording()
@@ -378,7 +380,7 @@ final class StudioModel: ObservableObject {
     }
 
     func testMicrophone() {
-        guard active, presented, pane == .sound, !held, !microphoneOn else { return }
+        guard active, presented, pane == .sound, audioSection == .sound, !held, !microphoneOn else { return }
         soundCheck.start(standalone: enableMicrophone == nil)
     }
 

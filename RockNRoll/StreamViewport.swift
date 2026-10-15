@@ -97,6 +97,8 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         video.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         content.addSubview(video)
         pinButton.configuration = .tinted()
+        pinButton.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        pinButton.configuration?.contentInsets = .zero
         pinButton.translatesAutoresizingMaskIntoConstraints = false
         pinButton.addAction(UIAction { [weak self] _ in
             self?.pinAction?()
@@ -106,8 +108,8 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         NSLayoutConstraint.activate([
             pinButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             pinButton.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            pinButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            pinButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+            pinButton.widthAnchor.constraint(equalToConstant: 44),
+            pinButton.heightAnchor.constraint(equalToConstant: 44)
         ])
         if zoomable {
             zoomControls.axis = .horizontal

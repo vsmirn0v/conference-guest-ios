@@ -15,10 +15,7 @@ final class AudioMixingUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 12)
         app.buttons["Unmute microphone"].firstMatch.tap()
         Thread.sleep(forTimeInterval: 3)
-        app.buttons["More call options"].tap()
-        let view = app.descendants(matching: .any)["meeting.menu.call.view-mode"].firstMatch
-        for _ in 0..<4 { if view.isHittable { break }; app.swipeUp() }
-        XCTAssertTrue(view.isHittable); view.tap()
+        app.openMeetingMore(.view)
         for _ in 0..<4 where !app.buttons["Audio only"].isHittable { app.swipeUp() }
         app.buttons["Audio only"].tap()
         youtube.terminate()

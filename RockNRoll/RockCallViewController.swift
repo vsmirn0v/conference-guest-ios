@@ -25,7 +25,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     override var keyCommands: [UIKeyCommand]? {
         CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
             chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls)) +
-            [UIKeyCommand(input: ",", modifierFlags: .command, action: #selector(keyOpenStudio))]
+            [UIKeyCommand(input: ",", modifierFlags: .command, action: #selector(keyOpenStudio)),
+             UIKeyCommand(title: L("Reactions"), action: #selector(keyOpenReactions), input: "r", modifierFlags: .command.union(.shift))]
     }
     var onLeave: (() -> Void)?
     var onMicrophone: ((Bool) -> Void)?
@@ -84,7 +85,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let conversationButton = UIButton(type: .system)
     private let missedButton = UIButton(type: .system)
     private let participantsButton = UIButton(type: .system)
-    private let moreButton = AlignedCallButton(frame: .zero)
+    private let reactionsButton = AlignedCallButton(frame: .zero)
+    private var actionsMenu: UIMenu?
     private let fitButton = UIButton(type: .system)
     private let zoomInButton = UIButton(type: .system)
     private let zoomOutButton = UIButton(type: .system)
@@ -162,9 +164,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     @objc private func keyToggleCamera() { camera.sendActions(for: .touchUpInside) }
     @objc private func keyOpenStudio() {
         guard let studio else { return }
-        StudioPresentation.show(studio, from: moreButton)
+        StudioPresentation.show(studio, from: reactionsButton)
     }
     @objc private func keyOpenChat() { openConversation(.chat) }
+    @objc private func keyOpenReactions() { reactionsButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
     @objc private func keyFocus() { focus.toggle() }
     @objc private func keyRestoreControls() { focus.show(); focus.interaction() }
@@ -256,7 +259,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             swipe.direction = direction; swipe.delegate = self
             streamScroll.addGestureRecognizer(swipe)
         }
-        moreButton.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         updateControlTitles()
         focus.interaction()
     }
@@ -506,8 +508,18 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self?.openConversation(.catchUp)
         }, for: .touchUpInside)
         configure(participantsButton, symbol: "person.2.fill", label: L("Musicians"))
-        configure(moreButton, symbol: "ellipsis.circle.fill", label: L("More call options"), title: L("More"))
-        moreButton.showsMenuAsPrimaryAction = true
+        configure(reactionsButton, symbol: "face.smiling", label: L("Reactions"), title: L("Reactions"))
+        reactionsButton.accessibilityIdentifier = "call.reactions"
+        let showActions: (Bool) -> Void = { [weak self] more in
+            guard let self else { return }
+            self.focus.interaction()
+            self.configureMoreMenu()
+            MeetingActionsController.show(model: nil, menu: self.actionsMenu, from: self.reactionsButton,
+                startsWithMore: more, openChat: self.supportsChat ? { [weak self] in self?.openConversation(.chat) } : nil,
+                onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
+        }
+        reactionsButton.addAction(UIAction { _ in showActions(false) }, for: .touchUpInside)
+        MeetingActionsShortcut.install(on: reactionsButton) { showActions(true) }
         configureMoreMenu()
         configure(fitButton, symbol: "arrow.down.right.and.arrow.up.left", label: L("Fit shared screen at 100%"))
         configure(zoomInButton, symbol: "plus.magnifyingglass", label: L("Zoom in shared screen"))
@@ -570,7 +582,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             StudioShortcut.install(on: camera, pane: .camera, model: studio)
             StudioShortcut.install(on: speaker, pane: .sound, model: studio, devices: true)
         }
-        if !supportsSharing { share.isHidden = true; sharePicker.isHidden = true }
+        if !supportsSharing { share.isEnabled = false; sharePicker.isHidden = true }
         conversationButton.isHidden = !supportsChat
         share.addAction(UIAction { [weak self] _ in
             guard let self else { return }
@@ -607,6 +619,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self.present(navigation, animated: true)
         }, for: .touchUpInside)
         leave.addAction(UIAction { [weak self] _ in self?.onLeave?() }, for: .touchUpInside)
+        workspace.openReactions = { [weak self] anchor, visibility in
+            guard let self else { return }
+            self.configureMoreMenu()
+            MeetingActionsController.show(model: nil, menu: self.actionsMenu, from: anchor,
+                openChat: {}, onVisibilityChanged: { [weak self] shown in
+                    self?.focus.menuVisible = shown
+                    visibility(shown)
+                })
+        }
         workspace.toggleMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
         workspace.toggleCamera = { [weak self] in self?.camera.sendActions(for: .touchUpInside) }
         workspace.toggleSpeaker = { [weak self] in self?.speaker.sendActions(for: .touchUpInside) }
@@ -681,7 +702,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             broadcastAppearance.topAnchor.constraint(equalTo: shareControl.topAnchor),
             broadcastAppearance.bottomAnchor.constraint(equalTo: shareControl.bottomAnchor)
         ])
-        let bar = CallToolbar(items: [microphone, camera] + (supportsSharing ? [shareControl] : []) + [audioControl, moreButton, leave])
+        let bar = CallToolbar(items: [microphone, camera, shareControl, audioControl, reactionsButton, leave])
         toolbar = bar
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.textColor = .lightGray
@@ -1073,6 +1094,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         tile.addSubview(badge)
         let pin = UIButton(type: .system)
         pin.configuration = .tinted()
+        pin.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)
+        pin.configuration?.contentInsets = .zero
         pin.configuration?.image = UIImage(systemName: pinnedStreamKey == key ? "pin.fill" : "pin")
         pin.accessibilityLabel = pinnedStreamKey == key ? L("Unpin %@ %@", participant.name ?? L("Musician"), isShare ? L("screen") : L("video")) :
             L("Pin %@ %@", participant.name ?? L("Musician"), isShare ? L("screen") : L("video"))
@@ -1106,8 +1129,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             badge.trailingAnchor.constraint(lessThanOrEqualTo: pin.leadingAnchor, constant: -6),
             pin.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -10),
             pin.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -8),
-            pin.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            pin.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+            pin.widthAnchor.constraint(equalToConstant: 44),
+            pin.heightAnchor.constraint(equalToConstant: 44)
         ])
         var entry = VideoTile(tile: tile, zoom: zoom, video: video, badge: badge, pin: pin)
         configureVideoTile(&entry, participant: participant, track: track,
@@ -1220,94 +1243,113 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     private func configureMoreMenu() {
-        moreButton.accessibilityValue = floatingVideo?.canShow == true ? L("Floating video available") : nil
-        var items: [UIMenuElement] = [layoutMenu()]
+        reactionsButton.accessibilityValue = floatingVideo?.canShow == true ? L("Floating video available") : nil
+        var cameraSound: [UIMenuElement] = []
+        var sharePresenter: [UIMenuElement] = [
+            UIAction(title: isSharingScreen ? L("Stop sharing") : L("Share screen"), image: UIImage(systemName: "rectangle.on.rectangle"),
+                attributes: supportsSharing && (sharingAvailable || isSharingScreen) ? [] : [.disabled]) { [weak self] _ in
+                    guard let self else { return }
+                    self.performGroupedShareAction()
+                }
+        ]
+        var invite: [UIMenuElement] = []
+        var meeting: [UIMenuElement] = [UIAction(title: L("Meeting details"), image: UIImage(systemName: "info.circle")) { [weak self] _ in
+            guard let self else { return }
+            let details = [self.workspace.roomIdentifier, self.workspace.invitationURL?.absoluteString].compactMap { $0 }.joined(separator: "\n")
+            let alert = UIAlertController(title: self.titleLabel.text, message: details, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: L("Done"), style: .default))
+            self.reactionsButton.callActionPresenter?.present(alert, animated: true)
+        }]
         if let studio {
-            items.append(UIAction(title: L("Audio devices"), image: UIImage(systemName: "headphones")) { [weak self] _ in
+            cameraSound = [UIAction(title: L("Camera & sound"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
+                guard let self else { return }
+                StudioPresentation.show(studio, from: self.reactionsButton)
+            }, UIAction(title: L("Audio devices"), image: UIImage(systemName: "headphones")) { [weak self] _ in
                 guard let self else { return }
                 studio.audioSection = .devices
-                StudioPresentation.show(studio, from: self.moreButton, pane: .sound)
-            })
-            items.append(UIAction(title: L("Camera & sound"), image: UIImage(systemName: "slider.horizontal.3")) { [weak self] _ in
-                guard let self else { return }
-                StudioPresentation.show(studio, from: self.moreButton)
-            })
-            if studio.presenter.available {
-                items.append(UIAction(title: L("Presenter"), image: UIImage(systemName: "person.crop.rectangle")) { [weak self] _ in
-                    guard let self else { return }
-                    StudioPresentation.show(studio, from: self.moreButton, pane: .presenter)
-                })
+                StudioPresentation.show(studio, from: self.reactionsButton, pane: .sound)
+            }]
+            if studio.availableCameraCount > 1 {
+                cameraSound.append(UIAction(title: L("Flip camera"), image: UIImage(systemName: "camera.rotate"),
+                    attributes: studio.canFlipCamera ? [] : [.disabled]) { [weak self] _ in self?.studio?.flipCamera() })
             }
-        }
-        if workspace.invitationURL != nil {
-            items.append(UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
-                [weak self] _ in guard let self else { return }
-                self.workspace.shareInvitation(from: self.moreButton)
-            })
-            items.append(UIAction(title: L("Copy link"), image: UIImage(systemName: "doc.on.doc")) {
-                [weak self] _ in self?.workspace.copyInvitation()
-            })
-        }
-        items += [
-            UIAction(title: L("Fit shared screen"), image: UIImage(systemName: "arrow.down.right.and.arrow.up.left"),
-                     attributes: (primaryZoom?.maximumZoomScale ?? 1) > 1 ? [] : [.disabled]) { [weak self] _ in
-                self?.primaryZoom?.setZoomScale(1, animated: true)
-            },
-            UIAction(title: L("Hide controls"), image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")) {
-                [weak self] _ in self?.focus.hide()
-            },
-            UIAction(title: L("Automatically hide controls"), state: focus.automaticallyHides ? .on : .off) {
-                [weak self] _ in guard let self else { return }
-                self.focus.automaticallyHides.toggle(); self.configureMoreMenu()
-            },
-            UIAction(title: L("Automatic view"), state: browsedStream == nil && pinnedStream == nil ? .on : .off) {
-                [weak self] _ in self?.browsedStream = nil; self?.setPin(nil)
-            },
-            UIAction(title: L("Show floating video"), image: UIImage(systemName: "pip.enter"),
-                     attributes: floatingVideo?.canShow == true && !isHeld ? [] : [.disabled]) {
-                [weak self] _ in self?.floatingVideo?.start()
-            },
-            UIAction(title: L("Floating video when multitasking"),
-                     image: UIImage(systemName: "pip"),
-                     state: FloatingVideoPreference.enabled ? .on : .off) { [weak self] _ in
-                FloatingVideoPreference.enabled.toggle()
-                self?.floatingVideo?.refreshPreference()
-                self?.configureMoreMenu()
-            },
-            UIMenu(title: L("View"), children: ConferenceDisplayMode.allCases.map { option in
-                UIAction(title: option.title, image: UIImage(systemName: option.symbol),
-                         state: option == displayMode ? .on : .off) { [weak self] _ in
+            sharePresenter.append(UIAction(title: L("Presenter"), image: UIImage(systemName: "person.crop.rectangle"),
+                attributes: studio.presenter.available ? [] : [.disabled]) { [weak self] _ in
                     guard let self else { return }
-                    self.displayMode = option
-                    self.configureMoreMenu()
-                    if let snapshot = self.displayedSnapshot { self.render(snapshot: snapshot) }
-                    self.onDisplayMode?(option)
-                }
-            }),
-            UIAction(title: isSpeakerOn ? L("Use iPhone receiver") : L("Use iPhone speaker"),
-                     image: UIImage(systemName: "speaker.wave.2")) { [weak self] _ in
+                    StudioPresentation.show(studio, from: self.reactionsButton, pane: .presenter)
+                })
+        }
+        if !ProcessInfo.processInfo.isiOSAppOnMac {
+        cameraSound.append(UIAction(title: isSpeakerOn ? L("Use iPhone receiver") : L("Use iPhone speaker"),
+            image: UIImage(systemName: "speaker.wave.2")) { [weak self] _ in
                 guard let self else { return }
                 self.isSpeakerOn.toggle()
                 self.workspace.speakerOn = self.isSpeakerOn
                 self.onSpeaker?(self.isSpeakerOn)
                 self.configureMoreMenu()
-            },
-        ]
-        if (studio?.availableCameraCount ?? 0) > 1 {
-            items.append(UIAction(title: L("Flip camera"), image: UIImage(systemName: "camera.rotate"),
-                attributes: studio?.canFlipCamera == true ? [] : [.disabled]) { [weak self] _ in
-                    self?.studio?.flipCamera()
-                })
+            })
         }
+        if workspace.invitationURL != nil {
+            invite = [UIAction(title: L("Invite musicians"), image: UIImage(systemName: "square.and.arrow.up")) {
+                [weak self] _ in guard let self else { return }
+                self.workspace.shareInvitation(from: self.reactionsButton)
+            }, UIAction(title: L("Copy link"), image: UIImage(systemName: "doc.on.doc")) {
+                [weak self] _ in self?.workspace.copyInvitation()
+            }]
+        }
+        let incoming = UIMenu(title: L("Incoming media"), identifier: UIMenu.Identifier("call.view-mode"), options: .displayInline,
+            children: ConferenceDisplayMode.allCases.map { option in
+                UIAction(title: option.title, image: UIImage(systemName: option.symbol),
+                    state: option == displayMode ? .on : .off) { [weak self] _ in
+                        guard let self else { return }
+                        self.setDisplayMode(option)
+                        self.configureMoreMenu()
+                    }
+            })
+        let visibility = UIMenu(title: L("Control visibility"), options: .displayInline, children: [
+            UIAction(title: L("Hide controls"), image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")) { [weak self] _ in self?.focus.hide() },
+            UIAction(title: L("Automatically hide controls"), state: focus.automaticallyHides ? .on : .off) { [weak self] _ in
+                guard let self else { return }; self.focus.automaticallyHides.toggle(); self.configureMoreMenu()
+            }
+        ])
+        let screen = UIMenu(title: L("Screen sharing"), options: .displayInline, children: [
+            UIAction(title: L("Fit shared screen"), image: UIImage(systemName: "arrow.down.right.and.arrow.up.left"),
+                attributes: (primaryZoom?.maximumZoomScale ?? 1) > 1 ? [] : [.disabled]) { [weak self] _ in self?.primaryZoom?.setZoomScale(1, animated: true) },
+            UIAction(title: L("Automatic view"), state: browsedStream == nil && pinnedStream == nil ? .on : .off) { [weak self] _ in
+                self?.browsedStream = nil; self?.setPin(nil)
+            }
+        ])
+        let floating = UIMenu(title: L("Floating video"), options: .displayInline, children: [
+            UIAction(title: L("Show floating video"), image: UIImage(systemName: "pip.enter"),
+                attributes: floatingVideo?.canShow == true && !isHeld ? [] : [.disabled]) { [weak self] _ in self?.floatingVideo?.start() },
+            UIAction(title: L("Floating video when multitasking"), image: UIImage(systemName: "pip"),
+                state: FloatingVideoPreference.enabled ? .on : .off) { [weak self] _ in
+                    FloatingVideoPreference.enabled.toggle(); self?.floatingVideo?.refreshPreference(); self?.configureMoreMenu()
+                }
+        ])
         #if DEBUG
-        items = fixtureActions + items
+        meeting = fixtureActions + meeting
         #endif
-        moreButton.menu = UIMenu(children: items)
+        actionsMenu = MeetingActionGroup.make(cameraSound: cameraSound, sharePresenter: sharePresenter,
+            view: [layoutMenu(), incoming, visibility, screen, floating], invite: invite, meeting: meeting)
+    }
+
+    func performGroupedShareAction() {
+        guard supportsSharing, sharingAvailable || isSharingScreen else { return }
+        if isSharingScreen || usesNativeShareControl || ProcessInfo.processInfo.isiOSAppOnMac {
+            onShare?(!isSharingScreen)
+        } else if #available(iOS 27.0, *) {
+            onShare?(true)
+        } else {
+            // LiveKit's older-iOS path must open ReplayKit's consent picker,
+            // exactly as tapping the broadcast control in the dock does.
+            (sharePicker.subviews.compactMap { $0 as? UIButton }.first)?.sendActions(for: .touchUpInside)
+        }
     }
 
     func setSharing(_ enabled: Bool) {
         guard supportsSharing else {
-            share.isHidden = true; sharePicker.isHidden = true; shareTitle.isHidden = true; broadcastAppearance.isHidden = true
+            share.isHidden = false; share.isEnabled = false; sharePicker.isHidden = true; shareTitle.isHidden = true; broadcastAppearance.isHidden = true
             return
         }
         isSharingScreen = enabled

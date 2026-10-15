@@ -95,7 +95,7 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(tile.waitForExistence(timeout: 10)); XCTAssertTrue(tile.isHittable); tile.tap()
         assertLayout(app, "Focus")
         XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Полина")
-        app.buttons["More call options"].tap(); app.buttons["Change speaking participant"].tap()
+        app.openMeetingMore(.meeting); app.buttons["Change speaking participant"].tap()
         XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Полина")
         app.buttons["Focus participant.person-4.camera"].tap()
         XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Олег Никитин")
@@ -222,7 +222,7 @@ final class MeetingPresentationUITests: XCTestCase {
             transcript.tap()
             XCTAssertTrue(app.segmentedControls["Conversation mode"].waitForExistence(timeout: 5))
             app.buttons[language == "ru" ? "Закрыть беседу" : "Close conversation"].tap()
-            app.buttons[language == "ru" ? "Другие действия" : "More call options"].tap()
+            app.openMeetingMore(.meeting)
             app.buttons["Provider action"].tap()
             app.buttons["Meeting status"].tap()
             app.buttons["Continue"].tap()
@@ -238,7 +238,7 @@ final class MeetingPresentationUITests: XCTestCase {
         let viewport = app.scrollViews["Shared screen viewport"]
         XCTAssertTrue(viewport.waitForExistence(timeout: 10))
         Thread.sleep(forTimeInterval: 4)
-        app.buttons["More call options"].tap(); app.buttons["Routine notice in focus"].tap()
+        app.openMeetingMore(.meeting); app.buttons["Routine notice in focus"].tap()
         app.buttons["Hide controls"].tap()
         Thread.sleep(forTimeInterval: 4)
         XCTAssertFalse(app.buttons["Leave"].exists)
@@ -247,7 +247,7 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 5))
         viewport.pinch(withScale: 2, velocity: 1)
         let zoom = try XCTUnwrap(viewport.value as? String)
-        app.buttons["More call options"].tap(); app.buttons["Recording in focus"].tap()
+        app.openMeetingMore(.meeting); app.buttons["Recording in focus"].tap()
         app.buttons["Hide controls"].tap()
         let header = app.otherElements["Compact meeting header"]
         XCTAssertTrue(header.waitForExistence(timeout: 5))
@@ -308,8 +308,8 @@ final class MeetingPresentationUITests: XCTestCase {
         }
     }
     private func assertControls(_ app: XCUIApplication, language: String) {
-        let labels = language == "ru" ? ["Включить микрофон", "Включить видео", "Транслировать экран", "Другие действия", "Выйти"] :
-            ["Unmute microphone", "Start video", "Share screen", "More call options", "Leave"]
+        let labels = language == "ru" ? ["Включить микрофон", "Включить видео", "Транслировать экран", "call.reactions", "Выйти"] :
+            ["Unmute microphone", "Start video", "Share screen", "call.reactions", "Leave"]
         let window = app.windows.firstMatch.frame
         for label in labels {
             let button = app.buttons[label]
@@ -365,12 +365,12 @@ final class MeetingPresentationUITests: XCTestCase {
 
     func testAutoHideWaitsForMenuAndRestoresWithoutClickThrough() {
         let app = launch(autoHide: true)
-        XCTAssertTrue(app.buttons["More call options"].waitForExistence(timeout: 10))
-        app.buttons["More call options"].tap()
+        XCTAssertTrue(app.buttons["call.reactions"].waitForExistence(timeout: 10))
+        app.openMeetingMore(.view)
         Thread.sleep(forTimeInterval: 6)
-        XCTAssertTrue(app.buttons["Leave"].exists, "An open menu must prevent auto-hide")
-        if app.buttons["View"].exists { app.buttons["View"].tap() }
+        XCTAssertTrue(app.buttons["All video"].exists, "The tool surface must remain open while auto-hide is deferred")
         app.buttons["All video"].tap()
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 2), "Dismissing tools should restore visible controls before auto-hide resumes")
         let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !app.buttons["Leave"].exists }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 10), .completed)
         XCTAssertFalse(app.buttons["Show controls, Mic off"].exists)
@@ -454,7 +454,7 @@ final class MeetingPresentationUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
         app.launch()
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 10))
-        app.buttons["More call options"].tap()
+        app.openMeetingMore(.view)
         app.buttons["Hide controls"].tap()
         let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !app.buttons["Leave"].exists }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
@@ -469,7 +469,7 @@ final class MeetingPresentationUITests: XCTestCase {
         viewport.pinch(withScale: 2, velocity: 1)
         viewport.swipeLeft()
         XCTAssertTrue(viewport.exists, "Zoomed drag pans instead of selecting another stream")
-        app.buttons["More call options"].tap()
+        app.openMeetingMore(.view)
         app.buttons["Fit shared screen"].tap()
         expectation(for: NSPredicate(format: "value == '100%'"), evaluatedWith: viewport)
         waitForExpectations(timeout: 5)
@@ -534,7 +534,7 @@ final class MeetingPresentationUITests: XCTestCase {
         let faded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !fit.isHittable }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [faded], timeout: 6), .completed)
         XCTAssertEqual(viewport.value as? String, zoom)
-        app.buttons["More call options"].tap()
+        app.openMeetingMore(.view)
         app.buttons["Fit shared screen"].tap()
         expectation(for: NSPredicate(format: "value == '100%'"), evaluatedWith: viewport)
         waitForExpectations(timeout: 5)

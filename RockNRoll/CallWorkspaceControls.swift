@@ -18,6 +18,7 @@ final class CallWorkspaceControls: ObservableObject {
     var toggleCamera: (() -> Void)?
     var toggleSpeaker: (() -> Void)?
     var leave: (() -> Void)?
+    var openReactions: ((UIView, @escaping (Bool) -> Void) -> Void)?
 
     func copyInvitation() {
         guard let invitationURL else { return }
@@ -26,13 +27,9 @@ final class CallWorkspaceControls: ObservableObject {
 
     func shareInvitation(from view: UIView) {
         guard let invitationURL else { return }
-        var responder: UIResponder? = view
-        while let current = responder, !(current is UIViewController) {
-            responder = current.next
-        }
-        guard let presenter = responder as? UIViewController else { return }
+        guard let presenter = view.callActionPresenter else { return }
         let sheet = UIActivityViewController(activityItems: [invitationURL], applicationActivities: nil)
-        if let popover = sheet.popoverPresentationController { popover.sourceView = view }
+        if let popover = sheet.popoverPresentationController { popover.sourceView = view.callActionPresentationAnchor }
         presenter.present(sheet, animated: true) { [weak sheet] in
             sheet?.view.accessibilityIdentifier = "Invitation sharing"
         }
@@ -58,8 +55,9 @@ final class CallWorkspaceControls: ObservableObject {
             sheet.addAction(UIAlertAction(title: L("Copy link"), style: .default) { [weak self] _ in self?.copyInvitation() })
         }
         sheet.addAction(UIAlertAction(title: L("Cancel"), style: .cancel))
-        sheet.popoverPresentationController?.sourceView = view
-        sheet.popoverPresentationController?.sourceRect = view.bounds
+        let anchor = view.callActionPresentationAnchor
+        sheet.popoverPresentationController?.sourceView = anchor
+        sheet.popoverPresentationController?.sourceRect = anchor.bounds
         presenter.present(sheet, animated: true)
     }
 }

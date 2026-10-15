@@ -21,6 +21,9 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private let chat: ChatStore
     private let activityFilterButton = UIButton(type: .system)
     private let reactionHistoryInfo = UIButton(type: .system)
+    private let activityTools = UIStackView()
+    private let reactionsButton = UIButton(type: .system)
+    private var reactionToolsPresented = false
     private var activityFilter: ConversationActivityFilter
     private var reactionViews: [String: ReactionHistoryRowView] = [:]
     private var renderedReactionIDs = [String]()
@@ -129,7 +132,13 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         buildFooter()
         buildCallStrip()
 
-        let column = UIStackView(arrangedSubviews: [header, mode, activityFilterButton, reactionHistoryInfo, content, footer, callStrip])
+        activityTools.axis = .horizontal
+        activityTools.alignment = .center
+        activityTools.setContentHuggingPriority(.required, for: .vertical)
+        activityTools.heightAnchor.constraint(equalToConstant: 44).withPriority(.defaultHigh).isActive = true
+        activityTools.addArrangedSubview(activityFilterButton)
+        activityTools.addArrangedSubview(reactionHistoryInfo)
+        let column = UIStackView(arrangedSubviews: [header, mode, activityTools, content, footer, callStrip])
         column.axis = .vertical
         column.spacing = 6
         column.translatesAutoresizingMaskIntoConstraints = false
@@ -154,7 +163,6 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         reactionHistoryInfo.configuration = .plain()
         reactionHistoryInfo.configuration?.image = UIImage(systemName: "info.circle")
         reactionHistoryInfo.configuration?.imagePlacement = .trailing
-        reactionHistoryInfo.configuration?.imagePadding = 6
         reactionHistoryInfo.configuration?.contentInsets = .zero
         reactionHistoryInfo.configuration?.baseForegroundColor = .lightGray
         reactionHistoryInfo.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
@@ -162,8 +170,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         }
         reactionHistoryInfo.contentHorizontalAlignment = .leading
         reactionHistoryInfo.setContentHuggingPriority(.defaultHigh, for: .vertical)
-        reactionHistoryInfo.titleLabel?.numberOfLines = 0
-        reactionHistoryInfo.titleLabel?.adjustsFontForContentSizeCategory = true
+        reactionHistoryInfo.widthAnchor.constraint(equalToConstant: 44).isActive = true
         reactionHistoryInfo.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         reactionHistoryInfo.accessibilityIdentifier = "reaction.history-info"
         reactionHistoryInfo.accessibilityHint = L("About reaction history")
@@ -466,7 +473,26 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         sendButton.addAction(UIAction { [weak self] _ in self?.sendMessage() }, for: .touchUpInside)
         sendButton.widthAnchor.constraint(equalToConstant: 48).isActive = true
         sendButton.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        reactionsButton.configuration = .plain()
+        reactionsButton.configuration?.image = UIImage(systemName: "face.smiling")
+        reactionsButton.accessibilityLabel = L("Reactions")
+        reactionsButton.accessibilityIdentifier = "chat.reactions"
+        reactionsButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        reactionsButton.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        reactionsButton.isHidden = call?.openReactions == nil
+        reactionsButton.addAction(UIAction { [weak self] _ in
+            guard let self, let open = self.call?.openReactions, self.presentedViewController == nil else { return }
+            self.composer.resignFirstResponder()
+            self.reactionToolsPresented = true
+            self.renderMode()
+            open(self.reactionsButton) { [weak self] visible in
+                guard let self else { return }
+                self.reactionToolsPresented = visible
+                self.renderMode()
+            }
+        }, for: .touchUpInside)
         let row = composerRow
+        row.addArrangedSubview(reactionsButton)
         row.addArrangedSubview(composer); row.addArrangedSubview(sendButton)
         row.axis = .horizontal
         row.alignment = .bottom
@@ -588,9 +614,10 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private func renderMode() {
         let selected = ConversationMode(rawValue: mode.selectedSegmentIndex) ?? .chat
         chat.isConversationOpen = selected == .chat && activityFilter != .reactions && panelVisible &&
-            contentIsActive && presentedViewController == nil
+            contentIsActive && !reactionToolsPresented && presentedViewController == nil
         activityFilterButton.isHidden = selected != .chat || !chat.reactionHistoryAvailable
         reactionHistoryInfo.isHidden = selected != .chat || activityFilter == .messages || !chat.reactionHistoryAvailable
+        activityTools.isHidden = selected != .chat || !chat.reactionHistoryAvailable
         messageList.isHidden = selected != .chat
         transcript.isHidden = selected != .liveText
         catchUpHost.view.isHidden = selected != .catchUp
@@ -636,7 +663,8 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
 
     private func updateReactionHistoryInfo() {
         let incomplete = !chat.reactionHistory.gaps.isEmpty || chat.reactionHistory.hasTruncatedHistory
-        reactionHistoryInfo.configuration?.title = incomplete ? L("Reaction history may be incomplete") : L("Received on this device")
+        reactionHistoryInfo.accessibilityLabel = incomplete ? L("Reaction history may be incomplete") : L("Received on this device")
+        reactionHistoryInfo.configuration?.image = UIImage(systemName: incomplete ? "info.circle.fill" : "info.circle")
     }
 
     private func showReactionHistoryInfo() {
@@ -766,10 +794,10 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     private func markVisibleReactions() {
         chat.isConversationOpen = panelVisible && contentIsActive &&
             mode.selectedSegmentIndex == ConversationMode.chat.rawValue && activityFilter != .reactions &&
-            presentedViewController == nil
+            !reactionToolsPresented && presentedViewController == nil
         let reading = panelVisible && contentIsActive &&
             mode.selectedSegmentIndex == ConversationMode.chat.rawValue && activityFilter != .messages &&
-            viewIfLoaded?.window != nil && presentedViewController == nil
+            viewIfLoaded?.window != nil && !reactionToolsPresented && presentedViewController == nil
         let nearBottom = messageList.contentSize.height - messageList.contentOffset.y - messageList.bounds.height < 60
         chat.reactionHistory.isReadingLatest = reading && nearBottom
         guard reading, !renderingMessages else { return }

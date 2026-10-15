@@ -27,8 +27,8 @@ public enum HomeMeetingPolicy {
             $0.hasResolvedInvitation && !$0.allDay && $0.end > now &&
                 $0.start <= now.addingTimeInterval(soonInterval)
         }.sorted {
-            let left = abs($0.start.timeIntervalSince(now)), right = abs($1.start.timeIntervalSince(now))
-            return left == right ? ($0.start, $0.id) < ($1.start, $1.id) : left < right
+            if $0.isScheduledNow(now) != $1.isScheduledNow(now) { return $0.isScheduledNow(now) }
+            return ($0.start, $0.id) < ($1.start, $1.id)
         }
         var byRoom: [MeetingRoomIdentity: CalendarMeeting] = [:]
         for meeting in scheduled {
@@ -60,13 +60,40 @@ public enum HomeMeetingPolicy {
                 (calendar.isDate($0.start, inSameDayAs: now) || $0.isScheduledNow(now))
         }.sorted { ($0.start, $0.id) < ($1.start, $1.id) }
     }
+
+    /// Expansion hides only later events; concurrent and soon-starting rooms
+    /// remain discoverable even when both promoted slots are occupied.
+    public static func todayPreview(_ meetings: [CalendarMeeting], at now: Date, expanded: Bool) -> [CalendarMeeting] {
+        guard !expanded else { return meetings }
+        let boundary = now.addingTimeInterval(soonInterval)
+        return meetings.filter { $0.start <= boundary } + meetings.filter { $0.start > boundary }.prefix(2)
+    }
 }
 
-/// Keep suggestions in place for the visible home session. Late discoveries
-/// are applied explicitly, so an approaching tap cannot land on another room.
+/// Presentation state is frozen with the rows it controls. Live permission is
+/// still revalidated by each action, so revocation never enables a stale join.
+public struct HomeCalendarState: Equatable, Sendable {
+    public let enabled: Bool
+    public let available: Bool
+    public let hasSelection: Bool
+    public let loading: Bool
+    public let error: String?
+    public init(enabled: Bool = false, available: Bool = false, hasSelection: Bool = false,
+                loading: Bool = false, error: String? = nil) {
+        self.enabled = enabled; self.available = available; self.hasSelection = hasSelection
+        self.loading = loading; self.error = error
+    }
+}
+
+/// Apply discoveries automatically when safe. During interaction, update only
+/// existing same-room metadata; insertion/removal/reordering waits for release.
 public struct HomeMeetingSnapshot: Equatable, Sendable {
     public private(set) var items: [HomeMeeting] = []
     public private(set) var pending: [HomeMeeting] = []
+    public private(set) var calendarItems: [CalendarMeeting] = []
+    public private(set) var calendarState = HomeCalendarState()
+    private var pendingCalendarItems: [CalendarMeeting] = []
+    private var pendingCalendarState = HomeCalendarState()
     private struct Key: Equatable {
         let room: MeetingRoomIdentity; let calendar: CalendarMeeting?; let device: String?; let session: UUID?
         let title: String?; let deviceLabel: String?; let sharing: Bool?; let companion: Bool?
@@ -76,11 +103,31 @@ public struct HomeMeetingSnapshot: Equatable, Sendable {
             sharing = item.handoff?.isSharingScreen; companion = item.handoff?.supportsCompanion
         }
     }
-    public var hasUpdates: Bool { pending.map(Key.init) != items.map(Key.init) }
-    public init() {}
-    public mutating func update(_ candidates: [HomeMeeting], allowChanges: Bool) {
-        pending = Array(candidates.prefix(HomeMeetingPolicy.previewLimit))
-        if allowChanges { acceptUpdates() }
+    public var hasUpdates: Bool {
+        pending.map(Key.init) != items.map(Key.init) || pendingCalendarItems != calendarItems || pendingCalendarState != calendarState
     }
-    public mutating func acceptUpdates() { items = pending }
+    public init() {}
+    public mutating func update(_ candidates: [HomeMeeting], calendarMeetings: [CalendarMeeting] = [],
+                                calendarState: HomeCalendarState = .init(), allowChanges: Bool) {
+        pending = Array(candidates.prefix(HomeMeetingPolicy.previewLimit))
+        pendingCalendarItems = calendarMeetings
+        pendingCalendarState = calendarState
+        if allowChanges { acceptUpdates(); return }
+        items = items.map { original in
+            pending.first { updated in
+                updated.id == original.id && updated.calendar?.id == original.calendar?.id &&
+                    updated.handoff?.deviceID == original.handoff?.deviceID &&
+                    updated.handoff?.sessionID == original.handoff?.sessionID
+            } ?? original
+        }
+        calendarItems = calendarItems.map { original in
+            calendarMeetings.first {
+                $0.id == original.id && $0.roomIdentity == original.roomIdentity &&
+                    $0.start == original.start && $0.end == original.end && $0.allDay == original.allDay
+            } ?? original
+        }
+    }
+    public mutating func acceptUpdates() {
+        items = pending; calendarItems = pendingCalendarItems; calendarState = pendingCalendarState
+    }
 }

@@ -1,0 +1,140 @@
+<style>
+#rnr-ux-drafts { --rnr-bg:light-dark(#f6f6f8,#101014); --rnr-surface:light-dark(#ffffff,#242428); --rnr-text:light-dark(#161619,#f4f4f6); --rnr-secondary:light-dark(#646469,#a7a7af); --rnr-line:light-dark(#e4e4e8,#3a3a42); --rnr-dock:light-dark(#e8eaf1,#222637); --rnr-accent:light-dark(#a74300,#ff9954); --rnr-soft:light-dark(#fff0e5,#38271f); --rnr-danger:light-dark(#bb2333,#ff5c67); color:var(--rnr-text); font-family:-apple-system,BlinkMacSystemFont,sans-serif; }
+#rnr-ux-drafts .rnr-stage { min-height:760px; display:flex; align-items:flex-start; justify-content:center; padding:24px 8px; box-sizing:border-box; }
+#rnr-ux-drafts .rnr-phone { width:390px; max-width:100%; background:var(--rnr-bg); border:1px solid var(--rnr-line); border-radius:32px; overflow:hidden; }
+#rnr-ux-drafts .rnr-label { color:var(--rnr-secondary); font-size:12px; }
+#rnr-ux-drafts .rnr-callhead { padding:20px 20px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+#rnr-ux-drafts strong { font-weight:500; }
+#rnr-ux-drafts button { font:inherit; color:inherit; border:0; background:transparent; }
+#rnr-ux-drafts .rnr-calltitle { font-size:18px; margin-bottom:5px; }
+#rnr-ux-drafts .rnr-route { display:flex; gap:5px; align-items:center; padding:0; color:var(--rnr-secondary); font-size:13px; min-height:44px; }
+#rnr-ux-drafts .rnr-icon { width:20px; height:20px; flex-shrink:0; }
+#rnr-ux-drafts .rnr-headicons { display:flex; gap:0; flex-shrink:0; }
+#rnr-ux-drafts .rnr-headbutton { width:44px; height:44px; padding:0; display:grid; place-items:center; }
+#rnr-ux-drafts .rnr-callhead>div:first-child { min-width:0; flex:1; }
+#rnr-ux-drafts .rnr-media { margin:0 16px; height:128px; border-radius:12px; background:var(--rnr-surface); overflow:hidden; border:1px solid var(--rnr-line); }
+#rnr-ux-drafts .rnr-document { padding:15px; font-size:13px; }
+#rnr-ux-drafts .rnr-document h4 { margin:0 0 10px; font-size:15px; font-weight:500; }
+#rnr-ux-drafts .rnr-notes { display:flex; gap:8px; }
+#rnr-ux-drafts .rnr-notes div { flex:1; border-top:2px solid var(--rnr-accent); padding:7px 0; }
+#rnr-ux-drafts .rnr-presenter { padding:6px 16px 8px; color:var(--rnr-secondary); font-size:12px; }
+#rnr-ux-drafts .rnr-sheet { border-radius:24px 24px 0 0; background:var(--rnr-surface); padding:8px 16px 16px; min-height:330px; }
+#rnr-ux-drafts .rnr-grabber { width:34px; height:4px; border-radius:2px; background:var(--rnr-line); margin:0 auto 10px; }
+#rnr-ux-drafts .rnr-panelhead { display:flex; gap:8px; align-items:center; justify-content:space-between; min-height:44px; }
+#rnr-ux-drafts .rnr-paneltitle { font-size:18px; flex:1; }
+#rnr-ux-drafts .rnr-done,#rnr-ux-drafts .rnr-back { color:var(--rnr-accent); min-height:44px; min-width:44px; padding:0 6px; }
+#rnr-ux-drafts .rnr-row { display:flex; width:100%; align-items:center; text-align:left; gap:12px; min-height:46px; padding:9px 6px; border-bottom:1px solid var(--rnr-line); box-sizing:border-box; }
+#rnr-ux-drafts .rnr-row:last-child { border-bottom:0; }
+#rnr-ux-drafts .rnr-row .rnr-rowtitle { flex:1; min-width:0; }
+#rnr-ux-drafts .rnr-value { color:var(--rnr-secondary); font-size:12px; }
+#rnr-ux-drafts .rnr-chevron { width:14px; height:14px; color:var(--rnr-secondary); }
+#rnr-ux-drafts .rnr-dock { background:var(--rnr-dock); display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:2px; padding:9px 6px 13px; margin:0 8px 8px; border-radius:18px; }
+#rnr-ux-drafts .rnr-dock button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; min-height:48px; font-size:11px; padding:2px; }
+#rnr-ux-drafts .rnr-dock button { touch-action:manipulation; user-select:none; -webkit-user-select:none; }
+#rnr-ux-drafts .rnr-dock button:last-child { color:var(--rnr-danger); }
+#rnr-ux-drafts .rnr-dock button[data-action=more] { color:var(--rnr-accent); }
+#rnr-ux-drafts .rnr-quick { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; padding:12px 0; }
+#rnr-ux-drafts .rnr-quick button { display:flex; flex-direction:column; justify-content:center; align-items:center; gap:8px; background:var(--rnr-bg); border-radius:12px; min-height:76px; padding:5px; font-size:13px; }
+#rnr-ux-drafts .rnr-reactions { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; padding:10px 0; }
+#rnr-ux-drafts .rnr-reaction { min-height:62px; display:flex; flex-direction:column; align-items:center; gap:4px; padding:6px 2px; border-radius:10px; }
+#rnr-ux-drafts .rnr-reaction:hover { background:var(--rnr-soft); }
+#rnr-ux-drafts .rnr-emoji { font-size:26px; }
+#rnr-ux-drafts .rnr-reactionname { font-size:11px; text-align:center; overflow-wrap:anywhere; max-width:100%; }
+#rnr-ux-drafts .rnr-feedback { min-height:44px; color:var(--rnr-accent); padding-top:7px; font-size:13px; }
+#rnr-ux-drafts .rnr-history { padding:8px 0; }
+#rnr-ux-drafts .rnr-event { padding:10px 4px; display:flex; gap:12px; align-items:center; border-bottom:1px solid var(--rnr-line); }
+#rnr-ux-drafts .rnr-event div { flex:1; }
+#rnr-ux-drafts .rnr-historynote { color:var(--rnr-secondary); font-size:12px; padding:8px 4px; }
+#rnr-ux-drafts .rnr-desktop { width:680px; max-width:100%; background:var(--rnr-bg); border:1px solid var(--rnr-line); border-radius:18px; overflow:hidden; }
+#rnr-ux-drafts .rnr-titlebar { padding:13px 20px; background:var(--rnr-surface); display:flex; align-items:center; gap:14px; border-bottom:1px solid var(--rnr-line); }
+#rnr-ux-drafts .rnr-titlebar span { flex:1; font-weight:500; }
+#rnr-ux-drafts .rnr-desktopbody { display:grid; grid-template-columns:minmax(0,1fr) 280px; min-height:510px; }
+#rnr-ux-drafts .rnr-desktop .rnr-sheet { border-radius:0; border-left:1px solid var(--rnr-line); padding:12px; }
+#rnr-ux-drafts .rnr-desktop .rnr-media { height:210px; margin-top:50px; }
+#rnr-ux-drafts .rnr-desktop .rnr-presenter { padding-top:12px; }
+#rnr-ux-drafts .rnr-footerstatus { padding:13px 20px; color:var(--rnr-secondary); font-size:12px; }
+#rnr-ux-drafts .rnr-chip { display:inline-flex; align-items:center; gap:5px; border-radius:8px; background:var(--rnr-soft); color:var(--rnr-accent); padding:5px 8px; }
+#rnr-ux-drafts .rnr-leafnote { color:var(--rnr-secondary); font-size:13px; padding:12px 4px; }
+#rnr-ux-drafts .rnr-check { color:var(--rnr-accent); }
+#rnr-ux-drafts .rnr-sectionlabel { color:var(--rnr-secondary); font-size:12px; padding:14px 4px 8px; }
+#rnr-ux-drafts .rnr-segment { display:flex; gap:3px; padding:3px; background:var(--rnr-bg); border-radius:12px; margin-bottom:8px; }
+#rnr-ux-drafts .rnr-segment button { flex:1; min-height:44px; border-radius:9px; font-size:13px; }
+#rnr-ux-drafts .rnr-segment button[aria-pressed="true"] { background:var(--rnr-surface); color:var(--rnr-accent); }
+#rnr-ux-drafts .rnr-panel[hidden] { display:none; }
+@media (max-width:520px) { #rnr-ux-drafts .rnr-desktopbody { grid-template-columns:minmax(0,1fr); } #rnr-ux-drafts .rnr-desktop .rnr-media { margin-top:10px; height:128px; } #rnr-ux-drafts .rnr-desktop .rnr-sheet { border-left:0; } #rnr-ux-drafts .rnr-stage { min-height:800px; padding:18px 0; } }
+@media (max-width:360px) { #rnr-ux-drafts .rnr-dock { grid-template-columns:repeat(3,minmax(0,1fr)); } #rnr-ux-drafts .rnr-stage { min-height:870px; } }
+#rnr-ux-drafts .rnr-chatfeed { display:flex; flex-direction:column; gap:12px; padding:14px 0; }
+#rnr-ux-drafts .rnr-message { padding:10px 12px; border-radius:12px; background:var(--rnr-bg); }
+#rnr-ux-drafts .rnr-message>div:last-child { padding-top:4px; overflow-wrap:anywhere; }
+#rnr-ux-drafts .rnr-chatreaction { display:flex; gap:8px; align-items:center; padding:3px 10px; color:var(--rnr-secondary); font-size:13px; }
+#rnr-ux-drafts .rnr-composer { display:flex; align-items:center; gap:3px; padding:8px 0; border-top:1px solid var(--rnr-line); }
+#rnr-ux-drafts .rnr-composer input { min-width:0; flex:1; width:100%; min-height:44px; box-sizing:border-box; color:var(--rnr-text); background:var(--rnr-bg); border:1px solid var(--rnr-line); border-radius:10px; padding:8px; font:inherit; font-size:16px; }
+</style>
+<div id="rnr-ux-drafts" class="viz-carousel viz-dotted-background" aria-label="Meeting menu design alternatives">
+<section data-variant="Hold More" aria-label="Hold More design">
+<div class="rnr-stage"><div class="rnr-phone" data-kind="grouped" aria-label="Hold More phone draft">
+<div class="rnr-callhead"><div><div class="rnr-calltitle">Evening rehearsal</div><button class="rnr-route cursor-interaction" data-action="audio"><i data-lucide="headphones" class="rnr-icon" aria-hidden="true"></i>AirPods</button></div><div class="rnr-headicons"><button class="rnr-headbutton cursor-interaction" aria-label="Participants"><i data-lucide="users" class="rnr-icon" aria-hidden="true"></i></button><button class="rnr-headbutton cursor-interaction" data-action="chat" aria-label="Chat"><i data-lucide="message-square" class="rnr-icon" aria-hidden="true"></i></button></div></div>
+<div class="rnr-media"><div class="rnr-document"><h4>Bridge · rehearsal notes</h4><div class="rnr-notes"><div>Guitar<br>Am · F</div><div>Keys<br>C · G</div><div>Drums<br>Quiet → build</div></div></div></div><div class="rnr-presenter">Ani’s screen · Speaking: Aram</div>
+<div class="rnr-sheet"><div class="rnr-grabber"></div><div class="rnr-menu"></div></div><div class="rnr-dock"></div>
+</div></div></section>
+<section data-variant="Tap Reactions" aria-label="Tap Reactions design" hidden>
+<div class="rnr-stage"><div class="rnr-phone" data-kind="quick" aria-label="Tap Reactions phone draft">
+<div class="rnr-callhead"><div><div class="rnr-calltitle">Evening rehearsal</div><button class="rnr-route cursor-interaction" data-action="audio"><i data-lucide="headphones" class="rnr-icon" aria-hidden="true"></i>AirPods</button></div><div class="rnr-headicons"><button class="rnr-headbutton cursor-interaction" aria-label="Participants"><i data-lucide="users" class="rnr-icon" aria-hidden="true"></i></button><button class="rnr-headbutton cursor-interaction" data-action="chat" aria-label="Chat"><i data-lucide="message-square" class="rnr-icon" aria-hidden="true"></i></button></div></div>
+<div class="rnr-media"><div class="rnr-document"><h4>Bridge · rehearsal notes</h4><div class="rnr-notes"><div>Guitar<br>Am · F</div><div>Keys<br>C · G</div><div>Drums<br>Quiet → build</div></div></div></div><div class="rnr-presenter">Ani’s screen · Speaking: Aram</div>
+<div class="rnr-sheet"><div class="rnr-grabber"></div><div class="rnr-menu"></div></div><div class="rnr-dock"></div>
+</div></div></section>
+<section data-variant="Desktop inspector" aria-label="Desktop inspector adaptation" hidden>
+<div class="rnr-stage"><div class="rnr-desktop" data-kind="desktop" aria-label="Desktop meeting inspector draft">
+<div class="rnr-titlebar"><i data-lucide="music-2" class="rnr-icon" aria-hidden="true"></i><span>Rock’n’Roll</span><span class="rnr-label">Design draft</span></div>
+<div class="rnr-desktopbody"><div><div class="rnr-callhead"><div><div class="rnr-calltitle">Evening rehearsal</div><button class="rnr-route cursor-interaction" data-action="audio"><i data-lucide="headphones" class="rnr-icon" aria-hidden="true"></i>AirPods</button></div><div class="rnr-headicons"><button class="rnr-headbutton cursor-interaction" aria-label="Participants"><i data-lucide="users" class="rnr-icon" aria-hidden="true"></i></button><button class="rnr-headbutton cursor-interaction" data-action="reactions" aria-label="Reactions"><i data-lucide="smile" class="rnr-icon" aria-hidden="true"></i></button><button class="rnr-headbutton cursor-interaction" data-action="chat" aria-label="Chat"><i data-lucide="message-square" class="rnr-icon" aria-hidden="true"></i></button></div></div><div class="rnr-media"><div class="rnr-document"><h4>Bridge · rehearsal notes</h4><div class="rnr-notes"><div>Guitar<br>Am · F</div><div>Keys<br>C · G</div><div>Drums<br>Quiet → build</div></div></div></div><div class="rnr-presenter">Ani’s screen · Speaking: Aram</div></div><div class="rnr-sheet"><div class="rnr-menu"></div></div></div><div class="rnr-footerstatus">6 participants · Microphone off · Camera off</div><div class="rnr-dock"></div>
+</div></div></section>
+</div>
+<script>
+(() => {
+ const root=document.getElementById('rnr-ux-drafts');
+ const saved=window.openai?.widgetState;
+ const state={language:saved?.modelContent?.language==='Russian'?'Russian':'English'};
+ const ru={'Hold More':'Удерживайте Ещё','Hold for reactions':'Удерживайте для реакций','Hold for options':'Удерживайте для настроек',Chat:'Чат','Open chat':'Открыть чат','Write a message…':'Написать сообщение…',Send:'Отправить',Layout:'Раскладка','Receive video':'Входящее видео','Controls & PiP':'Управление и PiP',Laugh:'Смех',Celebrate:'Поздравить',More:'Ещё',Done:'Готово',Back:'Назад',Reactions:'Реакции','Camera & sound':'Камера и звук','Share & Presenter':'Экран и презентация',View:'Вид',Invite:'Пригласить',Meeting:'Встреча',Mic:'Микр.',Video:'Видео',Share:'Экран',Audio:'Звук',Leave:'Выйти','Reaction history':'История реакций','Camera reactions':'Реакции камеры',Preferences:'Настройки','Audio devices':'Аудиоустройства','Private preview':'Личный просмотр',Gallery:'Галерея',Focus:'Главный участник','All video':'Всё видео','Screen shares':'Только экран','Audio only':'Только звук','Hide controls':'Скрыть управление','Fit shared screen':'Вписать экран','Picture in Picture':'Картинка в картинке','Automatic PiP':'Автоматическая PiP','Automatically hide controls':'Автоскрытие управления','Copy link':'Копировать ссылку','Share invitation':'Поделиться ссылкой',Recording:'Запись',Details:'Сведения','Meeting details':'Сведения о встрече',Presenter:'Презентация','Start screen sharing':'Поделиться экраном','Only on this device':'Только на этом устройстве',Sent:'Отправлено',You:'Вы','Today, 19:42':'Сегодня, 19:42','Messages stay separate':'Сообщения отдельно',Heart:'Сердце',Like:'Нравится',Smile:'Улыбка',Applause:'Аплодисменты',Fire:'Огонь',Wave:'Привет',Handshake:'Рукопожатие',Thanks:'Спасибо',Thinking:'Думаю',Sad:'Грусть',Dislike:'Не нравится',Surprise:'Удивление','Meeting microphone stays off':'Микрофон встречи остаётся выключен'};
+ const t=x=>state.language==='Russian'?(ru[x]||x):x;
+ const icons={reactions:'smile',camera:'sliders-horizontal',share:'monitor-up',view:'layout-grid',invite:'user-plus',meeting:'info',audio:'headphones',history:'message-square',chat:'message-square',preferences:'settings-2'};
+ const main=[['reactions','Reactions'],['camera','Camera & sound'],['share','Share & Presenter'],['view','View'],['invite','Invite'],['meeting','Meeting']];
+ const reactions=[['❤️','Heart'],['👍','Like'],['😂','Laugh'],['🎉','Celebrate'],['🔥','Fire'],['👋','Wave'],['🤝','Handshake'],['🙏','Thanks'],['🤔','Thinking'],['😢','Sad'],['👎','Dislike'],['😱','Surprise']];
+ const icon=x=>'<i data-lucide="'+x+'" class="rnr-icon" aria-hidden="true"></i>';
+ const views=[];
+ function header(v,title){return '<div class="rnr-panelhead">'+(v.page==='more'||v.stack.length===0?'':'<button class="rnr-back cursor-interaction" data-action="back" aria-label="'+t('Back')+'">'+icon('chevron-left')+'</button>')+'<strong class="rnr-paneltitle">'+t(title)+'</strong>'+(v.kind==='quick'&&v.page==='reactions'?'<button class="rnr-done cursor-interaction" data-action="more">'+t('More')+'</button>':'')+'<button class="rnr-done cursor-interaction" data-action="close">'+t('Done')+'</button></div>';}
+ function row(id,label,value=''){return '<button class="rnr-row cursor-interaction" data-action="'+id+'">'+icon(icons[id]||'chevron-right')+'<span class="rnr-rowtitle">'+t(label)+'</span>'+(value?'<span class="rnr-value">'+t(value)+'</span>':'')+'<i data-lucide="chevron-right" class="rnr-chevron" aria-hidden="true"></i></button>';}
+ function esc(x){return String(x).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('\"','&quot;');}
+ function segments(options,selected){return '<div class="rnr-segment">'+options.map(([id,label])=>'<button class="cursor-interaction" data-action="'+id+'" aria-pressed="'+(selected===label)+'">'+t(label)+'</button>').join('')+'</div>';}
+ function render(v){
+  let content='';
+  if(v.page==='more') content=header(v,'More')+main.map(([id,label])=>row(id,label,id==='reactions'&&v.kind==='grouped'?'Hold More':id==='camera'?'AirPods':'')).join('');
+  else if(v.page==='reactions') content=header(v,'Reactions')+'<div class="rnr-reactions">'+reactions.map(([emoji,name])=>'<button class="rnr-reaction cursor-interaction" data-emoji="'+emoji+'" data-name="'+name+'" aria-label="'+t(name)+'"><span class="rnr-emoji">'+emoji+'</span><span class="rnr-reactionname">'+t(name)+'</span></button>').join('')+'</div><div class="rnr-feedback" aria-live="polite">'+v.feedback+'</div>'+row('chat','Open chat')+row('preferences','Camera reactions');
+  else if(v.page==='chat'||v.page==='history') content=header(v,'Chat')+'<div class="rnr-chatfeed">'+v.events.map(e=>e.type==='message'?'<div class="rnr-message"><div class="rnr-label">'+esc(t(e.name))+'</div><div>'+esc(e.text)+'</div></div>':'<div class="rnr-chatreaction"><span>'+e.emoji+'</span><span>'+esc(t(e.name))+(e.text?' · '+esc(t(e.text)):'')+'</span></div>').join('')+'</div><div class="rnr-composer"><input aria-label="'+t('Write a message…')+'" placeholder="'+t('Write a message…')+'" value="'+esc(v.draft)+'"><button class="rnr-headbutton cursor-interaction" data-action="reactions" aria-label="Reactions">'+icon('smile')+'</button><button class="rnr-headbutton cursor-interaction" data-action="send-message" aria-label="'+t('Send')+'">'+icon('arrow-up')+'</button></div>';
+  else if(v.page==='camera') content=header(v,'Camera & sound')+row('audio','Audio devices','AirPods')+row('preview','Private preview')+row('effects','Camera reactions')+'<div class="rnr-leafnote">'+t('Meeting microphone stays off')+'</div>';
+  else if(v.page==='view') content=header(v,'View')+'<div class="rnr-sectionlabel">'+t('Layout')+'</div>'+segments([['choose-gallery','Gallery'],['choose-focus','Focus']],v.layout)+'<div class="rnr-sectionlabel">'+t('Receive video')+'</div>'+segments([['receive-all','All video'],['receive-shares','Screen shares'],['receive-audio','Audio only']],v.receive)+row('fit','Fit shared screen')+row('display-options','Controls & PiP');
+  else if(v.page==='display-options') content=header(v,'Controls & PiP')+row('display','Hide controls')+row('autohide','Automatically hide controls',v.autoHide?'✓':'')+row('pip','Picture in Picture')+row('autopip','Automatic PiP',v.autoPiP?'✓':'');
+  else if(v.page==='share') content=header(v,'Share & Presenter')+row('start-share','Start screen sharing')+row('presenter','Presenter');
+  else if(v.page==='invite') content=header(v,'Invite')+row('copy','Copy link')+row('invitation','Share invitation');
+  else if(v.page==='meeting') content=header(v,'Meeting')+row('recording','Recording')+row('details','Meeting details');
+  else if(v.page==='preferences'||v.page==='effects') content=header(v,'Preferences')+row('camera-reactions','Camera reactions',v.cameraReactions?'✓':'');
+  else content=header(v,v.page==='audio'?'Audio devices':v.page==='preview'?'Private preview':v.page==='recording'?'Recording':v.page==='details'?'Meeting details':v.page==='presenter'?'Presenter':'More')+'<div class="rnr-leafnote">'+(v.page==='audio'?'AirPods · Input and output':v.page==='preview'?t('Meeting microphone stays off'):v.page==='details'?'Evening rehearsal · rock.glowsoft.ru/jams/evening':v.page==='recording'?'Not recording':'Private setup · Not published')+'</div>';
+  v.menu.innerHTML=content;
+  v.dock.innerHTML=[['mic','Mic','mic-off'],['video','Video','video-off'],['share','Share','monitor-up'],['audio','Audio','volume-2'],(v.kind==='quick'?['reactions','Reactions','smile']:['more','More','ellipsis']),['leave','Leave','phone-off']].map(([id,label,symbol])=>'<button class="cursor-interaction" data-action="'+id+'"'+(id==='more'?' data-tooltip="'+t('Hold for reactions')+'"':id==='reactions'?' data-tooltip="'+t('Hold for options')+'"':'')+'>'+icon(symbol)+'<span>'+t(label)+'</span></button>').join('');
+  if(window.lucide) lucide.createIcons();
+ }
+ root.querySelectorAll('[data-kind]').forEach(el=>{
+  const v={el,kind:el.dataset.kind,page:el.dataset.kind==='quick'?'reactions':'more',stack:[],feedback:'',draft:'',events:[{type:'message',name:'Ani',text:'Let’s start from the chorus.'},{type:'reaction',emoji:'🎉 3  ❤️ 2',name:'Ani, Aram +2',text:''},{type:'message',name:'Mariam',text:'Ready.'}],layout:'Focus',receive:'All video',autoPiP:true,autoHide:true,cameraReactions:false,menu:el.querySelector('.rnr-menu'),dock:el.querySelector('.rnr-dock')}; views.push(v);render(v);el.addEventListener('input',e=>{if(e.target.matches('.rnr-composer input'))v.draft=e.target.value;});
+  el.addEventListener('click',e=>{const b=e.target.closest('button');if(!b||(!b.dataset.action&&!b.dataset.emoji))return;if(b.dataset.emoji){v.feedback=t('Sent')+' '+b.dataset.emoji;v.events.push({type:'reaction',emoji:b.dataset.emoji,name:'You',text:b.dataset.name});v.events=v.events.slice(-10);}else {const a=b.dataset.action;if(v.suppressDockClick&&b.closest('.rnr-dock')){v.suppressDockClick=false;return;}if(a==='close'){el.querySelector('.rnr-sheet').hidden=true;return;}if(a==='send-message'){if(v.draft.trim()){v.events.push({type:'message',name:'You',text:v.draft.trim()});v.draft='';}}else if(a==='back'){v.page=v.stack.pop()||'more';}else if(a==='reactions'&&b.closest('.rnr-dock')){el.querySelector('.rnr-sheet').hidden=false;v.stack=[];v.page='reactions';}else if(a==='more'){el.querySelector('.rnr-sheet').hidden=false;v.stack=[];v.page='more';}else if(a==='choose-gallery')v.layout='Gallery';else if(a==='choose-focus')v.layout='Focus';else if(a==='receive-all')v.receive='All video';else if(a==='receive-shares')v.receive='Screen shares';else if(a==='receive-audio')v.receive='Audio only';else if(a==='autopip')v.autoPiP=!v.autoPiP;else if(a==='autohide')v.autoHide=!v.autoHide;else if(a==='camera-reactions')v.cameraReactions=!v.cameraReactions;else if(['mic','video','leave','display','fit','pip','copy','invitation','start-share'].includes(a)){v.feedback='';return;}else {el.querySelector('.rnr-sheet').hidden=false;v.stack.push(v.page);v.page=a;}}render(v);saveState();});
+  let holdTimer=null, holdPoint=null;
+  const shortcutButton=event=>event.target.closest('.rnr-dock button[data-action="more"], .rnr-dock button[data-action="reactions"]');
+  const cancelHold=()=>{clearTimeout(holdTimer);holdTimer=null;holdPoint=null;};
+  const openShortcut=()=>{cancelHold();v.suppressDockClick=true;v.stack=[];v.page=v.kind==='quick'?'more':'reactions';el.querySelector('.rnr-sheet').hidden=false;render(v);saveState();};
+  el.addEventListener('pointerdown',event=>{v.suppressDockClick=false;cancelHold();if(event.button!==0||!shortcutButton(event))return;holdPoint={x:event.clientX,y:event.clientY};holdTimer=setTimeout(openShortcut,450);});
+  el.addEventListener('pointermove',event=>{if(holdPoint&&Math.hypot(event.clientX-holdPoint.x,event.clientY-holdPoint.y)>12)cancelHold();});
+  ['pointerup','pointercancel','lostpointercapture'].forEach(name=>el.addEventListener(name,cancelHold));
+  el.addEventListener('contextmenu',event=>{if(!shortcutButton(event))return;event.preventDefault();openShortcut();});
+ });
+ function saveState(){if(window.openai?.setWidgetState)window.openai.setWidgetState({modelContent:{language:state.language},privateContent:{}}).catch(()=>{});}
+ if(window.Tweak){const tweak=new Tweak({container:root,onChange:()=>{views.forEach(render);saveState();}});tweak.addSelect(state,'language',{label:'Language',options:['English','Russian']});}
+})();
+</script>

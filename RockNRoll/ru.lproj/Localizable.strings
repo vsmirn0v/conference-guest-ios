@@ -819,3 +819,21 @@
 "Jam %@" = "Джем %@";
 "OK" = "ОК";
 "Try again" = "Попробовать снова";
+
+// Meeting navigation and automatic calendar suggestions.
+"Today" = "Сегодня";
+"Show more today" = "Ещё встречи сегодня";
+"Share & Presenter" = "Экран и презентация";
+"Incoming media" = "Получаемые потоки";
+"Control visibility" = "Показ элементов управления";
+"Floating video" = "Плавающее видео";
+"Touch and hold for more call options." = "Нажмите и удерживайте, чтобы открыть другие действия.";
+"Open More options" = "Открыть другие действия";
+"Invite" = "Пригласить";
+"About camera effects" = "Об эффектах камеры";
+"Camera reactions" = "Реакции камеры";
+"About sound profiles" = "О режимах звука";
+"About this check" = "О проверке";
+"Meeting websites" = "Сайты встреч";
+"Names and saved invitations, including invitation passwords, stay in your private iCloud storage." = "Имена и сохранённые приглашения, включая пароли к ним, хранятся в вашем личном хранилище iCloud.";
+"Screen sharing" = "Демонстрация экрана";

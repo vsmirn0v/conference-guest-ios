@@ -821,3 +821,21 @@
 "Jam %@" = "Jam %@";
 "OK" = "OK";
 "Try again" = "Try again";
+
+// Meeting navigation and automatic calendar suggestions.
+"Today" = "Today";
+"Show more today" = "Show more today";
+"Share & Presenter" = "Share & Presenter";
+"Incoming media" = "Incoming media";
+"Control visibility" = "Control visibility";
+"Floating video" = "Floating video";
+"Touch and hold for more call options." = "Touch and hold for more call options.";
+"Open More options" = "Open More options";
+"Invite" = "Invite";
+"About camera effects" = "About camera effects";
+"Camera reactions" = "Camera reactions";
+"About sound profiles" = "About sound profiles";
+"About this check" = "About this check";
+"Meeting websites" = "Meeting websites";
+"Names and saved invitations, including invitation passwords, stay in your private iCloud storage." = "Names and saved invitations, including invitation passwords, stay in your private iCloud storage.";
+"Screen sharing" = "Screen sharing";

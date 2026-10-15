@@ -31,12 +31,6 @@ struct StudioPanel: View {
                 .pickerStyle(.segmented).padding(.horizontal).padding(.bottom, 8)
                 .accessibilityIdentifier("studio.panes")
                 }
-                if model.pane == .sound {
-                    Picker(L("Audio settings"), selection: $model.audioSection) {
-                        Text(L("Sound")).tag(StudioModel.AudioSection.sound)
-                        Text(L("Devices")).tag(StudioModel.AudioSection.devices)
-                    }.pickerStyle(.segmented).padding(.horizontal).accessibilityIdentifier("studio.audio-sections")
-                }
                 if model.pane == .presenter {
                     // Keep one native surface mounted when expanding the canvas.
                     // Reparenting it between Form and a second host loses display.
@@ -54,15 +48,26 @@ struct StudioPanel: View {
                 Form {
                     switch model.pane {
                     case .camera: cameraControls
-                    case .sound:
-                        if model.audioSection == .devices { AudioDevicesControls(studio: model).disabled(model.held || !model.active) }
-                        else { soundControls }
+                    case .sound: soundControls
                     case .presenter: EmptyView()
                     }
                     if model.held || !model.active {
                         Section { Text(model.active ? L("Sound controls are paused while the meeting is on hold.") : L("The meeting has ended.")) }
                     }
                 }.accessibilityIdentifier("studio.settings")
+                .navigationDestination(isPresented: Binding(
+                    get: { model.pane == .sound && model.audioSection == .devices },
+                    set: { if !$0 { model.audioSection = .sound } }
+                )) {
+                    Form { AudioDevicesControls(studio: model).disabled(model.held || !model.active) }
+                        .navigationTitle(L("Audio devices"))
+                        .accessibilityIdentifier("studio.devices")
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button(L("Done")) { model.close() }.accessibilityIdentifier("studio.done")
+                            }
+                        }
+                }
                 }
                 if !model.canvasExpanded { footer }
             }
@@ -83,7 +88,6 @@ struct StudioPanel: View {
             .onChange(of: model.presented) { if !$0 { images.cancel() } }
             .onAppear { model.refreshSystemSelection() }
             .onChange(of: model.presented) { if !$0 { if let onDismiss { onDismiss() } else { dismiss() } } }
-            .onChange(of: model.audioSection) { _ in model.releasePrivateMicrophone() }
             .onReceive(refresh) { _ in model.refreshSystemSelection(refreshDevices: false) }
             .background(GeometryReader { size in
                 Color.clear.onAppear { compact = size.size.height < 500 }
@@ -125,16 +129,6 @@ struct StudioPanel: View {
 
     private var cameraControls: some View {
         Group {
-            if model.automaticFramingSupported {
-                Section {
-                    Toggle(L("Automatic framing"), isOn: Binding(get: { model.automaticFramingEnabled }, set: { model.setAutomaticFraming($0) }))
-                        .disabled(model.held || !model.active)
-                        .accessibilityIdentifier("studio.automatic-framing")
-                }
-            }
-            if let reactions = model.reactions, reactions.available {
-                Section(L("Reactions")) { CameraReactionSettings(model: reactions) }
-            }
             if model.presenter.running {
                 Section {
                     Text(L("Your camera is controlled by Presenter while the canvas is shared."))
@@ -181,7 +175,7 @@ struct StudioPanel: View {
                 ForEach(model.cameraEffects.filter { $0.state != .unavailable }) { effect in
                     LabeledContent(effect.title, value: effect.value).font(.footnote)
                 }
-                if !compact {
+                DisclosureGroup(L("About camera effects")) {
                     Text(L("Use system controls for background blur, lighting and framing supported by your camera."))
                         .font(.footnote).foregroundStyle(.secondary)
                     if !model.cameraOn {
@@ -191,6 +185,19 @@ struct StudioPanel: View {
                 }
             }
             }
+            if model.automaticFramingSupported {
+                Section {
+                    Toggle(L("Automatic framing"), isOn: Binding(get: { model.automaticFramingEnabled }, set: { model.setAutomaticFraming($0) }))
+                        .disabled(model.held || !model.active)
+                        .accessibilityIdentifier("studio.automatic-framing")
+                }
+            }
+            if let reactions = model.reactions, reactions.available {
+                Section {
+                    DisclosureGroup(L("Camera reactions")) { CameraReactionSettings(model: reactions) }
+                        .accessibilityIdentifier("studio.camera-reactions")
+                }
+            }
         }
     }
 
@@ -198,24 +205,27 @@ struct StudioPanel: View {
         Group {
         SoundCheckControls(model: model, compact: compact)
         Section {
-            Label(model.microphoneOn ? L("Microphone is live") : L("Muted in jam"),
-                  systemImage: model.microphoneOn ? "mic.fill" : "mic.slash.fill")
             Picker(L("Sound profile"), selection: Binding(get: { model.profile }, set: { model.select($0) })) {
                 ForEach(StudioAudioProfile.allCases, id: \.self) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented).accessibilityIdentifier("studio.sound-profile")
             .disabled(!model.active || model.held || model.applying || model.applyProfile == nil)
             Button { model.audioSection = .devices } label: {
-                Label(L("Audio devices"), systemImage: "headphones")
-            }
-            Text(compact ? L("Conversation reduces noise. Music keeps more detail.") : model.audioExplanation)
-                .font(.footnote).foregroundStyle(.secondary)
-            if let suppression = model.observedNoiseSuppression {
-                LabeledContent(L("Noise suppression"), value: suppression ? L("On") : L("Off")).font(.footnote)
-            }
-            if !model.microphoneOn {
-                Text(L("Your microphone stays muted. The profile is used when you unmute."))
-                    .font(.footnote).foregroundStyle(.secondary)
+                HStack {
+                    Label(L("Audio devices"), systemImage: "headphones")
+                    Spacer()
+                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                }
+            }.accessibilityIdentifier("studio.audio-devices")
+            DisclosureGroup(L("About sound profiles")) {
+                Text(model.audioExplanation).font(.footnote).foregroundStyle(.secondary)
+                if let suppression = model.observedNoiseSuppression {
+                    LabeledContent(L("Noise suppression"), value: suppression ? L("On") : L("Off")).font(.footnote)
+                }
+                if !model.microphoneOn {
+                    Text(L("Your microphone stays muted. The profile is used when you unmute."))
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
             }
             if model.applying { ProgressView(L("Updating sound…")) }
             if let error = model.error { Text(error).foregroundStyle(.red).accessibilityIdentifier("studio.error") }
@@ -354,10 +364,7 @@ private final class StudioSheet: UIPresentationController {
 @MainActor
 enum StudioPresentation {
     static func show(_ model: StudioModel, from view: UIView, pane: StudioModel.Pane = .camera) {
-        var responder: UIResponder? = view
-        while let current = responder, !(current is UIViewController) { responder = current.next }
-        guard var presenter = responder as? UIViewController else { return }
-        while let parent = presenter.parent { presenter = parent }
+        guard let presenter = view.callActionPresenter else { return }
         guard presenter.presentedViewController == nil else { return }
         model.open(pane)
         presenter.present(StudioHostingController(model: model), animated: true)

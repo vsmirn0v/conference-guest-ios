@@ -18,7 +18,9 @@ struct JoinView: View {
     @State private var agendaSettings = false
     @State private var homeSnapshot = HomeMeetingSnapshot()
     @State private var homeVisible = false
+    @StateObject private var homeInteraction = HomeInteractionState()
     @State private var homeNow = Date()
+    @State private var homeLayoutNow = Date()
     @State private var foreground = true
     @State private var showingSettings = false
     @AppStorage(SystemCallCoordinator.controlsPreferenceKey) private var systemCallControls = false
@@ -56,30 +58,27 @@ struct JoinView: View {
                     urgentSection
                     Section {
                         joinPanel(width: window.size.width - (wide ? min(320, window.size.width * 0.32) : 0))
+                            .homeAnchor("join")
+                            .background(HomeScrollReference(state: homeInteraction))
                     }
                     if !wide { library(wide: false) }
                     CalendarAgendaView(calendar: calendar, history: history, continuation: continuation,
                         busy: busy, onJoin: model.joinCalendarMeeting, onSettings: { showingSettings = true },
                         home: true, excluded: Set(homeSnapshot.items.compactMap { $0.calendar?.id }),
-                        onShowAll: { showingAgenda = true })
+                        onShowAll: { showingAgenda = true }, homeMeetings: homeSnapshot.calendarItems, homeNow: homeLayoutNow,
+                        homeState: homeSnapshot.calendarState)
                     secondarySections
                 }
                 .coordinateSpace(name: "home.main")
                 .scrollContentBackground(.hidden)
                 .background(Color(uiColor: .systemGroupedBackground))
                 .accessibilityIdentifier("home.main")
+                .onPreferenceChange(HomeRowFrames.self) { homeInteraction.layoutChanged($0) }
             }
+            .background(HomeInteractionProbe(state: homeInteraction))
             .navigationTitle(ProcessInfo.processInfo.isiOSAppOnMac ? L("Home") : "Rock’n’Roll")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if homeSnapshot.hasUpdates {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { homeSnapshot.acceptUpdates() } label: { Image(systemName: "calendar.badge.clock") }
-                            .disabled(homeInteracting)
-                            .accessibilityLabel(L("Show updated meeting suggestions"))
-                            .accessibilityIdentifier("home.show-updates")
-                    }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel(L("Settings"))
@@ -128,11 +127,20 @@ struct JoinView: View {
             .onChange(of: confirmingStaleContinuation) { if !$0 { staleContinuation = nil } }
             .onReceive(calendar.$meetings) { refreshHome(meetings: $0) }
             .onReceive(calendar.$now) { _ in refreshHome() }
+            .onChange(of: calendar.access) { _ in refreshHome() }
+            .onChange(of: calendar.enabled) { _ in refreshHome() }
+            .onChange(of: calendar.selected) { _ in refreshHome() }
+            .onChange(of: calendar.loading) { _ in refreshHome() }
+            .onChange(of: calendar.error) { _ in refreshHome() }
             .onReceive(continuation.$candidates) { refreshHome(handoffs: $0) }
             .onReceive(NotificationCenter.default.publisher(for: UIScene.didActivateNotification)) { _ in
-                foreground = true; refreshHome()
+                foreground = true; homeInteraction.resume(); refreshHome()
             }
-            .onReceive(NotificationCenter.default.publisher(for: UIScene.willDeactivateNotification)) { _ in foreground = false }
+            .onReceive(NotificationCenter.default.publisher(for: UIScene.willDeactivateNotification)) { _ in
+                foreground = false; homeInteraction.cancel()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in refreshHome() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in refreshHome() }
             .task(id: shouldTick) {
                 guard shouldTick else { return }
                 while !Task.isCancelled {
@@ -146,8 +154,8 @@ struct JoinView: View {
             .onChange(of: model.isNameRequiredForJoin) { required in
                 if required { nameFocused = true }
             }
-            .onAppear { homeVisible = false; refreshHome(); homeVisible = true; if model.isNameRequiredForJoin { nameFocused = true } }
-            .onDisappear { homeVisible = false; favoriteDrag.cancel(); sync.endNameEditing() }
+            .onAppear { homeInteraction.resume(); homeVisible = false; refreshHome(); homeVisible = true; if model.isNameRequiredForJoin { nameFocused = true } }
+            .onDisappear { homeVisible = false; homeInteraction.cancel(); favoriteDrag.cancel(); sync.endNameEditing() }
             .alert(L("Join here without moving the other device?"),
                                 isPresented: $confirmingStaleContinuation,
                                 presenting: staleContinuation) { jam in
@@ -218,17 +226,37 @@ struct JoinView: View {
 
     private var busy: Bool { model.isJoining || model.isInConference || model.isLeaving || continuation.moving }
     private var homeInteracting: Bool {
-        nameFocused || linkFocused || favoriteDrag.session != nil || showingSettings || showingAgenda ||
+        homeInteraction.active || nameFocused || linkFocused || favoriteDrag.session != nil || showingSettings || showingAgenda ||
             showingDevices || editingRoom != nil || mediaCheck.presented || confirmingStaleContinuation ||
             calendar.choosingMeeting != nil || model.siteSelection != nil || model.engineSelection != nil ||
             model.showSwitchConfirmation || busy
     }
-    private var shouldTick: Bool { foreground && !model.isInConference && (calendar.enabled || !continuation.candidates.isEmpty) }
+    private var shouldTick: Bool { homeVisible && foreground && !model.isInConference && (calendar.enabled || !continuation.candidates.isEmpty) }
     private func refreshHome(meetings: [CalendarMeeting]? = nil, handoffs: [ActiveJam]? = nil) {
         homeNow = Date()
-        homeSnapshot.update(HomeMeetingPolicy.candidates(meetings: meetings ?? calendar.upcoming,
-                            handoffs: handoffs ?? continuation.candidates, at: homeNow),
-                            allowChanges: !homeVisible)
+        let available = calendar.enabled && calendar.access == .allowed ?
+            (meetings ?? calendar.upcoming).filter { calendar.selected.contains($0.calendarID) && $0.end > homeNow && $0.hasResolvedInvitation } : []
+        let candidates = HomeMeetingPolicy.candidates(meetings: available,
+                            handoffs: handoffs ?? continuation.candidates, at: homeNow)
+        let allowChanges = !homeVisible || (!homeInteracting && foreground)
+        var updated = homeSnapshot
+        updated.update(candidates, calendarMeetings: available,
+            calendarState: .init(enabled: calendar.enabled, available: calendar.access == .allowed && !calendar.selected.isEmpty,
+                hasSelection: !calendar.selected.isEmpty, loading: calendar.loading, error: calendar.error), allowChanges: allowChanges)
+        if allowChanges {
+            let before = HomeMeetingPolicy.today(meetings: homeSnapshot.calendarItems, at: homeLayoutNow,
+                excluding: Set(homeSnapshot.items.compactMap { $0.calendar?.id })).map(\.id)
+            let after = HomeMeetingPolicy.today(meetings: updated.calendarItems, at: homeNow,
+                excluding: Set(updated.items.compactMap { $0.calendar?.id })).map(\.id)
+            if homeSnapshot.items.map(\.id) != updated.items.map(\.id) || before != after || homeSnapshot.calendarState != updated.calendarState {
+                let surviving = Set(updated.items.map { "urgent." + $0.id.homeAnchorID })
+                    .union(after.map { "calendar." + $0 }).union(favorites.map { "favorite." + $0.id })
+                    .union(recent.map { "recent." + $0.id }).union(["join"])
+                homeInteraction.preserveVisibleAnchor(surviving: surviving)
+            }
+            homeLayoutNow = homeNow
+        }
+        homeSnapshot = updated
     }
     @ViewBuilder private var urgentSection: some View {
         if !homeSnapshot.items.isEmpty {
@@ -237,8 +265,11 @@ struct JoinView: View {
                     HomeMeetingCard(item: item, now: homeNow, calendar: calendar, history: history,
                         continuation: continuation, busy: busy, onJoin: model.joinCalendarMeeting,
                         onStale: { staleContinuation = $0; confirmingStaleContinuation = true })
+                        .homeAnchor("urgent." + item.id.homeAnchorID)
                 }
             }
+        } else if homeSnapshot.calendarState.enabled && homeSnapshot.calendarState.hasSelection && homeSnapshot.calendarState.loading {
+            Section { HomeMeetingLoadingCard() }
         }
     }
     @ViewBuilder private var automaticJoinBanner: some View {
@@ -420,6 +451,8 @@ struct JoinView: View {
                     history: history, drag: favoriteDrag,
                     onJoin: { model.rejoin(room) }, onRename: { startRename(room) },
                     onStar: { model.toggleStar(room) }, onOriginalName: { model.setAlias(nil, for: room) })
+                .homeAnchor("favorite." + room.id)
+                .background(HomeScrollReference(state: homeInteraction, main: false))
                 .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 8))
                 .swipeActions {
                     Button(L("Remove"), role: .destructive) { removeRoom(room) }
@@ -473,6 +506,8 @@ struct JoinView: View {
                     }
                     .accessibilityLabel(room.isStarred ? L("Unstar %@", room.displayTitle) : L("Star %@", room.displayTitle))
                 }
+                .homeAnchor("recent." + room.id)
+                .background(HomeScrollReference(state: homeInteraction, main: false))
                 .swipeActions {
                     Button(L("Remove"), role: .destructive) {
                         removeRoom(room)
@@ -509,36 +544,268 @@ struct JoinView: View {
                     NavigationLink { CalendarSettingsView(calendar: calendar) } label: {
                         Label(L("Calendars"), systemImage: "calendar")
                     }.accessibilityIdentifier("calendar.settings")
-                }
-                Section(L("Compatible meeting website")) {
-                    TextField(L("HTTPS website address"), text: $model.guestWebsiteOrigin)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                    Text(L("Fallback for app links that omit their website. Links with an embedded host open directly."))
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                RoomSyncSettingsView(sync: sync, continuation: continuation)
-                if !ProcessInfo.processInfo.isiOSAppOnMac {
-                    Section {
-                        Toggle(L("System call controls"), isOn: $systemCallControls)
-                            .accessibilityIdentifier("calls.systemControls")
-                    } header: {
-                        Text(L("Phone calls"))
-                    } footer: {
-                        Text(L("Audio and Picture in Picture keep working with this off. Some cellular networks block phone calls while system call controls are on. Changes apply to the next jam."))
+                    NavigationLink {
+                        Form {
+                            Section {
+                                Text(L("Names and saved invitations, including invitation passwords, stay in your private iCloud storage."))
+                                    .font(.subheadline)
+                            }
+                            RoomSyncSettingsView(sync: sync, continuation: continuation)
+                        }.navigationTitle(L("Across your devices"))
+                    } label: { Label(L("Across your devices"), systemImage: "icloud") }
+                        .accessibilityIdentifier("settings.devices")
+                    if !ProcessInfo.processInfo.isiOSAppOnMac {
+                        NavigationLink { Form { phoneSettings }.navigationTitle(L("Phone calls")) } label: {
+                            Label(L("Phone calls"), systemImage: "phone")
+                        }.accessibilityIdentifier("settings.phone")
                     }
-                }
-                Section(L("About")) {
-                    Text(L("Small music groups in Yerevan can plan sessions and share ideas live."))
-                    Link(L("Community"), destination: URL(string: "https://rock.glowsoft.ru/community")!)
-                    Link(L("Privacy policy"), destination: URL(string: "https://rock.glowsoft.ru/privacy")!)
-                    Link(L("Support"), destination: URL(string: "https://rock.glowsoft.ru/support")!)
-                    Link(L("Third-party notices"), destination: URL(string: "https://rock.glowsoft.ru/notices")!)
+                    NavigationLink { Form { websiteSettings }.navigationTitle(L("Meeting websites")) } label: {
+                        Label(L("Meeting websites"), systemImage: "globe")
+                    }.accessibilityIdentifier("settings.websites")
+                    NavigationLink { Form { aboutSettings }.navigationTitle(L("About")) } label: {
+                        Label(L("About"), systemImage: "info.circle")
+                    }.accessibilityIdentifier("settings.about")
                 }
             }
             .navigationTitle(L("Settings"))
             .toolbar { Button(L("Done")) { showingSettings = false } }
+        }
+    }
+    private var websiteSettings: some View {
+        Section(L("Compatible meeting website")) {
+            TextField(L("HTTPS website address"), text: $model.guestWebsiteOrigin)
+                .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+            Text(L("Fallback for app links that omit their website. Links with an embedded host open directly."))
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+    private var phoneSettings: some View {
+        Section {
+            Toggle(L("System call controls"), isOn: $systemCallControls).accessibilityIdentifier("calls.systemControls")
+        } header: { Text(L("Phone calls")) } footer: {
+            Text(L("Audio and Picture in Picture keep working with this off. Some cellular networks block phone calls while system call controls are on. Changes apply to the next jam."))
+        }
+    }
+    private var aboutSettings: some View {
+        Section(L("About")) {
+            Text(L("Small music groups in Yerevan can plan sessions and share ideas live."))
+            Link(L("Community"), destination: URL(string: "https://rock.glowsoft.ru/community")!)
+            Link(L("Privacy policy"), destination: URL(string: "https://rock.glowsoft.ru/privacy")!)
+            Link(L("Support"), destination: URL(string: "https://rock.glowsoft.ru/support")!)
+            Link(L("Third-party notices"), destination: URL(string: "https://rock.glowsoft.ru/notices")!)
+        }
+    }
+}
+
+private extension MeetingRoomIdentity {
+    var homeAnchorID: String { [engine.rawValue, origin, room].joined(separator: "|") }
+}
+
+struct HomeRowFrames: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+extension View {
+    func homeAnchor(_ id: String) -> some View {
+        background(GeometryReader { geometry in
+            Color.clear.preference(key: HomeRowFrames.self, value: [id: geometry.frame(in: .global)])
+        })
+    }
+}
+
+/// Observe touch/scroll state without replacing Form's scroll delegate or
+/// competing with buttons, context menus and native favorite drag gestures.
+@MainActor
+final class HomeInteractionState: NSObject, ObservableObject {
+    @Published private(set) var active = false
+    weak var scrollView: UIScrollView?
+    private var touching = false
+    private var acceptingEvents = true
+    private var restoringAnchor = false
+    private var settle: Task<Void, Never>?
+    private var lastMovement = Date.distantPast
+    private struct ScrollObservation {
+        weak var scroll: UIScrollView?
+        var clients: Int
+        let token: NSKeyValueObservation
+    }
+    private var scrolls: [ObjectIdentifier: ScrollObservation] = [:]
+    private var frames: [String: CGRect] = [:]
+    private var anchor: (id: String, y: CGFloat)?
+
+    func touch(_ touching: Bool, in view: UIView?) {
+        guard acceptingEvents else { return }
+        settle?.cancel(); settle = nil
+        self.touching = touching
+        if touching {
+            if !active { active = true }
+        } else { scrolled() }
+    }
+    func register(_ scroll: UIScrollView) {
+        let id = ObjectIdentifier(scroll)
+        if var existing = scrolls[id] { existing.clients += 1; scrolls[id] = existing; return }
+        // Wheel/trackpad scrolls need not produce UITouch events. Observe the
+        // actual Form as well as its existing pan; never replace its delegate.
+        let token = scroll.observe(\.contentOffset, options: [.old, .new]) { [weak self] _, change in
+            guard change.oldValue != change.newValue else { return }
+            // Our own anchor correction is synchronous and must not restart
+            // interaction protection after every structural refresh.
+            guard self?.restoringAnchor != true else { return }
+            DispatchQueue.main.async { [weak self] in self?.scrolled() }
+        }
+        scroll.panGestureRecognizer.addTarget(self, action: #selector(scrollPanChanged(_:)))
+        scrolls[id] = .init(scroll: scroll, clients: 1, token: token)
+    }
+    func unregister(_ scroll: UIScrollView) {
+        let id = ObjectIdentifier(scroll)
+        guard var existing = scrolls[id] else { return }
+        if existing.clients > 1 { existing.clients -= 1; scrolls[id] = existing; return }
+        existing.token.invalidate()
+        scroll.panGestureRecognizer.removeTarget(self, action: #selector(scrollPanChanged(_:)))
+        scrolls.removeValue(forKey: id)
+    }
+    @objc private func scrollPanChanged(_ pan: UIPanGestureRecognizer) { scrolled() }
+    private func scrolled() {
+        guard acceptingEvents else { return }
+        lastMovement = Date()
+        if !active { active = true }
+        guard !touching, settle == nil else { return }
+        settle = Task { [weak self] in
+            // One task exists only while input/scrolling settles. New offsets
+            // extend its quiet period without allocating a task per frame.
+            do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
+            while let self, !Task.isCancelled {
+                let moving = scrolls.values.contains { entry in
+                    guard let scroll = entry.scroll else { return false }
+                    return scroll.isTracking || scroll.isDragging || scroll.isDecelerating ||
+                        scroll.panGestureRecognizer.state == .began || scroll.panGestureRecognizer.state == .changed
+                }
+                if !touching, !moving, Date().timeIntervalSince(lastMovement) >= 0.18 { break }
+                do { try await Task.sleep(for: .milliseconds(80)) } catch { return }
+            }
+            guard let self, !touching else { return }
+            active = false; settle = nil
+        }
+    }
+    func preserveVisibleAnchor(surviving: Set<String>) {
+        guard anchor == nil, let scrollView, scrollView.contentOffset.y > -scrollView.adjustedContentInset.top + 2 else { return }
+        let visible = scrollView.convert(scrollView.bounds.inset(by: scrollView.adjustedContentInset), to: nil)
+        anchor = frames.filter { surviving.contains($0.key) && $0.value.intersects(visible) }
+            .min { $0.value.minY < $1.value.minY }.map { ($0.key, $0.value.minY) }
+    }
+    func layoutChanged(_ frames: [String: CGRect]) {
+        self.frames = frames
+        guard let anchor else { return }
+        self.anchor = nil
+        guard !active, let scrollView, let frame = frames[anchor.id] else { return }
+        let delta = frame.minY - anchor.y
+        guard abs(delta) > 0.5 else { return }
+        let minimum = -scrollView.adjustedContentInset.top
+        let maximum = max(minimum, scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom)
+        restoringAnchor = true
+        defer { restoringAnchor = false }
+        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x,
+            y: min(maximum, max(minimum, scrollView.contentOffset.y + delta))), animated: false)
+    }
+    func resume() { acceptingEvents = true }
+    func cancel() {
+        acceptingEvents = false; settle?.cancel(); settle = nil; touching = false; active = false; anchor = nil
+    }
+}
+
+private struct HomeScrollReference: UIViewRepresentable {
+    let state: HomeInteractionState
+    var main = true
+    func makeUIView(context: Context) -> UIView { Reference(state: state, main: main) }
+    func updateUIView(_ view: UIView, context: Context) {}
+    static func dismantleUIView(_ view: UIView, coordinator: ()) { (view as? Reference)?.disconnect() }
+    private final class Reference: UIView {
+        weak var state: HomeInteractionState?
+        private weak var registered: UIScrollView?
+        private let main: Bool
+        init(state: HomeInteractionState, main: Bool) {
+            self.state = state; self.main = main; super.init(frame: .zero); isUserInteractionEnabled = false
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { disconnect(); return }
+            var ancestor = superview
+            while let current = ancestor, !(current is UIScrollView) { ancestor = current.superview }
+            let scroll = ancestor as? UIScrollView
+            guard scroll !== registered else { return }
+            disconnect()
+            if let scroll { state?.register(scroll); registered = scroll; if main { state?.scrollView = scroll } }
+        }
+        func disconnect() {
+            if let registered { state?.unregister(registered) }
+            registered = nil
+        }
+    }
+}
+
+/// Track touch identities rather than batches: lifting/cancelling one finger
+/// must not release the protected layout while another finger remains down.
+struct HomeTouchLifetime<Touch: Hashable> {
+    private var touches: Set<Touch> = []
+    var isActive: Bool { !touches.isEmpty }
+    mutating func begin(_ incoming: Set<Touch>) -> Bool {
+        let first = touches.isEmpty; touches.formUnion(incoming); return first
+    }
+    mutating func end(_ outgoing: Set<Touch>) -> Bool {
+        touches.subtract(outgoing); return touches.isEmpty
+    }
+    mutating func reset() { touches.removeAll() }
+}
+
+private struct HomeInteractionProbe: UIViewRepresentable {
+    let state: HomeInteractionState
+    func makeUIView(context: Context) -> Probe { Probe(state: state) }
+    func updateUIView(_ view: Probe, context: Context) {}
+    static func dismantleUIView(_ view: Probe, coordinator: ()) { view.detach() }
+    final class Probe: UIView, UIGestureRecognizerDelegate {
+        weak var state: HomeInteractionState?
+        private var observer: TouchObserver?
+        init(state: HomeInteractionState) { self.state = state; super.init(frame: .zero); isUserInteractionEnabled = false }
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func didMoveToWindow() {
+            super.didMoveToWindow(); detach()
+            guard let window else { return }
+            let observer = TouchObserver(target: nil, action: nil)
+            observer.cancelsTouchesInView = false; observer.delaysTouchesBegan = false; observer.delaysTouchesEnded = false
+            observer.delegate = self
+            observer.onTouch = { [weak state] touching, view in state?.touch(touching, in: view) }
+            window.addGestureRecognizer(observer); self.observer = observer
+        }
+        func detach() { if let observer { observer.view?.removeGestureRecognizer(observer) }; observer = nil }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            window != nil && bounds.contains(touch.location(in: self))
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+    }
+    private final class TouchObserver: UIGestureRecognizer {
+        var onTouch: ((Bool, UIView?) -> Void)?
+        private var touches = HomeTouchLifetime<UITouch>()
+        override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+        override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool { false }
+        override func touchesBegan(_ incoming: Set<UITouch>, with event: UIEvent) {
+            let first = touches.begin(incoming)
+            state = first ? .began : .changed
+            if first { onTouch?(true, incoming.first?.view) }
+        }
+        override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) { state = .changed }
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { finish(touches, cancelled: false) }
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { finish(touches, cancelled: true) }
+        private func finish(_ touches: Set<UITouch>, cancelled: Bool) {
+            if self.touches.end(touches) { state = cancelled ? .cancelled : .ended; onTouch?(false, nil) }
+            else { state = .changed }
+        }
+        override func reset() {
+            super.reset()
+            if touches.isActive { touches.reset(); onTouch?(false, nil) }
         }
     }
 }

@@ -23,12 +23,12 @@ struct SoundCheckControls: View {
                 Button(check.capturing ? L("Stop private check") : L("Test microphone")) {
                     if check.capturing { check.stop() } else { model.testMicrophone() }
                 }.buttonStyle(.borderless).accessibilityIdentifier(check.capturing ? "studio.stop-sound-check" : "studio.test-microphone")
-                if !compact {
+            }
+            DisclosureGroup(L("About this check")) {
+                if !model.microphoneOn {
                     Text(L("Your meeting microphone stays muted. Nothing from this check is sent to the jam."))
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-            }
-            if !compact {
                 Text(L("Input activity shows your microphone capture, not confirmation that others can hear you."))
                     .font(.footnote).foregroundStyle(.secondary)
             }
@@ -38,7 +38,7 @@ struct SoundCheckControls: View {
         .onAppear {
             // An already-authorized muted input can be previewed privately. Never
             // mute a live meeting merely because its settings were opened.
-            if !model.microphoneOn && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized { model.testMicrophone() }
+            if !model.microphoneOn && model.audioSection == .sound && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized { model.testMicrophone() }
         }
     }
 }

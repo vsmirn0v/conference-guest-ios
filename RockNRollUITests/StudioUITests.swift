@@ -105,8 +105,7 @@ final class StudioUITests: XCTestCase {
         let output = app.descendants(matching: .any)["call.output"].firstMatch
         XCTAssertTrue(output.exists)
         output.press(forDuration: 0.7)
-        XCTAssertTrue(app.segmentedControls["studio.audio-sections"].buttons["Devices"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.segmentedControls["studio.audio-sections"].buttons["Devices"].isSelected)
+        XCTAssertTrue(app.descendants(matching: .any)["studio.devices"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["studio.output-device"].firstMatch.exists)
         app.buttons["studio.done"].tap()
         mic.press(forDuration: 0.7)
@@ -321,7 +320,9 @@ final class StudioUITests: XCTestCase {
         return app
     }
     private func openStudio(_ app: XCUIApplication) {
-        app.buttons["More call options"].firstMatch.tap()
+        app.buttons["call.reactions"].tap()
+        app.buttons["call.more"].tap()
+        app.descendants(matching: .any)["meeting.menu.call.group.cameraSound"].firstMatch.tap()
         app.buttons["Camera & sound"].firstMatch.tap()
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
     }
@@ -351,8 +352,10 @@ final class StudioUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
         app.launch()
-        let more = app.buttons[russian ? "Другие действия" : "More call options"].firstMatch
+        let more = app.buttons["call.reactions"]
         XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
+        app.buttons["call.more"].tap()
+        app.descendants(matching: .any)["meeting.menu.call.group.cameraSound"].firstMatch.tap()
         let studio = app.buttons[russian ? "Камера и звук" : "Camera & sound"].firstMatch
         XCTAssertTrue(studio.waitForExistence(timeout: 5)); studio.tap()
         let camera = app.buttons["studio.camera-effects"]

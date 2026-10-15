@@ -99,24 +99,30 @@ final class ParticipantPanelViewController: UIViewController {
         for status in statuses {
             let card = UIStackView()
             card.axis = .vertical
-            card.spacing = 6
+            card.spacing = 4
             card.backgroundColor = .secondarySystemBackground
             card.layer.cornerRadius = 14
-            card.layoutMargins = UIEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+            card.layoutMargins = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
             card.isLayoutMarginsRelativeArrangement = true
             let name = UILabel()
-            name.font = .preferredFont(forTextStyle: .headline)
+            name.font = .preferredFont(forTextStyle: .body)
             name.adjustsFontForContentSizeCategory = true
             name.numberOfLines = 0
-            card.addArrangedSubview(name)
+            let identity = UIStackView()
+            identity.axis = traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? .vertical : .horizontal
+            identity.spacing = 8
+            identity.alignment = .leading
+            identity.addArrangedSubview(name)
             let speaking = UILabel()
-            speaking.font = .preferredFont(forTextStyle: .subheadline)
+            speaking.font = .preferredFont(forTextStyle: .caption1)
             speaking.adjustsFontForContentSizeCategory = true
             speaking.textColor = .systemGreen
             speaking.text = L("● Speaking")
-            card.addArrangedSubview(speaking)
+            speaking.setContentCompressionResistancePriority(.required, for: .horizontal)
+            identity.addArrangedSubview(speaking)
+            card.addArrangedSubview(identity)
             let media = UILabel()
-            media.font = .preferredFont(forTextStyle: .subheadline)
+            media.font = .preferredFont(forTextStyle: .caption1)
             media.adjustsFontForContentSizeCategory = true
             media.numberOfLines = 0
             media.textColor = .secondaryLabel
@@ -171,6 +177,7 @@ final class ParticipantPanelViewController: UIViewController {
         configuration.title = key == pinnedKey ? L("Unpin %@", title.lowercased()) : L("Pin %@", title.lowercased())
         configuration.image = UIImage(systemName: key == pinnedKey ? "pin.slash" : "pin")
         button.configuration = configuration
+        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         button.titleLabel?.numberOfLines = 0
         button.accessibilityLabel = configuration.title
         button.addAction(UIAction { [weak self] _ in action(self?.pinnedKey == key ? nil : key) },

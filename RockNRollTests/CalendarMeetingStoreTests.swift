@@ -1,10 +1,73 @@
 import ConferenceCore
 import Combine
 import XCTest
+import UIKit
 @testable import RockNRoll
 
 @MainActor
 final class CalendarMeetingStoreTests: XCTestCase {
+    func testHomeMultiTouchProtectionEndsOnlyAfterLastIdentityLeaves() {
+        var touches = HomeTouchLifetime<Int>()
+        XCTAssertTrue(touches.begin([1, 2]))
+        XCTAssertFalse(touches.begin([3]), "Additional fingers do not begin a new protected interaction")
+        XCTAssertFalse(touches.end([1]))
+        XCTAssertFalse(touches.end([2]), "A cancelled finger must not release the remaining finger")
+        XCTAssertTrue(touches.isActive)
+        XCTAssertTrue(touches.end([3]))
+        XCTAssertFalse(touches.isActive)
+        XCTAssertTrue(touches.begin([4])); touches.reset(); XCTAssertFalse(touches.isActive)
+    }
+    func testHomeActualScrollOffsetsProtectLayoutWithoutTouchAndStopWhenUnregistered() async throws {
+        let state = HomeInteractionState()
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        scroll.contentSize = CGSize(width: 320, height: 2000)
+        state.register(scroll); state.register(scroll)
+        defer { state.cancel(); state.unregister(scroll); state.unregister(scroll) }
+        scroll.setContentOffset(CGPoint(x: 0, y: 100), animated: false)
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertTrue(state.active, "Wheel/trackpad scrolling must protect Home without a UITouch")
+        state.unregister(scroll) // A second Form row still references this scroll view.
+        try await Task.sleep(for: .milliseconds(140))
+        scroll.setContentOffset(CGPoint(x: 0, y: 200), animated: false)
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertTrue(state.active, "More offsets extend the quiet period")
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertFalse(state.active, "Scrolling settles without requiring a tap or idle polling")
+        state.unregister(scroll)
+        scroll.setContentOffset(CGPoint(x: 0, y: 300), animated: false)
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertFalse(state.active)
+    }
+    func testHomeAnchorCorrectionDoesNotRestartScrollProtectionAndInactiveHomeIgnoresOffsets() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let host = UIViewController()
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; previous?.makeKey() }
+        let state = HomeInteractionState()
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
+        host.view.addSubview(scroll)
+        scroll.contentInsetAdjustmentBehavior = .never
+        scroll.contentSize = CGSize(width: 320, height: 2000)
+        let row = UIView(frame: CGRect(x: 0, y: 250, width: 320, height: 80))
+        scroll.addSubview(row)
+        host.view.layoutIfNeeded()
+        scroll.contentOffset = CGPoint(x: 0, y: 200)
+        state.scrollView = scroll; state.register(scroll)
+        defer { state.unregister(scroll); state.cancel() }
+        state.layoutChanged(["row": row.convert(row.bounds, to: nil)])
+        state.preserveVisibleAnchor(surviving: ["row"])
+        row.frame.origin.y += 20
+        state.layoutChanged(["row": row.convert(row.bounds, to: nil)])
+        XCTAssertEqual(scroll.contentOffset.y, 220, accuracy: 0.5)
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertFalse(state.active, "Programmatic anchor restoration must not queue another refresh")
+        state.cancel()
+        scroll.contentOffset.y = 300
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertFalse(state.active, "Inactive Home cancels settling and ignores queued scroll notifications")
+    }
     actor Reader: CalendarReading {
         var authorization: CalendarAccess = .allowed
         var requests = 0

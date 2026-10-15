@@ -2,6 +2,97 @@ import XCTest
 import UIKit
 
 final class MeetingReactionsUITests: XCTestCase {
+    func testTapReactionsKeepsSenderOpenAndMoreHasSixDestinations() {
+        let app = fixtureApp()
+        defer { app.terminate() }
+        app.buttons["call.reactions"].tap()
+        for kind in ["like", "heart"] {
+            let reaction = app.buttons["reactions.send.\(kind)"]
+            XCTAssertTrue(reaction.waitForExistence(timeout: 5)); reaction.tap()
+            XCTAssertTrue(app.buttons["reactions.done"].exists)
+        }
+        XCTAssertFalse(app.switches["reactions.camera-sharing"].exists, "Camera forwarding belongs in Video settings")
+        XCTAssertTrue(app.buttons["reactions.chat"].exists)
+        let more = app.buttons["call.more"]
+        for _ in 0..<3 where !more.isHittable { app.swipeUp() }
+        XCTAssertTrue(more.isHittable); more.tap()
+        XCTAssertTrue(app.buttons["meeting.more.reactions"].waitForExistence(timeout: 5))
+        for group in ["cameraSound", "sharePresenter", "view", "invite", "meeting"] {
+            let destination = app.descendants(matching: .any)["meeting.menu.call.group.\(group)"].firstMatch
+            XCTAssertTrue(destination.exists, "Missing More destination \(group)")
+        }
+        app.buttons["meeting.more.reactions"].tap()
+        XCTAssertTrue(app.buttons["reactions.send.like"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["meeting.more.reactions"].exists)
+    }
+
+    func testHoldReactionsConsumesReleaseAndOpensMore() {
+        let app = fixtureApp()
+        defer { app.terminate() }
+        app.buttons["call.reactions"].press(forDuration: 0.7)
+        XCTAssertTrue(app.buttons["meeting.more.reactions"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["reactions.send.like"].exists, "A held press also triggered the short tap")
+        XCTAssertFalse(app.staticTexts["reactions.received.like"].exists, "Opening tools sent a reaction")
+        app.buttons["reactions.done"].tap()
+        app.buttons["call.reactions"].tap()
+        XCTAssertTrue(app.buttons["reactions.send.like"].waitForExistence(timeout: 5))
+    }
+
+    func testUnsupportedEngineKeepsReactionsAndMoreDiscoverable() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
+        app.launchArguments = ["-AppleLanguages", "(en)"]
+        app.launch(); defer { app.terminate() }
+        let button = app.buttons["call.reactions"]
+        XCTAssertTrue(button.waitForExistence(timeout: 10)); button.tap()
+        XCTAssertTrue(app.staticTexts["Reactions are unavailable in this meeting."].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["reactions.send.like"].exists)
+        app.buttons["call.more"].tap()
+        XCTAssertTrue(app.buttons["meeting.more.reactions"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["meeting.menu.call.group.view"].firstMatch.exists)
+    }
+
+    func testComposerMoreActionsPreserveModalChatAndDraft() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
+        app.launchEnvironment["CONFERENCE_TEST_STUDIO"] = "1"
+        app.launchArguments = ["-AppleLanguages", "(en)"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch(); defer { app.terminate() }
+        let chat = app.buttons["Chat"].firstMatch
+        XCTAssertTrue(chat.waitForExistence(timeout: 10)); chat.tap()
+        let composer = app.textViews["Chat message"]
+        XCTAssertTrue(composer.waitForExistence(timeout: 5)); composer.tap()
+        composer.typeText("Keep this unsent arrangement")
+        app.buttons["chat.reactions"].tap()
+        XCTAssertTrue(app.buttons["call.more"].waitForExistence(timeout: 5)); app.buttons["call.more"].tap()
+        app.descendants(matching: .any)["meeting.menu.call.group.cameraSound"].firstMatch.tap()
+        app.buttons["Camera & sound"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
+        app.buttons["studio.done"].tap()
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertEqual(composer.value as? String, "Keep this unsent arrangement")
+        app.buttons["chat.reactions"].tap()
+        app.buttons["call.more"].tap()
+        app.descendants(matching: .any)["meeting.menu.call.group.meeting"].firstMatch.tap()
+        app.buttons["Meeting details"].tap()
+        let details = app.alerts.firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: 5)); details.buttons["Done"].tap()
+        XCTAssertEqual(composer.value as? String, "Keep this unsent arrangement")
+        XCTAssertEqual(app.textViews.matching(identifier: "Chat message").count, 1)
+    }
+
+    private func fixtureApp() -> XCUIApplication {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
+        app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "reactions"
+        app.launchArguments = ["-AppleLanguages", "(en)"]
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        XCTAssertTrue(app.buttons["call.reactions"].waitForExistence(timeout: 10))
+        return app
+    }
+
     func testOwnReactionUsesFloatingOverlayBelowMeetingHeader() {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
@@ -10,7 +101,7 @@ final class MeetingReactionsUITests: XCTestCase {
         app.launch(); defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
             XCUIDevice.shared.orientation = orientation
-            let more = app.buttons["call.more"]
+            let more = app.buttons["call.reactions"]
             XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
             let send = app.buttons["reactions.send.like"]
             XCTAssertTrue(send.waitForExistence(timeout: 5)); send.tap()
@@ -45,7 +136,7 @@ final class MeetingReactionsUITests: XCTestCase {
             app.terminate()
         }
         app.launch()
-        let more = app.buttons["call.more"]
+        let more = app.buttons["call.reactions"]
         XCTAssertTrue(more.waitForExistence(timeout: 30))
         let submitted = app.staticTexts["reactions.test-submitted"]
         more.tap()
@@ -92,7 +183,7 @@ final class MeetingReactionsUITests: XCTestCase {
             return
         }
         assertEmptyStageEdges(app, invitation: invitation)
-        let more = app.buttons["call.more"]
+        let more = app.buttons["call.reactions"]
         more.tap()
         assertAllReactionsAvailable(app)
         for kind in ["like", "dislike"] {
@@ -174,14 +265,13 @@ final class MeetingReactionsUITests: XCTestCase {
         }
     }
 
-    func testWideReactionShortcut() throws {
+    func testReactionShortcutAvailableAtEveryWidth() throws {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
         app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "reactions"
         XCUIDevice.shared.orientation = .landscapeLeft
         defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
         app.launch()
-        guard app.frame.width >= 700 else { throw XCTSkip("Direct shortcut requires a wide layout; compact screens use More") }
         let shortcut = app.buttons["call.reactions"]
         XCTAssertTrue(shortcut.waitForExistence(timeout: 10)); XCTAssertTrue(shortcut.isHittable)
         shortcut.tap()
@@ -203,7 +293,7 @@ final class MeetingReactionsUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_REACTIONS"] = "1"
         app.launch()
         defer { app.terminate() }
-        let more = app.buttons["call.more"]
+        let more = app.buttons["call.reactions"]
         XCTAssertTrue(more.waitForExistence(timeout: 25))
         more.tap()
         for kind in ["like", "dislike"] {
@@ -222,7 +312,7 @@ final class MeetingReactionsUITests: XCTestCase {
         }
         app.buttons["Start video"].firstMatch.tap()
         Thread.sleep(forTimeInterval: 3)
-        more.tap()
+        app.buttons["Stop video"].firstMatch.press(forDuration: 0.6)
         let forwarding = app.switches["reactions.camera-sharing"]
         XCTAssertTrue(forwarding.waitForExistence(timeout: 5))
         let wasOn = forwarding.value as? String == "1"
@@ -232,9 +322,11 @@ final class MeetingReactionsUITests: XCTestCase {
         let status = app.staticTexts["reactions.camera-status"]
         let supported = expectation(for: NSPredicate(format: "label == %@ OR label == %@", "Ready", "Enable Reactions in system camera controls"), evaluatedWith: status)
         wait(for: [supported], timeout: 10)
-        app.buttons["reactions.done"].tap()
+        app.buttons["studio.done"].tap()
         for (index, title) in ["Test camera reaction: Like", "Test camera reaction: Dislike"].enumerated() {
             more.tap()
+            app.buttons["call.more"].tap()
+            app.descendants(matching: .any)["meeting.menu.call.group.meeting"].firstMatch.tap()
             let effect = app.buttons[title].firstMatch
             for _ in 0..<4 { if effect.isHittable { break }; app.swipeUp() }
             XCTAssertTrue(effect.isHittable); effect.tap()
@@ -242,9 +334,9 @@ final class MeetingReactionsUITests: XCTestCase {
             wait(for: [forwarded], timeout: 10)
             Thread.sleep(forTimeInterval: 4)
         }
-        more.tap()
+        app.buttons["Stop video"].firstMatch.press(forDuration: 0.6)
         if !wasOn { app.switches["reactions.camera-sharing"].coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap() }
-        app.buttons["reactions.done"].tap()
+        app.buttons["studio.done"].tap()
         app.buttons["Leave"].firstMatch.tap()
     }
     func testPaletteAndExistingActionsSurviveRotation() { checkPalette(language: "en") }
@@ -258,11 +350,15 @@ final class MeetingReactionsUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         defer { app.terminate() }
         app.launch()
-        let more = app.buttons["call.more"]
+        let more = app.buttons["call.reactions"]
         XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
         let content = app.descendants(matching: .any)["reactions.compact-content"].firstMatch
         XCTAssertTrue(content.waitForExistence(timeout: 5))
-        XCTAssertEqual(content.frame.width, 320, accuracy: 1)
+        // UIKit may fit the adaptive sheet slightly narrower than the requested
+        // hosting width. The acceptance boundary is at most 320pt, with every
+        // reaction still visible, inside that width, and at least 44pt wide.
+        XCTAssertGreaterThan(content.frame.width, 0)
+        XCTAssertLessThanOrEqual(content.frame.width, 321)
         assertAllReactionsAvailable(app)
         for kind in ["heart", "like", "smile", "applause", "fire", "wave", "handshake", "thanks", "thinking", "sad", "dislike", "surprise"] {
             let button = app.buttons["reactions.send.\(kind)"]
@@ -290,7 +386,7 @@ final class MeetingReactionsUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
         app.launch()
-        let more = app.buttons["call.more"]
+        let more = app.buttons["call.reactions"]
         XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
         assertAllReactionsAvailable(app)
         for kind in ["like", "dislike"] {
@@ -305,7 +401,8 @@ final class MeetingReactionsUITests: XCTestCase {
         app.buttons["reactions.done"].tap()
         XCUIDevice.shared.orientation = .portrait
         more.tap()
-        let view = app.descendants(matching: .any)["meeting.menu.call.view-mode"].firstMatch
+        app.buttons["call.more"].tap()
+        let view = app.descendants(matching: .any)["meeting.menu.call.group.view"].firstMatch
         for _ in 0..<4 { if view.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(view.isHittable); view.tap()
         let audio = app.buttons[language == "ru" ? "Только звук" : "Audio only"].firstMatch

@@ -14,9 +14,9 @@ final class TelemostUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Unmute microphone"].waitForExistence(timeout: 30))
         app.buttons["Unmute microphone"].tap()
         XCTAssertTrue(app.buttons["Mute microphone"].waitForExistence(timeout: 8))
-        let available = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Floating video available"), object: app.buttons["More call options"])
+        let available = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Floating video available"), object: app.buttons["call.reactions"])
         XCTAssertEqual(XCTWaiter.wait(for: [available], timeout: 20), .completed)
-        app.buttons["More call options"].tap(); app.buttons["Show floating video"].tap()
+        app.openMeetingMore(.view); app.buttons["Show floating video"].tap()
         XCUIDevice.shared.press(.home)
         let pip = XCUIApplication(bundleIdentifier: "com.apple.springboard").windows["PIP-SBInteractionPassThroughView"]
         XCTAssertTrue(pip.waitForExistence(timeout: 8))
@@ -36,7 +36,7 @@ final class TelemostUITests: XCTestCase {
         defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
         XCTAssertTrue(app.scrollViews["Pinch to zoom screen share"].firstMatch.waitForExistence(timeout: 35))
         for route in ["Use iPhone receiver", "Use iPhone speaker"] {
-            app.buttons["More call options"].tap()
+            app.openMeetingMore(.cameraSound)
             let menu = app.collectionViews.firstMatch
             for _ in 0..<3 where !app.buttons[route].exists { menu.swipeDown() }
             XCTAssertTrue(app.buttons[route].waitForExistence(timeout: 3))
@@ -44,9 +44,9 @@ final class TelemostUITests: XCTestCase {
             sleep(3)
             XCTAssertTrue(app.buttons["Leave"].exists)
         }
-        let available = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Floating video available"), object: app.buttons["More call options"])
+        let available = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Floating video available"), object: app.buttons["call.reactions"])
         XCTAssertEqual(XCTWaiter.wait(for: [available], timeout: 15), .completed)
-        app.buttons["More call options"].tap(); app.buttons["Show floating video"].tap()
+        app.openMeetingMore(.view); app.buttons["Show floating video"].tap()
         XCUIDevice.shared.press(.home)
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let pip = system.windows["PIP-SBInteractionPassThroughView"]
@@ -176,8 +176,7 @@ final class TelemostUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Telemost Screen QA"].exists)
         app.buttons["Done"].tap()
         for mode in ["Screen shares", "Audio only", "All video"] {
-            app.buttons["More call options"].tap()
-            if app.buttons["View"].exists { app.buttons["View"].tap() }
+            app.openMeetingMore(.view)
             app.buttons[mode].tap()
             if mode == "Audio only" { XCTAssertFalse(share.exists) }
             else { XCTAssertTrue(share.waitForExistence(timeout: 10)) }

@@ -21,10 +21,10 @@ final class HomeMeetingsTests: XCTestCase {
             meeting("all-day", start: -300, allDay: true), unresolved], handoffs: [], at: now)
         XCTAssertEqual(items.map(\.calendar?.id), ["ten"])
     }
-    func testNearestStartWinsAmongOngoingAndSoonEvents() {
+    func testOngoingEventsPrecedeSoonEventsInStableScheduleOrder() {
         let items = HomeMeetingPolicy.candidates(meetings: [meeting("older", start: -1200),
             meeting("soon", start: 120), meeting("just-started", start: -60)], handoffs: [], at: now)
-        XCTAssertEqual(items.map(\.calendar?.id), ["just-started", "soon", "older"])
+        XCTAssertEqual(items.map(\.calendar?.id), ["older", "just-started", "soon"])
     }
     func testHandoffMergesCalendarUsingCanonicalRoomIdentityAndKeepsCurrentInvitation() {
         var current = meeting("daily", start: 120)
@@ -53,7 +53,7 @@ final class HomeMeetingsTests: XCTestCase {
         XCTAssertEqual(items.count, 2)
         XCTAssertEqual(items.first?.handoff?.deviceID, "Mac")
     }
-    func testPreviewIsBoundedAndLateChangesRequireExplicitAcceptance() {
+    func testPreviewIsBoundedAndLateChangesApplyAutomaticallyAfterInteraction() {
         let items = HomeMeetingPolicy.candidates(meetings: (1...4).map { meeting("room\($0)", start: Double($0 * 60)) },
                                                 handoffs: [], at: now)
         var snapshot = HomeMeetingSnapshot()
@@ -63,15 +63,15 @@ final class HomeMeetingsTests: XCTestCase {
         snapshot.update([], allowChanges: false)
         XCTAssertEqual(snapshot.items, before)
         XCTAssertTrue(snapshot.hasUpdates)
-        snapshot.acceptUpdates()
+        snapshot.update([], allowChanges: true)
         XCTAssertTrue(snapshot.items.isEmpty)
         XCTAssertFalse(snapshot.hasUpdates)
         snapshot.update(items, allowChanges: false)
-        XCTAssertTrue(snapshot.items.isEmpty, "Returning to the top must not insert a card under an approaching tap")
-        snapshot.acceptUpdates()
+        XCTAssertTrue(snapshot.items.isEmpty, "An approaching tap must not insert a different room under the finger")
+        snapshot.update(items, allowChanges: true)
         XCTAssertEqual(snapshot.items, before)
     }
-    func testEnrichmentKeepsDisplayedSuggestionIdentityAndMetadataUntilAccepted() {
+    func testEnrichmentDoesNotChangeActionKindDuringInteraction() {
         let original = HomeMeetingPolicy.candidates(meetings: [meeting("daily", start: 60)], handoffs: [], at: now)
         var snapshot = HomeMeetingSnapshot(); snapshot.update(original, allowChanges: true)
         let enriched = HomeMeetingPolicy.candidates(meetings: [meeting("daily", start: 120)],
@@ -82,6 +82,64 @@ final class HomeMeetingsTests: XCTestCase {
         XCTAssertTrue(snapshot.hasUpdates)
         snapshot.acceptUpdates()
         XCTAssertEqual(snapshot.items, enriched)
+    }
+    func testDelayedColdLaunchResultsNeedNoExplicitAcceptance() {
+        var snapshot = HomeMeetingSnapshot()
+        snapshot.update([], allowChanges: true)
+        let meetings = [meeting("daily", start: 60)]
+        let items = HomeMeetingPolicy.candidates(meetings: meetings, handoffs: [], at: now)
+        snapshot.update(items, calendarMeetings: meetings, allowChanges: true)
+        XCTAssertEqual(snapshot.items, items)
+        XCTAssertEqual(snapshot.calendarItems, meetings)
+        XCTAssertFalse(snapshot.hasUpdates)
+    }
+    func testLoadingCompletionAndPermissionChangesCannotRemoveLayoutDuringTouch() {
+        let loading = HomeCalendarState(enabled: true, available: true, hasSelection: true, loading: true)
+        let ready = HomeCalendarState(enabled: true, available: true, hasSelection: true)
+        let denied = HomeCalendarState(enabled: true, available: false, hasSelection: true, error: "Access denied")
+        let meetings = [meeting("daily", start: 60)]
+        let candidates = HomeMeetingPolicy.candidates(meetings: meetings, handoffs: [], at: now)
+        var snapshot = HomeMeetingSnapshot()
+        snapshot.update([], calendarState: loading, allowChanges: true)
+        snapshot.update(candidates, calendarMeetings: meetings, calendarState: ready, allowChanges: false)
+        XCTAssertTrue(snapshot.items.isEmpty)
+        XCTAssertEqual(snapshot.calendarState, loading, "The loading section must remain until a touch safely finishes")
+        snapshot.update(candidates, calendarMeetings: meetings, calendarState: ready, allowChanges: true)
+        XCTAssertEqual(snapshot.items, candidates)
+        XCTAssertEqual(snapshot.calendarState, ready)
+        snapshot.update([], calendarState: denied, allowChanges: false)
+        XCTAssertEqual(snapshot.items, candidates, "Revocation disables actions immediately without shifting the row")
+        XCTAssertEqual(snapshot.calendarState, ready)
+        XCTAssertNil(snapshot.items.first?.currentCalendar(in: []))
+        snapshot.update([], calendarState: denied, allowChanges: true)
+        XCTAssertTrue(snapshot.items.isEmpty)
+        XCTAssertEqual(snapshot.calendarState, denied)
+    }
+    func testTodayAlwaysShowsRemainingUrgentEventsAndOnlyLimitsLaterOverflow() {
+        let meetings = [meeting("overnight", start: -86400), meeting("overlap", start: -300),
+                        meeting("soon", start: 600), meeting("later1", start: 900),
+                        meeting("later2", start: 1800), meeting("later3", start: 2700)]
+        XCTAssertEqual(HomeMeetingPolicy.todayPreview(meetings, at: now, expanded: false).map(\.id),
+                       ["overnight", "overlap", "soon", "later1", "later2"])
+        XCTAssertEqual(HomeMeetingPolicy.todayPreview(meetings, at: now, expanded: true), meetings)
+    }
+    func testCalendarStructureWaitsWhileSafeMetadataEnrichmentIsImmediate() {
+        let original = meeting("daily", start: 60)
+        let items = HomeMeetingPolicy.candidates(meetings: [original], handoffs: [], at: now)
+        var snapshot = HomeMeetingSnapshot()
+        snapshot.update(items, calendarMeetings: [original], allowChanges: true)
+        var changed = original
+        changed.invitation = URL(string: "https://meeting.example.test/daily?psw=refreshed")!
+        let inserted = meeting("overlap", start: -300)
+        let incoming = HomeMeetingPolicy.candidates(meetings: [inserted, changed], handoffs: [], at: now)
+        snapshot.update(incoming, calendarMeetings: [inserted, changed], allowChanges: false)
+        XCTAssertEqual(snapshot.items.map(\.calendar?.id), ["daily"])
+        XCTAssertEqual(snapshot.items.first?.calendar?.invitation, changed.invitation)
+        XCTAssertEqual(snapshot.calendarItems, [changed])
+        XCTAssertTrue(snapshot.hasUpdates)
+        snapshot.update(incoming, calendarMeetings: [inserted, changed], allowChanges: true)
+        XCTAssertEqual(snapshot.items, incoming)
+        XCTAssertEqual(snapshot.calendarItems, [inserted, changed])
     }
     func testTodaySeparatesTomorrowAndRetainsOngoingOvernightEvents() {
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -110,9 +168,7 @@ final class HomeMeetingsTests: XCTestCase {
             calendarTitle: event.calendarTitle, title: "Updated title", start: now.addingTimeInterval(300), end: event.end)
         rescheduled.invitation = event.invitation; rescheduled.engine = event.engine
         snapshot.update(HomeMeetingPolicy.candidates(meetings: [rescheduled], handoffs: [heartbeat], at: now.addingTimeInterval(10)), allowChanges: false)
-        XCTAssertTrue(snapshot.hasUpdates, "Same-room event metadata updates must be revealable")
-        XCTAssertEqual(snapshot.items.first?.calendar?.title, event.title)
-        snapshot.acceptUpdates()
+        XCTAssertFalse(snapshot.hasUpdates, "Safe same-room metadata updates need no manual reveal")
         XCTAssertEqual(snapshot.items.first?.calendar?.title, rescheduled.title)
     }
 }

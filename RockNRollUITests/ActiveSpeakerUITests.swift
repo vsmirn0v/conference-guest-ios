@@ -2,8 +2,8 @@ import XCTest
 
 final class ActiveSpeakerUITests: XCTestCase {
     private func change(_ app: XCUIApplication, to name: String) {
-        let more = app.buttons["More call options"]
-        XCTAssertTrue(more.waitForExistence(timeout: 5)); more.tap()
+        let more = app.buttons["call.reactions"]
+        XCTAssertTrue(more.waitForExistence(timeout: 5)); app.openMeetingMore(.meeting)
         app.buttons["Test speaker: \(name)"].tap()
     }
     private func assertSpeaker(_ element: XCUIElement, _ name: String?) {

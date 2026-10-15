@@ -11,22 +11,33 @@ struct CalendarAgendaView: View {
     var home = false
     var excluded: Set<String> = []
     var onShowAll: () -> Void = {}
+    var homeMeetings: [CalendarMeeting]? = nil
+    var homeNow: Date? = nil
+    var homeState: HomeCalendarState? = nil
     @State private var expanded = false
+    @Environment(\.dynamicTypeSize) private var textSize
+    @ScaledMetric(relativeTo: .body) private var titleHeight = 23.0
+    @ScaledMetric(relativeTo: .caption) private var detailHeight = 17.0
 
     @ViewBuilder var body: some View {
         if home { homeAgenda } else { fullAgenda }
     }
     @ViewBuilder private var homeAgenda: some View {
-        if calendar.enabled {
-            if calendar.access == .allowed && !calendar.selected.isEmpty {
-                let rows = HomeMeetingPolicy.today(meetings: calendar.upcoming, at: calendar.now, excluding: excluded)
+        let state = homeState ?? .init(enabled: calendar.enabled, available: calendar.access == .allowed && !calendar.selected.isEmpty,
+            hasSelection: !calendar.selected.isEmpty, loading: calendar.loading, error: calendar.error)
+        if state.enabled {
+            if state.available {
+                let now = homeNow ?? calendar.now
+                let rows = HomeMeetingPolicy.today(meetings: homeMeetings ?? calendar.upcoming, at: now, excluding: excluded)
+                let preview = HomeMeetingPolicy.todayPreview(rows, at: now, expanded: false)
                 if !rows.isEmpty {
                     Section {
-                        ForEach(expanded ? rows : Array(rows.prefix(2))) { meeting in compactRow(meeting) }
-                        if rows.count > 2 {
-                            Button(expanded ? L("Show fewer") : L("Show all")) { expanded.toggle() }
+                        ForEach(expanded ? rows : preview) { meeting in compactRow(meeting).homeAnchor("calendar." + meeting.id) }
+                        if rows.count > preview.count {
+                            Button(expanded ? L("Show fewer") : L("Show more today")) { expanded.toggle() }
+                                .accessibilityIdentifier("calendar.today.expand")
                         }
-                    } header: { Text(L("Later today")) }
+                    } header: { Text(L("Today")) }
                 }
                 Section {
                     Button { onShowAll() } label: { Label(L("See upcoming meetings"), systemImage: "calendar") }
@@ -37,38 +48,49 @@ struct CalendarAgendaView: View {
                     Button { onSettings() } label: { Label(L("Choose calendars"), systemImage: "calendar") }
                 }
             }
-            if let error = calendar.error { Section { Text(error).font(.footnote).foregroundStyle(.red) } }
+            if let error = state.error { Section { Text(error).font(.footnote).foregroundStyle(.red) } }
         }
     }
     private func compactRow(_ meeting: CalendarMeeting) -> some View {
-        HStack(spacing: 4) {
+        let available = current(meeting)
+        let lines = textSize.isAccessibilitySize ? 2 : 1
+        return HStack(spacing: 4) {
             Button {
-                if let active = continuation.candidates.first(where: { $0.isRecent(at: Date()) && MeetingRoomIdentity($0.invitation, engine: $0.engine) == meeting.roomIdentity }) {
+                guard let current = current(meeting) else { return }
+                if let active = continuation.candidates.first(where: { $0.isRecent(at: Date()) && MeetingRoomIdentity($0.invitation, engine: $0.engine) == current.roomIdentity }) {
                     continuation.begin(active)
-                } else { onJoin(meeting) }
+                } else { onJoin(current) }
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(meeting.title).font(.body.weight(.medium)).fixedSize(horizontal: false, vertical: true)
+                    Text(meeting.title).font(.body.weight(.medium)).lineLimit(lines)
+                        .frame(height: titleHeight * Double(lines), alignment: .leading)
                     Text(time(meeting)).font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(meeting.calendarTitle).font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(lines).frame(height: detailHeight * Double(lines), alignment: .leading)
+                    Text(meeting.roomIdentity?.displayDetails ?? "").font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(lines).frame(height: detailHeight * Double(lines), alignment: .leading)
                 }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
-            }.buttonStyle(.plain).disabled(busy)
+            }.buttonStyle(.plain).disabled(busy || available == nil)
             .accessibilityLabel(L("Join %@", meeting.title)).accessibilityIdentifier("calendar.join." + meeting.id)
+            .accessibilityValue([time(meeting), meeting.roomIdentity?.displayDetails ?? ""].joined(separator: ". "))
             if let url = meeting.invitation {
                 let favorite = history.matching(url, engine: meeting.engine)
                 Button {
+                    guard let current = current(meeting), let url = current.invitation else { return }
                     if let favorite, favorite.isStarred { history.toggleStar(favorite.invitationURL) }
-                    else { history.saveFavorite(url: url, title: meeting.title, engine: meeting.engine) }
+                    else { history.saveFavorite(url: url, title: current.title, engine: current.engine) }
                 } label: { Image(systemName: favorite?.isStarred == true ? "star.fill" : "star").frame(width: 44, height: 44) }
-                .buttonStyle(.borderless)
+                .buttonStyle(.borderless).disabled(available == nil)
                 .accessibilityLabel(favorite?.isStarred == true ? L("Unstar %@", meeting.title) : L("Star %@", meeting.title))
                 .accessibilityIdentifier("calendar.star." + meeting.id)
             }
         }.contextMenu {
-            Button(L("Choose another room")) { calendar.choosingMeeting = meeting }
+            Button(L("Choose another room")) { if let current = current(meeting) { calendar.choosingMeeting = current } }
                 .accessibilityIdentifier("calendar.choose-room." + meeting.id)
         }
+    }
+    private func current(_ meeting: CalendarMeeting) -> CalendarMeeting? {
+        guard calendar.enabled, calendar.access == .allowed, calendar.selected.contains(meeting.calendarID) else { return nil }
+        return calendar.upcoming.first { $0.id == meeting.id && $0.roomIdentity == meeting.roomIdentity && $0.end > Date() }
     }
     @ViewBuilder private var fullAgenda: some View {
         if calendar.enabled {
