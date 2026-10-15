@@ -2,6 +2,38 @@ import XCTest
 import ImageIO
 
 final class PresenterUITests: XCTestCase {
+    func testNativePinchPreservesExpandedWorkspaceAndRedo() throws {
+#if targetEnvironment(simulator)
+        try requireNativePinchInput()
+#endif
+        checkExpandedWorkspace(russian: false, nativePinch: true)
+    }
+
+    private func requireNativePinchInput() throws {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "plain-zoom-control"
+        defer { XCUIDevice.shared.orientation = .portrait; app.terminate() }
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        XCUIDevice.shared.orientation = .landscapeLeft
+        waitForOrientation(app, landscape: true)
+        let scroll = app.scrollViews["plain.zoom"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+        let content = scroll.descendants(matching: .any)["plain.zoom.content"].firstMatch
+        XCTAssertTrue(content.waitForExistence(timeout: 5))
+        XCTAssertTrue(content.isHittable)
+        content.pinch(withScale: 2, velocity: 1)
+        let changed = NSPredicate { _, _ in
+            (scroll.value as? String).flatMap { Double($0.replacingOccurrences(of: "%", with: "")) }.map { $0 > 110 } == true
+        }
+        if XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: changed, object: nil)], timeout: 5) == .completed { return }
+        // A failed oracle must fail, not silently suppress the Presenter check.
+        app.buttons["plain.zoom.programmatic"].tap()
+        let positive = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: changed, object: nil)], timeout: 5)
+        XCTAssertEqual(positive, .completed, "Independent native zoom must update the accessibility result")
+        guard positive == .completed else { return }
+        throw XCTSkip("Simulator native pinch input did not zoom an independent UIKit control; programmatic zoom passed. Native Presenter pinch remains unverified on this simulator.")
+    }
     func testImagePickersPresentFromSourceAndScrolledBackgroundControls() {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
@@ -27,7 +59,7 @@ final class PresenterUITests: XCTestCase {
     }
     func testExpandedEditorFitsLandscapeAndReturnsPreview() { checkExpandedWorkspace(russian: false) }
     func testRussianExpandedWorkspaceKeepsToolsVisible() { checkExpandedWorkspace(russian: true) }
-    private func checkExpandedWorkspace(russian: Bool) {
+    private func checkExpandedWorkspace(russian: Bool, nativePinch: Bool = false) {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", russian ? "(ru)" : "(en)", "-AppleLocale", russian ? "ru_RU" : "en_US"]
         app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
@@ -62,12 +94,12 @@ final class PresenterUITests: XCTestCase {
         let originalHandle = handle.frame
         let center = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         center.withOffset(CGVector(dx: -36, dy: -36)).press(forDuration: 0.1,
-            thenDragTo: center.withOffset(CGVector(dx: -80, dy: -56)))
+            thenDragTo: center.withOffset(CGVector(dx: -120, dy: -80)))
         XCTAssertLessThan(handle.frame.minX, originalHandle.minX - 20)
         app.buttons["presenter.undo"].tap()
         XCTAssertEqual(handle.frame.minX, originalHandle.minX, accuracy: 3)
         handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 0.1,
-            thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 25, dy: 20)))
+            thenDragTo: handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).withOffset(CGVector(dx: 70, dy: 40)))
         XCTAssertGreaterThan(handle.frame.minX, originalHandle.minX + 10)
         app.buttons["presenter.undo"].tap()
         XCTAssertEqual(handle.frame.minX, originalHandle.minX, accuracy: 3)
@@ -85,8 +117,16 @@ final class PresenterUITests: XCTestCase {
         XCTAssertTrue(app.buttons["presenter.fit"].waitForExistence(timeout: 5))
         app.buttons["presenter.fit"].tap()
         XCTAssertTrue(app.buttons["presenter.redo"].isEnabled)
-        // A two-finger pinch navigates the editor and never adds a drawing edit.
-        canvas.pinch(withScale: 2, velocity: 1)
+        if nativePinch {
+            // Keep both touches inside the composition, excluding letterboxed space.
+            let composition = canvas.descendants(matching: .any)["presenter.composition"].firstMatch
+            XCTAssertTrue(composition.waitForExistence(timeout: 5))
+            XCTAssertTrue(composition.isHittable)
+            composition.pinch(withScale: 2, velocity: 1)
+        } else {
+            app.buttons["presenter.actions"].tap()
+            app.buttons[russian ? "Увеличить" : "Zoom in"].tap()
+        }
         XCTAssertTrue(app.buttons["presenter.fit"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["presenter.redo"].isEnabled)
         XCUIDevice.shared.orientation = .portrait
@@ -202,8 +242,21 @@ final class PresenterUITests: XCTestCase {
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
         let source = app.buttons["presenter.source"]
         waitForHittable(source); source.tap()
-        XCTAssertTrue(app.buttons[russian ? "Пустой холст" : "Blank canvas"].waitForExistence(timeout: 5), app.debugDescription)
-        app.buttons[russian ? "Пустой холст" : "Blank canvas"].tap()
+        // On iPad the source row remains accessible behind the popover and has
+        // the same title as its canvas action. Select the popover action only.
+        let canvasChoice = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@",
+            russian ? "Пустой холст" : "Blank canvas", "presenter.source")).firstMatch
+        XCTAssertTrue(canvasChoice.waitForExistence(timeout: 5), app.debugDescription)
+        canvasChoice.tap()
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: canvasChoice)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed,
+                       "Source selection must finish before the next control receives a tap")
+        let start = app.buttons["presenter.start"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            start.exists && start.isEnabled && start.isHittable
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed,
+                       "The selected source must render a preview before sharing can start")
     }
     private func assertCanvasPixels(_ canvas: XCUIElement) {
         XCTAssertTrue(canvas.waitForExistence(timeout: 5))

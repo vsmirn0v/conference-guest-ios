@@ -9,6 +9,10 @@ extension SceneDelegate {
             FloatingVideoPreference.enabled = true
         }
         if let fixture = ProcessInfo.processInfo.environment["CONFERENCE_TEST_UI_FIXTURE"] {
+            if fixture == "plain-zoom-control" {
+                window.rootViewController = PlainZoomControl()
+                return true
+            }
             if fixture == "meeting-gallery" {
                 window.rootViewController = MeetingGalleryFixture()
                 return true
@@ -290,6 +294,46 @@ extension SceneDelegate {
         }
         return false
     }
+}
+/// Independent native input control for simulator gesture qualification.
+private final class PlainZoomControl: UIViewController, UIScrollViewDelegate {
+    private let scroll = UIScrollView()
+    private let content = UIView(frame: CGRect(x: 0, y: 0, width: 1058, height: 595))
+    private var viewportSize = CGSize.zero
+    override func loadView() {
+        view = scroll
+        scroll.delegate = self
+        scroll.minimumZoomScale = 1; scroll.maximumZoomScale = 4
+        scroll.accessibilityIdentifier = "plain.zoom"
+        scroll.accessibilityValue = "100%"
+        content.backgroundColor = .orange
+        content.accessibilityIdentifier = "plain.zoom.content"
+        scroll.addSubview(content); scroll.contentSize = content.bounds.size
+        let zoom = UIButton(type: .system)
+        zoom.setTitle("Zoom control", for: .normal)
+        zoom.accessibilityIdentifier = "plain.zoom.programmatic"
+        zoom.addTarget(self, action: #selector(zoomControl), for: .touchUpInside)
+        zoom.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(zoom)
+        NSLayoutConstraint.activate([
+            zoom.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            zoom.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            zoom.widthAnchor.constraint(equalToConstant: 140), zoom.heightAnchor.constraint(equalToConstant: 44)
+        ])
+    }
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        if viewportSize != scroll.bounds.size {
+            viewportSize = scroll.bounds.size
+            scroll.setZoomScale(1, animated: false)
+            content.frame = CGRect(origin: .zero, size: scroll.bounds.size)
+            scroll.contentSize = content.bounds.size
+        }
+    }
+    @objc private func zoomControl() { scroll.setZoomScale(2, animated: false) }
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? { content }
+    func scrollViewDidZoom(_ scrollView: UIScrollView) { scroll.accessibilityValue = String(format: "%.0f%%", scroll.zoomScale * 100) }
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) { scrollViewDidZoom(scrollView) }
 }
 #endif
 
