@@ -17,7 +17,7 @@ final class AudioMixingUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 3)
         app.openMeetingMore(.view)
         for _ in 0..<4 where !app.buttons["Audio only"].isHittable { app.swipeUp() }
-        app.buttons["Audio only"].tap()
+        app.meetingActionButton("Audio only").tap()
         youtube.terminate()
         youtube.open(URL(string: "https://www.youtube.com/watch?v=aqz-KE-bpKQ")!)
         Thread.sleep(forTimeInterval: 12)

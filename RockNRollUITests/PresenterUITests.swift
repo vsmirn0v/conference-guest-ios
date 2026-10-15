@@ -198,7 +198,7 @@ final class PresenterUITests: XCTestCase {
     }
     private func open(_ app: XCUIApplication, russian: Bool = false) {
         app.openMeetingMore(.sharePresenter)
-        app.buttons[russian ? "Презентация" : "Presenter"].firstMatch.tap()
+        app.meetingActionButton(russian ? "Презентация" : "Presenter").tap()
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
         let source = app.buttons["presenter.source"]
         waitForHittable(source); source.tap()

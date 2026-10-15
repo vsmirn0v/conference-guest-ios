@@ -340,7 +340,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         camera.accessibilityLabel = L("Start video")
         share.configuration = Self.iconConfiguration("rectangle.on.rectangle", title: L("Share"))
         share.accessibilityLabel = L("Share screen")
-        for button in [microphone, camera, share, catchUpButton, missedButton, reactionsButton, participantsButton] {
+        // Reactions owns its held press; the large-content viewer would compete with More.
+        for button in [microphone, camera, share, catchUpButton, missedButton, participantsButton] {
             button.showsLargeContentViewer = true
             button.largeContentTitle = button.accessibilityLabel
             button.largeContentImage = button.configuration?.image

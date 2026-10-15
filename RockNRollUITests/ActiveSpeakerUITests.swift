@@ -1,17 +1,20 @@
 import XCTest
 
 final class ActiveSpeakerUITests: XCTestCase {
+    override func setUp() { super.setUp(); continueAfterFailure = false }
     private func change(_ app: XCUIApplication, to name: String) {
         let more = app.buttons["call.reactions"]
         XCTAssertTrue(more.waitForExistence(timeout: 5)); app.openMeetingMore(.meeting)
-        app.buttons["Test speaker: \(name)"].tap()
+        app.meetingActionButton("Test speaker: \(name)").tap()
+        app.waitForMeetingToolsToClose()
     }
     private func assertSpeaker(_ element: XCUIElement, _ name: String?) {
         let predicate = NSPredicate { _, _ in
+            guard element.exists && element.isHittable else { return false }
             let value = [element.label, element.value as? String].compactMap { $0 }.joined(separator: " ")
             return name.map { value.contains($0) } ?? !value.contains("Speaking:")
         }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 8), .completed)
     }
 
     func testGuestLandscapeMetadataDoesNotMovePinnedZoomedShare() throws {

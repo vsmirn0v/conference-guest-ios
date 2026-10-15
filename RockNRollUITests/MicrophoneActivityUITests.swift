@@ -30,13 +30,13 @@ final class MicrophoneActivityUITests: XCTestCase {
             let more = app.buttons["call.reactions"].firstMatch
             let visible = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: more)
             wait(for: [visible], timeout: 5)
-            app.openMeetingMore(.meeting); app.buttons["Fixture mic quiet"].tap()
+            app.openMeetingMore(.meeting); app.meetingActionButton("Fixture mic quiet").tap()
             let ready = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: mic)
             wait(for: [ready], timeout: 5)
             XCTAssertTrue(mic.isHittable)
             let quiet = mic.screenshot()
             let before = mic.frame
-            app.openMeetingMore(.meeting); app.buttons["Fixture mic loud"].tap()
+            app.openMeetingMore(.meeting); app.meetingActionButton("Fixture mic loud").tap()
             let loud = mic.screenshot()
             XCTAssertNotEqual(quiet.pngRepresentation, loud.pngRepresentation,
                 "Mic icon must show changing input in the actual meeting controls")

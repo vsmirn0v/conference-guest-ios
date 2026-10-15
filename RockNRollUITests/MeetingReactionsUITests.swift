@@ -27,15 +27,30 @@ final class MeetingReactionsUITests: XCTestCase {
     }
 
     func testHoldReactionsConsumesReleaseAndOpensMore() {
+        continueAfterFailure = false
         let app = fixtureApp()
-        defer { app.terminate() }
-        app.buttons["call.reactions"].press(forDuration: 0.7)
-        XCTAssertTrue(app.buttons["meeting.more.reactions"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["reactions.send.like"].exists, "A held press also triggered the short tap")
-        XCTAssertFalse(app.staticTexts["reactions.received.like"].exists, "Opening tools sent a reaction")
-        app.buttons["reactions.done"].tap()
-        app.buttons["call.reactions"].tap()
-        XCTAssertTrue(app.buttons["reactions.send.like"].waitForExistence(timeout: 5))
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        for (cycle, orientation) in [UIDeviceOrientation.portrait, .landscapeLeft, .landscapeLeft].enumerated() {
+            XCTContext.runActivity(named: "Hold and short tap cycle \(cycle + 1)") { _ in
+                XCUIDevice.shared.orientation = orientation
+                let shortcut = app.buttons["call.reactions"]
+                let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    shortcut.exists && shortcut.isHittable
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+                shortcut.press(forDuration: 0.7)
+                XCTAssertTrue(app.buttons["meeting.more.reactions"].waitForExistence(timeout: 5))
+                XCTAssertFalse(app.buttons["reactions.send.like"].exists, "A held press also triggered the short tap")
+                XCTAssertFalse(app.staticTexts["reactions.received.like"].exists, "Opening tools sent a reaction")
+                app.buttons["reactions.done"].tap()
+                guard app.waitForMeetingToolsToClose() else { return }
+                shortcut.tap()
+                XCTAssertTrue(app.buttons["reactions.send.like"].waitForExistence(timeout: 5))
+                XCTAssertFalse(app.buttons["meeting.more.reactions"].exists, "A short tap must open the sender")
+                app.buttons["reactions.done"].tap()
+                app.waitForMeetingToolsToClose()
+            }
+        }
     }
 
     func testUnsupportedEngineKeepsReactionsAndMoreDiscoverable() {
@@ -65,7 +80,7 @@ final class MeetingReactionsUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 5)); composer.tap()
         composer.typeText("Keep this unsent arrangement")
         app.buttons["chat.reactions"].tap()
-        XCTAssertTrue(app.buttons["call.more"].waitForExistence(timeout: 5)); app.buttons["call.more"].tap()
+        XCTAssertTrue(app.buttons["call.more"].waitForExistence(timeout: 5)); app.meetingActionButton("call.more").tap()
         app.descendants(matching: .any)["meeting.menu.call.group.cameraSound"].firstMatch.tap()
         app.buttons["Camera & sound"].firstMatch.tap()
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
@@ -73,8 +88,8 @@ final class MeetingReactionsUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         XCTAssertEqual(composer.value as? String, "Keep this unsent arrangement")
         app.buttons["chat.reactions"].tap()
-        app.buttons["call.more"].tap()
-        app.descendants(matching: .any)["meeting.menu.call.group.meeting"].firstMatch.tap()
+        app.meetingActionButton("call.more").tap()
+        app.meetingActionButton("meeting.menu.call.group.meeting").tap()
         app.buttons["Meeting details"].tap()
         let details = app.alerts.firstMatch
         XCTAssertTrue(details.waitForExistence(timeout: 5)); details.buttons["Done"].tap()

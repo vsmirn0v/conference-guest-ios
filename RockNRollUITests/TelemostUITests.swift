@@ -16,7 +16,7 @@ final class TelemostUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Mute microphone"].waitForExistence(timeout: 8))
         let available = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Floating video available"), object: app.buttons["call.reactions"])
         XCTAssertEqual(XCTWaiter.wait(for: [available], timeout: 20), .completed)
-        app.openMeetingMore(.view); app.buttons["Show floating video"].tap()
+        app.openMeetingMore(.view); app.meetingActionButton("Show floating video").tap()
         XCUIDevice.shared.press(.home)
         let pip = XCUIApplication(bundleIdentifier: "com.apple.springboard").windows["PIP-SBInteractionPassThroughView"]
         XCTAssertTrue(pip.waitForExistence(timeout: 8))
@@ -37,16 +37,13 @@ final class TelemostUITests: XCTestCase {
         XCTAssertTrue(app.scrollViews["Pinch to zoom screen share"].firstMatch.waitForExistence(timeout: 35))
         for route in ["Use iPhone receiver", "Use iPhone speaker"] {
             app.openMeetingMore(.cameraSound)
-            let menu = app.collectionViews.firstMatch
-            for _ in 0..<3 where !app.buttons[route].exists { menu.swipeDown() }
-            XCTAssertTrue(app.buttons[route].waitForExistence(timeout: 3))
-            app.buttons[route].tap()
+            app.meetingActionButton(route).tap()
             sleep(3)
             XCTAssertTrue(app.buttons["Leave"].exists)
         }
         let available = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Floating video available"), object: app.buttons["call.reactions"])
         XCTAssertEqual(XCTWaiter.wait(for: [available], timeout: 15), .completed)
-        app.openMeetingMore(.view); app.buttons["Show floating video"].tap()
+        app.openMeetingMore(.view); app.meetingActionButton("Show floating video").tap()
         XCUIDevice.shared.press(.home)
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let pip = system.windows["PIP-SBInteractionPassThroughView"]

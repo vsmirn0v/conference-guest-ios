@@ -6,6 +6,29 @@ import XCTest
 
 @MainActor
 final class MeetingActionsTests: XCTestCase {
+    func testGuestReactionsShortcutRetainsHoldOwnershipAfterControlsSetup() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene), host = UIViewController()
+        window.rootViewController = host
+        window.isHidden = false
+        let controls = CallControls(localPreview: LocalSharePreview(), state: nil, coordinator: nil,
+            router: nil, catchUp: CatchUpStore(), chat: ChatStore(), initialDisplayMode: .all,
+            invitationURL: nil, roomIdentifier: nil, onDisplayMode: { _ in }, onFloat: {},
+            onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
+            onMicrophoneState: { _ in }, onCameraState: { _ in })
+        host.view.addSubview(controls)
+        defer { controls.removeFromSuperview(); window.isHidden = true }
+        let button = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }
+            .first { $0.accessibilityIdentifier == "call.reactions" })
+        XCTAssertFalse(button.showsLargeContentViewer, "The large-content viewer competes with the More shortcut")
+        XCTAssertNil(button.menu, "A native context menu must not compete with the held-press shortcut")
+        let holds = button.gestureRecognizers?.compactMap { $0 as? UILongPressGestureRecognizer } ?? []
+        XCTAssertEqual(holds.count, 1)
+        XCTAssertTrue(try XCTUnwrap(holds.first).cancelsTouchesInView, "Release must not also open the reaction sender")
+        XCTAssertTrue(button.accessibilityCustomActions?.contains { $0.name == L("Open More options") } == true,
+                      "VoiceOver needs an alternative to the held press")
+    }
+
     func testGroupingPreservesExistingActionsAndDisabledCapabilities() throws {
         var calls = 0
         let active = UIAction(title: "Active", identifier: UIAction.Identifier("qa.active"), state: .on) { _ in calls += 1 }

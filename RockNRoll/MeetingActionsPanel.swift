@@ -214,6 +214,11 @@ final class MeetingActionsShortcut: NSObject {
         button.accessibilityCustomActions = [UIAccessibilityCustomAction(name: L("Open More options"), target: shortcut, selector: #selector(open))]
     }
     @objc private func held(_ gesture: UILongPressGestureRecognizer) {
+        #if DEBUG
+        if [.began, .ended, .cancelled].contains(gesture.state) {
+            NSLog("MEETING_ACTIONS_HOLD state=%ld", gesture.state.rawValue)
+        }
+        #endif
         guard gesture.state == .began else { return }
         if !ProcessInfo.processInfo.isiOSAppOnMac { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
         show()
