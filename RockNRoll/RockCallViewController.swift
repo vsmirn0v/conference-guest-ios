@@ -138,6 +138,17 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     var supportsChat = true
     var supportsSharing = true
     var usesNativeShareControl = false
+    #if DEBUG
+    var usesBroadcastPickerForTesting = false
+    #endif
+    private var usesBroadcastPicker: Bool {
+        guard !usesNativeShareControl, !ProcessInfo.processInfo.isiOSAppOnMac else { return false }
+        #if DEBUG
+        if usesBroadcastPickerForTesting { return true }
+        #endif
+        if #available(iOS 27.0, *) { return false }
+        return true
+    }
     var sharingAvailable = true {
         didSet {
             share.isEnabled = sharingAvailable || isSharingScreen
@@ -473,17 +484,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         configure(microphone, symbol: "mic.slash.fill", label: L("Unmute microphone"), title: L("Mic off"))
         configure(camera, symbol: "video.slash.fill", label: L("Start video"), title: L("Cam off"))
         configure(share, symbol: "rectangle.on.rectangle", label: L("Share screen"), title: L("Share"))
-        if usesNativeShareControl || ProcessInfo.processInfo.isiOSAppOnMac {
-            share.isHidden = false
-            sharePicker.isHidden = true
-            shareTitle.isHidden = true
-        } else if #available(iOS 27.0, *) {
-            share.isHidden = false
-            sharePicker.isHidden = true
-            shareTitle.isHidden = true
-        } else {
-            share.isHidden = true
-        }
+        share.isHidden = usesBroadcastPicker
+        sharePicker.isHidden = !usesBroadcastPicker
+        shareTitle.isHidden = !usesBroadcastPicker
         sharePicker.preferredExtension = Bundle.main.bundleIdentifier.map { "\($0).broadcast" }
         sharePicker.showsMicrophoneButton = false
         sharePicker.tintColor = accent
@@ -562,6 +565,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             routePicker = systemPicker
         }
         routePicker.accessibilityLabel = ProcessInfo.processInfo.isiOSAppOnMac ? L("Audio devices") : L("Choose audio output")
+        MeetingChromeSurface.hidePickerArtwork(in: routePicker)
         let leave = AlignedCallButton(frame: .zero)
         configure(leave, symbol: "phone.down.fill", label: L("Leave"), title: L("Leave"))
         leave.configuration?.baseForegroundColor = .systemRed
@@ -655,7 +659,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         configure(audioAppearance, symbol: "speaker.wave.2.fill", label: L("Audio output"), title: L("Audio"))
         audioAppearance.isUserInteractionEnabled = false
         audioAppearance.accessibilityElementsHidden = true
-        audioAppearance.backgroundColor = UIColor(red: 0.12, green: 0.14, blue: 0.21, alpha: 1)
         audioAppearance.translatesAutoresizingMaskIntoConstraints = false
         audioControl.addSubview(audioAppearance)
         NSLayoutConstraint.activate([
@@ -689,9 +692,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             shareTitle.bottomAnchor.constraint(equalTo: shareControl.bottomAnchor, constant: -4)
         ])
         configure(broadcastAppearance, symbol: "rectangle.on.rectangle", label: L("Share screen"), title: L("Share"))
+        MeetingChromeSurface.hidePickerArtwork(in: sharePicker)
         broadcastAppearance.isUserInteractionEnabled = false
         broadcastAppearance.accessibilityElementsHidden = true
-        broadcastAppearance.backgroundColor = UIColor(red: 0.12, green: 0.14, blue: 0.21, alpha: 1)
         broadcastAppearance.isHidden = sharePicker.isHidden
         shareTitle.isHidden = true
         broadcastAppearance.translatesAutoresizingMaskIntoConstraints = false
@@ -1354,19 +1357,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
         isSharingScreen = enabled
         share.isEnabled = sharingAvailable || enabled
-        if usesNativeShareControl || ProcessInfo.processInfo.isiOSAppOnMac {
-            share.isHidden = false
-            sharePicker.isHidden = true
-            shareTitle.isHidden = true
-        } else if #available(iOS 27.0, *) {
-            share.isHidden = false
-            sharePicker.isHidden = true
-            shareTitle.isHidden = true
-        } else {
-            share.isHidden = !enabled
-            sharePicker.isHidden = enabled
-            shareTitle.isHidden = enabled
-        }
+        share.isHidden = usesBroadcastPicker && !enabled
+        sharePicker.isHidden = !usesBroadcastPicker || enabled
+        shareTitle.isHidden = sharePicker.isHidden
         broadcastAppearance.isHidden = sharePicker.isHidden
         shareTitle.isHidden = true
         share.configuration?.image = UIImage(systemName: enabled ? "rectangle.slash" : "rectangle.on.rectangle")

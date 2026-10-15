@@ -110,6 +110,7 @@ final class AlignedCallButton: UIButton {
 }
 
 final class CallToolbar: UIView {
+    private let surface = MeetingChromeSurface()
     private let baseItems: [UIView]
     private var accessory: UIView?
     private var items: [UIView] {
@@ -127,8 +128,11 @@ final class CallToolbar: UIView {
     init(items: [UIView]) {
         self.baseItems = items
         super.init(frame: .zero)
+        overrideUserInterfaceStyle = .dark
+        surface.frame = bounds
+        surface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(surface)
         items.forEach { $0.translatesAutoresizingMaskIntoConstraints = true; addSubview($0) }
-        backgroundColor = UIColor(red: 0.12, green: 0.14, blue: 0.21, alpha: 1)
         layer.cornerRadius = 16
         accessibilityIdentifier = "Meeting toolbar"
     }

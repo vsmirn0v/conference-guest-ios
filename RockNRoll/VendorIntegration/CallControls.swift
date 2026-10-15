@@ -430,6 +430,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         route.accessibilityIdentifier = "call.output"
         let picker: UIView = ProcessInfo.processInfo.isiOSAppOnMac ? MacAudioRouteButton()
             : (coordinator?.audioRoutePickerButton ?? UIButton(type: .system))
+        MeetingChromeSurface.hidePickerArtwork(in: picker)
         picker.addGestureRecognizer(AudioRouteInteractionObserver { [weak self] in
             self?.onChooseAudioOutput?()
         })
@@ -439,7 +440,6 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         routeAppearance.configuration = Self.iconConfiguration("speaker.wave.2.fill", title: L("Audio"))
         routeAppearance.isUserInteractionEnabled = false
         routeAppearance.accessibilityElementsHidden = true
-        routeAppearance.backgroundColor = UIColor(red: 0.12, green: 0.14, blue: 0.21, alpha: 1)
         routeAppearance.translatesAutoresizingMaskIntoConstraints = false
         route.addSubview(routeAppearance)
         NSLayoutConstraint.activate([

@@ -346,6 +346,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
     }
 
     private func buildHeader() {
+        addControlBackground(to: header, cornerRadius: 20, fallbackColor: dark)
         let title = UILabel()
         title.text = L("Conversation")
         title.textColor = .white
@@ -518,8 +519,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         callStrip.isLayoutMarginsRelativeArrangement = true
         callStrip.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 2, leading: 4,
                                                                      bottom: 2, trailing: 4)
-        callStrip.backgroundColor = card
-        callStrip.layer.cornerRadius = 12
+        addControlBackground(to: callStrip, cornerRadius: 16, fallbackColor: card)
         callStrip.accessibilityIdentifier = "Conversation call controls"
         for button in [micButton, cameraButton, speakerButton, leaveButton] {
             button.configuration = .tinted()
@@ -572,6 +572,13 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         compactClose.tag = 29
     }
 
+    private func addControlBackground(to container: UIView, cornerRadius: CGFloat, fallbackColor: UIColor) {
+        let chrome = MeetingChromeSurface(cornerRadius: cornerRadius, fallbackColor: fallbackColor)
+        chrome.frame = container.bounds
+        chrome.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.insertSubview(chrome, at: 0)
+    }
+
     private func renderCallState(microphone: Bool, camera: Bool, speaker: Bool, held: Bool) {
         style(micButton, title: held ? L("On hold") : L("Mic"),
               symbol: microphone ? "mic.fill" : "mic.slash.fill", active: microphone)
@@ -600,7 +607,7 @@ final class ConversationPanelViewController: UIViewController, UITextViewDelegat
         button.largeContentTitle = title
         button.largeContentImage = UIImage(systemName: symbol)
         button.configuration?.baseForegroundColor = active ? accent : .white
-        button.configuration?.baseBackgroundColor = active ? accent.withAlphaComponent(0.22) : card
+        button.configuration?.baseBackgroundColor = active ? accent.withAlphaComponent(0.22) : .clear
         button.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
             var result = attributes
             result.font = .systemFont(ofSize: 11, weight: .semibold)

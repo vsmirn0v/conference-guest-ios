@@ -93,7 +93,7 @@ struct JoinView: View {
                         showingUndo = false
                     }
                     .padding(12)
-                    .background(.regularMaterial, in: Capsule())
+                    .background(ControlChromeBackground(cornerRadius: 24))
                 }
               }
             }
@@ -282,7 +282,7 @@ struct JoinView: View {
                     Spacer()
                     Button(L("Cancel")) { calendar.cancelAutomaticJoin(suppress: true) }
                 }.buttonStyle(.borderless)
-            }.padding(12).background(.regularMaterial)
+            }.padding(12).background(ControlChromeBackground())
                 .accessibilityIdentifier("calendar.countdown-banner")
         }
     }

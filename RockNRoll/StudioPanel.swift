@@ -123,7 +123,7 @@ struct StudioPanel: View {
                         } else if model.pane == .presenter {
                             PresenterShareControl(model: model.presenter)
                         }
-                    }.padding(.horizontal).padding(.vertical, 10).background(.regularMaterial)
+                    }.padding(.horizontal).padding(.vertical, 10).background(ControlChromeBackground())
                 }
     }
 
@@ -308,7 +308,9 @@ private final class StudioHostingController: UIHostingController<StudioPanel>, U
 private final class StudioTransition: NSObject, UIViewControllerAnimatedTransitioning {
     private let presenting: Bool
     init(presenting: Bool) { self.presenting = presenting }
-    func transitionDuration(using context: UIViewControllerContextTransitioning?) -> TimeInterval { 0.18 }
+    func transitionDuration(using context: UIViewControllerContextTransitioning?) -> TimeInterval {
+        UIAccessibility.isReduceMotionEnabled ? 0 : 0.18
+    }
     func animateTransition(using context: UIViewControllerContextTransitioning) {
         guard let controller = context.viewController(forKey: presenting ? .to : .from),
               let view = context.view(forKey: presenting ? .to : .from) else {
@@ -350,7 +352,9 @@ private final class StudioSheet: UIPresentationController {
         dim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(close)))
         containerView.insertSubview(dim, at: 0)
         dim.frame = containerView.bounds
-        presentedView?.layer.cornerRadius = 18
+        if #available(iOS 26.0, *) { presentedView?.layer.cornerRadius = 26 }
+        else { presentedView?.layer.cornerRadius = 18 }
+        presentedView?.layer.cornerCurve = .continuous
         presentedView?.clipsToBounds = true
         presentedView?.accessibilityViewIsModal = true
     }

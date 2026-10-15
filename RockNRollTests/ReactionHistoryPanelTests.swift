@@ -12,10 +12,17 @@ final class ReactionHistoryPanelTests: XCTestCase {
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         let chat = ChatStore(); chat.reactionHistoryAvailable = true; chat.reactionHistory.beginMeeting()
         let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
-        window.rootViewController = panel; window.makeKeyAndVisible()
+        let host = ManualAppearanceHost()
+        host.addChild(panel)
+        host.view.addSubview(panel.view)
+        panel.view.frame = host.view.bounds
+        panel.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        panel.didMove(toParent: host)
+        window.rootViewController = host; window.makeKeyAndVisible()
         defer { window.isHidden = true; previous?.makeKey() }
+        panel.beginAppearanceTransition(true, animated: false); panel.endAppearanceTransition()
         await drainUpdates()
-        panel.viewDidDisappear(false)
+        panel.beginAppearanceTransition(false, animated: false); panel.endAppearanceTransition()
         let before = panel.messageRenderCount
         let start = Date()
         for index in 0..<30 {
@@ -27,10 +34,10 @@ final class ReactionHistoryPanelTests: XCTestCase {
         await drainUpdates()
         XCTAssertEqual(panel.messageRenderCount, before)
         XCTAssertEqual(chat.unreadCount, 30)
-        panel.viewWillAppear(true); await drainUpdates()
+        panel.beginAppearanceTransition(true, animated: false); await drainUpdates()
         XCTAssertGreaterThan(panel.messageRenderCount, before, "Content must be ready during presentation, before didAppear")
         XCTAssertEqual(chat.unreadCount, 30, "Preparing content must not acknowledge it before presentation")
-        panel.viewDidAppear(true); await drainUpdates()
+        panel.endAppearanceTransition(); await drainUpdates()
         XCTAssertLessThanOrEqual(panel.messageRenderCount, before + 2, "Seen-state feedback may add one render")
         XCTAssertEqual(find(UITextView.self, in: panel.view).filter { $0.text?.hasPrefix("Message ") == true }.count, 30)
         let modes = try XCTUnwrap(find(UISegmentedControl.self, in: panel.view).first)
@@ -54,6 +61,9 @@ final class ReactionHistoryPanelTests: XCTestCase {
         let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
         window.rootViewController = panel; window.makeKeyAndVisible()
         defer { window.isHidden = true; previous?.makeKey() }
+        try await waitFor("Conversation appearance completed") {
+            chat.isConversationOpen && chat.reactionHistory.isReadingLatest
+        }
         await drainUpdates()
         let before = panel.messageRenderCount
         for _ in 0..<30 { chat.reactionHistory.receive(kind: .wave, participantID: "ani", displayName: "Ani") }
@@ -151,6 +161,9 @@ final class ReactionHistoryPanelTests: XCTestCase {
         let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
         window.rootViewController = panel; window.makeKeyAndVisible(); panel.view.layoutIfNeeded()
         defer { window.isHidden = true; previous?.makeKey() }
+        try await waitFor("Conversation appearance completed") {
+            chat.isConversationOpen && chat.reactionHistory.isReadingLatest
+        }
         let filter = try XCTUnwrap(find(UIButton.self, in: panel.view).first { $0.accessibilityIdentifier == "chat.activity-filter" })
         func choose(_ title: String) async throws {
             let action = try XCTUnwrap(filter.menu?.children.compactMap { $0 as? UIAction }.first { $0.title == title })
@@ -191,6 +204,9 @@ final class ReactionHistoryPanelTests: XCTestCase {
         let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat, initialFilter: .reactions)
         window.rootViewController = panel; window.makeKeyAndVisible(); panel.view.layoutIfNeeded()
         defer { window.isHidden = true; previous?.makeKey() }
+        try await waitFor("Reaction history appearance completed") {
+            chat.reactionHistory.isReadingLatest
+        }
         await drainUpdates(); panel.view.layoutIfNeeded()
         let history = try XCTUnwrap(find(UIScrollView.self, in: panel.view).first { $0.accessibilityLabel == L("Jam chat messages") })
         history.setContentOffset(CGPoint(x: 0, y: 200), animated: false)
@@ -255,7 +271,9 @@ final class ReactionHistoryPanelTests: XCTestCase {
         let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat)
         window.rootViewController = panel; window.makeKeyAndVisible(); panel.view.layoutIfNeeded()
         defer { panel.dismiss(animated: false); window.isHidden = true; previous?.makeKey() }
-        await drainUpdates()
+        try await waitFor("Conversation appearance completed") {
+            chat.isConversationOpen && chat.reactionHistory.isReadingLatest
+        }
         chat.isConversationOpen = true; chat.reactionHistory.isReadingLatest = true
         let info = try XCTUnwrap(find(UIButton.self, in: panel.view).first { $0.accessibilityIdentifier == "reaction.history-info" })
         info.sendActions(for: .touchUpInside)
@@ -306,26 +324,39 @@ final class ReactionHistoryPanelTests: XCTestCase {
         }
         let panel = ConversationPanelViewController(catchUp: CatchUpStore(), chat: chat, call: controls)
         window.rootViewController = panel; window.makeKeyAndVisible()
-        panel.view.layoutIfNeeded(); await drainUpdates()
+        panel.view.layoutIfNeeded()
+        try await waitFor("Conversation appearance completed") {
+            chat.isConversationOpen && chat.reactionHistory.isReadingLatest
+        }
         XCTAssertTrue(chat.isConversationOpen)
         XCTAssertTrue(chat.reactionHistory.isReadingLatest)
         let button = try XCTUnwrap(find(UIButton.self, in: panel.view).first { $0.accessibilityIdentifier == "chat.reactions" })
         button.sendActions(for: .touchUpInside)
-        await drainUpdates()
+        try await waitFor("Palette presentation completed") {
+            panel.presentedViewController != nil && panel.presentedViewController?.isBeingPresented == false
+        }
         XCTAssertFalse(chat.isConversationOpen)
         XCTAssertFalse(chat.reactionHistory.isReadingLatest)
         let palette = try XCTUnwrap(panel.presentedViewController as? MeetingActionsController)
-        for _ in 0..<40 where palette.isBeingPresented {
-            try await Task.sleep(for: .milliseconds(25))
-        }
         XCTAssertFalse(palette.isBeingPresented)
         let dismissed = expectation(description: "Palette dismissal completed")
         palette.dismiss(animated: false) { dismissed.fulfill() }
         await fulfillment(of: [dismissed], timeout: 3)
-        await drainUpdates()
+        try await waitFor("Conversation resumed after palette dismissal") {
+            panel.presentedViewController == nil && chat.isConversationOpen && chat.reactionHistory.isReadingLatest
+        }
         XCTAssertNil(panel.presentedViewController)
         XCTAssertTrue(chat.isConversationOpen)
         XCTAssertTrue(chat.reactionHistory.isReadingLatest)
+    }
+
+    private func waitFor(_ description: String, file: StaticString = #filePath, line: UInt = #line,
+                         until condition: () -> Bool) async throws {
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        while !condition(), ProcessInfo.processInfo.systemUptime < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertTrue(condition(), description, file: file, line: line)
     }
 
     private func drainUpdates() async {
@@ -336,4 +367,9 @@ final class ReactionHistoryPanelTests: XCTestCase {
     private func find<T: UIView>(_ type: T.Type, in root: UIView) -> [T] {
         ((root as? T).map { [$0] } ?? []) + root.subviews.flatMap { find(type, in: $0) }
     }
+}
+
+@MainActor
+private final class ManualAppearanceHost: UIViewController {
+    override var shouldAutomaticallyForwardAppearanceMethods: Bool { false }
 }
