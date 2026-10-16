@@ -541,6 +541,93 @@ final class CallPresentationTests: XCTestCase {
             }
         }
     }
+    func testSmallWindowLargestTextChromeKeepsMediaAndSingleLineCaptions() throws {
+        guard #available(iOS 17.0, *) else { throw XCTSkip("Per-view text trait overrides require iOS 17") }
+        let titles = ["Mic", "Video", "Share", "Audio", "Reactions", "Leave"]
+        let buttons = titles.map { title in
+            let button = AlignedCallButton(frame: .zero)
+            button.configuration = .plain(); button.configuration?.title = title
+            button.configuration?.image = UIImage(systemName: "circle")
+            button.accessibilityLabel = title
+            return button
+        }
+        let toolbar = CallToolbar(items: buttons)
+        toolbar.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        toolbar.arrange(rail: false, largeText: true)
+        XCTAssertLessThanOrEqual(toolbar.preferredHeight, 214)
+        toolbar.frame = CGRect(x: 0, y: 0, width: 359, height: toolbar.preferredHeight)
+        toolbar.layoutIfNeeded()
+        for (button, title) in zip(buttons, titles) {
+            button.layoutIfNeeded()
+            let caption = try XCTUnwrap(button.subviews.compactMap { $0 as? UILabel }.first { !$0.isHidden && $0.text == title })
+            XCTAssertEqual(caption.numberOfLines, 1)
+            XCTAssertGreaterThan(caption.font.pointSize, 12)
+            XCTAssertLessThanOrEqual(caption.font.pointSize, 18)
+            XCTAssertLessThanOrEqual(caption.bounds.height, 24)
+            XCTAssertTrue(button.bounds.contains(caption.frame))
+            XCTAssertGreaterThanOrEqual(button.bounds.width, 44)
+            XCTAssertGreaterThanOrEqual(button.bounds.height, 44)
+            XCTAssertEqual(button.accessibilityLabel, title)
+        }
+        let bounds = CGRect(x: 0, y: 0, width: 375, height: 667)
+        let visible = CallPresentationGeometry(bounds: bounds, insets: .init(top: 20, left: 0, bottom: 0, right: 0),
+            headerHeight: 240, toolbarHeight: toolbar.preferredHeight, hidden: false, largeText: true, floating: true)
+        let hidden = CallPresentationGeometry(bounds: bounds, insets: .init(top: 20, left: 0, bottom: 0, right: 0),
+            headerHeight: 240, toolbarHeight: toolbar.preferredHeight, hidden: true, largeText: true, floating: true)
+        XCTAssertTrue(visible.compactHeader)
+        XCTAssertEqual(visible.header.height, 44)
+        XCTAssertGreaterThan(visible.stage.height, 300)
+        XCTAssertEqual(visible.stage, hidden.stage)
+        XCTAssertFalse(visible.header.intersects(visible.toolbar))
+        toolbar.traitOverrides.preferredContentSizeCategory = .large
+        toolbar.arrange(rail: false, largeText: false)
+        toolbar.frame.size = CGSize(width: 359, height: toolbar.preferredHeight)
+        toolbar.layoutIfNeeded(); buttons[4].layoutIfNeeded()
+        let caption = try XCTUnwrap(buttons[4].subviews.compactMap { $0 as? UILabel }.first { !$0.isHidden && $0.text == "Reactions" })
+        XCTAssertTrue(caption.adjustsFontSizeToFitWidth)
+        let wordWidth = ("Reactions" as NSString).size(withAttributes: [.font: caption.font!]).width
+        XCTAssertLessThanOrEqual(wordWidth * caption.minimumScaleFactor, caption.bounds.width)
+    }
+    func testLargestTextSourceSymbolsAndHeaderStayInsideCompactRows() throws {
+        guard #available(iOS 17.0, *) else { throw XCTSkip("Per-view text trait overrides require iOS 17") }
+        let (window, controls, _, _) = try guestLayout()
+        defer { window.isHidden = true }
+        window.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        controls.setStagePresentation(.init(target: .init(participant: "presenter", isShare: true),
+            name: "Shared source with full identity", microphoneOn: true, watermark: nil,
+            active: true, automatic: true, count: 2, browsing: false))
+        window.layoutIfNeeded(); controls.layoutIfNeeded()
+        let guest = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "Shared stream selector" })
+        let scene = try XCTUnwrap(window.windowScene)
+        let nativeWindow = UIWindow(windowScene: scene)
+        nativeWindow.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        let call = RockCallViewController(title: "Full meeting identity", catchUp: CatchUpStore(), chat: ChatStore())
+        nativeWindow.rootViewController = call; nativeWindow.isHidden = false
+        defer { nativeWindow.isHidden = true }
+        let factory = try NativeRTCPeer.makeFactory()
+        let track = factory.videoTrack(with: factory.videoSource(), trackId: "share")
+        call.render(snapshot: .init(participants: [.init(id: "presenter", name: "Shared source with full identity", isLocal: false,
+            microphoneOn: true, cameraOn: false, screenShareOn: true, isSpeaking: false,
+            videoTracks: [.init(id: "share", source: .screenShareVideo, track: .native(track))])]))
+        nativeWindow.layoutIfNeeded(); call.view.layoutIfNeeded()
+        let native = try XCTUnwrap(descendants(call.view).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "Meeting source selector" })
+        for selector in [guest, native] {
+            selector.layoutIfNeeded()
+            let image = try XCTUnwrap(selector.imageView)
+            XCTAssertEqual(selector.bounds.height, 44)
+            XCTAssertLessThanOrEqual(image.bounds.width, 32)
+            XCTAssertLessThanOrEqual(image.bounds.height, 32)
+            XCTAssertTrue(selector.bounds.contains(image.frame))
+        }
+        let header = CompactCallHeader(frame: CGRect(x: 0, y: 0, width: 359, height: 44))
+        header.update(name: "Complete source identity", navigation: false, browsing: false, pinned: false,
+            pinLabel: nil, participantsLabel: "Musicians", chatValue: nil, status: "Full connection status",
+            focusAvailable: true, meetingName: "Full meeting identity")
+        header.layoutIfNeeded()
+        XCTAssertTrue(header.details.accessibilityLabel?.contains("Complete source identity") == true)
+        XCTAssertTrue(header.details.accessibilityLabel?.contains("Full meeting identity") == true)
+        XCTAssertTrue(header.details.accessibilityValue?.contains("Full connection status") == true)
+    }
     func testLandscapeHeaderHeightIsStableAcrossStatusChanges() {
         let bounds = CGRect(x: 0, y: 0, width: 812, height: 375)
         for height: CGFloat in [58, 80, 106, 140] {

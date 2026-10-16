@@ -249,25 +249,64 @@ final class MeetingPresentationUITests: XCTestCase {
         defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
         let grid = app.scrollViews["Meeting grid"]
         XCTAssertTrue(grid.waitForExistence(timeout: 10))
+        let participantIDs = ["ani", "aram", "mariam", "vahan"]
+        func visibleParticipants() -> [String] {
+            let window = app.windows.firstMatch.frame, page = grid.frame
+            return participantIDs.filter { id in
+                let tile = app.otherElements["gallery." + id + ".camera"]
+                guard tile.exists else { return false }
+                let frame = tile.frame
+                return frame.width > 0 && frame.height > 0 && window.contains(frame) && page.contains(frame) && tile.isHittable
+            }
+        }
+        func changePage(using button: XCUIElement) -> Bool {
+            guard waitForHittable(button) else { return false }
+            XCTAssertTrue(button.isEnabled)
+            let counter = app.staticTexts["Gallery page"]
+            XCTAssertTrue(counter.exists)
+            let before = counter.label
+            button.tap()
+            let changed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                counter.exists && counter.label != before
+            }, object: nil)
+            let result = XCTWaiter.wait(for: [changed], timeout: 5)
+            XCTAssertEqual(result, .completed, "The gallery pager must expose a different page")
+            return result == .completed
+        }
         for orientation: UIDeviceOrientation in [.portrait, .landscapeLeft, .portrait] {
             XCUIDevice.shared.orientation = orientation
             let landscape = orientation == .landscapeLeft
             let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 let frame = app.windows.firstMatch.frame
-                return (frame.width > frame.height) == landscape &&
-                    app.otherElements["gallery.ani.camera"].frame.width > 100
+                return (frame.width > frame.height) == landscape && visibleParticipants().count >= 2
             }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed)
-            for id in ["ani", "aram", "mariam", "vahan"] {
-                let tile = app.otherElements["gallery." + id + ".camera"]
-                XCTAssertTrue(tile.exists)
-                XCTAssertGreaterThan(tile.frame.width, 100)
-                XCTAssertGreaterThan(tile.frame.height, 100)
+            let previous = app.buttons["Previous participants"]
+            for _ in 0..<participantIDs.count {
+                guard previous.exists && previous.isEnabled else { break }
+                guard changePage(using: previous) else { return }
             }
-            let visible = ["ani", "aram", "mariam", "vahan"].filter {
-                app.windows.firstMatch.frame.contains(app.otherElements["gallery." + $0 + ".camera"].frame)
+            var seen = Set<String>()
+            for pageIndex in 0..<participantIDs.count {
+                let visible = visibleParticipants()
+                XCTAssertGreaterThanOrEqual(visible.count, pageIndex == 0 ? 2 : 1,
+                    "The first page must show multiple participants; a final partial page must remain visible")
+                for id in visible {
+                    let tile = app.otherElements["gallery." + id + ".camera"]
+                    XCTAssertGreaterThan(tile.frame.width, 100)
+                    XCTAssertGreaterThan(tile.frame.height, 100)
+                    XCTAssertTrue(app.windows.firstMatch.frame.contains(tile.frame))
+                    XCTAssertTrue(grid.frame.contains(tile.frame))
+                }
+                seen.formUnion(visible)
+                if seen.count == participantIDs.count { break }
+                let next = app.buttons["Next participants"]
+                guard next.exists && next.isEnabled else {
+                    return XCTFail("Gallery pages did not expose every fixture participant: \(seen)")
+                }
+                guard changePage(using: next) else { return }
             }
-            XCTAssertGreaterThanOrEqual(visible.count, 2, "Grid must show multiple participants together")
+            XCTAssertEqual(seen, Set(participantIDs), "Real pager actions must expose the complete fixture roster")
         }
         selectLayout(app, "Focus")
         XCTAssertFalse(grid.isHittable)
@@ -423,6 +462,17 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(name.exists || title.exists || fullTitle.exists)
         let toolbar = app.otherElements["Meeting toolbar"]
         XCTAssertTrue(window.contains(toolbar.frame), "The entire control rail must remain inside the window")
+        let header = app.otherElements["Compact meeting header"]
+        XCTAssertTrue(header.exists)
+        XCTAssertEqual(header.frame.height, 44)
+        let reactions = app.buttons["call.reactions"]
+        XCTAssertEqual(reactions.label, language == "ru" ? "Реакции" : "Reactions", "The full action name must remain accessible")
+        let source = app.buttons["Shared stream selector"]
+        if source.exists {
+            XCTAssertEqual(source.frame.height, 44, "Source title and icon share one bounded row")
+            XCTAssertFalse(source.frame.intersects(toolbar.frame))
+            XCTAssertFalse(source.frame.intersects(header.frame))
+        }
         let identityFrame = name.exists ? name.frame : title.exists ? title.frame : fullTitle.frame
         XCTAssertFalse(identityFrame.intersects(toolbar.frame), "Identity must not be under the toolbar")
     }
@@ -460,6 +510,12 @@ final class MeetingPresentationUITests: XCTestCase {
             }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed)
             assertControls(app, language: "ru")
+            if !landscape {
+                XCTAssertLessThanOrEqual(app.otherElements["Meeting toolbar"].frame.height, 214,
+                    "Large meeting captions must leave media visible on small screens")
+                XCTAssertLessThanOrEqual(app.buttons["call.reactions"].frame.height, 72,
+                    "The caption remains in one bounded control row")
+            }
         }
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "Largest Russian text"; attachment.lifetime = .keepAlways; add(attachment)
@@ -487,20 +543,37 @@ final class MeetingPresentationUITests: XCTestCase {
         let viewport = app.scrollViews["Shared screen viewport"]
         XCTAssertTrue(viewport.waitForExistence(timeout: 10))
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            app.openMeetingMore(.view)
+            app.meetingActionButton("Fit shared screen").tap()
+            let fitted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                viewport.exists && viewport.value as? String == "100%"
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [fitted], timeout: 5), .completed)
             XCUIDevice.shared.orientation = orientation
+            let gestureApp = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+            let gestureWindow = gestureApp.windows.firstMatch
+            let rotatedViewport = gestureApp.scrollViews.matching(identifier: "Shared screen viewport").firstMatch
             let coversWindow = NSPredicate { _, _ in
-                let frame = viewport.frame, bounds = app.windows.firstMatch.frame
-                return abs(frame.width - bounds.width) < 1 && abs(frame.height - bounds.height) < 1
+                guard rotatedViewport.exists else { return false }
+                let frame = rotatedViewport.frame, bounds = gestureWindow.frame
+                return (bounds.width > bounds.height) == (orientation != .portrait) &&
+                    abs(frame.minX - bounds.minX) < 1 && abs(frame.minY - bounds.minY) < 1 &&
+                    abs(frame.width - bounds.width) < 1 && abs(frame.height - bounds.height) < 1
             }
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: coversWindow, object: nil)], timeout: 5), .completed)
-            XCTAssertTrue(app.buttons["Leave"].isHittable)
-            viewport.pinch(withScale: 1.6, velocity: 1)
-            let zoom = viewport.value as? String
+            XCTAssertTrue(gestureApp.buttons["Leave"].isHittable)
+            XCTAssertEqual(rotatedViewport.value as? String, "100%")
+            gestureWindow.pinch(withScale: 3, velocity: 1)
+            let zoomed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                rotatedViewport.exists && (rotatedViewport.value as? String).map { $0 != "100%" } == true
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [zoomed], timeout: 5), .completed)
+            guard let zoom = rotatedViewport.value as? String else { return XCTFail("The pinch target must remain a zoomable share") }
             XCTAssertNotEqual(zoom, "100%")
-            app.buttons["Hide controls"].tap()
-            viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).tap()
-            XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 3))
-            XCTAssertEqual(viewport.value as? String, zoom)
+            gestureApp.buttons["Hide controls"].tap()
+            rotatedViewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).tap()
+            XCTAssertTrue(gestureApp.buttons["Leave"].waitForExistence(timeout: 3))
+            XCTAssertEqual(rotatedViewport.value as? String, zoom)
             assertControls(app, language: "en")
             let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             shot.name = "Floating share controls \(orientation.rawValue)"; shot.lifetime = .keepAlways; add(shot)
