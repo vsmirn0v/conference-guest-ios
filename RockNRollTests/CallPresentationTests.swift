@@ -1,9 +1,49 @@
+import ConferenceCore
+import SwiftUI
 import UIKit
 import XCTest
 @testable import RockNRoll
 
 @MainActor
 final class CallPresentationTests: XCTestCase {
+    func testLiveGuestPortraitControlsBeforeFirstRotation() async throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CONTROLS_INVITE"] else {
+            throw XCTSkip("Opt-in SDK hierarchy check")
+        }
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first?.windows.first { $0.isKeyWindow })
+        let original = window.rootViewController, host = UIViewController()
+        window.rootViewController = host; window.makeKeyAndVisible()
+        let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(), catchUp: CatchUpStore())
+        var active = false, ended = false
+        engine.onEvent = { event in
+            if event == .active { active = true }
+            if [.left, .failed, .canceled, .evicted].contains(event) { ended = true }
+        }
+        defer { engine.leave(); window.rootViewController = original }
+        let target = try JoinTarget.parse(invitation)
+        try engine.configure(container: host, networkURL: await VendorEndpointResolver.make().resolve(for: target),
+                             displayName: "Portrait controls QA")
+        try engine.join(target: target, displayName: "Portrait controls QA")
+        let deadline = Date().addingTimeInterval(45)
+        while !active && !ended && Date() < deadline { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertTrue(active); XCTAssertFalse(ended)
+        guard active, !ended else { return }
+        try await Task.sleep(for: .seconds(2))
+        let buttons = visibleMeetingButtons(in: window)
+        XCTAssertEqual(buttons.count, 2)
+        for button in buttons {
+            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
+            let hit = window.hitTest(point, with: nil)
+            var parent: UIView? = button
+            while let view = parent {
+                print("CONTROL_ANCESTOR \(button.accessibilityLabel ?? "") type=\(type(of: view)) frame=\(view.frame) bounds=\(view.bounds) interactive=\(view.isUserInteractionEnabled) hidden=\(view.isHidden) pointInside=\(view.point(inside: view.convert(point, from: window), with: nil))")
+                parent = view.superview
+            }
+            XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true,
+                "Initial portrait control must receive touches: \(button.accessibilityLabel ?? "") hit=\(String(describing: hit))")
+        }
+    }
     func testImmersiveStageUsesEveryPixelWhilePrivacyHeaderStaysSafe() {
         let portrait = CGRect(x: 0, y: 0, width: 440, height: 956)
         let landscape = CGRect(x: 0, y: 0, width: 956, height: 440)
@@ -180,7 +220,62 @@ final class CallPresentationTests: XCTestCase {
                   microphoneOn: false, cameraOn: false, sharing: false)
         }
     }
-    private func guestLayout() throws -> (UIWindow, CallControls, GuestStreamViews, MeetingLayoutControls) {
+
+    func testGuestControlsStayHittableAfterSDKHostFinishesPortraitLayout() async throws {
+        let (window, controls, streams, _) = try guestLayout()
+        defer { window.isHidden = true; streams.reset() }
+        let root = try XCTUnwrap(window.rootViewController?.view)
+        let sdkHost = UIView(frame: root.bounds)
+        root.addSubview(sdkHost)
+        controls.removeFromSuperview()
+        controls.frame = .zero
+        sdkHost.addSubview(controls)
+        window.layoutIfNeeded()
+        // SDK overlay hosts can first fill the window, then settle inside its
+        // safe area without changing the zero-sized custom controls view.
+        sdkHost.frame = root.bounds.inset(by: UIEdgeInsets(top: 62, left: 0, bottom: 34, right: 0))
+        sdkHost.clipsToBounds = true
+        window.layoutIfNeeded()
+        await settleUI()
+        let buttons = visibleMeetingButtons(in: window)
+        XCTAssertEqual(buttons.count, 2)
+        for button in buttons {
+            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
+            let hit = window.hitTest(point, with: nil)
+            XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true,
+                "\(button.accessibilityLabel ?? "control") must receive touches before the first rotation; hit=\(String(describing: hit))")
+        }
+    }
+
+    func testOwnedGuestSurfaceEscapesSwiftUIHitTestingAndUnmountsWithOverlay() async throws {
+        let (window, controls, streams, _) = try guestLayout(ownedSurface: true)
+        defer { window.isHidden = true; streams.reset() }
+        let root = try XCTUnwrap(window.rootViewController)
+        controls.removeFromSuperview()
+        let sdk = UIHostingController(rootView: GuestOverlayForTesting(controls: controls))
+        root.addChild(sdk); sdk.view.frame = root.view.bounds
+        root.view.addSubview(sdk.view); sdk.didMove(toParent: root)
+        window.layoutIfNeeded(); await settleUI()
+        let surface = try XCTUnwrap(descendants(window).compactMap { $0 as? CallChromeSurface }.first)
+        XCTAssertTrue(surface.superview === root.view, "The SDK hosting view must not own our interactive surface")
+        let buttons = visibleMeetingButtons(in: window)
+        XCTAssertEqual(buttons.count, 2)
+        for button in buttons {
+            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
+            let hit = window.hitTest(point, with: nil)
+            XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true)
+        }
+        sdk.willMove(toParent: nil); sdk.view.removeFromSuperview(); sdk.removeFromParent()
+        XCTAssertNil(surface.superview, "A detached SDK overlay must not leave controls blocking the home page")
+    }
+
+    private struct GuestOverlayForTesting: UIViewRepresentable {
+        let controls: CallControls
+        func makeUIView(context: Context) -> CallControls { controls }
+        func updateUIView(_ uiView: CallControls, context: Context) {}
+    }
+
+    private func guestLayout(ownedSurface: Bool = false) throws -> (UIWindow, CallControls, GuestStreamViews, MeetingLayoutControls) {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene), host = UIViewController()
         window.rootViewController = host; window.isHidden = false
@@ -188,7 +283,7 @@ final class CallPresentationTests: XCTestCase {
             router: nil, catchUp: CatchUpStore(), chat: ChatStore(), initialDisplayMode: .all,
             invitationURL: nil, roomIdentifier: "fixture", onDisplayMode: { _ in }, onFloat: {},
             onFloatingPreferenceChanged: {}, onLeave: {}, onScreenShare: { _ in },
-            onMicrophoneState: { _ in }, onCameraState: { _ in })
+            onMicrophoneState: { _ in }, onCameraState: { _ in }, surfaceContainer: ownedSurface ? host.view : nil)
         controls.frame = host.view.bounds; host.view.addSubview(controls)
         let streams = GuestStreamViews()
         controls.onPinParticipant = { streams.setPin($0) }
@@ -204,6 +299,17 @@ final class CallPresentationTests: XCTestCase {
         await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
     }
     private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+    private func visibleMeetingButtons(in view: UIView) -> [UIButton] {
+        descendants(view).compactMap { $0 as? UIButton }.filter { button in
+            guard button.accessibilityLabel?.hasPrefix(L("Musicians")) == true || button.accessibilityLabel == L("Leave") else { return false }
+            var ancestor: UIView? = button
+            while let current = ancestor {
+                if current.isHidden || current.alpha < 0.01 { return false }
+                ancestor = current.superview
+            }
+            return true
+        }
+    }
     private func focusedName(_ view: UIView) -> String? {
         descendants(view).compactMap { $0 as? UILabel }.first { $0.accessibilityIdentifier == "Participant name" }?.text
     }

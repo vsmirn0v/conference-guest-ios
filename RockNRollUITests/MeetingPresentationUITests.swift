@@ -1,6 +1,36 @@
 import XCTest
 
 final class MeetingPresentationUITests: XCTestCase {
+    func testLiveGuestButtonsRespondBeforeFirstRotationAndAfterReturningToPortrait() throws {
+        guard let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_GUEST_INVITE"] else {
+            throw XCTSkip("Opt-in live SDK interaction check")
+        }
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-automaticallyHideMeetingControls", "NO"]
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Portrait controls QA"
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait; app.terminate() }
+        let leave = app.buttons["Leave"]
+        XCTAssertTrue(leave.waitForExistence(timeout: 60))
+        for orientation: UIDeviceOrientation in [.portrait, .landscapeLeft, .portrait] {
+            XCUIDevice.shared.orientation = orientation
+            let musicians = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Musicians")).firstMatch
+            XCTAssertTrue(musicians.waitForExistence(timeout: 5)); musicians.tap()
+            let close = app.buttons["close"].exists ? app.buttons["close"] : app.buttons["Done"]
+            XCTAssertTrue(close.waitForExistence(timeout: 5), "Participants must actually open after tapping")
+            close.tap()
+            let reactions = app.buttons["call.reactions"]
+            XCTAssertTrue(reactions.waitForExistence(timeout: 5)); reactions.tap()
+            let done = app.buttons["reactions.done"]
+            XCTAssertTrue(done.waitForExistence(timeout: 5), "The bottom control must actually open its menu")
+            done.tap()
+        }
+        leave.tap()
+        XCTAssertTrue(app.buttons["join.start"].waitForExistence(timeout: 15), "Leave must dismiss the meeting and its controls")
+    }
     func testGuestParticipantStripSwipesOverButtonsAndKeepsTapSelection() {
         let app = launch("ru", scenario: "gallery-many")
         defer { app.terminate() }

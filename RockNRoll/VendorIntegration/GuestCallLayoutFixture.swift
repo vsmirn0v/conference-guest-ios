@@ -66,7 +66,8 @@ final class GuestCallLayoutFixture: UIViewController {
             onCameraState: { [weak self] in self?.controls.setFixtureMedia(camera: $0) },
             usesNativeParticipants: scenario == "participants" || ProcessInfo.processInfo.isiOSAppOnMac,
             studio: studio, activeSpeaker: activeSpeaker,
-            reactions: scenario == "reactions" ? reactions : nil, meetingStatus: meetingStatus)
+            reactions: scenario == "reactions" ? reactions : nil, meetingStatus: meetingStatus,
+            surfaceContainer: view)
         if let studio, ProcessInfo.processInfo.environment["CONFERENCE_TEST_MIC_ACTIVITY"] == "1" {
             controls.fixtureActions = MicrophoneActivityFixture(activity: studio.microphoneActivity).actions
         }

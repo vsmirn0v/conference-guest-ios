@@ -41,6 +41,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private let focus = CallFocusController()
     private let layoutOwner = UUID()
     private weak var mountedWindow: UIWindow?
+    private weak var surfaceContainer: UIView?
     private var toolbar: CallToolbar?
     private var headerView: UIStackView?
     private let compactHeader = CompactCallHeader()
@@ -164,7 +165,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
          canChangeMedia: @escaping () -> Bool = { true },
          usesNativeParticipants: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
          studio: StudioModel? = nil, activeSpeaker: ActiveSpeakerStore? = nil,
-         reactions: MeetingReactionsModel? = nil, meetingStatus: MeetingHeaderStatus? = nil) {
+         reactions: MeetingReactionsModel? = nil, meetingStatus: MeetingHeaderStatus? = nil,
+         surfaceContainer: UIView? = nil) {
+        self.surfaceContainer = surfaceContainer
         self.reactionHistory = chat.reactionHistory
         self.meetingStatus = meetingStatus ?? MeetingHeaderStatus()
         self.studio = studio
@@ -977,6 +980,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); layoutPresentation() }
 
     private func surfaceHost(in window: UIWindow) -> UIView? {
+        // SwiftUI hosting views can draw UIKit children but skip them during
+        // hit testing. The meeting owns a stable UIKit host outside that tree.
+        if let surfaceContainer, surfaceContainer.window === window { return surfaceContainer }
         // Stay inside the SDK's environment while escaping zero-sized overlay
         // hosts. Immersive media must reach the window edges even when an SDK
         // ancestor clips to the safe area; controls retain their own safe insets.

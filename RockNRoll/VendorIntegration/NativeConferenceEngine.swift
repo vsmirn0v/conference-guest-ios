@@ -1561,7 +1561,8 @@ final class NativeConferenceEngine: CallEngine {
                                         }, canChangeMedia: { [weak self] in
                                             self?.canChangeMedia(epoch: epoch, attempt: attempt) == true
                                         }, studio: self.studio, activeSpeaker: self.activeSpeaker,
-                                        reactions: self.reactions, meetingStatus: self.meetingStatus)
+                                        reactions: self.reactions, meetingStatus: self.meetingStatus,
+                                        surfaceContainer: self.screenPresenter?.sourceView)
             self.activeControls = controls
             controls.onStageVisibilityChanged = { [weak self] wanted in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
