@@ -543,6 +543,11 @@ final class CallPresentationTests: XCTestCase {
     }
     func testSmallWindowLargestTextChromeKeepsMediaAndSingleLineCaptions() throws {
         guard #available(iOS 17.0, *) else { throw XCTSkip("Per-view text trait overrides require iOS 17") }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene), host = UIViewController()
+        window.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true }
         let titles = ["Mic", "Video", "Share", "Audio", "Reactions", "Leave"]
         let buttons = titles.map { title in
             let button = AlignedCallButton(frame: .zero)
@@ -552,16 +557,24 @@ final class CallPresentationTests: XCTestCase {
             return button
         }
         let toolbar = CallToolbar(items: buttons)
-        toolbar.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        host.view.addSubview(toolbar)
+        window.layoutIfNeeded()
+        XCTAssertEqual(toolbar.traitCollection.preferredContentSizeCategory, .accessibilityExtraExtraExtraLarge)
         toolbar.arrange(rail: false, largeText: true)
         XCTAssertLessThanOrEqual(toolbar.preferredHeight, 214)
         toolbar.frame = CGRect(x: 0, y: 0, width: 359, height: toolbar.preferredHeight)
         toolbar.layoutIfNeeded()
         for (button, title) in zip(buttons, titles) {
-            button.layoutIfNeeded()
+            XCTAssertEqual(button.traitCollection.preferredContentSizeCategory, .accessibilityExtraExtraExtraLarge)
+            button.setNeedsLayout(); button.layoutIfNeeded()
             let caption = try XCTUnwrap(button.subviews.compactMap { $0 as? UILabel }.first { !$0.isHidden && $0.text == title })
             XCTAssertEqual(caption.numberOfLines, 1)
-            XCTAssertGreaterThan(caption.font.pointSize, 12)
+            if ProcessInfo.processInfo.isiOSAppOnMac {
+                // Designed for iPad on Mac can keep UIFontMetrics at its base size.
+                XCTAssertGreaterThanOrEqual(caption.font.pointSize, 12)
+            } else {
+                XCTAssertGreaterThan(caption.font.pointSize, 12)
+            }
             XCTAssertLessThanOrEqual(caption.font.pointSize, 18)
             XCTAssertLessThanOrEqual(caption.bounds.height, 24)
             XCTAssertTrue(button.bounds.contains(caption.frame))
@@ -579,7 +592,8 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertGreaterThan(visible.stage.height, 300)
         XCTAssertEqual(visible.stage, hidden.stage)
         XCTAssertFalse(visible.header.intersects(visible.toolbar))
-        toolbar.traitOverrides.preferredContentSizeCategory = .large
+        window.traitOverrides.preferredContentSizeCategory = .large
+        window.layoutIfNeeded()
         toolbar.arrange(rail: false, largeText: false)
         toolbar.frame.size = CGSize(width: 359, height: toolbar.preferredHeight)
         toolbar.layoutIfNeeded(); buttons[4].layoutIfNeeded()

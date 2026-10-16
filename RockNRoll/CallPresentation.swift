@@ -67,12 +67,25 @@ enum MeetingControlMetrics {
     static func boundSymbol(in button: UIButton) {
         button.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)
         button.imageView?.adjustsImageSizeForAccessibilityContentSizeCategory = false
+        (button as? MeetingMenuButton)?.boundedSymbolSide = 22
     }
 }
 
 /// Keep meeting controls visible for the entire lifetime of a system menu.
 class MeetingMenuButton: UIButton {
     var onMenuVisibilityChanged: ((Bool) -> Void)?
+    var boundedSymbolSide: CGFloat? { didSet { setNeedsLayout() } }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let side = boundedSymbolSide, let image = imageView else { return }
+        // Configurations can grow the image independently of their capped title font.
+        let center = image.center
+        image.adjustsImageSizeForAccessibilityContentSizeCategory = false
+        image.contentMode = .scaleAspectFit
+        image.transform = .identity
+        image.bounds.size = CGSize(width: side, height: side)
+        image.center = center
+    }
     override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
         willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
         super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
@@ -193,18 +206,18 @@ final class CallToolbar: UIView {
     }
 }
 
-/// A single stable row outside the media. The fuller portrait header remains intact.
+/// A stable floating row for meeting identity and actions at every window size.
 final class CompactCallHeader: UIView {
-    let details = UIButton(type: .system)
-    let previous = UIButton(type: .system)
-    let nextStream = UIButton(type: .system)
-    let automatic = UIButton(type: .system)
-    let pin = UIButton(type: .system)
+    let details = MeetingMenuButton(type: .system)
+    let previous = MeetingMenuButton(type: .system)
+    let nextStream = MeetingMenuButton(type: .system)
+    let automatic = MeetingMenuButton(type: .system)
+    let pin = MeetingMenuButton(type: .system)
     let layoutButton = MeetingMenuButton(type: .system)
-    let participants = UIButton(type: .system)
-    let missed = UIButton(type: .system)
-    let conversation = UIButton(type: .system)
-    let focus = UIButton(type: .system)
+    let participants = MeetingMenuButton(type: .system)
+    let missed = MeetingMenuButton(type: .system)
+    let conversation = MeetingMenuButton(type: .system)
+    let focus = MeetingMenuButton(type: .system)
     private let overflow = MeetingMenuButton(type: .system)
     var onMenuVisibilityChanged: ((Bool) -> Void)? {
         didSet {
