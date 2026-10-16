@@ -96,6 +96,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private var explicitLayout = false
     private let layoutControls = MeetingLayoutControls()
     private let participantStrip = MeetingParticipantStrip()
+    private var stripPreviews: [GuestStreamViews.PinTarget: GuestGalleryTile] = [:]
+    private let sourcePicker = MeetingMenuButton(type: .system)
+    private let sourcePickerSurface = MeetingChromeSurface(cornerRadius: 22)
+    private var sourcePickerSignature: [String] = []
     private var galleryItems: [GuestStreamViews.GalleryItem] = []
     private var galleryCount = 0
     private weak var streamViews: GuestStreamViews?
@@ -460,6 +464,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         toolbar = bar
         bar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bar)
+        titleLabel.accessibilityIdentifier = "Meeting title"
         titleLabel.font = .preferredFont(forTextStyle: .headline)
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = .white
@@ -693,7 +698,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             stageViewport = nil
             if name != nil {
                 let viewport = StreamViewport(video: stageVideo, state: StreamViewportState(),
-                    zoomable: isShare, name: name ?? L("Musician"), showInfo: true,
+                    zoomable: isShare, name: name ?? L("Musician"), showInfo: false,
                     microphoneOn: microphoneOn, pinned: !automatic, watermark: presentation.watermark)
                 viewport.updatePin(name: name ?? L("Musician"), isShare: isShare,
                                    pinned: !automatic, onPin: { [weak self] in self?.onPinStage?() })
@@ -711,7 +716,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 stageViewport = viewport
             }
         }
-        stageViewport?.updatePresentation(name: name ?? L("Musician"), showInfo: true,
+        stageViewport?.updatePresentation(name: name ?? L("Musician"), showInfo: false,
             microphoneOn: microphoneOn, watermark: presentation.watermark, zoomable: isShare,
             placeholderText: active ? nil : "\(name ?? L("Musician")) · \(L("Camera off"))")
         stageViewport?.updatePin(name: name ?? L("Musician"), isShare: isShare,
@@ -1011,6 +1016,24 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         localShareCard.translatesAutoresizingMaskIntoConstraints = true
         surface.addSubview(localShareCard)
         surface.addSubview(layoutControls); surface.addSubview(participantStrip)
+        sourcePicker.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
+        layoutControls.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
+        compactHeader.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
+        sourcePicker.configuration = .plain()
+        sourcePicker.configuration?.imagePadding = 6
+        sourcePicker.configuration?.titleLineBreakMode = .byTruncatingTail
+        sourcePicker.showsMenuAsPrimaryAction = true
+        sourcePicker.accessibilityIdentifier = "Shared stream selector"
+        sourcePickerSurface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        sourcePicker.insertSubview(sourcePickerSurface, at: 0)
+        surface.addSubview(sourcePicker)
+        participantStrip.previewProvider = { [weak self] id in
+            guard let self, let item = self.galleryItems.first(where: { self.stripID($0.id) == id }) else { return nil }
+            let preview = self.stripPreviews[item.id] ?? GuestGalleryTile(item: item, thumbnail: true, pin: {})
+            self.stripPreviews[item.id] = preview
+            preview.update(item, pin: {}); preview.setVisible(true)
+            return preview
+        }
         layoutControls.onLayout = { [weak self] in self?.chooseLayout($0) }
         layoutControls.onAutomatic = { [weak self] in
             self?.layoutMode = .speaker; self?.explicitLayout = true
@@ -1108,7 +1131,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height)
         let statusOnly = focus.hidden && headerStatus.announcingPrivacy
         let geometry = CallPresentationGeometry(bounds: surface.bounds, insets: window.safeAreaInsets,
-            headerHeight: headerHeight, toolbarHeight: toolbar.preferredHeight, hidden: focus.hidden, largeText: large, statusOnly: statusOnly)
+            headerHeight: headerHeight, toolbarHeight: toolbar.preferredHeight, hidden: focus.hidden, largeText: large, statusOnly: statusOnly, floating: true)
         toolbar.arrange(rail: geometry.rail, largeText: large)
         automaticView.configuration?.title = large ? nil : L("Auto")
         automaticView.configuration?.image = large ? UIImage(systemName: "arrow.triangle.2.circlepath") : nil
@@ -1136,29 +1159,24 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             identity.accessibilityValue = headerStatus.privacyDetails.joined(separator: " · ")
             identity.accessibilityHint = L("Meeting details")
         }
-        navigation.isHidden = galleryCount > 0 || focus.hidden || geometry.compactHeader || navigationCount < 2 || displayMode == .audioOnly || isWaitingForOthers
+        navigation.isHidden = true
         var stage = geometry.stage
-        if !navigation.isHidden {
-            navigation.frame = CGRect(x: stage.midX - 130, y: stage.minY, width: 260, height: 44)
-            stage.origin.y += 48; stage.size.height = max(0, stage.height - 48)
-        }
         let layoutAvailable = displayMode != .audioOnly && !isWaitingForOthers && galleryCount > 1
-        layoutControls.isHidden = !layoutAvailable || focus.hidden || geometry.compactHeader
-        let layoutFrame = CGRect(x: stage.minX, y: stage.minY, width: stage.width, height: 44)
+        layoutControls.isHidden = !layoutAvailable || focus.hidden || stageIsShare
+        let layoutFrame = CGRect(x: stage.minX + 4, y: stage.maxY - 46, width: min(288, max(0, stage.width - 8)), height: 44)
         if !layoutControls.isHidden {
-            layoutControls.frame = layoutFrame.insetBy(dx: 4, dy: 0)
-            layoutControls.frame.size.width = max(0, layoutFrame.width - 56)
-            stage.origin.y += 48; stage.size.height = max(0, stage.height - 48)
+            layoutControls.frame = layoutFrame
         }
-        participantStrip.isHidden = gridVisible || !layoutAvailable || focus.hidden
-        if !participantStrip.isHidden {
-            participantStrip.vertical = stage.width >= 800
+        let showsStrip = !gridVisible && layoutAvailable && !stageIsShare && stage.height >= 240
+        participantStrip.isHidden = !showsStrip || focus.hidden
+        if showsStrip {
+            participantStrip.vertical = surface.bounds.width >= 800
             if participantStrip.vertical {
-                participantStrip.frame = CGRect(x: stage.maxX - 196, y: stage.minY, width: 196, height: stage.height)
-                stage.size.width = max(0, stage.width - 208)
+                participantStrip.frame = CGRect(x: stage.maxX - 148, y: stage.minY, width: 148, height: max(0, stage.height - 56))
+                stage.size.width = max(0, stage.width - 160)
             } else {
-                participantStrip.frame = CGRect(x: stage.minX, y: stage.maxY - 52, width: stage.width, height: 52)
-                stage.size.height = max(0, stage.height - 60)
+                participantStrip.frame = CGRect(x: stage.minX, y: stage.maxY - 136, width: stage.width, height: 82)
+                stage.size.height = max(0, stage.height - 144)
             }
         }
         refreshLayoutControls()
@@ -1169,12 +1187,20 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 self?.onAutomaticView?(); self?.layoutPresentation()
             })
         updateDisplayBackdrops()
-        for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop, stageView] { backdrop.frame = stage }
-        if gridVisible { galleryView.frame = stage }
+        for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop] { backdrop.frame = stage }
+        stageView.frame = surface.bounds
+        stageViewport?.fittedContentRect = stageIsShare ? stage.inset(by: UIEdgeInsets(top: 0, left: 0, bottom: 52, right: 0)) : stage
+        if gridVisible {
+            galleryView.frame = geometry.stage.inset(by: UIEdgeInsets(top: 0, left: 0, bottom: layoutAvailable ? 54 : 0, right: 0))
+        }
+        sourcePicker.isHidden = !stageIsShare || !showsStage || focus.hidden
+        sourcePicker.frame = CGRect(x: geometry.stage.minX + 4, y: geometry.stage.maxY - 46,
+            width: min(240, max(0, geometry.stage.width - 160)), height: 44)
+        sourcePickerSurface.frame = sourcePicker.bounds
         galleryView.setActive(gridVisible)
         shareOffer.frame = CGRect(x: stage.minX + 56, y: stage.minY + 8,
             width: max(0, stage.width - 112), height: 44)
-        for control in [shareOffer, focusButton, navigation, compactHeader, localShareCard] { surface.bringSubviewToFront(control) }
+        for control in [header, toolbar, layoutControls, participantStrip, sourcePicker, shareOffer, focusButton, navigation, compactHeader, localShareCard] { surface.bringSubviewToFront(control) }
         if let reactionOverlay { surface.bringSubviewToFront(reactionOverlay) }
         reactionOverlay?.frame = surface.bounds
         if let overlay = reactionOverlay as? ReceivedReactionOverlay {
@@ -1187,7 +1213,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             backdrop.isAccessibilityElement = focus.hidden
             backdrop.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
         }
-        focusButton.isHidden = focus.hidden || !showsContent || geometry.compactHeader
+        focusButton.isHidden = true
         focusButton.frame = layoutControls.isHidden ? CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44) :
             CGRect(x: layoutFrame.maxX - 48, y: layoutFrame.minY, width: 44, height: 44)
         localShareCard.alpha = focus.hidden ? 0 : 1
@@ -1337,10 +1363,21 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private func refreshLayoutControls() {
         layoutControls.update(mode: gridVisible ? .grid : .speaker, manual: stagePinned || lastPresentation?.browsing == true,
             page: galleryView.page, pagination: galleryView.pagination, count: galleryCount)
-        participantStrip.update(galleryItems.map {
+        participantStrip.update(galleryItems.filter { !$0.id.isShare && $0.id != lastPresentation?.target }.map {
             MeetingStripItem(id: stripID($0.id), name: $0.name, isShare: $0.id.isShare,
                 audio: participantAudio(microphoneOn: $0.microphoneOn, id: $0.id.participant))
-        }, selected: lastPresentation?.target.map(stripID))
+        }, selected: nil)
+        let signature = galleryItems.map { stripID($0.id) + $0.name } + [lastPresentation?.target.map(stripID) ?? "", stagePinned.description]
+        if sourcePickerSignature != signature {
+            sourcePickerSignature = signature
+            sourcePicker.configuration?.title = stageName ?? L("Screen share")
+            sourcePicker.configuration?.image = UIImage(systemName: "rectangle.on.rectangle")
+            sourcePicker.menu = UIMenu(children: galleryItems.map { item in
+                UIAction(title: item.name + (item.id.isShare ? " · " + L("Screen share") : ""),
+                    image: UIImage(systemName: item.id.isShare ? "rectangle.on.rectangle" : "person.crop.rectangle"),
+                    state: item.id == lastPresentation?.target ? .on : .off) { [weak self] _ in self?.selectParticipant(item.id) }
+            } + [UIAction(title: L("Follow speaker"), image: UIImage(systemName: "waveform")) { [weak self] _ in self?.onAutomaticView?() }])
+        }
     }
 
     private var gridVisible: Bool {
@@ -1359,6 +1396,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             guard let self else { return }
             self.galleryItems = items
             self.galleryCount = items.count
+            let current = Set(items.map(\.id))
+            for id in self.stripPreviews.keys.filter({ !current.contains($0) }) {
+                self.stripPreviews.removeValue(forKey: id)?.removeFromSuperview()
+            }
+            for item in items { self.stripPreviews[item.id]?.update(item, pin: {}) }
             self.galleryView.setSpeaker(self.speakingParticipant, available: self.speakerReceptionAvailable && !self.isHeld)
             self.galleryView.update(items)
             self.updateDisplayBackdrops(); self.layoutPresentation()

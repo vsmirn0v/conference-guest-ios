@@ -66,6 +66,8 @@ final class ParticipantIdentityView: UIView {
 /// The same visible layout and page controls are used by every media engine.
 final class MeetingLayoutControls: UIView {
     let layout = UISegmentedControl(items: [L("Gallery"), L("Focus")])
+    private let picker = MeetingMenuButton(type: .system)
+    private let surface = MeetingChromeSurface(cornerRadius: 22)
     let automatic = UIButton(type: .system)
     let previous = UIButton(type: .system)
     let nextPage = UIButton(type: .system)
@@ -80,12 +82,20 @@ final class MeetingLayoutControls: UIView {
         let count: Int
     }
     private var renderedState: State?
+    var onMenuVisibilityChanged: ((Bool) -> Void)? { didSet { picker.onMenuVisibilityChanged = onMenuVisibilityChanged } }
     var onLayout: ((MeetingLayoutMode) -> Void)?
     var onAutomatic: (() -> Void)?
     var onPage: ((Int) -> Void)?
     override init(frame: CGRect) {
         super.init(frame: frame)
         accessibilityIdentifier = "Meeting layout controls"
+        addSubview(surface)
+        picker.configuration = .plain()
+        picker.configuration?.titleLineBreakMode = .byTruncatingTail
+        picker.showsMenuAsPrimaryAction = true
+        picker.accessibilityIdentifier = "Meeting view picker"
+        addSubview(picker)
+        layout.isHidden = true
         layout.accessibilityIdentifier = "Meeting layout"
         layout.addAction(UIAction { [weak self] _ in
             guard let self else { return }
@@ -120,6 +130,13 @@ final class MeetingLayoutControls: UIView {
         automatic.isHidden = mode == .grid
         automatic.isEnabled = manual
         automatic.configuration?.title = L(manual ? "Follow speaker" : "Following speaker")
+        picker.configuration?.title = L(mode == .grid ? "Gallery" : manual ? "Pinned" : "Focus")
+        picker.configuration?.image = UIImage(systemName: mode == .grid ? "square.grid.2x2" : manual ? "pin.fill" : "person.crop.rectangle")
+        picker.configuration?.imagePadding = 6
+        picker.menu = UIMenu(children: MeetingLayoutMode.allCases.map { option in
+            UIAction(title: option.title, image: UIImage(systemName: option.symbol), state: mode == option ? .on : .off) { [weak self] _ in self?.onLayout?(option) }
+        } + [UIAction(title: L("Follow speaker"), image: UIImage(systemName: "waveform")) { [weak self] _ in self?.onAutomatic?() }])
+        automatic.isHidden = true
         let pages = mode == .grid ? pagination?.pageCount ?? 1 : 1
         [previous, position, nextPage].forEach { $0.isHidden = pages <= 1 }
         previous.isEnabled = page > 0; nextPage.isEnabled = page < pages - 1
@@ -130,9 +147,9 @@ final class MeetingLayoutControls: UIView {
     }
     override func layoutSubviews() {
         super.layoutSubviews()
-        let width = min(190, max(120, bounds.width * 0.46))
-        layout.frame = CGRect(x: 0, y: 0, width: width, height: 44)
-        automatic.frame = CGRect(x: width + 8, y: 0, width: max(0, bounds.width - width - 8), height: 44)
+        surface.frame = bounds
+        let width = previous.isHidden ? bounds.width : min(132, max(88, bounds.width - 144))
+        picker.frame = CGRect(x: 0, y: 0, width: width, height: 44)
         nextPage.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: 44)
         previous.frame = CGRect(x: width + 4, y: 0, width: 44, height: 44)
         position.frame = CGRect(x: previous.frame.maxX, y: 0, width: max(0, nextPage.frame.minX - previous.frame.maxX), height: 44)
@@ -146,8 +163,8 @@ struct MeetingStripItem: Equatable {
     let audio: ParticipantAudioState
 }
 
-/// Identity buttons avoid duplicating decoders or showing the focused share twice.
-final class MeetingParticipantStrip: UIScrollView {
+/// Only mounted, visible cells request preview rendering from existing media sources.
+final class MeetingParticipantStrip: UIScrollView, UIScrollViewDelegate {
     private var buttons: [String: UIButton] = [:]
     private var items: [MeetingStripItem] = []
     private var selectedID: String?
@@ -155,12 +172,24 @@ final class MeetingParticipantStrip: UIScrollView {
     private(set) var buttonUpdateCount = 0
     #endif
     var onSelect: ((String) -> Void)?
+    var previewProvider: ((String) -> UIView?)? { didSet { refreshPreviews() } }
+    var onPreviewVisibilityChanged: (() -> Void)?
+    private var previews: [String: UIView] = [:]
+    private var observers: [NSObjectProtocol] = []
+    private(set) var visiblePreviewIDs = Set<String>()
+    override var isHidden: Bool { didSet { if oldValue != isHidden { refreshPreviews() } } }
     var vertical = false { didSet { if oldValue != vertical { setNeedsLayout() } } }
     override init(frame: CGRect) {
         super.init(frame: frame)
         accessibilityIdentifier = "Focus participants"
         delaysContentTouches = false
+        delegate = self
         showsVerticalScrollIndicator = true; showsHorizontalScrollIndicator = true
+        for name in [UIApplication.didEnterBackgroundNotification, UIApplication.didBecomeActiveNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshPreviews() }
+            })
+        }
     }
     required init?(coder: NSCoder) { nil }
     override func touchesShouldCancel(in view: UIView) -> Bool {
@@ -182,6 +211,9 @@ final class MeetingParticipantStrip: UIScrollView {
             if let existing = buttons[item.id] { button = existing }
             else {
                 button = UIButton(type: .system); button.configuration = .tinted()
+                button.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+                    var attributes = attributes; attributes.font = UIFont.preferredFont(forTextStyle: .caption1); return attributes
+                }
                 button.accessibilityIdentifier = "Focus participant." + item.id
                 button.addAction(UIAction { [weak self] _ in self?.onSelect?(item.id) }, for: .touchUpInside)
                 buttons[item.id] = button; addSubview(button)
@@ -214,10 +246,52 @@ final class MeetingParticipantStrip: UIScrollView {
         super.layoutSubviews()
         for (index, item) in items.enumerated() {
             buttons[item.id]?.frame = vertical
-                ? CGRect(x: 0, y: CGFloat(index) * 52, width: bounds.width, height: 46)
-                : CGRect(x: CGFloat(index) * 160, y: 0, width: 152, height: bounds.height)
+                ? CGRect(x: 0, y: CGFloat(index) * 100, width: bounds.width, height: 92)
+                : CGRect(x: CGFloat(index) * 112, y: 0, width: 104, height: bounds.height)
         }
-        contentSize = vertical ? CGSize(width: bounds.width, height: CGFloat(items.count) * 52) :
-            CGSize(width: CGFloat(items.count) * 160, height: bounds.height)
+        contentSize = vertical ? CGSize(width: bounds.width, height: CGFloat(items.count) * 100) :
+            CGSize(width: CGFloat(items.count) * 112, height: bounds.height)
+        refreshPreviews()
+    }
+    override func didMoveToWindow() { super.didMoveToWindow(); refreshPreviews() }
+    func scrollViewDidScroll(_ scrollView: UIScrollView) { refreshPreviews() }
+    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+    /// Reconcile an active source replacement or a camera stopping without waiting for a scroll.
+    func reloadPreviews() {
+        for preview in previews.values { preview.removeFromSuperview() }
+        previews.removeAll()
+        refreshPreviews()
+    }
+    private func refreshPreviews() {
+        let visible = Set(items.compactMap { item -> String? in
+            guard !isHidden, window != nil, UIApplication.shared.applicationState != .background, let button = buttons[item.id], bounds.intersects(button.frame) else { return nil }
+            return item.id
+        })
+        for id in previews.keys.filter({ !visible.contains($0) }) { previews.removeValue(forKey: id)?.removeFromSuperview() }
+        for id in visible {
+            guard let button = buttons[id] else { continue }
+            if previews[id] == nil {
+                let fallback = UILabel()
+                fallback.font = .preferredFont(forTextStyle: .title3)
+                fallback.textAlignment = .center; fallback.textColor = .secondaryLabel
+                fallback.backgroundColor = .tertiarySystemBackground
+                let view = previewProvider?(id) ?? fallback
+                previews[id] = view; view.isUserInteractionEnabled = false
+                view.clipsToBounds = true; view.layer.cornerRadius = 10
+                button.addSubview(view)
+            }
+            if let initials = previews[id] as? UILabel, let item = items.first(where: { $0.id == id }) {
+                initials.text = item.name.split(whereSeparator: { $0.isWhitespace }).prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
+            }
+            let font = UIFont.preferredFont(forTextStyle: .caption1)
+            let caption = min(button.bounds.height / 2, max(25, ceil(font.lineHeight) + 6))
+            // Preview leaves a dedicated, readable microphone/name caption.
+            previews[id]?.frame = CGRect(x: 2, y: 2, width: max(0, button.bounds.width - 4), height: max(0, button.bounds.height - caption - 4))
+            let inset = max(0, button.bounds.height - caption)
+            if button.configuration?.contentInsets.top != inset {
+                button.configuration?.contentInsets = NSDirectionalEdgeInsets(top: inset, leading: 6, bottom: 3, trailing: 6)
+            }
+        }
+        if visiblePreviewIDs != visible { visiblePreviewIDs = visible; onPreviewVisibilityChanged?() }
     }
 }

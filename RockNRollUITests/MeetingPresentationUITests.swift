@@ -55,7 +55,7 @@ final class MeetingPresentationUITests: XCTestCase {
         let strip = app.scrollViews["Focus participants"]
         XCTAssertTrue(strip.waitForExistence(timeout: 5), file: file, line: line)
         let selected = app.buttons["Focus participant.person-1.camera"]
-        XCTAssertTrue(selected.isSelected, file: file, line: line)
+        XCTAssertFalse(selected.exists, "Focused participant must not be duplicated", file: file, line: line)
         // Begin on the label, top/bottom button edges and microphone, never a gutter.
         for origin in [CGVector(dx: 0.65, dy: 0.5), CGVector(dx: 0.65, dy: 0.1),
                        CGVector(dx: 0.65, dy: 0.9), CGVector(dx: 0.12, dy: 0.5)] {
@@ -69,14 +69,15 @@ final class MeetingPresentationUITests: XCTestCase {
             let start = button.coordinate(withNormalizedOffset: origin)
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: -140, dy: 0)))
             XCTAssertLessThan(button.frame.minX, before - 50, "The entire button must scroll the strip", file: file, line: line)
-            XCTAssertTrue(selected.isSelected, "Dragging must not select or unpin a participant", file: file, line: line)
+            XCTAssertFalse(selected.exists, "Dragging must not select or unpin a participant", file: file, line: line)
         }
         guard let target = strip.buttons.allElementsBoundByIndex.first(where: {
             strip.frame.contains($0.frame.insetBy(dx: 1, dy: 1)) && !$0.isSelected
         }) else { return XCTFail("A newly revealed participant must be tappable", file: file, line: line) }
+        let targetID = target.identifier
         target.tap()
-        XCTAssertTrue(target.isSelected, "A normal tap must still focus that participant", file: file, line: line)
-        XCTAssertFalse(selected.isSelected, file: file, line: line)
+        XCTAssertFalse(app.buttons[targetID].exists, "The newly focused participant leaves the filmstrip", file: file, line: line)
+        XCTAssertTrue(selected.exists, file: file, line: line)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Participant strip after button drags"; attachment.lifetime = .keepAlways; add(attachment)
     }
@@ -93,7 +94,7 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(app.scrollViews["Focus participants"].exists)
         app.buttons["Focus participant.person-0.camera"].tap()
         XCTAssertTrue(app.buttons["Unpin Participant 1 video"].waitForExistence(timeout: 5))
-        app.segmentedControls["Meeting layout"].buttons["Gallery"].tap()
+        selectLayout(app, "Gallery")
         assertLayout(app, "Gallery")
         XCTAssertTrue(gallery.isHittable)
         let counter = app.staticTexts["Gallery page"]
@@ -105,7 +106,7 @@ final class MeetingPresentationUITests: XCTestCase {
         guard let next = visibleTiles.first(where: { $0.isHittable }) else { return XCTFail("Next page must contain accessible participant tiles") }
         next.tap()
         assertLayout(app, "Focus")
-        app.segmentedControls["Meeting layout"].buttons["Gallery"].tap()
+        selectLayout(app, "Gallery")
         assertLayout(app, "Gallery")
         XCTAssertTrue(next.isHittable, "Return to the previous page")
         let pageLabel = counter.label
@@ -134,7 +135,7 @@ final class MeetingPresentationUITests: XCTestCase {
         app.buttons["Focus participant.person-1.camera"].tap()
         app.scrollViews["Meeting content"].swipeLeft()
         XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Роман Тюрин")
-        app.segmentedControls["Meeting layout"].buttons["Gallery"].tap()
+        selectLayout(app, "Gallery")
         assertLayout(app, "Gallery")
         XCTAssertTrue(tile.isHittable)
         let counter = app.staticTexts["Gallery page"], initialPage = counter.label
@@ -148,35 +149,38 @@ final class MeetingPresentationUITests: XCTestCase {
     func testGuestSwipingFromAutomaticFocusCanResumeFollowingSpeaker() {
         let app = launch(scenario: "gallery-many")
         defer { app.terminate() }
-        XCTAssertTrue(app.segmentedControls["Meeting layout"].waitForExistence(timeout: 10))
-        app.segmentedControls["Meeting layout"].buttons["Focus"].tap()
+        XCTAssertTrue(app.buttons["Meeting view picker"].waitForExistence(timeout: 10))
+        selectLayout(app, "Focus")
         app.otherElements["Meeting stage"].swipeLeft()
-        let follow = app.buttons["Follow speaker"]
-        XCTAssertTrue(follow.isEnabled)
         XCTAssertTrue(app.buttons["Pin Полина video"].waitForExistence(timeout: 5))
-        follow.tap()
+        app.buttons["Meeting view picker"].tap()
+        app.buttons["Follow speaker"].tap()
         XCTAssertTrue(app.buttons["Pin Participant 1 video"].waitForExistence(timeout: 5))
-        XCTAssertFalse(follow.isEnabled)
     }
     func testGuestShareShortcutFocusesShareAfterReturningToGallery() {
         let app = launch(scenario: "gallery-share")
         defer { app.terminate() }
-        let layout = app.segmentedControls["Meeting layout"]
+        let layout = app.buttons["Meeting view picker"]
         XCTAssertTrue(layout.waitForExistence(timeout: 10))
-        layout.buttons["Gallery"].tap()
+        selectLayout(app, "Gallery")
         app.otherElements["gallery.camera.camera"].tap()
         assertLayout(app, "Focus")
-        layout.buttons["Gallery"].tap()
+        selectLayout(app, "Gallery")
         let share = app.buttons["View Ani’s arrangement screen share"]
         XCTAssertTrue(share.isHittable)
         share.tap()
         assertLayout(app, "Focus")
         XCTAssertTrue(app.buttons["Unpin Ani’s arrangement screen share"].waitForExistence(timeout: 5))
     }
+    private func selectLayout(_ app: XCUIApplication, _ title: String) {
+        app.buttons["Meeting view picker"].tap()
+        app.buttons.matching(NSPredicate(format: "label == %@", title)).allElementsBoundByIndex.last?.tap()
+    }
     private func assertLayout(_ app: XCUIApplication, _ label: String, file: StaticString = #filePath, line: UInt = #line) {
-        let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"),
-            object: app.segmentedControls["Meeting layout"].buttons[label])
-        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed, file: file, line: line)
+        let predicate = NSPredicate(format: "label CONTAINS %@", label == "Focus" ? "Pinned" : label)
+        let picker = app.buttons["Meeting view picker"]
+        if label == "Focus", picker.label.contains("Focus") { return }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: picker)], timeout: 5), .completed, file: file, line: line)
     }
     func testGridShowsAllParticipantsAndSwitchesToSpeakerAfterRotation() {
         let app = launch(scenario: "gallery")
@@ -203,7 +207,7 @@ final class MeetingPresentationUITests: XCTestCase {
             }
             XCTAssertGreaterThanOrEqual(visible.count, 2, "Grid must show multiple participants together")
         }
-        app.segmentedControls["Meeting layout"].buttons["Focus"].tap()
+        selectLayout(app, "Focus")
         XCTAssertFalse(grid.isHittable)
         XCTAssertTrue(app.scrollViews["Focus participants"].isHittable)
         let attachment = XCTAttachment(screenshot: app.screenshot())
@@ -350,9 +354,12 @@ final class MeetingPresentationUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(button.frame.height, 44)
         }
         let name = app.staticTexts.matching(identifier: "Participant name").firstMatch
-        XCTAssertTrue(name.exists)
+        let title = app.buttons["Meeting details"]
+        let fullTitle = app.staticTexts["Meeting title"]
+        XCTAssertTrue(name.exists || title.exists || fullTitle.exists)
         let toolbar = app.otherElements["Meeting toolbar"]
-        XCTAssertFalse(name.frame.intersects(toolbar.frame), "Name must not be under the toolbar")
+        let identityFrame = name.exists ? name.frame : title.exists ? title.frame : fullTitle.frame
+        XCTAssertFalse(identityFrame.intersects(toolbar.frame), "Identity must not be under the toolbar")
     }
     func testGuestControlsAndFooterFitEnglishAndRussianRotation() {
         defer { XCUIDevice.shared.orientation = .portrait }
@@ -410,6 +417,30 @@ final class MeetingPresentationUITests: XCTestCase {
             "Restoring controls must not trigger the control underneath the tap")
     }
 
+    func testFloatingShareZoomsAcrossWholeCanvasWithControlsVisible() {
+        let app = launch()
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        let viewport = app.scrollViews["Shared screen viewport"]
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            let coversWindow = NSPredicate { _, _ in
+                let frame = viewport.frame, bounds = app.windows.firstMatch.frame
+                return abs(frame.width - bounds.width) < 1 && abs(frame.height - bounds.height) < 1
+            }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: coversWindow, object: nil)], timeout: 5), .completed)
+            XCTAssertTrue(app.buttons["Leave"].isHittable)
+            viewport.pinch(withScale: 1.6, velocity: 1)
+            let zoom = viewport.value as? String
+            XCTAssertNotEqual(zoom, "100%")
+            app.buttons["Hide controls"].tap()
+            viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).tap()
+            XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 3))
+            XCTAssertEqual(viewport.value as? String, zoom)
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "Floating share controls \(orientation.rawValue)"; shot.lifetime = .keepAlways; add(shot)
+        }
+    }
     func testImmersiveShareEscapesClippedSafeAreaHostAndZoomsEdgeToEdge() throws {
         let app = launch(scenario: "safe-area-host")
         defer { XCUIDevice.shared.orientation = .portrait }

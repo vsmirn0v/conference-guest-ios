@@ -11,10 +11,20 @@ struct CallPresentationGeometry {
 
     init(bounds: CGRect, insets: UIEdgeInsets, headerHeight: CGFloat,
          toolbarHeight: CGFloat = 68, hidden: Bool, largeText: Bool = false, allowsRail: Bool = true,
-         statusOnly: Bool = false) {
+         statusOnly: Bool = false, floating: Bool = false) {
+        if floating && hidden {
+            let visible = Self(bounds: bounds, insets: insets, headerHeight: headerHeight,
+                toolbarHeight: toolbarHeight, hidden: false, largeText: largeText,
+                allowsRail: allowsRail, statusOnly: false, floating: true)
+            header = statusOnly ? CGRect(x: visible.header.minX, y: visible.header.minY,
+                width: visible.header.width, height: 44) : .zero
+            toolbar = .zero; stage = visible.stage
+            rail = visible.rail; compactHeader = statusOnly || visible.compactHeader
+            return
+        }
         let safe = bounds.inset(by: insets).insetBy(dx: 8, dy: 4)
         rail = allowsRail && safe.width > safe.height && safe.height < 480 && safe.height >= 284
-        compactHeader = (rail && !largeText) || statusOnly
+        compactHeader = ((rail || floating) && !largeText) || statusOnly
         if statusOnly && hidden {
             header = CGRect(x: safe.minX, y: safe.minY, width: safe.width, height: 44)
             toolbar = .zero
@@ -28,7 +38,8 @@ struct CallPresentationGeometry {
         }
         if rail {
             let railWidth: CGFloat = largeText ? min(296, safe.width * 0.45) : 56
-            toolbar = CGRect(x: safe.maxX - railWidth, y: safe.minY, width: railWidth, height: safe.height)
+            let height = floating && !largeText ? min(safe.height, 320) : safe.height
+            toolbar = CGRect(x: safe.maxX - railWidth, y: safe.midY - height / 2, width: railWidth, height: height)
             let width = max(0, safe.width - railWidth - 8)
             header = CGRect(x: compactHeader ? safe.minX : safe.minX + max(0, (width - 440) / 2), y: safe.minY,
                             width: compactHeader ? width : min(440, width), height: compactHeader ? 44 : headerHeight)
@@ -38,17 +49,32 @@ struct CallPresentationGeometry {
             let width = min(520, safe.width)
             toolbar = CGRect(x: safe.midX - width / 2, y: safe.maxY - toolbarHeight,
                              width: width, height: toolbarHeight)
-            header = CGRect(x: safe.midX - min(440, safe.width) / 2, y: safe.minY,
-                            width: min(440, safe.width), height: headerHeight)
+            header = CGRect(x: floating ? safe.minX : safe.midX - min(440, safe.width) / 2, y: safe.minY,
+                            width: floating ? safe.width : min(440, safe.width), height: compactHeader ? 44 : headerHeight)
             stage = CGRect(x: safe.minX, y: header.maxY + 6, width: safe.width,
                            height: max(0, toolbar.minY - header.maxY - 14))
         }
     }
 }
 
-/// All captioned actions share an optical icon center and a caption baseline.
-final class AlignedCallButton: UIButton {
+/// Keep meeting controls visible for the entire lifetime of a system menu.
+class MeetingMenuButton: UIButton {
     var onMenuVisibilityChanged: ((Bool) -> Void)?
+    override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+        willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
+        super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
+        onMenuVisibilityChanged?(true)
+    }
+    override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
+        willEndFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
+        super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
+        if let animator { animator.addCompletion { [weak self] in self?.onMenuVisibilityChanged?(false) } }
+        else { onMenuVisibilityChanged?(false) }
+    }
+}
+
+/// All captioned actions share an optical icon center and a caption baseline.
+final class AlignedCallButton: MeetingMenuButton {
     var showsCaption = true { didSet { if oldValue != showsCaption { setNeedsLayout() } } }
     private let symbolView = UIImageView()
     private let caption = UILabel()
@@ -66,17 +92,6 @@ final class AlignedCallButton: UIButton {
         addSubview(symbolView); addSubview(caption)
     }
     required init?(coder: NSCoder) { nil }
-    override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
-        willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
-        super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
-        onMenuVisibilityChanged?(true)
-    }
-    override func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
-        willEndFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
-        super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
-        if let animator { animator.addCompletion { [weak self] in self?.onMenuVisibilityChanged?(false) } }
-        else { onMenuVisibilityChanged?(false) }
-    }
     /// Custom icons use the same optical slot as ordinary SF Symbols.
     /// UIKit's imageView is deliberately hidden by this control.
     func setSymbolContent(_ content: UIView?) {
@@ -110,7 +125,7 @@ final class AlignedCallButton: UIButton {
 }
 
 final class CallToolbar: UIView {
-    private let surface = MeetingChromeSurface()
+    private let surface = MeetingChromeSurface(cornerRadius: 28)
     private let baseItems: [UIView]
     private var accessory: UIView?
     private var items: [UIView] {
@@ -133,7 +148,7 @@ final class CallToolbar: UIView {
         surface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         addSubview(surface)
         items.forEach { $0.translatesAutoresizingMaskIntoConstraints = true; addSubview($0) }
-        layer.cornerRadius = 16
+        layer.cornerRadius = 28
         accessibilityIdentifier = "Meeting toolbar"
     }
     required init?(coder: NSCoder) { nil }
@@ -170,16 +185,25 @@ final class CompactCallHeader: UIView {
     let nextStream = UIButton(type: .system)
     let automatic = UIButton(type: .system)
     let pin = UIButton(type: .system)
-    let layoutButton = UIButton(type: .system)
+    let layoutButton = MeetingMenuButton(type: .system)
     let participants = UIButton(type: .system)
     let missed = UIButton(type: .system)
     let conversation = UIButton(type: .system)
     let focus = UIButton(type: .system)
+    private let overflow = MeetingMenuButton(type: .system)
+    var onMenuVisibilityChanged: ((Bool) -> Void)? {
+        didSet {
+            layoutButton.onMenuVisibilityChanged = onMenuVisibilityChanged
+            overflow.onMenuVisibilityChanged = onMenuVisibilityChanged
+        }
+    }
     private let chatBadge = UILabel()
     private let missedBadge = UILabel()
     private let sourceLabel = UILabel()
     private let privacyIcon = UIImageView()
     private let speakerIndicator = ActiveSpeakerIndicator(font: .systemFont(ofSize: 15, weight: .medium))
+    private let identitySurface = MeetingChromeSurface(cornerRadius: 22)
+    private let actionsSurface = MeetingChromeSurface(cornerRadius: 22)
     private var sourceName = ""
     private var callStatus: String?
     private var privacySymbol: String?
@@ -197,13 +221,23 @@ final class CompactCallHeader: UIView {
         let followsSpeaker: Bool
     }
     private var renderedLayout: Layout?
+    private var availableActions = Set<ObjectIdentifier>()
+    private var layoutAvailable = false
+    private var disclosureOnly = false
+    private struct OverflowItem: Equatable {
+        let button: ObjectIdentifier
+        let title: String
+        let enabled: Bool
+        let menu: ObjectIdentifier?
+    }
+    private var overflowItems: [OverflowItem] = []
     private var actions: [UIButton] { [layoutButton, previous, automatic, nextStream, pin, participants, missed, conversation, focus] }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         accessibilityIdentifier = "Compact meeting header"
-        backgroundColor = UIColor.black.withAlphaComponent(0.8)
-        layer.cornerRadius = 12
+        backgroundColor = .clear
+        addSubview(identitySurface); addSubview(actionsSurface)
         details.contentHorizontalAlignment = .leading
         details.configuration = .plain()
         details.configuration?.titleLineBreakMode = .byTruncatingTail
@@ -238,6 +272,14 @@ final class CompactCallHeader: UIView {
             button.accessibilityLabel = label
             addSubview(button)
         }
+        availableActions = Set(actions.filter { $0 !== layoutButton }.map(ObjectIdentifier.init))
+        overflow.configuration = .plain()
+        overflow.configuration?.image = UIImage(systemName: "ellipsis")
+        overflow.showsMenuAsPrimaryAction = true
+        overflow.accessibilityLabel = L("More meeting controls")
+        overflow.accessibilityIdentifier = "More meeting controls"
+        overflow.isHidden = true
+        addSubview(overflow)
         for (button, badge) in [(conversation, chatBadge), (missed, missedBadge)] {
             badge.font = .systemFont(ofSize: 10, weight: .semibold)
             badge.textAlignment = .center
@@ -260,7 +302,9 @@ final class CompactCallHeader: UIView {
     func setLayout(mode: ConferenceCore.MeetingLayoutMode, available: Bool,
                    choose: @escaping (ConferenceCore.MeetingLayoutMode) -> Void,
                    followSpeaker: (() -> Void)? = nil) {
+        layoutAvailable = available
         layoutButton.isHidden = !available
+        setNeedsLayout()
         guard available else { return }
         let layout = Layout(mode: mode, followsSpeaker: followSpeaker != nil)
         guard renderedLayout != layout else { return }
@@ -309,7 +353,9 @@ final class CompactCallHeader: UIView {
         missed.accessibilityLabel = L("Catch up, %ld missed sections", missedCount)
         missedBadge.text = missedCount > 99 ? "99+" : String(missedCount)
         focus.isHidden = !focusAvailable
+        self.disclosureOnly = disclosureOnly
         if disclosureOnly { actions.forEach { $0.isHidden = true } }
+        availableActions = Set(actions.filter { $0 !== layoutButton && !$0.isHidden }.map(ObjectIdentifier.init))
         setNeedsLayout()
     }
     func setSpeaker(_ speaker: CallSpeaker?) {
@@ -331,9 +377,30 @@ final class CompactCallHeader: UIView {
     }
     override func layoutSubviews() {
         super.layoutSubviews()
-        let visible = actions.filter { !$0.isHidden }
+        let available = disclosureOnly ? [] : actions.filter {
+            $0 === layoutButton ? layoutAvailable : availableActions.contains(ObjectIdentifier($0))
+        }
+        let showsIdentity = bounds.width >= 104 || available.isEmpty
+        let capacity = max(1, Int(max(0, bounds.width - (showsIdentity ? 116 : 8)) / 44))
+        let needsOverflow = available.count > capacity || !showsIdentity
+        let priority: [UIButton] = [participants, conversation, focus, layoutButton, pin, missed, previous, automatic, nextStream]
+        let availableIDs = Set(available.map(ObjectIdentifier.init))
+        let direct = Set(priority.filter { availableIDs.contains(ObjectIdentifier($0)) }
+            .prefix(needsOverflow ? max(0, capacity - 1) : capacity).map(ObjectIdentifier.init))
+        var visible = available.filter { direct.contains(ObjectIdentifier($0)) }
+        actions.forEach { $0.isHidden = !direct.contains(ObjectIdentifier($0)) }
+        overflow.isHidden = !needsOverflow
+        if needsOverflow {
+            updateOverflow((showsIdentity ? [] : [details]) + available.filter { !direct.contains(ObjectIdentifier($0)) })
+            visible.append(overflow)
+        }
         let start = bounds.maxX - CGFloat(visible.count) * 44 - 4
-        details.frame = CGRect(x: 4, y: 0, width: max(0, start - 8), height: 44)
+        details.isHidden = !showsIdentity
+        identitySurface.isHidden = !showsIdentity
+        details.frame = CGRect(x: 4, y: 0, width: min(220, max(0, start - 12)), height: 44)
+        identitySurface.frame = details.frame
+        actionsSurface.isHidden = visible.isEmpty
+        actionsSurface.frame = CGRect(x: start - 2, y: 0, width: CGFloat(visible.count) * 44 + 6, height: 44)
         let inset: CGFloat = privacyIcon.isHidden ? 7 : 24
         sourceLabel.frame = CGRect(x: inset, y: 3, width: max(0, details.bounds.width - inset - 7), height: 14)
         privacyIcon.frame = CGRect(x: 7, y: 3, width: 13, height: 14)
@@ -343,6 +410,29 @@ final class CompactCallHeader: UIView {
         }
         chatBadge.frame = CGRect(x: 21, y: 3, width: 23, height: 14)
         missedBadge.frame = chatBadge.frame
+    }
+    private func updateOverflow(_ buttons: [UIButton]) {
+        let items = buttons.map { button in
+            OverflowItem(button: ObjectIdentifier(button),
+                title: [button.accessibilityLabel ?? button.configuration?.title, button.accessibilityValue]
+                    .compactMap { $0 }.joined(separator: ", "),
+                enabled: button.isEnabled, menu: button.menu.map(ObjectIdentifier.init))
+        }
+        guard overflowItems != items else { return }
+        overflowItems = items
+        overflow.menu = UIMenu(children: zip(buttons, items).map { button, item -> UIMenuElement in
+            if let menu = button.menu, button.showsMenuAsPrimaryAction {
+                return UIMenu(title: item.title, image: button.configuration?.image, children: menu.children)
+            }
+            return UIAction(title: item.title, image: button.configuration?.image,
+                attributes: item.enabled ? [] : .disabled) { [weak button] _ in
+                button?.sendActions(for: .touchUpInside)
+            }
+        })
+    }
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return hit === self ? nil : hit
     }
 }
 

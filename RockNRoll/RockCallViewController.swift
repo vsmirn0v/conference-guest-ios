@@ -57,6 +57,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private var explicitLayout = false
     private let layoutControls = MeetingLayoutControls()
     private let participantStrip = MeetingParticipantStrip()
+    private let sourceSelector = MeetingMenuButton(type: .system)
+    private var thumbnailSources: [String: (key: String, track: CallVideoSource, mirrored: Bool)] = [:]
+    private var thumbnailViews: [String: ParticipantPreview] = [:]
     private var galleryPage = 0
     private var galleryCapacity = 0
     private var gallerySize = CGSize.zero
@@ -107,10 +110,31 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private struct VideoTile {
         let tile: UIView
         let zoom: UIScrollView
+        let canvas: UIView
         let video: CallVideoView
+        let fitting: [NSLayoutConstraint]
+        let overlays: [NSLayoutConstraint]
         let badge: ParticipantMediaBadge
         let pin: UIButton
         var viewportSize = CGSize.zero
+        var fittedFrame = CGRect.zero
+    }
+    /// Borrows decoded pixels from the existing source; an unmounted thumbnail has no render demand.
+    private final class ParticipantPreview: UIView {
+        let video = CallVideoView()
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+            video.layoutMode = .fit; video.isEnabled = false
+            video.frame = bounds; video.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            addSubview(video)
+        }
+        required init?(coder: NSCoder) { nil }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            video.isEnabled = window != nil
+            if window == nil { video.track = nil }
+        }
     }
     private var videoTiles: [String: VideoTile] = [:]
     private var flipCameraConstraints: [NSLayoutConstraint] = []
@@ -218,20 +242,38 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
         focus.onChange = { [weak self] _ in
             guard let self else { return }
-            if let snapshot = self.displayedSnapshot { self.render(snapshot: snapshot) }
             self.view.setNeedsLayout()
+            self.view.layoutIfNeeded()
         }
         focus.canHide = { [weak self] in
             guard let self else { return false }
             return !self.isHeld && self.mediaStatus == nil && self.presentedViewController == nil && self.dockedConversation == nil
         }
+        view.insertSubview(streamScroll, at: 0)
         view.addSubview(layoutControls); view.addSubview(participantStrip)
+        sourceSelector.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
+        layoutControls.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
+        compactHeader.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
+        sourceSelector.configuration = .plain()
+        sourceSelector.configuration?.image = UIImage(systemName: "rectangle.on.rectangle")
+        sourceSelector.configuration?.imagePadding = 6
+        sourceSelector.configuration?.titleLineBreakMode = .byTruncatingTail
+        sourceSelector.accessibilityIdentifier = "Meeting source selector"
+        sourceSelector.showsMenuAsPrimaryAction = true
+        let sourceSurface = MeetingChromeSurface(cornerRadius: 14)
+        sourceSurface.isUserInteractionEnabled = false
+        sourceSurface.frame = sourceSelector.bounds
+        sourceSurface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        sourceSelector.insertSubview(sourceSurface, at: 0)
+        view.addSubview(sourceSelector)
         layoutControls.onLayout = { [weak self] in self?.chooseLayout($0) }
         layoutControls.onAutomatic = { [weak self] in self?.browsedStream = nil; self?.setPin(nil) }
         layoutControls.onPage = { [weak self] in self?.moveGalleryPage($0) }
         participantStrip.onSelect = { [weak self] key in
             guard let self, let target = self.streamPinTargets[key] else { return }; self.setPin(target)
         }
+        participantStrip.previewProvider = { [weak self] key in self?.participantPreview(for: key) }
+        participantStrip.onPreviewVisibilityChanged = { [weak self] in self?.onVideoDemandChanged?() }
         focusButton.configuration = .tinted()
         focusButton.configuration?.image = UIImage(systemName: "arrow.up.left.and.arrow.down.right")
         focusButton.accessibilityLabel = L("Hide controls")
@@ -284,60 +326,101 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let headerHeight = max(80, identityHeight + statusHeight + 8)
         let geometry = CallPresentationGeometry(bounds: view.bounds, insets: view.safeAreaInsets,
             headerHeight: headerHeight, toolbarHeight: toolbar.preferredHeight, hidden: focus.hidden,
-            largeText: large, allowsRail: dockedConversation == nil)
+            largeText: large, allowsRail: dockedConversation == nil, floating: true)
         toolbar.arrange(rail: geometry.rail, largeText: large)
         header.frame = geometry.header.insetBy(dx: 4, dy: 0)
         header.frame.size.height = max(0, geometry.header.height - statusHeight - 8)
         toolbar.frame = geometry.toolbar
         var stage = geometry.stage
+        var canvas = view.bounds
         if dockedConversation != nil {
             let width = view.bounds.width >= 700 ? min(400, max(320, view.bounds.width * 0.36)) : stage.width
             conversationHost.frame = CGRect(x: stage.maxX - width, y: stage.minY, width: width, height: stage.height)
             stage.size.width = max(0, stage.width - width - 8)
+            canvas.size.width = max(0, conversationHost.frame.minX - canvas.minX - 8)
         }
         for entry in videoTiles.values where entry.zoom.window != nil { rememberZoom(entry.zoom) }
         restoringZoom = true
         let layoutAvailable = displayedSnapshot?.remoteParticipants.isEmpty == false && displayMode != .audioOnly
-        let layoutFrame = CGRect(x: stage.minX, y: stage.minY, width: stage.width, height: 44)
-        layoutControls.isHidden = !layoutAvailable || focus.hidden || geometry.compactHeader
+        let sharing = effectiveLayoutMode == .speaker && currentPrimaryKey.flatMap { streamPinTargets[$0]?.isScreenShare } == true
+        let layoutFrame = CGRect(x: stage.minX + 4, y: max(stage.minY, stage.maxY - 48),
+            width: min(288, max(0, stage.width - 8)), height: 44)
+        layoutControls.isHidden = !layoutAvailable || focus.hidden || sharing
         if !layoutControls.isHidden {
             layoutControls.frame = layoutFrame
-            layoutControls.frame.size.width = max(0, layoutFrame.width - 56)
-            stage.origin.y += 48; stage.size.height = max(0, stage.height - 48)
         }
-        participantStrip.isHidden = effectiveLayoutMode == .grid || !layoutAvailable || focus.hidden
-        if !participantStrip.isHidden {
+        var imageFit = stage
+        let zoomWidth = max(140, 88 + max(44, fitButton.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width) + zoomControls.spacing * 2)
+        let selectorMinimum: CGFloat = large ? 176 : 144
+        let stackedSources = stage.width < selectorMinimum + zoomWidth + 16
+        let shareRowHeight: CGFloat = stackedSources ? 104 : 52
+        sourceSelector.isHidden = !sharing || !layoutAvailable || focus.hidden
+        sourceSelector.frame = CGRect(x: stage.minX + 4, y: stage.minY + 4,
+            width: max(0, min(280, stage.width - (stackedSources ? 8 : zoomWidth + 16))), height: 44)
+        if sharing {
+            imageFit.origin.y += min(imageFit.height, shareRowHeight)
+            imageFit.size.height = max(0, imageFit.height - shareRowHeight)
+        } else if layoutAvailable {
+            imageFit.size.height = max(0, layoutFrame.minY - stage.minY - 4)
+        }
+        let canShowStrip = stage.height >= 240
+        participantStrip.isHidden = effectiveLayoutMode == .grid || !layoutAvailable || focus.hidden || sharing || !canShowStrip
+        if effectiveLayoutMode == .speaker && layoutAvailable && !sharing && canShowStrip {
             participantStrip.vertical = stage.width >= 800
             if participantStrip.vertical {
-                participantStrip.frame = CGRect(x: stage.maxX - 196, y: stage.minY, width: 196, height: stage.height)
-                stage.size.width = max(0, stage.width - 208)
+                participantStrip.frame = CGRect(x: stage.maxX - 172, y: stage.minY,
+                    width: 168, height: max(0, imageFit.height))
+                imageFit.size.width = max(0, imageFit.width - 180)
             } else {
-                participantStrip.frame = CGRect(x: stage.minX, y: stage.maxY - 52, width: stage.width, height: 52)
-                stage.size.height = max(0, stage.height - 60)
+                let stripHeight = min(92, max(44, stage.height * 0.3))
+                participantStrip.frame = CGRect(x: stage.minX + 4, y: max(stage.minY, layoutFrame.minY - stripHeight - 6),
+                    width: max(0, stage.width - 8), height: min(stripHeight, stage.height))
+                imageFit.size.height = max(0, participantStrip.frame.minY - stage.minY - 8)
             }
         }
-        streamScroll.frame = stage
-        tiles.arrange(size: stage.size, mode: effectiveLayoutMode)
+        let gridStage = effectiveLayoutMode == .grid ? imageFit : stage
+        streamScroll.frame = effectiveLayoutMode == .grid ? gridStage : canvas
+        tiles.arrange(size: streamScroll.bounds.size, mode: effectiveLayoutMode)
         if effectiveLayoutMode != .grid { restoreGalleryPage = true }
         if effectiveLayoutMode == .grid, let pagination = tiles.pagination {
             let oldPage = galleryPage
-            let geometryChanged = gallerySize != stage.size || galleryCapacity != pagination.capacity
+            let geometryChanged = gallerySize != gridStage.size || galleryCapacity != pagination.capacity
             if galleryCapacity > 0, galleryCapacity != pagination.capacity {
                 galleryPage = galleryPage * galleryCapacity / pagination.capacity
             }
-            gallerySize = stage.size
+            gallerySize = gridStage.size
             galleryCapacity = pagination.capacity
             galleryPage = min(galleryPage, pagination.pageCount - 1)
             restoreGalleryPage = restoreGalleryPage || geometryChanged || oldPage != galleryPage
         }
         streamScroll.isPagingEnabled = effectiveLayoutMode == .grid
         if effectiveLayoutMode == .grid && restoreGalleryPage && !streamScroll.isDragging && !streamScroll.isDecelerating {
-            streamScroll.setContentOffset(CGPoint(x: CGFloat(galleryPage) * stage.width, y: 0), animated: false)
+            streamScroll.setContentOffset(CGPoint(x: CGFloat(galleryPage) * gridStage.width, y: 0), animated: false)
             restoreGalleryPage = false
         }
         refreshLayoutControls()
         streamScroll.layoutIfNeeded()
-        for (key, var entry) in videoTiles where entry.zoom.window != nil && entry.zoom.bounds.size != entry.viewportSize {
+        tiles.layoutIfNeeded()
+        var resized: [String] = []
+        for (key, var entry) in videoTiles where entry.tile.superview != nil {
+            let fitted = effectiveLayoutMode == .speaker
+                ? imageFit.offsetBy(dx: -canvas.minX, dy: -canvas.minY) : CGRect(origin: .zero, size: entry.zoom.bounds.size)
+            if entry.fittedFrame != fitted || entry.viewportSize != entry.zoom.bounds.size { resized.append(key) }
+            let values = [fitted.minX, fitted.minY, fitted.width, fitted.height]
+            for (constraint, value) in zip(entry.fitting, values) { constraint.constant = value }
+            let overlayValues = [fitted.minX + 10, fitted.maxY - entry.tile.bounds.height - 10,
+                fitted.maxX - entry.tile.bounds.width - 10, fitted.maxY - entry.tile.bounds.height - 8]
+            for (constraint, value) in zip(entry.overlays, overlayValues) { constraint.constant = value }
+            if flipCamera.superview === entry.tile {
+                flipCameraConstraints.first?.constant = fitted.minY + 8
+                flipCameraConstraints.dropFirst().first?.constant = fitted.maxX - entry.tile.bounds.width - 8
+            }
+            entry.tile.layoutIfNeeded()
+            entry.fittedFrame = fitted
+            videoTiles[key] = entry
+        }
+        for key in resized {
+            guard var entry = videoTiles[key], entry.zoom.window != nil else { continue }
             restoreZoom(entry.zoom, key: key)
             entry.viewportSize = entry.zoom.bounds.size
             videoTiles[key] = entry
@@ -366,13 +449,13 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         statusLabel.isHidden = focus.hidden || geometry.compactHeader
         statusLabel.frame = CGRect(x: geometry.header.minX, y: geometry.header.maxY - statusHeight,
             width: geometry.header.width, height: statusHeight)
-        zoomControls.frame = CGRect(x: stage.maxX - 150, y: stage.minY + 8, width: 140, height: 44)
+        zoomControls.frame = CGRect(x: stage.maxX - min(zoomWidth, stage.width - 8) - 4,
+            y: stage.minY + (sharing && stackedSources ? 56 : 4), width: max(0, min(zoomWidth, stage.width - 8)), height: 44)
         zoomVisibility.setSuppressed(focus.hidden)
         shareOffer.frame = CGRect(x: stage.minX + 56, y: stage.minY + 8, width: max(0, stage.width - 210), height: 44)
         shareOffer.alpha = focus.hidden ? 0 : 1
-        focusButton.frame = layoutControls.isHidden ? CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44) :
-            CGRect(x: layoutFrame.maxX - 48, y: layoutFrame.minY, width: 44, height: 44)
-        focusButton.isHidden = focus.hidden || primaryZoom == nil || geometry.compactHeader
+        focusButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44)
+        focusButton.isHidden = focus.hidden || primaryZoom == nil || geometry.compactHeader || sharing
         localShareCard.alpha = focus.hidden ? 0 : 1
         localShareCard.refreshLayout()
         let cardWidth = min(216, stage.width - 8)
@@ -384,8 +467,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         for entry in videoTiles.values {
             entry.zoom.isAccessibilityElement = true
             entry.zoom.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
-            entry.badge.alpha = focus.hidden ? 0 : 1
-            entry.pin.alpha = focus.hidden || effectiveLayoutMode == .grid || (geometry.compactHeader && entry.zoom === primaryZoom) ? 0 : 1
+            entry.badge.alpha = focus.hidden || effectiveLayoutMode == .speaker ? 0 : 1
+            entry.pin.alpha = focus.hidden || (geometry.compactHeader && entry.zoom === primaryZoom && effectiveLayoutMode != .grid) ? 0 : 1
             entry.pin.isUserInteractionEnabled = entry.pin.alpha > 0
             entry.pin.accessibilityElementsHidden = entry.pin.alpha == 0
         }
@@ -471,6 +554,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         routeLabel.text = L("Audio output")
 
         streamScroll.delegate = self
+        streamScroll.contentInsetAdjustmentBehavior = .never
         streamScroll.addSubview(tiles)
         tiles.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -898,6 +982,28 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         layoutControls.update(mode: effectiveLayoutMode, manual: pinnedStream != nil,
             page: galleryPage, pagination: tiles.pagination, count: tiles.arrangedSubviews.count)
     }
+    private func participantPreview(for id: String) -> UIView? {
+        guard let source = thumbnailSources[id] else { return nil }
+        let preview = thumbnailViews[id] ?? ParticipantPreview(frame: .zero)
+        preview.video.track = source.track
+        preview.video.isMirrored = source.mirrored
+        thumbnailViews[id] = preview
+        return preview
+    }
+    private func updateSourceSelector(participants: [CallParticipant]) {
+        let selected = pinnedStream ?? browsedStream ?? currentPrimaryKey.flatMap { streamPinTargets[$0] }
+        let automatic = UIAction(title: L("Follow speaker"), image: UIImage(systemName: "waveform"),
+            state: pinnedStream == nil && browsedStream == nil ? .on : .off) { [weak self] _ in self?.setPin(nil) }
+        let sources = orderedStreams.compactMap { target -> UIAction? in
+            guard let owner = participants.first(where: { $0.id == target.participantID }) else { return nil }
+            let name = (owner.name ?? L("Musician")) + (target.isScreenShare ? L(" · Screen") : "")
+            return UIAction(title: name, image: UIImage(systemName: target.isScreenShare ? "rectangle.on.rectangle" : "video"),
+                state: selected == target ? .on : .off) { [weak self] _ in self?.setPin(target) }
+        }
+        sourceSelector.menu = UIMenu(children: [automatic, UIMenu(options: .displayInline, children: sources)])
+        sourceSelector.configuration?.title = primaryName ?? L("Screen share")
+        sourceSelector.accessibilityLabel = L("Screen share") + ": " + (primaryName ?? L("Musician"))
+    }
     func render(snapshot: CallMediaSnapshot) {
         displayedSnapshot = snapshot
         let ids = snapshot.participants.map(\.id), existing = Set(rosterOrder)
@@ -936,6 +1042,24 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         if let browsedStream, !orderedStreams.contains(browsedStream) { self.browsedStream = nil }
         let activeKeys = Set(streams.map { $0.1.id })
         videoTiles = videoTiles.filter { activeKeys.contains($0.key) }
+        let previousThumbnailSources = thumbnailSources
+        thumbnailSources = Dictionary(streams.filter { $0.1.source == .camera }.map { participant, publication, track in
+            (streamID(PinnedStream(participantID: participant.id, isScreenShare: false)),
+             (key: publication.id, track: track, mirrored: participant.isLocal &&
+                CameraPreviewPresentation.isMirrored(device: studio?.liveCaptureDevice?())))
+        }, uniquingKeysWith: { first, _ in first })
+        let thumbnailsChanged = Set(previousThumbnailSources.keys) != Set(thumbnailSources.keys) ||
+            thumbnailSources.contains { id, source in
+                guard let previous = previousThumbnailSources[id] else { return true }
+                return previous.key != source.key || previous.track.identity != source.track.identity || previous.mirrored != source.mirrored
+            }
+        for (id, preview) in thumbnailViews {
+            guard let source = thumbnailSources[id] else { preview.video.track = nil; preview.video.isEnabled = false; continue }
+            preview.video.track = participantStrip.visiblePreviewIDs.contains(id) && preview.window != nil ? source.track : nil
+            preview.video.isMirrored = source.mirrored
+        }
+        thumbnailViews = thumbnailViews.filter { thumbnailSources[$0.key] != nil }
+        if thumbnailsChanged { participantStrip.reloadPreviews() }
         streamPinTargets = Dictionary(uniqueKeysWithValues: orderedStreams.map { (streamID($0), $0) })
         for stream in streams { streamPinTargets[stream.1.id] = PinnedStream(participantID: stream.0.id, isScreenShare: stream.1.source == .screenShareVideo) }
         if !streams.contains(where: { $0.0.isLocal && $0.1.source != .screenShareVideo }) {
@@ -948,6 +1072,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         pinnedStreamKey = primary.flatMap { requested == nil ? nil : $0.1.id }
         currentPrimaryKey = primary?.1.id
         primaryName = requested.flatMap { target in participants.first { $0.id == target.participantID }?.name } ?? primary?.0.name
+        updateSourceSelector(participants: participants)
         primaryZoom = nil
         if let primary {
             floatingVideo?.show(source: primary.2, name: primary.0.name ?? L("Musician"),
@@ -1072,6 +1197,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         tile.accessibilityLabel = "\(participant.name ?? L("Musician")) \(isShare ? L("screen share") : L("video"))"
         tile.addInteraction(UIContextMenuInteraction(delegate: self))
         let zoom = UIScrollView()
+        zoom.contentInsetAdjustmentBehavior = .never
         zoom.minimumZoomScale = 1
         zoom.maximumZoomScale = isShare ? 5 : 1
         zoom.panGestureRecognizer.isEnabled = false
@@ -1090,7 +1216,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         video.layoutMode = .fit
         video.track = track
         video.translatesAutoresizingMaskIntoConstraints = false
-        zoom.addSubview(video)
+        let canvas = UIView()
+        canvas.translatesAutoresizingMaskIntoConstraints = false
+        zoom.addSubview(canvas)
+        canvas.addSubview(video)
         tile.addSubview(zoom)
         let badge = ParticipantMediaBadge()
         badge.translatesAutoresizingMaskIntoConstraints = false
@@ -1116,26 +1245,35 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         speakingTiles[participant.id, default: []].append(tile)
         participantBadges[participant.id, default: []].append(badge)
         tileOrder[ObjectIdentifier(tile)] = participant.id + (isShare ? ".screen" : ".camera")
-        NSLayoutConstraint.activate([
+        let fitting = [
+            video.leadingAnchor.constraint(equalTo: canvas.leadingAnchor),
+            video.topAnchor.constraint(equalTo: canvas.topAnchor),
+            video.widthAnchor.constraint(equalToConstant: 0),
+            video.heightAnchor.constraint(equalToConstant: 0)
+        ]
+        let overlays = [
+            badge.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 10),
+            badge.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -10),
+            pin.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -10),
+            pin.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -8)
+        ]
+        NSLayoutConstraint.activate(fitting + overlays + [
             zoom.leadingAnchor.constraint(equalTo: tile.leadingAnchor),
             zoom.trailingAnchor.constraint(equalTo: tile.trailingAnchor),
             zoom.topAnchor.constraint(equalTo: tile.topAnchor),
             zoom.bottomAnchor.constraint(equalTo: tile.bottomAnchor),
-            video.leadingAnchor.constraint(equalTo: zoom.contentLayoutGuide.leadingAnchor),
-            video.trailingAnchor.constraint(equalTo: zoom.contentLayoutGuide.trailingAnchor),
-            video.topAnchor.constraint(equalTo: zoom.contentLayoutGuide.topAnchor),
-            video.bottomAnchor.constraint(equalTo: zoom.contentLayoutGuide.bottomAnchor),
-            video.widthAnchor.constraint(equalTo: zoom.frameLayoutGuide.widthAnchor),
-            video.heightAnchor.constraint(equalTo: zoom.frameLayoutGuide.heightAnchor),
-            badge.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 10),
-            badge.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -10),
+            canvas.leadingAnchor.constraint(equalTo: zoom.contentLayoutGuide.leadingAnchor),
+            canvas.trailingAnchor.constraint(equalTo: zoom.contentLayoutGuide.trailingAnchor),
+            canvas.topAnchor.constraint(equalTo: zoom.contentLayoutGuide.topAnchor),
+            canvas.bottomAnchor.constraint(equalTo: zoom.contentLayoutGuide.bottomAnchor),
+            canvas.widthAnchor.constraint(equalTo: zoom.frameLayoutGuide.widthAnchor),
+            canvas.heightAnchor.constraint(equalTo: zoom.frameLayoutGuide.heightAnchor),
             badge.trailingAnchor.constraint(lessThanOrEqualTo: pin.leadingAnchor, constant: -6),
-            pin.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -10),
-            pin.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -8),
             pin.widthAnchor.constraint(equalToConstant: 44),
             pin.heightAnchor.constraint(equalToConstant: 44)
         ])
-        var entry = VideoTile(tile: tile, zoom: zoom, video: video, badge: badge, pin: pin)
+        var entry = VideoTile(tile: tile, zoom: zoom, canvas: canvas, video: video, fitting: fitting,
+            overlays: overlays, badge: badge, pin: pin)
         configureVideoTile(&entry, participant: participant, track: track,
                            isShare: isShare, primary: primary, key: key)
         videoTiles[key] = entry
@@ -1195,11 +1333,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             voices.first { $0.id == activeSpeaker.current?.id } ?? voices.first
         activeSpeaker.update(speaking.map { CallSpeaker(id: $0.id, name: $0.name ?? L("Musician"), isLocal: $0.isLocal) })
         let byID = Dictionary(uniqueKeysWithValues: participants.map { ($0.id, $0) })
-        participantStrip.update(orderedStreams.compactMap { target in
+        let primary = (pinnedStream ?? browsedStream) ?? currentPrimaryKey.flatMap { streamPinTargets[$0] }
+        participantStrip.update(orderedStreams.filter { !$0.isScreenShare && $0 != primary }.compactMap { target in
             guard let owner = byID[target.participantID] else { return nil }
             return MeetingStripItem(id: streamID(target), name: owner.name ?? L("Musician"), isShare: target.isScreenShare,
                 audio: ParticipantAudioState(microphoneOn: owner.microphoneOn, speaking: owner.isSpeaking))
-        }, selected: (pinnedStream ?? browsedStream).map(streamID) ?? currentPrimaryKey.flatMap { streamPinTargets[$0] }.map(streamID))
+        }, selected: primary.map(streamID))
         for participant in participants {
             identityViews[participant.id]?.updateAudio(ParticipantAudioState(microphoneOn: participant.microphoneOn, speaking: participant.isSpeaking))
             for badge in participantBadges[participant.id] ?? [] {
@@ -1423,6 +1562,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             if visible { result[key] = key == currentPrimaryKey }
         }
         if wantsVideo, let key = currentPrimaryKey { result[key] = true }
+        for (id, preview) in thumbnailViews {
+            let visible = foreground && participantStrip.visiblePreviewIDs.contains(id)
+            preview.video.isEnabled = visible
+            if visible, let key = thumbnailSources[id]?.key, result[key] == nil { result[key] = false }
+        }
         // Preload adjacent camera tiles while foregrounded to keep swiping responsive.
         if foreground, !focus.hidden, effectiveLayoutMode == .speaker, pinnedStream == nil, let key = currentPrimaryKey, let target = streamPinTargets[key], let index = orderedStreams.firstIndex(of: target) {
             for i in [index - 1, index + 1] where orderedStreams.indices.contains(i) {
@@ -1492,7 +1636,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-        scrollView === streamScroll ? nil : scrollView.subviews.first { $0 is CallVideoView }
+        guard scrollView !== streamScroll, let key = scrollView.accessibilityIdentifier else { return nil }
+        return videoTiles[key]?.canvas
     }
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
@@ -1530,16 +1675,18 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         guard !restoringZoom, zoom !== streamScroll, let key = zoom.accessibilityIdentifier,
               let entry = videoTiles[key], entry.zoom === zoom, entry.viewportSize != .zero,
               entry.viewportSize == zoom.bounds.size, zoom.window != nil,
-              zoom.contentSize.width > 0, zoom.contentSize.height > 0 else { return }
+              entry.video.bounds.width > 0, entry.video.bounds.height > 0 else { return }
+        let center = zoom.convert(CGPoint(x: zoom.bounds.midX, y: zoom.bounds.midY), to: entry.video)
         zoomStates[key] = (zoom.zoomScale, CGPoint(
-            x: (zoom.contentOffset.x + zoom.bounds.width / 2) / zoom.contentSize.width,
-            y: (zoom.contentOffset.y + zoom.bounds.height / 2) / zoom.contentSize.height))
+            x: center.x / entry.video.bounds.width, y: center.y / entry.video.bounds.height))
     }
     private func restoreZoom(_ zoom: UIScrollView, key: String) {
-        guard let state = zoomStates[key] else { return }
+        guard let state = zoomStates[key], let entry = videoTiles[key] else { return }
         zoom.setZoomScale(state.0, animated: false)
+        let center = entry.video.convert(CGPoint(x: state.1.x * entry.video.bounds.width,
+            y: state.1.y * entry.video.bounds.height), to: zoom)
         zoom.contentOffset = CGPoint(
-            x: min(max(0, state.1.x * zoom.contentSize.width - zoom.bounds.width / 2), max(0, zoom.contentSize.width - zoom.bounds.width)),
-            y: min(max(0, state.1.y * zoom.contentSize.height - zoom.bounds.height / 2), max(0, zoom.contentSize.height - zoom.bounds.height)))
+            x: min(max(0, center.x - zoom.bounds.width / 2), max(0, zoom.contentSize.width - zoom.bounds.width)),
+            y: min(max(0, center.y - zoom.bounds.height / 2), max(0, zoom.contentSize.height - zoom.bounds.height)))
     }
 }

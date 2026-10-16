@@ -24,8 +24,14 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     private let state: StreamViewportState
     private let owner = UUID()
     private var viewportSize = CGSize.zero
+    /// The image starts clear of controls, while gestures use the entire canvas.
+    var fittedContentRect: CGRect? { didSet { if oldValue != fittedContentRect { setNeedsLayout() } } }
+    private var appliedFitRect = CGRect.zero
     private var restoring = false
     private var infoBottom: NSLayoutConstraint?
+    private var zoomBottom: NSLayoutConstraint?
+    private var zoomTrailing: NSLayoutConstraint?
+    private var showsParticipantInfo = true
     private let pinButton = UIButton(type: .system)
     private let zoomControls = UIStackView()
     private lazy var zoomVisibility = TransientCallControls(view: zoomControls)
@@ -56,6 +62,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
          onPin: (() -> Void)? = nil, isSpeaking: Bool = false) {
         self.video = video
         self.state = state
+        self.showsParticipantInfo = showInfo
         super.init(frame: .zero)
         state.owner = owner
         clipsToBounds = true
@@ -136,9 +143,10 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
                 zoomControls.addArrangedSubview(button)
             }
             addSubview(zoomControls)
-            NSLayoutConstraint.activate([
-                zoomControls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8)
-            ])
+            let trailing = zoomControls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8)
+            let bottom = zoomControls.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
+            zoomTrailing = trailing; zoomBottom = bottom
+            NSLayoutConstraint.activate([trailing, bottom])
             zoomVisibility.setAvailable(true)
         }
         updatePin(name: name, isShare: false, pinned: pinned, onPin: onPin)
@@ -170,9 +178,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
                 bottom,
                 label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8)
             ])
-            if zoomable {
-                zoomControls.bottomAnchor.constraint(equalTo: label.topAnchor, constant: -8).isActive = true
-            }
+
         }
         do {
             let label = watermarkLabel
@@ -201,6 +207,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     func updatePresentation(name: String, showInfo: Bool, microphoneOn: Bool,
                             watermark: String?, zoomable: Bool,
                             placeholderText: String? = nil, isSpeaking: Bool = false) {
+        showsParticipantInfo = showInfo
         participantInfo.update(name: name, microphoneOn: microphoneOn, speaking: isSpeaking)
         identity.update(name: name, microphoneOn: microphoneOn, speaking: isSpeaking)
         participantInfo.isHidden = !showInfo || !identity.isHidden
@@ -307,7 +314,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     func setMediaActive(_ active: Bool) {
         identity.isHidden = active || scroll.maximumZoomScale > 1
         mediaPlaceholder.isHidden = active || scroll.maximumZoomScale <= 1
-        participantInfo.isHidden = !identity.isHidden
+        participantInfo.isHidden = !showsParticipantInfo || !identity.isHidden
         if video.isHidden == !active { return }
         video.isHidden = !active
         if !active { clearCorrectedVideo() }
@@ -325,7 +332,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         }
         guard let correctedVideo else { return }
         correctedVideo.mirrored = isCameraMirrored
-        correctedVideo.frame = content.bounds
+        correctedVideo.frame = appliedFitRect.isEmpty ? content.bounds : appliedFitRect
         if correctedVideo.enqueue(sample, rotation: rotation) {
             correctedVideo.isHidden = false
         }
@@ -340,7 +347,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             content.addSubview(overlay); correctedVideo = overlay
         }
         guard let overlay = correctedVideo else { return nil }
-        overlay.mirrored = isCameraMirrored; overlay.frame = content.bounds
+        overlay.mirrored = isCameraMirrored; overlay.frame = appliedFitRect.isEmpty ? content.bounds : appliedFitRect
         if let current = overlay.existingFrameDelivery() { return current }
         let delivery = overlay.makeFrameDelivery { [weak overlay] _, _ in overlay?.isHidden = false; onGeometry?() }
         delivery.setActive(true)
@@ -361,7 +368,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             content.addSubview(overlay); correctedVideo = overlay
         }
-        correctedVideo?.frame = content.bounds
+        correctedVideo?.frame = appliedFitRect.isEmpty ? content.bounds : appliedFitRect
         correctedVideo?.mirrored = isCameraMirrored
         correctedVideo?.setCameraPreview(source)
         correctedVideo?.isHidden = false
@@ -381,10 +388,16 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         identity.frame = bounds
         if let record = CallStageLayout.record(for: window), let window {
             let visible = convert(record.rect, from: window).intersection(bounds)
-            if !visible.isNull { infoBottom?.constant = min(-8, visible.maxY - bounds.maxY - 8) }
+            if !visible.isNull {
+                infoBottom?.constant = min(-8, visible.maxY - bounds.maxY - 8)
+                zoomBottom?.constant = visible.maxY - bounds.maxY - 4
+                zoomTrailing?.constant = visible.maxX - bounds.maxX - 4
+            }
             controlsHidden = record.hidden
-        } else { infoBottom?.constant = -8 }
-        guard bounds.width > 0, bounds.height > 0, bounds.size != viewportSize else { return }
+        } else { infoBottom?.constant = -8; zoomBottom?.constant = -8; zoomTrailing?.constant = -8 }
+        let fit = fittedContentRect?.intersection(bounds) ?? bounds
+        guard bounds.width > 0, bounds.height > 0, !fit.isNull,
+              bounds.size != viewportSize || fit != appliedFitRect else { return }
         // Only a real viewport resize changes the base canvas. Media and participant
         // updates can lay out this view repeatedly without resetting a user's pinch.
         let scale = min(max(state.scale, scroll.minimumZoomScale), scroll.maximumZoomScale)
@@ -393,15 +406,16 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         scroll.setZoomScale(1, animated: false)
         scroll.frame = bounds
         viewportSize = bounds.size
+        appliedFitRect = fit
         content.frame = CGRect(origin: .zero, size: viewportSize)
-        if video.superview === content { video.frame = content.bounds }
-        correctedVideo?.frame = content.bounds
+        if video.superview === content { video.frame = fit }
+        correctedVideo?.frame = fit
         scroll.contentSize = viewportSize
         scroll.setZoomScale(scale, animated: false)
         let size = scroll.contentSize
         scroll.contentOffset = CGPoint(
-            x: min(max(center.x * size.width - bounds.width / 2, 0), max(size.width - bounds.width, 0)),
-            y: min(max(center.y * size.height - bounds.height / 2, 0), max(size.height - bounds.height, 0)))
+            x: min(max((fit.minX + center.x * fit.width) * scale - bounds.width / 2, 0), max(size.width - bounds.width, 0)),
+            y: min(max((fit.minY + center.y * fit.height) * scale - bounds.height / 2, 0), max(size.height - bounds.height, 0)))
         restoring = false
         updateAccessibility()
         onVisibilityChanged?()
@@ -426,9 +440,10 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         guard !restoring, state.owner == owner, window != nil,
               viewportSize != .zero, scroll.contentSize.width > 0, scroll.contentSize.height > 0 else { return }
         state.scale = scroll.zoomScale
+        guard appliedFitRect.width > 0, appliedFitRect.height > 0 else { return }
         state.center = CGPoint(
-            x: (scroll.contentOffset.x + scroll.bounds.width / 2) / scroll.contentSize.width,
-            y: (scroll.contentOffset.y + scroll.bounds.height / 2) / scroll.contentSize.height)
+            x: ((scroll.contentOffset.x + scroll.bounds.width / 2) / scroll.zoomScale - appliedFitRect.minX) / appliedFitRect.width,
+            y: ((scroll.contentOffset.y + scroll.bounds.height / 2) / scroll.zoomScale - appliedFitRect.minY) / appliedFitRect.height)
     }
 
     private func updateAccessibility() {

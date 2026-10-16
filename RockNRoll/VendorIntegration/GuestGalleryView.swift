@@ -5,7 +5,7 @@ import UIKit
 /// One color-managed sink per visible gallery tile. The provider retains its
 /// original view; this surface never reparents or changes the SDK's layout.
 @MainActor
-private final class GuestGalleryTile: UIView {
+final class GuestGalleryTile: UIView {
     private let video = GuestSampleBufferView()
     private let processor = GuestVideoFrameProcessor()
     private var energy: AnyCancellable?
@@ -15,6 +15,7 @@ private final class GuestGalleryTile: UIView {
     private var mediaActive = false
     private var visible = false
     private var hasFrame = false
+    private let thumbnail: Bool
     private var viewport: StreamViewport!
     private let status = UILabel()
 #if DEBUG
@@ -26,11 +27,12 @@ private final class GuestGalleryTile: UIView {
 #endif
     var onToggleControls: (() -> Void)? { didSet { viewport.onToggleControls = onToggleControls } }
     var onSelect: (() -> Void)? { didSet { viewport.onSelect = onSelect } }
-    init(item: GuestStreamViews.GalleryItem, pin: @escaping () -> Void) {
+    init(item: GuestStreamViews.GalleryItem, thumbnail: Bool = false, pin: @escaping () -> Void) {
+        self.thumbnail = thumbnail
         super.init(frame: .zero)
         video.contentMode = .scaleAspectFit
         viewport = StreamViewport(video: video, state: StreamViewportState(), zoomable: false,
-            name: item.name, showInfo: true, microphoneOn: item.microphoneOn, pinned: false,
+            name: item.name, showInfo: !thumbnail, microphoneOn: item.microphoneOn, pinned: false,
             watermark: item.watermark, showsPlaceholder: !item.active, onPin: pin)
         addSubview(viewport)
         viewport.pinInHeader = true
@@ -39,9 +41,9 @@ private final class GuestGalleryTile: UIView {
         status.isUserInteractionEnabled = false
         addSubview(status)
         energy = MediaEnergyBudget.shared.$pressure.sink { [weak self] _ in
-            Task { @MainActor in self?.processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS) }
+            Task { @MainActor in self?.updateFrameRate() }
         }
-        processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
+        updateFrameRate()
         processor.setMainDeliveryEnabled(false)
         update(item, pin: pin)
     }
@@ -53,13 +55,13 @@ private final class GuestGalleryTile: UIView {
         mediaActive = item.active
         localCamera = item.isLocalCamera
         video.mirrored = item.mirrored
-        viewport.updatePresentation(name: item.name, showInfo: true, microphoneOn: item.microphoneOn,
+        viewport.updatePresentation(name: item.name, showInfo: !thumbnail, microphoneOn: item.microphoneOn,
             watermark: item.watermark, zoomable: false, placeholderText: item.name,
             isSpeaking: item.speaking)
         viewport.updatePin(name: item.name, isShare: item.id.isShare, pinned: false, onPin: pin)
         viewport.setMediaActive(item.active)
         status.text = item.active ? L("Waiting for video…") : nil
-        status.isHidden = !item.active || hasFrame
+        status.isHidden = thumbnail || !item.active || hasFrame
         updateAudio(ParticipantAudioState(microphoneOn: item.microphoneOn, speaking: item.speaking))
         accessibilityIdentifier = "gallery." + item.id.participant + (item.id.isShare ? ".screen" : ".camera")
         refreshDemand()
@@ -69,9 +71,10 @@ private final class GuestGalleryTile: UIView {
         MeetingTileAppearance.update(self, speaking: state.speaking)
         accessibilityValue = state.speaking ? L("Speaking") : nil
     }
+    private func updateFrameRate() { processor.setFrameRate(thumbnail ? min(15, MediaEnergyBudget.shared.inlineFPS) : MediaEnergyBudget.shared.inlineFPS) }
     func setVisible(_ value: Bool) { visible = value; refreshDemand() }
     private func refreshDemand() {
-        guard visible, mediaActive, let renderer else { stop(); return }
+        guard visible, window != nil, mediaActive, let renderer else { stop(); return }
         if localCamera, let source = GuestCaptureDeviceObserver.cameraPreview() {
             processor.setEnabled(false); tap?.invalidate(); tap = nil
             video.setCameraPreview(source, enabled: visible)
@@ -94,6 +97,7 @@ private final class GuestGalleryTile: UIView {
         if reattaching { tap?.replayLatestFrame() }
     }
     private func stop() { processor.setEnabled(false); processor.setFrameDeliveries([]); video.clear(); tap?.invalidate(); tap = nil; video.setCameraPreview(nil) }
+    override func didMoveToWindow() { super.didMoveToWindow(); refreshDemand() }
     override func layoutSubviews() {
         super.layoutSubviews(); viewport.frame = bounds
         status.frame = bounds.insetBy(dx: 16, dy: 48)

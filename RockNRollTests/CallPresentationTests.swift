@@ -1,4 +1,5 @@
 import ConferenceCore
+import LiveKitWebRTC
 import SwiftUI
 import UIKit
 import XCTest
@@ -62,6 +63,73 @@ final class CallPresentationTests: XCTestCase {
             XCTAssertFalse(privacy.stage.intersects(privacy.header))
         }
     }
+    func testFloatingFitRemainsStableWhenControlsHide() {
+        for size in [CGSize(width: 320, height: 568), CGSize(width: 440, height: 956), CGSize(width: 956, height: 440), CGSize(width: 1200, height: 800)] {
+            let bounds = CGRect(origin: .zero, size: size)
+            let visible = CallPresentationGeometry(bounds: bounds, insets: .init(top: 44, left: 0, bottom: 34, right: 0), headerHeight: 80, hidden: false, floating: true)
+            let hidden = CallPresentationGeometry(bounds: bounds, insets: .init(top: 44, left: 0, bottom: 34, right: 0), headerHeight: 80, hidden: true, floating: true)
+            XCTAssertEqual(visible.stage, hidden.stage)
+            XCTAssertFalse(visible.stage.intersects(visible.header))
+            XCTAssertFalse(visible.stage.intersects(visible.toolbar))
+        }
+    }
+    func testFullCanvasZoomKeepsImageAndOffsetWhenChromeChanges() throws {
+        let renderer = UIView()
+        let viewport = StreamViewport(video: renderer, state: StreamViewportState(), zoomable: true,
+            name: "Share", showInfo: false, microphoneOn: false, pinned: false, watermark: nil)
+        viewport.frame = CGRect(x: 0, y: 0, width: 956, height: 440)
+        viewport.fittedContentRect = CGRect(x: 62, y: 48, width: 780, height: 340)
+        viewport.layoutIfNeeded()
+        let scroll = try XCTUnwrap(viewport.subviews.compactMap { $0 as? UIScrollView }.first)
+        XCTAssertEqual(scroll.frame, viewport.bounds)
+        XCTAssertEqual(renderer.frame, viewport.fittedContentRect)
+        scroll.setZoomScale(2, animated: false)
+        scroll.contentOffset = CGPoint(x: 340, y: 140)
+        let frame = renderer.frame, offset = scroll.contentOffset
+        for _ in 0..<10 {
+            viewport.controlsHidden.toggle(); viewport.setNeedsLayout(); viewport.layoutIfNeeded()
+            XCTAssertEqual(scroll.zoomScale, 2)
+            XCTAssertEqual(scroll.contentOffset, offset)
+            XCTAssertEqual(renderer.frame, frame)
+        }
+    }
+    func testFloatingZoomToolsStayInSafeRowClearOfFittedShare() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene), owner = UUID()
+        let safe = CGRect(x: 62, y: 48, width: 780, height: 340)
+        let fit = safe.inset(by: .init(top: 0, left: 0, bottom: 52, right: 0))
+        let viewport = StreamViewport(video: UIView(), state: StreamViewportState(), zoomable: true,
+            name: "Share", showInfo: false, microphoneOn: false, pinned: false, watermark: nil)
+        viewport.frame = CGRect(x: 0, y: 0, width: 956, height: 440)
+        viewport.fittedContentRect = fit
+        window.addSubview(viewport)
+        CallStageLayout.update(window: window, owner: owner, rect: safe, hidden: false, toggle: {})
+        defer { CallStageLayout.remove(window: window, owner: owner) }
+        viewport.layoutIfNeeded()
+        let tools = try XCTUnwrap(viewport.subviews.compactMap { $0 as? UIStackView }.first)
+        XCTAssertTrue(safe.contains(tools.frame), "Zoom tools must not sit underneath the landscape toolbar")
+        XCTAssertFalse(fit.intersects(tools.frame), "Tools must not cover shared content at 1x")
+    }
+    func testFilmstripUnmountsOffscreenAndHiddenPreviews() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        let strip = MeetingParticipantStrip(frame: CGRect(x: 0, y: 0, width: 240, height: 92))
+        window.addSubview(strip); window.isHidden = false
+        defer { window.isHidden = true }
+        strip.previewProvider = { _ in UIView() }
+        strip.update((0..<20).map { .init(id: String($0), name: String($0), isShare: false,
+            audio: .init(microphoneOn: false, speaking: false)) }, selected: nil)
+        strip.layoutIfNeeded()
+        XCTAssertEqual(strip.visiblePreviewIDs, Set(["0", "1", "2"]))
+        strip.contentOffset.x = 1120
+        XCTAssertEqual(strip.visiblePreviewIDs, Set(["10", "11", "12"]))
+        strip.isHidden = true
+        XCTAssertTrue(strip.visiblePreviewIDs.isEmpty)
+        strip.isHidden = false
+        XCTAssertEqual(strip.visiblePreviewIDs, Set(["10", "11", "12"]))
+        strip.removeFromSuperview()
+        XCTAssertTrue(strip.visiblePreviewIDs.isEmpty)
+    }
     func testParticipantStripUpdatesOnlyChangedChipsAndKeepsActionsAndSelection() throws {
         let strip = MeetingParticipantStrip(frame: CGRect(x: 0, y: 0, width: 390, height: 46))
         var items = (0..<100).map { index in
@@ -99,7 +167,7 @@ final class CallPresentationTests: XCTestCase {
         strip.update(items, selected: "1"); strip.layoutIfNeeded()
         XCTAssertEqual(strip.buttonUpdateCount, 103, "Reordering retains the controls and their content")
         XCTAssertEqual(second.frame.minX, 0)
-        XCTAssertEqual(first.frame.minX, 160)
+        XCTAssertEqual(first.frame.minX, 112)
         for button in strip.subviews.compactMap({ $0 as? UIButton }) {
             XCTAssertTrue(original[button.accessibilityIdentifier ?? ""] === button)
         }
@@ -109,6 +177,35 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertEqual(strip.buttonUpdateCount, 103)
     }
 
+    func testNativeThumbnailRetiresStoppedCameraAndRebindsNewSource() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        let call = RockCallViewController(title: "Meeting", catchUp: CatchUpStore(), chat: ChatStore())
+        window.rootViewController = call; window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let factory = try NativeRTCPeer.makeFactory()
+        let first = factory.videoTrack(with: factory.videoSource(), trackId: "first")
+        let replacement = factory.videoTrack(with: factory.videoSource(), trackId: "replacement")
+        func render(_ track: LKRTCVideoTrack?) {
+            call.render(snapshot: .init(participants: [
+                .init(id: "focus", name: "Focus", isLocal: false, microphoneOn: false, cameraOn: false, screenShareOn: false, isSpeaking: false, videoTracks: []),
+                .init(id: "other", name: "Other", isLocal: false, microphoneOn: false, cameraOn: track != nil, screenShareOn: false, isSpeaking: false,
+                    videoTracks: track.map { [.init(id: $0.trackId, source: .camera, track: .native($0))] } ?? [])]))
+            call.view.layoutIfNeeded()
+        }
+        render(first)
+        let strip = try XCTUnwrap(descendants(call.view).compactMap { $0 as? MeetingParticipantStrip }.first)
+        strip.onSelect?("focus.camera"); call.view.layoutIfNeeded(); strip.layoutIfNeeded()
+        await settleUI()
+        let old = try XCTUnwrap(descendants(strip).compactMap { $0 as? CallVideoView }.first)
+        XCTAssertEqual(old.track?.identity, CallVideoSource.native(first).identity)
+        render(nil); await settleUI()
+        XCTAssertNil(old.track)
+        XCTAssertNil(old.window)
+        render(replacement); strip.layoutIfNeeded(); await settleUI()
+        let next = try XCTUnwrap(descendants(strip).compactMap { $0 as? CallVideoView }.first)
+        XCTAssertEqual(next.track?.identity, CallVideoSource.native(replacement).identity)
+    }
     func testNativeSwipesStartAtCameraOffSelectionAndResetAfterStripSelection() throws {
         let call = RockCallViewController(title: "Meeting", catchUp: CatchUpStore(), chat: ChatStore())
         call.loadViewIfNeeded()
@@ -392,7 +489,7 @@ final class CallPresentationTests: XCTestCase {
             pinLabel: "Unpin presenter screen share", participantsLabel: "4 musicians", chatValue: "2 unread",
             chatCount: 2, missedCount: 1, status: nil, focusAvailable: true)
         header.layoutIfNeeded()
-        for button in header.subviews.compactMap({ $0 as? UIButton }) {
+        for button in header.subviews.compactMap({ $0 as? UIButton }).filter({ !$0.isHidden }) {
             XCTAssertGreaterThanOrEqual(button.bounds.width, 44)
             XCTAssertEqual(button.bounds.height, 44)
             XCTAssertTrue(header.bounds.contains(button.frame))
@@ -402,6 +499,22 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertTrue(header.automatic.isEnabled)
         XCTAssertEqual(header.pin.accessibilityLabel, "Unpin presenter screen share")
         XCTAssertEqual(header.conversation.accessibilityValue, "2 unread")
+    }
+    func testCompactHeaderOverflowKeepsTitleAndTargetsAtSmallWidths() {
+        for width: CGFloat in [304, 375, 500, 1024] {
+            let header = CompactCallHeader(frame: CGRect(x: 0, y: 0, width: width, height: 44))
+            header.update(name: "Meeting", navigation: true, browsing: true, pinned: true,
+                pinLabel: "Unpin", participantsLabel: "People", chatValue: "Unread", chatCount: 2,
+                missedCount: 5, status: nil, focusAvailable: true)
+            header.layoutIfNeeded()
+            XCTAssertGreaterThanOrEqual(header.details.bounds.width, 100)
+            for button in header.subviews.compactMap({ $0 as? UIButton }).filter({ !$0.isHidden }) {
+                XCTAssertTrue(header.bounds.contains(button.frame))
+                XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+                if button.isEnabled { XCTAssertNotNil(header.hitTest(button.center, with: nil), button.accessibilityLabel ?? "button") }
+            }
+            if width == 1024 { XCTAssertNil(header.hitTest(CGPoint(x: 300, y: 22), with: nil)) }
+        }
     }
     func testZoomControlsExpireWithoutLayoutRefreshesExtendingTheirLifetime() async throws {
         let view = UIView()
