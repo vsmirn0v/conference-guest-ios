@@ -36,7 +36,7 @@ Exported IPA SHA-256: `9e02a934e88f2006599f11b7600da7a48e39028720f1dc0e70f74eb9f
 
 ## Distribution
 
-Upload succeeded on October 17, 2026 (MSK). App Store Connect processing and group assignment are pending. The upload returned the existing third-party framework dSYM warnings; app and broadcast-extension symbols are verified above.
+Upload succeeded. App Store Connect build `4f166353-5928-4504-b8ef-72e0172f80e2` was verified as **Testing** in both Rock’n’Roll Internal and Rock’n’Roll Public Beta at 2026-10-17 00:39 MSK. Automatic tester notification was enabled. Public link: https://testflight.apple.com/join/Hd13C9U3. The upload returned six existing third-party framework dSYM warnings; app and broadcast-extension symbols are verified above.
 
 What to Test:
 
