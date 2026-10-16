@@ -73,6 +73,7 @@ final class ConferenceModel: ObservableObject {
         coordinator.onRemoteName = { [weak self] name in self?.applySyncedName(name) }
     }
     func installContinuationFixture(_ coordinator: MeetingContinuationCoordinator) { continuation = coordinator }
+    var joinTransportForTesting: ((JoinDestination, @escaping (CallEvent) -> Void) -> Void)?
     #endif
     private var jamEngine: RockRoomEngine?
     private var telemostEngine: TelemostCallEngine?
@@ -86,15 +87,18 @@ final class ConferenceModel: ObservableObject {
         let name: String
         let quiet: Bool
         let knownEngine: MeetingEngineKind?
+        let title: String?
     }
     /// History rejoin may substitute a rotated calendar invitation before discovery.
     private var rejoinEvidence: (invitation: URL, engine: MeetingEngineKind)?
     private weak var container: UIViewController?
     private var pendingTarget: JoinDestination?
-    private struct PendingInvitation { let target: JoinDestination; let autoJoin: Bool }
+    private struct PendingInvitation { let target: JoinDestination; let autoJoin: Bool; var title: String? = nil }
+    private var nameRequiredTitle: (invitation: URL, title: String)?
     private var replacementAfterLeave: PendingInvitation?
     private var activeRoute: JoinDestination?
     @Published private var activeRoomTitle: String?
+    private var activeVisitTitle: String?
     private var joinTask: Task<Void, Never>?
     private var terminalEventHandled = false
     private var sessionGeneration: UInt64 = 0
@@ -217,7 +221,7 @@ final class ConferenceModel: ObservableObject {
         }
     }
 
-    private func receive(target: JoinDestination, autoJoin: Bool) {
+    private func receive(target: JoinDestination, autoJoin: Bool, title: String? = nil) {
         dismissEngineSelection()
         #if DEBUG
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_RESOLVE_ONLY"] == "1" {
@@ -228,14 +232,15 @@ final class ConferenceModel: ObservableObject {
         if joinAwaitingName != nil {
             set(target: target)
             joinAwaitingName = target
+            nameRequiredTitle = title.map { (target.invitationURL, $0) }
             return
         }
         if isLeaving {
-            replacementAfterLeave = PendingInvitation(target: target, autoJoin: autoJoin)
+            replacementAfterLeave = PendingInvitation(target: target, autoJoin: autoJoin, title: title)
         } else if isJoining || isInConference {
             guard target != activeRoute else { return }
             if autoJoin {
-                replacementAfterLeave = PendingInvitation(target: target, autoJoin: true)
+                replacementAfterLeave = PendingInvitation(target: target, autoJoin: true, title: title)
                 pendingTarget = nil
                 showSwitchConfirmation = false
                 leave()
@@ -245,7 +250,7 @@ final class ConferenceModel: ObservableObject {
             }
         } else {
             set(target: target)
-            if autoJoin { startJoin(target) }
+            if autoJoin { startJoin(target, title: title) }
         }
     }
 
@@ -321,7 +326,7 @@ final class ConferenceModel: ObservableObject {
         websitePresenter.dismiss(fallback: container?.view.window)
     }
 
-    private func startJoin(_ target: JoinDestination, nameOverride: String? = nil, quiet: Bool = false,
+    private func startJoin(_ target: JoinDestination, nameOverride: String? = nil, quiet: Bool = false, title: String? = nil,
                            engineWasChosen: Bool = false) {
         guard !isJoining && !isInConference && !isLeaving else { return }
         dismissEngineSelection()
@@ -333,13 +338,20 @@ final class ConferenceModel: ObservableObject {
         let requestedName = nameOverride ?? displayName
         #endif
         let name = requestedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceTitle = title ?? nameRequiredTitle.flatMap { $0.invitation == target.invitationURL ? $0.title : nil }
+        let visitTitle = sourceTitle.flatMap { value -> String? in
+            let clean = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return clean.isEmpty ? nil : clean
+        }
         guard target.inputPolicy.accepts(name: name) else {
             joinAwaitingName = target
+            nameRequiredTitle = visitTitle.map { (target.invitationURL, $0) }
             status = L("Choose the name other musicians will see.")
             statusIsError = false
             return
         }
         joinAwaitingName = nil
+        nameRequiredTitle = nil
         guard let container else {
             status = L("Jam view is unavailable.")
             statusIsError = true
@@ -347,7 +359,7 @@ final class ConferenceModel: ObservableObject {
         }
         let knownEngine = rejoinEvidence.flatMap { $0.invitation == target.invitationURL ? $0.engine : nil } ??
             history.matching(target.invitationURL)?.engine
-        let request = JoinRequest(target: target, name: name, quiet: quiet, knownEngine: knownEngine)
+        let request = JoinRequest(target: target, name: name, quiet: quiet, knownEngine: knownEngine, title: visitTitle)
         rejoinEvidence = nil
         sessionGeneration &+= 1
         let generation = sessionGeneration
@@ -357,7 +369,8 @@ final class ConferenceModel: ObservableObject {
         companionAudioPaused = request.quiet
         liveSessionID = UUID(); liveName = name
         connectedURL = nil
-        activeRoomTitle = nil
+        activeRoomTitle = request.title
+        activeVisitTitle = request.title
         status = L("Finding this jam…")
         statusIsError = false
         #if DEBUG
@@ -396,9 +409,19 @@ final class ConferenceModel: ObservableObject {
                     joinTask = nil; phase = .idle; activeRoute = nil
                     companionAudioPaused = false; liveSessionID = nil
                     joinAwaitingName = destination
+                    nameRequiredTitle = request.title.map { (destination.invitationURL, $0) }
                     status = L("Choose the name other musicians will see.")
                     return
                 }
+                #if DEBUG
+                if let joinTransportForTesting {
+                    joinTransportForTesting(destination) { [weak self] event in
+                        guard let self, self.sessionGeneration == generation else { return }
+                        self.handle(event: event)
+                    }
+                    return
+                }
+                #endif
                 switch destination {
                 case .guest(let guest):
                     let networkURL: URL
@@ -537,7 +560,7 @@ final class ConferenceModel: ObservableObject {
         do {
             let target: JoinDestination = community ?
                 .jam(try JamTarget.parseCompatibleInvitation(selection.invitation.absoluteString)) : request.target
-            startJoin(target, nameOverride: request.name, quiet: request.quiet, engineWasChosen: true)
+            startJoin(target, nameOverride: request.name, quiet: request.quiet, title: request.title, engineWasChosen: true)
         } catch {
             status = error.localizedDescription; statusIsError = true
         }
@@ -570,7 +593,7 @@ final class ConferenceModel: ObservableObject {
         calendar.suppressAutomaticJoin(for: meeting)
         do {
             let target = try destination(for: invitation.absoluteString, verifiedEngine: meeting.engine)
-            receive(target: target, autoJoin: true)
+            receive(target: target, autoJoin: true, title: meeting.title)
         } catch { status = error.localizedDescription; statusIsError = true }
     }
 
@@ -589,7 +612,7 @@ final class ConferenceModel: ObservableObject {
         guard let invitation = replacementAfterLeave else { return }
         replacementAfterLeave = nil
         set(target: invitation.target)
-        if invitation.autoJoin { startJoin(invitation.target) }
+        if invitation.autoJoin { startJoin(invitation.target, title: invitation.title) }
     }
 
     private func set(target: JoinDestination) {
@@ -644,7 +667,7 @@ final class ConferenceModel: ObservableObject {
             if let activeRoute {
                 let identifier = activeRoute.roomIdentifier
                 history.record(url: activeRoute.invitationURL,
-                               title: activeRoomTitle ?? identifier, identifier: identifier,
+                               title: activeVisitTitle ?? activeRoomTitle ?? identifier, identifier: identifier,
                                engine: activeRoute.engineKind)
                 if let room = history.matching(activeRoute.invitationURL) { calendar.noteJoined(room, invitation: activeRoute.invitationURL) }
             }
@@ -726,7 +749,7 @@ final class ConferenceModel: ObservableObject {
         activeRoomTitle = title
         continuation.updateCurrent(continuationSnapshot())
         if isInConference, let url = activeRoute?.invitationURL {
-            history.updateTitle(for: url, title: title)
+            history.updateTitle(for: url, title: activeVisitTitle ?? title)
         }
     }
 
@@ -761,7 +784,7 @@ final class ConferenceModel: ObservableObject {
         }
         do {
             let target = try destination(for: jam.invitation.absoluteString, verifiedEngine: jam.engine)
-            set(target: target); startJoin(target, nameOverride: jam.name, quiet: quiet)
+            set(target: target); startJoin(target, nameOverride: jam.name, quiet: quiet, title: jam.title)
         } catch { status = error.localizedDescription; statusIsError = true; continuation.targetDidFail() }
         return isJoining ? liveSessionID : nil
     }

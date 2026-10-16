@@ -18,12 +18,12 @@ struct CallPresentationGeometry {
         if statusOnly && hidden {
             header = CGRect(x: safe.minX, y: safe.minY, width: safe.width, height: 44)
             toolbar = .zero
-            stage = CGRect(x: safe.minX, y: header.maxY + 6, width: safe.width,
-                           height: max(0, safe.maxY - header.maxY - 6))
+            stage = CGRect(x: bounds.minX, y: header.maxY + 6, width: bounds.width,
+                           height: max(0, bounds.maxY - header.maxY - 6))
             return
         }
         if hidden {
-            header = .zero; toolbar = .zero; stage = safe
+            header = .zero; toolbar = .zero; stage = bounds
             return
         }
         if rail {

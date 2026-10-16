@@ -11,6 +11,7 @@ final class GuestCallLayoutFixture: UIViewController {
     private var renderers: [String: RTCMTLVideoView] = [:]
     private var timer: Timer?
     private var selectedName = ""
+    private var safeAreaHost: UIView?
     private var views: [String: UIView] = [:]
     private let meetingStatus = MeetingHeaderStatus()
     private let reactions = MeetingReactionsModel()
@@ -129,7 +130,13 @@ final class GuestCallLayoutFixture: UIViewController {
         if ["gallery", "gallery-many", "gallery-share"].contains(scenario) { controls.bindStreams(streams) }
         controls.frame = view.bounds
         controls.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        if ["participants", "studio", "reactions", "notices"].contains(scenario) {
+        if scenario == "safe-area-host" {
+            let host = UIView(frame: view.bounds.inset(by: view.safeAreaInsets))
+            host.clipsToBounds = true
+            view.addSubview(host)
+            safeAreaHost = host
+            host.addSubview(controls)
+        } else if ["participants", "studio", "reactions", "notices"].contains(scenario) {
             // The real SDK overlay can be hosted by a zero-sized child controller.
             // Panels must present from the visible meeting above that host.
             let host = UIViewController()
@@ -180,6 +187,10 @@ final class GuestCallLayoutFixture: UIViewController {
             self.processor.submit(RTCVideoFrame(buffer: buffer, rotation: ._0,
                 timeStampNs: Int64(Date().timeIntervalSince1970 * 1_000_000_000)))
         }
+    }
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        safeAreaHost?.frame = view.bounds.inset(by: view.safeAreaInsets)
     }
     private func scheduleStatus(_ action: @escaping () -> Void) {
         // Give the test time to close the menu and hide controls first.

@@ -978,8 +978,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
     private func surfaceHost(in window: UIWindow) -> UIView? {
         // Stay inside the SDK's environment while escaping zero-sized overlay
-        // hosts. All interactive controls must fit in this ancestor's bounds.
-        let visible = window.bounds.inset(by: window.safeAreaInsets)
+        // hosts. Immersive media must reach the window edges even when an SDK
+        // ancestor clips to the safe area; controls retain their own safe insets.
+        let visible = window.bounds
         var ancestor = superview
         while let view = ancestor, view !== window {
             if view.bounds.contains(view.convert(visible, from: window)) { return view }

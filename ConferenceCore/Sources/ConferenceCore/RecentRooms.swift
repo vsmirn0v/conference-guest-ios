@@ -95,6 +95,8 @@ public struct RecentRooms: Codable, Equatable, Sendable {
             items.append(RecentRoom(invitationURL: url,
                                     title: cleanTitle.isEmpty ? identifier : cleanTitle,
                                     identifier: identifier, lastJoined: date))
+            // nil is reserved for legacy visits and is ambiguous with saved-only cloud records.
+            items[items.count - 1].hasBeenJoined = true
             items[items.count - 1].engine = engine
         }
         normalize()

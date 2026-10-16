@@ -3,6 +3,21 @@ import XCTest
 @testable import ConferenceCore
 
 final class RecentRoomsTests: XCTestCase {
+    func testNewVisitCannotBeDowngradedToSavedOnlyBySameTimestampCloudRecord() throws {
+        let url = URL(string: "https://meeting.example.test/calls/team?psw=fixture")!
+        var history = RecentRooms()
+        history.record(url: url, title: "Calendar meeting", identifier: "team", at: Date(timeIntervalSince1970: 100), engine: .guest)
+        let visit = try XCTUnwrap(history.items.first)
+        var savedOnly = visit
+        savedOnly.hasBeenJoined = false
+        let local = SyncedRoom(visit, version: .init(counter: 1, device: "phone"))
+        let stale = SyncedRoom(savedOnly, version: .init(counter: 2, device: "mac"))
+        for merged in [local.merging(stale), stale.merging(local)] {
+            let restored = RecentRooms(items: [merged.room])
+            XCTAssertEqual(restored.items.count, 1)
+            XCTAssertEqual(restored.items.first?.lastVisit, visit.lastVisit)
+        }
+    }
     func testReturningToOriginalInvitationReplacesRotatedCredentialsLocallyAndInSync() throws {
         let original = URL(string: "https://meet.example.test/calls/room?psw=first")!
         let rotated = URL(string: "https://meet.example.test/calls/room?psw=second")!

@@ -380,6 +380,52 @@ final class MeetingPresentationUITests: XCTestCase {
             "Restoring controls must not trigger the control underneath the tap")
     }
 
+    func testImmersiveShareEscapesClippedSafeAreaHostAndZoomsEdgeToEdge() throws {
+        let app = launch(scenario: "safe-area-host")
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let viewport = app.scrollViews["Shared screen viewport"]
+        XCTAssertTrue(viewport.waitForExistence(timeout: 10))
+        XCTAssertEqual(viewport.value as? String, "100%")
+        app.buttons["Hide controls"].tap()
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft, .landscapeRight] {
+            XCUIDevice.shared.orientation = orientation
+            let window = app.windows.firstMatch
+            let coversWindow = NSPredicate { _, _ in
+                let frame = viewport.frame, bounds = window.frame
+                return abs(frame.minX - bounds.minX) < 1 && abs(frame.minY - bounds.minY) < 1 &&
+                    abs(frame.width - bounds.width) < 1 && abs(frame.height - bounds.height) < 1
+            }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: coversWindow, object: nil)], timeout: 5), .completed)
+            XCTAssertEqual(window.frame.width > window.frame.height, orientation != .portrait)
+        }
+        viewport.pinch(withScale: 3, velocity: 1)
+        XCTAssertNotEqual(viewport.value as? String, "100%")
+        let pixelsFillWindow = NSPredicate { _, _ in
+            guard let image = XCUIScreen.main.screenshot().image.cgImage,
+                  let pixel = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                    space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            for x in [0.1, 0.5, 0.9] {
+                for y in [0.1, 0.5, 0.9] {
+                    guard let sample = image.cropping(to: CGRect(x: Double(image.width) * x,
+                        y: Double(image.height) * y, width: 1, height: 1)) else { return false }
+                    pixel.draw(sample, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+                    guard let bytes = pixel.data?.assumingMemoryBound(to: UInt8.self),
+                          max(bytes[0], bytes[1], bytes[2]) > 8 else { return false }
+                }
+            }
+            return true
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: pixelsFillWindow, object: nil)], timeout: 5), .completed,
+            "Zoomed checkerboard pixels must reach both sides of the display after rotation")
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "Immersive shared screen uses full display after zoom"; shot.lifetime = .keepAlways
+        add(shot)
+        viewport.swipeLeft()
+        XCTAssertFalse(app.buttons["Leave"].exists)
+        viewport.tap()
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 5))
+    }
+
     func testFocusPreservesZoomAndPinAcrossRotation() throws {
         let app = launch()
         defer { XCUIDevice.shared.orientation = .portrait }

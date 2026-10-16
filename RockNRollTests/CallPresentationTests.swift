@@ -4,6 +4,24 @@ import XCTest
 
 @MainActor
 final class CallPresentationTests: XCTestCase {
+    func testImmersiveStageUsesEveryPixelWhilePrivacyHeaderStaysSafe() {
+        let portrait = CGRect(x: 0, y: 0, width: 440, height: 956)
+        let landscape = CGRect(x: 0, y: 0, width: 956, height: 440)
+        for (bounds, insets) in [(portrait, UIEdgeInsets(top: 62, left: 0, bottom: 34, right: 0)),
+                                 (landscape, UIEdgeInsets(top: 0, left: 62, bottom: 21, right: 62))] {
+            let hidden = CallPresentationGeometry(bounds: bounds, insets: insets, headerHeight: 80, hidden: true)
+            XCTAssertEqual(hidden.stage, bounds)
+            XCTAssertEqual(hidden.header, .zero)
+            XCTAssertEqual(hidden.toolbar, .zero)
+            let privacy = CallPresentationGeometry(bounds: bounds, insets: insets, headerHeight: 80,
+                hidden: true, statusOnly: true)
+            XCTAssertEqual(privacy.stage.minX, bounds.minX)
+            XCTAssertEqual(privacy.stage.maxX, bounds.maxX)
+            XCTAssertEqual(privacy.stage.maxY, bounds.maxY)
+            XCTAssertTrue(bounds.inset(by: insets).contains(privacy.header))
+            XCTAssertFalse(privacy.stage.intersects(privacy.header))
+        }
+    }
     func testParticipantStripUpdatesOnlyChangedChipsAndKeepsActionsAndSelection() throws {
         let strip = MeetingParticipantStrip(frame: CGRect(x: 0, y: 0, width: 390, height: 46))
         var items = (0..<100).map { index in

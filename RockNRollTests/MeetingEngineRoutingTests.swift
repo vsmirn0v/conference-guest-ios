@@ -6,13 +6,14 @@ import XCTest
 @MainActor
 final class MeetingEngineRoutingTests: XCTestCase {
     final class Proof: URLProtocol {
-        enum Mode { case community, both, unknown }
+        enum Mode { case community, guest, both, unknown }
         static var mode = Mode.community
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
             let metadata = request.url?.path.hasPrefix("/api/") == true
-            let status = Self.mode == .unknown || (!metadata && Self.mode == .community) ? 404 : 200
+            let status = Self.mode == .unknown || (!metadata && Self.mode == .community) ||
+                (metadata && Self.mode == .guest) ? 404 : 200
             let json = metadata ? "{\"id\":\"team\",\"title\":\"Room\",\"community\":\"Group\",\"description\":\"\",\"engine\":\"livekit\",\"join_protocol\":\"rocknroll-v1\"}" :
                 "{\"fixture\":{\"serverUrl\":\"https://backend.example.test\"}}"
             client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status,
@@ -22,17 +23,18 @@ final class MeetingEngineRoutingTests: XCTestCase {
         override func stopLoading() {}
     }
     private let invitation = URL(string: "https://opaque.example.test/jams/team")!
-    private func make() -> (ConferenceModel, UIViewController) {
+    private func make(storage: any RoomHistoryStorage = RoomSyncCoordinatorTests.Storage(),
+                      cloud: RoomSyncCoordinatorTests.Cloud? = nil) -> (ConferenceModel, UIViewController) {
         ConferenceJoinOptionsTests.FailedJoin.reset()
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [Proof.self]
         let joinConfig = URLSessionConfiguration.ephemeral; joinConfig.protocolClasses = [ConferenceJoinOptionsTests.FailedJoin.self]
         let preferences = UserDefaults(suiteName: "RoutingTests-" + UUID().uuidString)!
         preferences.set("Configured name", forKey: "savedDisplayName")
         let model = ConferenceModel(jamService: JamService(session: URLSession(configuration: joinConfig)),
-            history: RoomHistoryStore(storage: RoomSyncCoordinatorTests.Storage()), preferences: preferences,
+            history: RoomHistoryStore(storage: storage), preferences: preferences,
             engineDetector: MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config)))
         model.installSyncFixture(RoomSyncCoordinator(history: model.history, name: model.displayName,
-            preferences: preferences, storage: RoomSyncCoordinatorTests.Storage(), transport: RoomSyncCoordinatorTests.Cloud()))
+            preferences: preferences, storage: RoomSyncCoordinatorTests.Storage(), transport: cloud ?? RoomSyncCoordinatorTests.Cloud()))
         let container = UIViewController(); model.configure(container: container)
         return (model, container)
     }
@@ -127,5 +129,90 @@ final class MeetingEngineRoutingTests: XCTestCase {
         XCTAssertTrue(legacyModel.isNameRequiredForJoin)
         XCTAssertEqual(legacyModel.invite, legacy.absoluteString)
         withExtendedLifetime([container, legacyContainer]) {}
+    }
+
+    func testCalendarAndHandoffVisitsKeepTheirNamesAndPersistForEveryEngine() async throws {
+        for kind in [MeetingEngineKind.guest, .community, .telemost, .trueconf] {
+            for handoff in [false, true] {
+                Proof.mode = kind == .guest ? .guest : .community
+                let storage = RoomSyncCoordinatorTests.Storage()
+                let cloud = RoomSyncCoordinatorTests.Cloud()
+                let (model, container) = make(storage: storage, cloud: cloud)
+                let url = URL(string: kind == .telemost ? "https://telemost.yandex.ru/j/12345678901234" :
+                    kind == .guest ? "https://meeting.example.test/calls/q01xx4?psw=fixture" :
+                    kind == .trueconf ? "https://custom.example.test/c/team" : invitation.absoluteString)!
+                var complete: ((CallEvent) -> Void)?
+                let ready = expectation(description: "Join transport \(kind) \(handoff)")
+                model.joinTransportForTesting = { destination, callback in
+                    XCTAssertEqual(destination.engineKind, kind)
+                    complete = callback; ready.fulfill()
+                }
+                if handoff {
+                    let jam = ActiveJam(deviceID: "other", invitation: url, title: "Design review", name: "Ani",
+                        deviceLabel: "Mac", engine: kind)
+                    XCTAssertNotNil(model.joinFromContinuation(jam, quiet: false))
+                } else {
+                    var meeting = CalendarMeeting(id: "event", seriesID: "series", calendarID: "work", calendarTitle: "Work",
+                        title: "Design review", start: Date(), end: Date().addingTimeInterval(600))
+                    meeting.invitation = url; meeting.engine = kind
+                    model.joinCalendarMeeting(meeting)
+                }
+                await fulfillment(of: [ready], timeout: 5)
+                XCTAssertTrue(model.history.rooms.isEmpty, "Starting a join must not create a visit")
+                complete?(.joined)
+                complete?(.active)
+                let room = try XCTUnwrap(model.history.rooms.first)
+                XCTAssertEqual(model.history.rooms.count, 1)
+                XCTAssertEqual(room.title, "Design review")
+                XCTAssertEqual(room.joinURL, url)
+                XCTAssertEqual(room.engine, kind)
+                XCTAssertNotNil(room.lastVisit)
+                XCTAssertEqual(room.hasBeenJoined, true)
+                XCTAssertFalse(room.isStarred)
+                XCTAssertEqual(RoomHistoryStore(storage: storage).rooms, model.history.rooms)
+                model.sync.setEnabled(true)
+                await model.sync.synchronizeForNotification()
+                let (other, otherContainer) = make(cloud: cloud)
+                other.sync.setEnabled(true)
+                await other.sync.synchronizeForNotification()
+                XCTAssertEqual(other.history.rooms, model.history.rooms, "Calendar/handoff visits must reach another device")
+                complete?(.left)
+                complete?(.active) // A late callback must not resurrect the ended session.
+                XCTAssertFalse(model.isInConference)
+                XCTAssertEqual(model.history.rooms.count, 1)
+                withExtendedLifetime([container, otherContainer]) {}
+            }
+        }
+    }
+
+    func testCalendarNamePromptKeepsTitleAndFailedJoinDoesNotCreateHistory() async throws {
+        Proof.mode = .guest
+        let (model, container) = make()
+        model.displayName = ""
+        let url = URL(string: "https://meeting.example.test/calls/scheduled?psw=fixture")!
+        var meeting = CalendarMeeting(id: "event", seriesID: "series", calendarID: "work", calendarTitle: "Work",
+            title: "Scheduled design review", start: Date(), end: Date().addingTimeInterval(600))
+        meeting.invitation = url; meeting.engine = .guest
+        model.joinCalendarMeeting(meeting)
+        XCTAssertTrue(model.isNameRequiredForJoin)
+        XCTAssertTrue(model.history.rooms.isEmpty)
+        model.displayName = "Ani"
+        var complete: ((CallEvent) -> Void)?
+        let first = expectation(description: "First transport")
+        model.joinTransportForTesting = { _, callback in complete = callback; first.fulfill() }
+        model.join()
+        await fulfillment(of: [first], timeout: 5)
+        complete?(.failed)
+        complete?(.active)
+        XCTAssertTrue(model.history.rooms.isEmpty)
+
+        let retry = expectation(description: "Retry transport")
+        model.joinTransportForTesting = { _, callback in complete = callback; retry.fulfill() }
+        model.joinCalendarMeeting(meeting)
+        await fulfillment(of: [retry], timeout: 5)
+        complete?(.joined)
+        XCTAssertEqual(model.history.rooms.first?.title, meeting.title)
+        XCTAssertEqual(model.history.rooms.first?.joinURL, url)
+        withExtendedLifetime(container) {}
     }
 }
