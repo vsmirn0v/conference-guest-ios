@@ -1020,6 +1020,12 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         layoutControls.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         compactHeader.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         sourcePicker.configuration = .plain()
+        sourcePicker.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = UIFontMetrics(forTextStyle: .callout).scaledFont(for: .systemFont(ofSize: 15, weight: .medium), maximumPointSize: 24)
+            return attributes
+        }
+        sourcePicker.titleLabel?.numberOfLines = 1
         sourcePicker.configuration?.imagePadding = 6
         sourcePicker.configuration?.titleLineBreakMode = .byTruncatingTail
         sourcePicker.showsMenuAsPrimaryAction = true

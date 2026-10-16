@@ -110,6 +110,28 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertTrue(safe.contains(tools.frame), "Zoom tools must not sit underneath the landscape toolbar")
         XCTAssertFalse(fit.intersects(tools.frame), "Tools must not cover shared content at 1x")
     }
+    func testOffscreenStageRecordDoesNotAccumulateCaptionInsets() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene), owner = UUID()
+        let viewport = StreamViewport(video: UIView(), state: StreamViewportState(), zoomable: true,
+            name: "Presenter", showInfo: true, microphoneOn: true, pinned: false, watermark: nil)
+        viewport.frame = CGRect(x: 0, y: 0, width: 320, height: 240)
+        window.addSubview(viewport)
+        viewport.layoutIfNeeded()
+        let tools = try XCTUnwrap(viewport.subviews.compactMap { $0 as? UIStackView }.first)
+        let caption = try XCTUnwrap(viewport.subviews.compactMap { $0 as? ParticipantMediaBadge }.first)
+        XCTAssertFalse(caption.isHidden)
+        XCTAssertLessThanOrEqual(tools.frame.maxY, caption.frame.minY - 8)
+        let expected = tools.frame
+        CallStageLayout.update(window: window, owner: owner,
+            rect: CGRect(x: 400, y: 400, width: 320, height: 240), hidden: false, toggle: {})
+        defer { CallStageLayout.remove(window: window, owner: owner) }
+        for _ in 0..<10 {
+            viewport.setNeedsLayout(); viewport.layoutIfNeeded()
+            XCTAssertEqual(tools.frame, expected, "An offscreen SDK tile must not accumulate caption offsets")
+            XCTAssertLessThanOrEqual(tools.frame.maxY, caption.frame.minY - 8)
+        }
+    }
     func testFilmstripUnmountsOffscreenAndHiddenPreviews() throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene)

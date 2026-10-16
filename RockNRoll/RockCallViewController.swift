@@ -255,6 +255,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         layoutControls.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         compactHeader.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         sourceSelector.configuration = .plain()
+        sourceSelector.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = UIFontMetrics(forTextStyle: .callout).scaledFont(for: .systemFont(ofSize: 15, weight: .medium), maximumPointSize: 24)
+            return attributes
+        }
+        sourceSelector.titleLabel?.numberOfLines = 1
         sourceSelector.configuration?.image = UIImage(systemName: "rectangle.on.rectangle")
         sourceSelector.configuration?.imagePadding = 6
         sourceSelector.configuration?.titleLineBreakMode = .byTruncatingTail
@@ -436,7 +442,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let pin = currentPrimaryKey.flatMap { videoTiles[$0]?.pin }
         let sourceName = (primaryName ?? titleLabel.text ?? L("Jam")) +
             (currentPrimaryKey.flatMap { streamPinTargets[$0]?.isScreenShare } == true ? L(" · Screen") : "")
-        compactHeader.update(name: isHeld || mediaStatus != nil ? statusLabel.text ?? L("Jam") : sourceName,
+        compactHeader.update(name: isHeld || mediaStatus != nil ? statusLabel.text ?? L("Jam") :
+            effectiveLayoutMode == .grid ? titleLabel.text ?? L("Jam") : sourceName,
             navigation: false, browsing: browsedStream != nil, pinned: pinnedStream != nil,
             pinLabel: pin?.accessibilityLabel, participantsLabel: participantsButton.accessibilityLabel,
             chatValue: chat.unreadCount > 0 ? conversationButton.accessibilityLabel : nil,
@@ -506,6 +513,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if gestureRecognizer is UISwipeGestureRecognizer { return effectiveLayoutMode != .grid && (primaryZoom?.zoomScale ?? 1) <= 1.01 }
         return true
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+        shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer is UISwipeGestureRecognizer && otherGestureRecognizer is UIPinchGestureRecognizer
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         var target = touch.view

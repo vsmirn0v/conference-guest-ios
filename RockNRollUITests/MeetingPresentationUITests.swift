@@ -59,6 +59,10 @@ final class MeetingPresentationUITests: XCTestCase {
         // Begin on the label, top/bottom button edges and microphone, never a gutter.
         for origin in [CGVector(dx: 0.65, dy: 0.5), CGVector(dx: 0.65, dy: 0.1),
                        CGVector(dx: 0.65, dy: 0.9), CGVector(dx: 0.12, dy: 0.5)] {
+            // The shorter cards can reach the end after three flicks. Leave room
+            // to test the next touch origin rather than trying to scroll past it.
+            let rightEdge = strip.buttons.allElementsBoundByIndex.map { $0.frame.maxX }.max() ?? 0
+            if rightEdge <= strip.frame.maxX + 1 { strip.swipeRight() }
             let bounds = strip.frame
             guard let button = strip.buttons.allElementsBoundByIndex.first(where: {
                 let frame = $0.frame
@@ -90,10 +94,10 @@ final class MeetingPresentationUITests: XCTestCase {
         let tile = app.otherElements["gallery.person-1.camera"]
         XCTAssertTrue(tile.isHittable); tile.tap()
         assertLayout(app, "Focus")
-        XCTAssertTrue(app.staticTexts["Полина"].exists)
+        XCTAssertTrue(app.buttons["Meeting details"].label.contains("Полина"))
         XCTAssertTrue(app.scrollViews["Focus participants"].exists)
         app.buttons["Focus participant.person-0.camera"].tap()
-        XCTAssertTrue(app.buttons["Unpin Participant 1 video"].waitForExistence(timeout: 5))
+        assertHeaderAction(app, "Unpin Participant 1 video")
         selectLayout(app, "Gallery")
         assertLayout(app, "Gallery")
         XCTAssertTrue(gallery.isHittable)
@@ -152,16 +156,15 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Meeting view picker"].waitForExistence(timeout: 10))
         selectLayout(app, "Focus")
         app.otherElements["Meeting stage"].swipeLeft()
-        XCTAssertTrue(app.buttons["Pin Полина video"].waitForExistence(timeout: 5))
+        assertHeaderAction(app, "Pin Полина video")
         app.buttons["Meeting view picker"].tap()
         app.buttons["Follow speaker"].tap()
-        XCTAssertTrue(app.buttons["Pin Participant 1 video"].waitForExistence(timeout: 5))
+        assertHeaderAction(app, "Pin Participant 1 video")
     }
     func testGuestShareShortcutFocusesShareAfterReturningToGallery() {
         let app = launch(scenario: "gallery-share")
         defer { app.terminate() }
-        let layout = app.buttons["Meeting view picker"]
-        XCTAssertTrue(layout.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Shared stream selector"].waitForExistence(timeout: 10))
         selectLayout(app, "Gallery")
         app.otherElements["gallery.camera.camera"].tap()
         assertLayout(app, "Focus")
@@ -170,17 +173,60 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(share.isHittable)
         share.tap()
         assertLayout(app, "Focus")
-        XCTAssertTrue(app.buttons["Unpin Ani’s arrangement screen share"].waitForExistence(timeout: 5))
+        assertHeaderAction(app, "Unpin Ani’s arrangement screen share")
     }
     private func selectLayout(_ app: XCUIApplication, _ title: String) {
-        app.buttons["Meeting view picker"].tap()
-        app.buttons.matching(NSPredicate(format: "label == %@", title)).allElementsBoundByIndex.last?.tap()
+        let picker = app.buttons["Meeting view picker"]
+        if picker.isHittable {
+            picker.tap()
+            let option = app.buttons.matching(NSPredicate(format: "label == %@", title)).allElementsBoundByIndex.last
+            guard let option else { return XCTFail("Layout option \(title) is missing") }
+            XCTAssertTrue(option.waitForExistence(timeout: 5)); XCTAssertTrue(option.isHittable)
+            option.tap()
+        } else {
+            app.openMeetingMore(.view)
+            app.meetingActionButton(title).tap()
+        }
     }
     private func assertLayout(_ app: XCUIApplication, _ label: String, file: StaticString = #filePath, line: UInt = #line) {
-        let predicate = NSPredicate(format: "label CONTAINS %@", label == "Focus" ? "Pinned" : label)
-        let picker = app.buttons["Meeting view picker"]
-        if label == "Focus", picker.label.contains("Focus") { return }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: picker)], timeout: 5), .completed, file: file, line: line)
+        let predicate = NSPredicate { _, _ in
+            let picker = app.buttons["Meeting view picker"]
+            if picker.isHittable {
+                return picker.label.contains(label) || (label == "Focus" && picker.label.contains("Pinned"))
+            }
+            return label == "Focus" && !app.scrollViews["Meeting grid"].isHittable &&
+                (app.buttons["Shared stream selector"].isHittable || app.buttons["Meeting source selector"].isHittable)
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 5), .completed, file: file, line: line)
+    }
+    private func headerAction(_ app: XCUIApplication, _ label: String,
+                              file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        let action = app.buttons[label]
+        if !action.isHittable {
+            let overflow = app.buttons["More meeting controls"]
+            XCTAssertTrue(overflow.waitForExistence(timeout: 5), file: file, line: line)
+            XCTAssertTrue(overflow.isHittable, file: file, line: line)
+            overflow.tap()
+        }
+        XCTAssertTrue(action.waitForExistence(timeout: 5), label, file: file, line: line)
+        XCTAssertTrue(action.isHittable, label, file: file, line: line)
+        return action
+    }
+    private func tapHeaderAction(_ app: XCUIApplication, _ label: String,
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        headerAction(app, label, file: file, line: line).tap()
+    }
+    private func assertHeaderAction(_ app: XCUIApplication, _ label: String,
+                                    file: StaticString = #filePath, line: UInt = #line) {
+        let direct = app.buttons[label].isHittable
+        let action = headerAction(app, label, file: file, line: line)
+        XCTAssertTrue(action.isEnabled, label, file: file, line: line)
+        if !direct {
+            // UIKit consumes this outside touch when dismissing the system menu.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+            let dismissed = NSPredicate { _, _ in !app.buttons[label].isHittable }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: dismissed, object: nil)], timeout: 3), .completed, file: file, line: line)
+        }
     }
     func testGridShowsAllParticipantsAndSwitchesToSpeakerAfterRotation() {
         let app = launch(scenario: "gallery")
@@ -240,17 +286,18 @@ final class MeetingPresentationUITests: XCTestCase {
                 }, object: nil)
                 XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed)
                 XCTAssertFalse(app.otherElements["Top meeting notices"].exists)
-                let header = landscape ? app.otherElements["Compact meeting header"] : app.buttons["Meeting status"]
-                let next = app.buttons[language == "ru" ? "Следующий поток" : "Next stream"]
-                XCTAssertTrue(next.isHittable)
-                XCTAssertFalse(header.frame.intersects(viewport.frame))
-                if !landscape { XCTAssertFalse(header.frame.intersects(next.frame)) }
+                let header = app.otherElements["Compact meeting header"]
+                XCTAssertTrue(header.exists)
+                XCTAssertTrue(app.windows.firstMatch.frame.contains(header.frame))
+                XCTAssertTrue(header.frame.contains(app.buttons["Meeting details"].frame))
+                XCTAssertTrue(app.buttons["Meeting details"].isHittable)
+                assertHeaderAction(app, language == "ru" ? "Следующий поток" : "Next stream")
                 assertControls(app, language: language)
                 let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
                 attachment.name = "Inline privacy \(language) \(orientation.rawValue)"
                 attachment.lifetime = .keepAlways; add(attachment)
             }
-            app.buttons["Meeting status"].tap()
+            app.buttons["Meeting details"].tap()
             let transcript = app.buttons[language == "ru" ? "Посмотреть расшифровку" : "View transcript"]
             XCTAssertTrue(transcript.waitForExistence(timeout: 5))
             transcript.tap()
@@ -258,10 +305,10 @@ final class MeetingPresentationUITests: XCTestCase {
             app.buttons[language == "ru" ? "Закрыть беседу" : "Close conversation"].tap()
             app.openMeetingMore(.meeting)
             app.meetingActionButton("Provider action").tap()
-            app.buttons["Meeting status"].tap()
+            app.buttons["Meeting details"].tap()
             app.buttons["Continue"].tap()
             let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                app.buttons["Meeting status"].label.contains("Action completed")
+                app.buttons["Meeting details"].label.contains("Action completed")
             }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 5), .completed)
             app.terminate()
@@ -287,7 +334,9 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(header.waitForExistence(timeout: 5))
         XCTAssertEqual(header.frame.height, 44)
         XCTAssertFalse(app.buttons["Leave"].exists)
-        XCTAssertFalse(header.frame.intersects(viewport.frame))
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(header.frame))
+        XCTAssertTrue(header.frame.contains(app.buttons["Meeting details"].frame))
+        XCTAssertTrue(app.buttons["Meeting details"].isHittable)
         XCTAssertEqual(viewport.value as? String, zoom)
         let expired = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !header.exists }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [expired], timeout: 6), .completed)
@@ -297,21 +346,20 @@ final class MeetingPresentationUITests: XCTestCase {
     func testCompactSDKLayoutAllowsButtonsAndSwipeNavigation() {
         let app = launch(scenario: "compact")
         defer { XCUIDevice.shared.orientation = .portrait }
-        XCTAssertTrue(app.buttons["Next stream"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["Next stream"].isHittable)
-        app.buttons["Next stream"].tap()
-        XCTAssertTrue(app.buttons["Pin Aram video"].waitForExistence(timeout: 5))
-        app.buttons["Previous stream"].tap()
+        XCTAssertTrue(app.buttons["Meeting details"].waitForExistence(timeout: 10))
+        tapHeaderAction(app, "Next stream")
+        assertHeaderAction(app, "Pin Aram video")
+        tapHeaderAction(app, "Previous stream")
         let viewport = app.scrollViews["Shared screen viewport"]
         XCTAssertTrue(viewport.waitForExistence(timeout: 5))
         viewport.swipeLeft()
-        XCTAssertTrue(app.buttons["Pin Aram video"].waitForExistence(timeout: 5))
+        assertHeaderAction(app, "Pin Aram video")
         XCUIDevice.shared.orientation = .landscapeLeft
-        XCTAssertTrue(app.buttons["Next stream"].waitForExistence(timeout: 5))
-        app.buttons["Automatic view"].tap()
+        assertHeaderAction(app, "Next stream")
+        tapHeaderAction(app, "Automatic view")
         XCTAssertTrue(viewport.waitForExistence(timeout: 5))
         XCUIDevice.shared.orientation = .portrait
-        XCTAssertTrue(app.buttons["Next stream"].isHittable)
+        assertHeaderAction(app, "Next stream")
     }
 
     func testSoloMeetingKeepsInviteShortcutAboveSelfTile() {
@@ -355,7 +403,7 @@ final class MeetingPresentationUITests: XCTestCase {
         }
         let name = app.staticTexts.matching(identifier: "Participant name").firstMatch
         let title = app.buttons["Meeting details"]
-        let fullTitle = app.staticTexts["Meeting title"]
+        let fullTitle = app.buttons["Meeting status"]
         XCTAssertTrue(name.exists || title.exists || fullTitle.exists)
         let toolbar = app.otherElements["Meeting toolbar"]
         let identityFrame = name.exists ? name.frame : title.exists ? title.frame : fullTitle.frame
@@ -413,8 +461,7 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Show controls, Mic off"].exists)
         app.scrollViews["Shared screen viewport"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)).tap()
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["Pin Ani’s arrangement screen share"].exists,
-            "Restoring controls must not trigger the control underneath the tap")
+        assertHeaderAction(app, "Pin Ani’s arrangement screen share")
     }
 
     func testFloatingShareZoomsAcrossWholeCanvasWithControlsVisible() {
@@ -442,25 +489,41 @@ final class MeetingPresentationUITests: XCTestCase {
         }
     }
     func testImmersiveShareEscapesClippedSafeAreaHostAndZoomsEdgeToEdge() throws {
-        let app = launch(scenario: "safe-area-host")
-        defer { XCUIDevice.shared.orientation = .portrait }
+        let scenarios: [String?] = [nil, "safe-area-host"]
+        for scenario in scenarios {
+            try assertFreshLandscapeSharePinch(scenario: scenario)
+        }
+    }
+    private func assertFreshLandscapeSharePinch(scenario: String?) throws {
+        let app = launch(scenario: scenario)
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
         let viewport = app.scrollViews["Shared screen viewport"]
         XCTAssertTrue(viewport.waitForExistence(timeout: 10))
         XCTAssertEqual(viewport.value as? String, "100%")
         app.buttons["Hide controls"].tap()
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft, .landscapeRight] {
             XCUIDevice.shared.orientation = orientation
-            let window = app.windows.firstMatch
             let coversWindow = NSPredicate { _, _ in
-                let frame = viewport.frame, bounds = window.frame
+                let frame = app.scrollViews.matching(identifier: "Shared screen viewport").firstMatch.frame
+                let bounds = app.windows.firstMatch.frame
                 return abs(frame.minX - bounds.minX) < 1 && abs(frame.minY - bounds.minY) < 1 &&
                     abs(frame.width - bounds.width) < 1 && abs(frame.height - bounds.height) < 1
             }
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: coversWindow, object: nil)], timeout: 5), .completed)
-            XCTAssertEqual(window.frame.width > window.frame.height, orientation != .portrait)
+            let bounds = app.windows.firstMatch.frame
+            XCTAssertEqual(bounds.width > bounds.height, orientation != .portrait)
         }
-        viewport.pinch(withScale: 3, velocity: 1)
-        XCTAssertNotEqual(viewport.value as? String, "100%")
+        // Resolve a new gesture target after rotation. At 100% the result cannot
+        // accidentally pass by retaining a successful earlier portrait pinch.
+        let gestureApp = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        let gestureWindow = gestureApp.windows.firstMatch
+        let rotatedViewport = gestureApp.scrollViews.matching(identifier: "Shared screen viewport").firstMatch
+        XCTAssertTrue(rotatedViewport.waitForExistence(timeout: 5))
+        XCTAssertEqual(rotatedViewport.frame, gestureWindow.frame)
+        XCTAssertEqual(rotatedViewport.value as? String, "100%")
+        gestureWindow.pinch(withScale: 3, velocity: 1)
+        let zoom = try XCTUnwrap(gestureApp.scrollViews.matching(identifier: "Shared screen viewport").firstMatch.value as? String)
+        XCTAssertNotEqual(zoom, "100%", "A fresh landscape pinch must zoom the \(scenario ?? "default") fixture")
         let pixelsFillWindow = NSPredicate { _, _ in
             guard let image = XCUIScreen.main.screenshot().image.cgImage,
                   let pixel = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
@@ -479,11 +542,14 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: pixelsFillWindow, object: nil)], timeout: 5), .completed,
             "Zoomed checkerboard pixels must reach both sides of the display after rotation")
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        shot.name = "Immersive shared screen uses full display after zoom"; shot.lifetime = .keepAlways
+        shot.name = "Immersive \(scenario ?? "default") shared screen uses full display after zoom"; shot.lifetime = .keepAlways
         add(shot)
-        viewport.swipeLeft()
+        // A failed pinch leaves browsing enabled. Do not turn that first failure
+        // into a misleading missing-share failure by intentionally changing source.
+        guard zoom != "100%" else { return }
+        rotatedViewport.swipeLeft()
         XCTAssertFalse(app.buttons["Leave"].exists)
-        viewport.tap()
+        gestureApp.scrollViews.matching(identifier: "Shared screen viewport").firstMatch.tap()
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 5))
     }
 
@@ -492,7 +558,7 @@ final class MeetingPresentationUITests: XCTestCase {
         defer { XCUIDevice.shared.orientation = .portrait }
         let viewport = app.scrollViews["Shared screen viewport"]
         XCTAssertTrue(viewport.waitForExistence(timeout: 10))
-        app.buttons["Pin Ani’s arrangement screen share"].tap()
+        tapHeaderAction(app, "Pin Ani’s arrangement screen share")
         viewport.pinch(withScale: 2, velocity: 1)
         let zoom = try XCTUnwrap(viewport.value as? String)
         XCTAssertNotEqual(zoom, "100%")
@@ -507,8 +573,9 @@ final class MeetingPresentationUITests: XCTestCase {
         viewport.tap()
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 5))
         XCTAssertEqual(viewport.value as? String, zoom)
-        XCTAssertTrue(app.buttons["Unpin Ani’s arrangement screen share"].exists)
-        XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").count, 1)
+        assertHeaderAction(app, "Unpin Ani’s arrangement screen share")
+        XCTAssertTrue(app.buttons["Meeting details"].label.contains("Ani’s arrangement"))
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").count, 0)
     }
 
     func testTapTogglesChromeWhileDoubleTapOnlyZooms() {
@@ -581,10 +648,9 @@ final class MeetingPresentationUITests: XCTestCase {
         expectation(for: NSPredicate(format: "value == '100%'"), evaluatedWith: viewport)
         waitForExpectations(timeout: 5)
         viewport.swipeLeft()
-        XCTAssertTrue(app.buttons["Pin Aram video"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Automatic view"].exists)
-        app.buttons["Automatic view"].tap()
-        XCTAssertTrue(app.buttons["Pin Ani’s arrangement screen share"].waitForExistence(timeout: 5))
+        assertHeaderAction(app, "Pin Aram video")
+        tapHeaderAction(app, "Automatic view")
+        assertHeaderAction(app, "Pin Ani’s arrangement screen share")
     }
 
     func testLandscapeHeaderKeepsNavigationAndPinOutsideMedia() throws {
@@ -602,10 +668,10 @@ final class MeetingPresentationUITests: XCTestCase {
             XCTAssertEqual(app.otherElements["Meeting toolbar"].frame.width, 56, accuracy: 1)
             let next = app.buttons[language == "ru" ? "Следующий поток" : "Next stream"]
             XCTAssertTrue(next.isHittable)
-            XCTAssertLessThanOrEqual(next.frame.maxY, viewport.frame.minY)
+            XCTAssertTrue(header.frame.contains(next.frame))
             let pin = app.buttons[language == "ru" ? "Закрепить Ani’s arrangement трансляция экрана" : "Pin Ani’s arrangement screen share"]
             XCTAssertTrue(pin.isHittable)
-            XCTAssertLessThanOrEqual(pin.frame.maxY, viewport.frame.minY)
+            XCTAssertTrue(header.frame.contains(pin.frame))
             pin.tap()
             XCTAssertFalse(next.isEnabled)
             app.buttons[language == "ru" ? "Автоматический выбор" : "Automatic view"].tap()

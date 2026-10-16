@@ -300,6 +300,10 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         }
         return true
     }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+        shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer is UISwipeGestureRecognizer && otherGestureRecognizer is UIPinchGestureRecognizer
+    }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         var target = touch.view
         while let current = target {
@@ -386,15 +390,21 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     override func layoutSubviews() {
         super.layoutSubviews()
         identity.frame = bounds
+        var infoOffset: CGFloat = -8
+        var zoomOffset: CGFloat = -8
+        var trailingOffset: CGFloat = -8
         if let record = CallStageLayout.record(for: window), let window {
             let visible = convert(record.rect, from: window).intersection(bounds)
             if !visible.isNull {
-                infoBottom?.constant = min(-8, visible.maxY - bounds.maxY - 8)
-                zoomBottom?.constant = visible.maxY - bounds.maxY - 4
-                zoomTrailing?.constant = visible.maxX - bounds.maxX - 4
+                infoOffset = min(-8, visible.maxY - bounds.maxY - 8)
+                zoomOffset = visible.maxY - bounds.maxY - 4
+                trailingOffset = visible.maxX - bounds.maxX - 4
             }
             controlsHidden = record.hidden
-        } else { infoBottom?.constant = -8; zoomBottom?.constant = -8; zoomTrailing?.constant = -8 }
+        }
+        infoBottom?.constant = infoOffset
+        zoomBottom?.constant = zoomOffset - (participantInfo.isHidden ? 0 : participantInfo.intrinsicContentSize.height + 8)
+        zoomTrailing?.constant = trailingOffset
         let fit = fittedContentRect?.intersection(bounds) ?? bounds
         guard bounds.width > 0, bounds.height > 0, !fit.isNull,
               bounds.size != viewportSize || fit != appliedFitRect else { return }

@@ -91,6 +91,12 @@ final class MeetingLayoutControls: UIView {
         accessibilityIdentifier = "Meeting layout controls"
         addSubview(surface)
         picker.configuration = .plain()
+        picker.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = UIFontMetrics(forTextStyle: .callout).scaledFont(for: .systemFont(ofSize: 15, weight: .medium), maximumPointSize: 24)
+            return attributes
+        }
+        picker.titleLabel?.numberOfLines = 1
         picker.configuration?.titleLineBreakMode = .byTruncatingTail
         picker.showsMenuAsPrimaryAction = true
         picker.accessibilityIdentifier = "Meeting view picker"
