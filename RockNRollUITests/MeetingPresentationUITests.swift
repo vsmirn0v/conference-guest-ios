@@ -82,7 +82,7 @@ final class MeetingPresentationUITests: XCTestCase {
         target.tap()
         XCTAssertFalse(app.buttons[targetID].exists, "The newly focused participant leaves the filmstrip", file: file, line: line)
         XCTAssertTrue(selected.exists, file: file, line: line)
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "Participant strip after button drags"; attachment.lifetime = .keepAlways; add(attachment)
     }
 
@@ -117,7 +117,7 @@ final class MeetingPresentationUITests: XCTestCase {
         gallery.swipeRight()
         XCTAssertNotEqual(counter.label, pageLabel, "A swipe over a participant tile must page the gallery")
         XCTAssertTrue(tile.isHittable)
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "Guest name gallery page"; attachment.lifetime = .keepAlways; add(attachment)
     }
     func testNativeGallerySelectionAndSpeakerChanges() {
@@ -147,7 +147,7 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertNotEqual(counter.label, initialPage)
         app.scrollViews["Meeting content"].swipeRight()
         XCTAssertTrue(tile.isHittable)
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "Native name gallery"; attachment.lifetime = .keepAlways; add(attachment)
     }
     func testGuestSwipingFromAutomaticFocusCanResumeFollowingSpeaker() {
@@ -177,54 +177,70 @@ final class MeetingPresentationUITests: XCTestCase {
     }
     private func selectLayout(_ app: XCUIApplication, _ title: String) {
         let picker = app.buttons["Meeting view picker"]
-        if picker.isHittable {
+        if picker.exists && picker.isHittable {
             picker.tap()
             let option = app.buttons.matching(NSPredicate(format: "label == %@", title)).allElementsBoundByIndex.last
             guard let option else { return XCTFail("Layout option \(title) is missing") }
-            XCTAssertTrue(option.waitForExistence(timeout: 5)); XCTAssertTrue(option.isHittable)
+            guard option.waitForExistence(timeout: 5) else { return XCTFail("Layout option \(title) is missing") }
+            // UIKit menu rows can report isHittable=false while their native
+            // tap resolves a valid hit point. Verify the resulting layout below.
             option.tap()
         } else {
             app.openMeetingMore(.view)
             app.meetingActionButton(title).tap()
         }
+        assertLayout(app, title)
     }
     private func assertLayout(_ app: XCUIApplication, _ label: String, file: StaticString = #filePath, line: UInt = #line) {
         let predicate = NSPredicate { _, _ in
             let picker = app.buttons["Meeting view picker"]
-            if picker.isHittable {
+            if picker.exists && picker.isHittable {
                 return picker.label.contains(label) || (label == "Focus" && picker.label.contains("Pinned"))
             }
-            return label == "Focus" && !app.scrollViews["Meeting grid"].isHittable &&
-                (app.buttons["Shared stream selector"].isHittable || app.buttons["Meeting source selector"].isHittable)
+            let grid = app.scrollViews["Meeting grid"]
+            let guestSource = app.buttons["Shared stream selector"], nativeSource = app.buttons["Meeting source selector"]
+            return label == "Focus" && !(grid.exists && grid.isHittable) &&
+                ((guestSource.exists && guestSource.isHittable) || (nativeSource.exists && nativeSource.isHittable))
         }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 5), .completed, file: file, line: line)
     }
     private func headerAction(_ app: XCUIApplication, _ label: String,
                               file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         let action = app.buttons[label]
-        if !action.isHittable {
+        if !action.exists || !action.isHittable {
             let overflow = app.buttons["More meeting controls"]
-            XCTAssertTrue(overflow.waitForExistence(timeout: 5), file: file, line: line)
-            XCTAssertTrue(overflow.isHittable, file: file, line: line)
+            guard waitForHittable(overflow, file: file, line: line) else { return action }
             overflow.tap()
         }
-        XCTAssertTrue(action.waitForExistence(timeout: 5), label, file: file, line: line)
-        XCTAssertTrue(action.isHittable, label, file: file, line: line)
+        _ = waitForHittable(action, file: file, line: line)
         return action
+    }
+    @discardableResult
+    private func waitForHittable(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) -> Bool {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            element.exists && element.isHittable
+        }, object: nil)
+        let result = XCTWaiter.wait(for: [ready], timeout: 5)
+        XCTAssertEqual(result, .completed, "\(element.identifier) must become hittable", file: file, line: line)
+        return result == .completed
     }
     private func tapHeaderAction(_ app: XCUIApplication, _ label: String,
                                  file: StaticString = #filePath, line: UInt = #line) {
-        headerAction(app, label, file: file, line: line).tap()
+        let action = headerAction(app, label, file: file, line: line)
+        guard action.exists && action.isHittable else { return }
+        XCTAssertTrue(action.isEnabled, label, file: file, line: line)
+        action.tap()
     }
     private func assertHeaderAction(_ app: XCUIApplication, _ label: String,
                                     file: StaticString = #filePath, line: UInt = #line) {
-        let direct = app.buttons[label].isHittable
+        let direct = app.buttons[label].exists && app.buttons[label].isHittable
         let action = headerAction(app, label, file: file, line: line)
+        guard action.exists && action.isHittable else { return }
         XCTAssertTrue(action.isEnabled, label, file: file, line: line)
         if !direct {
             // UIKit consumes this outside touch when dismissing the system menu.
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
-            let dismissed = NSPredicate { _, _ in !app.buttons[label].isHittable }
+            let dismissed = NSPredicate { _, _ in !action.exists || !action.isHittable }
             XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: dismissed, object: nil)], timeout: 3), .completed, file: file, line: line)
         }
     }
@@ -256,7 +272,7 @@ final class MeetingPresentationUITests: XCTestCase {
         selectLayout(app, "Focus")
         XCTAssertFalse(grid.isHittable)
         XCTAssertTrue(app.scrollViews["Focus participants"].isHittable)
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "Speaker layout after grid rotation"; attachment.lifetime = .keepAlways; add(attachment)
     }
     private func launch(_ language: String = "en", autoHide: Bool = false, largeText: Bool = false,
@@ -406,6 +422,7 @@ final class MeetingPresentationUITests: XCTestCase {
         let fullTitle = app.buttons["Meeting status"]
         XCTAssertTrue(name.exists || title.exists || fullTitle.exists)
         let toolbar = app.otherElements["Meeting toolbar"]
+        XCTAssertTrue(window.contains(toolbar.frame), "The entire control rail must remain inside the window")
         let identityFrame = name.exists ? name.frame : title.exists ? title.frame : fullTitle.frame
         XCTAssertFalse(identityFrame.intersects(toolbar.frame), "Identity must not be under the toolbar")
     }
@@ -451,7 +468,7 @@ final class MeetingPresentationUITests: XCTestCase {
     func testAutoHideWaitsForMenuAndRestoresWithoutClickThrough() {
         let app = launch(autoHide: true)
         XCTAssertTrue(app.buttons["call.reactions"].waitForExistence(timeout: 10))
-        app.openMeetingMore(.view)
+        app.openMeetingMore(.view, waitForAutoHide: true)
         Thread.sleep(forTimeInterval: 6)
         XCTAssertTrue(app.buttons["All video"].exists, "The tool surface must remain open while auto-hide is deferred")
         app.meetingActionButton("All video").tap()
@@ -484,7 +501,8 @@ final class MeetingPresentationUITests: XCTestCase {
             viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).tap()
             XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 3))
             XCTAssertEqual(viewport.value as? String, zoom)
-            let shot = XCTAttachment(screenshot: app.screenshot())
+            assertControls(app, language: "en")
+            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             shot.name = "Floating share controls \(orientation.rawValue)"; shot.lifetime = .keepAlways; add(shot)
         }
     }
@@ -614,7 +632,7 @@ final class MeetingPresentationUITests: XCTestCase {
             let faded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !hint.exists }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [faded], timeout: 4), .completed)
             XCTAssertFalse(app.buttons["Show controls, Mic off"].exists)
-            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             screenshot.name = "Unobstructed shared screen \(language)"; screenshot.lifetime = .keepAlways; add(screenshot)
             viewport.tap(); viewport.tap()
             XCTAssertFalse(hint.exists, "The teaching hint must not become another persistent overlay")

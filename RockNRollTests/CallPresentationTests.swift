@@ -333,6 +333,55 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertEqual(layout.layout.selectedSegmentIndex, 0, "A late pin result must preserve the newer Gallery choice")
     }
 
+    func testGuestGalleryKeepsLayoutAndPaginationWhileShareRemainsSelected() async throws {
+        let (window, controls, streams, layout) = try guestLayout()
+        defer { window.isHidden = true; streams.reset() }
+        let roster = (0..<20).map {
+            GuestStreamViews.Participant(id: "person-\($0)", name: "Participant \($0)", isLocal: false,
+                microphoneOn: false, cameraOn: false, sharing: $0 == 0)
+        }
+        controls.updateParticipantRoster(roster, speaking: nil)
+        streams.updateParticipants(roster)
+        await settleUI()
+        window.layoutIfNeeded()
+        let share = GuestStreamViews.PinTarget(participant: "person-0", isShare: true)
+        let gallery = try XCTUnwrap(descendants(window).compactMap { $0 as? GuestGalleryView }.first)
+        let picker = try XCTUnwrap(descendants(layout).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "Meeting view picker"
+        })
+        let source = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "Shared stream selector"
+        })
+        XCTAssertEqual(streams.selectedTarget, share)
+        XCTAssertTrue(layout.isHidden)
+        XCTAssertFalse(source.isHidden)
+
+        layout.layout.selectedSegmentIndex = 0; layout.layout.sendActions(for: .valueChanged)
+        window.layoutIfNeeded(); gallery.layoutIfNeeded(); layout.layoutIfNeeded()
+        XCTAssertFalse(gallery.isHidden)
+        XCTAssertFalse(layout.isHidden, "An available share must not hide explicit Gallery controls")
+        XCTAssertFalse(picker.isHidden)
+        XCTAssertFalse(layout.nextPage.isHidden)
+        XCTAssertTrue(layout.nextPage.isEnabled)
+        XCTAssertTrue(source.isHidden, "Gallery must show the layout picker instead of the share source selector")
+        for button in [picker, layout.nextPage] {
+            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
+            var hit = window.hitTest(point, with: nil)
+            while hit != nil && hit !== button { hit = hit?.superview }
+            XCTAssertTrue(hit === button, "Gallery picker and pagination must be reachable")
+        }
+        let page = gallery.page
+        layout.nextPage.sendActions(for: .touchUpInside)
+        XCTAssertEqual(gallery.page, page + 1)
+
+        layout.layout.selectedSegmentIndex = 1; layout.layout.sendActions(for: .valueChanged)
+        window.layoutIfNeeded()
+        XCTAssertTrue(gallery.isHidden)
+        XCTAssertTrue(layout.isHidden, "Share Focus uses one source selector")
+        XCTAssertFalse(source.isHidden)
+        XCTAssertEqual(streams.selectedTarget, share)
+    }
+
     private var guestRoster: [GuestStreamViews.Participant] {
         ["Anna", "Boris", "Clara"].enumerated().map {
             .init(id: String(UnicodeScalar(97 + $0.offset)!), name: $0.element, isLocal: false,

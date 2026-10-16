@@ -1168,7 +1168,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         navigation.isHidden = true
         var stage = geometry.stage
         let layoutAvailable = displayMode != .audioOnly && !isWaitingForOthers && galleryCount > 1
-        layoutControls.isHidden = !layoutAvailable || focus.hidden || stageIsShare
+        layoutControls.isHidden = !layoutAvailable || focus.hidden || (stageIsShare && !gridVisible)
         let layoutFrame = CGRect(x: stage.minX + 4, y: stage.maxY - 46, width: min(288, max(0, stage.width - 8)), height: 44)
         if !layoutControls.isHidden {
             layoutControls.frame = layoutFrame
