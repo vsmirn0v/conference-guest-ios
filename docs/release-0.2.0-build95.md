@@ -42,7 +42,7 @@ Upload succeeded on 16 October 2026 at 18:15 MSK. App Store Connect processed th
 
 Apple reported the same six nonfatal third-party symbol warnings as build 94. The app and both broadcast extensions have verified matching dSYMs.
 
-After publication, the user reported unclickable top and bottom controls; investigation is ongoing.
+After publication, the user reported initially unclickable top and bottom controls in portrait. This was reproduced against the live SDK and fixed in [build 96](release-0.2.0-build96.md).
 
 What to Test:
 
