@@ -24,7 +24,7 @@ struct CallPresentationGeometry {
         }
         let safe = bounds.inset(by: insets).insetBy(dx: 8, dy: 4)
         rail = allowsRail && safe.width > safe.height && safe.height < 480 && safe.height >= 284
-        compactHeader = ((rail || floating) && !largeText) || statusOnly
+        compactHeader = floating || (rail && !largeText) || statusOnly
         if statusOnly && hidden {
             header = CGRect(x: safe.minX, y: safe.minY, width: safe.width, height: 44)
             toolbar = .zero
@@ -57,6 +57,19 @@ struct CallPresentationGeometry {
     }
 }
 
+/// Meeting chrome grows with text preferences while keeping the media and touch targets usable.
+@MainActor
+enum MeetingControlMetrics {
+    static func captionFont(for traits: UITraitCollection) -> UIFont {
+        UIFontMetrics(forTextStyle: .caption2).scaledFont(for: .systemFont(ofSize: 12, weight: .medium),
+            maximumPointSize: 18, compatibleWith: traits)
+    }
+    static func boundSymbol(in button: UIButton) {
+        button.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 22, weight: .medium)
+        button.imageView?.adjustsImageSizeForAccessibilityContentSizeCategory = false
+    }
+}
+
 /// Keep meeting controls visible for the entire lifetime of a system menu.
 class MeetingMenuButton: UIButton {
     var onMenuVisibilityChanged: ((Bool) -> Void)?
@@ -85,9 +98,11 @@ final class AlignedCallButton: MeetingMenuButton {
         symbolView.contentMode = .scaleAspectFit
         symbolView.isUserInteractionEnabled = false
         caption.textAlignment = .center
-        caption.numberOfLines = 2
-        caption.lineBreakMode = .byWordWrapping
-        caption.adjustsFontForContentSizeCategory = true
+        caption.numberOfLines = 1
+        caption.lineBreakMode = .byTruncatingTail
+        caption.adjustsFontSizeToFitWidth = true
+        caption.minimumScaleFactor = 0.75
+        caption.allowsDefaultTighteningForTruncation = true
         caption.isUserInteractionEnabled = false
         addSubview(symbolView); addSubview(caption)
     }
@@ -104,7 +119,7 @@ final class AlignedCallButton: MeetingMenuButton {
     override func layoutSubviews() {
         super.layoutSubviews()
         imageView?.isHidden = true; titleLabel?.isHidden = true
-        let font = UIFontMetrics(forTextStyle: .caption2).scaledFont(for: .systemFont(ofSize: 12, weight: .medium))
+        let font = MeetingControlMetrics.captionFont(for: traitCollection)
         caption.font = font
         caption.text = configuration?.title
         let color = configuration?.baseForegroundColor ?? tintColor ?? .white
@@ -137,8 +152,8 @@ final class CallToolbar: UIView {
     var rail = false { didSet { if oldValue != rail { setNeedsLayout() } } }
     var largeText = false { didSet { if oldValue != largeText { setNeedsLayout() } } }
     var preferredHeight: CGFloat {
-        let font = UIFontMetrics(forTextStyle: .caption2).scaledFont(for: .systemFont(ofSize: 12, weight: .medium), compatibleWith: traitCollection)
-        return largeText ? CGFloat((items.count + 1) / 2) * max(69, ceil(font.lineHeight) * 2 + 40) + 10 : 68
+        let font = MeetingControlMetrics.captionFont(for: traitCollection)
+        return largeText ? CGFloat((items.count + 1) / 2) * max(64, ceil(font.lineHeight) + 40) + 10 : 68
     }
     init(items: [UIView]) {
         self.baseItems = items
@@ -243,6 +258,12 @@ final class CompactCallHeader: UIView {
         details.configuration?.titleLineBreakMode = .byTruncatingTail
         details.configuration?.image = UIImage(systemName: "info.circle")
         details.configuration?.imagePadding = 6
+        details.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = UIFontMetrics(forTextStyle: .callout).scaledFont(for: .systemFont(ofSize: 15, weight: .medium), maximumPointSize: 20)
+            return attributes
+        }
+        MeetingControlMetrics.boundSymbol(in: details)
         details.accessibilityIdentifier = "Meeting details"
         addSubview(details)
         sourceLabel.font = .systemFont(ofSize: 11)
@@ -269,12 +290,14 @@ final class CompactCallHeader: UIView {
         ] {
             button.configuration = .plain()
             button.configuration?.image = UIImage(systemName: symbol)
+            MeetingControlMetrics.boundSymbol(in: button)
             button.accessibilityLabel = label
             addSubview(button)
         }
         availableActions = Set(actions.filter { $0 !== layoutButton }.map(ObjectIdentifier.init))
         overflow.configuration = .plain()
         overflow.configuration?.image = UIImage(systemName: "ellipsis")
+        MeetingControlMetrics.boundSymbol(in: overflow)
         overflow.showsMenuAsPrimaryAction = true
         overflow.accessibilityLabel = L("More meeting controls")
         overflow.accessibilityIdentifier = "More meeting controls"
@@ -326,11 +349,11 @@ final class CompactCallHeader: UIView {
                 pinLabel: String?, participantsLabel: String?, chatValue: String?,
                 chatCount: Int = 0, missedCount: Int = 0, status: String?, speaking: CallSpeaker? = nil, focusAvailable: Bool,
                 privacySymbol: String? = nil, privacyDescription: String? = nil, disclosureOnly: Bool = false,
-                chatAvailable: Bool = true) {
+                chatAvailable: Bool = true, meetingName: String? = nil) {
         sourceName = name
         callStatus = status
         self.privacySymbol = privacySymbol; self.privacyDescription = privacyDescription
-        details.accessibilityLabel = L("Jam details") + ", " + name
+        details.accessibilityLabel = [L("Jam details"), meetingName, name].compactMap { $0 }.joined(separator: ", ")
         setSpeaker(speaking)
         actions.filter { $0 !== layoutButton }.forEach { $0.isHidden = false }
         for button in [previous, automatic, nextStream] { button.isHidden = !navigation }

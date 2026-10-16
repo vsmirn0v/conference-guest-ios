@@ -264,6 +264,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         sourceSelector.configuration?.image = UIImage(systemName: "rectangle.on.rectangle")
         sourceSelector.configuration?.imagePadding = 6
         sourceSelector.configuration?.titleLineBreakMode = .byTruncatingTail
+        MeetingControlMetrics.boundSymbol(in: sourceSelector)
         sourceSelector.accessibilityIdentifier = "Meeting source selector"
         sourceSelector.showsMenuAsPrimaryAction = true
         let sourceSurface = MeetingChromeSurface(cornerRadius: 14)
@@ -449,7 +450,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             chatValue: chat.unreadCount > 0 ? conversationButton.accessibilityLabel : nil,
             chatCount: chat.unreadCount, missedCount: store.timeline.unreadCount,
             status: isHeld || mediaStatus != nil ? statusLabel.text : nil,
-            speaking: activeSpeaker.current, focusAvailable: primaryZoom != nil, chatAvailable: supportsChat)
+            speaking: activeSpeaker.current, focusAvailable: primaryZoom != nil, chatAvailable: supportsChat,
+            meetingName: titleLabel.text)
         compactHeader.setLayout(mode: effectiveLayoutMode, available: layoutAvailable,
             choose: { [weak self] in self?.chooseLayout($0) },
             followSpeaker: { [weak self] in self?.browsedStream = nil; self?.setPin(nil) })

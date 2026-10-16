@@ -98,6 +98,7 @@ final class MeetingLayoutControls: UIView {
         }
         picker.titleLabel?.numberOfLines = 1
         picker.configuration?.titleLineBreakMode = .byTruncatingTail
+        MeetingControlMetrics.boundSymbol(in: picker)
         picker.showsMenuAsPrimaryAction = true
         picker.accessibilityIdentifier = "Meeting view picker"
         addSubview(picker)

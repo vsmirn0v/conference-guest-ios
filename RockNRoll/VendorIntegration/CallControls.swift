@@ -1028,6 +1028,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         sourcePicker.titleLabel?.numberOfLines = 1
         sourcePicker.configuration?.imagePadding = 6
         sourcePicker.configuration?.titleLineBreakMode = .byTruncatingTail
+        MeetingControlMetrics.boundSymbol(in: sourcePicker)
         sourcePicker.showsMenuAsPrimaryAction = true
         sourcePicker.accessibilityIdentifier = "Shared stream selector"
         sourcePickerSurface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
@@ -1158,7 +1159,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             chatCount: unreadChatCount, missedCount: missedCount, status: status,
             speaking: statusOnly || headerStatus.noticeTitle != nil ? nil : activeSpeaker.current, focusAvailable: showsContent,
             privacySymbol: headerStatus.privacySymbol,
-            privacyDescription: headerStatus.privacyDetails.joined(separator: " · "), disclosureOnly: statusOnly)
+            privacyDescription: headerStatus.privacyDetails.joined(separator: " · "), disclosureOnly: statusOnly,
+            meetingName: titleLabel.text)
         if let identity = header.arrangedSubviews.first {
             identity.accessibilityLabel = [titleLabel.text, countLabel.text, routeLabel.text,
                 callStateLabel.isHidden ? nil : callStateLabel.text].compactMap { $0 }.joined(separator: ", ")
