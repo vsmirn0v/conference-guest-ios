@@ -385,6 +385,7 @@
 		FE21699C05E6734D5BBA7553 /* MacMeetingLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4AC84D98F30630EE14FA23C /* MacMeetingLiveTests.swift */; };
 		FF1446733C5323E128CA61CA /* GuestWebSocketTap.m in Sources */ = {isa = PBXBuildFile; fileRef = 68DEF6B8B1414FDFE79EFB70 /* GuestWebSocketTap.m */; };
 		FF3E800C2CDA0B6EBD9EF3E2 /* SampleBufferImageRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95635E9D486B37EDF5A04411 /* SampleBufferImageRenderer.swift */; };
+		B95CFE102BF340D1B622A101 /* OwnedWindowCaptureFixture.m in Sources */ = {isa = PBXBuildFile; fileRef = B95CFE102BF340D1B622A102 /* OwnedWindowCaptureFixture.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -820,6 +821,8 @@
 		FE377E3F013CC98891447FFA /* StudioAudioPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioAudioPolicy.swift; sourceTree = "<group>"; };
 		FE3CCAD5DAEC3B948515641C /* BroadcastLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BroadcastLifecycleTests.swift; sourceTree = "<group>"; };
 		FE7E7ABE77FAC05896773221 /* GuestColorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestColorUITests.swift; sourceTree = "<group>"; };
+		B95CFE102BF340D1B622A102 /* OwnedWindowCaptureFixture.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = OwnedWindowCaptureFixture.m; sourceTree = "<group>"; };
+		B95CFE102BF340D1B622A103 /* OwnedWindowCaptureFixture.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = OwnedWindowCaptureFixture.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1242,6 +1245,8 @@
 		DA4E1195A6EAE225E8C05321 /* RockNRollTests */ = {
 			isa = PBXGroup;
 			children = (
+				B95CFE102BF340D1B622A102 /* OwnedWindowCaptureFixture.m */,
+				B95CFE102BF340D1B622A103 /* OwnedWindowCaptureFixture.h */,
 				76CCA593AC98F64897D0D892 /* ActiveSpeakerTests.swift */,
 				48C7D263FA5D790DAD2BFAD3 /* ApplicationMicrophoneMuteTests.swift */,
 				019359A3106165FAECA43BED /* AudioAcquisitionTests.swift */,
@@ -1996,6 +2001,7 @@
 				FE21699C05E6734D5BBA7553 /* MacMeetingLiveTests.swift in Sources */,
 				6D30B42F2A55BBBB1EF6225F /* MacMeetingTests.swift in Sources */,
 				DF11840F64A5219F131DB9AB /* MacScreenCaptureTests.swift in Sources */,
+				B95CFE102BF340D1B622A101 /* OwnedWindowCaptureFixture.m in Sources */,
 				CC018DC021BBCBB6D0FB742C /* MediaEnergyTests.swift in Sources */,
 				CFE902B2CA9F50840A8AE214 /* MeetingActionsTests.swift in Sources */,
 				60A74F51C712997E50F6F5CF /* MeetingChromeProfileTests.swift in Sources */,
@@ -2145,6 +2151,7 @@
 					"@loader_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.conferenceguest.tests;
+				SWIFT_OBJC_BRIDGING_HEADER = RockNRollTests/OwnedWindowCaptureFixture.h;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -2186,6 +2193,7 @@
 					"@loader_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.conferenceguest.tests;
+				SWIFT_OBJC_BRIDGING_HEADER = RockNRollTests/OwnedWindowCaptureFixture.h;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

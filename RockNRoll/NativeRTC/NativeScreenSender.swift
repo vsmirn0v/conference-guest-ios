@@ -53,6 +53,10 @@ final class NativeScreenSender {
         stopping = Task { await capture?.stop(); try? await track?.stop() }
         await stopping?.value; stopping = nil
     }
+    func retrySelection() {
+        guard !closed, !composed else { return }
+        capture?.start()
+    }
     func startComposed() throws {
         guard !closed else { throw CancellationError() }
         composed = true

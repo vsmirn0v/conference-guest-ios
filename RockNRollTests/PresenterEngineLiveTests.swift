@@ -7,6 +7,144 @@ import XCTest
 @testable import RockNRoll
 
 @MainActor final class PresenterEngineLiveTests: XCTestCase {
+    func testMacGuestSyntheticShareRepeatedStartStop() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              let link = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SHARE_LIFECYCLE_INVITE"] else {
+            throw XCTSkip("Opt-in Mac guest share lifecycle check; sends generated canvas only")
+        }
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first?.windows.first { $0.isKeyWindow })
+        let original = window.rootViewController
+        let container = UIViewController(); window.rootViewController = container
+        let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(),
+            catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
+        var active = false, ended = false
+        engine.onEvent = {
+            switch $0 { case .active: active = true; case .left, .failed: ended = true; default: break }
+        }
+        addTeardownBlock { @MainActor in
+            engine.leave()
+            let deadline = Date().addingTimeInterval(10)
+            while engine.hasJoinStarted && !ended && Date() < deadline { try? await Task.sleep(for: .milliseconds(100)) }
+            window.rootViewController = original
+        }
+        let target = try JoinTarget.parse(link), endpoint = try await VendorEndpointResolver.make().resolve(for: target)
+        try engine.configure(container: container, networkURL: endpoint, displayName: "Share lifecycle QA")
+        try engine.join(target: target, displayName: "Share lifecycle QA")
+        try await wait { active && engine.readyForPresenterForTesting && engine.mediaReadyForTesting || ended }
+        XCTAssertFalse(ended)
+        let model = engine.studioForTesting.presenter
+        model.selectCanvas(); model.includeCamera = false
+        engine.studioForTesting.open(.presenter)
+        try await wait { model.hasPreview || ended }
+        for iteration in 0..<20 {
+            await model.start()
+            try await wait { model.running || model.error != nil || ended }
+            XCTAssertFalse(ended); XCTAssertNil(model.error)
+            XCTAssertTrue(model.running)
+            try await Task.sleep(for: .milliseconds(iteration.isMultiple(of: 2) ? 120 : 700))
+            model.stop()
+            try await wait { !model.stopping || ended }
+            XCTAssertFalse(ended); XCTAssertFalse(model.running)
+            print("SHARE_LIFECYCLE cycle=\(iteration + 1) stopped")
+        }
+        engine.leave()
+        try await wait { ended }
+    }
+
+    func testMacGuestOwnedWindowCaptureRepeatedStartStop() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              let link = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_OWNED_CAPTURE_LIFECYCLE_INVITE"] else {
+            throw XCTSkip("Opt-in guest stability test; captures only its own generated window")
+        }
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first?.windows.first { $0.isKeyWindow })
+        let original = window.rootViewController, container = UIViewController()
+        window.rootViewController = container
+        let engine = NativeConferenceEngine(systemCall: SystemCallCoordinator(),
+            catchUp: CatchUpStore(storageURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
+        var active = false, ended = false
+        engine.onEvent = {
+            switch $0 { case .active: active = true; case .left, .failed: ended = true; default: break }
+        }
+        var fixtures: [OwnedWindowCaptureFixture] = []
+        addTeardownBlock { @MainActor in
+            engine.leave()
+            for fixture in fixtures {
+                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                    fixture.stop { continuation.resume() }
+                }
+            }
+            let deadline = Date().addingTimeInterval(10)
+            while engine.hasJoinStarted && !ended && Date() < deadline { try? await Task.sleep(for: .milliseconds(100)) }
+            window.rootViewController = original
+        }
+        let deadline = Date().addingTimeInterval(65)
+        func until(cleanup: Bool = false, line: UInt = #line, _ predicate: () -> Bool) async throws {
+            let limit = cleanup ? Date().addingTimeInterval(15) : deadline
+            while !predicate() && Date() < limit { try await Task.sleep(for: .milliseconds(50)) }
+            XCTAssertTrue(predicate(), "Owned capture lifecycle exceeded its time budget", line: line)
+            if !predicate() { throw NSError(domain: "OwnedCaptureDeadline", code: Int(line)) }
+        }
+        let target = try JoinTarget.parse(link), endpoint = try await VendorEndpointResolver.make().resolve(for: target)
+        try engine.configure(container: container, networkURL: endpoint, displayName: "Owned capture lifecycle QA")
+        try engine.join(target: target, displayName: "Owned capture lifecycle QA")
+        try await until { active && engine.readyForPresenterForTesting && engine.mediaReadyForTesting || ended }
+        XCTAssertFalse(ended)
+        let studio = engine.studioForTesting, model = studio.presenter
+        model.includeCamera = false; studio.open(.presenter)
+        var cancelDuringStart = true, interruptedStarts = 0, delivered = 0
+        model.makeScreenSource = { [weak model] frame, _, selected, end in
+            let fixture = OwnedWindowCaptureFixture()
+            fixtures.append(fixture)
+            fixture.onFrame = { sample in MainActor.assumeIsolated { delivered += 1; frame(sample) } }
+            fixture.onSelected = { MainActor.assumeIsolated { selected(.selected) } }
+            fixture.onEnd = { error in MainActor.assumeIsolated { end(error.localizedDescription) } }
+            fixture.onStarting = { [weak fixture, weak model] in
+                MainActor.assumeIsolated {
+                    if cancelDuringStart && fixture?.starting == true {
+                        interruptedStarts += 1; model?.stop()
+                    }
+                }
+            }
+            return OwnedWindowScreenSource(fixture)
+        }
+        // Retire a genuine asynchronous SCStream start before its first frame.
+        model.selectScreen()
+        try await until { interruptedStarts == 1 || model.error != nil || ended }
+        XCTAssertEqual(interruptedStarts, 1); XCTAssertNil(model.error); XCTAssertFalse(ended)
+        await model.waitForScreenStop()
+        cancelDuringStart = false
+        for iteration in 0..<10 {
+            guard Date() < deadline else { throw NSError(domain: "OwnedCaptureDeadline", code: iteration) }
+            let before = delivered
+            model.selectScreen()
+            try await until { model.screenSelected && model.hasPreview || model.error != nil || ended }
+            XCTAssertNil(model.error); XCTAssertFalse(ended)
+            let fixture = try XCTUnwrap(fixtures.last)
+            try await until { fixture.changes >= 2 || model.error != nil || ended }
+            await model.start()
+            try await until { model.running || model.error != nil || ended }
+            XCTAssertTrue(model.running); XCTAssertNil(model.error); XCTAssertFalse(ended)
+            try await Task.sleep(for: .milliseconds(300))
+            XCTAssertGreaterThan(delivered, before)
+            print("OWNED_CAPTURE_LIFECYCLE cycle=\(iteration + 1) frames=\(fixture.frames) changes=\(fixture.changes)")
+            if iteration == 9 {
+                engine.leave() // Last cycle exercises Leave with real capture and SDK upload active.
+                try await until(cleanup: true) { ended }
+            } else {
+                model.stop()
+                try await until { !model.stopping || ended }
+                XCTAssertFalse(ended)
+            }
+            await model.waitForScreenStop()
+            let stopped = fixture.frames
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(fixture.frames, stopped, "Retired capture delivered another frame")
+        }
+        XCTAssertTrue(ended)
+    }
+
     func testMacGuestScreenPresenterSelectionAndResize() async throws {
         guard ProcessInfo.processInfo.isiOSAppOnMac,
               let link = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SCREEN_PRESENTER_INVITE"],
@@ -314,6 +452,18 @@ import XCTest
         while !predicate(), Date() < end { try await Task.sleep(for: .milliseconds(100)) }
         XCTAssertTrue(predicate(), file: file, line: line)
         if !predicate() { throw NSError(domain: "PresenterQualification", code: Int(line)) }
+    }
+}
+
+@MainActor
+private final class OwnedWindowScreenSource: PresenterScreenSource {
+    private let fixture: OwnedWindowCaptureFixture
+    init(_ fixture: OwnedWindowCaptureFixture) { self.fixture = fixture }
+    func start() { fixture.start() }
+    func stop() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            fixture.stop { continuation.resume() }
+        }
     }
 }
 #endif

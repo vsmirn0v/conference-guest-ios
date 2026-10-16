@@ -13,9 +13,25 @@ import ScreenCaptureKit
 
 @available(iOS 27.0, *)
 @MainActor
+protocol NativeScreenCapturePicker: AnyObject {
+    var isAvailable: Bool { get }
+    var isActive: Bool { get set }
+    func add(_ observer: any SCContentSharingPickerObserver)
+    func remove(_ observer: any SCContentSharingPickerObserver)
+    func present()
+}
+
+@available(iOS 27.0, *)
+extension SCContentSharingPicker: NativeScreenCapturePicker {}
+
+@available(iOS 27.0, *)
+@MainActor
 final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScreenSource {
     private let windowResize = MacScreenCaptureBridge()
     private let lifecycle = ScreenCaptureLifecycle()
+    private let picker: any NativeScreenCapturePicker
+    private let isMac: Bool
+    private var pickerObserver: PickerObserver?
     private lazy var macPicker: ScreenCapturePickerSession = {
         let session = ScreenCapturePickerSession()
         session.onFilter = { [weak self] filter in
@@ -37,6 +53,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
     private var uploadStarted = false
     private var retirement: Task<Void, Never>?
     private var picking = false
+    private var selectionPending = false
     private var pickerRegistered = false
     private var generation = 0
     private var selectionGeneration = 0
@@ -54,15 +71,19 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
 
     init(preview: LocalSharePreview, preserveDetail: Bool = false, onFrame: ((CMSampleBuffer) -> Void)? = nil,
          onEffect: @escaping (Bool) -> Void = { _ in }, onSelection: @escaping (PresenterScreenSelection) -> Void = { _ in },
-         onEnd: @escaping (String?) -> Void = { _ in }, onError: @escaping (String) -> Void) {
+         onEnd: @escaping (String?) -> Void = { _ in }, onError: @escaping (String) -> Void,
+         picker: any NativeScreenCapturePicker = SCContentSharingPicker.shared,
+         isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac) {
         self.preview = preview; self.onFrame = onFrame; self.onEffect = onEffect
         self.onSelection = onSelection; self.onEnd = onEnd; self.onError = onError
-        windowResize.preserveDetail = preserveDetail && ProcessInfo.processInfo.isiOSAppOnMac
+        self.picker = picker; self.isMac = isMac
+        windowResize.preserveDetail = preserveDetail && isMac
     }
 
     func start() {
-        guard !picking, retirement == nil else { return }
-        if ProcessInfo.processInfo.isiOSAppOnMac {
+        guard !selectionPending, retirement == nil else { return }
+        if isMac {
+            guard !picking else { return }
             if stream == nil { generation += 1 }
             picking = true
             pickerRegistered = true; macPicker.stream = stream
@@ -70,7 +91,6 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
             catch { selectionFailed(error) }
             return
         }
-        let picker = SCContentSharingPicker.shared
         guard picker.isAvailable, !picker.isActive || pickerRegistered else {
             let message = L("Screen sharing is unavailable. Close any other sharing chooser and try again.")
             onError(message); onEnd(message)
@@ -78,18 +98,27 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         }
         if stream == nil { generation += 1 }
         picking = true
-        if !pickerRegistered { picker.add(self); pickerRegistered = true }
+        // Keep a chooser that ended without a callback retryable on an explicit
+        // tap until a filter is accepted. isActive describes system registration,
+        // not whether its chooser is still visible.
+        if let pickerObserver { picker.remove(pickerObserver) }
+        let observer = PickerObserver(owner: self, generation: generation)
+        pickerObserver = observer
+        picker.add(observer); pickerRegistered = true
         picker.isActive = true
         picker.present()
     }
 
     private func releasePicker() {
         picking = false
+        selectionPending = false
         guard stream == nil, pickerRegistered else { return }
         pickerRegistered = false
-        if ProcessInfo.processInfo.isiOSAppOnMac { macPicker.invalidate(); return }
-        SCContentSharingPicker.shared.remove(self)
-        SCContentSharingPicker.shared.isActive = false
+        if isMac { macPicker.invalidate(); return }
+        let observer = pickerObserver
+        pickerObserver = nil
+        if let observer { picker.remove(observer) }
+        picker.isActive = false
     }
 
     func stop() async {
@@ -122,6 +151,7 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
 
     private func selected(_ filter: SCContentFilter) async {
         guard picking || stream != nil else { return }
+        selectionPending = true
         let attempt = generation
         selectionGeneration += 1
         let selection = selectionGeneration
@@ -143,12 +173,12 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         config.capturesAudio = false
         // Mac defaults are 60 fps/eight surfaces. Our visible preview tops out
         // at 30 fps and outgoing sharing at 15; keep capture bounded accordingly.
-        if ProcessInfo.processInfo.isiOSAppOnMac {
+        if isMac {
             MacScreenCaptureBridge.configureTiming(config, fps: 30, queueDepth: 3)
             MacScreenCaptureBridge.configureWindow(config, sourceStyle: filter.style.rawValue)
         }
         #if DEBUG
-        if ProcessInfo.processInfo.isiOSAppOnMac,
+        if isMac,
            let fps = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAPTURE_FPS"].flatMap(Int.init) {
             let depth = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_CAPTURE_DEPTH"].flatMap(Int.init) ?? 3
             MacScreenCaptureBridge.configureTiming(config, fps: fps, queueDepth: depth)
@@ -166,8 +196,8 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         guard generation == attempt, selectionGeneration == selection else { return }
         let capture = SCStream(filter: filter, configuration: config, delegate: self)
         stream = capture
-        if ProcessInfo.processInfo.isiOSAppOnMac { macPicker.stream = capture }
-        if ProcessInfo.processInfo.isiOSAppOnMac, filter.style == .window {
+        if isMac { macPicker.stream = capture }
+        if isMac, filter.style == .window {
             // Public macOS updateConfiguration is unavailable in the UIKit SDK's
             // declarations, but available on the Mac stream through our ABI adapter.
             windowResize.prepareWindowResize(forStream: capture, configuration: config)
@@ -208,35 +238,53 @@ final class NativeGuestScreenCapture: NSObject, GuestScreenCapture, PresenterScr
         }
     }
     private func selectionCancelled() {
-        guard picking else { return }
+        guard picking, !selectionPending else { return }
         releasePicker(); onSelection(.cancelled)
         if stream == nil { onEnd(nil) }
     }
     private func selectionFailed(_ error: Error) {
-        guard picking else { return }
+        guard picking, !selectionPending else { return }
         releasePicker()
         let message = L("Could not open screen sharing: %@", error.localizedDescription)
         onSelection(.cancelled)
         onError(message); onEnd(message)
     }
 
+    /// The system may deliver callbacks off-main or after the chooser was
+    /// retired. Each presentation keeps its own identity across that hop.
+    private final class PickerObserver: NSObject, SCContentSharingPickerObserver {
+        private weak var owner: NativeGuestScreenCapture?
+        private let generation: Int
+        init(owner: NativeGuestScreenCapture, generation: Int) {
+            self.owner = owner; self.generation = generation
+        }
+        nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker,
+                                             didUpdateWith filter: SCContentFilter, for stream: SCStream?) {
+            Task { @MainActor [weak self] in
+                guard let self, let owner, owner.generation == generation,
+                      owner.pickerObserver === self else { return }
+                await owner.selected(filter)
+            }
+        }
+        nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
+            Task { @MainActor [weak self] in
+                guard let self, let owner, owner.generation == generation,
+                      owner.pickerObserver === self else { return }
+                owner.selectionCancelled()
+            }
+        }
+        nonisolated func contentSharingPickerStartDidFailWithError(_ error: Error) {
+            Task { @MainActor [weak self] in
+                guard let self, let owner, owner.generation == generation,
+                      owner.pickerObserver === self else { return }
+                owner.selectionFailed(error)
+            }
+        }
+    }
 }
 
 @available(iOS 27.0, *)
-extension NativeGuestScreenCapture: SCContentSharingPickerObserver, SCStreamOutput, SCStreamDelegate {
-    nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker,
-                                         didUpdateWith filter: SCContentFilter, for stream: SCStream?) {
-        Task { @MainActor [weak self] in await self?.selected(filter) }
-    }
-
-    nonisolated func contentSharingPicker(_ picker: SCContentSharingPicker, didCancelFor stream: SCStream?) {
-        Task { @MainActor [weak self] in self?.selectionCancelled() }
-    }
-
-    nonisolated func contentSharingPickerStartDidFailWithError(_ error: Error) {
-        Task { @MainActor [weak self] in self?.selectionFailed(error) }
-    }
-
+extension NativeGuestScreenCapture: SCStreamOutput, SCStreamDelegate {
     nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
                             of type: SCStreamOutputType) {
         // SCStream delivers samples on the main queue specified above. Do not

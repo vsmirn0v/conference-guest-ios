@@ -515,8 +515,13 @@ final class TrueConfCallEngine: CallEngine {
             sharingTask = Task { [weak self] in await self?.stopScreenSharing() }
             return
         }
-        guard !held, !quiet, connected, screenSender == nil else {
+        guard !held, !quiet, connected else {
             if broadcast { BroadcastManager.shared.requestStop() }
+            return
+        }
+        if let screenSender {
+            if broadcast { BroadcastManager.shared.requestStop() }
+            else if !sharingActive { screenSender.retrySelection() }
             return
         }
         let sender: NativeScreenSender

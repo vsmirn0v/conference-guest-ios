@@ -2,6 +2,9 @@ import UIKit
 import CoreMedia
 import XCTest
 @testable import RockNRoll
+#if canImport(ScreenCaptureKit)
+import ScreenCaptureKit
+#endif
 
 @MainActor
 final class MacScreenCaptureTests: XCTestCase {
@@ -299,6 +302,88 @@ final class MacScreenCaptureTests: XCTestCase {
             stops += 1; self.completion = completion
         }
     }
+    #if canImport(ScreenCaptureKit)
+    @available(iOS 27.0, *)
+    private final class NativePicker: NativeScreenCapturePicker {
+        var isAvailable = true, isActive = false
+        var presentations = 0
+        var observers: [any SCContentSharingPickerObserver] = []
+        func add(_ observer: any SCContentSharingPickerObserver) { observers.append(observer) }
+        func remove(_ observer: any SCContentSharingPickerObserver) { observers.removeAll { $0 === observer } }
+        func present() { presentations += 1 }
+    }
+    func testPhonePickerCanReopenAfterDismissalWithoutCallback() async throws {
+        guard #available(iOS 27.0, *) else { throw XCTSkip("Native phone picker requires iOS 27") }
+        let picker = NativePicker()
+        var ends = 0
+        let capture = NativeGuestScreenCapture(preview: LocalSharePreview(),
+            onEnd: { _ in ends += 1 }, onError: { _ in XCTFail("Reopening is not an error") },
+            picker: picker, isMac: false)
+        capture.start()
+        let abandoned = try XCTUnwrap(picker.observers.first)
+        // No callback is delivered when the chooser is dismissed. The next tap
+        // must still open it, despite registration remaining active.
+        capture.start(); capture.start()
+        XCTAssertEqual(picker.presentations, 3)
+        XCTAssertEqual(picker.observers.count, 1)
+        abandoned.contentSharingPicker(SCContentSharingPicker.shared, didCancelFor: nil)
+        abandoned.contentSharingPickerStartDidFailWithError(NSError(domain: "Old chooser", code: 1))
+        await settle()
+        XCTAssertTrue(picker.isActive); XCTAssertEqual(ends, 0)
+        await capture.stop()
+        XCTAssertFalse(picker.isActive); XCTAssertTrue(picker.observers.isEmpty)
+    }
+    func testPhonePickerExplicitCancellationAllowsAnotherShare() async throws {
+        guard #available(iOS 27.0, *) else { throw XCTSkip("Native phone picker requires iOS 27") }
+        let picker = NativePicker()
+        var cancellations = 0, ends = 0
+        let capture = NativeGuestScreenCapture(preview: LocalSharePreview(),
+            onSelection: { if $0 == .cancelled { cancellations += 1 } },
+            onEnd: { message in XCTAssertNil(message); ends += 1 }, onError: { _ in XCTFail("Cancellation is not an error") },
+            picker: picker, isMac: false)
+        capture.start()
+        try XCTUnwrap(picker.observers.first).contentSharingPicker(SCContentSharingPicker.shared, didCancelFor: nil)
+        await settle()
+        XCTAssertEqual(cancellations, 1); XCTAssertEqual(ends, 1)
+        XCTAssertFalse(picker.isActive); XCTAssertTrue(picker.observers.isEmpty)
+        capture.start()
+        XCTAssertEqual(picker.presentations, 2); XCTAssertTrue(picker.isActive)
+        await capture.stop()
+    }
+    func testPhonePickerStopFencesQueuedCallbacksFromNextAttempt() async throws {
+        guard #available(iOS 27.0, *) else { throw XCTSkip("Native phone picker requires iOS 27") }
+        let picker = NativePicker()
+        var ends = 0
+        let capture = NativeGuestScreenCapture(preview: LocalSharePreview(),
+            onEnd: { _ in ends += 1 }, onError: { _ in XCTFail("Retired picker error leaked") }, picker: picker, isMac: false)
+        capture.start()
+        let old = try XCTUnwrap(picker.observers.first)
+        old.contentSharingPicker(SCContentSharingPicker.shared, didCancelFor: nil)
+        await capture.stop()
+        capture.start()
+        old.contentSharingPickerStartDidFailWithError(NSError(domain: "Retired chooser", code: 1))
+        await settle()
+        XCTAssertEqual(ends, 0); XCTAssertTrue(picker.isActive)
+        XCTAssertEqual(picker.observers.count, 1); XCTAssertEqual(picker.presentations, 2)
+        await capture.stop()
+    }
+    func testPhonePickerUnavailableOrOwnedElsewhereDoesNotPresent() async throws {
+        guard #available(iOS 27.0, *) else { throw XCTSkip("Native phone picker requires iOS 27") }
+        let picker = NativePicker()
+        var errors = 0, ends = 0
+        let capture = NativeGuestScreenCapture(preview: LocalSharePreview(),
+            onEnd: { message in XCTAssertNotNil(message); ends += 1 }, onError: { _ in errors += 1 },
+            picker: picker, isMac: false)
+        picker.isAvailable = false
+        capture.start()
+        picker.isAvailable = true; picker.isActive = true
+        capture.start()
+        XCTAssertEqual(picker.presentations, 0); XCTAssertTrue(picker.observers.isEmpty)
+        XCTAssertEqual(errors, 2); XCTAssertEqual(ends, 2)
+        await capture.stop()
+        XCTAssertTrue(picker.isActive, "Stopping an unregistered capture must not deactivate another owner")
+    }
+    #endif
     func testStopCoalescesAndRejectsLateFramesAndErrors() async throws {
         let bridge = Bridge()
         var frames = 0, ends = 0
