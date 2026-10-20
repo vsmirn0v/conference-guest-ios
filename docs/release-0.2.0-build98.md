@@ -18,7 +18,9 @@ The initial small-phone sweep exposed obsolete single-share selector expectation
 
 An outside tap that dismisses a menu is ignored by canvas hiding/selection, while explicit menu commands remain available. The regression harness also waits for either a direct header action or its overflow during rotation, rather than assuming an earlier layout is still active.
 
-Physical iPhone testing is deferred for this build. Capture, codec and audio implementations are unchanged.
+Physical follow-up, 20 October 2026: iVitalii (iPhone 17 Pro Max, iOS 27.0.1) ran a development build from the same application source as build 98. All 24 presentation scenarios have passing physical results, including the live guest-room controls before first rotation and after returning to portrait. The 95 rendering/layout unit cases completed with 90 passed and five expected platform/opt-in skips. Fit/Fill, full-display edge pixels, zoom/pan preservation, tap/double-tap behavior, menu dismissal, both gallery implementations, English/Russian rotation, transcription controls and largest Russian text passed. Physical portrait/landscape screenshots were reviewed.
+
+The initial UI-runner accessibility startup error passed on its targeted rerun. Three unit cases assumed English copy and failed on the Russian-language phone; assertions now compare localized labels, and the complete physical unit selection passes. The affected classes also passed all 18 cases on the English iOS 17.5 simulator. These are test-only changes; application capture, codecs, audio and UI source remain unchanged. No replacement beta is required.
 
 ## What to Test
 

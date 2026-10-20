@@ -27,13 +27,13 @@ final class FloatingVideoContentTests: XCTestCase {
         let badge = try XCTUnwrap(surface.subviews.first {
             $0.accessibilityIdentifier == "Floating microphone status"
         })
-        XCTAssertEqual(badge.accessibilityValue, "Unavailable")
+        XCTAssertEqual(badge.accessibilityValue, L("Unavailable"))
         for (status, expected) in [(PiPMicrophoneStatus.muted, "Muted"), (.on, "On"),
                                     (.unavailable, "Unavailable"), (.muted, "Muted")] {
             surface.setMicrophoneStatus(status)
             surface.layoutIfNeeded()
-            XCTAssertEqual(badge.accessibilityLabel, "Your microphone")
-            XCTAssertEqual(badge.accessibilityValue, expected)
+            XCTAssertEqual(badge.accessibilityLabel, L("Your microphone"))
+            XCTAssertEqual(badge.accessibilityValue, L(expected))
             XCTAssertFalse(badge.accessibilityTraits.contains(.button))
             XCTAssertFalse(badge.isUserInteractionEnabled)
             XCTAssertTrue(video.superview === surface)
@@ -56,7 +56,7 @@ final class FloatingVideoContentTests: XCTestCase {
                 surface.layoutIfNeeded()
                 XCTAssertTrue(surface.bounds.contains(badge.frame))
                 XCTAssertGreaterThanOrEqual(label.bounds.width, ceil(label.intrinsicContentSize.width))
-                XCTAssertEqual(label.text, size.width < 200 ? "You" : status.title)
+                XCTAssertEqual(label.text, size.width < 200 ? L("You") : status.title)
             }
         }
     }

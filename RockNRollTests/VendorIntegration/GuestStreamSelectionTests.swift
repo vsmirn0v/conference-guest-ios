@@ -146,11 +146,11 @@ final class GuestStreamSelectionTests: XCTestCase {
         XCTAssertTrue(labels.contains { $0.text == "Renamed musician" && !$0.isHidden })
         let badge = try XCTUnwrap(descendants(updated).first { $0 is ParticipantMediaBadge })
         XCTAssertEqual(badge.accessibilityLabel, "Renamed musician")
-        XCTAssertEqual(badge.accessibilityValue, "Speaking")
+        XCTAssertEqual(badge.accessibilityValue, L("Speaking"))
         XCTAssertTrue(labels.contains { $0.text == "Meeting watermark" && !$0.isHidden })
         XCTAssertTrue(updated.accessibilityElementsHidden == false)
         XCTAssertTrue(descendants(updated).compactMap { $0 as? UIButton }.contains {
-            $0.accessibilityLabel == "Pin Renamed musician screen share"
+            $0.accessibilityLabel == "\(L("Pin")) Renamed musician \(L("screen share"))"
         })
     }
 
