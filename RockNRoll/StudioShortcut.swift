@@ -13,7 +13,8 @@ final class StudioShortcut: NSObject {
         let shortcut = StudioShortcut { [weak button, weak model] in
             guard let button, let model else { return }
             model.audioSection = devices ? .devices : .sound
-            StudioPresentation.show(model, from: button, pane: pane == .camera && model.presenter.running ? .presenter : pane)
+            StudioPresentation.show(model, from: button, pane: pane == .camera && model.presenter.running ? .presenter : pane,
+                shareLanding: pane == .presenter)
         }
         objc_setAssociatedObject(button, &association, shortcut, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         let hold = UILongPressGestureRecognizer(target: shortcut, action: #selector(held(_:)))
@@ -24,7 +25,7 @@ final class StudioShortcut: NSObject {
         secondary.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
         secondary.buttonMaskRequired = .secondary
         button.addGestureRecognizer(secondary)
-        let label = devices ? L("Audio devices") : pane == .camera ? L("Preview and camera settings") : (pane == .presenter ? L("Presenter") : L("Sound settings"))
+        let label = devices ? L("Audio devices") : pane == .camera ? L("Preview and camera settings") : (pane == .presenter ? L("Share & Presenter") : L("Sound settings"))
         for target in accessibilityTargets ?? [button] {
             target.showsLargeContentViewer = false
             target.accessibilityHint = L("Touch and hold to configure without turning it on.")

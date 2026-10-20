@@ -2,6 +2,116 @@ import XCTest
 import Vision
 
 final class StudioUITests: XCTestCase {
+    func testShareLandingUpdatesWhenPresenterFinishesStarting() {
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
+        app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "studio"
+        app.launchEnvironment["CONFERENCE_TEST_PRESENTER_DELAY"] = "1"
+        app.launch(); defer { app.terminate() }
+        let share = app.buttons["Share screen"].firstMatch
+        XCTAssertTrue(share.waitForExistence(timeout: 10)); share.press(forDuration: 0.7)
+        app.buttons["studio.open-presenter"].tap()
+        app.buttons["presenter.source"].tap()
+        app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Blank canvas", "presenter.source")).firstMatch.tap()
+        let start = app.buttons["presenter.start"].firstMatch
+        XCTAssertTrue(start.waitForExistence(timeout: 5))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: start)], timeout: 5), .completed)
+        start.tap(); app.buttons["studio.back-share"].tap()
+        let stop = app.buttons["studio.share-screen"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 5)); XCTAssertFalse(stop.isEnabled)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND label == %@", "Stop sharing"), object: stop)], timeout: 10), .completed)
+        attach("Share landing after delayed Presenter start")
+        stop.tap()
+        XCTAssertFalse(app.buttons["studio.done"].exists)
+    }
+
+    func testRussianLargeTextKeepsThumbStudioActionsReachable() {
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(ru)", "-AppleLocale", "ru_RU",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+            "-automaticallyHideMeetingControls", "NO"]
+        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
+        app.launchEnvironment["CONFERENCE_TEST_STUDIO"] = "1"
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        let mic = app.buttons["Включить микрофон"].firstMatch
+        XCTAssertTrue(mic.waitForExistence(timeout: 10)); mic.press(forDuration: 0.7)
+        let panes = app.segmentedControls["studio.panes"]
+        XCTAssertTrue(panes.waitForExistence(timeout: 5))
+        let initialY = panes.frame.minY
+        for title in ["Экран", "Видео", "Звук"] {
+            let section = panes.buttons[title]
+            XCTAssertTrue(section.isHittable); section.tap()
+            XCTAssertEqual(panes.frame.minY, initialY, accuracy: 2)
+            let action = app.buttons[title == "Экран" ? "studio.share-screen" : title == "Видео" ? "studio.start-video" : "studio.unmute"]
+            XCTAssertTrue(action.isHittable)
+            XCTAssertGreaterThanOrEqual(action.frame.height, 44)
+        }
+        attach("Russian largest text portrait Studio")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(panes.waitForExistence(timeout: 5))
+        XCTAssertTrue(panes.buttons["Звук"].isHittable)
+        let settings = app.descendants(matching: .any)["studio.settings"].firstMatch
+        XCTAssertGreaterThanOrEqual(settings.frame.height, 100)
+        let profile = app.buttons["Музыка"].firstMatch
+        // Full swipes can leap over a short row between large accessibility rows.
+        for _ in 0..<60 {
+            if profile.exists && profile.isHittable { break }
+            settings.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)).press(forDuration: 0.05,
+                thenDragTo: settings.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55)),
+                withVelocity: .slow, thenHoldForDuration: 0.1)
+        }
+        XCTAssertTrue(profile.isHittable, app.debugDescription)
+        XCTAssertTrue(app.buttons["studio.done"].isHittable)
+        attach("Russian largest text landscape Studio")
+        app.buttons["studio.done"].tap()
+        XCTAssertTrue(mic.isHittable)
+    }
+
+    func testThumbDockAndAdaptiveStudioKeepPrivateMediaOff() {
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-automaticallyHideMeetingControls", "NO"]
+        app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
+        app.launchEnvironment["CONFERENCE_TEST_STUDIO"] = "1"
+        XCUIDevice.shared.orientation = .portrait
+        app.launch()
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        let mic = app.buttons["Unmute microphone"].firstMatch
+        XCTAssertTrue(mic.waitForExistence(timeout: 10))
+        let dock = [app.buttons["Share screen"].firstMatch, app.buttons["Start video"].firstMatch,
+                    app.descendants(matching: .any)["call.output"].firstMatch, mic,
+                    app.buttons["call.reactions"], app.buttons["Leave"].firstMatch]
+        for (a, b) in zip(dock, dock.dropFirst()) { XCTAssertLessThan(a.frame.midX, b.frame.midX) }
+        mic.press(forDuration: 0.7)
+        let panes = app.segmentedControls["studio.panes"]
+        XCTAssertTrue(panes.waitForExistence(timeout: 5))
+        let portraitY = panes.frame.minY
+        XCTAssertTrue(panes.buttons["Audio"].isSelected)
+        if UIDevice.current.userInterfaceIdiom == .phone { XCTAssertGreaterThan(portraitY, app.frame.midY) }
+        for title in ["Share", "Video", "Audio"] {
+            panes.buttons[title].tap()
+            XCTAssertTrue(panes.buttons[title].isSelected)
+            XCTAssertEqual(panes.frame.minY, portraitY, accuracy: 2)
+            XCTAssertFalse(app.buttons["Mute microphone"].exists)
+            XCTAssertFalse(app.buttons["Stop video"].exists)
+        }
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(panes.waitForExistence(timeout: 5))
+        XCTAssertLessThan(panes.frame.minY, app.frame.midY)
+        XCTAssertTrue(panes.buttons["Audio"].isSelected)
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(panes.waitForExistence(timeout: 5))
+        XCTAssertEqual(panes.frame.minY, portraitY, accuracy: 2)
+        attach("Thumb dock and bottom Studio selector")
+        app.buttons["studio.done"].tap()
+        XCTAssertTrue(mic.isHittable)
+    }
+
     func testPrejoinPreviewDismissesToJoinWithoutConnecting() {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
@@ -35,8 +145,11 @@ final class StudioUITests: XCTestCase {
             let share = app.buttons["Share screen"].firstMatch
             XCTAssertTrue(share.waitForExistence(timeout: 10))
             share.press(forDuration: 0.7)
-            let presenter = app.segmentedControls["studio.panes"].buttons["Presenter"]
+            let presenter = app.segmentedControls["studio.panes"].buttons["Share"]
             XCTAssertTrue(presenter.waitForExistence(timeout: 5)); XCTAssertTrue(presenter.isSelected)
+            XCTAssertTrue(app.buttons["studio.open-presenter"].exists)
+            app.buttons["studio.open-presenter"].tap()
+            XCTAssertTrue(app.buttons["presenter.source"].waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["Stop sharing screen"].exists, "Holding Share must not start capture")
             attach("Share hold opens private Presenter")
             app.buttons["studio.done"].tap()
@@ -71,8 +184,10 @@ final class StudioUITests: XCTestCase {
         let ready = expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: share)
         wait(for: [ready], timeout: 20)
         share.press(forDuration: 0.7)
-        let presenter = app.segmentedControls["studio.panes"].buttons["Presenter"]
+        let presenter = app.segmentedControls["studio.panes"].buttons["Share"]
         XCTAssertTrue(presenter.waitForExistence(timeout: 5)); XCTAssertTrue(presenter.isSelected)
+        app.buttons["studio.open-presenter"].tap()
+        XCTAssertTrue(app.buttons["presenter.source"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Stop sharing screen"].exists)
         attach("Live Telemost Share hold opens Presenter")
     }

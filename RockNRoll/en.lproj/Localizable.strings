@@ -888,3 +888,12 @@
 "Meeting status" = "Meeting status";
 "Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default." = "Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default.";
 "Unknown" = "Unknown";
+"Screen sharing is active" = "Screen sharing is active";
+"Choose what others see" = "Choose what others see";
+"Choose a screen or window using the system picker." = "Choose a screen or window using the system picker.";
+"Choose what to share using the system picker." = "Choose what to share using the system picker.";
+"Screen sharing is not available in this meeting." = "Screen sharing is not available in this meeting.";
+"Your current screen stays live until you start Presenter." = "Your current screen stays live until you start Presenter.";
+"Arrange your camera, slides and annotations before sharing." = "Arrange your camera, slides and annotations before sharing.";
+"Start" = "Start";
+"Unmute" = "Unmute";

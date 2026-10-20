@@ -412,6 +412,13 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         }, for: .touchUpInside)
         if let studio {
             MicrophoneActivityView.install(on: microphone, model: studio.microphoneActivity)
+            studio.screenSharingAvailable = share.isEnabled
+            studio.screenSharing = localPreview.active
+            studio.changeScreenSharing = { [weak self, weak studio] enabled in
+                guard let self, let studio, self.studio === studio, studio.active,
+                      !self.isHeld, self.window != nil, canChangeMedia() else { return }
+                onScreenShare(enabled)
+            }
             studio.enableCamera = { [weak self] in self?.camera.sendActions(for: .touchUpInside) }
             studio.enableMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
             StudioShortcut.install(on: microphone, pane: .sound, model: studio)
@@ -486,7 +493,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             routeAppearance.bottomAnchor.constraint(equalTo: route.bottomAnchor)
         ])
 
-        let bar = CallToolbar(items: [microphone, camera, share, route, reactionsButton, leave])
+        let bar = CallToolbar(share: share, camera: camera, audio: route,
+                              microphone: microphone, reactions: reactionsButton, leave: leave)
         toolbar = bar
         bar.translatesAutoresizingMaskIntoConstraints = false
         addSubview(bar)
@@ -638,6 +646,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             // The SDK's ReplayKit button is unavailable on Mac. Our native
             // sharing editor remains available; the sender enforces room policy.
             self.share.isEnabled = media != .disabled || self.studio?.presenter.available == true
+            self.studio?.screenSharingAvailable = self.share.isEnabled
+            self.studio?.screenSharing = isSharing
             self.share.accessibilityLabel = isSharing ? L("Stop sharing screen") : L("Share screen")
             self.share.largeContentTitle = self.share.accessibilityLabel
         }.store(in: &subscriptions)

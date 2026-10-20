@@ -44,6 +44,9 @@ final class GuestCallLayoutFixture: UIViewController {
         studio?.observeNoiseSuppression(true)
         studio?.applyProfile = { [weak studio] profile in studio?.observeNoiseSuppression(profile == .conversation) }
         studio?.presenter.startSharing = { _, _ in }
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_PRESENTER_DELAY"] == "1" {
+            studio?.presenter.startSharing = { _, _ in try await Task.sleep(nanoseconds: 6_000_000_000) }
+        }
         studio?.presenter.sendSample = { _ in }
         studio?.presenter.stopSharing = {}
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_PRESENTER_WARM"] == "1" {

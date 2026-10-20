@@ -5,33 +5,57 @@ import UniformTypeIdentifiers
 import SwiftUI
 import UIKit
 
+@MainActor
+final class StudioPanelLayout: ObservableObject {
+    @Published var bottomSelector: Bool?
+    static func usesBottomSelector(size: CGSize, idiom: UIUserInterfaceIdiom,
+                                   isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac) -> Bool {
+        !isMac && idiom == .phone && size.height >= size.width
+    }
+}
+
 struct StudioPanel: View {
     @ObservedObject var model: StudioModel
     @ObservedObject private var soundCheck: PrivateSoundCheck
     var onDismiss: (() -> Void)? = nil
+    var onScreenShare: ((Bool) -> Void)? = nil
+    @ObservedObject private var layout: StudioPanelLayout
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @StateObject private var images: PresenterImageImport
     @State private var compact = false
+    @ScaledMetric(relativeTo: .body) private var actionLine: CGFloat = 21
+    private var actionSlot: CGFloat { max(80, actionLine + 44) }
     private let refresh = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    init(model: StudioModel, onDismiss: (() -> Void)? = nil) {
+    init(model: StudioModel, onDismiss: (() -> Void)? = nil,
+         onScreenShare: ((Bool) -> Void)? = nil, layout: StudioPanelLayout? = nil) {
         self.model = model; self.soundCheck = model.soundCheck; self.onDismiss = onDismiss
+        self.onScreenShare = onScreenShare; self.layout = layout ?? StudioPanelLayout()
         _images = StateObject(wrappedValue: PresenterImageImport(model: model.presenter))
+    }
+
+    private var bottomSelector: Bool {
+        layout.bottomSelector ?? (!ProcessInfo.processInfo.isiOSAppOnMac &&
+            UIDevice.current.userInterfaceIdiom == .phone && verticalSizeClass != .compact)
+    }
+
+    private var panes: some View {
+        Picker(L("Camera & sound"), selection: Binding(get: { model.pane }, set: { model.selectPane($0) })) {
+            Text(L("Share")).tag(StudioModel.Pane.presenter)
+            Text(L("Video")).tag(StudioModel.Pane.camera)
+            Text(L("Audio")).tag(StudioModel.Pane.sound)
+        }
+        .pickerStyle(.segmented).padding(.horizontal).padding(.vertical, 8)
+        .accessibilityIdentifier("studio.panes")
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if !model.canvasExpanded {
-                Picker(L("Camera & sound"), selection: $model.pane) {
-                    Text(L("Audio")).tag(StudioModel.Pane.sound)
-                    Text(L("Video")).tag(StudioModel.Pane.camera)
-                    if model.presenter.available { Text(L("Presenter")).tag(StudioModel.Pane.presenter) }
-                }
-                .pickerStyle(.segmented).padding(.horizontal).padding(.bottom, 8)
-                .accessibilityIdentifier("studio.panes")
-                }
-                if model.pane == .presenter {
+                if !model.canvasExpanded && !bottomSelector { panes }
+                if model.pane == .presenter && !model.shareLanding {
                     // Keep one native surface mounted when expanding the canvas.
                     // Reparenting it between Form and a second host loses display.
                     GeometryReader { geometry in
@@ -49,7 +73,7 @@ struct StudioPanel: View {
                     switch model.pane {
                     case .camera: cameraControls
                     case .sound: soundControls
-                    case .presenter: EmptyView()
+                    case .presenter: shareControls
                     }
                     if model.held || !model.active {
                         Section { Text(model.active ? L("Sound controls are paused while the meeting is on hold.") : L("The meeting has ended.")) }
@@ -69,7 +93,13 @@ struct StudioPanel: View {
                         }
                 }
                 }
-                if !model.canvasExpanded { footer }
+                if !model.canvasExpanded {
+                    VStack(spacing: 0) {
+                        if bottomSelector { panes }
+                        footer.frame(minHeight: bottomSelector ? actionSlot : nil,
+                                     maxHeight: bottomSelector ? actionSlot : nil)
+                    }.background(ControlChromeBackground())
+                }
             }
             .navigationTitle(model.canvasExpanded ? L("Canvas") : model.pane == .presenter ? L("Share") : L("Camera & sound"))
             .navigationBarTitleDisplayMode(.inline)
@@ -78,6 +108,12 @@ struct StudioPanel: View {
                 Button(L("Done")) {
                     if model.canvasExpanded { model.canvasExpanded = false } else { model.close() }
                 }.accessibilityIdentifier("studio.done")
+            } }
+            .toolbar { ToolbarItem(placement: .navigationBarLeading) {
+                if model.pane == .presenter && !model.shareLanding && !model.canvasExpanded {
+                    Button { model.showShareLanding() } label: { Label(L("Share"), systemImage: "chevron.left") }
+                        .accessibilityIdentifier("studio.back-share")
+                }
             } }
             .alert(item: $model.systemSettingsHelp) { help in
                 Alert(title: Text(help.title), message: Text(help.message), dismissButton: .default(Text(L("OK"))))
@@ -100,31 +136,84 @@ struct StudioPanel: View {
                 if model.active && !model.held {
                     VStack(spacing: 8) {
                         if model.pane == .camera && !model.cameraOn && !model.presenter.running && model.enableCamera != nil {
-                            Text(L("Nothing is sent until you start video."))
-                                .font(.footnote).foregroundStyle(.secondary)
                             Button {
                                 Task { _ = await model.startVideo() }
                             } label: {
                                 HStack {
                                     if model.startingVideo { ProgressView() }
-                                    Text(L("Start video"))
-                                }.frame(maxWidth: .infinity, minHeight: 36)
+                                    primaryLabel("Start video", short: "Start")
+                                }.frame(maxWidth: .infinity, minHeight: 44)
                             }
                             .buttonStyle(.borderedProminent)
                             .disabled(model.startingVideo || model.switchingCamera || model.previewLoading)
                             .accessibilityIdentifier("studio.start-video")
+                            .accessibilityLabel(L("Start video"))
                         } else if model.pane == .sound && !model.microphoneOn && model.enableMicrophone != nil {
                             Button {
                                 guard model.active, !model.held else { return }
                                 model.releasePrivateMicrophone(); model.enableMicrophone?(); model.close()
-                            } label: { Text(L("Unmute microphone")).frame(maxWidth: .infinity, minHeight: 36) }
+                            } label: { primaryLabel("Unmute microphone", short: "Unmute").frame(maxWidth: .infinity, minHeight: 44) }
                             .buttonStyle(.borderedProminent).disabled(model.applying)
                             .accessibilityIdentifier("studio.unmute")
+                            .accessibilityLabel(L("Unmute microphone"))
                         } else if model.pane == .presenter {
-                            PresenterShareControl(model: model.presenter)
+                            if model.shareLanding {
+                                if model.canRequestScreenSharing { screenShareButton }
+                            }
+                            else { PresenterShareControl(model: model.presenter, compact: dynamicTypeSize.isAccessibilitySize) }
                         }
-                    }.padding(.horizontal).padding(.vertical, 10).background(ControlChromeBackground())
+                    }.padding(.horizontal).padding(.vertical, 10)
                 }
+    }
+
+    private func primaryLabel(_ title: String, short: String, symbol: String? = nil) -> some View {
+        ViewThatFits(in: .horizontal) {
+            Group {
+                if let symbol { Label(L(title), systemImage: symbol) }
+                else { Text(L(title)) }
+            }.fixedSize(horizontal: true, vertical: false)
+            Text(L(short)).fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private var screenShareButton: some View {
+        let running = model.screenSharing || model.presenter.running
+        return Button {
+            let enabled = !running
+            if let onScreenShare { onScreenShare(enabled) }
+            else { model.requestScreenSharing(enabled) }
+        } label: {
+            primaryLabel(running ? "Stop sharing" : "Share screen", short: running ? "Stop" : "Start",
+                         symbol: running ? "stop.circle" : "rectangle.on.rectangle")
+                .frame(maxWidth: .infinity, minHeight: 44)
+        }.buttonStyle(.borderedProminent).tint(running ? .red : .orange)
+            .disabled(model.presenter.starting || model.presenter.stopping)
+            .accessibilityIdentifier("studio.share-screen")
+            .accessibilityLabel(running ? L("Stop sharing") : L("Share screen"))
+    }
+
+    private var shareControls: some View {
+        Group {
+            Section(L("Screen sharing")) {
+                Label(model.screenSharing || model.presenter.running ? L("Screen sharing is active") : L("Choose what others see"),
+                      systemImage: "rectangle.on.rectangle")
+                Text(ProcessInfo.processInfo.isiOSAppOnMac ? L("Choose a screen or window using the system picker.") :
+                        L("Choose what to share using the system picker."))
+                    .font(.footnote).foregroundStyle(.secondary)
+                if !model.canRequestScreenSharing {
+                    Text(L("Screen sharing is not available in this meeting.")).font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            Section(L("Presenter")) {
+                Button { model.editPresenter() } label: {
+                    Label(L("Open Presenter"), systemImage: "person.crop.rectangle")
+                }.accessibilityIdentifier("studio.open-presenter")
+                    .disabled(!model.presenter.available || model.held || !model.active)
+                Text(model.screenSharing ? L("Your current screen stays live until you start Presenter.") :
+                        L("Arrange your camera, slides and annotations before sharing."))
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var cameraControls: some View {
@@ -132,7 +221,7 @@ struct StudioPanel: View {
             if model.presenter.running {
                 Section {
                     Text(L("Your camera is controlled by Presenter while the canvas is shared."))
-                    Button(L("Open Presenter")) { model.pane = .presenter }
+                    Button(L("Open Presenter")) { model.editPresenter() }
                     Button(L("Camera effects")) { model.showSystemSettings(.videoEffects) }
                         .disabled(!model.systemSettingsAvailable || model.presenter.cameraDevice == nil)
                     ForEach(model.cameraEffects.filter { $0.state != .unavailable }) { effect in
@@ -179,6 +268,8 @@ struct StudioPanel: View {
                     Text(L("Use system controls for background blur, lighting and framing supported by your camera."))
                         .font(.footnote).foregroundStyle(.secondary)
                     if !model.cameraOn {
+                        Text(L("Nothing is sent until you start video."))
+                            .font(.footnote).foregroundStyle(.secondary)
                         Text(L("Closing this preview keeps video off."))
                             .font(.footnote).foregroundStyle(.secondary)
                     }
@@ -278,11 +369,19 @@ private final class StudioPreviewHost: UIView {
 @MainActor
 private final class StudioHostingController: UIHostingController<StudioPanel>, UIViewControllerTransitioningDelegate {
     private let model: StudioModel
+    private let inspectorLayout: StudioPanelLayout
     private var subscription: AnyCancellable?
-    init(model: StudioModel) {
+    init(model: StudioModel, containerSize: CGSize, idiom: UIUserInterfaceIdiom) {
         self.model = model
-        super.init(rootView: StudioPanel(model: model))
-        rootView = StudioPanel(model: model, onDismiss: { [weak self] in self?.dismiss(animated: true) })
+        let layout = StudioPanelLayout()
+        layout.bottomSelector = StudioPanelLayout.usesBottomSelector(size: containerSize, idiom: idiom)
+        self.inspectorLayout = layout
+        super.init(rootView: StudioPanel(model: model, layout: layout))
+        rootView = StudioPanel(model: model, onDismiss: { [weak self] in self?.dismiss(animated: true) },
+            onScreenShare: { [weak self] enabled in
+                guard let self else { return }
+                StudioPresentation.requestScreenSharing(self.model, enabled: enabled, from: self)
+            }, layout: layout)
         modalPresentationStyle = .custom
         transitioningDelegate = self
         subscription = model.$canvasExpanded.sink { [weak self] _ in
@@ -295,7 +394,7 @@ private final class StudioHostingController: UIHostingController<StudioPanel>, U
         if isBeingDismissed || presentingViewController == nil { model.close() }
     }
     func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
-        StudioSheet(presentedViewController: presented, presenting: presenting, model: model)
+        StudioSheet(presentedViewController: presented, presenting: presenting, model: model, layout: inspectorLayout)
     }
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
         StudioTransition(presenting: true)
@@ -330,8 +429,10 @@ private final class StudioTransition: NSObject, UIViewControllerAnimatedTransiti
 private final class StudioSheet: UIPresentationController {
     private let dim = UIView()
     private let model: StudioModel
-    init(presentedViewController: UIViewController, presenting: UIViewController?, model: StudioModel) {
+    private let inspectorLayout: StudioPanelLayout
+    init(presentedViewController: UIViewController, presenting: UIViewController?, model: StudioModel, layout: StudioPanelLayout) {
         self.model = model
+        self.inspectorLayout = layout
         super.init(presentedViewController: presentedViewController, presenting: presenting)
     }
     override var frameOfPresentedViewInContainerView: CGRect {
@@ -361,16 +462,27 @@ private final class StudioSheet: UIPresentationController {
     override func containerViewWillLayoutSubviews() {
         dim.frame = containerView?.bounds ?? .zero
         presentedView?.frame = frameOfPresentedViewInContainerView
+        if let size = containerView?.bounds.size {
+            let bottom = StudioPanelLayout.usesBottomSelector(size: size, idiom: presentedViewController.traitCollection.userInterfaceIdiom)
+            if inspectorLayout.bottomSelector != bottom { inspectorLayout.bottomSelector = bottom }
+        }
     }
     @objc private func close() { presentedViewController.dismiss(animated: true) }
 }
 
 @MainActor
 enum StudioPresentation {
-    static func show(_ model: StudioModel, from view: UIView, pane: StudioModel.Pane = .camera) {
+    static func requestScreenSharing(_ model: StudioModel, enabled: Bool, from controller: UIViewController) {
+        guard model.active, !controller.isBeingDismissed, controller.presentingViewController != nil else { return }
+        model.close()
+        controller.dismiss(animated: true) { [weak model] in model?.requestScreenSharing(enabled) }
+    }
+
+    static func show(_ model: StudioModel, from view: UIView, pane: StudioModel.Pane = .camera, shareLanding: Bool = false) {
         guard let presenter = view.callActionPresenter else { return }
         guard presenter.presentedViewController == nil else { return }
-        model.open(pane)
-        presenter.present(StudioHostingController(model: model), animated: true)
+        model.open(pane, shareLanding: shareLanding)
+        presenter.present(StudioHostingController(model: model, containerSize: view.window?.bounds.size ?? presenter.view.bounds.size,
+            idiom: presenter.traitCollection.userInterfaceIdiom), animated: true)
     }
 }

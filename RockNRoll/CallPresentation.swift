@@ -174,16 +174,10 @@ final class AlignedCallButton: MeetingMenuButton {
 final class CallToolbar: UIView {
     private let surface = MeetingChromeSurface(cornerRadius: 28)
     private let endSurface = MeetingChromeSurface(cornerRadius: 28)
+    private let leaveDivider = UIView()
     var separatesLast = false { didSet { if oldValue != separatesLast { setNeedsLayout() } } }
     var inlineAccessWidth: CGFloat = 0 { didSet { if oldValue != inlineAccessWidth { setNeedsLayout() } } }
-    private let baseItems: [UIView]
-    private var accessory: UIView?
-    private var items: [UIView] {
-        guard let accessory else { return baseItems }
-        var result = baseItems
-        result.insert(accessory, at: max(0, result.count - 2))
-        return result
-    }
+    private let items: [UIView]
     var rail = false { didSet { if oldValue != rail { setNeedsLayout() } } }
     var largeText = false { didSet { if oldValue != largeText { setNeedsLayout() } } }
     var preferredHeight: CGFloat {
@@ -191,7 +185,7 @@ final class CallToolbar: UIView {
         return largeText ? CGFloat((items.count + 1) / 2) * max(64, ceil(font.lineHeight) + 40) + 10 : 68
     }
     init(items: [UIView]) {
-        self.baseItems = items
+        self.items = items
         super.init(frame: .zero)
         overrideUserInterfaceStyle = .dark
         surface.frame = bounds
@@ -199,22 +193,27 @@ final class CallToolbar: UIView {
         addSubview(surface)
         addSubview(endSurface)
         endSurface.isHidden = true
+        leaveDivider.backgroundColor = UIColor.white.withAlphaComponent(0.16)
+        leaveDivider.isUserInteractionEnabled = false
+        leaveDivider.isAccessibilityElement = false
+        addSubview(leaveDivider)
         items.forEach { $0.translatesAutoresizingMaskIntoConstraints = true; addSubview($0) }
+        accessibilityElements = items
         layer.cornerRadius = 28
         accessibilityIdentifier = "Meeting toolbar"
     }
     required init?(coder: NSCoder) { nil }
-    func setAccessory(_ view: UIView?) {
-        guard accessory !== view else { return }
-        accessory?.removeFromSuperview(); accessory = view
-        if let view { view.translatesAutoresizingMaskIntoConstraints = true; addSubview(view) }
-        setNeedsLayout()
+    /// Supplemental tools use MeetingAccessControls, outside the primary sequence.
+    convenience init(share: UIView, camera: UIView, audio: UIView, microphone: UIView,
+                     reactions: UIView, leave: UIView) {
+        self.init(items: [share, camera, audio, microphone, reactions, leave])
     }
     func arrange(rail: Bool, largeText: Bool) { self.rail = rail; self.largeText = largeText }
     override func layoutSubviews() {
         super.layoutSubviews()
         let separated = separatesLast && !rail && !largeText && items.count > 1
         endSurface.isHidden = !separated
+        leaveDivider.isHidden = separated || largeText || items.count < 2
         if separated {
             let end = CGRect(x: bounds.maxX - 54, y: 0, width: 54, height: bounds.height)
             surface.frame = CGRect(x: 0, y: 0, width: end.minX - 8 - inlineAccessWidth, height: bounds.height)
@@ -232,12 +231,21 @@ final class CallToolbar: UIView {
         let columns = rail ? (largeText ? 2 : 1) : largeText ? 2 : items.count
         let rows = (items.count + columns - 1) / columns
         let area = bounds.insetBy(dx: 4, dy: 5)
-        let width = area.width / CGFloat(columns), height = area.height / CGFloat(rows)
+        let extent = rail ? area.height : area.width
+        let gap: CGFloat = !largeText && items.count > 1 && extent >= CGFloat(items.count) * 44 + 6 ? 6 : 0
+        let width = (area.width - (rail ? 0 : gap)) / CGFloat(columns)
+        let height = (area.height - (rail ? gap : 0)) / CGFloat(rows)
         for (index, item) in items.enumerated() {
             setCaptions(in: item, visible: !rail || largeText)
-            item.frame = CGRect(x: area.minX + CGFloat(index % columns) * width,
-                                y: area.minY + CGFloat(index / columns) * height,
+            let last = index == items.count - 1
+            item.frame = CGRect(x: area.minX + CGFloat(index % columns) * width + (last && !rail ? gap : 0),
+                                y: area.minY + CGFloat(index / columns) * height + (last && rail ? gap : 0),
                                 width: width, height: height).insetBy(dx: 1, dy: 0)
+        }
+        if let last = items.last, !leaveDivider.isHidden {
+            leaveDivider.frame = rail ? CGRect(x: area.minX + 8, y: last.frame.minY - gap / 2,
+                width: max(0, area.width - 16), height: 1) : CGRect(x: last.frame.minX - gap / 2 - 1,
+                y: area.midY - 14, width: 1, height: 28)
         }
     }
     private func setCaptions(in view: UIView, visible: Bool) {

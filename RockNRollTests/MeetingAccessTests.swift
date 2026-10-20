@@ -5,6 +5,31 @@ import XCTest
 
 @MainActor
 final class MeetingAccessTests: XCTestCase {
+    func testPrimaryControlsKeepThumbOrderAndAccessibleTraversal() {
+        let share = UIButton(), camera = UIButton(), audio = UIButton(), mic = UIButton(), reactions = UIButton(), leave = UIButton()
+        let expected = [share, camera, audio, mic, reactions, leave]
+        let toolbar = CallToolbar(share: share, camera: camera, audio: audio, microphone: mic, reactions: reactions, leave: leave)
+        for (size, rail, large) in [(CGSize(width: 304, height: 68), false, false),
+                                   (CGSize(width: 56, height: 284), true, false),
+                                   (CGSize(width: 304, height: 220), false, true)] {
+            toolbar.frame = CGRect(origin: .zero, size: size)
+            toolbar.arrange(rail: rail, largeText: large); toolbar.layoutIfNeeded()
+            XCTAssertEqual(toolbar.accessibilityElements?.compactMap { $0 as? UIButton }, expected)
+            for (i, button) in expected.enumerated() {
+                XCTAssertGreaterThanOrEqual(button.bounds.width, 44)
+                XCTAssertGreaterThanOrEqual(button.bounds.height, 44)
+                XCTAssertTrue(toolbar.bounds.contains(button.frame))
+                for next in expected.dropFirst(i + 1) {
+                    let overlap = button.frame.intersection(next.frame)
+                    XCTAssertFalse(overlap.width > 0.01 && overlap.height > 0.01, "\(button.frame), \(next.frame)")
+                }
+            }
+            if !large {
+                XCTAssertEqual(expected.sorted { rail ? $0.frame.minY < $1.frame.minY : $0.frame.minX < $1.frame.minX }, expected)
+            }
+        }
+    }
+
     func testAllLayoutsAndFiltersKeepIndependentPreferenceAndHonestLabels() {
         for layout in MeetingLayoutMode.allCases {
             for display in ConferenceDisplayMode.allCases {

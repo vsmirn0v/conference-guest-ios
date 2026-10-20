@@ -34,6 +34,10 @@ final class StudioModel: ObservableObject {
         didSet { if audioSection == .devices && oldValue != audioSection { releasePrivateMicrophone() } }
     }
     @Published var canvasExpanded = false
+    @Published private(set) var shareLanding = false
+    @Published var screenSharingAvailable = false
+    @Published var screenSharing = false
+    var changeScreenSharing: ((Bool) -> Void)?
     let presenter = PresenterModel()
     let recording = MeetingRecording()
     let microphoneActivity = MicrophoneActivity()
@@ -79,6 +83,7 @@ final class StudioModel: ObservableObject {
     private let privateCamera: PrivateCameraPreviewing
     private let cameraInventory: CameraDeviceInventory<AVCaptureDevice>
     private var cameraInventoryObservation: AnyCancellable?
+    private var presenterControlsObservation: AnyCancellable?
     private let preferences: UserDefaults?
     private static let profileKey = "studio.audio-profile"
     private var livePreview: StudioLivePreview?
@@ -107,6 +112,11 @@ final class StudioModel: ObservableObject {
         cameraInventoryObservation = cameraInventory.$available.dropFirst().sink { [weak self] devices in
             self?.applyCameraInventory(devices)
         }
+        // Share's landing/footer depends on these controls, not per-frame scene changes.
+        presenterControlsObservation = Publishers.CombineLatest4(
+            presenter.$available.removeDuplicates(), presenter.$running.removeDuplicates(),
+            presenter.$starting.removeDuplicates(), presenter.$stopping.removeDuplicates()
+        ).dropFirst().sink { [weak self] _ in self?.objectWillChange.send() }
         presenter.openCameraEffects = { [weak self] in self?.showSystemSettings(.videoEffects) }
         if let raw = preferences?.string(forKey: Self.profileKey), let saved = StudioAudioProfile(rawValue: raw) {
             profile = saved
@@ -131,13 +141,47 @@ final class StudioModel: ObservableObject {
         cameraDeviceObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
-    func open(_ pane: Pane) {
+    func open(_ pane: Pane, shareLanding: Bool = false) {
         guard active else { return }
         refreshSystemSelection()
+        self.shareLanding = shareLanding && !presenter.running
         self.pane = pane
         presented = true
         refreshPreview()
         refreshPresenter()
+    }
+
+    func selectPane(_ pane: Pane) {
+        guard active else { return }
+        shareLanding = pane == .presenter && !presenter.running
+        self.pane = pane
+        refreshPresenter()
+    }
+
+    func editPresenter() {
+        guard active, !held, presenter.available else { return }
+        shareLanding = false
+        pane = .presenter
+        refreshPresenter()
+    }
+
+    func showShareLanding() {
+        guard active else { return }
+        shareLanding = true; pane = .presenter
+        refreshPresenter()
+    }
+
+    var canRequestScreenSharing: Bool {
+        presenter.running || (changeScreenSharing != nil && (screenSharing || screenSharingAvailable))
+    }
+
+    /// Called after the inspector dismisses, so native consent has a free presenter.
+    func requestScreenSharing(_ enabled: Bool) {
+        guard active, !held else { return }
+        if !enabled && presenter.running { presenter.stop(); return }
+        guard let changeScreenSharing,
+              enabled ? screenSharingAvailable && !screenSharing && !presenter.running : screenSharing else { return }
+        changeScreenSharing(enabled)
     }
 
     func close() {
@@ -159,7 +203,7 @@ final class StudioModel: ObservableObject {
     }
 
     private func refreshPresenter() {
-        if presented && pane == .presenter && active { presenter.open() } else { presenter.close() }
+        if presented && pane == .presenter && !shareLanding && active { presenter.open() } else { presenter.close() }
     }
 
     private func refreshPreview() {
@@ -388,6 +432,7 @@ final class StudioModel: ObservableObject {
 
     func end() {
         active = false
+        changeScreenSharing = nil; screenSharingAvailable = false; screenSharing = false
         cameraSelectionTask?.cancel(); cameraSelectionTask = nil; switchingCamera = false
         recording.end()
         microphoneActivity.setStatus(.unavailable)

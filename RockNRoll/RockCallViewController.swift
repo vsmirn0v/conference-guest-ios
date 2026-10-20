@@ -158,7 +158,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     var localCameraPreview: CameraCapturePreview?
     private var displayedSnapshot: CallMediaSnapshot?
     var supportsChat = true
-    var supportsSharing = true
+    var supportsSharing = true { didSet { studio?.screenSharingAvailable = supportsSharing && sharingAvailable } }
     var usesNativeShareControl = false
     #if DEBUG
     var usesBroadcastPickerForTesting = false
@@ -175,6 +175,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         didSet {
             share.isEnabled = sharingAvailable || isSharingScreen
             sharePicker.isUserInteractionEnabled = sharingAvailable
+            studio?.screenSharingAvailable = supportsSharing && sharingAvailable
         }
     }
     var sharePreview: LocalSharePreview { localSharePreview }
@@ -691,6 +692,14 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }, for: .touchUpInside)
         if let studio {
             MicrophoneActivityView.install(on: microphone, model: studio.microphoneActivity)
+            studio.screenSharingAvailable = supportsSharing && sharingAvailable
+            studio.screenSharing = isSharingScreen
+            studio.changeScreenSharing = { [weak self, weak studio] enabled in
+                guard let self, let studio, self.studio === studio, studio.active, !self.isHeld,
+                      self.viewIfLoaded?.window != nil else { return }
+                if enabled { self.performGroupedShareAction() }
+                else if self.isSharingScreen { self.onShare?(false) }
+            }
             studio.enableCamera = { [weak self] in self?.camera.sendActions(for: .touchUpInside) }
             studio.enableMicrophone = { [weak self] in self?.microphone.sendActions(for: .touchUpInside) }
             StudioShortcut.install(on: microphone, pane: .sound, model: studio)
@@ -785,7 +794,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             item.translatesAutoresizingMaskIntoConstraints = false
             shareControl.addSubview(item)
         }
-        if let studio, studio.presenter.available {
+        if let studio {
             // The container also receives holds on the system broadcast button.
             StudioShortcut.install(on: shareControl, pane: .presenter, model: studio,
                 accessibilityTargets: [share, sharePicker])
@@ -816,7 +825,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             broadcastAppearance.topAnchor.constraint(equalTo: shareControl.topAnchor),
             broadcastAppearance.bottomAnchor.constraint(equalTo: shareControl.bottomAnchor)
         ])
-        let bar = CallToolbar(items: [microphone, camera, shareControl, audioControl, reactionsButton, leave])
+        let bar = CallToolbar(share: shareControl, camera: camera, audio: audioControl,
+                              microphone: microphone, reactions: reactionsButton, leave: leave)
         toolbar = bar
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.textColor = .lightGray
@@ -1500,6 +1510,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             return
         }
         isSharingScreen = enabled
+        studio?.screenSharing = enabled
+        studio?.screenSharingAvailable = supportsSharing && sharingAvailable
         share.isEnabled = sharingAvailable || enabled
         share.isHidden = usesBroadcastPicker && !enabled
         sharePicker.isHidden = !usesBroadcastPicker || enabled

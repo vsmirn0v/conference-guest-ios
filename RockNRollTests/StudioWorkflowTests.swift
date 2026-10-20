@@ -1,9 +1,151 @@
 import AVFoundation
+import Combine
 import XCTest
 @testable import RockNRoll
 
 @MainActor
 final class StudioWorkflowTests: XCTestCase {
+    func testShareLandingObservesAsyncPresenterControlsWithoutObservingFrames() async throws {
+        let model = StudioModel(audioControl: .noiseSuppression, privateCamera: StudioCameraFixture())
+        defer { model.end() }
+        var complete: CheckedContinuation<Void, Never>?
+        model.presenter.startSharing = { _, _ in await withCheckedContinuation { complete = $0 } }
+        model.presenter.stopSharing = {}
+        model.presenter.selectCanvas(); model.open(.presenter)
+        try await settle { model.presenter.canStartSharing }
+        var updates = 0
+        let observation = model.objectWillChange.sink { updates += 1 }
+        defer { observation.cancel() }
+        let start = Task { await model.presenter.start() }
+        try await settle { complete != nil }
+        model.showShareLanding()
+        let pending = updates
+        complete?.resume(); await start.value
+        XCTAssertTrue(model.presenter.running); XCTAssertFalse(model.presenter.starting)
+        XCTAssertGreaterThanOrEqual(updates - pending, 2, "Both running and the final starting=false must reach the landing")
+        let settled = updates
+        model.presenter.scene.speaking = true
+        XCTAssertEqual(updates, settled, "Per-frame scene activity must not redraw the inspector")
+    }
+
+    private final class Preview: PrivateCameraPreviewing {
+        let view = UIView()
+        var starts = 0
+        func start() async throws { starts += 1 }
+        func stop() async {}
+    }
+
+    func testInspectorResizingKeepsTheSamePrivatePreviewWithoutRestartingCapture() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), host = UIViewController(), capture = Preview()
+        window.rootViewController = host; window.makeKeyAndVisible()
+        let anchor = UIButton(frame: CGRect(x: 10, y: 100, width: 80, height: 44))
+        host.view.addSubview(anchor)
+        let model = StudioModel(audioControl: .noiseSuppression, privateCamera: capture)
+        defer { model.end(); host.dismiss(animated: false); window.isHidden = true; previous?.makeKey() }
+        StudioPresentation.show(model, from: anchor, pane: .camera)
+        try await settle { model.previewView != nil && host.presentedViewController?.isBeingPresented == false }
+        let preview = try XCTUnwrap(model.previewView)
+        let inspector = try XCTUnwrap(host.presentedViewController?.presentationController)
+        let container = try XCTUnwrap(inspector.containerView)
+        for size in [CGSize(width: 320, height: 568), CGSize(width: 844, height: 390), CGSize(width: 390, height: 844)] {
+            container.bounds.size = size
+            inspector.containerViewWillLayoutSubviews()
+            host.presentedViewController?.view.layoutIfNeeded()
+            try await Task.sleep(nanoseconds: 30_000_000)
+            XCTAssertTrue(model.previewView === preview)
+            XCTAssertEqual(capture.starts, 1)
+            XCTAssertFalse(model.cameraOn); XCTAssertFalse(model.microphoneOn)
+        }
+    }
+
+    func testScreenShareDismissesInspectorBeforeRequestAndRejectsRetiredCompletions() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene), host = UIViewController()
+        window.rootViewController = host; window.makeKeyAndVisible()
+        let anchor = UIButton(frame: CGRect(x: 10, y: 100, width: 80, height: 44))
+        host.view.addSubview(anchor)
+        defer { host.dismiss(animated: false); window.isHidden = true; previous?.makeKey() }
+        for outcome in ["start", "stop", "hold", "end"] {
+            let model = StudioModel(audioControl: .noiseSuppression, privateCamera: StudioCameraFixture())
+            model.screenSharingAvailable = true; model.screenSharing = outcome == "stop"
+            var requests: [Bool] = []
+            model.changeScreenSharing = {
+                XCTAssertNil(host.presentedViewController, "System picker must have a free presenter")
+                requests.append($0)
+            }
+            StudioPresentation.show(model, from: anchor, pane: .presenter, shareLanding: true)
+            try await settle { host.presentedViewController != nil && host.presentedViewController?.isBeingPresented == false }
+            let inspector = try XCTUnwrap(host.presentedViewController)
+            StudioPresentation.requestScreenSharing(model, enabled: outcome != "stop", from: inspector)
+            if outcome == "hold" { model.held = true }
+            if outcome == "end" { model.end() }
+            try await settle { host.presentedViewController == nil }
+            XCTAssertEqual(requests, outcome == "start" ? [true] : outcome == "stop" ? [false] : [])
+            model.end()
+        }
+    }
+
+    private func settle(_ ready: () -> Bool) async throws {
+        for _ in 0..<500 {
+            if ready() { return }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Inspector transition did not settle")
+    }
+
+    func testShareLandingDoesNotPreparePresenterOrPublishAndExplicitEditorRemainsAvailable() {
+        let model = StudioModel(audioControl: .noiseSuppression, privateCamera: StudioCameraFixture())
+        model.presenter.startSharing = { _, _ in XCTFail("Navigation published Presenter") }
+        model.presenter.selectCanvas()
+        model.open(.presenter, shareLanding: true)
+        XCTAssertTrue(model.shareLanding)
+        XCTAssertFalse(model.presenter.hasPreview)
+        XCTAssertFalse(model.cameraOn); XCTAssertFalse(model.microphoneOn)
+        model.screenSharing = true
+        model.changeScreenSharing = { _ in XCTFail("Private editing replaced the live share") }
+        model.editPresenter()
+        XCTAssertFalse(model.shareLanding)
+        XCTAssertEqual(model.pane, .presenter)
+        model.close()
+        XCTAssertTrue(model.screenSharing, "Closing private Presenter must preserve the live share")
+        model.open(.sound)
+        model.selectPane(.sound)
+        model.selectPane(.presenter)
+        XCTAssertTrue(model.shareLanding)
+        model.end()
+    }
+
+    func testShareRequestRejectsLateHoldEndAndUnavailableCapture() {
+        let model = StudioModel(audioControl: .noiseSuppression)
+        var changes: [Bool] = []
+        model.changeScreenSharing = { changes.append($0) }
+        model.requestScreenSharing(true)
+        XCTAssertTrue(changes.isEmpty)
+        model.screenSharingAvailable = true
+        model.open(.presenter, shareLanding: true)
+        model.close()
+        model.held = true; model.requestScreenSharing(true)
+        XCTAssertTrue(changes.isEmpty)
+        model.held = false; model.requestScreenSharing(true)
+        XCTAssertEqual(changes, [true])
+        model.screenSharing = true; model.requestScreenSharing(true)
+        XCTAssertEqual(changes, [true], "Duplicate start must not toggle the sender off")
+        model.screenSharingAvailable = false; model.requestScreenSharing(false)
+        XCTAssertEqual(changes, [true, false], "An active source can still stop when starts are disabled")
+        model.end(); model.requestScreenSharing(true); model.requestScreenSharing(false)
+        XCTAssertEqual(changes, [true, false])
+    }
+
+    func testSelectorUsesContainerOrientationRatherThanNarrowLandscapeSheet() {
+        XCTAssertTrue(StudioPanelLayout.usesBottomSelector(size: CGSize(width: 320, height: 568), idiom: .phone, isMac: false))
+        XCTAssertFalse(StudioPanelLayout.usesBottomSelector(size: CGSize(width: 956, height: 440), idiom: .phone, isMac: false))
+        XCTAssertFalse(StudioPanelLayout.usesBottomSelector(size: CGSize(width: 320, height: 700), idiom: .pad, isMac: false))
+        XCTAssertFalse(StudioPanelLayout.usesBottomSelector(size: CGSize(width: 320, height: 700), idiom: .phone, isMac: true))
+    }
+
     func testImageImporterUsesPlatformPickerAndLoadsImageWithoutStartingShare() async throws {
         let model = PresenterModel(observeLifecycle: false)
         let importer = PresenterImageImport(model: model)

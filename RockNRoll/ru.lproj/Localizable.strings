@@ -886,3 +886,12 @@
 "Meeting status" = "Статус встречи";
 "Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default." = "Показывать состояние микрофона и подключения на экране блокировки и в Dynamic Island, когда системное управление звонками выключено. Название встречи скрыто по умолчанию.";
 "Unknown" = "Неизвестно";
+"Screen sharing is active" = "Идёт показ экрана";
+"Choose what others see" = "Выберите, что увидят участники";
+"Choose a screen or window using the system picker." = "Выберите экран или окно в системном меню.";
+"Choose what to share using the system picker." = "Выберите источник показа в системном меню.";
+"Screen sharing is not available in this meeting." = "Показ экрана недоступен в этой встрече.";
+"Your current screen stays live until you start Presenter." = "Текущий показ экрана продолжится до запуска презентации.";
+"Arrange your camera, slides and annotations before sharing." = "Подготовьте камеру, слайды и заметки перед началом показа.";
+"Start" = "Начать";
+"Unmute" = "Включить";
