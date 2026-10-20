@@ -44,6 +44,7 @@ final class MeetingActivityFixture: UIViewController {
         renderCard()
     }
     private func apply(end: Bool = false) {
+        result.accessibilityValue = end ? "ended" : "\(snapshot.state.microphone.rawValue)|\(snapshot.state.connection.rawValue)"
         renderCard(); coordinator.update(end ? nil : snapshot)
         Task { [weak self] in
             guard let self else { return }

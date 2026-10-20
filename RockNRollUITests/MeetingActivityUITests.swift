@@ -11,7 +11,8 @@ final class MeetingActivityUITests: XCTestCase {
         if status.label == "unavailable" { throw XCTSkip("ActivityKit unavailable on this runtime") }
         func expect(_ value: String) {
             let e = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", value), object: status)
-            XCTAssertEqual(XCTWaiter.wait(for: [e], timeout: 20), .completed, "Actual ActivityKit content: \(status.label)")
+            XCTAssertEqual(XCTWaiter.wait(for: [e], timeout: 20), .completed,
+                           "Actual ActivityKit content: \(status.label); requested: \(status.value ?? "none")")
         }
         app.buttons["activity-fixture.start"].tap(); expect("1|muted|connected")
         app.buttons["activity-fixture.microphone"].tap(); expect("1|on|connected")
@@ -24,6 +25,9 @@ final class MeetingActivityUITests: XCTestCase {
         attachment.name = "Meeting Live Activity outside the app"; attachment.lifetime = .keepAlways; add(attachment)
         app.activate()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        // Simulator reports foreground before SpringBoard finishes accepting
+        // touches in the activated window. This wait belongs only to the harness.
+        Thread.sleep(forTimeInterval: 1)
         app.buttons["activity-fixture.reconnect"].tap(); expect("1|paused|reconnecting")
         app.buttons["activity-fixture.recover"].tap(); expect("1|muted|connected")
         app.buttons["activity-fixture.end"].tap(); expect("0|none|none")
