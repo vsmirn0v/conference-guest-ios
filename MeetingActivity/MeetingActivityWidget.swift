@@ -19,15 +19,10 @@ struct MeetingActivityWidget: Widget {
                         .environment(\.colorScheme, .dark)
                 }
             } compactLeading: {
-                HStack(spacing: 4) {
-                    Text("R").font(.caption.weight(.bold)).foregroundStyle(.orange)
-                    MeetingActivityMicrophone(state: context.state, stale: context.isStale, showsLabel: false)
-                }.environment(\.colorScheme, .dark)
+                Text("R").font(.caption.weight(.bold)).foregroundStyle(.orange)
             } compactTrailing: {
-                ViewThatFits(in: .horizontal) {
-                    Text(context.state.startedAt, style: .timer).monospacedDigit().fixedSize()
-                    Image(systemName: context.state.microphoneSymbol(stale: context.isStale))
-                }.font(.caption).foregroundStyle(.white)
+                MeetingActivityMicrophone(state: context.state, stale: context.isStale, showsLabel: false)
+                    .environment(\.colorScheme, .dark)
             } minimal: {
                 MeetingActivityMicrophone(state: context.state, stale: context.isStale, showsLabel: false)
                     .environment(\.colorScheme, .dark)
