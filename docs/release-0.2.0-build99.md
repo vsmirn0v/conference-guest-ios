@@ -36,4 +36,4 @@ App UUID: `DE8BF687-8635-391F-84A0-F29593D26CD3`. IPA SHA-256: `ab82d7bd0931aa57
 
 ## Distribution
 
-Upload is in progress; TestFlight processing and group assignment are pending.
+This uploaded candidate is superseded by build 100 before public group assignment. Final screenshot review found that the compact timer fallback duplicated the microphone icon; build 100 uses one brand mark and one microphone status symbol.
