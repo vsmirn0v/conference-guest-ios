@@ -230,21 +230,7 @@ struct CalendarSettingsView: View {
                 } else if calendar.access == .notDetermined {
                     Section { Button(L("Allow calendar access")) { calendar.refresh(requestPermission: true) } }
                 } else {
-                    ForEach(Array(Set(calendar.calendars.map(\.source))).sorted(), id: \.self) { source in
-                        Section(source) {
-                            ForEach(calendar.calendars.filter { $0.source == source }) { option in
-                                Toggle(isOn: Binding(get: { calendar.selected.contains(option.id) },
-                                    set: { calendar.select(option.id, included: $0) })) {
-                                    HStack(spacing: 10) {
-                                        Circle().fill(Color(red: option.color[0], green: option.color[1], blue: option.color[2]))
-                                            .frame(width: 10, height: 10).accessibilityHidden(true)
-                                        Text(option.name)
-                                    }
-                                }
-                                    .accessibilityIdentifier("calendar.select." + option.id)
-                            }
-                        }
-                    }
+                    CalendarSelectionSections(calendar: calendar)
                     Section {
                         Toggle(L("Join scheduled meetings when opening the app"), isOn: Binding(get: { calendar.automaticJoin }, set: calendar.setAutomaticJoin))
                             .accessibilityIdentifier("calendar.automaticJoin")
@@ -264,6 +250,26 @@ struct CalendarSettingsView: View {
         }
         .navigationTitle(L("Calendars"))
         .onAppear { calendar.refresh() }
+    }
+}
+
+struct CalendarSelectionSections: View {
+    @ObservedObject var calendar: CalendarMeetingStore
+    var body: some View {
+        ForEach(Array(Set(calendar.calendars.map(\.source))).sorted(), id: \.self) { source in
+            Section(source) {
+                ForEach(calendar.calendars.filter { $0.source == source }) { option in
+                    Toggle(isOn: Binding(get: { calendar.selected.contains(option.id) },
+                        set: { calendar.select(option.id, included: $0) })) {
+                        HStack(spacing: 10) {
+                            Circle().fill(Color(red: option.color[0], green: option.color[1], blue: option.color[2]))
+                                .frame(width: 10, height: 10).accessibilityHidden(true)
+                            Text(option.name)
+                        }
+                    }.accessibilityIdentifier("calendar.select." + option.id)
+                }
+            }
+        }
     }
 }
 

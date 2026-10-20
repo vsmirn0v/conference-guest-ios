@@ -71,7 +71,7 @@ extension ConferenceModel {
     }
     func receiveContinuationActivity(_ activity: NSUserActivity) -> Bool {
         guard activity.activityType == "dev.vsmirn0v.conferenceguest.continue-jam" else { return false }
-        continuation.setForeground(true)
+        setup.performMeetingIntent { [weak self] in self?.continuation.setForeground(true) }
         // Present a continuation choice; system discovery never starts a call automatically.
         return true
     }

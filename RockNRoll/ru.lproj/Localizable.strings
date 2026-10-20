@@ -962,3 +962,36 @@
 "%d min ago" = "%d мин. назад";
 
 "%d meeting reminders" = "Напоминания о встречах: %d";
+
+/* Meeting setup */
+"Step %d of %d" = "Шаг %d из %d";
+"Meeting setup" = "Настройка встреч";
+"Finish later" = "Позже";
+"Back" = "Назад";
+"Finish" = "Завершить";
+"No calendars are available on this device." = "На этом устройстве нет доступных календарей.";
+"Your meetings, ready to join" = "Ваши встречи под рукой";
+"A reminder at the right time" = "Напоминания вовремя";
+"Your meetings across devices" = "Встречи на всех устройствах";
+"See upcoming meetings on Home from the calendars you choose. Your calendar events are never changed." = "Встречи из выбранных календарей появятся на главном экране. Приложение не изменяет события календаря.";
+"Get reminders for meetings with supported invitation links in your selected calendars." = "Получайте напоминания о встречах с поддерживаемыми ссылками в выбранных календарях.";
+"Optionally keep your name, favorites, recent meetings and reminder preferences together through private iCloud storage." = "При желании синхронизируйте имя, избранное, недавние встречи и настройки напоминаний через личное хранилище iCloud.";
+"Loading calendars…" = "Загружаем календари…";
+"%d selected" = "Выбрано: %d";
+"Choose at least one calendar to see its meetings and receive reminders." = "Выберите хотя бы один календарь, чтобы видеть его встречи и получать напоминания.";
+"Calendar access is off. Allow full access in Settings, then choose calendars here." = "Доступ к календарю отключён. Разрешите полный доступ в настройках устройства, затем выберите календари здесь.";
+"Calendar access is optional. You can always join by invitation link." = "Доступ к календарю необязателен. Вы всегда можете войти по ссылке-приглашению.";
+"Join when opening the app" = "Входить при открытии приложения";
+"Off by default. For one verified meeting near its start, a five-second countdown gives you time to cancel. Microphone and camera start off." = "Изначально выключено. Если скоро начинается одна подтверждённая встреча, перед входом будет пять секунд на отмену. Микрофон и камера сначала выключены.";
+"Meeting reminders on this device" = "Напоминания на этом устройстве";
+"Updating notifications…" = "Обновляем уведомления…";
+"Reminders need at least one calendar with supported meeting links." = "Для напоминаний нужен хотя бы один календарь с поддерживаемыми ссылками на встречи.";
+"Use recommended settings" = "Применить рекомендуемые настройки";
+"Customize reminders" = "Настроить напоминания";
+"Recommended settings" = "Рекомендуемые настройки";
+"Your current settings" = "Ваши текущие настройки";
+"Recommended: 2 minutes before, no alert at the start, and a quiet reminder 2 minutes after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off." = "Рекомендуем: за 2 минуты до начала, без сигнала в момент начала и тихое напоминание через 2 минуты после, если приложение открыто в другой встрече. Звук и сведения о встрече включены, неотложные уведомления выключены.";
+"More iCloud options" = "Другие настройки iCloud";
+"Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device." = "Используйте один Аккаунт Apple на всех устройствах. Сохранённые приглашения могут содержать коды доступа. Аудио, видео, чат и расшифровки не синхронизируются. Выбор календарей и включение уведомлений настраиваются отдельно на каждом устройстве.";
+"You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings." = "Вы можете завершить настройку, пока iCloud подключается, или хранить всё только на этом устройстве. Эти параметры можно изменить в настройках.";
+"Continue meeting setup" = "Продолжить настройку встреч";

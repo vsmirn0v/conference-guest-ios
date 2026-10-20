@@ -248,6 +248,19 @@ final class CalendarMeetingStoreTests: XCTestCase {
         XCTAssertEqual(joins, 1)
         store.backgrounded()
     }
+    func testSetupPauseClearsTheEntryOpportunityButKeepsFutureOpeningAvailable() async throws {
+        let (store, _) = make(Reader(events: [event()]))
+        store.setAutomaticJoin(true); store.canAutomaticallyJoin = { _ in true }
+        store.foregrounded(allowAutomaticJoin: true)
+        store.pauseAutomaticJoin(); try await ready(store)
+        XCTAssertNil(store.countdown, "A load finishing under setup must not create a countdown")
+        store.refresh(); try await ready(store)
+        XCTAssertNil(store.countdown, "Finishing setup or refreshing is not a new opening")
+        store.foregrounded(allowAutomaticJoin: true); try await ready(store)
+        XCTAssertEqual(store.countdown, 5, "An explicitly enabled future app opening still works")
+        store.pauseAutomaticJoin(); XCTAssertNil(store.countdown)
+        store.backgrounded()
+    }
     func testCalendarNotificationsCoalesceAndDoNoWorkInBackground() async throws {
         let reader = Reader(events: [event()]); let (store, _) = make(reader)
         store.foregrounded(allowAutomaticJoin: false); try await ready(store)

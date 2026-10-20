@@ -47,6 +47,7 @@ final class ConferenceModel: ObservableObject {
     let chat = ChatStore()
     let history: RoomHistoryStore
     let calendar: CalendarMeetingStore
+    let setup: MeetingSetupCoordinator
     private var reminderSubscriptions: Set<AnyCancellable> = []
     private let reminderPresenter = MeetingReminderPresenter()
     private var reminderSceneVisible = true
@@ -127,6 +128,7 @@ final class ConferenceModel: ObservableObject {
     init(jamService: JamService = JamService(), history: RoomHistoryStore? = nil, preferences: UserDefaults = .standard,
          engineDetector: MeetingEngineDetector? = nil, calendar: CalendarMeetingStore? = nil) {
         self.jamService = jamService; self.history = history ?? RoomHistoryStore(); self.preferences = preferences
+        setup = MeetingSetupCoordinator(preferences: preferences)
         let detector = engineDetector ?? VendorEndpointResolver.makeDetector()
         self.engineDetector = detector
         self.calendar = calendar ?? CalendarMeetingStore(detector: detector, preferences: preferences)
@@ -136,7 +138,7 @@ final class ConferenceModel: ObservableObject {
         self.calendar.configureInvitationContext(history: self.history, preferences: preferences)
         self.calendar.canAutomaticallyJoin = { [weak self] meeting in
             guard let self else { return false }
-            return !self.isJoining && !self.isInConference && !self.isLeaving &&
+            return !self.setup.blocksAutomaticJoin && !self.isJoining && !self.isInConference && !self.isLeaving &&
                 !self.calendar.reminders.hasOpenIntent &&
                 !self.calendar.reminders.presenting &&
                 self.siteSelection == nil && self.engineSelection == nil &&
@@ -144,6 +146,10 @@ final class ConferenceModel: ObservableObject {
                 self.continuation.candidates.isEmpty && !self.continuation.moving
         }
         self.calendar.onAutomaticJoin = { [weak self] in self?.joinCalendarMeeting($0) }
+        setup.onBegin = { [weak self] in self?.calendar.pauseAutomaticJoin() }
+        setup.onEnd = { [weak self] in self?.calendar.pauseAutomaticJoin() }
+        setup.onCloudStep = { [weak self] in self?.sync.dismissOffer() }
+        setup.onDefer = { [weak self] in self?.sync.dismissOffer() }
     }
 
     var desktopMeetingActive: Bool { phase != .idle }
@@ -190,7 +196,7 @@ final class ConferenceModel: ObservableObject {
         reminders.scene = { [weak self, weak reminders] in
             guard let self else { return .init() }
             return .init(visible: self.reminderSceneVisible && self.container?.view.window != nil && UIApplication.shared.applicationState == .active,
-                room: reminders?.activeRoom(), usable: !self.meetingReconnecting && !self.isJoining && !self.isLeaving && reminders?.presenting != true && reminders?.editing == nil)
+                room: reminders?.activeRoom(), usable: !self.setup.isPresented && !self.meetingReconnecting && !self.isJoining && !self.isLeaving && reminders?.presenting != true && reminders?.editing == nil)
         }
         reminders.onBackground = { [weak self] in self?.reminderPresenter.backgrounded() }
         reminders.onPresentation = { [weak self, weak reminders] events in
@@ -208,6 +214,9 @@ final class ConferenceModel: ObservableObject {
         objectWillChange.sink { [weak self] in
             DispatchQueue.main.async { self?.refreshReminders() }
         }.store(in: &reminderSubscriptions)
+        setup.objectWillChange.sink { [weak self] in
+            DispatchQueue.main.async { self?.refreshReminders() }
+        }.store(in: &reminderSubscriptions)
         CalendarReminderBroker.shared.attach(reminders)
     }
 
@@ -223,6 +232,10 @@ final class ConferenceModel: ObservableObject {
     }
 
     private func openReminder(_ occurrence: ReminderOccurrence?, join: Bool) {
+        if setup.needsDismissal {
+            setup.performMeetingIntent { [weak self] in self?.openReminder(occurrence, join: join) }; return
+        }
+        setup.suspendForMeeting()
         guard let container else { return }
         let busy = isInConference || isJoining || isLeaving
         if let occurrence, busy, isInConference, let url = connectedURL,
@@ -299,6 +312,10 @@ final class ConferenceModel: ObservableObject {
     }
 
     func receive(url: URL) {
+        if setup.needsDismissal {
+            setup.performMeetingIntent { [weak self] in self?.receive(url: url) }; return
+        }
+        setup.suspendForMeeting()
         calendarReminderTarget = nil
         if url.scheme == "conferenceguest", url.host == "active-meeting" {
             // An old Activity is only navigation. It never initiates a join.
@@ -328,6 +345,10 @@ final class ConferenceModel: ObservableObject {
     }
 
     private func receive(target: JoinDestination, autoJoin: Bool, title: String? = nil) {
+        if setup.needsDismissal {
+            setup.performMeetingIntent { [weak self] in self?.receive(target: target, autoJoin: autoJoin, title: title) }; return
+        }
+        setup.suspendForMeeting()
         dismissEngineSelection()
         #if DEBUG
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_RESOLVE_ONLY"] == "1" {
@@ -435,6 +456,11 @@ final class ConferenceModel: ObservableObject {
     private func startJoin(_ target: JoinDestination, nameOverride: String? = nil, quiet: Bool = false, title: String? = nil,
                            engineWasChosen: Bool = false) {
         guard !isJoining && !isInConference && !isLeaving else { return }
+        if setup.needsDismissal {
+            setup.performMeetingIntent { [weak self] in self?.startJoin(target, nameOverride: nameOverride, quiet: quiet,
+                title: title, engineWasChosen: engineWasChosen) }; return
+        }
+        setup.suspendForMeeting()
         dismissEngineSelection()
         calendar.cancelAutomaticJoin(suppress: true)
         #if DEBUG
@@ -707,7 +733,7 @@ final class ConferenceModel: ObservableObject {
     }
 
     func calendarForegrounded() {
-        calendar.foregrounded(allowAutomaticJoin: !explicitCalendarEntry && !calendar.reminders.hasOpenIntent && !CalendarReminderBroker.shared.hasPendingIntent)
+        calendar.foregrounded(allowAutomaticJoin: !setup.blocksAutomaticJoin && !explicitCalendarEntry && !calendar.reminders.hasOpenIntent && !CalendarReminderBroker.shared.hasPendingIntent)
         explicitCalendarEntry = false
     }
 

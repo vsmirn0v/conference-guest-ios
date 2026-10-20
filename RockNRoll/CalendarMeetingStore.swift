@@ -82,6 +82,9 @@ final class CalendarMeetingStore: ObservableObject {
         automaticJoin = value; preferences.set(value, forKey: "calendarMeetings.automaticJoin")
         cancelAutomaticJoin(); automaticEntry = false
     }
+    func pauseAutomaticJoin() {
+        automaticEntry = false; cancelAutomaticJoin()
+    }
     func select(_ id: String, included: Bool) {
         if included { selected.insert(id) } else { selected.remove(id) }
         meetings.removeAll { !selected.contains($0.calendarID) }

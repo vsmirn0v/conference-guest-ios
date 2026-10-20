@@ -8,6 +8,8 @@ struct JoinView: View {
     @ObservedObject var sync: RoomSyncCoordinator
     @ObservedObject var continuation: MeetingContinuationCoordinator
     @ObservedObject var calendar: CalendarMeetingStore
+    @ObservedObject var setup: MeetingSetupCoordinator
+    @State private var setupAfterSettings: Int?
     @State private var showingSavedHistory = false
     @FocusState private var nameFocused: Bool
     @FocusState private var linkFocused: Bool
@@ -102,7 +104,19 @@ struct JoinView: View {
             .sheet(isPresented: $showingSavedHistory) {
                 SavedCatchUpView(store: catchUp)
             }
-            .sheet(isPresented: $showingSettings) { settingsSheet }
+            .sheet(isPresented: $showingSettings, onDismiss: {
+                if let generation = setupAfterSettings {
+                    setupAfterSettings = nil
+                    if generation == setup.intentGeneration, !busy, !model.isNameRequiredForJoin,
+                       model.siteSelection == nil, model.engineSelection == nil, !calendar.reminders.hasOpenIntent { setup.begin() }
+                }
+            }) { settingsSheet }
+            .sheet(isPresented: Binding(get: { setup.isPresented }, set: { if !$0 { setup.finishLater() } }), onDismiss: {
+                setup.presentationDidDismiss()
+            }) {
+                MeetingSetupView(setup: setup, calendar: calendar, reminders: calendar.reminders, sync: sync, continuation: continuation)
+                    .onAppear { setup.presentationDidMount() }
+            }
             .modifier(CalendarReminderSheet(reminders: calendar.reminders, isActive: { !showingAgenda }))
             .sheet(isPresented: $showingAgenda) { agendaSheet }
             .sheet(isPresented: $showingDevices, onDismiss: {
@@ -112,7 +126,7 @@ struct JoinView: View {
                 StudioPanel(model: mediaCheck)
             }
             .onChange(of: model.isJoining) {
-                if $0 { nameFocused = false; linkFocused = false; sync.endNameEditing(); mediaCheck.close() }
+                if $0 { setup.suspendForMeeting(); nameFocused = false; linkFocused = false; sync.endNameEditing(); mediaCheck.close() }
             }
             .onReceive(NotificationCenter.default.publisher(for: UIScene.willDeactivateNotification)) { _ in
                 nameFocused = false
@@ -124,7 +138,8 @@ struct JoinView: View {
                 if focused { sync.beginNameEditing() } else { sync.endNameEditing() }
             }
             .onChange(of: linkFocused) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
-            .onChange(of: homeInteracting) { if !$0 { refreshHome() } }
+            .onChange(of: homeInteracting) { if !$0 { refreshHome(); offerSetup() } }
+            .onChange(of: setup.launchReady) { _ in offerSetup() }
             .onChange(of: showingAgenda) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
             .onChange(of: showingDevices) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
             .onChange(of: confirmingStaleContinuation) { if !$0 { staleContinuation = nil } }
@@ -159,8 +174,9 @@ struct JoinView: View {
             }
             .onAppear {
                 homeInteraction.resume(); homeVisible = false; refreshHome(); homeVisible = true
+                offerSetup()
                 calendar.reminders.isEventVisible = { id in
-                    guard homeVisible, foreground, !showingSettings, !showingAgenda, !showingDevices,
+                    guard homeVisible, foreground, !setup.isPresented, !showingSettings, !showingAgenda, !showingDevices,
                           !mediaCheck.presented, !model.isInConference else { return false }
                     if homeInteraction.isAnchorVisible("calendar." + id) { return true }
                     guard let item = homeSnapshot.items.first(where: { $0.calendar?.id == id }) else { return false }
@@ -242,7 +258,7 @@ struct JoinView: View {
 
     private var busy: Bool { model.isJoining || model.isInConference || model.isLeaving || continuation.moving }
     private var homeInteracting: Bool {
-        homeInteraction.active || nameFocused || linkFocused || favoriteDrag.session != nil || showingSettings || showingAgenda ||
+        setup.isPresented || homeInteraction.active || nameFocused || linkFocused || favoriteDrag.session != nil || showingSettings || showingAgenda ||
             showingDevices || editingRoom != nil || mediaCheck.presented || confirmingStaleContinuation ||
             calendar.choosingMeeting != nil || model.siteSelection != nil || model.engineSelection != nil ||
             model.showSwitchConfirmation || busy
@@ -401,7 +417,7 @@ struct JoinView: View {
             Section { Text(warning).font(.footnote).foregroundStyle(.orange)
                 Button(L("Retry saving rooms")) { history.retrySave() } }
         }
-        if sync.offerSync && !busy {
+        if sync.offerSync && !busy && !setup.isPresented {
             Section(L("Keep your jams across devices")) {
                 Text(L("Sync your name, favorites and recent jams through your private iCloud account.")).font(.subheadline)
                 Button(L("Enable iCloud Sync")) { sync.dismissOffer(); sync.setEnabled(true); showingSettings = true }
@@ -556,6 +572,12 @@ struct JoinView: View {
         NavigationStack {
             Form {
                 Section {
+                    Button {
+                        setupAfterSettings = setup.intentGeneration; showingSettings = false
+                    } label: { Label(setup.completed ? L("Meeting setup") : L("Continue meeting setup"), systemImage: "checklist") }
+                        .accessibilityIdentifier("settings.setup")
+                }
+                Section {
                     NavigationLink { CalendarSettingsView(calendar: calendar) } label: {
                         Label(L("Calendars"), systemImage: "calendar")
                     }.accessibilityIdentifier("calendar.settings")
@@ -585,6 +607,10 @@ struct JoinView: View {
             .navigationTitle(L("Settings"))
             .toolbar { Button(L("Done")) { showingSettings = false } }
         }
+    }
+    private func offerSetup() {
+        setup.offerIfAppropriate(homeVisible && foreground && !homeInteracting && model.invite.isEmpty &&
+            !calendar.reminders.hasOpenIntent && !calendar.reminders.presenting && !CalendarReminderBroker.shared.hasPendingIntent)
     }
     private var websiteSettings: some View {
         Section(L("Compatible meeting website")) {

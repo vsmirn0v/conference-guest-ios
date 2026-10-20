@@ -44,7 +44,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         #endif
         #if DEBUG
         CameraBackgroundTrace.start()
-        let model = CalendarUIFixture.makeModel() ?? RoomSyncUIFixture.makeModel()
+        let model = MeetingSetupUIFixture.makeModel() ?? CalendarUIFixture.makeModel() ?? RoomSyncUIFixture.makeModel()
         RoomSyncUIFixture.configure(model)
         MeetingContinuationUIFixture.configure(model)
         MeetingContinuationLiveFixture.configure(model)
@@ -56,7 +56,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                                                             history: model.history,
                                                             sync: model.sync,
                                                             continuation: model.continuation,
-                                                            calendar: model.calendar))
+                                                            calendar: model.calendar,
+                                                            setup: model.setup))
         let controller = MeetingContainerViewController()
         controller.addChild(hosting)
         controller.view.addSubview(hosting.view)
@@ -88,6 +89,13 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         } else if let activity = connectionOptions.userActivities.first {
             if !model.receiveContinuationActivity(activity), let url = activity.webpageURL { model.receive(url: url) }
         }
+        #if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        if (environment.keys.contains { $0.hasPrefix("CONFERENCE_TEST_") } && environment["CONFERENCE_TEST_MEETING_SETUP"] == nil) ||
+            NSClassFromString("XCTestCase") != nil { model.setup.suspendForMeeting() }
+        #endif
+        model.setup.finishLaunch(hasMeetingIntent: !connectionOptions.urlContexts.isEmpty || !connectionOptions.userActivities.isEmpty ||
+            CalendarReminderBroker.shared.hasPendingIntent)
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {

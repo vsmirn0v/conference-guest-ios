@@ -20,6 +20,7 @@ final class CalendarPermissionUITests: XCTestCase {
         XCTAssertTrue(element.isHittable)
     }
     func testNativeCalendarPermissionIsRequestedOnlyWhenFeatureIsEnabled() {
+        app.launchEnvironment["CONFERENCE_TEST_SKIP_SETUP"] = "1"
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
