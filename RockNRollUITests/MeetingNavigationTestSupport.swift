@@ -10,48 +10,22 @@ extension XCUIApplication {
     func openMeetingMore(_ destination: MeetingMoreDestination, waitForAutoHide: Bool = false,
                          file: StaticString = #filePath, line: UInt = #line) {
         guard waitForMeetingToolsToClose(file: file, line: line) else { return }
-        let reactions = buttons["call.reactions"]
+        let tools = buttons[destination == .view ? "call.view" : "call.more"]
         if waitForAutoHide {
-            let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !reactions.exists }, object: nil)
-            guard XCTWaiter.wait(for: [hidden], timeout: 10) == .completed else {
-                XCTFail("Meeting controls did not auto-hide before restoring them.", file: file, line: line)
-                return
-            }
+            let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !tools.exists }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 10), .completed, file: file, line: line)
         }
-        if !reactions.exists || !reactions.isHittable {
-            // Auto-hide can expire while the previous panel's dismissal settles.
-            // Restore through the same media tap a participant uses.
-            let canvases = [scrollViews["Shared screen viewport"], scrollViews["Meeting content"],
-                            otherElements["Meeting stage"]]
+        if !tools.exists || !tools.isHittable {
+            let canvases = [scrollViews["Shared screen viewport"], scrollViews["Meeting content"], otherElements["Meeting stage"]]
             guard let canvas = canvases.first(where: { $0.exists && $0.isHittable }) else {
-                XCTFail("Meeting controls are hidden and no tappable media canvas is available.\n\(debugDescription)", file: file, line: line)
-                return
+                return XCTFail("No visible meeting canvas to restore controls.", file: file, line: line)
             }
             canvas.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-            guard reactions.waitForExistence(timeout: 3) else {
-                XCTFail("Tapping meeting content did not restore Reactions.\n\(debugDescription)", file: file, line: line)
-                return
-            }
-            // Use the restored button's verified frame before another sequence of
-            // AX hit-point queries can consume the fresh five-second hide window.
-            let window = windows.firstMatch, bounds = window.frame, frame = reactions.frame
-            guard frame.width >= 44, frame.height >= 44, bounds.contains(frame) else {
-                XCTFail("Restored Reactions is outside the meeting window: \(frame)", file: file, line: line)
-                return
-            }
-            window.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: frame.midX - bounds.minX, dy: frame.midY - bounds.minY)).tap()
-        } else {
-            reactions.tap()
         }
-        let shown = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.meetingActionsList != nil }, object: nil)
-        guard XCTWaiter.wait(for: [shown], timeout: 5) == .completed else {
-            XCTFail("Reactions has no visible scrollable list.\n\(debugDescription)", file: file, line: line)
-            return
-        }
-        meetingActionButton("call.more", file: file, line: line).tap()
-        guard buttons["meeting.more.reactions"].waitForExistence(timeout: 5) else {
-            XCTFail("The visible More action did not open its destinations.\n\(debugDescription)", file: file, line: line)
+        guard tools.waitForExistence(timeout: 5) else { return XCTFail("Direct meeting tool is missing.", file: file, line: line) }
+        tools.tap()
+        if destination == .view {
+            XCTAssertTrue(descendants(matching: .any).matching(identifier: "meeting.view.list").firstMatch.waitForExistence(timeout: 5), file: file, line: line)
             return
         }
         let identifier = "meeting.menu.call.group.\(destination.rawValue)"
@@ -67,7 +41,8 @@ extension XCUIApplication {
     @discardableResult
     func waitForMeetingToolsToClose(file: StaticString = #filePath, line: UInt = #line) -> Bool {
         let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            !self.descendants(matching: .any).matching(identifier: "meeting.actions.list").firstMatch.exists
+            !self.descendants(matching: .any).matching(identifier: "meeting.actions.list").firstMatch.exists &&
+            !self.descendants(matching: .any).matching(identifier: "meeting.view.list").firstMatch.exists
         }, object: nil)
         guard XCTWaiter.wait(for: [closed], timeout: 8) == .completed else {
             XCTFail("The action panel did not finish dismissing.\n\(debugDescription)", file: file, line: line)
@@ -96,9 +71,15 @@ extension XCUIApplication {
 
     private var meetingActionsList: XCUIElement? {
         // SwiftUI may retain offscreen navigation Lists with the same identifier.
-        let collections = collectionViews.matching(identifier: "meeting.actions.list").allElementsBoundByIndex
-        if let current = visibleMeetingElement(collections) { return current }
-        return visibleMeetingElement(scrollViews.matching(identifier: "meeting.actions.list").allElementsBoundByIndex)
+        let collections = collectionViews.matching(NSPredicate(format: "identifier IN %@", ["meeting.actions.list", "meeting.view.list"])).allElementsBoundByIndex
+        let scrolls = scrollViews.matching(NSPredicate(format: "identifier IN %@", ["meeting.actions.list", "meeting.view.list"])).allElementsBoundByIndex
+        let bounds = windows.firstMatch.frame
+        // A List covered by its own rows may report non-hittable, although its
+        // visible row centers are valid drag targets. Ignore retained hidden Lists.
+        return (collections + scrolls).first {
+            $0.exists && $0.frame.intersection(bounds).height > 44 &&
+            $0.buttons.allElementsBoundByIndex.contains { $0.exists && $0.isHittable }
+        }
     }
 
     private func scrollMeetingActions(to target: () -> XCUIElement?) -> XCUIElement? {

@@ -157,11 +157,11 @@ final class MeetingPresentationUITests: XCTestCase {
     func testGuestSwipingFromAutomaticFocusCanResumeFollowingSpeaker() {
         let app = launch(scenario: "gallery-many")
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["Meeting view picker"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["call.view"].waitForExistence(timeout: 10))
         selectLayout(app, "Focus")
         app.otherElements["Meeting stage"].swipeLeft()
         assertHeaderAction(app, "Pin Полина video")
-        app.buttons["Meeting view picker"].tap()
+        app.buttons["call.view"].tap()
         app.buttons["Follow speaker"].tap()
         assertHeaderAction(app, "Pin Participant 1 video")
     }
@@ -182,7 +182,7 @@ final class MeetingPresentationUITests: XCTestCase {
     }
     private func assertGalleryMenuDismissal(_ app: XCUIApplication, tile: XCUIElement,
                                             file: StaticString = #filePath, line: UInt = #line) {
-        let picker = app.buttons["Meeting view picker"]
+        let picker = app.buttons["call.view"]
         guard waitForHittable(picker, file: file, line: line) else { return }
         picker.tap()
         let menuItem = app.buttons.matching(NSPredicate(format: "label == 'Focus'")).firstMatch
@@ -194,7 +194,7 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Meeting details"].isHittable, file: file, line: line)
     }
     private func selectLayout(_ app: XCUIApplication, _ title: String) {
-        let picker = app.buttons["Meeting view picker"]
+        let picker = app.buttons["call.view"]
         if picker.exists && picker.isHittable {
             picker.tap()
             let option = app.buttons.matching(NSPredicate(format: "label == %@", title)).allElementsBoundByIndex.last
@@ -211,7 +211,7 @@ final class MeetingPresentationUITests: XCTestCase {
     }
     private func assertLayout(_ app: XCUIApplication, _ label: String, file: StaticString = #filePath, line: UInt = #line) {
         let predicate = NSPredicate { _, _ in
-            let picker = app.buttons["Meeting view picker"]
+            let picker = app.buttons["call.view"]
             if picker.exists && picker.isHittable {
                 return picker.label.contains(label) || (label == "Focus" && picker.label.contains("Pinned"))
             }
@@ -579,7 +579,7 @@ final class MeetingPresentationUITests: XCTestCase {
         let viewport = app.scrollViews["Shared screen viewport"]
         XCTAssertTrue(viewport.waitForExistence(timeout: 10))
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
-            app.openMeetingMore(.view)
+            app.openMeetingMore(.meeting)
             app.meetingActionButton("Fit shared screen").tap()
             let fitted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 viewport.exists && viewport.value as? String == "100%"
@@ -758,7 +758,7 @@ final class MeetingPresentationUITests: XCTestCase {
         app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock"
         app.launch()
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 10))
-        app.openMeetingMore(.view)
+        app.openMeetingMore(.meeting)
         app.meetingActionButton("Hide controls").tap()
         let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !app.buttons["Leave"].exists }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
@@ -773,7 +773,7 @@ final class MeetingPresentationUITests: XCTestCase {
         viewport.pinch(withScale: 2, velocity: 1)
         viewport.swipeLeft()
         XCTAssertTrue(viewport.exists, "Zoomed drag pans instead of selecting another stream")
-        app.openMeetingMore(.view)
+        app.openMeetingMore(.meeting)
         app.meetingActionButton("Fit shared screen").tap()
         expectation(for: NSPredicate(format: "value == '100%'"), evaluatedWith: viewport)
         waitForExpectations(timeout: 5)
@@ -847,7 +847,7 @@ final class MeetingPresentationUITests: XCTestCase {
         tapHeaderAction(app, "Fill screen")
         expectation(for: NSPredicate(format: "value == %@", zoom), evaluatedWith: viewport)
         waitForExpectations(timeout: 5)
-        app.openMeetingMore(.view)
+        app.openMeetingMore(.meeting)
         app.meetingActionButton("Fit shared screen").tap()
         expectation(for: NSPredicate(format: "value == '100%'"), evaluatedWith: viewport)
         waitForExpectations(timeout: 5)

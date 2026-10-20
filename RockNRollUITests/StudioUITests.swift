@@ -321,7 +321,7 @@ final class StudioUITests: XCTestCase {
     }
     private func openStudio(_ app: XCUIApplication) {
         app.buttons["call.reactions"].tap()
-        app.buttons["call.more"].tap()
+        app.buttons["meeting.actions.more"].tap()
         app.descendants(matching: .any)["meeting.menu.call.group.cameraSound"].firstMatch.tap()
         app.buttons["Camera & sound"].firstMatch.tap()
         XCTAssertTrue(app.buttons["studio.done"].waitForExistence(timeout: 5))
@@ -354,7 +354,7 @@ final class StudioUITests: XCTestCase {
         app.launch()
         let more = app.buttons["call.reactions"]
         XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
-        app.buttons["call.more"].tap()
+        app.buttons["meeting.actions.more"].tap()
         app.descendants(matching: .any)["meeting.menu.call.group.cameraSound"].firstMatch.tap()
         let studio = app.buttons[russian ? "Камера и звук" : "Camera & sound"].firstMatch
         XCTAssertTrue(studio.waitForExistence(timeout: 5)); studio.tap()

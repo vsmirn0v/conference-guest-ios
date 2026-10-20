@@ -313,7 +313,7 @@ final class ConferenceMediaUITests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         XCTAssertEqual(viewport.value as? String, "\(zoom)%")
         attachScreenshot(of: app, named: "Guest share zoom after rotation")
-        app.openMeetingMore(.view)
+        app.openMeetingMore(.meeting)
         app.meetingActionButton("Fit shared screen").tap()
         XCTAssertEqual(viewport.value as? String, "100%")
     }
@@ -610,7 +610,7 @@ final class ConferenceMediaUITests: XCTestCase {
         landscape.lifetime = .keepAlways
         add(landscape)
         app.openMeetingMore(.view)
-        XCTAssertTrue(app.buttons["Screen shares"].isEnabled)
+        XCTAssertTrue(app.buttons["Screen sharing only"].isEnabled)
         app.meetingActionButton("Audio only").tap()
         XCTAssertTrue(app.buttons["call.reactions"].exists)
         app.openMeetingMore(.view)
@@ -687,7 +687,7 @@ final class ConferenceMediaUITests: XCTestCase {
             .firstMatch
         XCTAssertTrue(sharing.waitForExistence(timeout: 20))
         app.openMeetingMore(.view)
-        let shares = app.buttons["Screen shares"]
+        let shares = app.buttons["Screen sharing only"]
         XCTAssertTrue(shares.isEnabled)
         shares.tap()
         let viewport = app.scrollViews["Shared screen viewport"].firstMatch
@@ -717,7 +717,7 @@ final class ConferenceMediaUITests: XCTestCase {
         attachScreenshot(of: app, named: "Guest camera view restored")
 
         app.openMeetingMore(.view)
-        app.meetingActionButton("Screen shares").tap()
+        app.meetingActionButton("Screen sharing only").tap()
         XCTAssertTrue(empty.waitForExistence(timeout: 10))
         print("GUEST_SHARE_TEST_AWAITING_RESTART")
         XCTAssertTrue(sharing.waitForExistence(timeout: 60),
@@ -747,7 +747,7 @@ final class ConferenceMediaUITests: XCTestCase {
         }
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 60))
         app.openMeetingMore(.view)
-        app.meetingActionButton("Screen shares").tap()
+        app.meetingActionButton("Screen sharing only").tap()
         let empty = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@",
             "No screen share is live.")).firstMatch
         XCTAssertTrue(empty.waitForExistence(timeout: 15))
@@ -963,7 +963,7 @@ final class ConferenceMediaUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 4)
         attachScreenshot(of: app, named: "Guest audio only")
         app.openMeetingMore(.view)
-        XCTAssertTrue(app.buttons["Screen shares"].isEnabled)
+        XCTAssertTrue(app.buttons["Screen sharing only"].isEnabled)
         app.meetingActionButton("All video").tap()
         Thread.sleep(forTimeInterval: 4)
         attachScreenshot(of: app, named: "Guest video restored")
@@ -1001,7 +1001,7 @@ final class ConferenceMediaUITests: XCTestCase {
         app.buttons["Done"].tap()
         attachScreenshot(of: app, named: "Rock all video and share")
         app.openMeetingMore(.view)
-        app.meetingActionButton("Screen shares").tap()
+        app.meetingActionButton("Screen sharing only").tap()
         Thread.sleep(forTimeInterval: 3)
         XCTAssertTrue(app.buttons["call.reactions"].exists)
         attachScreenshot(of: app, named: "Rock screen share only")
@@ -1225,7 +1225,7 @@ final class ConferenceMediaUITests: XCTestCase {
         waitForExpectations(timeout: 20)
         for manual in [false, true] {
             if manual {
-                app.openMeetingMore(.view)
+                app.openMeetingMore(.meeting)
                 app.meetingActionButton("Show floating video").tap()
                 Thread.sleep(forTimeInterval: 2)
             }
@@ -1240,19 +1240,19 @@ final class ConferenceMediaUITests: XCTestCase {
             attachScreenshot(of: app, named: "Guest restored zoom \(manual)")
             Thread.sleep(forTimeInterval: 2)
         }
-        app.openMeetingMore(.view)
+        app.openMeetingMore(.meeting)
         app.meetingActionButton("Floating video when multitasking").tap()
         XCUIDevice.shared.press(.home)
         Thread.sleep(forTimeInterval: 3)
         XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard")
             .windows["PIP-SBInteractionPassThroughView"].exists)
         returnFromFloatingVideo(app)
-        app.openMeetingMore(.view)
+        app.openMeetingMore(.meeting)
         app.meetingActionButton("Show floating video").tap()
         XCUIDevice.shared.press(.home)
         assertLiveFloatingVideo(app)
         returnFromFloatingVideo(app)
-        app.openMeetingMore(.view)
+        app.openMeetingMore(.meeting)
         app.meetingActionButton("Floating video when multitasking").tap()
         app.openMeetingMore(.view)
         app.meetingActionButton("Audio only").tap()
@@ -1288,7 +1288,7 @@ final class ConferenceMediaUITests: XCTestCase {
                          named: "Guest camera floating over Home")
         returnFromFloatingVideo(app)
         app.openMeetingMore(.view)
-        app.meetingActionButton("Screen shares").tap()
+        app.meetingActionButton("Screen sharing only").tap()
         XCUIDevice.shared.press(.home)
         Thread.sleep(forTimeInterval: 3)
         XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard")

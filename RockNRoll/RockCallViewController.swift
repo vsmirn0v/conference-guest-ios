@@ -26,7 +26,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
             chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls)) +
             [UIKeyCommand(input: ",", modifierFlags: .command, action: #selector(keyOpenStudio)),
-             UIKeyCommand(title: L("Reactions"), action: #selector(keyOpenReactions), input: "r", modifierFlags: .command.union(.shift))]
+             UIKeyCommand(title: L("Reactions"), action: #selector(keyOpenReactions), input: "r", modifierFlags: .command.union(.shift)),
+             UIKeyCommand(title: L("View"), action: #selector(keyOpenView), input: "l", modifierFlags: .command.union(.shift)),
+             UIKeyCommand(title: L("More"), action: #selector(keyOpenMore), input: "m", modifierFlags: .command.union(.shift))]
     }
     var onLeave: (() -> Void)?
     var onMicrophone: ((Bool) -> Void)?
@@ -44,6 +46,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private var headerView: UIStackView?
     private let compactHeader = CompactCallHeader()
     private var toolbar: CallToolbar?
+    private let accessControls = MeetingAccessControls()
+    private let panelOwner = MeetingPanelOwner()
     private let focusButton = UIButton(type: .system)
     private var browsedStream: PinnedStream?
     private var orderedStreams: [PinnedStream] = []
@@ -84,7 +88,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let share = AlignedCallButton(frame: .zero)
     private let sharePicker = RPSystemBroadcastPickerView()
     private let shareTitle = UILabel()
-    private let displayModeButton = UIButton(type: .system)
     private let conversationButton = UIButton(type: .system)
     private let missedButton = UIButton(type: .system)
     private let participantsButton = UIButton(type: .system)
@@ -198,6 +201,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
     @objc private func keyOpenChat() { openConversation(.chat) }
     @objc private func keyOpenReactions() { reactionsButton.sendActions(for: .touchUpInside) }
+    @objc private func keyOpenView() { focus.show(); accessControls.viewButton.sendActions(for: .touchUpInside) }
+    @objc private func keyOpenMore() { focus.show(); accessControls.moreButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
     @objc private func keyFocus() { focus.toggle() }
     @objc private func keyRestoreControls() { focus.show(); focus.interaction() }
@@ -246,6 +251,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
         view.insertSubview(streamScroll, at: 0)
         view.addSubview(layoutControls); view.addSubview(participantStrip)
+        layoutControls.navigationOnly = true
+        view.addSubview(accessControls)
         sourceSelector.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         layoutControls.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         compactHeader.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
@@ -332,13 +339,22 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height
         let headerHeight = max(80, identityHeight + statusHeight + 8)
         let geometry = CallPresentationGeometry(bounds: view.bounds, insets: view.safeAreaInsets,
-            headerHeight: headerHeight, toolbarHeight: toolbar.preferredHeight, hidden: focus.hidden,
+            headerHeight: headerHeight, toolbarHeight: toolbar.preferredHeight, hidden: false,
             largeText: large, allowsRail: dockedConversation == nil, floating: true)
         toolbar.arrange(rail: geometry.rail, largeText: large)
         header.frame = geometry.header.insetBy(dx: 4, dy: 0)
         header.frame.size.height = max(0, geometry.header.height - statusHeight - 8)
-        toolbar.frame = geometry.toolbar
-        var stage = geometry.stage
+        let accessWidth = geometry.rail ? geometry.stage.width : geometry.toolbar.width
+        let access = MeetingAccessGeometry(base: geometry, bounds: view.bounds, insets: view.safeAreaInsets,
+            accessSize: accessControls.fittingSize(availableWidth: accessWidth), largeText: large)
+        toolbar.frame = access.toolbar
+        toolbar.separatesLast = access.inline
+        toolbar.inlineAccessWidth = access.inline ? access.access.width + 8 : 0
+        accessControls.frame = access.access
+        accessControls.isHidden = focus.hidden
+        accessControls.update(MeetingViewState(layout: layoutMode, display: displayMode,
+            manualFocus: pinnedStream != nil || browsedStream != nil, effectiveLayout: effectiveLayoutMode))
+        var stage = access.stage
         var canvas = view.bounds
         if dockedConversation != nil {
             let width = view.bounds.width >= 700 ? min(400, max(320, view.bounds.width * 0.36)) : stage.width
@@ -352,7 +368,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let sharing = effectiveLayoutMode == .speaker && currentPrimaryKey.flatMap { streamPinTargets[$0]?.isScreenShare } == true
         let layoutFrame = CGRect(x: stage.minX + 4, y: max(stage.minY, stage.maxY - 48),
             width: min(288, max(0, stage.width - 8)), height: 44)
-        layoutControls.isHidden = !layoutAvailable || focus.hidden || sharing
+        layoutControls.isHidden = !layoutAvailable || focus.hidden || sharing || effectiveLayoutMode != .grid || (tiles.pagination?.pageCount ?? 1) <= 1
         if !layoutControls.isHidden {
             layoutControls.frame = layoutFrame
         }
@@ -361,7 +377,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         sourceSelector.frame = CGRect(x: stage.minX + 4, y: stage.minY + 4,
             width: min(280, max(0, stage.width - 8)), height: 44)
         if sharing { imageFit = canvas }
-        else if layoutAvailable { imageFit.size.height = max(0, layoutFrame.minY - stage.minY - 4) }
+        else if !layoutControls.isHidden { imageFit.size.height = max(0, layoutFrame.minY - stage.minY - 4) }
         let canShowStrip = stage.height >= 240
         participantStrip.isHidden = effectiveLayoutMode == .grid || !layoutAvailable || focus.hidden || sharing || !canShowStrip
         if effectiveLayoutMode == .speaker && layoutAvailable && !sharing && canShowStrip {
@@ -444,9 +460,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             status: isHeld || mediaStatus != nil ? statusLabel.text : nil,
             speaking: activeSpeaker.current, focusAvailable: primaryZoom != nil, chatAvailable: supportsChat,
             meetingName: titleLabel.text)
-        compactHeader.setLayout(mode: effectiveLayoutMode, available: layoutAvailable,
-            choose: { [weak self] in self?.chooseLayout($0) },
-            followSpeaker: { [weak self] in self?.browsedStream = nil; self?.setPin(nil) })
+        // Layout and receive filtering have one stable, visible entry in the dock.
+        compactHeader.setLayout(mode: effectiveLayoutMode, available: false, choose: { _ in })
         updateShareScaleControl()
         statusLabel.isHidden = focus.hidden || geometry.compactHeader
         statusLabel.frame = CGRect(x: geometry.header.minX, y: geometry.header.maxY - statusHeight,
@@ -605,9 +620,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         configure(flipCamera, symbol: "arrow.triangle.2.circlepath.camera", label: L("Flip camera"))
         flipCamera.isEnabled = false
         configure(speaker, symbol: "speaker.wave.2.fill", label: L("Use iPhone speaker"))
-        configure(displayModeButton, symbol: displayMode.symbol, label: L("Display: All video"))
-        displayModeButton.showsMenuAsPrimaryAction = true
-        configureModeMenu()
         configure(conversationButton, symbol: "text.bubble", label: L("Chat"))
         configure(missedButton, symbol: "clock.arrow.circlepath", label: L("Catch up"))
         missedButton.isHidden = true
@@ -621,11 +633,25 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             guard let self else { return }
             self.focus.interaction()
             self.configureMoreMenu()
-            MeetingActionsController.show(model: nil, menu: self.actionsMenu, from: self.reactionsButton,
+            MeetingActionsController.show(model: nil, menu: self.actionsMenu,
+                from: more ? self.accessControls.moreButton : self.reactionsButton,
                 startsWithMore: more, openChat: self.supportsChat ? { [weak self] in self?.openConversation(.chat) } : nil,
-                onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
+                owner: self.panelOwner, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
         }
         reactionsButton.addAction(UIAction { _ in showActions(false) }, for: .touchUpInside)
+        accessControls.moreButton.addAction(UIAction { _ in showActions(true) }, for: .touchUpInside)
+        accessControls.viewButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.focus.interaction()
+            MeetingActionsController.showView(state: MeetingViewState(layout: self.layoutMode,
+                display: self.displayMode, manualFocus: self.pinnedStream != nil || self.browsedStream != nil,
+                effectiveLayout: self.effectiveLayoutMode),
+                from: self.accessControls.viewButton, owner: self.panelOwner,
+                chooseLayout: { [weak self] in self?.chooseLayout($0) },
+                chooseDisplay: { [weak self] in self?.setDisplayMode($0) },
+                followSpeaker: { [weak self] in self?.layoutMode = .speaker; self?.explicitLayout = true; self?.browsedStream = nil; self?.setPin(nil) },
+                onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
+        }, for: .touchUpInside)
         MeetingActionsShortcut.install(on: reactionsButton) { showActions(true) }
         configureMoreMenu()
         shareOffer.configuration = .tinted()
@@ -712,7 +738,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             guard let self else { return }
             self.configureMoreMenu()
             MeetingActionsController.show(model: nil, menu: self.actionsMenu, from: anchor,
-                openChat: {}, onVisibilityChanged: { [weak self] shown in
+                openChat: {}, owner: self.panelOwner, onVisibilityChanged: { [weak self] shown in
                     self?.focus.menuVisible = shown
                     visibility(shown)
                 })
@@ -1366,29 +1392,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         return tile
     }
 
-    private func layoutMenu() -> UIMenu {
-        UIMenu(title: L("Layout"), options: .displayInline, children: MeetingLayoutMode.allCases.map { mode in
-            UIAction(title: mode.title, image: UIImage(systemName: mode.symbol), state: mode == layoutMode ? .on : .off) { [weak self] _ in
-                guard let self else { return }
-                self.chooseLayout(mode)
-            }
-        })
-    }
-    private func configureModeMenu() {
-        displayModeButton.menu = UIMenu(children: [layoutMenu()] + ConferenceDisplayMode.allCases.map { option in
-            UIAction(title: option.title, image: UIImage(systemName: option.symbol),
-                     state: option == displayMode ? .on : .off) { [weak self] _ in
-                guard let self else { return }
-                self.setDisplayMode(option)
-            }
-        })
-    }
-
     func setDisplayMode(_ mode: ConferenceDisplayMode) {
         displayMode = mode
-        displayModeButton.configuration?.image = UIImage(systemName: mode.symbol)
-        displayModeButton.accessibilityLabel = L("Display: %@", mode.title)
-        configureModeMenu()
         if let snapshot = displayedSnapshot { render(snapshot: snapshot) }
         onDisplayMode?(mode)
     }
@@ -1448,15 +1453,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 [weak self] _ in self?.workspace.copyInvitation()
             }]
         }
-        let incoming = UIMenu(title: L("Incoming media"), identifier: UIMenu.Identifier("call.view-mode"), options: .displayInline,
-            children: ConferenceDisplayMode.allCases.map { option in
-                UIAction(title: option.title, image: UIImage(systemName: option.symbol),
-                    state: option == displayMode ? .on : .off) { [weak self] _ in
-                        guard let self else { return }
-                        self.setDisplayMode(option)
-                        self.configureMoreMenu()
-                    }
-            })
         let visibility = UIMenu(title: L("Control visibility"), options: .displayInline, children: [
             UIAction(title: L("Hide controls"), image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")) { [weak self] _ in self?.focus.hide() },
             UIAction(title: L("Automatically hide controls"), state: focus.automaticallyHides ? .on : .off) { [weak self] _ in
@@ -1482,7 +1478,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         meeting = fixtureActions + meeting
         #endif
         actionsMenu = MeetingActionGroup.make(cameraSound: cameraSound, sharePresenter: sharePresenter,
-            view: [layoutMenu(), incoming, visibility, screen, floating], invite: invite, meeting: meeting)
+            view: [visibility, screen, floating], invite: invite, meeting: meeting)
     }
 
     func performGroupedShareAction() {
@@ -1591,7 +1587,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     func restoreFromFloatingVideo() { floatingVideo?.foregrounded() }
 
-    func endFloatingVideo() { activeSpeaker.end(); floatingVideo?.end(); localShareRenderer.setTrack(nil); localSharePreview.end() }
+    func endFloatingVideo() { panelOwner.retire(); activeSpeaker.end(); floatingVideo?.end(); localShareRenderer.setTrack(nil); localSharePreview.end() }
 
     func setSpeakerReceptionAvailable(_ available: Bool) {
         speakerReceptionAvailable = available

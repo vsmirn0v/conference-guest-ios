@@ -121,7 +121,7 @@ final class MeetingChromeSurfaceTests: XCTestCase {
                 XCTAssertEqual(button.configuration?.title, ["Mic", "Video", "Share", "Audio", "Reactions", "Leave"][index])
                 XCTAssertEqual(button.configuration?.baseForegroundColor, .white)
             }
-            XCTAssertEqual(toolbar.subviews.compactMap { $0 as? MeetingChromeSurface }.count, 1)
+            XCTAssertEqual(toolbar.subviews.compactMap { $0 as? MeetingChromeSurface }.filter { !$0.isHidden }.count, 1)
             XCTAssertEqual(toolbar.subviews.compactMap { $0 as? AlignedCallButton }, buttons)
             XCTAssertFalse(geometry.stage.intersects(geometry.toolbar), "Video stays outside the dock")
         }

@@ -74,8 +74,8 @@ enum MeetingActionGroup: String, CaseIterable {
         case .cameraSound: return L("Camera & sound")
         case .sharePresenter: return L("Share & Presenter")
         case .view: return L("View")
-        case .invite: return L("Invite")
-        case .meeting: return L("Meeting")
+        case .invite: return L("Invite people")
+        case .meeting: return L("Meeting details")
         }
     }
     var symbol: String {
@@ -89,13 +89,22 @@ enum MeetingActionGroup: String, CaseIterable {
         }
     }
     var identifier: UIMenu.Identifier { UIMenu.Identifier("call.group.\(rawValue)") }
+    var detail: String? {
+        switch self {
+        case .cameraSound: return L("Private preview and effects")
+        case .sharePresenter: return L("Screen, slides and camera")
+        case .invite: return L("Link and sharing options")
+        case .meeting: return L("Information and meeting controls")
+        default: return nil
+        }
+    }
     func menu(_ children: [UIMenuElement]) -> UIMenu {
         UIMenu(title: title, image: UIImage(systemName: symbol), identifier: identifier, children: children)
     }
     static func make(cameraSound: [UIMenuElement], sharePresenter: [UIMenuElement],
                      view: [UIMenuElement], invite: [UIMenuElement], meeting: [UIMenuElement]) -> UIMenu {
         UIMenu(children: [Self.cameraSound.menu(cameraSound), Self.sharePresenter.menu(sharePresenter),
-            Self.view.menu(view), Self.invite.menu(invite), Self.meeting.menu(meeting)])
+            Self.invite.menu(invite), Self.meeting.menu(meeting + view)])
     }
 }
 
@@ -107,7 +116,10 @@ private struct MeetingActionRows: View {
             if let action = element as? UIAction, !action.attributes.contains(.hidden) {
                 Button { perform(action) } label: {
                     HStack(spacing: 12) {
-                        if let image = action.image { Image(uiImage: image).frame(width: 24) }
+                        if let image = action.image {
+                            Image(uiImage: image).renderingMode(.template).foregroundStyle(Color.primary)
+                                .frame(width: 24).accessibilityHidden(true)
+                        }
                         Text(action.title).fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 4)
                         if action.state == .on { Image(systemName: "checkmark") }
@@ -122,8 +134,18 @@ private struct MeetingActionRows: View {
                             .listStyle(.insetGrouped).navigationTitle(menu.title)
                             .accessibilityIdentifier("meeting.actions.list")
                     } label: {
-                        Label { Text(menu.title) } icon: {
-                            if let image = menu.image { Image(uiImage: image) }
+                        Label {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(menu.title)
+                                if let detail = MeetingActionGroup.allCases.first(where: { $0.identifier == menu.identifier })?.detail {
+                                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        } icon: {
+                            if let image = menu.image {
+                                Image(uiImage: image).renderingMode(.template).foregroundStyle(Color.primary)
+                                    .accessibilityHidden(true)
+                            }
                         }.frame(minHeight: 44)
                     }.accessibilityIdentifier("meeting.menu.\(menu.identifier.rawValue)")
                 }
@@ -152,9 +174,6 @@ private struct MeetingActionsContent: View {
         NavigationStack {
             List {
                 if showsMore {
-                    Button { changePage(more: false) } label: {
-                        Label(L("Reactions"), systemImage: MeetingActionGroup.reactions.symbol).frame(minHeight: 44)
-                    }.accessibilityIdentifier("meeting.more.reactions")
                     if let menu { MeetingActionRows(elements: menu.children, perform: perform) }
                 } else {
                     Section { ReactionPalette(model: model, select: select) }
@@ -164,18 +183,12 @@ private struct MeetingActionsContent: View {
                     }
                     Button { changePage(more: true) } label: {
                         Label(L("More"), systemImage: "ellipsis.circle").frame(minHeight: 44)
-                    }.accessibilityIdentifier("call.more")
+                    }.accessibilityIdentifier("meeting.actions.more")
                 }
             }.listStyle(.insetGrouped).navigationTitle(showsMore ? L("More") : L("Reactions"))
                 .accessibilityIdentifier("meeting.actions.list")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    if showsMore {
-                        ToolbarItem(placement: .navigationBarLeading) {
-                            Button { changePage(more: false) } label: { Image(systemName: "chevron.left") }
-                                .accessibilityLabel(L("Reactions"))
-                        }
-                    }
                     ToolbarItem(placement: .confirmationAction) {
                         Button(L("Done"), action: close).accessibilityIdentifier("reactions.done")
                     }
@@ -230,6 +243,9 @@ final class MeetingActionsShortcut: NSObject {
 final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPresentationControllerDelegate {
     private let model: MeetingReactionsModel
     private var onVisibilityChanged: ((Bool) -> Void)?
+    private var isCurrent: () -> Bool = { true }
+    private weak var invokingAnchor: UIView?
+    private weak var panelOwner: MeetingPanelOwner?
     init(model: MeetingReactionsModel?, menu: UIMenu?, startsWithMore: Bool = false, openChat: (() -> Void)? = nil) {
         let model = model ?? MeetingReactionsModel()
         self.model = model
@@ -241,9 +257,9 @@ final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPre
                 UIAccessibility.post(notification: .announcement, argument: L("You, %@", kind.title))
                 if !ProcessInfo.processInfo.isiOSAppOnMac { UISelectionFeedbackGenerator().selectionChanged() }
             }, perform: { [weak self, weak model] action in
-                guard let model else { return }
+                guard let self, let model else { return }
                 let generation = model.generation
-                self?.dismiss(animated: true) {
+                self.dismissAndPerform {
                     guard model.generation == generation else { return }
                     // Execute an existing public UIAction through its native control.
                     let button = UIButton(primaryAction: action)
@@ -251,9 +267,9 @@ final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPre
                 }
             }, openChat: openChat.map { callback in
                 { [weak self, weak model] in
-                    guard let model else { return }
+                    guard let self, let model else { return }
                     let generation = model.generation
-                    self?.dismiss(animated: true) {
+                    self.dismissAndPerform {
                         guard model.generation == generation else { return }
                         callback()
                     }
@@ -272,32 +288,74 @@ final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPre
         [UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(closePanel))]
     }
     @objc private func closePanel() { dismiss(animated: true) }
+    func dismissAndPerform(_ action: @escaping () -> Void) {
+        let isCurrent = isCurrent
+        guard isCurrent() else { return }
+        dismiss(animated: true) {
+            guard isCurrent() else { return }; action()
+        }
+    }
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         onVisibilityChanged?(false)
         onVisibilityChanged = nil
+        if panelOwner?.controller === self { panelOwner?.controller = nil }
+        if let invokingAnchor, invokingAnchor.window != nil {
+            UIAccessibility.post(notification: .layoutChanged, argument: invokingAnchor)
+        }
     }
     func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle { .none }
 
-    static func show(model: MeetingReactionsModel?, menu: UIMenu?, from anchor: UIView, startsWithMore: Bool = false, openChat: (() -> Void)? = nil, onVisibilityChanged: ((Bool) -> Void)? = nil) {
+    static func show(model: MeetingReactionsModel?, menu: UIMenu?, from anchor: UIView, startsWithMore: Bool = false, openChat: (() -> Void)? = nil, owner: MeetingPanelOwner? = nil, onVisibilityChanged: ((Bool) -> Void)? = nil) {
+        let controller = MeetingActionsController(model: model, menu: menu, startsWithMore: startsWithMore, openChat: openChat)
+        present(controller, from: anchor, owner: owner, onVisibilityChanged: onVisibilityChanged)
+    }
+
+    static func showView(state: MeetingViewState, from anchor: UIView, owner: MeetingPanelOwner,
+                         chooseLayout: @escaping (MeetingLayoutMode) -> Void,
+                         chooseDisplay: @escaping (ConferenceDisplayMode) -> Void,
+                         followSpeaker: @escaping () -> Void, onVisibilityChanged: @escaping (Bool) -> Void) {
+        let controller = MeetingActionsController(model: nil, menu: nil)
+        let perform: (@escaping () -> Void) -> Void = { [weak controller] action in
+            guard let controller else { return }
+            controller.dismissAndPerform(action)
+        }
+        controller.rootView = AnyView(MeetingViewContent(state: state,
+            close: { [weak controller] in controller?.dismiss(animated: true) },
+            chooseLayout: { mode in guard state.permitsLayout else { return }; perform { chooseLayout(mode) } },
+            chooseDisplay: { mode in perform { chooseDisplay(mode) } }, followSpeaker: { perform(followSpeaker) }))
+        controller.preferredContentSize = CGSize(width: 380, height: state.manualFocus ? 680 : 600)
+        present(controller, from: anchor, owner: owner, onVisibilityChanged: onVisibilityChanged)
+    }
+
+    private static func present(_ controller: MeetingActionsController, from anchor: UIView,
+                                owner: MeetingPanelOwner?, onVisibilityChanged: ((Bool) -> Void)?) {
         var responder: UIResponder? = anchor
         while let current = responder, !(current is UIViewController) { responder = current.next }
         guard var host = responder as? UIViewController else { return }
         while let parent = host.parent { host = parent }
         guard host.presentedViewController == nil else { return }
-        let controller = MeetingActionsController(model: model, menu: menu, startsWithMore: startsWithMore, openChat: openChat)
-        let wide = host.view.bounds.width > host.view.bounds.height || host.traitCollection.userInterfaceIdiom == .pad
+        guard anchor.window != nil, owner?.controller == nil, owner?.retired != true else { return }
+        controller.invokingAnchor = anchor
+        if let owner {
+            controller.isCurrent = owner.validity(from: anchor)
+            controller.panelOwner = owner; owner.controller = controller
+        }
+        let wide = host.view.bounds.width >= 600 && !host.traitCollection.preferredContentSizeCategory.isAccessibilityCategory
         if wide {
             controller.modalPresentationStyle = .popover
             controller.popoverPresentationController?.sourceView = anchor
             controller.popoverPresentationController?.sourceRect = anchor.bounds
             controller.popoverPresentationController?.delegate = controller
+            controller.popoverPresentationController?.passthroughViews = nil
         } else {
             controller.modalPresentationStyle = .pageSheet
             let compact = UISheetPresentationController.Detent.Identifier("reactions.compact")
-            controller.sheetPresentationController?.detents = [.custom(identifier: compact) { min($0.maximumDetentValue, 520) }, .large()]
+            let height = max(520, controller.preferredContentSize.height)
+            controller.sheetPresentationController?.detents = [.custom(identifier: compact) { min($0.maximumDetentValue, height) }, .large()]
             controller.sheetPresentationController?.selectedDetentIdentifier = host.traitCollection.preferredContentSizeCategory.isAccessibilityCategory ? .large : compact
             controller.sheetPresentationController?.prefersGrabberVisible = true
+            controller.sheetPresentationController?.prefersEdgeAttachedInCompactHeight = true
         }
         controller.onVisibilityChanged = onVisibilityChanged
         onVisibilityChanged?(true)

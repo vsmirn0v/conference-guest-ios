@@ -173,6 +173,9 @@ final class AlignedCallButton: MeetingMenuButton {
 
 final class CallToolbar: UIView {
     private let surface = MeetingChromeSurface(cornerRadius: 28)
+    private let endSurface = MeetingChromeSurface(cornerRadius: 28)
+    var separatesLast = false { didSet { if oldValue != separatesLast { setNeedsLayout() } } }
+    var inlineAccessWidth: CGFloat = 0 { didSet { if oldValue != inlineAccessWidth { setNeedsLayout() } } }
     private let baseItems: [UIView]
     private var accessory: UIView?
     private var items: [UIView] {
@@ -194,6 +197,8 @@ final class CallToolbar: UIView {
         surface.frame = bounds
         surface.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         addSubview(surface)
+        addSubview(endSurface)
+        endSurface.isHidden = true
         items.forEach { $0.translatesAutoresizingMaskIntoConstraints = true; addSubview($0) }
         layer.cornerRadius = 28
         accessibilityIdentifier = "Meeting toolbar"
@@ -208,6 +213,22 @@ final class CallToolbar: UIView {
     func arrange(rail: Bool, largeText: Bool) { self.rail = rail; self.largeText = largeText }
     override func layoutSubviews() {
         super.layoutSubviews()
+        let separated = separatesLast && !rail && !largeText && items.count > 1
+        endSurface.isHidden = !separated
+        if separated {
+            let end = CGRect(x: bounds.maxX - 54, y: 0, width: 54, height: bounds.height)
+            surface.frame = CGRect(x: 0, y: 0, width: end.minX - 8 - inlineAccessWidth, height: bounds.height)
+            endSurface.frame = end
+            let area = surface.frame.insetBy(dx: 4, dy: 5)
+            let width = area.width / CGFloat(items.count - 1)
+            for (index, item) in items.enumerated() {
+                setCaptions(in: item, visible: true)
+                item.frame = index == items.count - 1 ? end.insetBy(dx: 4, dy: 5) :
+                    CGRect(x: area.minX + CGFloat(index) * width, y: area.minY, width: width, height: area.height)
+            }
+            return
+        }
+        surface.frame = bounds
         let columns = rail ? (largeText ? 2 : 1) : largeText ? 2 : items.count
         let rows = (items.count + columns - 1) / columns
         let area = bounds.insetBy(dx: 4, dy: 5)

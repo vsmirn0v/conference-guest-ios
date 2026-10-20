@@ -23,7 +23,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         CallKeyboardCommands.make(microphone: #selector(keyToggleMicrophone), camera: #selector(keyToggleCamera),
             chat: #selector(keyOpenChat), participants: #selector(keyOpenParticipants), fit: #selector(keyFitScreen), focus: #selector(keyFocus), restore: #selector(keyRestoreControls)) +
             [UIKeyCommand(input: ",", modifierFlags: .command, action: #selector(keyOpenStudio)),
-             UIKeyCommand(title: L("Reactions"), action: #selector(keyOpenReactions), input: "r", modifierFlags: .command.union(.shift))]
+             UIKeyCommand(title: L("Reactions"), action: #selector(keyOpenReactions), input: "r", modifierFlags: .command.union(.shift)),
+             UIKeyCommand(title: L("View"), action: #selector(keyOpenView), input: "l", modifierFlags: .command.union(.shift)),
+             UIKeyCommand(title: L("More"), action: #selector(keyOpenMore), input: "m", modifierFlags: .command.union(.shift))]
     }
     @objc private func keyToggleMicrophone() { microphone.sendActions(for: .touchUpInside) }
     @objc private func keyToggleCamera() { camera.sendActions(for: .touchUpInside) }
@@ -34,6 +36,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     @objc private func keyOpenChat() { catchUpButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenReactions() { reactionsButton.sendActions(for: .touchUpInside) }
+    @objc private func keyOpenView() { focus.show(); accessControls.viewButton.sendActions(for: .touchUpInside) }
+    @objc private func keyOpenMore() { focus.show(); accessControls.moreButton.sendActions(for: .touchUpInside) }
     @objc private func keyFocus() { focus.toggle() }
     @objc private func keyRestoreControls() { focus.show(); focus.interaction() }
     @objc private func keyFitScreen() { fitZoomedContent() }
@@ -43,6 +47,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private weak var mountedWindow: UIWindow?
     private weak var surfaceContainer: UIView?
     private var toolbar: CallToolbar?
+    private let accessControls = MeetingAccessControls()
+    private let panelOwner = MeetingPanelOwner()
     private var headerView: UIStackView?
     private let compactHeader = CompactCallHeader()
     private let focusButton = UIButton(type: .system)
@@ -331,12 +337,32 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             guard let self else { return }
             self.focus.interaction()
             self.refreshMoreMenu?()
-            MeetingActionsController.show(model: self.reactions, menu: self.actionsMenu, from: self.reactionsButton,
+            MeetingActionsController.show(model: self.reactions, menu: self.actionsMenu,
+                from: more ? self.accessControls.moreButton : self.reactionsButton,
                 startsWithMore: more, openChat: { [weak self] in
                     self?.openConversation(catchUp: catchUp, chat: chat, selected: .chat)
-                }, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
+                }, owner: self.panelOwner, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
         }
         reactionsButton.addAction(UIAction { _ in showActions(false) }, for: .touchUpInside)
+        accessControls.moreButton.addAction(UIAction { _ in showActions(true) }, for: .touchUpInside)
+        accessControls.viewButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.focus.interaction()
+            MeetingActionsController.showView(state: MeetingViewState(layout: self.layoutMode,
+                display: self.displayMode, manualFocus: self.stagePinned || self.lastPresentation?.browsing == true,
+                effectiveLayout: self.gridVisible ? .grid : .speaker, galleryAvailable: self.galleryCount > 1 && !self.isWaitingForOthers),
+                from: self.accessControls.viewButton, owner: self.panelOwner,
+                chooseLayout: { [weak self] in self?.chooseLayout($0) },
+                chooseDisplay: { [weak self] mode in
+                    guard let self else { return }
+                    self.displayMode = mode; self.updateDisplayBackdrops(); self.layoutPresentation()
+                    self.refreshMoreMenu?(); onDisplayMode(mode)
+                },
+                followSpeaker: { [weak self] in
+                    self?.layoutMode = .speaker; self?.explicitLayout = true
+                    self?.onAutomaticView?(); self?.layoutPresentation()
+                }, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
+        }, for: .touchUpInside)
         MeetingActionsShortcut.install(on: reactionsButton) { showActions(true) }
         participantsButton.configuration = Self.iconConfiguration("person.2.fill")
         participantsButton.accessibilityLabel = L("Musicians")
@@ -412,7 +438,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             guard let self else { return }
             self.refreshMoreMenu?()
             MeetingActionsController.show(model: self.reactions, menu: self.actionsMenu, from: anchor,
-                openChat: {}, onVisibilityChanged: { [weak self] shown in
+                openChat: {}, owner: self.panelOwner, onVisibilityChanged: { [weak self] shown in
                     self?.focus.menuVisible = shown
                     visibility(shown)
                 })
@@ -961,6 +987,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window == nil {
+            panelOwner.invalidate()
             participantsPanel?.dismiss(animated: false)
             participantsPanel = nil
             CallStageLayout.remove(window: mountedWindow, owner: layoutOwner)
@@ -981,6 +1008,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         becomeFirstResponder()
         focus.interaction()
     }
+
+    func retireMeetingPanels() { panelOwner.retire() }
 
     override func layoutSubviews() { super.layoutSubviews(); layoutPresentation() }
     override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); layoutPresentation() }
@@ -1017,6 +1046,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         localShareCard.translatesAutoresizingMaskIntoConstraints = true
         surface.addSubview(localShareCard)
         surface.addSubview(layoutControls); surface.addSubview(participantStrip)
+        layoutControls.navigationOnly = true
+        surface.addSubview(accessControls)
         sourcePicker.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         layoutControls.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         compactHeader.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
@@ -1145,11 +1176,20 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel).height)
         let statusOnly = focus.hidden && headerStatus.announcingPrivacy
         let geometry = CallPresentationGeometry(bounds: surface.bounds, insets: window.safeAreaInsets,
-            headerHeight: headerHeight, toolbarHeight: toolbar.preferredHeight, hidden: focus.hidden, largeText: large, statusOnly: statusOnly, floating: true)
+            headerHeight: headerHeight, toolbarHeight: toolbar.preferredHeight, hidden: false, largeText: large, statusOnly: statusOnly, floating: true)
         toolbar.arrange(rail: geometry.rail, largeText: large)
         automaticView.configuration?.title = large ? nil : L("Auto")
         automaticView.configuration?.image = large ? UIImage(systemName: "arrow.triangle.2.circlepath") : nil
-        header.frame = geometry.header; toolbar.frame = geometry.toolbar
+        let accessWidth = geometry.rail ? geometry.stage.width : geometry.toolbar.width
+        let access = MeetingAccessGeometry(base: geometry, bounds: surface.bounds, insets: window.safeAreaInsets,
+            accessSize: accessControls.fittingSize(availableWidth: accessWidth), largeText: large)
+        header.frame = geometry.header; toolbar.frame = access.toolbar
+        toolbar.separatesLast = access.inline
+        toolbar.inlineAccessWidth = access.inline ? access.access.width + 8 : 0
+        accessControls.frame = access.access; accessControls.isHidden = focus.hidden
+        accessControls.update(MeetingViewState(layout: layoutMode, display: displayMode,
+            manualFocus: stagePinned || lastPresentation?.browsing == true,
+            effectiveLayout: gridVisible ? .grid : .speaker, galleryAvailable: galleryCount > 1 && !isWaitingForOthers))
         header.isHidden = focus.hidden || geometry.compactHeader; toolbar.isHidden = focus.hidden
         compactHeader.frame = geometry.header
         compactHeader.isHidden = (focus.hidden && !statusOnly) || !geometry.compactHeader
@@ -1175,9 +1215,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             identity.accessibilityHint = L("Meeting details")
         }
         navigation.isHidden = true
-        var stage = geometry.stage
+        var stage = access.stage
         let layoutAvailable = displayMode != .audioOnly && !isWaitingForOthers && galleryCount > 1
-        layoutControls.isHidden = !layoutAvailable || focus.hidden || (stageIsShare && !gridVisible)
+        layoutControls.isHidden = !layoutAvailable || focus.hidden || !gridVisible || (galleryView.pagination?.pageCount ?? 1) <= 1
         let layoutFrame = CGRect(x: stage.minX + 4, y: stage.maxY - 46, width: min(288, max(0, stage.width - 8)), height: 44)
         if !layoutControls.isHidden {
             layoutControls.frame = layoutFrame
@@ -1195,27 +1235,22 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             }
         }
         refreshLayoutControls()
-        compactHeader.setLayout(mode: gridVisible ? .grid : .speaker, available: layoutAvailable && !statusOnly,
-            choose: { [weak self] in self?.chooseLayout($0) },
-            followSpeaker: { [weak self] in
-                self?.layoutMode = .speaker; self?.explicitLayout = true
-                self?.onAutomaticView?(); self?.layoutPresentation()
-            })
+        compactHeader.setLayout(mode: gridVisible ? .grid : .speaker, available: false, choose: { _ in })
         updateDisplayBackdrops()
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop] { backdrop.frame = stage }
         stageView.frame = surface.bounds
         stageViewport?.fittedContentRect = stageIsShare ? surface.bounds : stage
         if gridVisible {
-            galleryView.frame = geometry.stage.inset(by: UIEdgeInsets(top: 0, left: 0, bottom: layoutAvailable ? 54 : 0, right: 0))
+            galleryView.frame = access.stage.inset(by: UIEdgeInsets(top: 0, left: 0, bottom: layoutControls.isHidden ? 0 : 54, right: 0))
         }
         sourcePicker.isHidden = !stageIsShare || !showsStage || galleryItems.filter { $0.id.isShare }.count <= 1 || focus.hidden
-        sourcePicker.frame = CGRect(x: geometry.stage.minX + 4, y: geometry.stage.maxY - 46,
-            width: min(240, max(0, geometry.stage.width - 160)), height: 44)
+        sourcePicker.frame = CGRect(x: access.stage.minX + 4, y: max(access.stage.minY, access.stage.maxY - 46),
+            width: min(240, max(0, access.stage.width - 160)), height: 44)
         sourcePickerSurface.frame = sourcePicker.bounds
         galleryView.setActive(gridVisible)
         shareOffer.frame = CGRect(x: stage.minX + 56, y: stage.minY + 8,
             width: max(0, stage.width - 112), height: 44)
-        for control in [header, toolbar, layoutControls, participantStrip, sourcePicker, shareOffer, focusButton, navigation, compactHeader, localShareCard] { surface.bringSubviewToFront(control) }
+        for control in [header, toolbar, accessControls, layoutControls, participantStrip, sourcePicker, shareOffer, focusButton, navigation, compactHeader, localShareCard] { surface.bringSubviewToFront(control) }
         if let reactionOverlay { surface.bringSubviewToFront(reactionOverlay) }
         reactionOverlay?.frame = surface.bounds
         if let overlay = reactionOverlay as? ReceivedReactionOverlay {
@@ -1248,24 +1283,6 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
     private func configureMoreMenu(coordinator: JazzActiveConferenceCoordinator?,
                                    onChange: @escaping (ConferenceDisplayMode) -> Void) {
-        let layout = UIMenu(title: L("Layout"), options: .displayInline, children: MeetingLayoutMode.allCases.map { mode in
-            UIAction(title: mode.title, image: UIImage(systemName: mode.symbol), state: mode == layoutMode ? .on : .off) { [weak self] _ in
-                guard let self else { return }
-                self.chooseLayout(mode)
-                self.configureMoreMenu(coordinator: coordinator, onChange: onChange)
-                self.updateDisplayBackdrops(); self.layoutPresentation()
-            }
-        })
-        let viewMenu = UIMenu(title: L("Incoming media"), identifier: UIMenu.Identifier("call.view-mode"), options: .displayInline, children: ConferenceDisplayMode.allCases.map { option in
-            UIAction(title: option.title, image: UIImage(systemName: option.symbol),
-                     state: option == displayMode ? .on : .off) { [weak self] _ in
-                guard let self else { return }
-                self.displayMode = option
-                self.updateDisplayBackdrops()
-                self.configureMoreMenu(coordinator: coordinator, onChange: onChange)
-                onChange(option)
-            }
-        })
         let flip = UIAction(title: L("Flip camera"), image: UIImage(systemName: "camera.rotate"),
                             attributes: studio?.canFlipCamera == true ? [] : [.hidden]) { [weak studio] _ in studio?.flipCamera() }
         let fit = UIAction(title: L("Fit shared screen"),
@@ -1336,7 +1353,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         #if DEBUG
         meeting = fixtureActions + meeting
         #endif
-        let viewActions: [UIMenuElement] = [layout, viewMenu,
+        let viewActions: [UIMenuElement] = [
             UIMenu(title: L("Control visibility"), options: .displayInline, children: [focusAction, autoHide]),
             UIMenu(title: L("Screen sharing"), options: .displayInline, children: [fit, followSpeaker]),
             UIMenu(title: L("Floating video"), options: .displayInline, children: [float, automatic])]

@@ -65,6 +65,7 @@ final class ParticipantIdentityView: UIView {
 
 /// The same visible layout and page controls are used by every media engine.
 final class MeetingLayoutControls: UIView {
+    var navigationOnly = false { didSet { picker.isHidden = navigationOnly; setNeedsLayout() } }
     let layout = UISegmentedControl(items: [L("Gallery"), L("Focus")])
     private let picker = MeetingMenuButton(type: .system)
     private let surface = MeetingChromeSurface(cornerRadius: 22)
@@ -155,6 +156,12 @@ final class MeetingLayoutControls: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         surface.frame = bounds
+        if navigationOnly {
+            previous.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
+            nextPage.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: 44)
+            position.frame = CGRect(x: 44, y: 0, width: max(0, bounds.width - 88), height: 44)
+            return
+        }
         let width = previous.isHidden ? bounds.width : min(132, max(88, bounds.width - 144))
         picker.frame = CGRect(x: 0, y: 0, width: width, height: 44)
         nextPage.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: 44)

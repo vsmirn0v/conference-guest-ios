@@ -845,3 +845,29 @@
 "Fit whole share" = "Показать весь экран";
 
 "Fill screen" = "Заполнить экран";
+
+"Shares only" = "Только экран";
+
+"View: %@" = "Вид: %@";
+
+"Choose layout and incoming video" = "Выбрать расположение и входящее видео";
+
+"Your layout is remembered while Audio only is selected." = "Расположение сохраняется, пока выбран режим «Только звук».";
+
+"Screen sharing only" = "Только демонстрация экрана";
+
+"Receive video" = "Входящее видео";
+
+"Changes your incoming video only." = "Меняется только входящее видео.";
+
+"Invite people" = "Пригласить участников";
+
+"Private preview and effects" = "Личная проверка и эффекты";
+
+"Screen, slides and camera" = "Экран, слайды и камера";
+
+"Link and sharing options" = "Ссылка и варианты отправки";
+
+"Information and meeting controls" = "Информация и управление встречей";
+
+"Gallery is available when more participants or screens are present." = "Галерея доступна, когда во встрече больше участников или экранов.";

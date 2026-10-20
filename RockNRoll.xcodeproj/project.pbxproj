@@ -116,6 +116,7 @@
 		4348F04B521CB67613009F69 /* JazzSDK in Frameworks */ = {isa = PBXBuildFile; productRef = 0B3F91314298394121DA8F1D /* JazzSDK */; };
 		4510D964728C36F5FE264FAE /* GuestIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC54A79FFF8952C055E7A7F7 /* GuestIdentity.swift */; };
 		4522FFD1FA7E282B005BB24D /* MeetingReactionsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70F2F10C1E78EAE9BE910FC2 /* MeetingReactionsModel.swift */; };
+		455505BFABD74D09BCA7116C /* MeetingAccessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FEF63DF50B4DB95CA1BD86E /* MeetingAccessTests.swift */; };
 		459BD79F3E24CA87ADA9F089 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF64302A8DFA2B622264D317 /* SceneDelegate.swift */; };
 		48EDBDC71ECEDC5C5D5DC15F /* MacCallActivityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2105118F321D73B68AE2C312 /* MacCallActivityTests.swift */; };
 		491249E6FBFEDA1AD2840F9A /* MeetingLayoutUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EB32C99B6E496CDF12C2830 /* MeetingLayoutUI.swift */; };
@@ -171,6 +172,7 @@
 		6B9F31717189E217A2D4C90D /* h264-color-signalling.json in Resources */ = {isa = PBXBuildFile; fileRef = 05BBE962B794CA6D9B47C606 /* h264-color-signalling.json */; };
 		6C45997A89ACC9D8F7D4ADD2 /* NativeCallAudioTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CFBCFA794819F9D59CC71F0 /* NativeCallAudioTests.swift */; };
 		6C528C5F955DEC7DB007B9AD /* GuestStudioPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E90ED19CB3026DE451DD213 /* GuestStudioPreview.swift */; };
+		6CF253E2DDDC49F062EA5D23 /* MeetingAccessUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19BF0392450BD2006D941153 /* MeetingAccessUITests.swift */; };
 		6D100AD96546AA80A8CB129E /* ActiveSpeakerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76CCA593AC98F64897D0D892 /* ActiveSpeakerTests.swift */; };
 		6D30B42F2A55BBBB1EF6225F /* MacMeetingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94414B67F00B3087BB60850A /* MacMeetingTests.swift */; };
 		6DAB9FC37F3E89692CE49C83 /* StudioCameraFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08841EF21263FF97C33C034C /* StudioCameraFixture.swift */; };
@@ -214,6 +216,7 @@
 		85330D0912AACC4DDB01486E /* VP9LiveMeasurementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CF4EB2262AE1AF1C91AE292 /* VP9LiveMeasurementTests.swift */; };
 		854816A56F9A823805D6270C /* GuestStreamSelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC9017A1D53B2ADECBD4A7AC /* GuestStreamSelectionTests.swift */; };
 		856E2D281F4C10FCEC81BF3C /* BroadcastLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2136DD137C2553FB698F710F /* BroadcastLifecycle.swift */; };
+		85B9ED510E8EE259D6FC8D74 /* MeetingAccessControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50ACB89C40D49C8B2417F98A /* MeetingAccessControls.swift */; };
 		85F19E196333A086D2BB5E7A /* MediaEnergyBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12C215D2AA424631377314EE /* MediaEnergyBudget.swift */; };
 		864D8CEB2EF1F12219F2AEC7 /* SceneDelegate+Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = C22ED977A6A00525FC0E8F35 /* SceneDelegate+Fixtures.swift */; };
 		86E6EE6B86ED978255A59478 /* PresenterCanvasEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08CD8AFDAE2DD223386B8D65 /* PresenterCanvasEditor.swift */; };
@@ -329,6 +332,7 @@
 		DCB9C347482577A35E60FBF7 /* CatchUpStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88EF3E7A0EEE19E9A9B3E857 /* CatchUpStore.swift */; };
 		DCF7A47C1E95326FAEE5A860 /* H264InputColorSignallingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B7AD2D01EA5113094322619 /* H264InputColorSignallingTests.swift */; };
 		DD76B7C3FFD74D6416883136 /* RoomSyncCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33040F702F0225D226CAF319 /* RoomSyncCoordinatorTests.swift */; };
+		DED6EC5596CCB2F77F57C400 /* OwnedWindowCaptureFixture.m in Sources */ = {isa = PBXBuildFile; fileRef = 5CBA24BD85A3461BE483A4EA /* OwnedWindowCaptureFixture.m */; };
 		DEEC202A2E066D2589B3A0E8 /* VideoPublicationHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3734DAEFE83487ACB199C21E /* VideoPublicationHealth.swift */; };
 		DF11840F64A5219F131DB9AB /* MacScreenCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C431195AC30436736EB33ACE /* MacScreenCaptureTests.swift */; };
 		DF33C17DCDE4748646025538 /* NativeCallAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CB3DC8CBFE3831F8BF6F3BE /* NativeCallAudio.swift */; };
@@ -385,7 +389,6 @@
 		FE21699C05E6734D5BBA7553 /* MacMeetingLiveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4AC84D98F30630EE14FA23C /* MacMeetingLiveTests.swift */; };
 		FF1446733C5323E128CA61CA /* GuestWebSocketTap.m in Sources */ = {isa = PBXBuildFile; fileRef = 68DEF6B8B1414FDFE79EFB70 /* GuestWebSocketTap.m */; };
 		FF3E800C2CDA0B6EBD9EF3E2 /* SampleBufferImageRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95635E9D486B37EDF5A04411 /* SampleBufferImageRenderer.swift */; };
-		B95CFE102BF340D1B622A101 /* OwnedWindowCaptureFixture.m in Sources */ = {isa = PBXBuildFile; fileRef = B95CFE102BF340D1B622A102 /* OwnedWindowCaptureFixture.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -475,6 +478,7 @@
 		170C8543C40BE24465CEA135 /* PresenterUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterUITests.swift; sourceTree = "<group>"; };
 		1741E6D891EBA9FB108E4AE0 /* GuestCallLayoutFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestCallLayoutFixture.swift; sourceTree = "<group>"; };
 		17A0929629A0678EF0B00990 /* BridgingHeader.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = BridgingHeader.h; sourceTree = "<group>"; };
+		19BF0392450BD2006D941153 /* MeetingAccessUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingAccessUITests.swift; sourceTree = "<group>"; };
 		1A4D6E3541BB8DE1BF8A5762 /* PresenterCanvasEdit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterCanvasEdit.swift; sourceTree = "<group>"; };
 		1A5345E4BCE3205566821E30 /* NativeScreenSender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeScreenSender.swift; sourceTree = "<group>"; };
 		1B9ECF9F921A9F6DA982577C /* StudioUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioUITests.swift; sourceTree = "<group>"; };
@@ -516,6 +520,7 @@
 		2C5C7EE579F37BACDF9E7710 /* VendorEndpointResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VendorEndpointResolver.swift; sourceTree = "<group>"; };
 		2E6B97EB6CB2C3AD85CFDFBB /* PresenterModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterModel.swift; sourceTree = "<group>"; };
 		2EBD5B5CF327FC6506710905 /* AppleCalendarReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleCalendarReader.swift; sourceTree = "<group>"; };
+		2FEF63DF50B4DB95CA1BD86E /* MeetingAccessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingAccessTests.swift; sourceTree = "<group>"; };
 		309E63B34934422ED1649102 /* TelemostChatWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemostChatWire.swift; sourceTree = "<group>"; };
 		33040F702F0225D226CAF319 /* RoomSyncCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncCoordinatorTests.swift; sourceTree = "<group>"; };
 		3396CF5A570AAC1EABCB466D /* CallTileContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallTileContainer.swift; sourceTree = "<group>"; };
@@ -571,6 +576,7 @@
 		4E177269CF747C9FD3B7987C /* StudioWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioWorkflowTests.swift; sourceTree = "<group>"; };
 		4E1EF35CB2CC3F314FDBB804 /* CameraUplinkEvidenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraUplinkEvidenceTests.swift; sourceTree = "<group>"; };
 		4FFCA5602816073CDAEE4132 /* RoomSyncLiveProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomSyncLiveProbe.swift; sourceTree = "<group>"; };
+		50ACB89C40D49C8B2417F98A /* MeetingAccessControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingAccessControls.swift; sourceTree = "<group>"; };
 		5127962F2CBE03E63CBB7923 /* MicrophoneActivityUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneActivityUITests.swift; sourceTree = "<group>"; };
 		52EBCE444018DE2553B34CA7 /* MeetingServiceProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingServiceProbe.swift; sourceTree = "<group>"; };
 		53C17A8C556D501D2A2D9205 /* TelemostChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemostChat.swift; sourceTree = "<group>"; };
@@ -589,6 +595,7 @@
 		5B653B040BAC24FB00F892D0 /* ChatStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatStore.swift; sourceTree = "<group>"; };
 		5C25649F074191A643400907 /* GuestVP9HardwareDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestVP9HardwareDecoder.swift; sourceTree = "<group>"; };
 		5C847D46F8727FA32DDDE23A /* PerformanceStripBaseline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerformanceStripBaseline.swift; sourceTree = "<group>"; };
+		5CBA24BD85A3461BE483A4EA /* OwnedWindowCaptureFixture.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = OwnedWindowCaptureFixture.m; sourceTree = "<group>"; };
 		5CF47C316471FC2C3B80B1B0 /* TelemostTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemostTransport.swift; sourceTree = "<group>"; };
 		5CFBCFA794819F9D59CC71F0 /* NativeCallAudioTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCallAudioTests.swift; sourceTree = "<group>"; };
 		5CFE89ACD94BAAE54053186F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -724,6 +731,7 @@
 		B756DA6C961B8D0289A606EE /* GuestScreenCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestScreenCapture.swift; sourceTree = "<group>"; };
 		B809BB80707B957EA275127D /* PresenterEngineLiveTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PresenterEngineLiveTests.swift; sourceTree = "<group>"; };
 		B8CD56A3FCF389EEAC237654 /* MeetingActionsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingActionsPanel.swift; sourceTree = "<group>"; };
+		B8DC6FAEB147876E97C4FC45 /* OwnedWindowCaptureFixture.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = OwnedWindowCaptureFixture.h; sourceTree = "<group>"; };
 		B9308FFA1A1D0FF47F8DFAB4 /* ControlChromeIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ControlChromeIntegrationTests.swift; sourceTree = "<group>"; };
 		B9CD858D9C42BF13EBDB3F9C /* AdditionalRootTrust.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdditionalRootTrust.swift; sourceTree = "<group>"; };
 		BA0A49CF55FD4B1E8AB5546E /* GuestAudioSessionPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestAudioSessionPolicyTests.swift; sourceTree = "<group>"; };
@@ -821,8 +829,6 @@
 		FE377E3F013CC98891447FFA /* StudioAudioPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StudioAudioPolicy.swift; sourceTree = "<group>"; };
 		FE3CCAD5DAEC3B948515641C /* BroadcastLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BroadcastLifecycleTests.swift; sourceTree = "<group>"; };
 		FE7E7ABE77FAC05896773221 /* GuestColorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuestColorUITests.swift; sourceTree = "<group>"; };
-		B95CFE102BF340D1B622A102 /* OwnedWindowCaptureFixture.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = OwnedWindowCaptureFixture.m; sourceTree = "<group>"; };
-		B95CFE102BF340D1B622A103 /* OwnedWindowCaptureFixture.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = OwnedWindowCaptureFixture.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -1101,6 +1107,7 @@
 				7908F826BB87EAA540B4F7D3 /* MacScreenCaptureBridge.h */,
 				6E0CD67783CA1B4BECC333E6 /* MacScreenCaptureBridge.m */,
 				12C215D2AA424631377314EE /* MediaEnergyBudget.swift */,
+				50ACB89C40D49C8B2417F98A /* MeetingAccessControls.swift */,
 				B8CD56A3FCF389EEAC237654 /* MeetingActionsPanel.swift */,
 				76BB1295740CB6DDF22128C7 /* MeetingChromeSurface.swift */,
 				D353B40533B1DDB10C100095 /* MeetingContainerViewController.swift */,
@@ -1245,8 +1252,6 @@
 		DA4E1195A6EAE225E8C05321 /* RockNRollTests */ = {
 			isa = PBXGroup;
 			children = (
-				B95CFE102BF340D1B622A102 /* OwnedWindowCaptureFixture.m */,
-				B95CFE102BF340D1B622A103 /* OwnedWindowCaptureFixture.h */,
 				76CCA593AC98F64897D0D892 /* ActiveSpeakerTests.swift */,
 				48C7D263FA5D790DAD2BFAD3 /* ApplicationMicrophoneMuteTests.swift */,
 				019359A3106165FAECA43BED /* AudioAcquisitionTests.swift */,
@@ -1291,6 +1296,7 @@
 				94414B67F00B3087BB60850A /* MacMeetingTests.swift */,
 				C431195AC30436736EB33ACE /* MacScreenCaptureTests.swift */,
 				8C28DB8E6F73735636A2365C /* MediaEnergyTests.swift */,
+				2FEF63DF50B4DB95CA1BD86E /* MeetingAccessTests.swift */,
 				1C23C1B2AAAA270F064932F8 /* MeetingActionsTests.swift */,
 				A8E0092E23FC474C21337AD6 /* MeetingChromeProfileTests.swift */,
 				ECC280B2FC6D3D46100D4670 /* MeetingChromeSurfaceTests.swift */,
@@ -1308,6 +1314,8 @@
 				86A4407E202F9667E3FAD11D /* OutgoingMediaExperimentTests.swift */,
 				8EE31B7E83BA253BE1AD08B4 /* OutgoingMediaLiveTests.swift */,
 				7A1D43E1E5944ECC6CEC7179 /* OutgoingVideoCadenceTests.swift */,
+				B8DC6FAEB147876E97C4FC45 /* OwnedWindowCaptureFixture.h */,
+				5CBA24BD85A3461BE483A4EA /* OwnedWindowCaptureFixture.m */,
 				231CDF08E0E1C80D24F69C9E /* PerformanceEvaluationTests.swift */,
 				5C847D46F8727FA32DDDE23A /* PerformanceStripBaseline.swift */,
 				BB369290564963B920E5DB8A /* PresenterCanvasTests.swift */,
@@ -1373,6 +1381,7 @@
 				014F1BB5CA2AB0F777D109C3 /* LocalizationUITests.swift */,
 				D6054155B3110878C5C33029 /* MacAudioDeviceUITests.swift */,
 				A1AD2EC5120D62DAFB52BA47 /* MediaServicesResetUITests.swift */,
+				19BF0392450BD2006D941153 /* MeetingAccessUITests.swift */,
 				A54A60C9AC3CB1C954536BF5 /* MeetingContinuationUITests.swift */,
 				DF8CA355C2EBA95F4DF79266 /* MeetingNavigationTestSupport.swift */,
 				4CA55617AFA3B22DCC659978 /* MeetingPresentationUITests.swift */,
@@ -1780,6 +1789,7 @@
 				4BDE584A462623C09CDF9E14 /* MacMeetingWindowBridge.m in Sources */,
 				2E5B1E313F2AC28995AF4D97 /* MacScreenCaptureBridge.m in Sources */,
 				85F19E196333A086D2BB5E7A /* MediaEnergyBudget.swift in Sources */,
+				85B9ED510E8EE259D6FC8D74 /* MeetingAccessControls.swift in Sources */,
 				1A7BA73BF660F9BA8EB59A12 /* MeetingActionsPanel.swift in Sources */,
 				BADB0A098E171808D274F4EE /* MeetingChromeSurface.swift in Sources */,
 				66141605982773EDD3BD3F08 /* MeetingContainerViewController.swift in Sources */,
@@ -1909,6 +1919,7 @@
 				07DC662E323F7A0BEF5ABD97 /* LocalizationUITests.swift in Sources */,
 				328C37B40535A23BCCF8F29C /* MacAudioDeviceUITests.swift in Sources */,
 				F41BF646598058BC358A45D0 /* MediaServicesResetUITests.swift in Sources */,
+				6CF253E2DDDC49F062EA5D23 /* MeetingAccessUITests.swift in Sources */,
 				EF1B7F865B1FD6B946C4D13D /* MeetingContinuationUITests.swift in Sources */,
 				8BC00EA761753E1A74F111EB /* MeetingNavigationTestSupport.swift in Sources */,
 				CA715F9D35BBBB15E40B2B3C /* MeetingPresentationUITests.swift in Sources */,
@@ -2001,8 +2012,8 @@
 				FE21699C05E6734D5BBA7553 /* MacMeetingLiveTests.swift in Sources */,
 				6D30B42F2A55BBBB1EF6225F /* MacMeetingTests.swift in Sources */,
 				DF11840F64A5219F131DB9AB /* MacScreenCaptureTests.swift in Sources */,
-				B95CFE102BF340D1B622A101 /* OwnedWindowCaptureFixture.m in Sources */,
 				CC018DC021BBCBB6D0FB742C /* MediaEnergyTests.swift in Sources */,
+				455505BFABD74D09BCA7116C /* MeetingAccessTests.swift in Sources */,
 				CFE902B2CA9F50840A8AE214 /* MeetingActionsTests.swift in Sources */,
 				60A74F51C712997E50F6F5CF /* MeetingChromeProfileTests.swift in Sources */,
 				143FDE522F29CA2E122957C7 /* MeetingChromeSurfaceTests.swift in Sources */,
@@ -2022,6 +2033,7 @@
 				E6D3FD1ABE16896F34EB1C5B /* OutgoingMediaExperimentTests.swift in Sources */,
 				1757927E6A4BAF69164DAF70 /* OutgoingMediaLiveTests.swift in Sources */,
 				F50F4BA6B4D65365D8D2D567 /* OutgoingVideoCadenceTests.swift in Sources */,
+				DED6EC5596CCB2F77F57C400 /* OwnedWindowCaptureFixture.m in Sources */,
 				B39210BA346F0B0C14C2187F /* ParticipantMediaBadgeTests.swift in Sources */,
 				AF9F8418B6B2AEDA58CC050A /* PerformanceEvaluationTests.swift in Sources */,
 				0BB163C4DC0240AAE5D74B02 /* PerformanceStripBaseline.swift in Sources */,
@@ -2151,8 +2163,8 @@
 					"@loader_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.conferenceguest.tests;
-				SWIFT_OBJC_BRIDGING_HEADER = RockNRollTests/OwnedWindowCaptureFixture.h;
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = RockNRollTests/OwnedWindowCaptureFixture.h;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/RockNRoll.app/RockNRoll";
@@ -2193,8 +2205,8 @@
 					"@loader_path/Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.vsmirn0v.conferenceguest.tests;
-				SWIFT_OBJC_BRIDGING_HEADER = RockNRollTests/OwnedWindowCaptureFixture.h;
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = RockNRollTests/OwnedWindowCaptureFixture.h;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/RockNRoll.app/RockNRoll";

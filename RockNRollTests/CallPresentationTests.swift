@@ -339,8 +339,8 @@ final class CallPresentationTests: XCTestCase {
         window.layoutIfNeeded()
         let share = GuestStreamViews.PinTarget(participant: "person-0", isShare: true)
         let gallery = try XCTUnwrap(descendants(window).compactMap { $0 as? GuestGalleryView }.first)
-        let picker = try XCTUnwrap(descendants(layout).compactMap { $0 as? UIButton }.first {
-            $0.accessibilityIdentifier == "Meeting view picker"
+        let picker = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "call.view"
         })
         let source = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first {
             $0.accessibilityIdentifier == "Shared stream selector"
@@ -436,6 +436,28 @@ final class CallPresentationTests: XCTestCase {
         let controls: CallControls
         func makeUIView(context: Context) -> CallControls { controls }
         func updateUIView(_ uiView: CallControls, context: Context) {}
+    }
+
+    func testGuestMultipleShareSelectorDoesNotCoverDirectViewOrMore() async throws {
+        let (window, controls, streams, _) = try guestLayout()
+        defer { window.isHidden = true; streams.reset() }
+        let roster = (0..<2).map { GuestStreamViews.Participant(id: "share-\($0)", name: "Presenter \($0)",
+            isLocal: false, microphoneOn: false, cameraOn: false, sharing: true) }
+        controls.updateParticipantRoster(roster, speaking: nil); streams.updateParticipants(roster)
+        await settleUI(); window.layoutIfNeeded()
+        let selector = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first {
+            $0.accessibilityIdentifier == "Shared stream selector"
+        })
+        let capsule = try XCTUnwrap(descendants(window).compactMap { $0 as? MeetingAccessControls }.first)
+        XCTAssertFalse(selector.isHidden)
+        let sourceRect = selector.convert(selector.bounds, to: window)
+        XCTAssertFalse(sourceRect.intersects(capsule.convert(capsule.bounds, to: window)))
+        for button in [selector, capsule.viewButton, capsule.moreButton] {
+            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
+            let hit = window.hitTest(point, with: nil)
+            XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true,
+                "Multiple-share controls must not cover \(button.accessibilityIdentifier ?? "button")")
+        }
     }
 
     private func guestLayout(ownedSurface: Bool = false) throws -> (UIWindow, CallControls, GuestStreamViews, MeetingLayoutControls) {

@@ -977,6 +977,7 @@ final class NativeConferenceEngine: CallEngine {
         endCodecPolicy()
         resetPiPMicrophoneObservation()
         endFloatingVideoSession()
+        activeControls?.retireMeetingPanels()
         activeControls?.isHidden = true
         pendingRoom = nil
         let epoch = sessionEpoch
@@ -1925,6 +1926,7 @@ final class NativeConferenceEngine: CallEngine {
         audioRecoveryTask?.cancel(); audioRecoveryTask = nil
         networkRecoveryTask?.cancel(); networkRecoveryTask = nil
         pendingRoom = nil
+        activeControls?.retireMeetingPanels()
         activeControls?.isHidden = true
         finishing = Task { @MainActor [weak self] in
             guard let self, self.sessionEpoch == epoch else { return }

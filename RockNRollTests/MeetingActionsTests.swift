@@ -37,7 +37,7 @@ final class MeetingActionsTests: XCTestCase {
         }
         let menu = MeetingActionGroup.make(cameraSound: [active], sharePresenter: [unsupported], view: [], invite: [], meeting: [])
         let groups = try menu.children.map { try XCTUnwrap($0 as? UIMenu) }
-        XCTAssertEqual(groups.map(\.identifier), [MeetingActionGroup.cameraSound, .sharePresenter, .view, .invite, .meeting].map(\.identifier))
+        XCTAssertEqual(groups.map(\.identifier), [MeetingActionGroup.cameraSound, .sharePresenter, .invite, .meeting].map(\.identifier))
         let preserved = try XCTUnwrap(groups[0].children.first as? UIAction)
         XCTAssertEqual(preserved.identifier, active.identifier)
         XCTAssertEqual(preserved.state, .on)
