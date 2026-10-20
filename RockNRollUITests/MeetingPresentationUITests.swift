@@ -92,7 +92,9 @@ final class MeetingPresentationUITests: XCTestCase {
         let gallery = app.scrollViews["Meeting grid"]
         XCTAssertTrue(gallery.waitForExistence(timeout: 10))
         let tile = app.otherElements["gallery.person-1.camera"]
-        XCTAssertTrue(tile.isHittable); tile.tap()
+        XCTAssertTrue(tile.isHittable)
+        assertGalleryMenuDismissal(app, tile: tile)
+        tile.tap()
         assertLayout(app, "Focus")
         XCTAssertTrue(app.buttons["Meeting details"].label.contains("Полина"))
         XCTAssertTrue(app.scrollViews["Focus participants"].exists)
@@ -127,7 +129,9 @@ final class MeetingPresentationUITests: XCTestCase {
         app.launch()
         defer { app.terminate() }
         let tile = app.otherElements["camera-off.person-1"]
-        XCTAssertTrue(tile.waitForExistence(timeout: 10)); XCTAssertTrue(tile.isHittable); tile.tap()
+        XCTAssertTrue(tile.waitForExistence(timeout: 10)); XCTAssertTrue(tile.isHittable)
+        assertGalleryMenuDismissal(app, tile: tile)
+        tile.tap()
         assertLayout(app, "Focus")
         XCTAssertEqual(app.staticTexts.matching(identifier: "Participant name").firstMatch.label, "Полина")
         app.openMeetingMore(.meeting); app.meetingActionButton("Change speaking participant").tap()
@@ -164,7 +168,8 @@ final class MeetingPresentationUITests: XCTestCase {
     func testGuestShareShortcutFocusesShareAfterReturningToGallery() {
         let app = launch(scenario: "gallery-share")
         defer { app.terminate() }
-        XCTAssertTrue(app.buttons["Shared stream selector"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.scrollViews["Shared screen viewport"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["Shared stream selector"].isHittable)
         selectLayout(app, "Gallery")
         app.otherElements["gallery.camera.camera"].tap()
         assertLayout(app, "Focus")
@@ -174,6 +179,19 @@ final class MeetingPresentationUITests: XCTestCase {
         share.tap()
         assertLayout(app, "Focus")
         assertHeaderAction(app, "Unpin Ani’s arrangement screen share")
+    }
+    private func assertGalleryMenuDismissal(_ app: XCUIApplication, tile: XCUIElement,
+                                            file: StaticString = #filePath, line: UInt = #line) {
+        let picker = app.buttons["Meeting view picker"]
+        guard waitForHittable(picker, file: file, line: line) else { return }
+        picker.tap()
+        let menuItem = app.buttons.matching(NSPredicate(format: "label == 'Focus'")).firstMatch
+        XCTAssertTrue(menuItem.waitForExistence(timeout: 5), file: file, line: line)
+        tile.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.75)).tap()
+        let dismissed = NSPredicate { _, _ in !menuItem.exists }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: dismissed, object: nil)], timeout: 5), .completed, file: file, line: line)
+        assertLayout(app, "Gallery", file: file, line: line)
+        XCTAssertTrue(app.buttons["Meeting details"].isHittable, file: file, line: line)
     }
     private func selectLayout(_ app: XCUIApplication, _ title: String) {
         let picker = app.buttons["Meeting view picker"]
@@ -199,21 +217,31 @@ final class MeetingPresentationUITests: XCTestCase {
             }
             let grid = app.scrollViews["Meeting grid"]
             let guestSource = app.buttons["Shared stream selector"], nativeSource = app.buttons["Meeting source selector"]
+            let share = app.scrollViews["Shared screen viewport"]
             return label == "Focus" && !(grid.exists && grid.isHittable) &&
-                ((guestSource.exists && guestSource.isHittable) || (nativeSource.exists && nativeSource.isHittable))
+                ((share.exists && share.isHittable) || (guestSource.exists && guestSource.isHittable) || (nativeSource.exists && nativeSource.isHittable))
         }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 5), .completed, file: file, line: line)
     }
     private func headerAction(_ app: XCUIApplication, _ label: String,
-                              file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+                              file: StaticString = #filePath, line: UInt = #line) -> (button: XCUIElement, openedMenu: Bool) {
         let action = app.buttons[label]
+        var openedMenu = false
         if !action.exists || !action.isHittable {
             let overflow = app.buttons["More meeting controls"]
-            guard waitForHittable(overflow, file: file, line: line) else { return action }
-            overflow.tap()
+            let ready = NSPredicate { _, _ in
+                (action.exists && action.isHittable) || (overflow.exists && overflow.isHittable)
+            }
+            let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 5)
+            XCTAssertEqual(result, .completed, "The header action or its overflow must become hittable", file: file, line: line)
+            guard result == .completed else { return (action, false) }
+            if !action.exists || !action.isHittable {
+                overflow.tap()
+                openedMenu = true
+            }
         }
         _ = waitForHittable(action, file: file, line: line)
-        return action
+        return (action, openedMenu)
     }
     @discardableResult
     private func waitForHittable(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) -> Bool {
@@ -221,28 +249,34 @@ final class MeetingPresentationUITests: XCTestCase {
             element.exists && element.isHittable
         }, object: nil)
         let result = XCTWaiter.wait(for: [ready], timeout: 5)
-        XCTAssertEqual(result, .completed, "\(element.identifier) must become hittable", file: file, line: line)
+        XCTAssertEqual(result, .completed, "The requested control must become hittable", file: file, line: line)
         return result == .completed
     }
     private func tapHeaderAction(_ app: XCUIApplication, _ label: String,
                                  file: StaticString = #filePath, line: UInt = #line) {
-        let action = headerAction(app, label, file: file, line: line)
+        let action = headerAction(app, label, file: file, line: line).button
         guard action.exists && action.isHittable else { return }
         XCTAssertTrue(action.isEnabled, label, file: file, line: line)
         action.tap()
     }
     private func assertHeaderAction(_ app: XCUIApplication, _ label: String,
                                     file: StaticString = #filePath, line: UInt = #line) {
-        let direct = app.buttons[label].exists && app.buttons[label].isHittable
-        let action = headerAction(app, label, file: file, line: line)
-        guard action.exists && action.isHittable else { return }
-        XCTAssertTrue(action.isEnabled, label, file: file, line: line)
-        if !direct {
-            // UIKit consumes this outside touch when dismissing the system menu.
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
-            let dismissed = NSPredicate { _, _ in !action.exists || !action.isHittable }
-            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: dismissed, object: nil)], timeout: 3), .completed, file: file, line: line)
+        let resolved = headerAction(app, label, file: file, line: line)
+        let action = resolved.button
+        defer {
+            if resolved.openedMenu {
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+                let dismissed = NSPredicate { _, _ in !action.exists || !action.isHittable }
+                XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: dismissed, object: nil)], timeout: 3), .completed, file: file, line: line)
+            }
         }
+        guard action.exists && action.isHittable else {
+            print("Unresolved header action: \(label)\n\(app.debugDescription)")
+            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            shot.name = "Unresolved header action"; shot.lifetime = .keepAlways; add(shot)
+            return
+        }
+        XCTAssertTrue(action.isEnabled, label, file: file, line: line)
     }
     func testGridShowsAllParticipantsAndSwitchesToSpeakerAfterRotation() {
         let app = launch(scenario: "gallery")
@@ -375,7 +409,8 @@ final class MeetingPresentationUITests: XCTestCase {
         XCTAssertTrue(viewport.waitForExistence(timeout: 10))
         Thread.sleep(forTimeInterval: 4)
         app.openMeetingMore(.meeting); app.meetingActionButton("Routine notice in focus").tap()
-        app.buttons["Hide controls"].tap()
+        viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)).tap()
+        waitForHiddenControls(app)
         Thread.sleep(forTimeInterval: 4)
         XCTAssertFalse(app.buttons["Leave"].exists)
         XCTAssertFalse(app.otherElements["Compact meeting header"].exists)
@@ -384,7 +419,8 @@ final class MeetingPresentationUITests: XCTestCase {
         viewport.pinch(withScale: 2, velocity: 1)
         let zoom = try XCTUnwrap(viewport.value as? String)
         app.openMeetingMore(.meeting); app.meetingActionButton("Recording in focus").tap()
-        app.buttons["Hide controls"].tap()
+        viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)).tap()
+        waitForHiddenControls(app)
         let header = app.otherElements["Compact meeting header"]
         XCTAssertTrue(header.waitForExistence(timeout: 5))
         XCTAssertEqual(header.frame.height, 44)
@@ -570,7 +606,8 @@ final class MeetingPresentationUITests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [zoomed], timeout: 5), .completed)
             guard let zoom = rotatedViewport.value as? String else { return XCTFail("The pinch target must remain a zoomable share") }
             XCTAssertNotEqual(zoom, "100%")
-            gestureApp.buttons["Hide controls"].tap()
+            rotatedViewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)).tap()
+            waitForHiddenControls(gestureApp)
             rotatedViewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).tap()
             XCTAssertTrue(gestureApp.buttons["Leave"].waitForExistence(timeout: 3))
             XCTAssertEqual(rotatedViewport.value as? String, zoom)
@@ -591,7 +628,8 @@ final class MeetingPresentationUITests: XCTestCase {
         let viewport = app.scrollViews["Shared screen viewport"]
         XCTAssertTrue(viewport.waitForExistence(timeout: 10))
         XCTAssertEqual(viewport.value as? String, "100%")
-        app.buttons["Hide controls"].tap()
+        viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)).tap()
+        waitForHiddenControls(app)
         for orientation in [UIDeviceOrientation.portrait, .landscapeLeft, .landscapeRight] {
             XCUIDevice.shared.orientation = orientation
             let coversWindow = NSPredicate { _, _ in
@@ -653,7 +691,8 @@ final class MeetingPresentationUITests: XCTestCase {
         viewport.pinch(withScale: 2, velocity: 1)
         let zoom = try XCTUnwrap(viewport.value as? String)
         XCTAssertNotEqual(zoom, "100%")
-        app.buttons["Hide controls"].tap()
+        viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)).tap()
+        waitForHiddenControls(app)
         XCTAssertFalse(app.buttons["Leave"].exists)
         XCTAssertFalse(app.buttons["Show controls, Mic off"].exists)
         viewport.swipeLeft()
@@ -786,18 +825,28 @@ final class MeetingPresentationUITests: XCTestCase {
         }
     }
 
-    func testZoomToolsFadeAndMoreKeepsFitAvailable() throws {
+    private func waitForHiddenControls(_ app: XCUIApplication) {
+        let hidden = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !app.buttons["Leave"].exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 3), .completed)
+    }
+    func testScaleButtonTogglesFitFillAndMoreKeepsFitAvailable() throws {
         let app = launch()
+        defer { app.terminate() }
         let viewport = app.scrollViews["Shared screen viewport"]
         XCTAssertTrue(viewport.waitForExistence(timeout: 10))
-        viewport.pinch(withScale: 2, velocity: 1)
+        XCTAssertFalse(app.buttons["Shared stream selector"].isHittable, "A single share needs no duplicate source chip")
+        tapHeaderAction(app, "Fill screen")
+        let filled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (viewport.value as? String).map { $0 != "100%" } == true
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [filled], timeout: 5), .completed)
         let zoom = try XCTUnwrap(viewport.value as? String)
-        XCTAssertNotEqual(zoom, "100%")
-        let fit = app.buttons["Fit shared screen at 100%"]
-        XCTAssertTrue(fit.isHittable)
-        let faded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !fit.isHittable }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [faded], timeout: 6), .completed)
-        XCTAssertEqual(viewport.value as? String, zoom)
+        tapHeaderAction(app, "Fit whole share")
+        expectation(for: NSPredicate(format: "value == '100%'"), evaluatedWith: viewport)
+        waitForExpectations(timeout: 5)
+        tapHeaderAction(app, "Fill screen")
+        expectation(for: NSPredicate(format: "value == %@", zoom), evaluatedWith: viewport)
+        waitForExpectations(timeout: 5)
         app.openMeetingMore(.view)
         app.meetingActionButton("Fit shared screen").tap()
         expectation(for: NSPredicate(format: "value == '100%'"), evaluatedWith: viewport)

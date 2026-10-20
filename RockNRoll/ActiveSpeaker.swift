@@ -60,6 +60,7 @@ final class ActiveSpeakerIndicator: UIView {
     private let icon = UIImageView(image: UIImage(systemName: "waveform"))
     private let name = UILabel()
     private var displayed: CallSpeaker?
+    var contentInset: CGFloat = 7 { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
 
     init(font: UIFont) {
         super.init(frame: .zero)
@@ -87,11 +88,11 @@ final class ActiveSpeakerIndicator: UIView {
     }
 
     override var intrinsicContentSize: CGSize {
-        CGSize(width: ceil(name.intrinsicContentSize.width) + 33, height: 26)
+        CGSize(width: ceil(name.intrinsicContentSize.width) + 19 + contentInset * 2, height: 26)
     }
     override func layoutSubviews() {
         super.layoutSubviews()
-        icon.frame = CGRect(x: 7, y: (bounds.height - 14) / 2, width: 14, height: 14)
-        name.frame = CGRect(x: 26, y: 0, width: max(0, bounds.width - 33), height: bounds.height)
+        icon.frame = CGRect(x: contentInset, y: (bounds.height - 14) / 2, width: 14, height: 14)
+        name.frame = CGRect(x: contentInset + 19, y: 0, width: max(0, bounds.width - 19 - contentInset * 2), height: bounds.height)
     }
 }

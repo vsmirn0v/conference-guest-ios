@@ -121,6 +121,7 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
     var evidenceForTesting: [[String: Any]] { tiles.values.map(\.evidenceForTesting) }
 #endif
     var onPin: ((GuestStreamViews.PinTarget) -> Void)?
+    var canSelect: (() -> Bool)?
     var onInteraction: (() -> Void)?
     var onToggleControls: (() -> Void)?
     override init(frame: CGRect) {
@@ -147,7 +148,10 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
             if let tile = tiles[item.id] { tile.update(item, pin: pin) }
             else {
                 let tile = GuestGalleryTile(item: item, pin: pin)
-                tile.onSelect = pin
+                tile.onSelect = { [weak self] in
+                    guard self?.canSelect?() != false else { return }
+                    pin()
+                }
                 tiles[item.id] = tile; addSubview(tile)
             }
         }

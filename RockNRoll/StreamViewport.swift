@@ -24,17 +24,14 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     private let state: StreamViewportState
     private let owner = UUID()
     private var viewportSize = CGSize.zero
-    /// The image starts clear of controls, while gestures use the entire canvas.
+    /// Media fit is independent of the floating controls.
     var fittedContentRect: CGRect? { didSet { if oldValue != fittedContentRect { setNeedsLayout() } } }
     private var appliedFitRect = CGRect.zero
     private var restoring = false
     private var infoBottom: NSLayoutConstraint?
-    private var zoomBottom: NSLayoutConstraint?
-    private var zoomTrailing: NSLayoutConstraint?
     private var showsParticipantInfo = true
     private let pinButton = UIButton(type: .system)
-    private let zoomControls = UIStackView()
-    private lazy var zoomVisibility = TransientCallControls(view: zoomControls)
+    var onZoomChanged: (() -> Void)?
     private var pinAction: (() -> Void)?
     private var pinName = ""
     private var pinIsShare = false
@@ -47,11 +44,23 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     var controlsHidden = false { didSet {
         guard oldValue != controlsHidden else { return }
         updatePinVisibility()
-        zoomVisibility.setSuppressed(controlsHidden)
         participantInfo.alpha = controlsHidden ? 0 : 1
         updateFocusAccessibility()
     } }
     var zoomScale: CGFloat { scroll.zoomScale }
+    var fillScale: CGFloat? {
+        let size = correctedVideo?.displaySize ?? (video as? GuestSampleBufferView)?.displaySize ?? (video as? CallVideoView)?.displaySize ?? .zero
+        return SharedScreenScale.fill(content: size, viewport: appliedFitRect.size)
+    }
+    func toggleScale() {
+        guard scroll.maximumZoomScale > 1 else { return }
+        if scroll.zoomScale > 1.01 { scroll.setZoomScale(1, animated: true); return }
+        guard let scale = fillScale else { return }
+        scroll.maximumZoomScale = max(5, scale)
+        let size = CGSize(width: bounds.width / scale, height: bounds.height / scale)
+        scroll.zoom(to: CGRect(x: appliedFitRect.midX - size.width / 2, y: appliedFitRect.midY - size.height / 2,
+            width: size.width, height: size.height), animated: true)
+    }
     var onVisibilityChanged: (() -> Void)?
     var rendererView: UIView { video }
 
@@ -84,7 +93,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             addGestureRecognizer(swipe)
         }
         scroll.minimumZoomScale = 1
-        scroll.maximumZoomScale = zoomable ? 5 : 1
+        scroll.maximumZoomScale = zoomable ? max(5, state.scale, scroll.zoomScale, fillScale ?? 1) : 1
         scroll.contentInsetAdjustmentBehavior = .never
         scroll.showsHorizontalScrollIndicator = false
         scroll.showsVerticalScrollIndicator = false
@@ -118,37 +127,6 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             pinButton.widthAnchor.constraint(equalToConstant: 44),
             pinButton.heightAnchor.constraint(equalToConstant: 44)
         ])
-        if zoomable {
-            zoomControls.axis = .horizontal
-            zoomControls.spacing = 4
-            zoomControls.translatesAutoresizingMaskIntoConstraints = false
-            for (title, symbol, action) in [
-                (L("Zoom out"), "minus.magnifyingglass", -1),
-                (L("Fit shared screen at 100%"), "arrow.down.right.and.arrow.up.left", 0),
-                (L("Zoom in"), "plus.magnifyingglass", 1)
-            ] {
-                let button = UIButton(type: .system)
-                button.configuration = .tinted()
-                button.configuration?.image = UIImage(systemName: symbol)
-                button.accessibilityLabel = title
-                button.widthAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-                button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-                button.addAction(UIAction { [weak self] _ in
-                    guard let self else { return }
-                    let scale = action == 0 ? 1 : self.scroll.zoomScale * (action > 0 ? 1.5 : 1 / 1.5)
-                    self.scroll.setZoomScale(min(self.scroll.maximumZoomScale,
-                                                 max(self.scroll.minimumZoomScale, scale)), animated: true)
-                    self.zoomVisibility.activity()
-                }, for: .touchUpInside)
-                zoomControls.addArrangedSubview(button)
-            }
-            addSubview(zoomControls)
-            let trailing = zoomControls.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8)
-            let bottom = zoomControls.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
-            zoomTrailing = trailing; zoomBottom = bottom
-            NSLayoutConstraint.activate([trailing, bottom])
-            zoomVisibility.setAvailable(true)
-        }
         updatePin(name: name, isShare: false, pinned: pinned, onPin: onPin)
         mediaPlaceholder.text = placeholderText ?? name
         updateFocusAccessibility()
@@ -214,8 +192,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         mediaPlaceholder.text = placeholderText ?? name
         watermarkLabel.text = watermark
         watermarkLabel.isHidden = watermark == nil
-        scroll.maximumZoomScale = zoomable ? 5 : 1
-        zoomVisibility.setAvailable(zoomable)
+        scroll.maximumZoomScale = zoomable ? max(5, state.scale, scroll.zoomScale, fillScale ?? 1) : 1
         if scroll.zoomScale > scroll.maximumZoomScale {
             scroll.setZoomScale(scroll.maximumZoomScale, animated: false)
         }
@@ -245,13 +222,27 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     private func updateFocusAccessibility() {
         scroll.isAccessibilityElement = controlsHidden || scroll.maximumZoomScale > 1 || onSelect != nil
         if scroll.maximumZoomScale <= 1 { scroll.accessibilityLabel = onSelect != nil ? pinName : L("Meeting content") }
-        scroll.accessibilityCustomActions = controlsHidden ? [UIAccessibilityCustomAction(name: L("Show controls")) { [weak self] _ in
+        var actions: [UIAccessibilityCustomAction] = controlsHidden ? [UIAccessibilityCustomAction(name: L("Show controls")) { [weak self] _ in
             guard let self, self.controlsHidden else { return false }
             self.tappedStage()
             return true
-        }] : onSelect == nil ? nil : [UIAccessibilityCustomAction(name: L("Focus %@", pinName)) { [weak self] _ in
+        }] : onSelect == nil ? [] : [UIAccessibilityCustomAction(name: L("Focus %@", pinName)) { [weak self] _ in
             guard let self, let select = self.onSelect else { return false }; select(); return true
         }]
+        if scroll.maximumZoomScale > 1 {
+            actions += [UIAccessibilityCustomAction(name: L("Zoom in")) { [weak self] _ in self?.adjustZoom(1.5) ?? false },
+                UIAccessibilityCustomAction(name: L("Zoom out")) { [weak self] _ in self?.adjustZoom(1 / 1.5) ?? false },
+                UIAccessibilityCustomAction(name: L("Fit whole share")) { [weak self] _ in self?.scroll.setZoomScale(1, animated: true); return self != nil },
+                UIAccessibilityCustomAction(name: L("Fill screen")) { [weak self] _ in
+                    guard let self, self.fillScale != nil else { return false }
+                    self.scroll.setZoomScale(1, animated: false); self.toggleScale(); return true
+                }]
+        }
+        scroll.accessibilityCustomActions = actions.isEmpty ? nil : actions
+    }
+    private func adjustZoom(_ factor: CGFloat) -> Bool {
+        scroll.setZoomScale(min(scroll.maximumZoomScale, max(1, scroll.zoomScale * factor)), animated: true)
+        return true
     }
 
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
@@ -285,7 +276,6 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         if let onSelect { onSelect() }
         else if let onToggleControls { onToggleControls() }
         else { CallStageLayout.record(for: window)?.toggleControls() }
-        if !controlsHidden { zoomVisibility.activity() }
     }
     @objc private func doubleTappedStage() {
         guard scroll.maximumZoomScale > 1 else { return }
@@ -332,6 +322,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             overlay.isUserInteractionEnabled = false
             overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             content.addSubview(overlay)
+            overlay.onDisplaySizeChanged = { [weak self] in self?.onZoomChanged?() }
             correctedVideo = overlay
         }
         guard let correctedVideo else { return }
@@ -349,6 +340,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             overlay.isHidden = true; overlay.isUserInteractionEnabled = false
             overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             content.addSubview(overlay); correctedVideo = overlay
+            overlay.onDisplaySizeChanged = { [weak self] in self?.onZoomChanged?() }
         }
         guard let overlay = correctedVideo else { return nil }
         overlay.mirrored = isCameraMirrored; overlay.frame = appliedFitRect.isEmpty ? content.bounds : appliedFitRect
@@ -391,20 +383,14 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         super.layoutSubviews()
         identity.frame = bounds
         var infoOffset: CGFloat = -8
-        var zoomOffset: CGFloat = -8
-        var trailingOffset: CGFloat = -8
         if let record = CallStageLayout.record(for: window), let window {
             let visible = convert(record.rect, from: window).intersection(bounds)
             if !visible.isNull {
                 infoOffset = min(-8, visible.maxY - bounds.maxY - 8)
-                zoomOffset = visible.maxY - bounds.maxY - 4
-                trailingOffset = visible.maxX - bounds.maxX - 4
             }
             controlsHidden = record.hidden
         }
         infoBottom?.constant = infoOffset
-        zoomBottom?.constant = zoomOffset - (participantInfo.isHidden ? 0 : participantInfo.intrinsicContentSize.height + 8)
-        zoomTrailing?.constant = trailingOffset
         let fit = fittedContentRect?.intersection(bounds) ?? bounds
         guard bounds.width > 0, bounds.height > 0, !fit.isNull,
               bounds.size != viewportSize || fit != appliedFitRect else { return }
@@ -428,6 +414,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
             y: min(max((fit.minY + center.y * fit.height) * scale - bounds.height / 2, 0), max(size.height - bounds.height, 0)))
         restoring = false
         updateAccessibility()
+        onZoomChanged?()
         onVisibilityChanged?()
     }
 
@@ -436,13 +423,8 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         rememberViewport()
         updateAccessibility()
-        if !restoring { zoomVisibility.activity() }
+        if !restoring { onZoomChanged?() }
     }
-
-    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) { zoomVisibility.beginInteraction() }
-    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) { zoomVisibility.endInteraction() }
-    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { zoomVisibility.beginInteraction() }
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) { zoomVisibility.endInteraction() }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) { rememberViewport() }
 

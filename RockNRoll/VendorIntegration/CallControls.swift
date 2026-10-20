@@ -710,6 +710,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                     viewport.topAnchor.constraint(equalTo: stageView.topAnchor),
                     viewport.bottomAnchor.constraint(equalTo: stageView.bottomAnchor)
                 ])
+                viewport.onZoomChanged = { [weak self] in self?.updateShareScaleControl() }
                 viewport.onBrowse = { [weak self] step in self?.onBrowse?(step) }
                 viewport.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
                 viewport.onToggleControls = { [weak self] in self?.toggleControls() }
@@ -1087,10 +1088,16 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             (compactHeader.previous, previous), (compactHeader.nextStream, nextStream),
             (compactHeader.automatic, automaticView), (compactHeader.participants, participantsButton),
             (compactHeader.missed, missedButton),
-            (compactHeader.conversation, catchUpButton), (compactHeader.focus, focusButton)
+            (compactHeader.conversation, catchUpButton)
         ] {
             button.addAction(UIAction { [weak action] _ in action?.sendActions(for: .touchUpInside) }, for: .touchUpInside)
         }
+        compactHeader.focus.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            if self.stageIsShare && !self.gridVisible { self.stageViewport?.toggleScale() }
+            else { self.focus.hide() }
+        }, for: .touchUpInside)
+        stageVideo.onDisplaySizeChanged = { [weak self] in self?.updateShareScaleControl() }
         compactHeader.pin.addAction(UIAction { [weak self] _ in self?.onPinStage?(); self?.focus.interaction() }, for: .touchUpInside)
         compactHeader.details.addAction(UIAction { [weak self] _ in
             guard let self else { return }
@@ -1197,11 +1204,11 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         updateDisplayBackdrops()
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop] { backdrop.frame = stage }
         stageView.frame = surface.bounds
-        stageViewport?.fittedContentRect = stageIsShare ? stage.inset(by: UIEdgeInsets(top: 0, left: 0, bottom: 52, right: 0)) : stage
+        stageViewport?.fittedContentRect = stageIsShare ? surface.bounds : stage
         if gridVisible {
             galleryView.frame = geometry.stage.inset(by: UIEdgeInsets(top: 0, left: 0, bottom: layoutAvailable ? 54 : 0, right: 0))
         }
-        sourcePicker.isHidden = !stageIsShare || !showsStage || focus.hidden
+        sourcePicker.isHidden = !stageIsShare || !showsStage || galleryItems.filter { $0.id.isShare }.count <= 1 || focus.hidden
         sourcePicker.frame = CGRect(x: geometry.stage.minX + 4, y: geometry.stage.maxY - 46,
             width: min(240, max(0, geometry.stage.width - 160)), height: 44)
         sourcePickerSurface.frame = sourcePicker.bounds
@@ -1232,6 +1239,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             verticalFittingPriority: .fittingSizeLevel).height)
         localShareCard.frame = CGRect(x: stage.minX + 4, y: stage.maxY - cardHeight - 44,
             width: cardWidth, height: cardHeight)
+        updateShareScaleControl()
         stageViewport?.controlsHidden = focus.hidden
         stageViewport?.pinInHeader = geometry.compactHeader
         CallStageLayout.update(window: window, owner: layoutOwner, rect: surface.convert(stage, to: window), hidden: focus.hidden,
@@ -1398,6 +1406,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         if galleryView.superview == nil { surface.addSubview(galleryView) }
         if let reactionOverlay { surface.bringSubviewToFront(reactionOverlay) }
         galleryView.onPin = { [weak self] target in self?.selectParticipant(target) }
+        galleryView.canSelect = { [weak self] in self?.focus.menuVisible != true }
         galleryView.onInteraction = { [weak self] in self?.focus.interaction() }
         galleryView.onToggleControls = { [weak self] in self?.toggleControls() }
         streams.onGalleryPresentation = { [weak self] items in
@@ -1436,6 +1445,18 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             displayMode == .screenShares && !stageIsShare
         shareOffer.isHidden = shareOffer.configuration?.title == nil || focus.hidden
         if previousStageDemand != wantsStageFrames { onStageVisibilityChanged?(wantsStageFrames) }
+    }
+
+    private func updateShareScaleControl() {
+        guard stageIsShare, !gridVisible, let viewport = stageViewport else {
+            compactHeader.focus.accessibilityIdentifier = nil
+            compactHeader.focus.accessibilityLabel = L("Hide controls")
+            compactHeader.focus.configuration?.image = UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+            compactHeader.focus.isEnabled = true
+            return
+        }
+        SharedScreenScale.configure(compactHeader.focus, zoomed: viewport.zoomScale > 1.01,
+            available: viewport.zoomScale > 1.01 || (viewport.fillScale ?? 1) > 1.01)
     }
 
     private func fitZoomedContent() {

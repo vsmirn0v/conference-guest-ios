@@ -5,9 +5,16 @@ import UIKit
 /// Shared bounded surface for decoded native and room tracks. Pixels enqueue
 /// off-main on iOS 17+, while geometry, mirroring and layout stay on the UI.
 @MainActor
-final class CallVideoView: UIView {
+final class CallVideoView: UIView, TrackDelegate {
     enum Layout { case fit, fill }
     private let video = GuestSampleBufferView()
+    var displaySize: CGSize {
+        if !roomFallback.isHidden, let size = roomFallback.track?.dimensions {
+            return CGSize(width: Int(size.width), height: Int(size.height))
+        }
+        return video.displaySize
+    }
+    var onDisplaySizeChanged: (() -> Void)?
     private let roomFallback = VideoView()
     private var sink: RoomFloatingVideoSink?
     private var delivery: SampleBufferFrameDelivery?
@@ -35,6 +42,7 @@ final class CallVideoView: UIView {
     }
     override init(frame: CGRect) {
         super.init(frame: frame)
+        video.onDisplaySizeChanged = { [weak self] in self?.onDisplaySizeChanged?() }
         roomFallback.renderMode = .sampleBuffer; roomFallback.mirrorMode = .off
         roomFallback.layoutMode = .fit; roomFallback.isHidden = true
         roomFallback.translatesAutoresizingMaskIntoConstraints = false; addSubview(roomFallback)
@@ -60,6 +68,8 @@ final class CallVideoView: UIView {
     }
     required init?(coder: NSCoder) { nil }
     private func bind(_ previous: CallVideoSource?) {
+        previous?.roomTrack?.remove(delegate: self)
+        track?.roomTrack?.add(delegate: self)
         bindingRevision &+= 1
         let revision = bindingRevision, retiredCamera = cameraPreview, retiredSink = sink, retiredDelivery = delivery
         cameraPreview = nil; sink = nil; delivery = nil
@@ -90,6 +100,7 @@ final class CallVideoView: UIView {
             // The public room-frame wrapper hides AVCapture crop offsets.
             // Normally local cameras use the borrowed preview above.
             video.isHidden = true; roomFallback.isHidden = false; roomFallback.track = local
+            onDisplaySizeChanged?()
             return
         }
         let delivery = video.makeFrameDelivery { _, _ in }
@@ -103,6 +114,7 @@ final class CallVideoView: UIView {
                 if let sink = self.sink { sink.retire(); track.remove(sink) }
                 self.sink = nil; self.video.clear(); self.video.isHidden = true
                 self.roomFallback.isHidden = false; self.roomFallback.track = roomTrack
+                self.onDisplaySizeChanged?()
             }
         }
         self.sink = sink; sink.setWanted(renderingEnabled, fps: MediaEnergyBudget.shared.inlineFPS)
@@ -110,5 +122,11 @@ final class CallVideoView: UIView {
         track.add(sink)
     }
     override func layoutSubviews() { super.layoutSubviews(); sink?.setAdaptiveSize(renderingEnabled ? bounds.size : .zero) }
+    nonisolated func track(_ track: VideoTrack, didUpdateDimensions dimensions: Dimensions?) {
+        Task { @MainActor [weak self] in
+            guard let self, self.track?.roomTrack === track else { return }
+            self.onDisplaySizeChanged?()
+        }
+    }
     deinit { observers.forEach(NotificationCenter.default.removeObserver); delivery?.invalidate(); if let sink { sink.retire(); track?.remove(sink) } }
 }

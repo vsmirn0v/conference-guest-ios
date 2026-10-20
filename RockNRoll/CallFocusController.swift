@@ -69,6 +69,9 @@ final class CallFocusController {
         ])
     }
     func toggle() {
+        // An outside tap dismisses the menu without also hiding the canvas chrome.
+        // Explicit menu actions still use hide() to defer until dismissal ends.
+        guard !menuVisible else { return }
         if hidden { show(); interaction() } else { hide() }
     }
     func restoreAccessibilityAction() -> UIAccessibilityCustomAction {

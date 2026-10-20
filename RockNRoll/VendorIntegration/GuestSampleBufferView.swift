@@ -17,6 +17,14 @@ final class GuestSampleBufferView: UIView {
     private var captureRevision: UInt64 = 0
     private var captureEnabled = true
     var onCameraPreviewSizeChanged: ((CGSize) -> Void)?
+    private(set) var displaySize = CGSize.zero
+    var onDisplaySizeChanged: (() -> Void)?
+    private func updateDisplaySize(_ size: CGSize, rotation: Int) {
+        let oriented = rotation == 90 || rotation == 270 ? CGSize(width: size.height, height: size.width) : size
+        guard oriented != displaySize else { return }
+        displaySize = oriented
+        onDisplaySizeChanged?()
+    }
 #if DEBUG
     var evidenceForTesting: [String: Any] { renderTarget.evidenceForTesting }
     func forceResetErrorForTesting(_ value: Bool) { renderTarget.forceResetErrorForTesting(value) }
@@ -43,6 +51,9 @@ final class GuestSampleBufferView: UIView {
 
     @discardableResult
     func enqueue(_ sample: CMSampleBuffer, rotation: Int) -> Bool {
+        if let format = CMSampleBufferGetFormatDescription(sample) {
+            updateDisplaySize(CMVideoFormatDescriptionGetPresentationDimensions(format, usePixelAspectRatio: true, useCleanAperture: true), rotation: rotation)
+        }
         if self.rotation != rotation {
             self.rotation = rotation
             setNeedsLayout()
@@ -54,6 +65,7 @@ final class GuestSampleBufferView: UIView {
     func clear() {
         frameDelivery?.invalidate(); frameDelivery = nil
         setCameraPreview(nil); renderTarget.clear(removingImage: true)
+        updateDisplaySize(.zero, rotation: 0)
     }
 
     func existingFrameDelivery() -> SampleBufferFrameDelivery? {
@@ -63,6 +75,7 @@ final class GuestSampleBufferView: UIView {
         frameDelivery?.invalidate()
         let delivery = SampleBufferFrameDelivery(target: renderTarget) { [weak self] size, rotation in
             guard let self else { return }
+            self.updateDisplaySize(size, rotation: rotation)
             self.renderTarget.checkRecovery()
             if self.rotation != rotation { self.rotation = rotation; self.setNeedsLayout(); self.layoutIfNeeded() }
             onGeometry(size, rotation)

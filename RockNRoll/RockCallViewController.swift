@@ -90,11 +90,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let participantsButton = UIButton(type: .system)
     private let reactionsButton = AlignedCallButton(frame: .zero)
     private var actionsMenu: UIMenu?
-    private let fitButton = UIButton(type: .system)
-    private let zoomInButton = UIButton(type: .system)
-    private let zoomOutButton = UIButton(type: .system)
-    private let zoomControls = UIStackView()
-    private lazy var zoomVisibility = TransientCallControls(view: zoomControls)
     private let shareOffer = UIButton(type: .system)
     let localSharePreview = LocalSharePreview()
     private lazy var localShareCard = LocalSharePreviewCard(model: localSharePreview)
@@ -236,7 +231,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private func installFocus() {
         // Media, transcript and controls use a common visible-window geometry.
         NSLayoutConstraint.deactivate(view.constraints)
-        for item in [headerView!, toolbar!, streamScroll, statusLabel, zoomControls, shareOffer, conversationHost, localShareCard] {
+        for item in [headerView!, toolbar!, streamScroll, statusLabel, shareOffer, conversationHost, localShareCard] {
             NSLayoutConstraint.deactivate(item.constraints.filter { $0.firstItem === item && $0.secondItem == nil })
             item.translatesAutoresizingMaskIntoConstraints = true
         }
@@ -301,9 +296,14 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }, for: .touchUpInside)
         for (button, action) in [(compactHeader.participants, participantsButton),
                                  (compactHeader.missed, missedButton),
-                                 (compactHeader.conversation, conversationButton), (compactHeader.focus, focusButton)] {
+                                 (compactHeader.conversation, conversationButton)] {
             button.addAction(UIAction { [weak action] _ in action?.sendActions(for: .touchUpInside) }, for: .touchUpInside)
         }
+        compactHeader.focus.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            if self.effectiveLayoutMode == .speaker && self.currentPrimaryKey.flatMap({ self.streamPinTargets[$0]?.isScreenShare }) == true { self.toggleShareScale() }
+            else { self.focus.hide() }
+        }, for: .touchUpInside)
         compactHeader.details.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             self.workspace.showDetails(from: self.compactHeader.details, presenter: self,
@@ -357,19 +357,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             layoutControls.frame = layoutFrame
         }
         var imageFit = stage
-        let zoomWidth = max(140, 88 + max(44, fitButton.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width) + zoomControls.spacing * 2)
-        let selectorMinimum: CGFloat = large ? 176 : 144
-        let stackedSources = stage.width < selectorMinimum + zoomWidth + 16
-        let shareRowHeight: CGFloat = stackedSources ? 104 : 52
-        sourceSelector.isHidden = !sharing || !layoutAvailable || focus.hidden
+        sourceSelector.isHidden = !sharing || orderedStreams.filter { $0.isScreenShare }.count <= 1 || focus.hidden
         sourceSelector.frame = CGRect(x: stage.minX + 4, y: stage.minY + 4,
-            width: max(0, min(280, stage.width - (stackedSources ? 8 : zoomWidth + 16))), height: 44)
-        if sharing {
-            imageFit.origin.y += min(imageFit.height, shareRowHeight)
-            imageFit.size.height = max(0, imageFit.height - shareRowHeight)
-        } else if layoutAvailable {
-            imageFit.size.height = max(0, layoutFrame.minY - stage.minY - 4)
-        }
+            width: min(280, max(0, stage.width - 8)), height: 44)
+        if sharing { imageFit = canvas }
+        else if layoutAvailable { imageFit.size.height = max(0, layoutFrame.minY - stage.minY - 4) }
         let canShowStrip = stage.height >= 240
         participantStrip.isHidden = effectiveLayoutMode == .grid || !layoutAvailable || focus.hidden || sharing || !canShowStrip
         if effectiveLayoutMode == .speaker && layoutAvailable && !sharing && canShowStrip {
@@ -455,12 +447,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         compactHeader.setLayout(mode: effectiveLayoutMode, available: layoutAvailable,
             choose: { [weak self] in self?.chooseLayout($0) },
             followSpeaker: { [weak self] in self?.browsedStream = nil; self?.setPin(nil) })
+        updateShareScaleControl()
         statusLabel.isHidden = focus.hidden || geometry.compactHeader
         statusLabel.frame = CGRect(x: geometry.header.minX, y: geometry.header.maxY - statusHeight,
             width: geometry.header.width, height: statusHeight)
-        zoomControls.frame = CGRect(x: stage.maxX - min(zoomWidth, stage.width - 8) - 4,
-            y: stage.minY + (sharing && stackedSources ? 56 : 4), width: max(0, min(zoomWidth, stage.width - 8)), height: 44)
-        zoomVisibility.setSuppressed(focus.hidden)
         shareOffer.frame = CGRect(x: stage.minX + 56, y: stage.minY + 8, width: max(0, stage.width - 210), height: 44)
         shareOffer.alpha = focus.hidden ? 0 : 1
         focusButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44)
@@ -475,7 +465,24 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             width: cardWidth, height: cardHeight)
         for entry in videoTiles.values {
             entry.zoom.isAccessibilityElement = true
-            entry.zoom.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
+            var accessible = focus.hidden ? [focus.restoreAccessibilityAction()] : []
+            if entry.zoom.maximumZoomScale > 1 {
+                accessible += [UIAccessibilityCustomAction(name: L("Zoom in")) { [weak zoom = entry.zoom] _ in
+                        guard let zoom else { return false }; zoom.setZoomScale(min(zoom.maximumZoomScale, zoom.zoomScale * 1.5), animated: true); return true },
+                    UIAccessibilityCustomAction(name: L("Zoom out")) { [weak zoom = entry.zoom] _ in
+                        guard let zoom else { return false }; zoom.setZoomScale(max(1, zoom.zoomScale / 1.5), animated: true); return true },
+                    UIAccessibilityCustomAction(name: L("Fit whole share")) { [weak zoom = entry.zoom] _ in zoom?.setZoomScale(1, animated: true); return zoom != nil },
+                    UIAccessibilityCustomAction(name: L("Fill screen")) { [weak zoom = entry.zoom, weak video = entry.video] _ in
+                        guard let zoom, let video, let scale = SharedScreenScale.fill(content: video.displaySize, viewport: zoom.bounds.size) else { return false }
+                        zoom.maximumZoomScale = max(5, zoom.zoomScale, scale)
+                        zoom.setZoomScale(1, animated: false)
+                        let size = CGSize(width: zoom.bounds.width / scale, height: zoom.bounds.height / scale)
+                        zoom.zoom(to: CGRect(x: (zoom.bounds.width - size.width) / 2, y: (zoom.bounds.height - size.height) / 2,
+                            width: size.width, height: size.height), animated: true)
+                        return true
+                    }]
+            }
+            entry.zoom.accessibilityCustomActions = accessible.isEmpty ? nil : accessible
             entry.badge.alpha = focus.hidden || effectiveLayoutMode == .speaker ? 0 : 1
             entry.pin.alpha = focus.hidden || (geometry.compactHeader && entry.zoom === primaryZoom && effectiveLayoutMode != .grid) ? 0 : 1
             entry.pin.isUserInteractionEnabled = entry.pin.alpha > 0
@@ -487,13 +494,13 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     }
 
     @objc private func tappedStage(_ gesture: UITapGestureRecognizer) {
+        guard !focus.menuVisible else { return }
         if effectiveLayoutMode == .grid && !focus.hidden {
             let point = gesture.location(in: tiles)
             if let tile = tiles.arrangedSubviews.first(where: { $0.frame.contains(point) }),
                let target = tileSelections[ObjectIdentifier(tile)] { setPin(target); return }
         }
         focus.toggle()
-        zoomVisibility.activity()
     }
     @objc private func swipedStage(_ gesture: UISwipeGestureRecognizer) {
         if effectiveLayoutMode == .grid { moveGalleryPage(gesture.direction == .left ? 1 : -1) }
@@ -621,25 +628,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         reactionsButton.addAction(UIAction { _ in showActions(false) }, for: .touchUpInside)
         MeetingActionsShortcut.install(on: reactionsButton) { showActions(true) }
         configureMoreMenu()
-        configure(fitButton, symbol: "arrow.down.right.and.arrow.up.left", label: L("Fit shared screen at 100%"))
-        configure(zoomInButton, symbol: "plus.magnifyingglass", label: L("Zoom in shared screen"))
-        configure(zoomOutButton, symbol: "minus.magnifyingglass", label: L("Zoom out shared screen"))
-        zoomControls.axis = .horizontal
-        zoomControls.spacing = 4
-        zoomControls.addArrangedSubview(zoomOutButton)
-        zoomControls.addArrangedSubview(fitButton)
-        zoomControls.addArrangedSubview(zoomInButton)
-        zoomControls.isHidden = true
-        fitButton.isHidden = true
-        fitButton.addAction(UIAction { [weak self] _ in
-            self?.primaryZoom?.setZoomScale(1, animated: true)
-        }, for: .touchUpInside)
-        zoomInButton.addAction(UIAction { [weak self] _ in
-            self?.changePrimaryZoom(by: 1.5)
-        }, for: .touchUpInside)
-        zoomOutButton.addAction(UIAction { [weak self] _ in
-            self?.changePrimaryZoom(by: 1 / 1.5)
-        }, for: .touchUpInside)
         shareOffer.configuration = .tinted()
         shareOffer.configuration?.image = UIImage(systemName: "rectangle.on.rectangle")
         shareOffer.isHidden = true
@@ -810,7 +798,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         statusLabel.textAlignment = .center
         conversationHost.isHidden = true
         conversationHost.backgroundColor = .clear
-        for item in [header, streamScroll, bar, statusLabel, zoomControls, shareOffer, conversationHost] {
+        for item in [header, streamScroll, bar, statusLabel, shareOffer, conversationHost] {
             item.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(item)
         }
@@ -850,14 +838,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             bar.widthAnchor.constraint(lessThanOrEqualToConstant: 520),
             bar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -4),
             bar.heightAnchor.constraint(equalToConstant: 62),
-            zoomControls.topAnchor.constraint(equalTo: streamScroll.topAnchor, constant: 12),
-            zoomControls.trailingAnchor.constraint(equalTo: streamScroll.trailingAnchor, constant: -12),
-            zoomOutButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            zoomOutButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            fitButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            fitButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            zoomInButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            zoomInButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             shareOffer.centerXAnchor.constraint(equalTo: streamScroll.centerXAnchor),
             shareOffer.topAnchor.constraint(equalTo: streamScroll.topAnchor, constant: 12),
             shareOffer.leadingAnchor.constraint(greaterThanOrEqualTo: streamScroll.leadingAnchor, constant: 8),
@@ -922,11 +902,29 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         view.setNeedsLayout()
     }
 
-    private func changePrimaryZoom(by factor: CGFloat) {
-        guard let zoom = primaryZoom else { return }
-        zoom.setZoomScale(min(zoom.maximumZoomScale,
-                              max(zoom.minimumZoomScale, zoom.zoomScale * factor)), animated: true)
-        zoomVisibility.activity()
+    private func updateShareScaleControl() {
+        guard effectiveLayoutMode == .speaker, currentPrimaryKey.flatMap({ streamPinTargets[$0]?.isScreenShare }) == true,
+              let zoom = primaryZoom else {
+            compactHeader.focus.accessibilityIdentifier = nil
+            compactHeader.focus.accessibilityLabel = L("Hide controls")
+            compactHeader.focus.configuration?.image = UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+            compactHeader.focus.isEnabled = true
+            return
+        }
+        let content = currentPrimaryKey.flatMap { videoTiles[$0]?.video.displaySize } ?? .zero
+        let fill = SharedScreenScale.fill(content: content, viewport: zoom.bounds.size)
+        if let fill { zoom.maximumZoomScale = max(5, zoom.zoomScale, fill) }
+        SharedScreenScale.configure(compactHeader.focus, zoomed: zoom.zoomScale > 1.01,
+            available: zoom.zoomScale > 1.01 || (fill ?? 1) > 1.01)
+    }
+    private func toggleShareScale() {
+        guard let zoom = primaryZoom, let key = currentPrimaryKey, let entry = videoTiles[key] else { return }
+        if zoom.zoomScale > 1.01 { zoom.setZoomScale(1, animated: true); return }
+        guard let scale = SharedScreenScale.fill(content: entry.video.displaySize, viewport: zoom.bounds.size) else { return }
+        zoom.maximumZoomScale = max(5, scale)
+        let size = CGSize(width: zoom.bounds.width / scale, height: zoom.bounds.height / scale)
+        zoom.zoom(to: CGRect(x: entry.fittedFrame.midX - size.width / 2, y: entry.fittedFrame.midY - size.height / 2,
+            width: size.width, height: size.height), animated: true)
     }
 
     private func updateControlTitles() {
@@ -1118,9 +1116,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             tiles.addArrangedSubview(empty)
         }
         if snapshot.remoteParticipants.isEmpty && streams.isEmpty && displayMode == .all { tiles.addArrangedSubview(waitingRoomView()) }
-        zoomVisibility.setAvailable(primary?.1.source == .screenShareVideo)
-        zoomControls.isHidden = primary?.1.source != .screenShareVideo
-        fitButton.isHidden = (primaryZoom?.zoomScale ?? 1) <= 1.01
         participantsPanel?.update(participants.map(\.status), pinnedKey: pinnedStreamKey)
         tiles.arrange(size: streamScroll.bounds.size, mode: effectiveLayoutMode)
         refreshSpeaking(snapshot: snapshot)
@@ -1227,6 +1222,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let video = CallVideoView()
         // Use the same color-managed renderer as the floating video surface.
         video.layoutMode = .fit
+        video.onDisplaySizeChanged = { [weak self] in self?.updateShareScaleControl() }
         video.track = track
         video.translatesAutoresizingMaskIntoConstraints = false
         let canvas = UIView()
@@ -1658,8 +1654,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             scrollView.panGestureRecognizer.isEnabled = scrollView.zoomScale > 1.01
             scrollView.accessibilityValue = "\(Int((scrollView.zoomScale * 100).rounded()))%"
             rememberZoom(scrollView)
-            if !restoringZoom && scrollView === primaryZoom { zoomVisibility.activity() }
-            if scrollView === primaryZoom { fitButton.isHidden = scrollView.zoomScale <= 1.01 }
+            if !restoringZoom && scrollView === primaryZoom { updateShareScaleControl() }
         }
     }
 
@@ -1669,14 +1664,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         }
         rememberZoom(scrollView)
     }
-    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) { zoomVisibility.beginInteraction() }
-    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) { zoomVisibility.endInteraction() }
-    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        if scrollView !== streamScroll { zoomVisibility.beginInteraction() }
-    }
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        if scrollView !== streamScroll { zoomVisibility.endInteraction() }
-        else if !decelerate { settleGalleryPage() }
+        if scrollView === streamScroll && !decelerate { settleGalleryPage() }
     }
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { if scrollView === streamScroll { settleGalleryPage() } }
     private func settleGalleryPage() {

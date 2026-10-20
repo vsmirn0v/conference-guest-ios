@@ -1,6 +1,25 @@
 import ConferenceCore
 import UIKit
 
+/// Fit and Fill share the same renderer and preserve the source aspect ratio.
+enum SharedScreenScale {
+    static func fill(content: CGSize, viewport: CGSize) -> CGFloat? {
+        guard content.width > 0, content.height > 0, viewport.width > 0, viewport.height > 0 else { return nil }
+        let x = viewport.width / content.width, y = viewport.height / content.height
+        let scale = max(x, y) / min(x, y)
+        return scale.isFinite ? max(1, scale) : nil
+    }
+    static func configure(_ button: UIButton, zoomed: Bool, available: Bool) {
+        let label = zoomed ? L("Fit whole share") : L("Fill screen")
+        guard button.accessibilityIdentifier != "Shared screen scale" || button.accessibilityLabel != label || button.isEnabled != available else { return }
+        button.configuration?.image = UIImage(systemName: zoomed ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+        button.accessibilityLabel = label
+        button.accessibilityIdentifier = "Shared screen scale"
+        button.isEnabled = available
+        button.superview?.setNeedsLayout()
+    }
+}
+
 /// Geometry belongs to the visible call window, independently of media providers.
 struct CallPresentationGeometry {
     let header: CGRect
@@ -285,6 +304,7 @@ final class CompactCallHeader: UIView {
         sourceLabel.isUserInteractionEnabled = false
         sourceLabel.isAccessibilityElement = false
         speakerIndicator.isAccessibilityElement = false
+        speakerIndicator.contentInset = 0
         details.addSubview(sourceLabel); details.addSubview(speakerIndicator)
         privacyIcon.contentMode = .scaleAspectFit
         privacyIcon.isUserInteractionEnabled = false
@@ -400,13 +420,14 @@ final class CompactCallHeader: UIView {
         guard renderedIdentity != identity else { return }
         renderedIdentity = identity
         sourceLabel.text = sourceName
-        sourceLabel.isHidden = visible == nil
+        sourceLabel.textColor = callStatus != nil ? .systemOrange : visible == nil ? .white : .lightGray
+        sourceLabel.isHidden = false
         speakerIndicator.setSpeaker(visible)
-        details.configuration?.title = visible == nil ? sourceName : nil
-        details.configuration?.image = visible == nil ? UIImage(systemName: privacySymbol ?? "info.circle") : nil
-        privacyIcon.image = privacySymbol.flatMap { UIImage(systemName: $0) }
-        privacyIcon.tintColor = privacySymbol == "record.circle" ? .systemRed : .systemOrange
-        privacyIcon.isHidden = visible == nil || privacySymbol == nil
+        details.configuration?.title = nil
+        details.configuration?.image = nil
+        privacyIcon.image = UIImage(systemName: privacySymbol ?? "info.circle")
+        privacyIcon.tintColor = privacySymbol == "record.circle" ? .systemRed : privacySymbol == nil ? .lightGray : .systemOrange
+        privacyIcon.isHidden = false
         details.configuration?.baseForegroundColor = callStatus == nil ? .white : .systemOrange
         details.accessibilityValue = [callStatus, privacyDescription, visible?.accessibilityLabel].compactMap { $0 }.joined(separator: ", ")
         setNeedsLayout()
@@ -437,15 +458,20 @@ final class CompactCallHeader: UIView {
         identitySurface.frame = details.frame
         actionsSurface.isHidden = visible.isEmpty
         actionsSurface.frame = CGRect(x: start - 2, y: 0, width: CGFloat(visible.count) * 44 + 6, height: 44)
-        let inset: CGFloat = privacyIcon.isHidden ? 7 : 24
-        sourceLabel.frame = CGRect(x: inset, y: 3, width: max(0, details.bounds.width - inset - 7), height: 14)
-        privacyIcon.frame = CGRect(x: 7, y: 3, width: 13, height: 14)
-        speakerIndicator.frame = CGRect(x: 0, y: 18, width: details.bounds.width, height: 23)
+        let textX: CGFloat = 40
+        let textWidth = max(0, details.bounds.width - textX - 14)
+        let speaking = !speakerIndicator.isHidden
+        sourceLabel.font = speaking ? .systemFont(ofSize: 11) : UIFontMetrics(forTextStyle: .callout).scaledFont(for: .systemFont(ofSize: 15, weight: .medium), maximumPointSize: 20)
+        sourceLabel.frame = CGRect(x: textX, y: speaking ? 6 : 8, width: textWidth, height: speaking ? 14 : 28)
+        privacyIcon.frame = CGRect(x: 14, y: 12, width: 18, height: 20)
+        speakerIndicator.frame = CGRect(x: textX, y: 20, width: textWidth, height: 20)
         for (index, button) in visible.enumerated() {
             button.frame = CGRect(x: start + CGFloat(index) * 44, y: 0, width: 44, height: 44)
         }
-        chatBadge.frame = CGRect(x: 21, y: 3, width: 23, height: 14)
-        missedBadge.frame = chatBadge.frame
+        for badge in [chatBadge, missedBadge] {
+            let width = min(22, max(14, ceil(badge.intrinsicContentSize.width) + 6))
+            badge.frame = CGRect(x: 39 - width, y: 6, width: width, height: 14)
+        }
     }
     private func updateOverflow(_ buttons: [UIButton]) {
         let items = buttons.map { button in

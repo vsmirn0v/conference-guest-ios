@@ -75,12 +75,12 @@ final class ActiveSpeakerTests: XCTestCase {
         }
         header.setSpeaker(nil); header.layoutIfNeeded()
         XCTAssertEqual(header.subviews.map(\.frame), frames)
-        XCTAssertEqual(header.details.configuration?.title, "Ani · Screen")
+        XCTAssertTrue(header.details.subviews.compactMap { $0 as? UILabel }.contains { $0.text == "Ani · Screen" })
         header.update(name: "Reconnecting", navigation: true, browsing: false, pinned: true,
             pinLabel: "Unpin", participantsLabel: "4", chatValue: nil, status: "Reconnecting",
             speaking: aram, focusAvailable: true)
         header.setSpeaker(ani)
-        XCTAssertEqual(header.details.configuration?.title, "Reconnecting")
+        XCTAssertTrue(header.details.subviews.compactMap { $0 as? UILabel }.contains { $0.text == "Reconnecting" })
         XCTAssertEqual(header.details.accessibilityValue, "Reconnecting")
     }
 
