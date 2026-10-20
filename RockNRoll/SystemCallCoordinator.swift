@@ -39,6 +39,8 @@ final class SystemCallCoordinator: NSObject, CXProviderDelegate, CXCallObserverD
     }
     private lazy var controller = CXCallController()
     private var usesSystemCall: Bool
+    var hasRegisteredSystemCall: Bool { usesSystemCall && callID != nil }
+    var hasCompetingCall: Bool { observedCalls.contains { $0.id != callID && !$0.ended } }
     private let registrationOverride: Bool?
     private var audioInterruptionObserver: NSObjectProtocol?
     private var applicationRecoveryTask: Task<Void, Never>?

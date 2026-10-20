@@ -40,6 +40,8 @@ final class ConferenceModel: ObservableObject {
     }
 
     private let systemCall = SystemCallCoordinator()
+    private var meetingActivity: MeetingActivitySession?
+    private var meetingReconnecting = false
     let catchUpStore = CatchUpStore()
     private lazy var engine = NativeConferenceEngine(systemCall: systemCall, catchUp: catchUpStore)
     let chat = ChatStore()
@@ -179,7 +181,17 @@ final class ConferenceModel: ObservableObject {
     func configure(container: UIViewController) {
         self.container = container
         engine.chat = chat
+        if MeetingActivitySupport.supported, meetingActivity == nil {
+            meetingActivity = MeetingActivitySession(changes: objectWillChange.eraseToAnyPublisher(), preferences: preferences) { [weak self] in
+                guard let self, self.isInConference, let id = self.liveSessionID, let engine = self.activeEngine else { return nil }
+                return .init(sessionID: id, title: self.activeRoomTitle, engine: engine,
+                    reconnecting: self.meetingReconnecting, systemControls: self.systemCall.hasRegisteredSystemCall,
+                    otherCall: self.systemCall.hasCompetingCall, audioReady: self.systemCall.canRestoreAudio)
+            }
+        }
     }
+
+    func meetingActivityForegrounded() { meetingActivity?.foregrounded() }
 
     func prepareToFloat() {
         guard isInConference else { return }
@@ -201,6 +213,13 @@ final class ConferenceModel: ObservableObject {
     }
 
     func receive(url: URL) {
+        if url.scheme == "conferenceguest", url.host == "active-meeting" {
+            // An old Activity is only navigation. It never initiates a join.
+            if MeetingActivitySnapshot.sessionID(from: url) == liveSessionID, isInConference {
+                restoreFromFloatingVideo()
+            }
+            return
+        }
         explicitCalendarEntry = true
         calendar.cancelAutomaticJoin(suppress: true)
         do {
@@ -364,6 +383,7 @@ final class ConferenceModel: ObservableObject {
         sessionGeneration &+= 1
         let generation = sessionGeneration
         terminalEventHandled = false
+        meetingReconnecting = false
         phase = .joining
         activeRoute = target
         companionAudioPaused = request.quiet
@@ -647,6 +667,7 @@ final class ConferenceModel: ObservableObject {
         case .connecting:
             guard !isLeaving else { return }
             statusIsError = false
+            meetingReconnecting = true
             if isJoining { status = L("Connecting…") }
             else if isInConference { status = L("Reconnecting…") }
         case .lobby:
@@ -659,6 +680,7 @@ final class ConferenceModel: ObservableObject {
             if isJoining { print("Jam join: active after \(joinElapsed)s") }
             #endif
             phase = .active
+            meetingReconnecting = false
             connectedURL = activeRoute?.invitationURL
             status = L("In jam")
             continuation.targetDidConnect(invitation: connectedURL, sessionID: liveSessionID)

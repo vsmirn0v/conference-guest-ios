@@ -873,3 +873,18 @@
 "Information and meeting controls" = "Information and meeting controls";
 
 "Gallery is available when more participants or screens are present." = "Gallery is available when more participants or screens are present.";
+
+// Meeting Live Activity
+"Meeting in progress" = "Meeting in progress";
+"Microphone status unavailable" = "Microphone status unavailable";
+"Mic paused" = "Mic paused";
+"Open to check meeting" = "Open to check meeting";
+"Connected" = "Connected";
+"Meeting paused" = "Meeting paused";
+"Paused for another call" = "Paused for another call";
+"Open meeting" = "Open meeting";
+"Meeting status outside the app" = "Meeting status outside the app";
+"Show meeting name" = "Show meeting name";
+"Meeting status" = "Meeting status";
+"Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default." = "Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default.";
+"Unknown" = "Unknown";

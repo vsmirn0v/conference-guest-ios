@@ -9,6 +9,10 @@ extension SceneDelegate {
             FloatingVideoPreference.enabled = true
         }
         if let fixture = ProcessInfo.processInfo.environment["CONFERENCE_TEST_UI_FIXTURE"] {
+            if fixture == "meeting-activity", #available(iOS 16.2, *) {
+                window.rootViewController = MeetingActivityFixture()
+                return true
+            }
             if fixture == "plain-zoom-control" {
                 window.rootViewController = PlainZoomControl()
                 return true

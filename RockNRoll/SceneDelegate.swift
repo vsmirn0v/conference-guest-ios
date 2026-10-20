@@ -102,6 +102,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
+        conference?.meetingActivityForegrounded()
         macMeeting?.becameActive()
         conference?.calendarForegrounded()
         conference?.sync.foregrounded()

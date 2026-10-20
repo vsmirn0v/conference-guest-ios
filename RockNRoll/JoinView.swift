@@ -24,6 +24,8 @@ struct JoinView: View {
     @State private var foreground = true
     @State private var showingSettings = false
     @AppStorage(SystemCallCoordinator.controlsPreferenceKey) private var systemCallControls = false
+    @AppStorage(MeetingActivityCoordinator.enabledKey) private var meetingActivityEnabled = true
+    @AppStorage(MeetingActivityCoordinator.titleKey) private var meetingActivityShowTitle = false
     @State private var showingAllRooms = false
     @StateObject private var mediaCheck = StudioModel(audioControl: .fullProcessing, preferences: .standard)
     @StateObject private var favoriteDrag = FavoriteDragState()
@@ -577,11 +579,23 @@ struct JoinView: View {
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
-    private var phoneSettings: some View {
+    @ViewBuilder private var phoneSettings: some View {
         Section {
             Toggle(L("System call controls"), isOn: $systemCallControls).accessibilityIdentifier("calls.systemControls")
         } header: { Text(L("Phone calls")) } footer: {
             Text(L("Audio and Picture in Picture keep working with this off. Some cellular networks block phone calls while system call controls are on. Changes apply to the next jam."))
+        }
+        if MeetingActivitySupport.supported {
+            Section {
+                Toggle(L("Meeting status outside the app"), isOn: $meetingActivityEnabled)
+                    .accessibilityIdentifier("meeting.activity.enabled")
+                if meetingActivityEnabled {
+                    Toggle(L("Show meeting name"), isOn: $meetingActivityShowTitle)
+                        .accessibilityIdentifier("meeting.activity.title")
+                }
+            } header: { Text(L("Meeting status")) } footer: {
+                Text(L("Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default."))
+            }
         }
     }
     private var aboutSettings: some View {

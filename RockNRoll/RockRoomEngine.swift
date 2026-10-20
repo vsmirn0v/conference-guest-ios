@@ -56,6 +56,9 @@ final class RockRoomEngine: NSObject, RoomDelegate, CallEngine, @unchecked Senda
     var callWorkspacePublisher: AnyPublisher<CallWorkspaceControls?, Never> {
         $callView.map { $0?.workspace }.eraseToAnyPublisher()
     }
+    var activityMicrophonePublisher: AnyPublisher<PiPMicrophoneStatus, Never> {
+        studio.microphoneActivity.$status.eraseToAnyPublisher()
+    }
     private(set) var hasJoinStarted = false
     private var receptionPaused = false
     var isSharingScreen: Bool { room?.localParticipant.isScreenShareEnabled() == true }

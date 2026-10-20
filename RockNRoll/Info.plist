@@ -32,9 +32,11 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>98</string>
+	<string>99</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+    <key>NSSupportsLiveActivities</key>
+    <true/>
 	<key>JoinLinkHost</key>
 	<string>$(JOIN_LINK_HOST)</string>
 	<key>LSRequiresIPhoneOS</key>

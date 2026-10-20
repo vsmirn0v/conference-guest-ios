@@ -64,6 +64,9 @@ final class TrueConfCallEngine: CallEngine {
     var callWorkspacePublisher: AnyPublisher<CallWorkspaceControls?, Never> {
         $view.map { $0?.workspace }.eraseToAnyPublisher()
     }
+    var activityMicrophonePublisher: AnyPublisher<PiPMicrophoneStatus, Never> {
+        studio.microphoneActivity.$status.eraseToAnyPublisher()
+    }
     private(set) var hasJoinStarted = false
     var isSharingScreen: Bool { sharingActive }
     var continuationHostView: UIView? { view?.viewIfLoaded }

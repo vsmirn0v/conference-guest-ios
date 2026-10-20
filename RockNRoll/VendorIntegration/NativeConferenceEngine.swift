@@ -102,7 +102,7 @@ final class NativeConferenceEngine: CallEngine {
         activeCoordinator?.toggleCamera(isOn: enabled)
     }
     #endif
-    private var studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard)
+    @Published private var studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard)
     private var studioSubscription: AnyCancellable?
     private let activeSpeaker = ActiveSpeakerStore()
     private var speakerSubscription: AnyCancellable?
@@ -128,7 +128,10 @@ final class NativeConferenceEngine: CallEngine {
     private var activeInvitationURL: URL?
     private var activeRoomIdentifier: String?
     #if DEBUG
-    var studioForTesting: StudioModel { studio }
+    var studioForTesting: StudioModel {
+        get { studio }
+        set { studio = newValue }
+    }
     var readyForPresenterForTesting: Bool { isSDKActive && !isSystemHeld && !leaveRequested && !needsMediaReconnect }
     var codecCheckTrackIDsForTesting: [String] { codecChecks.keys.sorted() }
     func codecFallbackForTesting() { GuestPublishingCodecPolicy.shared.disable(generation: sessionEpoch) }
@@ -140,6 +143,11 @@ final class NativeConferenceEngine: CallEngine {
     #endif
     var callWorkspacePublisher: AnyPublisher<CallWorkspaceControls?, Never> {
         $callWorkspace.eraseToAnyPublisher()
+    }
+    var activityMicrophonePublisher: AnyPublisher<PiPMicrophoneStatus, Never> {
+        // SDK overlays may replace the studio after the logical meeting starts.
+        $studio.map { $0.microphoneActivity.$status.eraseToAnyPublisher() }
+            .switchToLatest().eraseToAnyPublisher()
     }
     private(set) var hasJoinStarted = false
     private var hasMediaJoinStarted = false

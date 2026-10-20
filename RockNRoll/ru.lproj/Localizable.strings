@@ -871,3 +871,18 @@
 "Information and meeting controls" = "Информация и управление встречей";
 
 "Gallery is available when more participants or screens are present." = "Галерея доступна, когда во встрече больше участников или экранов.";
+
+// Meeting Live Activity
+"Meeting in progress" = "Встреча продолжается";
+"Microphone status unavailable" = "Статус микрофона неизвестен";
+"Mic paused" = "Микрофон на паузе";
+"Open to check meeting" = "Откройте, чтобы проверить встречу";
+"Connected" = "Подключено";
+"Meeting paused" = "Встреча на паузе";
+"Paused for another call" = "Пауза на время звонка";
+"Open meeting" = "Открыть встречу";
+"Meeting status outside the app" = "Статус встречи вне приложения";
+"Show meeting name" = "Показывать название встречи";
+"Meeting status" = "Статус встречи";
+"Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default." = "Показывать состояние микрофона и подключения на экране блокировки и в Dynamic Island, когда системное управление звонками выключено. Название встречи скрыто по умолчанию.";
+"Unknown" = "Неизвестно";

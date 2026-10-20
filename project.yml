@@ -32,6 +32,8 @@ targets:
       - path: Shared/LocalSharePreviewTransport.swift
       - path: Shared/OutgoingShareExperiment.swift
       - path: Shared/OutgoingVideoCadence.swift
+      - path: Shared/MeetingActivityState.swift
+      - path: Shared/MeetingActivityViews.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
     dependencies:
       - package: JazzSDK
@@ -43,6 +45,7 @@ targets:
         product: LiveKitWebRTC
       - target: RockBroadcast
       - target: GuestBroadcast
+      - target: MeetingActivity
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest
@@ -119,6 +122,26 @@ targets:
         DEVELOPMENT_TEAM: 5V64BP2H3P
         GENERATE_INFOPLIST_FILE: NO
         APPLICATION_EXTENSION_API_ONLY: YES
+  MeetingActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "16.2"
+    sources:
+      - path: MeetingActivity
+      - path: Shared/MeetingActivityState.swift
+      - path: Shared/MeetingActivityViews.swift
+      - path: Shared/Localization.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.activity
+        INFOPLIST_FILE: MeetingActivity/Info.plist
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 5V64BP2H3P
+        GENERATE_INFOPLIST_FILE: NO
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
   RockNRollTests:
     type: bundle.unit-test
     platform: iOS
