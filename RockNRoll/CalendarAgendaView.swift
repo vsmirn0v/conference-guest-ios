@@ -84,6 +84,7 @@ struct CalendarAgendaView: View {
                 .accessibilityIdentifier("calendar.star." + meeting.id)
             }
         }.contextMenu {
+            Button(L("Reminders")) { if let current = current(meeting) { calendar.reminders.editing = calendar.reminders.occurrence(for: current) } }
             Button(L("Choose another room")) { if let current = current(meeting) { calendar.choosingMeeting = current } }
                 .accessibilityIdentifier("calendar.choose-room." + meeting.id)
         }
@@ -174,12 +175,11 @@ struct CalendarAgendaView: View {
                 .accessibilityIdentifier("calendar.join." + meeting.id)
                 Spacer(minLength: 0)
                 if meeting.invitation != nil {
-                    Button { calendar.choosingMeeting = meeting } label: {
-                        Image(systemName: "ellipsis").frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel(L("Choose another room"))
-                    .accessibilityIdentifier("calendar.choose-room." + meeting.id)
+                    CalendarMeetingActions(id: meeting.id, onReminders: {
+                        if let current = current(meeting) { calendar.reminders.editing = calendar.reminders.occurrence(for: current) }
+                    }, onChooseRoom: {
+                        if let current = current(meeting) { calendar.choosingMeeting = current }
+                    }).id(meeting.id)
                 }
             }
             if prominent { Text(L("Microphone and camera start off")).font(.caption).foregroundStyle(.secondary) }
@@ -190,10 +190,31 @@ struct CalendarAgendaView: View {
     }
 }
 
+private struct CalendarMeetingActions: View {
+    let id: String
+    let onReminders: () -> Void
+    let onChooseRoom: () -> Void
+    @State private var showing = false
+    var body: some View {
+        Button { showing = true } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+            .buttonStyle(.borderless).accessibilityLabel(L("More"))
+            .accessibilityIdentifier("calendar.more." + id)
+            .confirmationDialog(L("More"), isPresented: $showing, titleVisibility: .hidden) {
+                Button(L("Reminders"), action: onReminders)
+                Button(L("Choose another room"), action: onChooseRoom)
+                Button(L("Cancel"), role: .cancel) {}
+            }
+    }
+}
+
 struct CalendarSettingsView: View {
     @ObservedObject var calendar: CalendarMeetingStore
     var body: some View {
         Form {
+            Section {
+                NavigationLink(L("Meeting reminders")) { CalendarReminderSettingsView(reminders: calendar.reminders, calendar: calendar) }
+                    .accessibilityIdentifier("calendar.reminders")
+            }
             Section {
                 Toggle(L("Show calendar meetings"), isOn: Binding(get: { calendar.enabled }, set: calendar.setEnabled))
                     .accessibilityIdentifier("calendar.enabled")

@@ -66,6 +66,7 @@ struct HomeMeetingCard: View {
         .padding(.vertical, 2)
         .contextMenu {
             if let meeting {
+                Button(L("Reminders")) { calendar.reminders.editing = calendar.reminders.occurrence(for: meeting) }
                 Button(L("Choose another room")) { calendar.choosingMeeting = meeting }
                     .accessibilityIdentifier("calendar.choose-room." + meeting.id)
             }

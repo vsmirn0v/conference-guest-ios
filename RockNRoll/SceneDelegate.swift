@@ -102,6 +102,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
+        if !ProcessInfo.processInfo.isiOSAppOnMac { conference?.reminderVisibilityChanged(true) }
         conference?.meetingActivityForegrounded()
         macMeeting?.becameActive()
         conference?.calendarForegrounded()
@@ -113,6 +114,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
+        conference?.reminderVisibilityChanged(false)
         conference?.calendar.backgrounded()
         conference?.prepareToFloat()
     }
@@ -123,6 +125,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {
+        conference?.reminderVisibilityChanged(false)
         macMeeting?.invalidate()
         macMeeting = nil
     }

@@ -108,6 +108,7 @@ final class NativeConferenceEngine: CallEngine {
     private var speakerSubscription: AnyCancellable?
     private var refreshSpeakerInput: (() -> Void)?
     var continuationHostView: UIView? { activeControls }
+    var reminderHost: MeetingReminderHost? { activeControls?.reminderHost }
     private let streamViews = GuestStreamViews()
     private var offeredShare: GuestStreamViews.PinTarget?
     private var floatingVideo: GuestVideoPictureInPicture?

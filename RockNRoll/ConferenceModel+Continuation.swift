@@ -27,9 +27,15 @@ extension ConferenceModel {
             Task { @MainActor [weak self] in self?.updateContinuationActivity() }
         }
         coordinator.onStatus = { [weak self] _, _ in self?.refreshContinuationBanner() }
-        sync.onCloudAccessChanged = { [weak coordinator] account in coordinator?.setCloudAccount(account) }
-        sync.beforeDeleteSyncedData = { [weak coordinator] in try await coordinator?.deleteCloudData() }
+        sync.onCloudAccessChanged = { [weak coordinator, weak reminders = calendar.reminders] account in
+            coordinator?.setCloudAccount(account)
+            reminders?.observe([], account: account); reminders?.syncProfile(account: account)
+        }
+        sync.beforeDeleteSyncedData = { [weak coordinator, weak reminders = calendar.reminders] in
+            try await reminders?.deleteCloudProfile(); try await coordinator?.deleteCloudData()
+        }
         coordinator.setCloudAccount(sync.cloudAccount)
+        calendar.reminders.syncProfile(account: sync.cloudAccount)
         return coordinator
     }
     func refreshContinuationBanner() {

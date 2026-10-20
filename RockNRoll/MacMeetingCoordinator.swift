@@ -14,6 +14,11 @@ protocol MacMeetingSession: AnyObject {
     func backgroundedWithoutFloatingVideo()
     func restoreFromFloatingVideo()
     func leave()
+    func reminderVisibilityChanged(_ visible: Bool)
+}
+
+extension MacMeetingSession {
+    func reminderVisibilityChanged(_ visible: Bool) {}
 }
 
 extension ConferenceModel: MacMeetingSession {
@@ -23,6 +28,7 @@ extension ConferenceModel: MacMeetingSession {
 @MainActor
 protocol MacMeetingPresentation: AnyObject {
     var hiddenForMeeting: Bool { get }
+    var visibleForReminders: Bool { get }
     func bindMainWindow() -> Bool
     func markVisible()
     func update(_ state: MacMeetingMenuState)
@@ -30,6 +36,10 @@ protocol MacMeetingPresentation: AnyObject {
     func closeMeetingWindow()
     func hideMeeting() -> Bool
     func invalidate()
+}
+
+extension MacMeetingPresentation {
+    var visibleForReminders: Bool { !hiddenForMeeting }
 }
 
 @MainActor
@@ -40,6 +50,7 @@ private final class NativeMacMeetingPresentation: MacMeetingPresentation {
     }
     func bindMainWindow() -> Bool { bridge.bindMainWindow() }
     var hiddenForMeeting: Bool { bridge.hiddenForMeeting }
+    var visibleForReminders: Bool { bridge.visibleForReminders }
     func markVisible() { bridge.markVisible() }
     func update(_ state: MacMeetingMenuState) {
         bridge.updateActive(state.active, title: state.title, microphoneOn: state.microphoneOn, menu: state.menu)
@@ -82,6 +93,7 @@ final class MacMeetingCoordinator {
         bound = bridge.bindMainWindow()
         if !bound { bindingLost() }
         bridge.markVisible()
+        model?.reminderVisibilityChanged(bridge.visibleForReminders)
         if wasHidden && !bridge.hiddenForMeeting { model?.restoreFromFloatingVideo() }
         #if DEBUG
         NSLog("Mac meeting window binding: %@ %@", String(bound), String(describing: RockMacMeetingBridgeDiagnostics()))
@@ -146,11 +158,12 @@ final class MacMeetingCoordinator {
     private func perform(_ action: String) {
         guard let model, !terminating else { return }
         if action == "terminate" { terminating = true; bindingTask?.cancel(); model.leave(); return }
+        if action == "reminderVisibility" { model.reminderVisibilityChanged(bridge.visibleForReminders); return }
         if action == "binding" { if !terminating { becameActive() }; return }
         guard !terminating, bound else { return }
         guard bridge.bindMainWindow() else { bindingLost(); return }
-        if action == "visible" { model.restoreFromFloatingVideo(); return }
-        if action == "hidden" { model.prepareToFloat(); model.backgroundedWithoutFloatingVideo(); return }
+        if action == "visible" { model.reminderVisibilityChanged(bridge.visibleForReminders); model.restoreFromFloatingVideo(); return }
+        if action == "hidden" { model.reminderVisibilityChanged(false); model.prepareToFloat(); model.backgroundedWithoutFloatingVideo(); return }
         let pieces = action.split(separator: ":")
         guard pieces.count >= 2, pieces[0] == Substring(model.desktopSessionToken), model.desktopMeetingActive else { return }
         switch pieces[1] {

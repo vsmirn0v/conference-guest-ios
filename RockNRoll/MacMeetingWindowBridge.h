@@ -14,6 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)markVisible;
 - (void)invalidate;
 @property(nonatomic, readonly) BOOL hiddenForMeeting;
+@property(nonatomic, readonly) BOOL visibleForReminders;
 #if DEBUG
 - (void)closeForTesting;
 - (void)closeThroughDelegateForTesting;

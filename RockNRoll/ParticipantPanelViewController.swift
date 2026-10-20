@@ -13,6 +13,7 @@ struct ParticipantStatus: Equatable {
 }
 
 final class ParticipantPanelViewController: UIViewController {
+    var onDismiss: (() -> Void)?
     var onPin: ((String?) -> Void)?
     var onMoreControls: (() -> Void)?
     private let list = UIStackView()
@@ -50,6 +51,11 @@ final class ParticipantPanelViewController: UIViewController {
             list.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor)
         ])
         redraw()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        onDismiss?()
     }
 
     func update(_ statuses: [ParticipantStatus], pinnedKey: String?) {

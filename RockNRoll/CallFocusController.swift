@@ -15,7 +15,9 @@ final class CallFocusController {
     private var keyboardVisible = false
     private var hideAfterMenu = false
     private let defaults: UserDefaults
+    var onReminderChange: (() -> Void)?
     var menuVisible = false { didSet {
+        onReminderChange?()
         if menuVisible { invalidate() }
         else if hideAfterMenu { hideAfterMenu = false; hide() }
         else { interaction() }

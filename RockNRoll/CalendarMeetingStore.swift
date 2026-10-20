@@ -25,6 +25,7 @@ final class CalendarMeetingStore: ObservableObject {
     var knownEngine: (URL) -> MeetingEngineKind? = { _ in nil }
     var canAutomaticallyJoin: (CalendarMeeting) -> Bool = { _ in false }
     var onAutomaticJoin: (CalendarMeeting) -> Void = { _ in }
+    let reminders: CalendarReminderCoordinator
     private let preferences: UserDefaults
     private let storage: any RoomHistoryStorage
     private let reader: any CalendarReading
@@ -34,6 +35,7 @@ final class CalendarMeetingStore: ObservableObject {
     private var countdownTask: Task<Void, Never>?
     private var notificationTask: Task<Void, Never>?
     private var revision = UUID()
+    private var completedRevision: UUID?
     private var foreground = false
     private var automaticEntry = false
     private var observer: NSObjectProtocol?
@@ -47,12 +49,17 @@ final class CalendarMeetingStore: ObservableObject {
 
     init(reader: any CalendarReading = AppleCalendarReader(), detector: MeetingEngineDetector,
          preferences: UserDefaults = .standard,
-         storage: any RoomHistoryStorage = KeychainRoomHistoryStorage(service: "dev.vsmirn0v.conferenceguest.calendar")) {
+         storage: any RoomHistoryStorage = KeychainRoomHistoryStorage(service: "dev.vsmirn0v.conferenceguest.calendar"),
+         reminders: CalendarReminderCoordinator? = nil) {
         self.reader = reader; self.detector = detector; self.preferences = preferences; self.storage = storage
+        self.reminders = reminders ?? (preferences === UserDefaults.standard ? CalendarReminderBroker.shared.sharedCoordinator : CalendarReminderCoordinator(preferences: preferences))
         enabled = preferences.bool(forKey: "calendarMeetings.enabled")
         automaticJoin = preferences.bool(forKey: "calendarMeetings.automaticJoin")
         selected = Set(preferences.stringArray(forKey: "calendarMeetings.selected") ?? [])
         state = storage.read().flatMap { try? JSONDecoder().decode(LocalState.self, from: $0) } ?? .init()
+        self.reminders.onNeedsSnapshot = { [weak self] in self?.refresh() }
+        self.reminders.onEditing = { [weak self] in self?.cancelAutomaticJoin(suppress: true) }
+        self.reminders.beforeOpen = { [weak self] in await self?.refreshForReminder() ?? false }
         observer = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.calendarDidChange() }
         }
@@ -68,6 +75,7 @@ final class CalendarMeetingStore: ObservableObject {
             revision = UUID(); task?.cancel(); task = nil; loading = false
             boundaryTask?.cancel(); cancelAutomaticJoin(); meetings = []; calendars = []
             state.visits = [:]; persist()
+            updateReminders()
         } else { refresh(requestPermission: true) }
     }
     func setAutomaticJoin(_ value: Bool) {
@@ -79,9 +87,11 @@ final class CalendarMeetingStore: ObservableObject {
         meetings.removeAll { !selected.contains($0.calendarID) }
         preferences.set(selected.sorted(), forKey: "calendarMeetings.selected")
         state.visits = [:]; persist(); cancelAutomaticJoin(); refresh()
+        updateReminders()
     }
     func foregrounded(allowAutomaticJoin: Bool) {
         foreground = true; automaticEntry = allowAutomaticJoin
+        reminders.foregrounded()
         refresh()
     }
     func backgrounded() {
@@ -90,7 +100,7 @@ final class CalendarMeetingStore: ObservableObject {
         boundaryTask?.cancel(); notificationTask?.cancel(); cancelAutomaticJoin()
     }
     func calendarDidChange() {
-        guard enabled, foreground else { return }
+        guard enabled, foreground || reminders.enabled else { return }
         cancelAutomaticJoin()
         notificationTask?.cancel()
         notificationTask = Task { [weak self] in
@@ -112,7 +122,7 @@ final class CalendarMeetingStore: ObservableObject {
                 guard !Task.isCancelled, revision == token else { return }
                 access = authorization
                 guard authorization == .allowed else {
-                    meetings = []; calendars = []; loading = false; state.visits = [:]; persist(); return
+                    meetings = []; calendars = []; loading = false; state.visits = [:]; persist(); updateReminders(); return
                 }
                 let snapshot = await reader.read(selected: selected, now: Date(), knownOrigins: knownOrigins(), aliases: aliases())
                 guard !Task.isCancelled, revision == token else { return }
@@ -167,12 +177,26 @@ final class CalendarMeetingStore: ObservableObject {
                 now = Date(); loading = false; task = nil
                 let retained = state.suppressed.filter { $0.value > now }
                 if retained != state.suppressed { state.suppressed = retained; persist() }
-                scheduleBoundary(); considerAutomaticJoin()
+                completedRevision = token
+                updateReminders(); scheduleBoundary(); considerAutomaticJoin()
             } catch {
                 guard !Task.isCancelled, revision == token else { return }
                 self.error = L("Calendar access could not be completed. Try again."); loading = false
             }
         }
+    }
+    private func updateReminders() {
+        reminders.update(meetings: meetings, available: enabled && access == .allowed && !selected.isEmpty)
+    }
+    private func refreshForReminder() async -> Bool {
+        automaticEntry = false; cancelAutomaticJoin(); refresh()
+        for _ in 0..<2 {
+            let token = revision
+            await task?.value
+            if revision != token { continue }
+            return completedRevision == token && enabled && access == .allowed && !loading && error == nil
+        }
+        return false
     }
     private struct CalendarCopy: Hashable {
         let title: String; let start: Date; let end: Date; let links: [URL]
@@ -291,7 +315,7 @@ final class CalendarMeetingStore: ObservableObject {
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
             guard let self else { return }
             let previous = self.now; self.now = Date()
-            if Calendar.current.isDate(previous, inSameDayAs: self.now) { self.scheduleBoundary() }
+            if Calendar.current.isDate(previous, inSameDayAs: self.now) { self.updateReminders(); self.scheduleBoundary() }
             else { self.refresh() }
         }
     }

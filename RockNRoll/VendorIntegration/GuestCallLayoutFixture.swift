@@ -8,6 +8,7 @@ final class GuestCallLayoutFixture: UIViewController {
     private let streams = GuestStreamViews()
     private let processor = GuestVideoFrameProcessor()
     private var controls: CallControls!
+    var reminderHostForTesting: MeetingReminderHost? { controls?.reminderHost }
     private var renderers: [String: RTCMTLVideoView] = [:]
     private var timer: Timer?
     private var selectedName = ""

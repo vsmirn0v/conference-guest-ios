@@ -56,6 +56,22 @@ final class MeetingPanelOwner {
 final class MeetingAccessControls: UIView {
     let viewButton = UIButton(type: .system)
     let moreButton = UIButton(type: .system)
+    private let moreSizingButton = UIButton(type: .system)
+    let reminderHost = MeetingReminderHost()
+    private var reminderBadgeCount = 0
+    private var measuredMoreWidth: (traits: UITraitCollection, width: CGFloat)?
+    var reminderActions: [UIMenuElement] = []
+    func menuWithReminders(_ menu: UIMenu?) -> UIMenu? {
+        guard !reminderActions.isEmpty else { return menu }
+        return UIMenu(children: [UIMenu(title: L("Next meeting"), options: .displayInline, children: reminderActions)] + (menu?.children ?? []))
+    }
+    func setReminderBadge(_ count: Int) {
+        guard count != reminderBadgeCount else { return }
+        reminderBadgeCount = count
+        let image = UIImage(systemName: count > 0 ? "calendar.badge.clock" : "ellipsis")
+        moreButton.configuration?.image = image
+        moreButton.accessibilityValue = count > 0 ? L("%d meeting reminders", count) : nil
+    }
     private let surface = MeetingChromeSurface(cornerRadius: 24)
     private let divider = UIView()
     private var renderedState: MeetingViewState?
@@ -68,7 +84,21 @@ final class MeetingAccessControls: UIView {
         let titles = [L("Focus"), L("Gallery"), L("Shares only"), L("Audio only")]
         return max(154, ceil(titles.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0) + 64)
     }
-    private var moreWidth: CGFloat { max(84, ceil((L("More") as NSString).size(withAttributes: [.font: font]).width) + 46) }
+    private var moreWidth: CGFloat {
+        if let measuredMoreWidth, measuredMoreWidth.traits == traitCollection { return measuredMoreWidth.width }
+        // UIButton also scales symbol metrics for accessibility. Measure both
+        // states once per trait change so a reminder cannot move the controls.
+        let original = moreButton.configuration
+        var width: CGFloat = 84
+        for symbol in ["ellipsis", "calendar.badge.clock"] {
+            var configuration = original
+            configuration?.image = UIImage(systemName: symbol)
+            moreSizingButton.configuration = configuration
+            width = max(width, ceil(moreSizingButton.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 48)).width))
+        }
+        measuredMoreWidth = (traitCollection, width)
+        return width
+    }
     func fittingSize(availableWidth: CGFloat) -> CGSize {
         let ideal = viewWidth + moreWidth + 1
         return CGSize(width: min(max(44, availableWidth), ideal), height: availableWidth < ideal ? 96 : 48)
@@ -80,6 +110,10 @@ final class MeetingAccessControls: UIView {
         addSubview(surface)
         divider.backgroundColor = UIColor.white.withAlphaComponent(0.15)
         addSubview(divider)
+        moreSizingButton.isHidden = true
+        moreSizingButton.isUserInteractionEnabled = false
+        moreSizingButton.isAccessibilityElement = false
+        addSubview(moreSizingButton)
         for button in [viewButton, moreButton] {
             button.configuration = .plain()
             button.configuration?.baseForegroundColor = .white
@@ -87,9 +121,9 @@ final class MeetingAccessControls: UIView {
             button.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
             button.configuration?.titleLineBreakMode = .byTruncatingTail
             button.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)
-            button.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            button.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { [weak self] attributes in
                 var attributes = attributes
-                attributes.font = UIFontMetrics(forTextStyle: .callout).scaledFont(for: .systemFont(ofSize: 15, weight: .medium), maximumPointSize: 24)
+                attributes.font = self?.font
                 return attributes
             }
             addSubview(button)
@@ -101,6 +135,11 @@ final class MeetingAccessControls: UIView {
         moreButton.accessibilityLabel = L("More")
     }
     required init?(coder: NSCoder) { nil }
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        measuredMoreWidth = nil
+        setNeedsLayout(); superview?.setNeedsLayout()
+    }
     func update(_ state: MeetingViewState) {
         guard renderedState != state else { return }
         renderedState = state

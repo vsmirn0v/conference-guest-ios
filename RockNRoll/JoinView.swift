@@ -103,6 +103,7 @@ struct JoinView: View {
                 SavedCatchUpView(store: catchUp)
             }
             .sheet(isPresented: $showingSettings) { settingsSheet }
+            .modifier(CalendarReminderSheet(reminders: calendar.reminders, isActive: { !showingAgenda }))
             .sheet(isPresented: $showingAgenda) { agendaSheet }
             .sheet(isPresented: $showingDevices, onDismiss: {
                 if staleContinuation != nil { confirmingStaleContinuation = true }
@@ -156,8 +157,21 @@ struct JoinView: View {
             .onChange(of: model.isNameRequiredForJoin) { required in
                 if required { nameFocused = true }
             }
-            .onAppear { homeInteraction.resume(); homeVisible = false; refreshHome(); homeVisible = true; if model.isNameRequiredForJoin { nameFocused = true } }
-            .onDisappear { homeVisible = false; homeInteraction.cancel(); favoriteDrag.cancel(); sync.endNameEditing() }
+            .onAppear {
+                homeInteraction.resume(); homeVisible = false; refreshHome(); homeVisible = true
+                calendar.reminders.isEventVisible = { id in
+                    guard homeVisible, foreground, !showingSettings, !showingAgenda, !showingDevices,
+                          !mediaCheck.presented, !model.isInConference else { return false }
+                    if homeInteraction.isAnchorVisible("calendar." + id) { return true }
+                    guard let item = homeSnapshot.items.first(where: { $0.calendar?.id == id }) else { return false }
+                    return homeInteraction.isAnchorVisible("urgent." + item.id.homeAnchorID)
+                }
+                if model.isNameRequiredForJoin { nameFocused = true }
+            }
+            .onDisappear {
+                homeVisible = false; calendar.reminders.isEventVisible = { _ in false }
+                homeInteraction.cancel(); favoriteDrag.cancel(); sync.endNameEditing()
+            }
             .alert(L("Join here without moving the other device?"),
                                 isPresented: $confirmingStaleContinuation,
                                 presenting: staleContinuation) { jam in
@@ -414,6 +428,7 @@ struct JoinView: View {
             .navigationDestination(isPresented: $agendaSettings) { CalendarSettingsView(calendar: calendar) }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button(L("Done")) { showingAgenda = false } } }
             .sheet(item: $calendar.choosingMeeting) { CalendarRoomBindingView(meeting: $0, calendar: calendar, history: history) }
+            .modifier(CalendarReminderSheet(reminders: calendar.reminders, isActive: { showingAgenda }))
         }
     }
     private var devicesSheet: some View {
@@ -647,6 +662,11 @@ final class HomeInteractionState: NSObject, ObservableObject {
     private var scrolls: [ObjectIdentifier: ScrollObservation] = [:]
     private var frames: [String: CGRect] = [:]
     private var anchor: (id: String, y: CGFloat)?
+
+    func isAnchorVisible(_ id: String) -> Bool {
+        guard let frame = frames[id], let scrollView, scrollView.window != nil else { return false }
+        return frame.intersects(scrollView.convert(scrollView.bounds, to: nil))
+    }
 
     func touch(_ touching: Bool, in view: UIView?) {
         guard acceptingEvents else { return }

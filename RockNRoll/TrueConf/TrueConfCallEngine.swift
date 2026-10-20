@@ -70,6 +70,7 @@ final class TrueConfCallEngine: CallEngine {
     private(set) var hasJoinStarted = false
     var isSharingScreen: Bool { sharingActive }
     var continuationHostView: UIView? { view?.viewIfLoaded }
+    var reminderHost: MeetingReminderHost? { view?.reminderHost }
 
     init(systemCall: SystemCallCoordinator, catchUp: CatchUpStore, chat: ChatStore) {
         self.systemCall = systemCall; self.catchUp = catchUp; self.chat = chat

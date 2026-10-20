@@ -897,3 +897,70 @@
 "Arrange your camera, slides and annotations before sharing." = "Arrange your camera, slides and annotations before sharing.";
 "Start" = "Start";
 "Unmute" = "Unmute";
+
+/* Calendar meeting reminders */
+"After start" = "After start";
+"At start" = "At start";
+"Before start" = "Before start";
+"Choose a duration between 1 second and %@." = "Choose a duration between 1 second and %@.";
+"Choose calendars with supported meeting invitations in Calendars." = "Choose calendars with supported meeting invitations in Calendars.";
+"Custom" = "Custom";
+"Custom duration" = "Custom duration";
+"Custom…" = "Custom…";
+"Delivery and privacy" = "Delivery and privacy";
+"Duration" = "Duration";
+"Enable reminders on this device" = "Enable reminders on this device";
+"For meetings with a supported invitation link." = "For meetings with a supported invitation link.";
+"For this meeting only." = "For this meeting only.";
+"Hours" = "Hours";
+"In 2 min" = "In 2 min";
+"Join anyway" = "Join anyway";
+"Leave and join" = "Leave and join";
+"Leave the current meeting to join this one?" = "Leave the current meeting to join this one?";
+"Meeting reminder" = "Meeting reminder";
+"Meeting reminders" = "Meeting reminders";
+"Minutes" = "Minutes";
+"Notification delivery follows your Focus and system settings." = "Notification delivery follows your Focus and system settings.";
+"Notifications are off in Settings" = "Notifications are off in Settings";
+"Notifications could not be enabled. Try again." = "Notifications could not be enabled. Try again.";
+"On this device" = "On this device";
+"Reminders" = "Reminders";
+"Reminders could not be saved. Try again." = "Reminders could not be saved. Try again.";
+"Scheduled for now" = "Scheduled for now";
+"Scheduled start: %@" = "Scheduled start: %@";
+"Seconds" = "Seconds";
+"Show meeting details" = "Show meeting details";
+"Skip reminders" = "Skip reminders";
+"Some reminders could not be scheduled. Try again." = "Some reminders could not be scheduled. Try again.";
+"Starts in %@" = "Starts in %@";
+"This meeting is no longer available." = "This meeting is no longer available.";
+"This meeting's scheduled time has ended." = "This meeting's scheduled time has ended.";
+"Time Sensitive" = "Time Sensitive";
+"Unit" = "Unit";
+"Use defaults" = "Use defaults";
+"View meeting" = "View meeting";
+"When off, notifications show only the scheduled time." = "When off, notifications show only the scheduled time.";
+
+"While in another meeting" = "While in another meeting";
+
+"Always" = "Always";
+
+"No after-start reminder." = "No after-start reminder.";
+
+"A quiet reminder while this app is open in a different meeting." = "A quiet reminder while this app is open in a different meeting.";
+
+"Remind me even when this app is in the background." = "Remind me even when this app is in the background.";
+
+"Delay" = "Delay";
+
+"Collapse reminder" = "Collapse reminder";
+
+"Dismiss reminders for this meeting" = "Dismiss reminders for this meeting";
+
+"View meetings" = "View meetings";
+
+"Scheduled %@" = "Scheduled %@";
+
+"%d min ago" = "%d min ago";
+
+"%d meeting reminders" = "%d meeting reminders";

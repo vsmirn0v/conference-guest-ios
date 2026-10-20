@@ -47,6 +47,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let compactHeader = CompactCallHeader()
     private var toolbar: CallToolbar?
     private let accessControls = MeetingAccessControls()
+    var reminderHost: MeetingReminderHost { accessControls.reminderHost }
     private let panelOwner = MeetingPanelOwner()
     private let focusButton = UIButton(type: .system)
     private var browsedStream: PinnedStream?
@@ -206,7 +207,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     @objc private func keyOpenMore() { focus.show(); accessControls.moreButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
     @objc private func keyFocus() { focus.toggle() }
-    @objc private func keyRestoreControls() { focus.show(); focus.interaction() }
+    @objc private func keyRestoreControls() { if reminderHost.collapseReminder?() == true { return }; focus.show(); focus.interaction() }
     @objc private func keyFitScreen() { primaryZoom?.setZoomScale(1, animated: true) }
 
     init(title: String, catchUp: CatchUpStore, chat: ChatStore,
@@ -224,6 +225,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        reminderHost.changed()
         floatingVideo?.refreshPreference()
         focus.interaction()
     }
@@ -353,6 +355,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         toolbar.inlineAccessWidth = access.inline ? access.access.width + 8 : 0
         accessControls.frame = access.access
         accessControls.isHidden = focus.hidden
+        focus.onReminderChange = { [weak self] in self?.reminderHost.changed() }
+        reminderHost.bind(surface: view, access: accessControls, toolbar: toolbar,
+            blocked: { [weak self] in self?.focus.menuVisible != false },
+            privateContent: { [weak self] in self?.isSharingScreen == true || self?.studio?.presenter.running == true }, studio: studio)
         accessControls.update(MeetingViewState(layout: layoutMode, display: displayMode,
             manualFocus: pinnedStream != nil || browsedStream != nil, effectiveLayout: effectiveLayoutMode))
         var stage = access.stage
@@ -634,7 +640,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             guard let self else { return }
             self.focus.interaction()
             self.configureMoreMenu()
-            MeetingActionsController.show(model: nil, menu: self.actionsMenu,
+            MeetingActionsController.show(model: nil, menu: self.accessControls.menuWithReminders(self.actionsMenu),
                 from: more ? self.accessControls.moreButton : self.reactionsButton,
                 startsWithMore: more, openChat: self.supportsChat ? { [weak self] in self?.openConversation(.chat) } : nil,
                 owner: self.panelOwner, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
@@ -732,6 +738,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             let statuses = snapshot.participants.map(\.status)
             #endif
             let panel = ParticipantPanelViewController()
+            panel.onDismiss = { [weak self] in self?.reminderHost.changed() }
             panel.onPin = { [weak self] key in
                 guard let self else { return }
                 self.setPin(key.flatMap { self.streamPinTargets[$0] })
@@ -746,7 +753,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         workspace.openReactions = { [weak self] anchor, visibility in
             guard let self else { return }
             self.configureMoreMenu()
-            MeetingActionsController.show(model: nil, menu: self.actionsMenu, from: anchor,
+            MeetingActionsController.show(model: nil, menu: self.accessControls.menuWithReminders(self.actionsMenu), from: anchor,
                 openChat: {}, owner: self.panelOwner, onVisibilityChanged: { [weak self] shown in
                     self?.focus.menuVisible = shown
                     visibility(shown)
@@ -1510,6 +1517,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             return
         }
         isSharingScreen = enabled
+        reminderHost.changed()
         studio?.screenSharing = enabled
         studio?.screenSharingAvailable = supportsSharing && sharingAvailable
         share.isEnabled = sharingAvailable || enabled

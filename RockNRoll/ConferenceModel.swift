@@ -47,6 +47,13 @@ final class ConferenceModel: ObservableObject {
     let chat = ChatStore()
     let history: RoomHistoryStore
     let calendar: CalendarMeetingStore
+    private var reminderSubscriptions: Set<AnyCancellable> = []
+    private let reminderPresenter = MeetingReminderPresenter()
+    private var reminderSceneVisible = true
+    private let homeReminderHost = MeetingReminderHost()
+    private var reminderEngineSubscription: AnyCancellable?
+    private var reminderEngineID: ObjectIdentifier?
+    private var calendarReminderTarget: (room: MeetingRoomIdentity, eventID: String)?
     private var explicitCalendarEntry = false
     private var liveSessionID: UUID?
     private var liveName = ""
@@ -126,39 +133,15 @@ final class ConferenceModel: ObservableObject {
         displayName = preferences.string(forKey: "savedDisplayName")
             .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 } ?? ""
         guestWebsiteOrigin = preferences.string(forKey: "guestWebsiteOrigin") ?? ""
-        self.calendar.knownOrigins = { [weak self] in
-            guard let self else { return [] }
-            var origins = Set(self.history.rooms.compactMap { (try? JoinTarget.parse($0.joinURL.absoluteString))?.originURL.absoluteString.lowercased() })
-            let site = self.guestWebsiteOrigin.hasPrefix("https://") ? self.guestWebsiteOrigin : "https://" + self.guestWebsiteOrigin
-            if let url = URL(string: site), url.host != nil { origins.insert(url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()) }
-            return origins
-        }
-        self.calendar.knownEngine = { [weak self] in self?.history.matching($0)?.engine }
+        self.calendar.configureInvitationContext(history: self.history, preferences: preferences)
         self.calendar.canAutomaticallyJoin = { [weak self] meeting in
             guard let self else { return false }
             return !self.isJoining && !self.isInConference && !self.isLeaving &&
+                !self.calendar.reminders.hasOpenIntent &&
+                !self.calendar.reminders.presenting &&
                 self.siteSelection == nil && self.engineSelection == nil &&
                 meeting.engine?.inputPolicy.accepts(name: self.displayName) == true &&
                 self.continuation.candidates.isEmpty && !self.continuation.moving
-        }
-        self.calendar.aliases = { [weak self] in
-            var aliases: [String: URL] = [:]
-            var ambiguous: Set<String> = []
-            for room in self?.history.rooms ?? [] {
-                guard let name = room.alias?.lowercased(), name.contains("."),
-                      let host = URL(string: "https://" + name)?.host, host == name else { continue }
-                if aliases[host] != nil, aliases[host] != room.joinURL { ambiguous.insert(host) }
-                aliases[host] = room.joinURL
-            }
-            for host in ambiguous { aliases.removeValue(forKey: host) }
-            return aliases
-        }
-        self.calendar.invitationNormalizer = { [weak self] url in
-            if GuestSiteLinkAdapter.handles(url), let self {
-                return try? GuestSiteLinkAdapter.invitation(from: url, websiteOrigin: self.guestWebsiteOrigin,
-                    recentInvitations: self.guestInvitations)
-            }
-            return (try? JoinTarget.parse(url.absoluteString))?.invitationURL
         }
         self.calendar.onAutomaticJoin = { [weak self] in self?.joinCalendarMeeting($0) }
     }
@@ -180,6 +163,7 @@ final class ConferenceModel: ObservableObject {
 
     func configure(container: UIViewController) {
         self.container = container
+        configureReminders()
         engine.chat = chat
         if MeetingActivitySupport.supported, meetingActivity == nil {
             meetingActivity = MeetingActivitySession(changes: objectWillChange.eraseToAnyPublisher(), preferences: preferences) { [weak self] in
@@ -191,6 +175,108 @@ final class ConferenceModel: ObservableObject {
         }
     }
 
+    private func configureReminders() {
+        guard reminderSubscriptions.isEmpty else { return }
+        let reminders = calendar.reminders
+        reminders.canPresent = { [weak self] in self?.container?.view.window != nil && UIApplication.shared.applicationState == .active }
+        reminders.activeRoom = { [weak self] in
+            guard let self, self.isInConference, let url = self.connectedURL else { return nil }
+            return MeetingRoomIdentity(url, engine: self.activeRoute?.engineKind)
+        }
+        reminders.onOpen = { [weak self] occurrence, join in
+            self?.explicitCalendarEntry = true; self?.calendar.cancelAutomaticJoin()
+            self?.openReminder(occurrence, join: join)
+        }
+        reminders.scene = { [weak self, weak reminders] in
+            guard let self else { return .init() }
+            return .init(visible: self.reminderSceneVisible && self.container?.view.window != nil && UIApplication.shared.applicationState == .active,
+                room: reminders?.activeRoom(), usable: !self.meetingReconnecting && !self.isJoining && !self.isLeaving && reminders?.presenting != true && reminders?.editing == nil)
+        }
+        reminders.onBackground = { [weak self] in self?.reminderPresenter.backgrounded() }
+        reminders.onPresentation = { [weak self, weak reminders] events in
+            guard let self, let reminders else { return [] }
+            let visible = self.isInConference ? events : events.filter { event in
+                reminders.occurrence(for: event).map { !reminders.isEventVisible($0.eventID) } ?? false
+            }
+            self.homeReminderHost.surface = self.container?.view
+            return self.reminderPresenter.render(visible, host: self.isInConference ? self.activeEngine?.reminderHost : self.homeReminderHost, coordinator: reminders)
+                .union(Set(events.filter { !visible.contains($0) }.map(\.id)))
+        }
+        continuation.$candidates.sink { [weak self, weak reminders] jams in
+            reminders?.observe(jams, account: self?.sync.cloudAccount)
+        }.store(in: &reminderSubscriptions)
+        objectWillChange.sink { [weak self] in
+            DispatchQueue.main.async { self?.refreshReminders() }
+        }.store(in: &reminderSubscriptions)
+        CalendarReminderBroker.shared.attach(reminders)
+    }
+
+    private func refreshReminders() {
+        let identifier = activeEngine.map(ObjectIdentifier.init)
+        if identifier != reminderEngineID {
+            reminderEngineID = identifier
+            reminderEngineSubscription = activeEngine?.callWorkspacePublisher.sink { [weak self] _ in
+                DispatchQueue.main.async { self?.calendar.reminders.refreshPresentation() }
+            }
+        }
+        calendar.reminders.refreshPresentation()
+    }
+
+    private func openReminder(_ occurrence: ReminderOccurrence?, join: Bool) {
+        guard let container else { return }
+        let busy = isInConference || isJoining || isLeaving
+        if let occurrence, busy, isInConference, let url = connectedURL,
+           MeetingRoomIdentity(url, engine: activeRoute?.engineKind) == occurrence.room {
+            restoreFromFloatingVideo(); return
+        }
+        let remote = occurrence.flatMap { occurrence in continuation.candidates.first {
+            $0.isRecent(at: Date()) && MeetingRoomIdentity($0.invitation, engine: $0.engine) == occurrence.room
+        } }
+        if join, let occurrence, occurrence.end > Date(), remote == nil, !busy { joinReminder(occurrence); return }
+        let capturedSession = liveSessionID
+        calendar.reminders.presenting = true
+        let panel = UIHostingController(rootView: ReminderMeetingView(occurrence: occurrence,
+            activeElsewhere: remote, switching: busy, onJoin: { [weak self] in
+                guard let self, let occurrence else { return }
+                Task { @MainActor in
+                    guard let latest = await self.calendar.reminders.resolve(reference: occurrence.reference) else {
+                        self.openReminder(nil, join: false); return
+                    }
+                    if (self.isJoining || self.isInConference || self.isLeaving) && (!busy || capturedSession != self.liveSessionID) {
+                        self.openReminder(latest, join: false); return
+                    }
+                    self.joinReminder(latest)
+                }
+            }, onMove: { [weak self] jam in
+                guard let self, let occurrence else { return }
+                Task { @MainActor in
+                    guard let latest = await self.calendar.reminders.resolve(reference: occurrence.reference) else { self.openReminder(nil, join: false); return }
+                    guard !self.isJoining, !self.isInConference, !self.isLeaving,
+                          let current = self.continuation.candidates.first(where: {
+                              $0.deviceID == jam.deviceID && $0.sessionID == jam.sessionID && $0.isRecent(at: Date()) &&
+                                  MeetingRoomIdentity($0.invitation, engine: $0.engine) == latest.room
+                          }) else { self.openReminder(latest, join: false); return }
+                    self.calendarReminderTarget = latest.room.map { ($0, latest.eventID) }
+                    self.continuation.begin(current)
+                }
+            }, onDismiss: { [weak self] in self?.calendar.reminders.presenting = false }))
+        panel.modalPresentationStyle = .formSheet
+        var presenter = container
+        while let presented = presenter.presentedViewController { presenter = presented }
+        presenter.present(panel, animated: true)
+    }
+    private func joinReminder(_ occurrence: ReminderOccurrence) {
+        calendarReminderTarget = occurrence.room.map { ($0, occurrence.eventID) }
+        do {
+            let target = try destination(for: occurrence.invitation.absoluteString, verifiedEngine: occurrence.engine)
+            receive(target: target, autoJoin: true, title: occurrence.title)
+        } catch { status = error.localizedDescription; statusIsError = true }
+    }
+
+    func reminderVisibilityChanged(_ visible: Bool) {
+        reminderSceneVisible = visible
+        if visible { calendar.reminders.foregrounded(); calendar.reminders.refreshPresentation() } else { calendar.reminders.backgrounded() }
+    }
     func meetingActivityForegrounded() { meetingActivity?.foregrounded() }
 
     func prepareToFloat() {
@@ -213,6 +299,7 @@ final class ConferenceModel: ObservableObject {
     }
 
     func receive(url: URL) {
+        calendarReminderTarget = nil
         if url.scheme == "conferenceguest", url.host == "active-meeting" {
             // An old Activity is only navigation. It never initiates a join.
             if MeetingActivitySnapshot.sessionID(from: url) == liveSessionID, isInConference {
@@ -609,6 +696,8 @@ final class ConferenceModel: ObservableObject {
     func toggleStar(_ room: RecentRoom) { history.toggleStar(room.invitationURL) }
 
     func joinCalendarMeeting(_ meeting: CalendarMeeting) {
+        let occurrence = calendar.reminders.enabled ? calendar.reminders.occurrence(for: meeting) : calendar.reminders.existingOccurrence(for: meeting)
+        calendarReminderTarget = meeting.roomIdentity.map { ($0, occurrence?.eventID ?? meeting.id) }
         guard let invitation = meeting.invitation else { calendar.choosingMeeting = meeting; return }
         calendar.suppressAutomaticJoin(for: meeting)
         do {
@@ -618,7 +707,7 @@ final class ConferenceModel: ObservableObject {
     }
 
     func calendarForegrounded() {
-        calendar.foregrounded(allowAutomaticJoin: !explicitCalendarEntry)
+        calendar.foregrounded(allowAutomaticJoin: !explicitCalendarEntry && !calendar.reminders.hasOpenIntent && !CalendarReminderBroker.shared.hasPendingIntent)
         explicitCalendarEntry = false
     }
 
@@ -652,6 +741,7 @@ final class ConferenceModel: ObservableObject {
             }
             continuation.updateCurrent(continuationSnapshot())
             updateContinuationActivity()
+            refreshReminders()
         }
         switch event {
         case .inactive:
@@ -692,6 +782,10 @@ final class ConferenceModel: ObservableObject {
                                title: activeVisitTitle ?? activeRoomTitle ?? identifier, identifier: identifier,
                                engine: activeRoute.engineKind)
                 if let room = history.matching(activeRoute.invitationURL) { calendar.noteJoined(room, invitation: activeRoute.invitationURL) }
+                if let room = MeetingRoomIdentity(activeRoute.invitationURL, engine: activeRoute.engineKind) {
+                    calendar.reminders.joined(room: room, eventID: calendarReminderTarget.flatMap { $0.room == room ? $0.eventID : nil })
+                    calendarReminderTarget = nil
+                }
             }
         case .joining:
             break

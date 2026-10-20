@@ -3,12 +3,13 @@ import ConferenceCore
 import Foundation
 
 enum CalendarUIFixture {
-    final class Storage: RoomHistoryStorage {
+    final class Storage: RoomHistoryStorage, ReminderStorage {
         var data: Data?
         func read() -> Data? { data }
         func write(_ data: Data) { self.data = data }
     }
     actor Reader: CalendarReading {
+        private let start = Date()
         func access() -> CalendarAccess { .allowed }
         func requestAccess() -> Bool { true }
         func read(selected: Set<String>, now: Date, knownOrigins: Set<String>, aliases: [String: URL]) async -> CalendarSnapshot {
@@ -18,7 +19,7 @@ enum CalendarUIFixture {
             func event(_ id: String, title: String, offset: Double, link: String?, series: String? = nil,
                        quoted: String? = nil) -> CalendarMeeting {
                 .init(id: id, seriesID: series ?? id, calendarID: "work", calendarTitle: "Work",
-                      title: title, start: now.addingTimeInterval(offset), end: now.addingTimeInterval(offset + 3600),
+                      title: title, start: start.addingTimeInterval(offset), end: start.addingTimeInterval(offset + 3600),
                       linkGroups: CalendarLinkDiscovery.groups(url: nil, location: link, notes: quoted,
                         knownOrigins: ["https://meeting.example.test", "https://music.example.test"], hintedHostFragments: []))
             }
@@ -81,7 +82,8 @@ enum CalendarUIFixture {
         preferences.set(true, forKey: "iCloudSyncOfferSeen")
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [Response.self]
         let detector = MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config))
-        let calendar = CalendarMeetingStore(reader: Reader(), detector: detector, preferences: preferences, storage: Storage())
+        let reminders = CalendarReminderCoordinator(preferences: preferences, storage: Storage())
+        let calendar = CalendarMeetingStore(reader: Reader(), detector: detector, preferences: preferences, storage: Storage(), reminders: reminders)
         let model = ConferenceModel(jamService: JamService(session: URLSession(configuration: config)),
                                history: RoomHistoryStore(storage: Storage()), preferences: preferences,
                                engineDetector: detector, calendar: calendar)

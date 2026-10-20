@@ -39,7 +39,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     @objc private func keyOpenView() { focus.show(); accessControls.viewButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenMore() { focus.show(); accessControls.moreButton.sendActions(for: .touchUpInside) }
     @objc private func keyFocus() { focus.toggle() }
-    @objc private func keyRestoreControls() { focus.show(); focus.interaction() }
+    @objc private func keyRestoreControls() { if reminderHost.collapseReminder?() == true { return }; focus.show(); focus.interaction() }
     @objc private func keyFitScreen() { fitZoomedContent() }
     private let surface = CallChromeSurface()
     private let focus = CallFocusController()
@@ -48,6 +48,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private weak var surfaceContainer: UIView?
     private var toolbar: CallToolbar?
     private let accessControls = MeetingAccessControls()
+    var reminderHost: MeetingReminderHost { accessControls.reminderHost }
     private let panelOwner = MeetingPanelOwner()
     private var headerView: UIStackView?
     private let compactHeader = CompactCallHeader()
@@ -337,7 +338,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             guard let self else { return }
             self.focus.interaction()
             self.refreshMoreMenu?()
-            MeetingActionsController.show(model: self.reactions, menu: self.actionsMenu,
+            MeetingActionsController.show(model: self.reactions, menu: self.accessControls.menuWithReminders(self.actionsMenu),
                 from: more ? self.accessControls.moreButton : self.reactionsButton,
                 startsWithMore: more, openChat: { [weak self] in
                     self?.openConversation(catchUp: catchUp, chat: chat, selected: .chat)
@@ -444,7 +445,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         workspace.openReactions = { [weak self] anchor, visibility in
             guard let self else { return }
             self.refreshMoreMenu?()
-            MeetingActionsController.show(model: self.reactions, menu: self.actionsMenu, from: anchor,
+            MeetingActionsController.show(model: self.reactions, menu: self.accessControls.menuWithReminders(self.actionsMenu), from: anchor,
                 openChat: {}, owner: self.panelOwner, onVisibilityChanged: { [weak self] shown in
                     self?.focus.menuVisible = shown
                     visibility(shown)
@@ -638,6 +639,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         state.$screenShareState.receive(on: DispatchQueue.main).sink { [weak self] media in
             guard let self else { return }
             let isSharing = media == .on
+            self.reminderHost.changed()
             if isSharing { self.localPreview.begin() } else { self.localPreview.end() }
             self.share.configuration?.image = UIImage(systemName: isSharing ? "rectangle.slash" : "rectangle.on.rectangle")
             self.share.configuration?.title = L("Share")
@@ -846,6 +848,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private func openParticipantsPanel() {
         guard let presenter = presentationContainer, presenter.presentedViewController == nil else { return }
         let panel = ParticipantPanelViewController()
+            panel.onDismiss = { [weak self] in self?.reminderHost.changed() }
         panel.onPin = { [weak self] key in
             guard let self, self.window != nil else { return }
             if let target = key.flatMap({ self.participantPinTargets[$0] }) { self.selectParticipant(target) }
@@ -1197,6 +1200,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         toolbar.separatesLast = access.inline
         toolbar.inlineAccessWidth = access.inline ? access.access.width + 8 : 0
         accessControls.frame = access.access; accessControls.isHidden = focus.hidden
+        focus.onReminderChange = { [weak self] in self?.reminderHost.changed() }
+        reminderHost.bind(surface: surface, access: accessControls, toolbar: toolbar,
+            blocked: { [weak self] in self?.focus.menuVisible != false },
+            privateContent: { [weak self] in self?.studio?.screenSharing == true || self?.studio?.presenter.running == true }, studio: studio)
         accessControls.update(MeetingViewState(layout: layoutMode, display: displayMode,
             manualFocus: stagePinned || lastPresentation?.browsing == true,
             effectiveLayout: gridVisible ? .grid : .speaker, galleryAvailable: galleryCount > 1 && !isWaitingForOthers))

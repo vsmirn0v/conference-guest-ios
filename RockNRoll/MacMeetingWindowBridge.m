@@ -137,6 +137,10 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
         for (NSString *name in @[@"mainWindow", @"hide:", @"unhide:", @"terminate:", @"activateIgnoringOtherApps:"]) {
             if (![app respondsToSelector:NSSelectorFromString(name)]) return self;
         }
+        for (NSString *name in @[@"NSWindowDidMiniaturizeNotification", @"NSWindowDidDeminiaturizeNotification",
+                                  @"NSApplicationDidHideNotification", @"NSApplicationDidUnhideNotification"]) {
+            [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reminderVisibilityUpdated:) name:name object:nil];
+        }
         _application = app;
         _statusBar = [statusBar systemStatusBar];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(willTerminate:)
@@ -311,6 +315,14 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
         });
     }
 }
+- (BOOL)visibleForReminders {
+    return !self.invalidated && self.window && !self.hiddenForMeeting && ![self.application isHidden] &&
+        [self.window isVisible] && ![self.window isMiniaturized];
+}
+- (void)reminderVisibilityUpdated:(NSNotification *)notification {
+    if (notification.object != self.window && notification.object != self.application) return;
+    if (self.action) self.action(@"reminderVisibility");
+}
 - (void)markVisible {
     if (self.window && ![self.application isHidden] && [self.window isVisible]) self.hiddenForMeeting = NO;
 }
@@ -393,6 +405,7 @@ NSDictionary *RockMacMeetingBridgeDiagnostics(void) {
 @interface RockProxyTestWindow : NSObject
 @property(nonatomic, weak) id delegate;
 @property(nonatomic) BOOL isVisible;
+@property(nonatomic) BOOL isMiniaturized;
 @property(nonatomic) NSUInteger styleMask;
 @property(nonatomic) NSInteger level;
 @property(nonatomic, strong) id sheetParent;
@@ -431,7 +444,10 @@ BOOL RockMacMeetingVisibilityQualification(void) {
     BOOL correct = bridge.hiddenForMeeting && visible == 0;
     window.isVisible = YES;
     [bridge completeVisibility:revision attempt:10];
-    correct &= !bridge.hiddenForMeeting && visible == 1;
+    correct &= !bridge.hiddenForMeeting && visible == 1 && bridge.visibleForReminders;
+    window.isMiniaturized = YES; correct &= !bridge.visibleForReminders;
+    window.isMiniaturized = NO; app.isHidden = YES; correct &= !bridge.visibleForReminders;
+    app.isHidden = NO; correct &= bridge.visibleForReminders;
     bridge.hiddenForMeeting = YES; bridge.visibilityRevision++;
     [bridge completeVisibility:revision attempt:10];
     correct &= bridge.hiddenForMeeting && visible == 1;

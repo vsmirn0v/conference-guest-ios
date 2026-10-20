@@ -895,3 +895,70 @@
 "Arrange your camera, slides and annotations before sharing." = "Подготовьте камеру, слайды и заметки перед началом показа.";
 "Start" = "Начать";
 "Unmute" = "Включить";
+
+/* Calendar meeting reminders */
+"After start" = "После начала";
+"At start" = "В момент начала";
+"Before start" = "До начала";
+"Choose a duration between 1 second and %@." = "Выберите длительность от 1 секунды до %@.";
+"Choose calendars with supported meeting invitations in Calendars." = "Выберите календари с поддерживаемыми ссылками на встречи в разделе «Календари».";
+"Custom" = "Настроить";
+"Custom duration" = "Своя длительность";
+"Custom…" = "Другое…";
+"Delivery and privacy" = "Доставка и конфиденциальность";
+"Duration" = "Длительность";
+"Enable reminders on this device" = "Включить напоминания на этом устройстве";
+"For meetings with a supported invitation link." = "Для встреч с поддерживаемой ссылкой-приглашением.";
+"For this meeting only." = "Только для этой встречи.";
+"Hours" = "Часы";
+"In 2 min" = "Через 2 мин";
+"Join anyway" = "Всё равно войти";
+"Leave and join" = "Выйти и войти";
+"Leave the current meeting to join this one?" = "Выйти из текущей встречи и войти в эту?";
+"Meeting reminder" = "Напоминание о встрече";
+"Meeting reminders" = "Напоминания о встречах";
+"Minutes" = "Минуты";
+"Notification delivery follows your Focus and system settings." = "Доставка уведомлений зависит от настроек фокусирования и системы.";
+"Notifications are off in Settings" = "Уведомления выключены в Настройках";
+"Notifications could not be enabled. Try again." = "Не удалось включить уведомления. Повторите попытку.";
+"On this device" = "На этом устройстве";
+"Reminders" = "Напоминания";
+"Reminders could not be saved. Try again." = "Не удалось сохранить напоминания. Повторите попытку.";
+"Scheduled for now" = "Запланировано на сейчас";
+"Scheduled start: %@" = "Начало по расписанию: %@";
+"Seconds" = "Секунды";
+"Show meeting details" = "Показывать сведения о встрече";
+"Skip reminders" = "Пропустить напоминания";
+"Some reminders could not be scheduled. Try again." = "Не удалось запланировать некоторые напоминания. Повторите попытку.";
+"Starts in %@" = "Начало через %@";
+"This meeting is no longer available." = "Эта встреча больше недоступна.";
+"This meeting's scheduled time has ended." = "Запланированное время этой встречи закончилось.";
+"Time Sensitive" = "Неотложные уведомления";
+"Unit" = "Единица";
+"Use defaults" = "По умолчанию";
+"View meeting" = "Открыть встречу";
+"When off, notifications show only the scheduled time." = "Если выключено, уведомления показывают только время встречи.";
+
+"While in another meeting" = "Во время другой встречи";
+
+"Always" = "Всегда";
+
+"No after-start reminder." = "Без напоминания после начала.";
+
+"A quiet reminder while this app is open in a different meeting." = "Тихое напоминание, когда приложение открыто в другой встрече.";
+
+"Remind me even when this app is in the background." = "Напоминать, даже когда приложение в фоне.";
+
+"Delay" = "Задержка";
+
+"Collapse reminder" = "Свернуть напоминание";
+
+"Dismiss reminders for this meeting" = "Отключить напоминания об этой встрече";
+
+"View meetings" = "Посмотреть встречи";
+
+"Scheduled %@" = "По расписанию: %@";
+
+"%d min ago" = "%d мин. назад";
+
+"%d meeting reminders" = "Напоминания о встречах: %d";
