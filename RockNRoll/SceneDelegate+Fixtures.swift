@@ -169,7 +169,20 @@ extension SceneDelegate {
             let call = RockCallViewController(title: "Open rehearsal",
                 catchUp: model.catchUpStore, chat: model.chat)
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_NATIVE_PICKERS"] == "1" {
-                call.usesBroadcastPickerForTesting = true
+                if #available(iOS 27.0, *) {
+                    // Match the shipping iOS 27 chooser; ReplayKit's legacy
+                    // extension picker is used only on older iOS versions.
+                    let capture = NativeGuestScreenCapture(preview: LocalSharePreview(),
+                        onError: { [weak call] in call?.showMediaStatus($0) })
+                    call.usesNativeShareControl = true
+                    call.onShare = { enabled in
+                        if enabled { capture.start() }
+                        else { Task { await capture.stop() } }
+                    }
+                    call.onLeave = { Task { await capture.stop() } }
+                } else {
+                    call.usesBroadcastPickerForTesting = true
+                }
             }
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_SPEAKER"] == "1" {
                 call.fixtureActions = SpeakerFixtureActions.make(call.activeSpeaker)

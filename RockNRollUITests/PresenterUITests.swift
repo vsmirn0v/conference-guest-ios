@@ -263,6 +263,7 @@ final class PresenterUITests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invite
+        app.launchEnvironment["CONFERENCE_TEST_MEDIA_TRACE"] = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_MEDIA_TRACE"]
         app.launchArguments += ["-automaticallyHideMeetingControls", "NO"]
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Presenter QA"
         #if targetEnvironment(simulator)

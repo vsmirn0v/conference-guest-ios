@@ -111,6 +111,9 @@ final class PiPMicrophoneUITests: XCTestCase {
         assertStatus("Aram", in: pip)
         assertStatus("You", in: pip)
         let mutedBadge = badgePixels(in: pip)
+        let mutedGray = grayBadgePixels(in: pip)
+        XCTAssertGreaterThanOrEqual(mutedGray, 0)
+        let badgeSize = pip.frame.size
         let calculator = XCUIApplication(bundleIdentifier: "com.apple.calculator")
         calculator.activate()
         assertStatus("Ani", in: pip)
@@ -118,8 +121,40 @@ final class PiPMicrophoneUITests: XCTestCase {
         XCTAssertNotEqual(mutedBadge, badgePixels(in: pip), "The compact microphone icon did not update")
         XCTAssertTrue(pip.exists)
         XCTAssertEqual(calculator.state, .runningForeground)
-        assertStatus("Mic unavailable", in: pip)
+        XCTAssertEqual(pip.frame.size, badgeSize)
+        // Small PiP deliberately retains only "You" beside the mic glyph.
+        // Verify the visible orange/on icon changes to disabled gray without
+        // requiring the full status phrase to fit in the compact badge.
+        XCTAssertGreaterThan(orangeBadgePixels(in: pip), 10)
+        let disabled = expectation(for: NSPredicate { _, _ in
+            pip.exists && pip.frame.size == badgeSize && self.orangeBadgePixels(in: pip) == 0
+                && self.grayBadgePixels(in: pip) > max(20, mutedGray * 2)
+        }, evaluatedWith: pip)
+        wait(for: [disabled], timeout: 15)
+        assertStatus("You", in: pip)
         XCTAssertTrue(pip.exists)
+    }
+
+    private func orangeBadgePixels(in pip: XCUIElement) -> Int {
+        badgeGlyphPixels(in: pip) { r, g, b in r > 160 && r * 4 > g * 5 && g * 5 > b * 6 }
+    }
+    private func grayBadgePixels(in pip: XCUIElement) -> Int {
+        badgeGlyphPixels(in: pip) { r, g, b in (190...220).contains(r) && max(r, g, b) - min(r, g, b) < 8 }
+    }
+    private func badgeGlyphPixels(in pip: XCUIElement, matching color: (Int, Int, Int) -> Bool) -> Int {
+        guard let full = pip.screenshot().image.cgImage else { return -1 }
+        // This fixed 16:9 fixture uses the compact "You" badge. Exclude its
+        // text and the speaker badge: a missing glyph must not pass the check.
+        let w = CGFloat(full.width), h = CGFloat(full.height)
+        guard let image = full.cropping(to: CGRect(x: w * 0.72, y: h * 0.76, width: w * 0.08, height: h * 0.14)) else { return -1 }
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        guard let context = CGContext(data: &pixels, width: image.width, height: image.height,
+            bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return -1 }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return stride(from: 0, to: pixels.count, by: 4).filter {
+            color(Int(pixels[$0]), Int(pixels[$0 + 1]), Int(pixels[$0 + 2]))
+        }.count
     }
 
     private func badgePixels(in pip: XCUIElement) -> Data? {

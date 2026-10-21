@@ -3,8 +3,17 @@ import XCTest
 final class LiquidGlassUITests: XCTestCase {
     func testNativeAudioControlIsReachableAndOpensPickerWhereSupported() {
         let app = launch()
-        defer { app.terminate() }
         let isMac = ProcessInfo.processInfo.isiOSAppOnMac
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let routes = springboard.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "LOCAL::"))
+        defer {
+            // iOS 27's route sheet survives terminating its presenting app.
+            // Dismiss it before the next native-picker test touches the dock.
+            if !isMac, routes.count > 0 {
+                springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
+            }
+            app.terminate()
+        }
         let output = app.buttons[isMac ? "Mac audio devices" : "AirPlay"]
         guard output.waitForExistence(timeout: 10) else {
             XCTFail("Native audio control missing: \(app.debugDescription)"); return
@@ -18,12 +27,11 @@ final class LiquidGlassUITests: XCTestCase {
         return
         #endif
         output.tap()
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let shown = NSPredicate { _, _ in
             if isMac {
                 return app.navigationBars["Audio devices"].exists && app.tables.count > 0
             }
-            return app.staticTexts["AirPlay"].exists || springboard.staticTexts["AirPlay"].exists
+            return routes.count > 0 || app.staticTexts["AirPlay"].exists || springboard.staticTexts["AirPlay"].exists
         }
         let ready = XCTNSPredicateExpectation(predicate: shown, object: nil)
         let result = XCTWaiter.wait(for: [ready], timeout: 8)
@@ -35,7 +43,7 @@ final class LiquidGlassUITests: XCTestCase {
         attach("Native audio picker from glass dock")
     }
 
-    func testSystemBroadcastPickerOpensWithoutStartingPublication() throws {
+    func testSystemShareChooserOpensWithoutStartingPublication() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("ReplayKit system broadcast presentation requires the physical iPhone")
         #else
@@ -48,15 +56,18 @@ final class LiquidGlassUITests: XCTestCase {
         XCTAssertTrue(share.waitForExistence(timeout: 10))
         share.tap()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let consent: String
+        if #available(iOS 27.0, *) { consent = "Share Entire Screen" }
+        else { consent = "Start Broadcast" }
         let shown = NSPredicate { _, _ in
-            app.buttons["Start Broadcast"].exists || springboard.buttons["Start Broadcast"].exists
+            app.buttons[consent].exists || springboard.buttons[consent].exists
         }
         let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: shown, object: nil)], timeout: 8)
         if result != .completed {
             print("BROADCAST PICKER APP: \(app.debugDescription)")
             print("BROADCAST PICKER SYSTEM: \(springboard.debugDescription)")
         }
-        XCTAssertEqual(result, .completed, "The masked native broadcast button must present its chooser")
+        XCTAssertEqual(result, .completed, "The current system sharing control must present its chooser")
         attach("Native broadcast chooser without starting capture")
         #endif
     }
