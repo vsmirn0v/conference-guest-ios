@@ -4,7 +4,7 @@ public struct ReminderFollowUp: Codable, Equatable, Sendable {
     public enum Mode: String, Codable, CaseIterable, Sendable { case off, anotherMeeting, always }
     public var mode: Mode
     public var delay: Int
-    public init(mode: Mode = .anotherMeeting, delay: Int = 120) { self.mode = mode; self.delay = delay }
+    public init(mode: Mode = .anotherMeeting, delay: Int = 30) { self.mode = mode; self.delay = delay }
     public var validated: Self { .init(mode: mode, delay: min(3600, max(1, delay))) }
 }
 
@@ -13,13 +13,13 @@ public struct ReminderTiming: Codable, Equatable, Sendable {
     public var atStart: Bool
     public var followUp: ReminderFollowUp
     public var rememberedBefore: Int = 120
-    public var rememberedAfter: Int = 120
+    public var rememberedAfter: Int = 30
     /// Legacy source compatibility. Setting this explicitly retains unconditional delivery.
     public var after: Int? {
         get { followUp.mode == .off ? nil : followUp.delay }
         set { followUp = .init(mode: newValue == nil ? .off : .always, delay: newValue ?? followUp.delay) }
     }
-    public init(before: Int? = 120, atStart: Bool = false, after: Int? = nil,
+    public init(before: Int? = nil, atStart: Bool = true, after: Int? = nil,
                 followUp: ReminderFollowUp? = nil) {
         self.before = before; self.atStart = atStart
         self.followUp = followUp ?? after.map { .init(mode: .always, delay: $0) } ?? .init()

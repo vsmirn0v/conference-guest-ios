@@ -12,7 +12,9 @@ final class CalendarReminderTests: XCTestCase {
     func testDefaultsAndIndependentPhases() {
         let occurrence = occurrence()
         let defaultPlan = CalendarReminderPlanner.plan(occurrences: [occurrence], states: [:], profile: .init(), now: now)
-        XCTAssertEqual(defaultPlan.map(\.phase), [.before]); XCTAssertEqual(defaultPlan[0].date, occurrence.start.addingTimeInterval(-120))
+        XCTAssertNil(ReminderProfile().timing.before)
+        XCTAssertTrue(ReminderProfile().timing.atStart)
+        XCTAssertEqual(defaultPlan.map(\.phase), [.start]); XCTAssertEqual(defaultPlan[0].date, occurrence.start)
         var profile = ReminderProfile(); profile.timing = .init(before: 30, atStart: true, after: 120)
         let plan = CalendarReminderPlanner.plan(occurrences: [occurrence], states: [:], profile: profile, now: now)
         XCTAssertEqual(plan.map(\.phase), [.before, .start, .after])
@@ -48,7 +50,7 @@ final class CalendarReminderTests: XCTestCase {
             case 0: state.attended = true
             case 1: state.remoteAccount = "account"
             case 2: state.skipped = true
-            default: state.consumed = [.before]
+            default: state.consumed = [.start]
             }
             XCTAssertEqual(CalendarReminderPlanner.plan(occurrences: [first, next], states: [first.id: state], profile: .init(), now: now).map(\.occurrenceID), [next.id])
         }
@@ -78,7 +80,7 @@ final class CalendarReminderTests: XCTestCase {
         let occurrence = occurrence()
         let first = CalendarReminderPlanner.plan(occurrences: [occurrence], states: [:], profile: .init(), now: now)
         XCTAssertEqual(first, CalendarReminderPlanner.plan(occurrences: [occurrence], states: [:], profile: .init(), now: now.addingTimeInterval(1)))
-        XCTAssertEqual(first[0].date.timeIntervalSince(occurrence.start), -120)
+        XCTAssertEqual(first[0].date, occurrence.start)
         XCTAssertNotEqual(first[0].id, CalendarReminderPlanner.plan(occurrences: [self.occurrence("recurrence")], states: [:], profile: .init(), now: now)[0].id)
     }
 }

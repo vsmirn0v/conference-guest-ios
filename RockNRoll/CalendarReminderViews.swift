@@ -167,7 +167,7 @@ private struct ReminderDurationView: View {
         Form {
             if !custom { Section {
                 if allowsOff { choice(nil) }
-                ForEach([30, 60, 120, 300, 600], id: \.self) { choice($0) }
+                ForEach([10, 15, 30, 60, 120, 300, 600], id: \.self) { choice($0) }
                 Button(L("Custom…")) {
                     let seconds = value ?? remembered
                     unit = seconds % 60 == 0 ? 60 : 1; quantity = String(seconds / unit); custom = true
@@ -202,7 +202,8 @@ private struct ReminderDurationView: View {
                 Text(ReminderFormatting.duration(seconds)); Spacer()
                 if value == seconds { Image(systemName: "checkmark").accessibilityHidden(true) }
             }.frame(minHeight: 44).contentShape(Rectangle())
-        }.accessibilityAddTraits(value == seconds ? .isSelected : [])
+        }.accessibilityIdentifier("reminders.duration." + (seconds.map(String.init) ?? "off"))
+            .accessibilityAddTraits(value == seconds ? .isSelected : [])
     }
 }
 

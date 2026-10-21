@@ -137,7 +137,7 @@ final class PresenterCompositorTests: XCTestCase {
     }
     func testCameraCardDisappearsAndAnnotationsReachTheOutput() throws {
         let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90))
-        var scene = PresenterScene()
+        var scene = PresenterScene(layout: .card)
         let live = try XCTUnwrap(compositor.render(scene: scene, camera: solid(230), time: .zero))
         let off = try XCTUnwrap(compositor.render(scene: scene, camera: nil, time: .zero))
         XCTAssertNotEqual(try pixels(live), try pixels(off))
@@ -159,9 +159,9 @@ final class PresenterCompositorTests: XCTestCase {
     func testManualCameraRotationUsesTheSamePixelAndMaskOrientation() throws {
         let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90))
         let camera = try solid(180)
-        var scene = PresenterScene(); scene.cameraRotation = 90
+        var scene = PresenterScene(layout: .card); scene.cameraRotation = 90
         let manual = try XCTUnwrap(compositor.render(scene: scene, camera: camera, time: .zero))
-        let device = try XCTUnwrap(compositor.render(scene: PresenterScene(), camera: camera, rotation: 90, time: .zero))
+        let device = try XCTUnwrap(compositor.render(scene: PresenterScene(layout: .card), camera: camera, rotation: 90, time: .zero))
         XCTAssertEqual(try pixels(manual), try pixels(device))
         var maskOrientation: CGImagePropertyOrientation?
         let masked = PresenterCompositor(size: CGSize(width: 160, height: 90), personMask: { _, orientation in
@@ -173,7 +173,7 @@ final class PresenterCompositorTests: XCTestCase {
     }
     func testCameraPlacementAndLiveDrawingReachOutgoingPixels() throws {
         let compositor = PresenterCompositor(size: CGSize(width: 160, height: 90))
-        var scene = PresenterScene()
+        var scene = PresenterScene(layout: .card)
         let camera = try solid(230)
         var left: [UInt8] = [], right: [UInt8] = []
         scene.placement.x = 0.03
@@ -563,7 +563,7 @@ final class PresenterModelTests: XCTestCase {
         var last: CMSampleBuffer?, sends = 0
         model.makePrivateCamera = { _ in capture }; capture.onFrames = { emit = $0 }
         model.startSharing = { sample, _ in last = sample }; model.sendSample = { last = $0; sends += 1 }; model.stopSharing = {}
-        model.scene = PresenterScene()
+        model.scene = PresenterScene(layout: .card)
         model.scene.placement = PresenterPlacement(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
         model.open(); model.acceptScreen(try screenSample(gray: 20)); model.includeCamera = true
         await waitUntil { emit != nil && model.hasPreview }
@@ -600,7 +600,7 @@ final class PresenterModelTests: XCTestCase {
         model.makeCameraSource = { emit = $0; return live }
         model.startSharing = { _, _ in await withCheckedContinuation { continuation = $0 } }
         model.sendSample = { last = $0; sends += 1 }; model.stopSharing = {}
-        model.scene = PresenterScene()
+        model.scene = PresenterScene(layout: .card)
         model.scene.placement = PresenterPlacement(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
         model.open(); model.acceptScreen(try screenSample()); model.includeCamera = true
         model.update(cameraOn: true, held: false)
@@ -989,6 +989,8 @@ final class PresenterModelTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let model = PresenterModel(observeLifecycle: false, preferences: defaults)
+        XCTAssertEqual(model.scene.layout, .cutout)
+        model.scene.layout = .beside
         var sends = 0
         model.startSharing = { _, _ in }; model.sendSample = { _ in sends += 1 }; model.stopSharing = {}
         model.selectCanvas(); model.open(); await waitUntil { model.hasPreview }; await model.start()
@@ -1001,6 +1003,7 @@ final class PresenterModelTests: XCTestCase {
         model.savePlacement(); model.end()
         let next = PresenterModel(observeLifecycle: false, preferences: defaults)
         XCTAssertEqual(next.scene.placement, placement)
+        XCTAssertEqual(next.scene.layout, .beside)
         XCTAssertFalse(next.includeCamera); XCTAssertFalse(next.running); XCTAssertNil(next.scene.image)
         next.end()
     }

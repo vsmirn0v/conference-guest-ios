@@ -992,7 +992,7 @@
 "Customize reminders" = "Customize reminders";
 "Recommended settings" = "Recommended settings";
 "Your current settings" = "Your current settings";
-"Recommended: 2 minutes before, no alert at the start, and a quiet reminder 2 minutes after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off." = "Recommended: 2 minutes before, no alert at the start, and a quiet reminder 2 minutes after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off.";
+"Recommended: no reminder before the start, an alert at the start, and a quiet reminder 30 seconds after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off." = "Recommended: no reminder before the start, an alert at the start, and a quiet reminder 30 seconds after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off.";
 "More iCloud options" = "More iCloud options";
 "Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device." = "Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device.";
 "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings." = "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings.";

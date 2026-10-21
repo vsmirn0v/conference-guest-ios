@@ -7,7 +7,7 @@ import Vision
 struct PresenterScene: Equatable {
     enum Layout: String, CaseIterable { case card, cutout, instrument, beside }
     enum Backdrop: String, CaseIterable { case dark, warm, stage }
-    var layout: Layout = .card
+    var layout: Layout = .cutout
     var backdrop: Backdrop = .dark
     var image: CGImage?
     enum ImageFraming: String, CaseIterable { case fit, fill }

@@ -153,7 +153,7 @@ struct MeetingSetupView: View {
                 .accessibilityIdentifier("setup.customizeReminders")
         } header: { Text(reminders.profile == ReminderProfile() ? L("Recommended settings") : L("Your current settings")) }
         footer: {
-            Text(L("Recommended: 2 minutes before, no alert at the start, and a quiet reminder 2 minutes after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off."))
+            Text(L("Recommended: no reminder before the start, an alert at the start, and a quiet reminder 30 seconds after while this app is open in another meeting. Sound and meeting details are on; Time Sensitive is off."))
         }
         if let error = reminders.error { Section { Text(error).foregroundStyle(.red) } }
     }

@@ -181,6 +181,7 @@ import XCTest
         let storage = Storage(), notifications = Notifications(), preferences = preferences()
         let event = meeting(offset: 110)
         var repository = CalendarReminderRepository(); repository.enabled = true
+        repository.profile.value.timing = .init(before: 120, atStart: false)
         repository.update([event], at: now)
         let occurrence = try XCTUnwrap(repository.occurrences.first)
         let plan = PlannedReminder(occurrence: occurrence, phase: .before, date: now.addingTimeInterval(-10))
@@ -189,7 +190,7 @@ import XCTest
         coordinator.foregrounded(); coordinator.update(meetings: [event], available: true); await coordinator.waitForReconciliation()
         var deliveries = 0; coordinator.scene = { .init(visible: true) }
         coordinator.onPresentation = { events in deliveries += events.filter { !coordinator.wasPresented($0) }.count; return Set(events.map(\.id)) }
-        let notification = ReminderNotification(plan: plan, occurrence: occurrence, profile: .init())
+        let notification = ReminderNotification(plan: plan, occurrence: occurrence, profile: repository.profile.value)
         coordinator.foregroundReminder(reference: occurrence.reference, requestID: plan.id, fingerprint: notification.fingerprint)
         await coordinator.waitForReconciliation()
         XCTAssertEqual(deliveries, 1); XCTAssertTrue(notifications.items.isEmpty)

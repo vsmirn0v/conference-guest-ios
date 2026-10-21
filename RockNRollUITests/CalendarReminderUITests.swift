@@ -53,6 +53,27 @@ final class CalendarReminderUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [on], timeout: 5), .completed)
         XCTAssertFalse(app.staticTexts["Notifications are off in Settings"].exists)
     }
+    func testShortFollowUpChoicesAndOneSecondCustomDelay() {
+        launch("en")
+        app.buttons["Settings"].tap(); app.buttons["calendar.settings"].tap(); app.buttons["calendar.reminders"].tap()
+        XCTAssertTrue(app.buttons["reminders.before"].label.contains("Off"))
+        app.buttons["reminders.after"].tap()
+        let delay = app.buttons["reminders.followUp.delay"]
+        XCTAssertTrue(delay.waitForExistence(timeout: 3)); XCTAssertTrue(delay.label.contains("30 seconds"))
+        delay.tap()
+        XCTAssertTrue(app.buttons["reminders.duration.15"].exists)
+        app.buttons["reminders.duration.10"].tap()
+        XCTAssertTrue(delay.waitForExistence(timeout: 3)); XCTAssertTrue(delay.label.contains("10 seconds"))
+        delay.tap(); app.buttons["reminders.custom"].tap()
+        let quantity = app.textFields["reminders.quantity"]
+        XCTAssertTrue(quantity.waitForExistence(timeout: 3)); quantity.tap()
+        quantity.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 2) + "0")
+        let save = app.buttons["reminders.saveDuration"]
+        XCTAssertFalse(save.isEnabled)
+        quantity.typeText(XCUIKeyboardKey.delete.rawValue + "1")
+        XCTAssertTrue(save.isEnabled); save.tap()
+        XCTAssertTrue(delay.waitForExistence(timeout: 3)); XCTAssertTrue(delay.label.contains("1 second"))
+    }
     func testRussianOccurrenceOverridesAndRotation() {
         launch("ru")
         app.descendants(matching: .any)["home.title.daily"].firstMatch.press(forDuration: 1.2)

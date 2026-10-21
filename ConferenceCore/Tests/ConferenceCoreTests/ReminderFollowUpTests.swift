@@ -4,7 +4,7 @@ import XCTest
 final class ReminderFollowUpTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
     private var current: MeetingRoomIdentity { .init(URL(string: "https://salutejazz.ru/calls/current")!, engine: .guest)! }
-    private func occurrence(_ id: String = "next", start: Double = -120, end: Double = 1800) -> ReminderOccurrence {
+    private func occurrence(_ id: String = "next", start: Double = -30, end: Double = 1800) -> ReminderOccurrence {
         var meeting = CalendarMeeting(id: id, seriesID: id, calendarID: "work", calendarTitle: "Work", title: id,
             start: now.addingTimeInterval(start), end: now.addingTimeInterval(end))
         meeting.invitation = URL(string: "https://salutejazz.ru/calls/" + id)!; meeting.engine = .guest
@@ -17,9 +17,10 @@ final class ReminderFollowUpTests: XCTestCase {
             scene: scene ?? .init(visible: true, room: current), now: date ?? now)
     }
     func testFreshDefaultIsConditionalAndNeverAddsSystemAfter() {
-        XCTAssertEqual(ReminderProfile().timing.followUp, .init(mode: .anotherMeeting, delay: 120))
+        XCTAssertEqual(ReminderProfile().timing.followUp, .init(mode: .anotherMeeting, delay: 30))
+        XCTAssertEqual(ReminderProfile().timing.rememberedAfter, 30)
         let occurrence = occurrence(start: 60)
-        XCTAssertEqual(CalendarReminderPlanner.plan(occurrences: [occurrence], states: [:], profile: .init(), now: now).count, 0)
+        XCTAssertEqual(CalendarReminderPlanner.plan(occurrences: [occurrence], states: [:], profile: .init(), now: now).map(\.phase), [.start])
     }
     func testLegacyOffAlwaysAndCustomMigrationRoundTrip() throws {
         for after in ["null", "90"] {
@@ -32,6 +33,11 @@ final class ReminderFollowUpTests: XCTestCase {
             let override = try JSONDecoder().decode(ReminderOverride.self, from: Data(custom.utf8))
             XCTAssertEqual(override.custom, timing)
         }
+        let previousRecommendation = #"{"before":120,"atStart":false,"followUp":{"mode":"anotherMeeting","delay":120},"rememberedBefore":120,"rememberedAfter":120}"#
+        let saved = try JSONDecoder().decode(ReminderTiming.self, from: Data(previousRecommendation.utf8))
+        XCTAssertEqual(saved.before, 120); XCTAssertFalse(saved.atStart)
+        XCTAssertEqual(saved.followUp, .init(mode: .anotherMeeting, delay: 120))
+        XCTAssertEqual(saved.rememberedAfter, 120)
     }
     func testDueBoundaryVisibleDifferentConnectedRoomAndRecovery() {
         let occurrence = occurrence()
@@ -48,7 +54,7 @@ final class ReminderFollowUpTests: XCTestCase {
     func testSingleFutureDeadlineAndBackgroundCancellation() {
         let first = occurrence("first", start: 60), second = occurrence("second", start: 120)
         let result = decide([first, second])
-        XCTAssertTrue(result.events.isEmpty); XCTAssertEqual(result.nextDeadline, now.addingTimeInterval(180))
+        XCTAssertTrue(result.events.isEmpty); XCTAssertEqual(result.nextDeadline, now.addingTimeInterval(90))
         XCTAssertNil(decide([first], scene: .init(visible: false, room: current)).nextDeadline)
     }
     func testEverySuppressionAndTentativeOverride() {
@@ -98,12 +104,12 @@ final class ReminderFollowUpTests: XCTestCase {
         XCTAssertEqual(decide([b, a], states: [a.id: state]).events.map(\.plan.occurrenceID), [a.id, b.id])
     }
     func testNativeForegroundPhaseIsSuppressedWhenAlreadyInItsRoom() {
-        let occurrence = occurrence(start: 60)
+        let occurrence = occurrence(start: 0)
         var state = ReminderOccurrenceState()
-        state.presentation = .init(plan: .init(occurrence: occurrence, phase: .before, date: now), scope: .system)
+        state.presentation = .init(plan: .init(occurrence: occurrence, phase: .start, date: now), scope: .system)
         XCTAssertTrue(decide([occurrence], states: [occurrence.id: state], scene: .init(visible: true, room: occurrence.room)).events.isEmpty)
         XCTAssertEqual(decide([occurrence], states: [occurrence.id: state]).events.count, 1)
-        var profile = ReminderProfile(); profile.timing.before = nil
+        var profile = ReminderProfile(); profile.timing.atStart = false
         XCTAssertTrue(decide([occurrence], states: [occurrence.id: state], profile: profile).events.isEmpty)
     }
 
