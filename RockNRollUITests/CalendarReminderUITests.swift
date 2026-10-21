@@ -13,7 +13,7 @@ final class CalendarReminderUITests: XCTestCase {
         if banner.exists { banner.swipeUp() }
         // At accessibility sizes the first calendar row may be virtualized
         // below the viewport. The fixed Settings action is the launch anchor.
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons[language == "ru" ? "Настройки" : "Settings"].waitForExistence(timeout: 10))
         if !largeText { XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 10)) }
     }
     func testSettingsDefaultOffAndCustomDurationWithoutChangingHomeLayout() {

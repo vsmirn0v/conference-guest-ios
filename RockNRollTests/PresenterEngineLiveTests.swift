@@ -33,6 +33,23 @@ import XCTest
         try engine.join(target: target, displayName: "Share lifecycle QA")
         try await wait { active && engine.readyForPresenterForTesting && engine.mediaReadyForTesting || ended }
         XCTAssertFalse(ended)
+        // Exercise the actual SDK containment path, rather than the capture-free
+        // toolbar fixture or a direct StudioModel call alone.
+        func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
+        for identifier in ["call.more", "call.view"] {
+            let button = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }
+                .first { $0.accessibilityIdentifier == identifier })
+            XCTAssertGreaterThanOrEqual(button.bounds.height, 44)
+            let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
+            let hit = window.hitTest(point, with: nil)
+            XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true)
+            button.sendActions(for: .touchUpInside)
+            try await wait { container.presentedViewController is MeetingActionsController || ended }
+            let panel = try XCTUnwrap(container.presentedViewController as? MeetingActionsController)
+            try await wait { !panel.isBeingPresented }
+            panel.dismiss(animated: false)
+            try await wait { container.presentedViewController == nil }
+        }
         let model = engine.studioForTesting.presenter
         model.selectCanvas(); model.includeCamera = false
         engine.studioForTesting.open(.presenter)

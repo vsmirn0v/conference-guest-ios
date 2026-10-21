@@ -186,30 +186,29 @@ final class PresenterUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Unmute microphone"].firstMatch.exists)
     }
 
-    /// Optional remote browser qualification; invitation remains outside source.
+    func testLiveGuestPresenterControlsKeepCanvasPrivate() throws {
+        let app = try openLiveGuestPresenter()
+        XCTAssertTrue(app.buttons["presenter.start"].isEnabled)
+        XCTAssertFalse(app.buttons["presenter.stop"].exists)
+        XCTAssertTrue(app.staticTexts["Only you"].exists)
+        app.buttons["studio.done"].tap()
+        XCTAssertTrue(app.buttons["call.more"].waitForExistence(timeout: 5))
+    }
+
+    /// Optional remote receiver qualification; invitation remains outside source.
     func testLiveGuestCanvasReachesScreenShareTransport() throws {
-        guard let invite = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_INVITE"] else {
-            throw XCTSkip("Opt-in remote receiver qualification")
-        }
-        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
-        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
-        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invite
-        app.launchArguments += ["-automaticallyHideMeetingControls", "NO"]
-        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Presenter QA"
         #if targetEnvironment(simulator)
-        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
-        #endif
-        defer {
-            if app.buttons["studio.done"].exists { app.buttons["studio.done"].tap() }
-            if app.buttons["Leave"].firstMatch.exists { app.buttons["Leave"].firstMatch.tap() }
-            app.terminate()
+        // The provider stores rtc_SSFD in its app-group directory. Simulator
+        // paths exceed its 103-byte Unix-socket limit; real sending needs a
+        // device or the Mac hosted transport test, not a launch-time workaround.
+        // The runner lacks the target app's group entitlement. The host harness
+        // supplies the count measured with simctl get_app_container ... groups.
+        if let value = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SCREEN_SHARE_SOCKET_PATH_BYTES"],
+           let bytes = Int(value), bytes > 103 {
+            throw XCTSkip("Provider screen-share socket path is \(bytes) bytes; its Unix-socket limit is 103")
         }
-        app.launch()
-        XCTAssertTrue(app.buttons["Unmute microphone"].firstMatch.waitForExistence(timeout: 30))
-        let connected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"),
-                                                  object: app.buttons["Unmute microphone"].firstMatch)
-        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 20), .completed)
-        open(app)
+        #endif
+        let app = try openLiveGuestPresenter()
         XCTAssertTrue(app.buttons["presenter.start"].waitForExistence(timeout: 10))
         if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_CAMERA"] == "1" {
             let camera = app.switches["presenter.camera"]
@@ -255,6 +254,32 @@ final class PresenterUITests: XCTestCase {
             XCTAssertFalse(app.staticTexts["presenter.error"].exists)
             app.buttons["presenter.stop"].tap()
         }
+    }
+    private func openLiveGuestPresenter() throws -> XCUIApplication {
+        guard let invite = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_INVITE"] else {
+            throw XCTSkip("Opt-in remote receiver qualification")
+        }
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invite
+        app.launchArguments += ["-automaticallyHideMeetingControls", "NO"]
+        app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Presenter QA"
+        #if targetEnvironment(simulator)
+        app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
+        #endif
+        addTeardownBlock {
+            if app.buttons["studio.done"].exists { app.buttons["studio.done"].tap() }
+            if app.buttons["Leave"].firstMatch.exists { app.buttons["Leave"].firstMatch.tap() }
+            app.terminate()
+        }
+        app.launch()
+        XCTAssertTrue(app.buttons["call.microphone"].waitForExistence(timeout: 30))
+        let connected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"),
+                                                  object: app.buttons["call.microphone"])
+        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 20), .completed)
+        open(app)
+        return app
     }
     private func open(_ app: XCUIApplication, russian: Bool = false) {
         app.openMeetingMore(.sharePresenter)
