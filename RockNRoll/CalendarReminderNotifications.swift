@@ -168,18 +168,20 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
             completionHandler(); return
         }
         Task { @MainActor in
-            switch response.actionIdentifier {
-            case Self.snooze, Self.skip:
-                let owner = sharedCoordinator
-                prepareBackgroundCalendar(owner: owner)
-                await owner.action(reference: reference, snooze: response.actionIdentifier == Self.snooze)
-            case Self.join, UNNotificationDefaultActionIdentifier:
-                let join = response.actionIdentifier == Self.join
-                if let coordinator { coordinator.open(reference: reference, join: join) }
-                else if !queued.contains(where: { $0.0 == reference && $0.1 == join }) { queued.append((reference, join)) }
-            default: break
-            }
+            await respond(reference: reference, action: response.actionIdentifier)
             completionHandler()
+        }
+    }
+    @MainActor func respond(reference: String, action: String) async {
+        switch action {
+        case Self.snooze, Self.skip:
+            let owner = sharedCoordinator
+            prepareBackgroundCalendar(owner: owner)
+            await owner.action(reference: reference, snooze: action == Self.snooze)
+        case Self.join, UNNotificationDefaultActionIdentifier:
+            if let coordinator { coordinator.open(reference: reference, join: true) }
+            else if !queued.contains(where: { $0.0 == reference && $0.1 }) { queued.append((reference, true)) }
+        default: break
         }
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,

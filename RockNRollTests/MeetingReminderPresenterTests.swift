@@ -169,12 +169,15 @@ import XCTest
         XCTAssertTrue(descendants(window).contains { $0.accessibilityIdentifier == "reminders.collapse" })
     }
 
-    func testReminderBadgeKeepsMoreTitleAndSizeStable() {
+    func testReminderBadgeKeepsMoreEllipsisAndSizeStable() throws {
         let (window, _, access) = fixture(); defer { window.isHidden = true }
         let before = access.fittingSize(availableWidth: 320)
+        let indicator = try XCTUnwrap(descendants(access).first { $0.accessibilityIdentifier == "Meeting reminder indicator" })
         for count in [0, 1, 12, 0] {
             access.setReminderBadge(count)
-            XCTAssertEqual(access.moreButton.configuration?.title, L("More"))
+            XCTAssertNil(access.moreButton.configuration?.title)
+            XCTAssertEqual(access.moreButton.configuration?.image?.pngData(), UIImage(systemName: "ellipsis")?.pngData())
+            XCTAssertEqual(indicator.isHidden, count == 0)
             XCTAssertEqual(access.fittingSize(availableWidth: 320), before)
             XCTAssertEqual(access.moreButton.accessibilityValue == nil, count == 0)
         }
@@ -194,10 +197,8 @@ import XCTest
                 XCTAssertEqual(access.moreButton.frame, moreFrame)
                 let content = access.moreButton.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 48))
                 XCTAssertGreaterThanOrEqual(access.moreButton.bounds.width, ceil(content.width))
-                if let label = access.moreButton.titleLabel {
-                    XCTAssertGreaterThanOrEqual(label.bounds.width + 0.5,
-                        label.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 48)).width)
-                } else { XCTFail("More must retain its full title") }
+                XCTAssertEqual(access.moreButton.accessibilityLabel, L("More"))
+                XCTAssertNil(access.moreButton.configuration?.title)
             }
         }
     }

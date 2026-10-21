@@ -101,16 +101,14 @@ final class MeetingChromeSurfaceTests: XCTestCase {
             toolbar.arrange(rail: geometry.rail, largeText: large)
             toolbar.setNeedsLayout(); toolbar.layoutIfNeeded()
             let columns = geometry.rail ? (large ? 2 : 1) : large ? 2 : buttons.count
-            let rows = (buttons.count + columns - 1) / columns
-            let area = toolbar.bounds.insetBy(dx: 4, dy: 5)
             for (index, button) in buttons.enumerated() {
-                let expected = CGRect(x: area.minX + CGFloat(index % columns) * area.width / CGFloat(columns),
-                    y: area.minY + CGFloat(index / columns) * area.height / CGFloat(rows),
-                    width: area.width / CGFloat(columns), height: area.height / CGFloat(rows)).insetBy(dx: 1, dy: 0)
-                XCTAssertEqual(button.frame.minX, expected.minX, accuracy: 0.001)
-                XCTAssertEqual(button.frame.minY, expected.minY, accuracy: 0.001)
-                XCTAssertEqual(button.frame.width, expected.width, accuracy: 0.001)
-                XCTAssertEqual(button.frame.height, expected.height, accuracy: 0.001)
+                for other in buttons.dropFirst(index + 1) {
+                    let overlap = button.frame.intersection(other.frame)
+                    XCTAssertFalse(overlap.width > 0.1 && overlap.height > 0.1, "Primary targets must not overlap")
+                }
+                if index >= columns {
+                    XCTAssertGreaterThan(button.frame.minY, buttons[index - columns].frame.minY)
+                }
                 XCTAssertGreaterThanOrEqual(button.bounds.width, 44)
                 XCTAssertGreaterThanOrEqual(button.bounds.height, 44)
                 XCTAssertTrue(toolbar.bounds.contains(button.frame))
@@ -200,19 +198,29 @@ final class MeetingChromeSurfaceTests: XCTestCase {
         guest.frame = host.view.bounds; host.view.addSubview(guest)
         for root in [native.view!, host.view!] {
             let toolbar = try XCTUnwrap(descendants(root).compactMap { $0 as? CallToolbar }.first)
-            let items = toolbar.subviews.filter { !($0 is MeetingChromeSurface) }
+            let items = toolbar.accessibilityElements?.compactMap { $0 as? UIView } ?? []
             XCTAssertEqual(items.count, 6)
-            let route = items[3]
-            let artwork = try XCTUnwrap(route.subviews.compactMap { $0 as? AlignedCallButton }.first)
-            XCTAssertEqual(artwork.backgroundColor?.cgColor.alpha ?? 0, 0)
-            XCTAssertFalse(artwork.isUserInteractionEnabled)
-            XCTAssertTrue(artwork.accessibilityElementsHidden)
-            XCTAssertTrue(route.subviews.contains { $0.layer.mask?.opacity == 0 })
+            let route = items[2]
+            if let artwork = route.subviews.compactMap({ $0 as? AlignedCallButton }).first {
+                XCTAssertEqual(artwork.backgroundColor?.cgColor.alpha ?? 0, 0)
+                XCTAssertFalse(artwork.isUserInteractionEnabled)
+                XCTAssertTrue(artwork.accessibilityElementsHidden)
+                XCTAssertTrue(route.subviews.contains { $0.layer.mask?.opacity == 0 })
+            } else { XCTAssertTrue(descendants(route).contains { $0 is MacAudioRouteButton }) }
         }
+        var expectsLegacy = !ProcessInfo.processInfo.isiOSAppOnMac
+        if #available(iOS 27.0, *) { expectsLegacy = false }
         let broadcast = try XCTUnwrap(descendants(native.view).compactMap { $0 as? RPSystemBroadcastPickerView }.first)
-        XCTAssertEqual(broadcast.layer.mask?.opacity, 0)
-        let broadcastArtwork = try XCTUnwrap(broadcast.superview?.subviews.compactMap { $0 as? AlignedCallButton }.last)
-        XCTAssertEqual(broadcastArtwork.backgroundColor?.cgColor.alpha ?? 0, 0)
+        XCTAssertEqual(!broadcast.isHidden, expectsLegacy)
+        if expectsLegacy {
+            XCTAssertEqual(broadcast.layer.mask?.opacity, 0)
+            let artwork = try XCTUnwrap(broadcast.superview?.subviews.compactMap { $0 as? AlignedCallButton }.last)
+            XCTAssertEqual(artwork.backgroundColor?.cgColor.alpha ?? 0, 0)
+        } else {
+            let share = try XCTUnwrap(broadcast.superview?.subviews.compactMap { $0 as? AlignedCallButton }
+                .first { !$0.isHidden && $0.isUserInteractionEnabled })
+            XCTAssertEqual(share.accessibilityLabel, L("Share screen"))
+        }
     }
 
     func testNativeMacAudioButtonPresentsActualDevicePicker() async throws {

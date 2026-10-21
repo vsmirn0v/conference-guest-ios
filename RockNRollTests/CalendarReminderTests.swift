@@ -56,6 +56,62 @@ import XCTest
         value.set(true, forKey: "calendarMeetings.enabled"); value.set(["work"], forKey: "calendarMeetings.selected")
         return value
     }
+    func testNotificationTapAndJoinUseSameDirectJoinIntentWarmAndAfterColdReplay() async throws {
+        for cold in [false, true] {
+            for action in [UNNotificationDefaultActionIdentifier, CalendarReminderBroker.join] {
+                let owner = CalendarReminderCoordinator(preferences: preferences(), storage: Storage(), notifications: Notifications())
+                await owner.setEnabled(true)
+                owner.update(meetings: [meeting()], available: true)
+                let occurrence = try XCTUnwrap(owner.repository.occurrences.first)
+                owner.beforeOpen = { true }
+                let opened = expectation(description: "Direct notification join")
+                owner.onOpen = { resolved, join in
+                    XCTAssertEqual(resolved?.reference, occurrence.reference)
+                    XCTAssertTrue(join)
+                    opened.fulfill()
+                }
+                let broker = CalendarReminderBroker()
+                if !cold { broker.attach(owner) }
+                await broker.respond(reference: occurrence.reference, action: action)
+                if cold {
+                    XCTAssertTrue(broker.hasPendingIntent)
+                    // The default tap and explicit action are the same intent.
+                    await broker.respond(reference: occurrence.reference, action: CalendarReminderBroker.join)
+                    broker.attach(owner)
+                }
+                await fulfillment(of: [opened], timeout: 2)
+                XCTAssertFalse(broker.hasPendingIntent)
+                await broker.respond(reference: occurrence.reference, action: UNNotificationDismissActionIdentifier)
+                XCTAssertFalse(broker.hasPendingIntent)
+            }
+        }
+    }
+    func testOlderDeferredSnoozeDetailsCannotReplaceNewNotificationJoin() async throws {
+        for resolvesBeforeForeground in [false, true] {
+            let owner = CalendarReminderCoordinator(preferences: preferences(), storage: Storage(), notifications: Notifications())
+            await owner.setEnabled(true)
+            owner.update(meetings: [meeting("old", offset: -60, end: 120), meeting("new", room: "new")], available: true)
+            await owner.waitForReconciliation()
+            let old = try XCTUnwrap(owner.repository.occurrences.first { $0.eventID == "old" })
+            let next = try XCTUnwrap(owner.repository.occurrences.first { $0.eventID == "new" })
+            await owner.action(reference: old.reference, snooze: true)
+            XCTAssertEqual(owner.repository.pendingOpen, old.reference)
+            let opened = expectation(description: "Newer explicit intent wins")
+            opened.assertForOverFulfill = true
+            owner.beforeOpen = { true }
+            owner.onOpen = { occurrence, join in
+                XCTAssertEqual(occurrence?.reference, next.reference); XCTAssertTrue(join); opened.fulfill()
+            }
+            owner.open(reference: next.reference, join: true)
+            XCTAssertNil(owner.repository.pendingOpen)
+            XCTAssertNil(owner.repository.pendingOpenDate)
+            if resolvesBeforeForeground { await fulfillment(of: [opened], timeout: 2) }
+            owner.foregrounded()
+            if !resolvesBeforeForeground { await fulfillment(of: [opened], timeout: 2) }
+            for _ in 0..<20 { await Task.yield() }
+            XCTAssertNil(owner.repository.pendingOpen)
+        }
+    }
     func testNoDuplicateReconciliationAndPersistenceAcrossRelaunch() async throws {
         let storage = Storage(), notifications = Notifications(), preferences = preferences()
         let coordinator = CalendarReminderCoordinator(preferences: preferences, storage: storage, notifications: notifications)

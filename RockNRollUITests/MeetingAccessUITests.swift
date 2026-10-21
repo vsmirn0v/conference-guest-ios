@@ -1,6 +1,41 @@
 import XCTest
 
 final class MeetingAccessUITests: XCTestCase {
+    func testGuestGalleryPagingSharesRowWithDirectToolsInBothOrientations() {
+        exerciseGalleryRow(guest: true)
+    }
+    func testNativeGalleryPagingSharesRowWithDirectToolsInBothOrientations() {
+        exerciseGalleryRow(guest: false)
+    }
+    private func exerciseGalleryRow(guest: Bool) {
+        let app = launch(guest: guest, gallery: true)
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        choose(app, "meeting.view.layout.gallery")
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft, .landscapeRight, .portrait] {
+            XCUIDevice.shared.orientation = orientation
+            let previous = app.buttons["Previous participants"], next = app.buttons["Next participants"]
+            let view = app.buttons["call.view"], more = app.buttons["call.more"]
+            let aligned = NSPredicate { _, _ in
+                previous.exists && next.exists && view.exists && more.exists && next.isHittable && view.isHittable && more.isHittable &&
+                    abs(next.frame.midY - view.frame.midY) < 1 && abs(view.frame.midY - more.frame.midY) < 1 &&
+                    next.frame.maxX + 7 <= view.frame.minX
+            }
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: aligned, object: nil)], timeout: 10), .completed)
+            for button in [previous, next, view, more] {
+                XCTAssertGreaterThanOrEqual(button.frame.width, 44)
+                XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            }
+            if !next.isEnabled { previous.tap() }
+            let position = app.staticTexts["Gallery page"], before = position.label
+            next.tap()
+            XCTAssertNotEqual(position.label, before)
+            XCTAssertTrue(previous.isEnabled)
+            previous.tap()
+            XCTAssertEqual(position.label, before)
+            exerciseDirectAccess(app)
+            attach(guest ? "Guest single context row" : "Native single context row")
+        }
+    }
     func testGuestDirectMoreAndViewKeepGalleryAndReceiveChoicesIndependent() {
         let app = launch(guest: true)
         defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
@@ -79,12 +114,13 @@ final class MeetingAccessUITests: XCTestCase {
         XCTAssertTrue(choice.waitForExistence(timeout: 5)); choice.tap()
         XCTAssertTrue(app.waitForMeetingToolsToClose(), "One choice should dismiss the panel")
     }
-    private func launch(guest: Bool, russian: Bool = false) -> XCUIApplication {
+    private func launch(guest: Bool, russian: Bool = false, gallery: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         if guest {
             app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
             app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "gallery-many"
-        } else { app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock" }
+        } else if gallery { app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "meeting-gallery" }
+        else { app.launchEnvironment["CONFERENCE_TEST_LAYOUT_FIXTURE"] = "rock" }
         app.launchArguments = ["-AppleLanguages", russian ? "(ru)" : "(en)", "-automaticallyHideMeetingControls", "NO"]
         if russian { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
         XCUIDevice.shared.orientation = .portrait

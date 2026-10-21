@@ -359,7 +359,11 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertFalse(layout.nextPage.isHidden)
         XCTAssertTrue(layout.nextPage.isEnabled)
         XCTAssertTrue(source.isHidden, "Gallery must show the layout picker instead of the share source selector")
-        for button in [picker, layout.nextPage] {
+        let more = try XCTUnwrap(descendants(window).compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "call.more" })
+        XCTAssertEqual(layout.convert(layout.bounds, to: window).midY, picker.convert(picker.bounds, to: window).midY, accuracy: 0.5)
+        XCTAssertLessThanOrEqual(layout.convert(layout.bounds, to: window).maxX + 8,
+            picker.convert(picker.bounds, to: window).minX)
+        for button in [picker, more, layout.previous, layout.nextPage] where button.isEnabled {
             let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
             var hit = window.hitTest(point, with: nil)
             while hit != nil && hit !== button { hit = hit?.superview }
@@ -375,6 +379,49 @@ final class CallPresentationTests: XCTestCase {
         XCTAssertTrue(layout.isHidden, "Share Focus uses one source selector")
         XCTAssertTrue(source.isHidden, "One share does not need a duplicate source selector")
         XCTAssertEqual(streams.selectedTarget, share)
+    }
+
+    func testNativeGalleryContextRowKeepsPagingAndToolsHittableAcrossResizeAndRosterChanges() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        let call = RockCallViewController(title: "Gallery row", catchUp: CatchUpStore(), chat: ChatStore())
+        window.rootViewController = call; window.makeKeyAndVisible()
+        defer { call.endFloatingVideo(); window.isHidden = true; previous?.makeKey() }
+        func roster(_ count: Int) {
+            call.render(snapshot: .init(participants: (0..<count).map {
+                CallParticipant(id: "p\($0)", name: "Person \($0)", isLocal: false,
+                    microphoneOn: false, cameraOn: false, screenShareOn: false, isSpeaking: false, videoTracks: [])
+            }))
+            call.view.setNeedsLayout(); call.view.layoutIfNeeded()
+        }
+        roster(80)
+        let pager = try XCTUnwrap(descendants(call.view).compactMap { $0 as? MeetingLayoutControls }.first)
+        let access = try XCTUnwrap(descendants(call.view).compactMap { $0 as? MeetingAccessControls }.first)
+        pager.onLayout?(.grid); call.view.layoutIfNeeded()
+        XCTAssertFalse(pager.isHidden)
+        for size in [CGSize(width: 375, height: 812), CGSize(width: 812, height: 375), CGSize(width: 375, height: 812)] {
+            window.frame.size = size; call.view.frame = window.bounds
+            call.view.setNeedsLayout(); call.view.layoutIfNeeded(); pager.layoutIfNeeded(); access.layoutIfNeeded()
+            XCTAssertEqual(pager.frame.midY, access.frame.midY, accuracy: 0.5)
+            XCTAssertLessThanOrEqual(pager.frame.maxX + 8, access.frame.minX)
+            for button in [pager.previous, pager.nextPage, access.viewButton, access.moreButton] where button.isEnabled {
+                let point = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)
+                var hit = window.hitTest(point, with: nil)
+                while hit != nil && hit !== button { hit = hit?.superview }
+                XCTAssertTrue(hit === button, "Context row must remain reachable after resize: \(button.accessibilityIdentifier ?? "")")
+            }
+            pager.nextPage.sendActions(for: .touchUpInside)
+            XCTAssertTrue(pager.previous.isEnabled)
+        }
+        let anchor = access.frame
+        roster(2)
+        XCTAssertTrue(pager.isHidden)
+        XCTAssertEqual(access.frame, anchor, "Losing the second page must not move View/More")
+        roster(80)
+        XCTAssertFalse(pager.isHidden)
+        XCTAssertFalse(pager.previous.isEnabled, "A reduced roster must clamp to the first page")
+        XCTAssertEqual(access.frame, anchor)
     }
 
     private var guestRoster: [GuestStreamViews.Participant] {

@@ -1,5 +1,6 @@
 import ConferenceCore
 import UIKit
+import UserNotifications
 import XCTest
 @testable import RockNRoll
 
@@ -30,9 +31,14 @@ final class MeetingEngineRoutingTests: XCTestCase {
         let joinConfig = URLSessionConfiguration.ephemeral; joinConfig.protocolClasses = [ConferenceJoinOptionsTests.FailedJoin.self]
         let preferences = UserDefaults(suiteName: "RoutingTests-" + UUID().uuidString)!
         preferences.set("Configured name", forKey: "savedDisplayName")
+        let detector = MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config))
+        let reminders = CalendarReminderCoordinator(preferences: preferences,
+            storage: CalendarReminderTests.Storage(), notifications: CalendarReminderTests.Notifications())
+        let calendar = CalendarMeetingStore(reader: MeetingSetupUIFixture.Reader(denied: false), detector: detector,
+            preferences: preferences, storage: RoomSyncCoordinatorTests.Storage(), reminders: reminders)
         let model = ConferenceModel(jamService: JamService(session: URLSession(configuration: joinConfig)),
             history: RoomHistoryStore(storage: storage), preferences: preferences,
-            engineDetector: MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config)))
+            engineDetector: detector, calendar: calendar)
         model.installSyncFixture(RoomSyncCoordinator(history: model.history, name: model.displayName,
             preferences: preferences, storage: RoomSyncCoordinatorTests.Storage(), transport: cloud ?? RoomSyncCoordinatorTests.Cloud()))
         let container = UIViewController(); model.configure(container: container)
@@ -42,6 +48,95 @@ final class MeetingEngineRoutingTests: XCTestCase {
         let end = Date().addingTimeInterval(2)
         while model.isJoining, Date() < end { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertFalse(model.isJoining)
+    }
+    func testNotificationTapStartsResolvedMeetingWithoutConfirmationForEveryEngine() async throws {
+        for kind in [MeetingEngineKind.guest, .community, .telemost, .trueconf] {
+            for endedSchedule in [false, true] {
+                Proof.mode = kind == .guest ? .guest : .community
+                let (model, container) = make()
+                let url = URL(string: kind == .telemost ? "https://telemost.yandex.ru/j/12345678901234" :
+                    kind == .guest ? "https://meeting.example.test/calls/q01xx4?psw=fixture" :
+                    kind == .trueconf ? "https://custom.example.test/c/team" : invitation.absoluteString)!
+                var meeting = CalendarMeeting(id: "event", seriesID: "series", calendarID: "work", calendarTitle: "Work",
+                    title: "Notification meeting", start: Date().addingTimeInterval(-1200),
+                    end: Date().addingTimeInterval(endedSchedule ? -600 : 600))
+                meeting.invitation = url; meeting.engine = kind
+                let reminders = model.calendar.reminders
+                await reminders.setEnabled(true)
+                reminders.beforeOpen = { true }
+                reminders.update(meetings: [meeting], available: true)
+                let occurrence = try XCTUnwrap(reminders.repository.occurrences.first)
+                var complete: ((CallEvent) -> Void)?
+                let ready = expectation(description: "Notification connects \(kind)")
+                model.joinTransportForTesting = { target, callback in
+                    XCTAssertEqual(target.engineKind, kind); XCTAssertEqual(target.invitationURL, url)
+                    complete = callback; ready.fulfill()
+                }
+                let broker = CalendarReminderBroker()
+                await broker.respond(reference: occurrence.reference, action: UNNotificationDefaultActionIdentifier)
+                broker.attach(reminders)
+                await fulfillment(of: [ready], timeout: 5)
+                XCTAssertNil(container.presentedViewController, "A tap must not open a second Join card")
+                XCTAssertFalse(model.showSwitchConfirmation)
+                complete?(.joined); complete?(.active)
+                XCTAssertEqual(model.history.rooms.first?.title, "Notification meeting")
+                complete?(.left)
+                withExtendedLifetime(container) {}
+            }
+        }
+    }
+    func testNotificationJoinKeepsRequiredNameGateAndRejectsRemovedOccurrence() async throws {
+        Proof.mode = .guest
+        let (model, container) = make(); model.displayName = ""
+        var meeting = CalendarMeeting(id: "event", seriesID: "series", calendarID: "work", calendarTitle: "Work",
+            title: "Notification meeting", start: Date(), end: Date().addingTimeInterval(600))
+        meeting.invitation = URL(string: "https://meeting.example.test/calls/scheduled?psw=fixture")!; meeting.engine = .guest
+        let reminders = model.calendar.reminders
+        await reminders.setEnabled(true)
+        reminders.update(meetings: [meeting], available: true)
+        let occurrence = try XCTUnwrap(reminders.repository.occurrences.first)
+        model.joinTransportForTesting = { _, _ in XCTFail("No transport without a name or current occurrence") }
+        reminders.onOpen(occurrence, true)
+        XCTAssertTrue(model.isNameRequiredForJoin)
+        XCTAssertTrue(model.history.rooms.isEmpty)
+        reminders.beforeOpen = { true }
+        reminders.update(meetings: [], available: true)
+        let removed = await reminders.resolve(reference: occurrence.reference)
+        XCTAssertNil(removed)
+        withExtendedLifetime(container) {}
+    }
+    func testExplicitReminderJoinRestoresSameRoomAndSerializesDifferentRoomWithoutASecondPrompt() async throws {
+        Proof.mode = .guest
+        let (model, container) = make()
+        let reminders = model.calendar.reminders
+        await reminders.setEnabled(true)
+        let meetings = ["first", "second"].map { room -> CalendarMeeting in
+            var event = CalendarMeeting(id: room, seriesID: room, calendarID: "work", calendarTitle: "Work",
+                title: room, start: Date(), end: Date().addingTimeInterval(600))
+            event.invitation = URL(string: "https://meeting.example.test/calls/\(room)?psw=fixture")!; event.engine = .guest
+            return event
+        }
+        reminders.update(meetings: meetings, available: true)
+        let first = try XCTUnwrap(reminders.repository.occurrences.first { $0.eventID == "first" })
+        let second = try XCTUnwrap(reminders.repository.occurrences.first { $0.eventID == "second" })
+        var callbacks: [(CallEvent) -> Void] = []
+        let joinedFirst = expectation(description: "First room"), joinedSecond = expectation(description: "Second room")
+        model.joinTransportForTesting = { target, callback in
+            callbacks.append(callback)
+            if callbacks.count == 1 { XCTAssertEqual(target.invitationURL, first.invitation); joinedFirst.fulfill() }
+            else { XCTAssertEqual(target.invitationURL, second.invitation); joinedSecond.fulfill() }
+        }
+        reminders.onOpen(first, true)
+        await fulfillment(of: [joinedFirst], timeout: 5)
+        callbacks[0](.joined); callbacks[0](.active)
+        reminders.onOpen(first, true)
+        XCTAssertEqual(callbacks.count, 1)
+        reminders.onOpen(second, true)
+        await fulfillment(of: [joinedSecond], timeout: 5)
+        XCTAssertFalse(model.showSwitchConfirmation)
+        XCTAssertNil(container.presentedViewController)
+        callbacks.last?(.left)
+        withExtendedLifetime(container) {}
     }
     func testProvenCommunityProtocolOverridesDefaultGuestParsing() async throws {
         Proof.mode = .community

@@ -111,6 +111,72 @@ final class MeetingAccessTests: XCTestCase {
         XCTAssertFalse(owner.validity(from: anchor)(), "A retired call cannot start a new panel generation")
     }
 
+    func testGalleryPagingAndToolsShareOneRowAcrossSizesAndTextPreferences() throws {
+        for size in [CGSize(width: 320, height: 568), CGSize(width: 440, height: 956),
+                     CGSize(width: 667, height: 375), CGSize(width: 956, height: 440),
+                     CGSize(width: 768, height: 1024), CGSize(width: 1200, height: 800)] {
+            for category in [UIContentSizeCategory.large, .accessibilityExtraExtraExtraLarge] {
+                let bounds = CGRect(origin: .zero, size: size)
+                let host = UIViewController(), child = UIViewController()
+                host.addChild(child); host.view.addSubview(child.view)
+                host.setOverrideTraitCollection(UITraitCollection(preferredContentSizeCategory: category), forChild: child)
+                let access = MeetingAccessControls(), pager = MeetingLayoutControls()
+                child.view.addSubview(access); child.view.addSubview(pager)
+                access.update(.init(layout: .grid, display: .all)); pager.navigationOnly = true
+                let large = category.isAccessibilityCategory
+                let base = CallPresentationGeometry(bounds: bounds, insets: .zero, headerHeight: 80,
+                    toolbarHeight: large ? 220 : 68, hidden: false, largeText: large, floating: true)
+                let geometry = MeetingAccessGeometry(base: base, bounds: bounds, insets: .zero,
+                    accessSize: access.fittingSize(availableWidth: MeetingAccessGeometry.availableAccessWidth(base: base, gallery: true)),
+                    largeText: large, gallery: true)
+                let pagination = MeetingTileLayout.gallery(count: 80, size: geometry.stage.size, largeText: large)
+                pager.update(mode: .grid, manual: false, page: 0, pagination: pagination, count: 80)
+                pager.frame = CGRect(origin: geometry.pagination.origin, size: pager.fittingSize(availableWidth: geometry.pagination.width))
+                access.frame = geometry.access; access.layoutIfNeeded(); pager.layoutIfNeeded()
+                XCTAssertFalse(geometry.inline)
+                XCTAssertEqual(pager.frame.minY, access.frame.minY)
+                XCTAssertEqual(pager.frame.height, access.frame.height)
+                XCTAssertEqual(geometry.stage.maxY + 8, access.frame.minY)
+                XCTAssertLessThanOrEqual(pager.frame.maxX + 8, access.frame.minX)
+                for control in [access.viewButton, access.moreButton, pager.previous, pager.nextPage] {
+                    XCTAssertGreaterThanOrEqual(control.bounds.width, 44, "\(size) \(category)")
+                    XCTAssertGreaterThanOrEqual(control.bounds.height, 44, "\(size) \(category)")
+                }
+                let position = try XCTUnwrap(descendants(pager).compactMap { $0 as? UILabel }.first { $0.accessibilityIdentifier == "Gallery page" })
+                XCTAssertLessThanOrEqual(position.sizeThatFits(CGSize(width: 1000, height: 48)).width, position.bounds.width)
+                XCTAssertTrue(position.accessibilityLabel?.contains("80") == true)
+                let anchor = access.frame
+                pager.update(mode: .grid, manual: false, page: 0,
+                    pagination: MeetingTileLayout.gallery(count: 2, size: geometry.stage.size, largeText: large), count: 2)
+                access.update(.init(layout: .speaker, display: .all)); access.layoutIfNeeded()
+                XCTAssertEqual(access.frame, anchor)
+                if let title = access.viewButton.configuration?.title {
+                    XCTAssertEqual(title, L("View") + " ▾")
+                    XCTAssertLessThanOrEqual(access.viewButton.sizeThatFits(CGSize(width: 1000, height: 48)).width,
+                        access.viewButton.bounds.width + 1)
+                }
+                XCTAssertEqual(access.viewButton.accessibilityLabel, L("View: %@", L("Focus")))
+            }
+        }
+    }
+
+    func testCompactPagerKeepsLargePageNumbersReadableAndFullRangeAccessible() throws {
+        let host = UIViewController(), child = UIViewController()
+        host.addChild(child); host.view.addSubview(child.view)
+        host.setOverrideTraitCollection(UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge), forChild: child)
+        let pager = MeetingLayoutControls(); pager.navigationOnly = true
+        child.view.addSubview(pager); pager.frame = CGRect(x: 0, y: 0, width: 152, height: 48)
+        let pages = MeetingTileLayout.gallery(count: 1200, size: CGSize(width: 100, height: 100), largeText: true)
+        let label = try XCTUnwrap(descendants(pager).compactMap { $0 as? UILabel }.first { $0.accessibilityIdentifier == "Gallery page" })
+        for page in [0, 99, 499, 1199] {
+            pager.update(mode: .grid, manual: false, page: page, pagination: pages, count: 1200)
+            pager.layoutIfNeeded()
+            XCTAssertNotEqual(label.text, "…")
+            XCTAssertLessThanOrEqual(label.sizeThatFits(CGSize(width: 1000, height: 48)).width, label.bounds.width)
+            XCTAssertEqual(label.accessibilityLabel, L("%ld–%ld of %ld", page + 1, page + 1, 1200))
+        }
+    }
+
     func testPresentedViewRetiresBeforeWindowDetachesAndRejectsItsQueuedChoice() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let previous = scene.windows.first(where: \.isKeyWindow)

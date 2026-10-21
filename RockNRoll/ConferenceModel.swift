@@ -242,10 +242,12 @@ final class ConferenceModel: ObservableObject {
            MeetingRoomIdentity(url, engine: activeRoute?.engineKind) == occurrence.room {
             restoreFromFloatingVideo(); return
         }
+        // A notification tap or explicit Join is already the user's meeting
+        // choice. Reuse serialized replacement and required-name handling.
+        if join, let occurrence { joinReminder(occurrence); return }
         let remote = occurrence.flatMap { occurrence in continuation.candidates.first {
             $0.isRecent(at: Date()) && MeetingRoomIdentity($0.invitation, engine: $0.engine) == occurrence.room
         } }
-        if join, let occurrence, occurrence.end > Date(), remote == nil, !busy { joinReminder(occurrence); return }
         let capturedSession = liveSessionID
         calendar.reminders.presenting = true
         let panel = UIHostingController(rootView: ReminderMeetingView(occurrence: occurrence,

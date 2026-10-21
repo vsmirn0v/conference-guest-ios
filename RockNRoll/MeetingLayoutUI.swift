@@ -73,6 +73,15 @@ final class MeetingLayoutControls: UIView {
     let previous = UIButton(type: .system)
     let nextPage = UIButton(type: .system)
     private let position = UILabel()
+    private var rangeText = ""
+    private var pageText: String {
+        guard let state = renderedState else { return "" }
+        return "\(state.page + 1)/\(state.pages)"
+    }
+    private var positionFont: UIFont {
+        UIFontMetrics(forTextStyle: .caption1).scaledFont(for: .systemFont(ofSize: 13), maximumPointSize: 22,
+            compatibleWith: traitCollection)
+    }
     private var renderedMode: MeetingLayoutMode?
     private struct State: Equatable {
         let mode: MeetingLayoutMode
@@ -120,7 +129,7 @@ final class MeetingLayoutControls: UIView {
             button.accessibilityLabel = L(label); button.accessibilityIdentifier = label
             button.addAction(UIAction { [weak self] _ in self?.onPage?(step) }, for: .touchUpInside)
         }
-        position.font = .preferredFont(forTextStyle: .caption1); position.textColor = .secondaryLabel
+        position.font = positionFont; position.textColor = .secondaryLabel
         position.textAlignment = .center; position.accessibilityIdentifier = "Gallery page"
         [layout, automatic, previous, position, nextPage].forEach(addSubview)
     }
@@ -149,19 +158,34 @@ final class MeetingLayoutControls: UIView {
         [previous, position, nextPage].forEach { $0.isHidden = pages <= 1 }
         previous.isEnabled = page > 0; nextPage.isEnabled = page < pages - 1
         if let range = pagination?.range(page: page, count: count), !range.isEmpty {
-            position.text = L("%ld–%ld of %ld", range.lowerBound + 1, range.upperBound, count)
-        }
+            rangeText = L("%ld–%ld of %ld", range.lowerBound + 1, range.upperBound, count)
+        } else { rangeText = "" }
+        position.accessibilityLabel = rangeText
         setNeedsLayout()
+    }
+    func fittingSize(availableWidth: CGFloat) -> CGSize {
+        let textWidth = ceil((rangeText as NSString).size(withAttributes: [.font: positionFont]).width)
+        return CGSize(width: min(availableWidth, max(152, textWidth + 104)), height: 48)
+    }
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        setNeedsLayout(); superview?.setNeedsLayout()
     }
     override func layoutSubviews() {
         super.layoutSubviews()
         surface.frame = bounds
+        position.font = positionFont
         if navigationOnly {
-            previous.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
-            nextPage.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: 44)
-            position.frame = CGRect(x: 44, y: 0, width: max(0, bounds.width - 88), height: 44)
+            previous.frame = CGRect(x: 0, y: 0, width: 44, height: bounds.height)
+            nextPage.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: bounds.height)
+            position.frame = CGRect(x: 44, y: 0, width: max(0, bounds.width - 88), height: bounds.height)
+            let choices = [rangeText, pageText, String((renderedState?.page ?? 0) + 1)]
+            position.text = choices.first { text in
+                ceil((text as NSString).size(withAttributes: [.font: positionFont]).width) + 8 <= position.bounds.width
+            } ?? "…"
             return
         }
+        position.text = rangeText
         let width = previous.isHidden ? bounds.width : min(132, max(88, bounds.width - 144))
         picker.frame = CGRect(x: 0, y: 0, width: width, height: 44)
         nextPage.frame = CGRect(x: bounds.width - 44, y: 0, width: 44, height: 44)

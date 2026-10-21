@@ -56,10 +56,11 @@ final class MeetingPanelOwner {
 final class MeetingAccessControls: UIView {
     let viewButton = UIButton(type: .system)
     let moreButton = UIButton(type: .system)
-    private let moreSizingButton = UIButton(type: .system)
+    private let viewSizingButton = UIButton(type: .system)
+    private var measuredViewWidth: CGFloat?
+    private let reminderIndicator = UIView()
     let reminderHost = MeetingReminderHost()
     private var reminderBadgeCount = 0
-    private var measuredMoreWidth: (traits: UITraitCollection, width: CGFloat)?
     var reminderActions: [UIMenuElement] = []
     func menuWithReminders(_ menu: UIMenu?) -> UIMenu? {
         guard !reminderActions.isEmpty else { return menu }
@@ -68,40 +69,31 @@ final class MeetingAccessControls: UIView {
     func setReminderBadge(_ count: Int) {
         guard count != reminderBadgeCount else { return }
         reminderBadgeCount = count
-        let image = UIImage(systemName: count > 0 ? "calendar.badge.clock" : "ellipsis")
-        moreButton.configuration?.image = image
+        reminderIndicator.isHidden = count == 0
         moreButton.accessibilityValue = count > 0 ? L("%d meeting reminders", count) : nil
     }
     private let surface = MeetingChromeSurface(cornerRadius: 24)
     private let divider = UIView()
     private var renderedState: MeetingViewState?
-    private var stacked = false
     private var font: UIFont {
         UIFontMetrics(forTextStyle: .callout).scaledFont(for: .systemFont(ofSize: 15, weight: .medium), maximumPointSize: 24,
             compatibleWith: traitCollection)
     }
     private var viewWidth: CGFloat {
-        let titles = [L("Focus"), L("Gallery"), L("Shares only"), L("Audio only")]
-        return max(154, ceil(titles.map { ($0 as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0) + 64)
-    }
-    private var moreWidth: CGFloat {
-        if let measuredMoreWidth, measuredMoreWidth.traits == traitCollection { return measuredMoreWidth.width }
-        // UIButton also scales symbol metrics for accessibility. Measure both
-        // states once per trait change so a reminder cannot move the controls.
-        let original = moreButton.configuration
-        var width: CGFloat = 84
-        for symbol in ["ellipsis", "calendar.badge.clock"] {
-            var configuration = original
+        if let measuredViewWidth { return measuredViewWidth }
+        var configuration = viewButton.configuration
+        configuration?.title = L("View") + " ▾"
+        var width: CGFloat = 88
+        for symbol in MeetingLayoutMode.allCases.map(\.symbol) + ConferenceDisplayMode.allCases.map(\.symbol) {
             configuration?.image = UIImage(systemName: symbol)
-            moreSizingButton.configuration = configuration
-            width = max(width, ceil(moreSizingButton.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 48)).width))
+            viewSizingButton.configuration = configuration
+            width = max(width, ceil(viewSizingButton.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: 48)).width))
         }
-        measuredMoreWidth = (traitCollection, width)
+        measuredViewWidth = width
         return width
     }
     func fittingSize(availableWidth: CGFloat) -> CGSize {
-        let ideal = viewWidth + moreWidth + 1
-        return CGSize(width: min(max(44, availableWidth), ideal), height: availableWidth < ideal ? 96 : 48)
+        CGSize(width: min(max(88, availableWidth), viewWidth + 44), height: 48)
     }
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -110,17 +102,14 @@ final class MeetingAccessControls: UIView {
         addSubview(surface)
         divider.backgroundColor = UIColor.white.withAlphaComponent(0.15)
         addSubview(divider)
-        moreSizingButton.isHidden = true
-        moreSizingButton.isUserInteractionEnabled = false
-        moreSizingButton.isAccessibilityElement = false
-        addSubview(moreSizingButton)
-        for button in [viewButton, moreButton] {
+        for button in [viewButton, moreButton, viewSizingButton] {
             button.configuration = .plain()
             button.configuration?.baseForegroundColor = .white
             button.configuration?.imagePadding = 6
             button.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
             button.configuration?.titleLineBreakMode = .byTruncatingTail
             button.configuration?.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 17, weight: .medium)
+            button.imageView?.adjustsImageSizeForAccessibilityContentSizeCategory = false
             button.configuration?.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { [weak self] attributes in
                 var attributes = attributes
                 attributes.font = self?.font
@@ -128,61 +117,80 @@ final class MeetingAccessControls: UIView {
             }
             addSubview(button)
         }
+        viewSizingButton.isHidden = true
+        viewSizingButton.isUserInteractionEnabled = false
+        viewSizingButton.isAccessibilityElement = false
         viewButton.accessibilityIdentifier = "call.view"
         moreButton.accessibilityIdentifier = "call.more"
-        moreButton.configuration?.title = L("More")
         moreButton.configuration?.image = UIImage(systemName: "ellipsis")
         moreButton.accessibilityLabel = L("More")
+        reminderIndicator.backgroundColor = .systemOrange
+        reminderIndicator.layer.cornerRadius = 3
+        reminderIndicator.isHidden = true
+        reminderIndicator.isUserInteractionEnabled = false
+        reminderIndicator.isAccessibilityElement = false
+        reminderIndicator.accessibilityIdentifier = "Meeting reminder indicator"
+        moreButton.addSubview(reminderIndicator)
     }
     required init?(coder: NSCoder) { nil }
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        measuredMoreWidth = nil
+        measuredViewWidth = nil
         setNeedsLayout(); superview?.setNeedsLayout()
     }
     func update(_ state: MeetingViewState) {
         guard renderedState != state else { return }
         renderedState = state
-        viewButton.configuration?.title = state.title + " ▾"
         viewButton.configuration?.image = UIImage(systemName: state.symbol)
         viewButton.accessibilityLabel = L("View: %@", state.title)
         viewButton.accessibilityValue = L("Layout: %@", state.display == .all ? state.selectedLayout.title : state.layout.title)
         viewButton.accessibilityHint = L("Choose layout and incoming video")
+        setNeedsLayout()
     }
     override func layoutSubviews() {
         super.layoutSubviews()
         surface.frame = bounds
-        stacked = bounds.height > 70
-        if stacked {
-            viewButton.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height / 2)
-            moreButton.frame = CGRect(x: 0, y: bounds.height / 2, width: bounds.width, height: bounds.height / 2)
-            divider.frame = CGRect(x: 12, y: bounds.midY, width: max(0, bounds.width - 24), height: 1)
-        } else {
-            let more = min(moreWidth, bounds.width - 44)
-            viewButton.frame = CGRect(x: 0, y: 0, width: bounds.width - more, height: bounds.height)
-            moreButton.frame = CGRect(x: viewButton.frame.maxX, y: 0, width: more, height: bounds.height)
-            divider.frame = CGRect(x: viewButton.frame.maxX, y: 10, width: 1, height: max(0, bounds.height - 20))
-        }
+        viewButton.frame = CGRect(x: 0, y: 0, width: max(44, bounds.width - 44), height: bounds.height)
+        moreButton.frame = CGRect(x: viewButton.frame.maxX, y: 0, width: 44, height: bounds.height)
+        let title = viewButton.bounds.width >= viewWidth ? L("View") + " ▾" : nil
+        if viewButton.configuration?.title != title { viewButton.configuration?.title = title }
+        divider.frame = CGRect(x: viewButton.frame.maxX, y: 10, width: 1, height: max(0, bounds.height - 20))
+        reminderIndicator.frame = CGRect(x: 31, y: 10, width: 6, height: 6)
     }
 }
 
-/// Camera-safe content reserves the two-row dock; shared media still uses its
+/// Camera-safe content reserves one context row; shared media still uses its
 /// full display canvas. Hidden chrome uses the same safe content geometry.
 struct MeetingAccessGeometry {
     let toolbar: CGRect
     let access: CGRect
+    let pagination: CGRect
     let stage: CGRect
     let inline: Bool
-    init(base: CallPresentationGeometry, bounds: CGRect, insets: UIEdgeInsets, accessSize: CGSize, largeText: Bool) {
+    static func availableAccessWidth(base: CallPresentationGeometry, gallery: Bool) -> CGFloat {
+        let width = gallery || base.rail ? base.stage.width : base.toolbar.width
+        return max(88, width - (gallery ? 160 : 0))
+    }
+    init(base: CallPresentationGeometry, bounds: CGRect, insets: UIEdgeInsets, accessSize: CGSize, largeText: Bool,
+         gallery: Bool = false) {
         let safe = bounds.inset(by: insets).insetBy(dx: 8, dy: 4)
-        inline = !base.rail && !largeText && accessSize.height <= 48 && safe.width >= 360 + accessSize.width + 8
-        if base.rail {
+        inline = !gallery && !base.rail && !largeText && accessSize.height <= 48 && safe.width >= 360 + accessSize.width + 8
+        if gallery {
+            toolbar = base.toolbar
+            let y = base.rail ? safe.maxY - accessSize.height : toolbar.minY - accessSize.height - 8
+            access = CGRect(x: base.stage.maxX - accessSize.width, y: y, width: accessSize.width, height: accessSize.height)
+            pagination = CGRect(x: base.stage.minX, y: y, width: max(0, access.minX - base.stage.minX - 8), height: accessSize.height)
+            stage = CGRect(x: base.stage.minX, y: base.stage.minY, width: base.stage.width,
+                height: max(0, y - base.stage.minY - 8))
+        } else if base.rail {
+            pagination = .zero
             toolbar = base.toolbar
             access = CGRect(x: max(safe.minX, toolbar.minX - accessSize.width - 8), y: safe.maxY - accessSize.height,
                 width: accessSize.width, height: accessSize.height)
             stage = CGRect(x: base.stage.minX, y: base.stage.minY, width: base.stage.width,
                 height: max(0, access.minY - base.stage.minY - 8))
         } else if inline {
+            pagination = .zero
             let width = min(440, safe.width - accessSize.width - 8)
             let x = safe.midX - (width + accessSize.width + 8) / 2
             toolbar = CGRect(x: x, y: base.toolbar.minY, width: width + accessSize.width + 8, height: base.toolbar.height)
@@ -190,6 +198,7 @@ struct MeetingAccessGeometry {
                 width: accessSize.width, height: accessSize.height)
             stage = base.stage
         } else {
+            pagination = .zero
             toolbar = base.toolbar
             access = CGRect(x: toolbar.maxX - min(accessSize.width, toolbar.width),
                 y: toolbar.minY - accessSize.height - 8, width: min(accessSize.width, toolbar.width), height: accessSize.height)

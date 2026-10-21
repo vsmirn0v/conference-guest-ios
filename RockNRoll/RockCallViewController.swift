@@ -347,9 +347,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         toolbar.arrange(rail: geometry.rail, largeText: large)
         header.frame = geometry.header.insetBy(dx: 4, dy: 0)
         header.frame.size.height = max(0, geometry.header.height - statusHeight - 8)
-        let accessWidth = geometry.rail ? geometry.stage.width : geometry.toolbar.width
+        let gallery = effectiveLayoutMode == .grid && displayMode != .audioOnly
+        let accessWidth = MeetingAccessGeometry.availableAccessWidth(base: geometry, gallery: gallery)
         let access = MeetingAccessGeometry(base: geometry, bounds: view.bounds, insets: view.safeAreaInsets,
-            accessSize: accessControls.fittingSize(availableWidth: accessWidth), largeText: large)
+            accessSize: accessControls.fittingSize(availableWidth: accessWidth), largeText: large, gallery: gallery)
         toolbar.frame = access.toolbar
         toolbar.separatesLast = access.inline
         toolbar.inlineAccessWidth = access.inline ? access.access.width + 8 : 0
@@ -373,18 +374,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         restoringZoom = true
         let layoutAvailable = displayedSnapshot?.remoteParticipants.isEmpty == false && displayMode != .audioOnly
         let sharing = effectiveLayoutMode == .speaker && currentPrimaryKey.flatMap { streamPinTargets[$0]?.isScreenShare } == true
-        let layoutFrame = CGRect(x: stage.minX + 4, y: max(stage.minY, stage.maxY - 48),
-            width: min(288, max(0, stage.width - 8)), height: 44)
-        layoutControls.isHidden = !layoutAvailable || focus.hidden || sharing || effectiveLayoutMode != .grid || (tiles.pagination?.pageCount ?? 1) <= 1
-        if !layoutControls.isHidden {
-            layoutControls.frame = layoutFrame
-        }
+        let stripBottom = max(stage.minY, stage.maxY - 48)
         var imageFit = stage
         sourceSelector.isHidden = !sharing || orderedStreams.filter { $0.isScreenShare }.count <= 1 || focus.hidden
         sourceSelector.frame = CGRect(x: stage.minX + 4, y: stage.minY + 4,
             width: min(280, max(0, stage.width - 8)), height: 44)
         if sharing { imageFit = canvas }
-        else if !layoutControls.isHidden { imageFit.size.height = max(0, layoutFrame.minY - stage.minY - 4) }
         let canShowStrip = stage.height >= 240
         participantStrip.isHidden = effectiveLayoutMode == .grid || !layoutAvailable || focus.hidden || sharing || !canShowStrip
         if effectiveLayoutMode == .speaker && layoutAvailable && !sharing && canShowStrip {
@@ -395,7 +390,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 imageFit.size.width = max(0, imageFit.width - 180)
             } else {
                 let stripHeight = min(92, max(44, stage.height * 0.3))
-                participantStrip.frame = CGRect(x: stage.minX + 4, y: max(stage.minY, layoutFrame.minY - stripHeight - 6),
+                participantStrip.frame = CGRect(x: stage.minX + 4, y: max(stage.minY, stripBottom - stripHeight - 6),
                     width: max(0, stage.width - 8), height: min(stripHeight, stage.height))
                 imageFit.size.height = max(0, participantStrip.frame.minY - stage.minY - 8)
             }
@@ -421,6 +416,11 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             restoreGalleryPage = false
         }
         refreshLayoutControls()
+        layoutControls.isHidden = !layoutAvailable || focus.hidden || !gallery || (tiles.pagination?.pageCount ?? 1) <= 1
+        if gallery {
+            layoutControls.frame = CGRect(origin: access.pagination.origin,
+                size: layoutControls.fittingSize(availableWidth: access.pagination.width))
+        }
         streamScroll.layoutIfNeeded()
         tiles.layoutIfNeeded()
         var resized: [String] = []

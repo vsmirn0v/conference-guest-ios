@@ -95,7 +95,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             NSClassFromString("XCTestCase") != nil { model.setup.suspendForMeeting() }
         #endif
         model.setup.finishLaunch(hasMeetingIntent: !connectionOptions.urlContexts.isEmpty || !connectionOptions.userActivities.isEmpty ||
-            CalendarReminderBroker.shared.hasPendingIntent)
+            CalendarReminderBroker.shared.hasPendingIntent || model.calendar.reminders.hasOpenIntent)
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {

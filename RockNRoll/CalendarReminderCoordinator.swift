@@ -94,7 +94,7 @@ final class CalendarReminderCoordinator: ObservableObject {
         if let reference = repository.pendingOpen {
             let recent = repository.pendingOpenDate.map { clock().timeIntervalSince($0) < 86400 } ?? false
             repository.pendingOpen = nil; repository.pendingOpenDate = nil; _ = save()
-            if recent { open(reference: reference, join: false) }
+            if recent, !hasOpenIntent { open(reference: reference, join: false) }
         }
         guard permissionRefresh == nil else { return }
         permissionFresh = false
@@ -181,6 +181,9 @@ final class CalendarReminderCoordinator: ObservableObject {
         if repository.states != previous { changed() }
     }
     func open(reference: String, join: Bool) {
+        if join, repository.pendingOpen != nil {
+            repository.pendingOpen = nil; repository.pendingOpenDate = nil; _ = save()
+        }
         hasOpenIntent = true
         opening?.cancel()
         opening = Task { [weak self] in

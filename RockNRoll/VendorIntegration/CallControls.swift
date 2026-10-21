@@ -1193,9 +1193,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         toolbar.arrange(rail: geometry.rail, largeText: large)
         automaticView.configuration?.title = large ? nil : L("Auto")
         automaticView.configuration?.image = large ? UIImage(systemName: "arrow.triangle.2.circlepath") : nil
-        let accessWidth = geometry.rail ? geometry.stage.width : geometry.toolbar.width
+        let accessWidth = MeetingAccessGeometry.availableAccessWidth(base: geometry, gallery: gridVisible)
         let access = MeetingAccessGeometry(base: geometry, bounds: surface.bounds, insets: window.safeAreaInsets,
-            accessSize: accessControls.fittingSize(availableWidth: accessWidth), largeText: large)
+            accessSize: accessControls.fittingSize(availableWidth: accessWidth), largeText: large, gallery: gridVisible)
         header.frame = geometry.header; toolbar.frame = access.toolbar
         toolbar.separatesLast = access.inline
         toolbar.inlineAccessWidth = access.inline ? access.access.width + 8 : 0
@@ -1234,11 +1234,6 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         navigation.isHidden = true
         var stage = access.stage
         let layoutAvailable = displayMode != .audioOnly && !isWaitingForOthers && galleryCount > 1
-        layoutControls.isHidden = !layoutAvailable || focus.hidden || !gridVisible || (galleryView.pagination?.pageCount ?? 1) <= 1
-        let layoutFrame = CGRect(x: stage.minX + 4, y: stage.maxY - 46, width: min(288, max(0, stage.width - 8)), height: 44)
-        if !layoutControls.isHidden {
-            layoutControls.frame = layoutFrame
-        }
         let showsStrip = !gridVisible && layoutAvailable && !stageIsShare && stage.height >= 240
         participantStrip.isHidden = !showsStrip || focus.hidden
         if showsStrip {
@@ -1251,14 +1246,20 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 stage.size.height = max(0, stage.height - 144)
             }
         }
-        refreshLayoutControls()
         compactHeader.setLayout(mode: gridVisible ? .grid : .speaker, available: false, choose: { _ in })
         updateDisplayBackdrops()
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop] { backdrop.frame = stage }
         stageView.frame = surface.bounds
         stageViewport?.fittedContentRect = stageIsShare ? surface.bounds : stage
         if gridVisible {
-            galleryView.frame = access.stage.inset(by: UIEdgeInsets(top: 0, left: 0, bottom: layoutControls.isHidden ? 0 : 54, right: 0))
+            galleryView.frame = access.stage
+            galleryView.layoutIfNeeded()
+        }
+        refreshLayoutControls()
+        layoutControls.isHidden = !layoutAvailable || focus.hidden || !gridVisible || (galleryView.pagination?.pageCount ?? 1) <= 1
+        if gridVisible {
+            layoutControls.frame = CGRect(origin: access.pagination.origin,
+                size: layoutControls.fittingSize(availableWidth: access.pagination.width))
         }
         sourcePicker.isHidden = !stageIsShare || !showsStage || galleryItems.filter { $0.id.isShare }.count <= 1 || focus.hidden
         sourcePicker.frame = CGRect(x: access.stage.minX + 4, y: max(access.stage.minY, access.stage.maxY - 46),
@@ -1281,8 +1282,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             backdrop.accessibilityCustomActions = focus.hidden ? [focus.restoreAccessibilityAction()] : nil
         }
         focusButton.isHidden = true
-        focusButton.frame = layoutControls.isHidden ? CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44) :
-            CGRect(x: layoutFrame.maxX - 48, y: layoutFrame.minY, width: 44, height: 44)
+        focusButton.frame = CGRect(x: stage.minX + 8, y: stage.minY + 8, width: 44, height: 44)
         localShareCard.alpha = focus.hidden ? 0 : 1
         localShareCard.refreshLayout()
         let cardWidth = min(216, stage.width - 8)
