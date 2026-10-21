@@ -16,7 +16,9 @@ Physical iPhone testing is deferred because the device is unavailable. No hardwa
 
 ## Distribution
 
-Pending archive, exported-artifact verification, upload and TestFlight group readback.
+Source: `2f6500e` on `main`, pushed. Archive: `/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-10-21/RockNRoll-0.2.0-b103.xcarchive`. Export succeeded. The exported app and all three extensions pass strict/deep signature verification with team `5V64BP2H3P`, version 0.2.0/build 103 and matching archive dSYMs. The distribution package has no debugger entitlement, uses Production iCloud, excludes DEBUG fixtures and keeps media frameworks out of the Activity extension. Deployment targets remain unchanged. Verification applies to the distribution-signed IPA.
+
+IPA SHA-256: `843e93b93cf6b68d7cfcdcd4e9d64d4637cc94ef835fb2c867a090bcbea5d50e`. Evidence: `.build/release103/artifact-verification.json`. Upload succeeded on October 21, 2026 at approximately 20:12 MSK. Apple reported missing dSYMs for six bundled dependency frameworks; app and extension dSYMs match, while symbolication inside those dependencies remains limited. Upload logs and the structured result are retained under `.build/release103/`. App Store Connect readback at 20:20 MSK confirms **Testing** for build 103, assigned to **Rock’n’Roll Internal** (one tester) and **Rock’n’Roll Public Beta** (seven testers). Testing notes were saved and automatic tester notification was enabled. Build ID: `e65444cb-dc31-480b-af88-a4b25f86d918`. Public invitation: https://testflight.apple.com/join/Hd13C9U3. Availability and group-detail screenshots/accessibility readbacks are retained under `.build/release103/testflight-build103*`; the structured record is `.build/release103/distribution.json`.
 
 ## What to Test
 
