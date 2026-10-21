@@ -114,6 +114,7 @@ final class StudioUITests: XCTestCase {
 
     func testPrejoinPreviewDismissesToJoinWithoutConnecting() {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment["CONFERENCE_TEST_SKIP_SETUP"] = "1"
         app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
         defer { app.terminate() }
@@ -227,7 +228,11 @@ final class StudioUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Music"].firstMatch.waitForExistence(timeout: 5))
         let settings = app.buttons["studio.microphone-settings"]
         for _ in 0..<3 { if settings.exists { break }; app.swipeUp() }
+        #if targetEnvironment(simulator)
         XCTAssertFalse(settings.isEnabled)
+        #else
+        XCTAssertTrue(settings.isEnabled, "Physical iPhone exposes native microphone modes")
+        #endif
         app.buttons["studio.done"].tap()
         XCTAssertTrue(mic.waitForExistence(timeout: 5)); XCTAssertTrue(cam.exists)
         cam.press(forDuration: 0.7)

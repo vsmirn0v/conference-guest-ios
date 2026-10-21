@@ -317,6 +317,8 @@ final class ConferenceModel: ObservableObject {
         }
         setup.suspendForMeeting()
         calendarReminderTarget = nil
+        explicitCalendarEntry = true
+        calendar.cancelAutomaticJoin(suppress: true)
         if url.scheme == "conferenceguest", url.host == "active-meeting" {
             // An old Activity is only navigation. It never initiates a join.
             if MeetingActivitySnapshot.sessionID(from: url) == liveSessionID, isInConference {
@@ -324,8 +326,6 @@ final class ConferenceModel: ObservableObject {
             }
             return
         }
-        explicitCalendarEntry = true
-        calendar.cancelAutomaticJoin(suppress: true)
         do {
             let target = try destination(for: url.absoluteString)
             receive(target: target, autoJoin: GuestSiteLinkAdapter.handles(url))

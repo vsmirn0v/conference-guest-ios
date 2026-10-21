@@ -194,6 +194,7 @@ final class PresenterUITests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invite
+        app.launchArguments += ["-automaticallyHideMeetingControls", "NO"]
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Presenter QA"
         #if targetEnvironment(simulator)
         app.launchEnvironment["CONFERENCE_TEST_DIRECT_MEDIA"] = "1"
@@ -205,6 +206,9 @@ final class PresenterUITests: XCTestCase {
         }
         app.launch()
         XCTAssertTrue(app.buttons["Unmute microphone"].firstMatch.waitForExistence(timeout: 30))
+        let connected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"),
+                                                  object: app.buttons["Unmute microphone"].firstMatch)
+        XCTAssertEqual(XCTWaiter.wait(for: [connected], timeout: 20), .completed)
         open(app)
         XCTAssertTrue(app.buttons["presenter.start"].waitForExistence(timeout: 10))
         if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_PRESENTER_CAMERA"] == "1" {
@@ -214,7 +218,14 @@ final class PresenterUITests: XCTestCase {
         }
         // A warm canvas distinguishes outgoing composition from a black idle tile.
         let scene = app.descendants(matching: .any)["presenter.scene"].firstMatch
-        for _ in 0..<4 { if scene.isHittable { break }; app.descendants(matching: .any)["studio.settings"].firstMatch.swipeUp() }
+        let settings = app.descendants(matching: .any)["studio.settings"].firstMatch
+        for _ in 0..<14 {
+            if scene.exists && scene.isHittable { break }
+            // A full swipe skips this short row in the phone's compact Form.
+            settings.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.78)).press(forDuration: 0.05,
+                thenDragTo: settings.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.42)))
+        }
+        XCTAssertTrue(scene.isHittable)
         scene.tap()
         app.buttons["Warm"].tap()
         app.buttons["presenter.start"].tap()

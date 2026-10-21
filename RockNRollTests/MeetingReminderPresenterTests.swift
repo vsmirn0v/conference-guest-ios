@@ -44,7 +44,9 @@ import XCTest
         XCTAssertTrue(buttons.allSatisfy { $0.bounds.height >= 44 })
         let collapse = try XCTUnwrap(buttons.first { $0.accessibilityIdentifier == "reminders.collapse" })
         collapse.sendActions(for: .touchUpInside)
-        XCTAssertNotNil(access.moreButton.accessibilityValue)
+        let chip = descendants(overlay).first { $0.accessibilityIdentifier == "reminders.chip" }
+        XCTAssertTrue(access.moreButton.accessibilityValue != nil || chip?.isHidden == false,
+                      "Collapsed reminder must retain either its chip or the More badge")
         XCTAssertEqual(access.reminderActions.count, 1)
     }
     func testPrivacyAndHostReplacementRemoveOldSurfaceAndBadge() async throws {
@@ -55,7 +57,7 @@ import XCTest
         host.privateContent = { true }
         _ = presenter.render(plans, host: host, coordinator: coordinator)
         let labels = descendants(first).compactMap { ($0 as? UILabel)?.text }
-        XCTAssertTrue(labels.contains("Meeting reminder")); XCTAssertFalse(labels.contains("Private first"))
+        XCTAssertTrue(labels.contains(L("Meeting reminder"))); XCTAssertFalse(labels.contains("Private first"))
         _ = presenter.render(plans, host: next, coordinator: coordinator)
         XCTAssertFalse(descendants(first).contains { $0.accessibilityIdentifier == "reminders.overlay" })
         XCTAssertTrue(access.reminderActions.isEmpty)
@@ -127,7 +129,7 @@ import XCTest
         call.setSharing(true)
         await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
         let labels = descendants(window).compactMap { ($0 as? UILabel)?.text }
-        XCTAssertTrue(labels.contains("Meeting reminder")); XCTAssertFalse(labels.contains("Private first"))
+        XCTAssertTrue(labels.contains(L("Meeting reminder"))); XCTAssertFalse(labels.contains("Private first"))
     }
     func testUnchangedCallLayoutDoesNotScheduleRepeatedCoordinatorWork() async {
         let (window, host, access) = fixture(); defer { window.isHidden = true }

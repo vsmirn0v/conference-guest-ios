@@ -11,6 +11,9 @@ final class StudioWorkflowTests: XCTestCase {
         var complete: CheckedContinuation<Void, Never>?
         model.presenter.startSharing = { _, _ in await withCheckedContinuation { complete = $0 } }
         model.presenter.stopSharing = {}
+        // This component test drives visibility explicitly; a physical hosted
+        // test process can start backgrounded after the preceding UI target.
+        model.presenter.setForeground(true)
         model.presenter.selectCanvas(); model.open(.presenter)
         try await settle { model.presenter.canStartSharing }
         var updates = 0

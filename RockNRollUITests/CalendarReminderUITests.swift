@@ -9,7 +9,12 @@ final class CalendarReminderUITests: XCTestCase {
         app.launchArguments = ["-AppleLanguages", "(\(language))", "-AppleLocale", language == "ru" ? "ru_RU" : "en_US"]
         if largeText { app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"] }
         app.launch()
-        XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 10))
+        let banner = XCUIApplication(bundleIdentifier: "com.apple.springboard").otherElements["NotificationShortLookView"].firstMatch
+        if banner.exists { banner.swipeUp() }
+        // At accessibility sizes the first calendar row may be virtualized
+        // below the viewport. The fixed Settings action is the launch anchor.
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
+        if !largeText { XCTAssertTrue(app.buttons["calendar.star.daily"].waitForExistence(timeout: 10)) }
     }
     func testSettingsDefaultOffAndCustomDurationWithoutChangingHomeLayout() {
         launch("en")

@@ -234,6 +234,32 @@ final class CalendarMeetingStoreTests: XCTestCase {
         XCTAssertNil(store.countdown)
         store.backgrounded()
     }
+    func testOldActivitySuppressesCalendarAutoJoinAcrossForegroundAndRefresh() async throws {
+        for warm in [false, true] {
+            let (store, preferences) = make(Reader(events: [event()]))
+            preferences.set("Tester", forKey: "savedDisplayName")
+            let model = ConferenceModel(history: RoomHistoryStore(storage: RoomSyncCoordinatorTests.Storage()),
+                preferences: preferences, calendar: store)
+            store.setAutomaticJoin(true)
+            if warm {
+                model.setup.begin(); model.setup.finishLater()
+                model.calendarForegrounded(); try await ready(store)
+                XCTAssertEqual(store.countdown, 5, "The fixture must have an eligible automatic join")
+            }
+            let oldActivity = MeetingActivitySnapshot(sessionID: UUID(), state: .init(startedAt: Date(),
+                connection: .connected, microphone: .muted, title: nil, route: nil))
+            model.receive(url: oldActivity.openURL)
+            model.calendarForegrounded(); try await ready(store)
+            XCTAssertEqual(store.meetings.count, 1)
+            XCTAssertNotNil(store.meetings.first?.invitation)
+            XCTAssertNil(store.countdown, "An old Activity must not start an unrelated meeting")
+            store.refresh(); try await ready(store)
+            XCTAssertNil(store.countdown, "A later calendar refresh must not revive the countdown")
+            XCTAssertFalse(model.isJoining)
+            XCTAssertFalse(model.isInConference)
+            store.backgrounded()
+        }
+    }
     func testAutomaticJoinFiresOnceAndNeverOnLaterCalendarRefresh() async throws {
         let reader = Reader(events: [event()]); let (store, _) = make(reader)
         store.setAutomaticJoin(true); store.canAutomaticallyJoin = { _ in true }

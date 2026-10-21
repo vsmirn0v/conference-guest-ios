@@ -1,7 +1,9 @@
 #if DEBUG
 import ActivityKit
+import ConferenceCore
 import SwiftUI
 import UIKit
+import UserNotifications
 
 /// Exercises real ActivityKit and the actual widget without joining a room.
 @available(iOS 16.2, *)
@@ -14,6 +16,9 @@ final class MeetingActivityFixture: UIViewController {
     private let result = UILabel()
     private let card = UIHostingController(rootView: AnyView(EmptyView()))
     private var contentObservation: Task<Void, Never>?
+    private let notificationID = ProcessInfo.processInfo.environment["CONFERENCE_TEST_ACTIVITY_REMINDER_ID"] ?? UUID().uuidString
+    private let notificationResult = UILabel()
+    private var notificationRequests: [String] = []
     deinit { contentObservation?.cancel() }
 
     override func viewDidLoad() {
@@ -41,9 +46,65 @@ final class MeetingActivityFixture: UIViewController {
             button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
             button.addAction(UIAction { _ in action() }, for: .touchUpInside); stack.addArrangedSubview(button)
         }
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_ACTIVITY_COEXISTENCE"] == "1" {
+            notificationResult.accessibilityIdentifier = "activity-fixture.notification"
+            notificationResult.text = "idle"; stack.addArrangedSubview(notificationResult)
+            let actions: [(String, () -> Void)] = [
+                ("Schedule device reminder", { [weak self] in Task { await self?.scheduleReminder() } }),
+                ("Read delivered reminder", { [weak self] in Task { await self?.readReminder() } })
+            ]
+            for (title, action) in actions {
+                let button = UIButton(type: .system); button.setTitle(title, for: .normal)
+                button.addAction(UIAction { _ in action() }, for: .touchUpInside)
+                stack.addArrangedSubview(button)
+            }
+            let pip = RoomFloatingVideoFixture()
+            addChild(pip); stack.addArrangedSubview(pip.view); pip.didMove(toParent: self)
+            pip.view.heightAnchor.constraint(equalToConstant: 300).isActive = true
+        }
         renderCard()
     }
+    private func scheduleReminder() async {
+        do {
+            let notifications = SystemReminderNotifications()
+            guard try await notifications.request(sensitive: false) else {
+                notificationResult.text = "permission denied"; return
+            }
+            let now = Date()
+            var meeting = CalendarMeeting(id: notificationID, seriesID: notificationID, calendarID: "device-verification",
+                calendarTitle: "Synthetic verification", title: "Rock device reminder verification",
+                start: now.addingTimeInterval(30), end: now.addingTimeInterval(600))
+            meeting.invitation = URL(string: "https://meeting.example.test/device-verification")!; meeting.engine = .guest
+            guard let occurrence = ReminderOccurrence(meeting: meeting, id: notificationID) else { return }
+            let plan = PlannedReminder(occurrence: occurrence, phase: .before, date: now.addingTimeInterval(20))
+            try await notifications.add(.init(plan: plan, occurrence: occurrence, profile: .init()))
+            notificationRequests.append(plan.id)
+            notificationResult.text = "scheduled"
+            // Read while still backgrounded: the ordinary Home coordinator
+            // correctly prunes this synthetic, unregistered event on return.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(23))
+                await self?.readReminder()
+            }
+        } catch { notificationResult.text = "error: \(error)" }
+    }
+    private func readReminder() async {
+        let delivered = await UNUserNotificationCenter.current().deliveredNotifications()
+        notificationResult.text = delivered.contains { $0.request.content.threadIdentifier == PlannedReminder.namespace + notificationID } ? "delivered" : "not delivered"
+    }
     private func apply(end: Bool = false) {
+        if end {
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: notificationRequests)
+            let id = notificationID
+            Task {
+                let center = UNUserNotificationCenter.current()
+                let requests = await center.pendingNotificationRequests().filter {
+                    $0.content.threadIdentifier == PlannedReminder.namespace + id
+                }
+                center.removePendingNotificationRequests(withIdentifiers: requests.map(\.identifier))
+                await SystemReminderNotifications().removeDelivered(occurrenceIDs: [id])
+            }
+        }
         result.accessibilityValue = end ? "ended" : "\(snapshot.state.microphone.rawValue)|\(snapshot.state.connection.rawValue)"
         renderCard(); coordinator.update(end ? nil : snapshot)
         Task { [weak self] in

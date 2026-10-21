@@ -54,3 +54,26 @@ final class CalendarEventKitIntegrationTests: XCTestCase {
     }
 }
 #endif
+
+#if !targetEnvironment(simulator)
+import ConferenceCore
+import EventKit
+import XCTest
+@testable import RockNRoll
+
+@MainActor
+final class PhysicalCalendarReadTests: XCTestCase {
+    func testDeviceEventKitReadRespectsSelectedCalendarsWithoutWritingEvents() async throws {
+        guard !ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Physical iPhone EventKit check") }
+        let reader = AppleCalendarReader()
+        guard await reader.access() == .allowed else { throw XCTSkip("Device Calendar permission is not granted") }
+        let empty = await reader.read(selected: [], now: Date(), knownOrigins: [], aliases: [:])
+        XCTAssertTrue(empty.meetings.isEmpty)
+        guard let selected = empty.calendars.first else { throw XCTSkip("No device calendars are available") }
+        let snapshot = await reader.read(selected: [selected.id], now: Date(), knownOrigins: [], aliases: [:])
+        XCTAssertTrue(snapshot.calendars.contains { $0.id == selected.id })
+        XCTAssertTrue(snapshot.meetings.allSatisfy { $0.calendarID == selected.id })
+        print("PHYSICAL_EVENTKIT selected_count=1 occurrence_count=\(snapshot.meetings.count) writes=0")
+    }
+}
+#endif

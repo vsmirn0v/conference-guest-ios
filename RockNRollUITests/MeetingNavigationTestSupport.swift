@@ -28,6 +28,9 @@ extension XCUIApplication {
             XCTAssertTrue(descendants(matching: .any).matching(identifier: "meeting.view.list").firstMatch.waitForExistence(timeout: 5), file: file, line: line)
             return
         }
+        guard descendants(matching: .any).matching(identifier: "meeting.actions.list").firstMatch.waitForExistence(timeout: 5) else {
+            return XCTFail("More did not finish opening.", file: file, line: line)
+        }
         let identifier = "meeting.menu.call.group.\(destination.rawValue)"
         guard let row = scrollMeetingActions(to: {
             self.visibleMeetingElement(self.descendants(matching: .any).matching(identifier: identifier).allElementsBoundByIndex)
