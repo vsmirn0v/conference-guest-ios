@@ -353,3 +353,10 @@ installed over the existing app, version still 0.2.0 (103). No release uploaded.
 - The final read-only Mac audit after the isolated test runs passed: the exact
   background-audio fixture is absent from history and not visible in the replica;
   its tombstone remains. The saved name is not the fixture name.
+
+- Distribution completed at 2026-10-22 16:59 MSK: App Store Connect build
+  `b0d78617-c148-4298-87a1-ec3e2baee074` is **Testing** in both the Internal
+  (1 tester) and Public Beta (7 testers) group build lists. What to Test is saved
+  and automatic tester notification is enabled. The public link remains
+  `https://testflight.apple.com/join/Hd13C9U3`. Both background prototypes remain
+  excluded from this published beta.

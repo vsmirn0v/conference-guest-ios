@@ -22,7 +22,16 @@ Artifact source: `d7352ce` on `main`, pushed. Archive: `/Users/v.smirnov/Library
 
 Local exported IPA SHA-256: `c2e7a63fe2e6f84597ca640590ab4ea35607e7a87224c7222961726117d3673d`. A separate development-signed local Mac Release build launched through the normal Designed for iPad wrapper, displayed Home, opened/dismissed Settings and quit through its application menu. That smoke is not a runtime test of the distribution IPA.
 
-Upload completed successfully at 16:40 MSK on October 22, 2026. App Store Connect lists build 104 as Processing. TestFlight group assignment and Testing status readback remain pending. The upload reported missing vendor-framework dSYMs for six dependencies; app and extension symbols were verified separately.
+Upload completed successfully at 16:40 MSK on October 22, 2026. Build ID: `b0d78617-c148-4298-87a1-ec3e2baee074`. The upload reported missing vendor-framework dSYMs for six dependencies; app and extension symbols were verified separately.
+
+Published and independently read back at 2026-10-22 16:59 MSK:
+
+- Rock’n’Roll Internal: build 0.2.0 (104), **Testing**, 1 tester.
+- Rock’n’Roll Public Beta: build 0.2.0 (104), **Testing**, 7 testers.
+- Testing notes saved; automatic tester notification enabled.
+- Public beta: [TestFlight](https://testflight.apple.com/join/Hd13C9U3).
+
+Distribution evidence: `.build/release104/upload-result.json`. Test-only fixture isolation and final validation records are committed in `6a43f52`; shipping source remains identical to the archived `d7352ce`.
 
 ## What to Test
 
