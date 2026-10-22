@@ -128,9 +128,15 @@ import XCTest
     }
     func testRecoveryDemandSurvivesBackgroundGraceWithoutKeepingVideoOnAfterCancel() async throws {
         let demand = MeetingVideoDemand(observeLifecycle: false)
+        let preference = FloatingVideoPreference.enabled
+        FloatingVideoPreference.enabled = true
+        defer { demand.onChange = nil; FloatingVideoPreference.enabled = preference }
         demand.setForeground(false, graceNanoseconds: 1)
         demand.setRecovering(true)
-        try await Task.sleep(for: .milliseconds(10))
+        let expired = expectation(description: "Background grace expired")
+        demand.onChange = { expired.fulfill() }
+        await fulfillment(of: [expired], timeout: 2)
+        demand.onChange = nil
         XCTAssertTrue(demand.wantsVideo)
         demand.setRecovering(false)
         XCTAssertFalse(demand.wantsVideo)

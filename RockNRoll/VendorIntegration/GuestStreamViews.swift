@@ -59,6 +59,8 @@ final class GuestStreamViews {
     private struct RenderedTile {
         let model: JazzParticipantViewModel
         weak var video: UIView?
+        // Capture the actual frame source before the SDK moves it into another wrapper.
+        weak var frameRenderer: UIView?
         weak var view: StreamViewport?
     }
     private var viewports: [Key: StreamViewportState] = [:]
@@ -208,8 +210,10 @@ final class GuestStreamViews {
 
     func makeView(model: JazzParticipantViewModel, video: UIView) -> UIView {
         let key = Key(participant: model.id, mode: model.displayMode, isShare: model.isSharingScreen)
-        retainShareFrame(model: model, video: video, key: key)
         let target = PinTarget(participant: model.id, isShare: model.isSharingScreen)
+        let renderer = GuestVideoFrameTap.findRenderer(video) ?? video
+        retireReassignedRenderers(video: video, renderer: renderer, target: target)
+        retainShareFrame(model: model, video: video, key: key)
         let onPin: (() -> Void)? = model.isLocal && model.isSharingScreen ? nil : { [weak self] in
             self?.setPin(self?.pinnedTarget == target ? nil : target)
         }
@@ -225,9 +229,9 @@ final class GuestStreamViews {
         // Speaker/microphone/name updates do not replace the decoded stream:
         // rebuilding its viewport would briefly expose the brighter SDK renderer.
         if let tile = renderedTiles[key], let view = tile.view,
-           tile.video === video, view.containsRenderer(video) {
+           tile.video === video, tile.frameRenderer === renderer, view.containsRenderer(video) {
             if tile.model != model {
-                renderedTiles[key] = RenderedTile(model: model, video: video, view: view)
+                renderedTiles[key] = RenderedTile(model: model, video: video, frameRenderer: renderer, view: view)
                 view.updatePresentation(name: model.name, showInfo: model.shouldShowParticipantInfo,
                                         microphoneOn: model.isAudioOn,
                                         watermark: watermark, zoomable: model.isSharingScreen && model.isZoomable,
@@ -263,11 +267,28 @@ final class GuestStreamViews {
         view.isLocalCamera = model.isLocal && !model.isSharingScreen
         view.setMediaActive(isActiveStream(model))
         view.accessibilityElementsHidden = onStagePresentation != nil
-        renderedTiles[key] = RenderedTile(model: model, video: video, view: view)
+        renderedTiles[key] = RenderedTile(model: model, video: video, frameRenderer: renderer, view: view)
         publishLocalCamera()
         view.onVisibilityChanged = { [weak self] in self?.updatePreferredVideo() }
         updatePreferredVideo()
         return view
+    }
+
+    private func retireReassignedRenderers(video: UIView, renderer: UIView, target: PinTarget) {
+        let reassigned = renderedTiles.keys.filter { key in
+            guard PinTarget(participant: key.participant, isShare: key.isShare) != target,
+                  let tile = renderedTiles[key] else { return false }
+            return tile.video === video || tile.frameRenderer === renderer
+        }
+        guard !reassigned.isEmpty else { return }
+        for key in reassigned {
+            shareFrameTaps.removeValue(forKey: key)?.invalidate()
+            renderedTiles.removeValue(forKey: key)?.view?.clearCorrectedVideo()
+        }
+        // The SDK can deliver the new owner's frames before our next coalesced
+        // layout update. Retire gallery, stage and PiP sinks synchronously first.
+        publishLocalCamera()
+        publishPreferredVideo()
     }
 
     private func retainShareFrame(model: JazzParticipantViewModel, video: UIView, key: Key) {
@@ -471,7 +492,7 @@ final class GuestStreamViews {
                 result.append(GalleryItem(id: id, name: participant.name, microphoneOn: participant.microphoneOn,
                     active: isShare ? participant.sharing : participant.cameraOn,
                     speaking: tile?.model.isDominantSpeaker == true, watermark: watermark,
-                    renderer: tile?.video, mirrored: participant.isLocal && !isShare && localCameraMirrored(),
+                    renderer: tile?.frameRenderer, mirrored: participant.isLocal && !isShare && localCameraMirrored(),
                     isLocalCamera: participant.isLocal && !isShare))
             }
             return result

@@ -50,7 +50,7 @@ final class GuestGalleryTile: UIView {
     required init?(coder: NSCoder) { nil }
     func update(_ item: GuestStreamViews.GalleryItem, pin: @escaping () -> Void) {
         if renderer !== item.renderer || mediaActive != item.active {
-            stop(); renderer = item.renderer; video.clear(); hasFrame = false
+            stop(); renderer = item.renderer
         }
         mediaActive = item.active
         localCamera = item.isLocalCamera
@@ -96,7 +96,11 @@ final class GuestGalleryTile: UIView {
         processor.setEnabled(tap != nil)
         if reattaching { tap?.replayLatestFrame() }
     }
-    private func stop() { processor.setEnabled(false); processor.setFrameDeliveries([]); video.clear(); tap?.invalidate(); tap = nil; video.setCameraPreview(nil) }
+    private func stop() {
+        processor.setEnabled(false); processor.setFrameDeliveries([])
+        video.clear(); tap?.invalidate(); tap = nil
+        hasFrame = false; status.isHidden = thumbnail || !mediaActive
+    }
     override func didMoveToWindow() { super.didMoveToWindow(); refreshDemand() }
     override func layoutSubviews() {
         super.layoutSubviews(); viewport.frame = bounds

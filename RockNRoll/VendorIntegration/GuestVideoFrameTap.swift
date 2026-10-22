@@ -70,7 +70,7 @@ final class GuestVideoFrameTap: @unchecked Sendable {
         return installed
     }()
 
-    private static func findRenderer(_ view: UIView) -> UIView? {
+    static func findRenderer(_ view: UIView) -> UIView? {
         if view is RTCEAGLVideoView || view is RTCMTLVideoView { return view }
         for child in view.subviews {
             if let renderer = findRenderer(child) { return renderer }

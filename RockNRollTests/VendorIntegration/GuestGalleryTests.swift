@@ -1,5 +1,7 @@
 import JazzSDK
+import AVFoundation
 import UIKit
+import WebRTC
 import XCTest
 @testable import RockNRoll
 
@@ -18,12 +20,18 @@ final class GuestGalleryTests: XCTestCase {
                   isZoomable: false, watermarkState: .hidden, displayMode: .speaker)
         }
         let first = streams.makeView(model: model("first"), video: renderer)
+        streams.setPin(.init(participant: "first", isShare: false))
+        var floating: StreamViewport?
+        streams.onFloatingVideo = { viewport, _, _, _ in floating = viewport }
         var items = await snapshot(streams)
         XCTAssertTrue(items.first { $0.id.participant == "first" }?.renderer === renderer)
+        XCTAssertTrue(floating === first)
         streams.onGalleryPresentation = { items = $0 }
         let second = streams.makeView(model: model("second"), video: renderer)
         XCTAssertNil(items.first { $0.id.participant == "first" }?.renderer,
                      "The old tile must retire synchronously before reassigned renderer callbacks arrive")
+        XCTAssertNil(floating, "Pinned stage/PiP must not display the new owner's frames")
+        XCTAssertEqual(streams.pinnedTarget, .init(participant: "first", isShare: false))
         items = await snapshot(streams)
         XCTAssertNil(items.first { $0.id.participant == "first" }?.renderer)
         XCTAssertTrue(items.first { $0.id.participant == "second" }?.renderer === renderer)
@@ -33,6 +41,173 @@ final class GuestGalleryTests: XCTestCase {
         XCTAssertTrue(items.first { $0.id.participant == "first" }?.renderer === originalCamera)
         XCTAssertTrue(items.first { $0.id.participant == "second" }?.renderer === renderer)
         withExtendedLifetime([first, second, restored]) {}
+    }
+
+    func testNestedRendererReassignmentRetiresAliasesButKeepsAnIndependentCamera() async {
+        let streams = GuestStreamViews()
+        defer { streams.reset() }
+        streams.updateParticipants(["first", "second"].map {
+            .init(id: $0, name: $0, isLocal: false, microphoneOn: false, cameraOn: true, sharing: false)
+        })
+        let renderer = RTCEAGLVideoView(frame: .zero), other = RTCEAGLVideoView(frame: .zero)
+        let wrapper = UIView(); wrapper.addSubview(renderer)
+        let speaker = streams.makeView(model: model("first"), video: wrapper)
+        let alias = streams.makeView(model: model("first", mode: .thumbnail), video: wrapper)
+        let independent = streams.makeView(model: model("first", mode: .tile), video: other)
+        var items = await snapshot(streams)
+        XCTAssertTrue(items.first?.renderer === renderer, "Same-owner display-mode aliases are valid")
+        let nextWrapper = UIView(); nextWrapper.addSubview(renderer)
+        let second = streams.makeView(model: model("second"), video: nextWrapper)
+        items = await snapshot(streams)
+        XCTAssertTrue(items.first { $0.id.participant == "first" }?.renderer === other)
+        XCTAssertTrue(items.first { $0.id.participant == "second" }?.renderer === renderer)
+        XCTAssertTrue(renderer.superview === nextWrapper, "Ownership tracking must not reparent the SDK's nested renderer")
+        withExtendedLifetime([speaker, alias, independent, second]) {}
+    }
+
+    func testReassignedRendererClearsDisplayedPixelsAndRejectsRetiredFrameDelivery() async throws {
+        let streams = GuestStreamViews()
+        defer { streams.reset() }
+        streams.updateParticipants(["first", "second"].map {
+            .init(id: $0, name: $0, isLocal: false, microphoneOn: false, cameraOn: true, sharing: false)
+        })
+        let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        let first = streams.makeView(model: model("first"), video: renderer)
+        let initial = await snapshot(streams)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        let tiles = Dictionary(uniqueKeysWithValues: initial.map { item in
+            (item.id, GuestGalleryTile(item: item, pin: {}))
+        })
+        for (index, tile) in tiles.values.enumerated() {
+            tile.frame = CGRect(x: 0, y: index * 250, width: 390, height: 250)
+            root.view.addSubview(tile); tile.setVisible(true); tile.layoutIfNeeded()
+        }
+        let firstTile = try XCTUnwrap(tiles[.init(participant: "first", isShare: false)])
+        let secondTile = try XCTUnwrap(tiles[.init(participant: "second", isShare: false)])
+        let firstDelivery = try XCTUnwrap(sampleView(in: firstTile)?.existingFrameDelivery())
+        let firstFrame = expectation(description: "First participant pixels")
+        firstDelivery.onEnqueuedForTesting = { sample, accepted in
+            guard accepted else { return }
+            Self.assertLuma(sample, 48); firstFrame.fulfill()
+        }
+        renderer.renderFrame(frame(luma: 48))
+        await fulfillment(of: [firstFrame], timeout: 2)
+        // Geometry notifications run on main after background frame delivery.
+        for _ in 0..<100 where firstTile.evidenceForTesting["hasFrame"] as? Bool != true {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(firstTile.evidenceForTesting["hasFrame"] as? Bool, true)
+        streams.onGalleryPresentation = { items in
+            for item in items { tiles[item.id]?.update(item, pin: {}) }
+        }
+        let second = streams.makeView(model: model("second", speaking: true), video: renderer)
+        XCTAssertFalse(firstDelivery.isCurrent, "Already prepared old-owner frames must be rejected")
+        XCTAssertEqual(firstTile.evidenceForTesting["hasFrame"] as? Bool, false)
+        let next = await snapshot(streams)
+        for item in next { tiles[item.id]?.update(item, pin: {}) }
+        let nextDelivery = try XCTUnwrap(sampleView(in: secondTile)?.existingFrameDelivery())
+        let nextFrame = expectation(description: "Second participant pixels")
+        nextFrame.assertForOverFulfill = false
+        nextDelivery.onEnqueuedForTesting = { sample, accepted in
+            guard accepted else { return }
+            Self.assertLuma(sample, 180); nextFrame.fulfill()
+        }
+        // A camera keeps producing while AVFoundation completes the sink's
+        // asynchronous flush. Exercise that stream, not a one-shot share replay.
+        for _ in 0..<3 {
+            renderer.renderFrame(frame(luma: 180))
+            try await Task.sleep(for: .milliseconds(80))
+        }
+        await fulfillment(of: [nextFrame], timeout: 2)
+        XCTAssertEqual(firstTile.evidenceForTesting["hasFrame"] as? Bool, false)
+        XCTAssertEqual(firstTile.evidenceForTesting["preparedFrames"] as? Int, 1)
+        withExtendedLifetime([first, second]) {}
+    }
+
+    func testReassignedShareCannotContaminatePreviousParticipantsSnapshot() {
+        let streams = GuestStreamViews()
+        defer { streams.reset() }
+        let renderer = RTCEAGLVideoView(frame: .zero)
+        let first = streams.makeView(model: model("first", share: true), video: renderer)
+        renderer.renderFrame(frame(luma: 48))
+        let second = streams.makeView(model: model("second", share: true), video: renderer)
+        var received: [UInt8] = []
+        let secondTap = GuestVideoFrameTap(view: renderer) { received.append($0.buffer.toI420().dataY[0]) }
+        secondTap?.replayLatestFrame()
+        XCTAssertTrue(received.isEmpty, "The new participant must not replay the previous participant's pixels")
+        renderer.renderFrame(frame(luma: 180))
+        XCTAssertEqual(received, [180])
+        let restoredRenderer = RTCEAGLVideoView(frame: .zero)
+        let restored = streams.makeView(model: model("first", share: true), video: restoredRenderer)
+        var original: [UInt8] = []
+        let firstTap = GuestVideoFrameTap(view: restoredRenderer) { original.append($0.buffer.toI420().dataY[0]) }
+        firstTap?.replayLatestFrame()
+        XCTAssertEqual(original, [48], "A static share may retain only its own last frame across renderer replacement")
+        firstTap?.invalidate(); secondTap?.invalidate()
+        withExtendedLifetime([first, second, restored]) {}
+    }
+
+    func testCameraAndShareForSameParticipantCannotOwnTheSameRenderer() async {
+        let streams = GuestStreamViews()
+        defer { streams.reset() }
+        streams.updateParticipants([
+            .init(id: "first", name: "First", isLocal: false, microphoneOn: false, cameraOn: true, sharing: true)
+        ])
+        let renderer = RTCEAGLVideoView(frame: .zero)
+        let camera = streams.makeView(model: model("first"), video: renderer)
+        let share = streams.makeView(model: model("first", share: true), video: renderer)
+        let items = await snapshot(streams)
+        XCTAssertNil(items.first { !$0.id.isShare }?.renderer)
+        XCTAssertTrue(items.first { $0.id.isShare }?.renderer === renderer)
+        withExtendedLifetime([camera, share]) {}
+    }
+
+    func testNestedRendererReplacementUpdatesSourceEvenWhenModelAndWrapperAreUnchanged() async {
+        let streams = GuestStreamViews()
+        defer { streams.reset() }
+        streams.updateParticipants([
+            .init(id: "first", name: "First", isLocal: false, microphoneOn: false, cameraOn: true, sharing: false)
+        ])
+        let wrapper = UIView(), firstRenderer = RTCEAGLVideoView(frame: .zero)
+        wrapper.addSubview(firstRenderer)
+        let first = streams.makeView(model: model("first"), video: wrapper)
+        let initial = await snapshot(streams)
+        XCTAssertTrue(initial.first?.renderer === firstRenderer)
+        firstRenderer.removeFromSuperview()
+        let secondRenderer = RTCEAGLVideoView(frame: .zero); wrapper.addSubview(secondRenderer)
+        let second = streams.makeView(model: model("first"), video: wrapper)
+        let items = await snapshot(streams)
+        XCTAssertTrue(items.first?.renderer === secondRenderer)
+        withExtendedLifetime([first, second]) {}
+    }
+
+    private func model(_ id: String, share: Bool = false, speaking: Bool = false,
+                       mode: JazzParticipantViewModel.DisplayMode = .speaker) -> JazzParticipantViewModel {
+        .init(name: id, isAudioOn: speaking, isVideoOn: true, isPinned: false, isSharingScreen: share,
+              isLocal: false, id: id, isDominantSpeaker: speaking, shouldShowParticipantInfo: true,
+              isZoomable: share, watermarkState: .hidden, displayMode: mode)
+    }
+
+    private func frame(luma: UInt8) -> RTCVideoFrame {
+        let pixels = RTCMutableI420Buffer(width: 4, height: 2, strideY: 4, strideU: 2, strideV: 2)
+        for index in 0..<8 { pixels.mutableDataY[index] = luma }
+        for index in 0..<2 { pixels.mutableDataU[index] = 128; pixels.mutableDataV[index] = 128 }
+        return RTCVideoFrame(buffer: pixels, rotation: RTCVideoRotation(rawValue: 0)!,
+                            timeStampNs: Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000))
+    }
+
+    private func sampleView(in view: UIView) -> GuestSampleBufferView? {
+        if let sample = view as? GuestSampleBufferView { return sample }
+        return view.subviews.lazy.compactMap { self.sampleView(in: $0) }.first
+    }
+
+    nonisolated private static func assertLuma(_ sample: CMSampleBuffer, _ expected: UInt8) {
+        guard let pixels = CMSampleBufferGetImageBuffer(sample) else { return XCTFail("Missing pixels") }
+        CVPixelBufferLockBaseAddress(pixels, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixels, .readOnly) }
+        XCTAssertEqual(CVPixelBufferGetBaseAddressOfPlane(pixels, 0)?.load(as: UInt8.self), expected)
     }
 
     func testNewSignaledSharePrecedesRendererAndDoesNotReuseOldCameraPixels() async {
