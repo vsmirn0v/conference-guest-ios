@@ -15,7 +15,7 @@ PiP start callbacks reject an empty initial window before establishing continuit
 
 Astra 6 xhigh planning and iterative source review identified interruption and opt-out event-ordering issues; these were fixed with regression coverage. Final source review has no remaining blocker.
 
-Mac regression: 136 cases, 2 capability skips, zero failures. iPhone Simulator: 136 unit/capability cases (29 skips) and two UI tests, zero failures. English persistence/independence and Russian largest-text portrait/landscape checks pass. iPad largest-text portrait/landscape and persistence/independence checks pass. Two initial iPad automation attempts did not activate the broad accessibility row; targeting its native child switch passes. Release archive/export signature, bundle versions, dSYM UUIDs, Production iCloud, promoted feature markers and DEBUG-fixture exclusion checks pass. Release Simulator UI smoke and TestFlight distribution remain pending.
+Mac regression: 136 cases, 2 capability skips, zero failures. iPhone Simulator: 136 unit/capability cases (29 skips) and two UI tests, zero failures. English persistence/independence and Russian largest-text portrait/landscape checks pass. iPad largest-text portrait/landscape and persistence/independence checks pass. Two initial iPad automation attempts did not activate the broad accessibility row; targeting its native child switch passes. Release archive/export signature, bundle versions, dSYM UUIDs, Production iCloud, promoted feature markers and DEBUG-fixture exclusion checks pass. A fresh Release Apple Silicon iPhone Simulator app passes the no-fixture UI smoke: both switches start off and activate independently; the installed executable hash matches the Release product and excludes DEBUG fixture markers. The initial all-architectures Simulator build failed in an existing Intel media dependency, so Release Simulator qualification is ARM64 only. TestFlight distribution is complete; both groups report Testing.
 
 These are opt-in experiments for remote hardware validation. Their actual warm/cold notification and first-time PiP behavior has not passed physical-device acceptance. The earlier empty-window symptom may still prevent background startup: rejecting an unsolicited empty start retires the anchor until the meeting returns to the foreground. No latency, battery or energy benefit is claimed.
 
@@ -27,7 +27,7 @@ Use a disposable guest meeting with another participant sending clear, continuou
 
 1. In Settings → Experimental features enable Background audio join. Save a display name, grant microphone permission using the explicit button if needed, and switch off System call controls under Settings → Phone calls.
 2. Configure Calendar and meeting reminders separately. Select a calendar containing a resolved guest invitation and an event starting soon. Confirm reminders are enabled for this event.
-3. Leave any current meeting, go Home and wait for its reminder.
+3. Leave any current meeting, go Home and wait for a fresh reminder delivered after enabling the experiment.
 4. Touch and hold the notification, then select Join audio (unlock if iOS asks). Do not tap the notification body: that opens the app normally.
 5. Expected: stay outside Rock’n’Roll and hear the meeting, with the microphone and camera off. Opening the app afterward should show that same session without joining again.
 6. If admission cannot finish, expect Open to finish joining after the bounded attempt. Report whether it stayed backgrounded, whether audio was audible and which fallback appeared.
@@ -35,7 +35,7 @@ Use a disposable guest meeting with another participant sending clear, continuou
 
 ### First incoming share PiP
 
-1. Turn on First screen share in the background and ordinary Floating video when multitasking.
+1. Turn on First screen share in the background and ordinary Floating video when multitasking. Use View → All video for this check.
 2. Open the guest meeting while nobody is sending video or sharing a screen. Go Home before the first share. There should be no initial blank PiP.
 3. Have the other participant begin sharing visibly changing content. Stay outside Rock’n’Roll for up to 15 seconds.
 4. Expected: PiP appears with moving content and the current presenter. Report no window, a blank window, one frozen frame or a window that disappears.
@@ -44,8 +44,15 @@ Use a disposable guest meeting with another participant sending clear, continuou
 
 ## Distribution
 
-Build reservation: 0.2.0 (105) in app and three extensions. Archive, upload and TestFlight readback pending.
+Build 0.2.0 (105) in the app and three extensions. Shipping source: `5fcfa6fd3bcb7ea064be6251db4fee68e87a0c83`; follow-up `619feb3` changes only UI tests and this release record. Production source hashes remain unchanged since the archive.
+
+- Archive: `/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-10-22/RockNRoll-0.2.0-b105.xcarchive`.
+- Local verified export SHA-256: `f9594b8b8e6c5961d5e101e56231c515e0f5210980c569dad14ea200ed15dbab`. Upload is a separate export from the same archive; this checksum identifies the local export only.
+- Evidence: `.build/beta105-validation/` and `.build/release105/artifact-verification.json`.
+- Upload succeeded at 19:15 MSK on 22 October 2026. Six pre-existing third-party dSYM warnings remain (JazzScreenShareImpl, LiveKitWebRTC, RustLiveKitUniFFI, SDSoup, Spench, WebRTC); app/extension symbols match independently. Both Rock’n’Roll Internal (1 tester) and Rock’n’Roll Public Beta (7 testers) show build 105 as **Testing**, expiring in 90 days. What to Test was saved, automatic tester notification was enabled, and both group build lists were read back independently.
+
+Build ID: `f894f2f0-56f4-46a3-8e6e-1c23255e7547`. Public beta: https://testflight.apple.com/join/Hd13C9U3 .
 
 ## What to Test
 
-> Optional experiments are available in Settings → Experimental features, both off by default. Test Background audio join using a reminder’s Join audio action, and First screen share in the background after opening a guest meeting and going Home. Please report whether the app stays backgrounded, whether audio is audible, whether PiP shows moving content, and any fallback notification. These experiments still need physical-device validation.
+> Optional experiments are available in Settings → Experimental features, both off by default. Test Background audio join using a reminder’s Join audio action (touch and hold the notification; normal taps open the app). Save your name, allow microphone access in advance and turn off System call controls. Test First screen share in the background by opening a guest meeting before anyone shares, then going Home before a participant starts sharing. Please report whether the app stays backgrounded, whether audio is audible, whether PiP shows moving content and any fallback notification. These experiments still need physical-device validation.
