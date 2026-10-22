@@ -9,6 +9,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     #if DEBUG
     var meetingForTesting: ConferenceModel? { conference }
     var macMeetingForTesting: MacMeetingCoordinator? { macMeeting }
+    func restoreMacMeetingForTesting() {
+        guard let conference, let window else { return }
+        macMeeting = MacMeetingCoordinator(model: conference, window: window)
+    }
     private var presenterExperiment: MacPresenterQualification?
     private var previewExperiment: PreviewCadenceExperiment?
     #endif

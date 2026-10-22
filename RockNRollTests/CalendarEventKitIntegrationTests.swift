@@ -56,13 +56,36 @@ final class CalendarEventKitIntegrationTests: XCTestCase {
 #endif
 
 #if !targetEnvironment(simulator)
+import AVFAudio
 import ConferenceCore
 import EventKit
+import UserNotifications
 import XCTest
 @testable import RockNRoll
 
 @MainActor
 final class PhysicalCalendarReadTests: XCTestCase {
+    func testBackgroundJoinPrerequisitesWithoutChangingCalendarOrSettings() async throws {
+        guard !ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Physical iPhone prerequisites") }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        let pending = await UNUserNotificationCenter.current().pendingNotificationRequests()
+        let delivered = await UNUserNotificationCenter.current().deliveredNotifications()
+        let allowed = await AppleCalendarReader().access() == .allowed
+        let localSource = allowed && EKEventStore().sources.contains { $0.sourceType == .local }
+        let evidence: [String: Any] = ["calendarAllowed": allowed,
+            "writableLocalSourceAvailable": localSource,
+            "notificationAuthorization": settings.authorizationStatus.rawValue,
+            "pendingMeetingReminders": pending.filter { $0.identifier.hasPrefix("calendar-reminder.") }.count,
+            "deliveredMeetingReminders": delivered.filter { $0.request.identifier.hasPrefix("calendar-reminder.") }.count,
+            "microphoneGranted": AVAudioSession.sharedInstance().recordPermission == .granted,
+            "savedNamePresent": !(UserDefaults.standard.string(forKey: "savedDisplayName") ?? "").isEmpty,
+            "systemControlsEnabled": UserDefaults.standard.bool(forKey: SystemCallCoordinator.controlsPreferenceKey)]
+        let data = try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys])
+        let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("background-join-prerequisites.json")
+        try data.write(to: file, options: .atomic)
+        print("BACKGROUND_JOIN_PREREQUISITES \(String(decoding: data, as: UTF8.self))")
+    }
     func testDeviceEventKitReadRespectsSelectedCalendarsWithoutWritingEvents() async throws {
         guard !ProcessInfo.processInfo.isiOSAppOnMac else { throw XCTSkip("Physical iPhone EventKit check") }
         let reader = AppleCalendarReader()

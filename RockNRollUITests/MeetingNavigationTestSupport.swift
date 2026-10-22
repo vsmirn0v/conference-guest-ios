@@ -64,7 +64,7 @@ extension XCUIApplication {
     }
 
     private func visibleMeetingElement(_ elements: [XCUIElement]) -> XCUIElement? {
-        let bounds = windows.firstMatch.frame
+        let bounds = meetingWindow.frame
         return elements.first {
             guard $0.exists else { return false }
             let frame = $0.frame
@@ -76,7 +76,7 @@ extension XCUIApplication {
         // SwiftUI may retain offscreen navigation Lists with the same identifier.
         let collections = collectionViews.matching(NSPredicate(format: "identifier IN %@", ["meeting.actions.list", "meeting.view.list"])).allElementsBoundByIndex
         let scrolls = scrollViews.matching(NSPredicate(format: "identifier IN %@", ["meeting.actions.list", "meeting.view.list"])).allElementsBoundByIndex
-        let bounds = windows.firstMatch.frame
+        let bounds = meetingWindow.frame
         // A List covered by its own rows may report non-hittable, although its
         // visible row centers are valid drag targets. Ignore retained hidden Lists.
         return (collections + scrolls).first {
@@ -89,7 +89,7 @@ extension XCUIApplication {
         for _ in 0..<8 {
             if let row = target() { return row }
             guard let list = meetingActionsList else { return nil }
-            let window = windows.firstMatch
+            let window = meetingWindow
             let windowFrame = window.frame
             let viewport = list.frame.intersection(windowFrame)
             let rows = list.buttons.allElementsBoundByIndex.filter {
@@ -112,5 +112,11 @@ extension XCUIApplication {
                 .press(forDuration: 0.02, thenDragTo: origin.withOffset(CGVector(dx: end.x - windowFrame.minX, dy: end.y - windowFrame.minY)))
         }
         return target()
+    }
+
+    private var meetingWindow: XCUIElement {
+        windows.allElementsBoundByIndex.max {
+            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+        } ?? windows.firstMatch
     }
 }

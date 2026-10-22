@@ -167,9 +167,17 @@ final class GuestVideoPictureInPicture {
         self.isScreenShare = isScreenShare
         #if DEBUG
         CameraBackgroundTrace.event("guest-select", ["hasViewport": viewport != nil, "presenting": presenting,
-            "rendererChanged": selectedRenderer !== viewport?.rendererView, "hasFrame": hasFrame])
+            "rendererChanged": selectedRenderer !== viewport?.rendererView, "hasFrame": hasFrame,
+            "anchorInWindow": sourceView.window != nil, "hasPiPController": floating.controllerForTesting != nil,
+            "experimentalFirstStart": FloatingVideoPreference.experimentalBackgroundStart])
         #endif
-        guard let viewport else { clear(); return }
+        guard let viewport else {
+            clear()
+            #if DEBUG
+            if !isInBackground { floating.prepareAnchor(sourceView) }
+            #endif
+            return
+        }
         if selectedViewport !== viewport { selectedViewport?.clearCorrectedVideo() }
         selectedViewport = viewport
         if viewport.isLocalCamera, let capture = GuestCaptureDeviceObserver.cameraPreview() {
@@ -281,6 +289,9 @@ final class GuestVideoPictureInPicture {
     func foregrounded() {
         background = false
         floating.foregrounded()
+        #if DEBUG
+        floating.prepareAnchor(sourceView)
+        #endif
         refreshInlineDelivery()
         processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
         processor.setEnabled(shouldProcessFrames)

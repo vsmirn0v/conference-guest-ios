@@ -370,13 +370,24 @@ final class GuestVideoDemandTests: XCTestCase {
     func testSignalingBootstrapsExperimentalBackgroundReceiveBeforeAnyRendererExists() async throws {
         try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-        window.rootViewController = UIViewController(); window.makeKeyAndVisible()
-        let source = try XCTUnwrap(window.rootViewController?.view)
+        let source = UIView(frame: window.bounds)
         var state = UIApplication.State.active, starts = 0
         let floating = GuestVideoPictureInPicture(sourceView: source, floatingEnvironment: .init(
             applicationState: { state }, supported: { true }, possible: { _ in true },
             start: { _ in starts += 1 }, stop: { _ in }, allowsFirstBackgroundStart: { true }))
         defer { floating.end(); window.isHidden = true }
+        floating.select(viewport: nil, name: "", isScreenShare: false)
+        XCTAssertNil(floating.lifecycleForTesting.controllerForTesting)
+        window.rootViewController = UIViewController()
+        window.rootViewController?.view.addSubview(source)
+        window.makeKeyAndVisible()
+        floating.select(viewport: nil, name: "", isScreenShare: false)
+        let controller = try XCTUnwrap(floating.lifecycleForTesting.controllerForTesting)
+        XCTAssertFalse(controller.canStartPictureInPictureAutomaticallyFromInline)
+        floating.select(viewport: nil, name: "", isScreenShare: false)
+        XCTAssertTrue(floating.lifecycleForTesting.controllerForTesting === controller)
+        XCTAssertFalse(floating.lifecycleForTesting.needsRecoveryFrames)
+        XCTAssertEqual(starts, 0)
         let demand = MeetingVideoDemand(observeLifecycle: false)
         demand.setForeground(false, graceNanoseconds: 1)
         try await Task.sleep(for: .milliseconds(10))
@@ -393,6 +404,49 @@ final class GuestVideoDemandTests: XCTestCase {
         while starts == 0 && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(starts, 1)
         XCTAssertTrue(floating.hasPreparedFrameForTesting)
+    }
+
+    func testLateAnchorCannotPrepareFirstBackgroundPiPWithoutForegroundOptIn() throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
+        for enabled in [false, true] {
+            let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+            let source = UIView(frame: window.bounds)
+            var state = UIApplication.State.active
+            let floating = GuestVideoPictureInPicture(sourceView: source, floatingEnvironment: .init(
+                applicationState: { state }, supported: { true }, possible: { _ in true },
+                start: { _ in XCTFail("A late background anchor must not start PiP") }, stop: { _ in },
+                allowsFirstBackgroundStart: { enabled }))
+            if enabled { state = .background; floating.backgrounded() }
+            window.rootViewController = UIViewController()
+            window.rootViewController?.view.addSubview(source)
+            window.makeKeyAndVisible()
+            floating.select(viewport: nil, name: "", isScreenShare: false)
+            XCTAssertNil(floating.lifecycleForTesting.controllerForTesting)
+            floating.selectSignaledSource(.init(participant: "presenter", isShare: true))
+            XCTAssertFalse(floating.lifecycleForTesting.needsRecoveryFrames)
+            floating.end(); window.isHidden = true
+        }
+    }
+
+    func testForegroundReturnPreparesAnExperimentalAnchorAttachedAfterBackgrounding() throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let source = UIView(frame: window.bounds)
+        var state = UIApplication.State.active
+        let floating = GuestVideoPictureInPicture(sourceView: source, floatingEnvironment: .init(
+            applicationState: { state }, supported: { true }, possible: { _ in true },
+            start: { _ in XCTFail("Preparing an empty anchor must not explicitly start PiP") }, stop: { _ in },
+            allowsFirstBackgroundStart: { true }))
+        defer { floating.end(); window.isHidden = true }
+        state = .background; floating.backgrounded()
+        window.rootViewController = UIViewController()
+        window.rootViewController?.view.addSubview(source); window.makeKeyAndVisible()
+        floating.select(viewport: nil, name: "", isScreenShare: false)
+        XCTAssertNil(floating.lifecycleForTesting.controllerForTesting)
+        state = .active; floating.foregrounded()
+        let controller = try XCTUnwrap(floating.lifecycleForTesting.controllerForTesting)
+        XCTAssertFalse(controller.canStartPictureInPictureAutomaticallyFromInline)
+        XCTAssertFalse(floating.lifecycleForTesting.needsRecoveryFrames)
     }
 
     func testExperimentalTimeoutIsNotRearmedByDuplicateMetadataOrLateFrames() async throws {

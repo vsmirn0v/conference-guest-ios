@@ -4,6 +4,7 @@ import CallKit
 import ConferenceCore
 import JazzSDK
 #if DEBUG
+import Darwin
 import JazzCore
 #endif
 import Network
@@ -85,6 +86,7 @@ final class NativeConferenceEngine: CallEngine {
     func reconnectReactionsForTesting() { beginMediaReconnect(forNetwork: false) }
     var mediaAttemptForTesting: UUID { mediaAttemptEpoch }
     var mediaReadyForTesting: Bool { isSDKActive && mediaConnectionConfirmed && !isMediaReconnecting }
+    var streamViewsForTesting: GuestStreamViews { streamViews }
     var hasReceivedVideoFrameForTesting: Bool {
         if (floatingVideo?.convertedFramesForTesting ?? 0) > 0 { return true }
         let gallery = activeControls?.videoEvidenceForTesting["gallery"] as? [[String: Any]] ?? []
@@ -1277,6 +1279,17 @@ final class NativeConferenceEngine: CallEngine {
         entry["videoSinks"] = activeControls?.videoEvidenceForTesting
         entry["remoteAudio"] = remoteAudioEvidence
         entry["videoDemand"] = videoDemand.wantsVideo
+        if event == "sample" || event == "session-finish" {
+            var usage = rusage()
+            if getrusage(RUSAGE_SELF, &usage) == 0 {
+                entry["processCPUSeconds"] = Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec)
+                    + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1e6
+                entry["peakResidentBytes"] = usage.ru_maxrss
+            }
+            entry["thermalState"] = ProcessInfo.processInfo.thermalState.rawValue
+            entry["lowPowerMode"] = ProcessInfo.processInfo.isLowPowerModeEnabled
+            entry["batteryState"] = UIDevice.current.batteryState.rawValue
+        }
         entry.merge(details) { _, value in value }
         entry.merge(systemCall.diagnosticState) { _, value in value }
         entry["vendorCallProxyEnabled"] = JMCallKitProxy.enabled

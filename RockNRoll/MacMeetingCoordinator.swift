@@ -256,6 +256,7 @@ final class MacMeetingCoordinator {
         if bound { bridge.closeMeetingWindow() }
     }
     #if DEBUG
+    var hasScheduledActivityForTesting: Bool { calendarActivity.hasActivityForTesting }
     var stateForTesting: [AnyHashable: Any] {
         (bridge as? NativeMacMeetingPresentation)?.bridge.stateForTesting() ?? [:]
     }

@@ -1,5 +1,6 @@
 import UIKit
 import XCTest
+import Vision
 
 final class ConferenceMediaUITests: XCTestCase {
     func testWideHomeKeepsJoinAndSavedRoomsSideBySide() throws {
@@ -1464,9 +1465,11 @@ final class ConferenceMediaUITests: XCTestCase {
             throw XCTSkip("Opt in explicitly: this test temporarily disables the phone's network.")
         }
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
-        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US",
+            "-experiments.firstBackgroundPiP", "NO", "-experiments.backgroundAudioJoin", "NO"]
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Network Acceptance QA"
+        app.launchEnvironment["CONFERENCE_TEST_MEDIA_TRACE"] = "1"
         app.launch()
         defer { if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
         guard app.buttons["Unmute microphone"].waitForExistence(timeout: 60) else {
@@ -1474,6 +1477,22 @@ final class ConferenceMediaUITests: XCTestCase {
             return
         }
         func verifyMovingVideo() -> Bool {
+            if ProcessInfo.processInfo.environment["ROCKNROLL_TEST_MOVING_SHARE_FIXTURE"] == "1" {
+                var first: Int?
+                let moving = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    guard let image = app.screenshot().image.cgImage else { return false }
+                    let request = VNRecognizeTextRequest()
+                    request.recognitionLanguages = ["en-US"]; request.recognitionLevel = .accurate
+                    try? VNImageRequestHandler(cgImage: image).perform([request])
+                    guard let text = request.results?.compactMap({ $0.topCandidates(1).first?.string })
+                        .first(where: { $0.hasPrefix("FRAME ") }), let frame = Int(text.dropFirst(6)) else { return false }
+                    if let first { return first != frame }
+                    first = frame; return false
+                }, object: nil)
+                let result = XCTWaiter.wait(for: [moving], timeout: 30) == .completed
+                XCTAssertTrue(result, "The controlled remote share must advance its visible frame counter")
+                return result
+            }
             let pin = app.buttons["Pin \(remote) video"]
             let nativeShare = app.buttons["Pin \(remote) screen"]
             let waiting = app.staticTexts["Waiting for \(remote)'s video…"]

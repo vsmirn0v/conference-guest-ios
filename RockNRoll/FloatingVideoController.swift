@@ -119,10 +119,16 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
 
     /// Pre-arm only the opt-in experiment while a real foreground anchor exists.
     func prepareAnchor(_ view: UIView) {
+        #if DEBUG
+        CameraBackgroundTrace.event("pip-anchor", ["enabled": allowsFirstBackgroundStart,
+            "sourceInWindow": view.window != nil, "sourceHidden": view.isHidden,
+            "hasController": controller != nil, "suspended": suspended, "phase": String(describing: phase)])
+        #endif
         guard !isEnded, allowsFirstBackgroundStart else { return }
         sourceView = view
         contentView.setWaitingForVideo(!hasVideo)
         prepare()
+        traceRecovery("pip-anchor-prepared")
     }
 
     /// Called for a new signaled source, before the SDK has a renderer/frame.
