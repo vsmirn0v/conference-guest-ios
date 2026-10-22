@@ -84,6 +84,7 @@ final class ConferenceModel: ObservableObject {
     }
     func installContinuationFixture(_ coordinator: MeetingContinuationCoordinator) { continuation = coordinator }
     var joinTransportForTesting: ((JoinDestination, @escaping (CallEvent) -> Void) -> Void)?
+    var beforeJoinTransportForTesting: (() async -> Void)?
     #endif
     private var jamEngine: RockRoomEngine?
     private var telemostEngine: TelemostCallEngine?
@@ -99,6 +100,7 @@ final class ConferenceModel: ObservableObject {
         let audioOnly: Bool
         let knownEngine: MeetingEngineKind?
         let title: String?
+        var admission: (() -> Bool)? = nil
     }
     /// History rejoin may substitute a rotated calendar invitation before discovery.
     private var rejoinEvidence: (invitation: URL, engine: MeetingEngineKind)?
@@ -111,6 +113,7 @@ final class ConferenceModel: ObservableObject {
     @Published private var activeRoomTitle: String?
     private var activeVisitTitle: String?
     private var joinTask: Task<Void, Never>?
+    private var scheduledJoinPending = false
     private var terminalEventHandled = false
     private var sessionGeneration: UInt64 = 0
     private var endpointCache: [URL: URL] = [:]
@@ -140,13 +143,19 @@ final class ConferenceModel: ObservableObject {
         self.calendar.canAutomaticallyJoin = { [weak self] meeting in
             guard let self else { return false }
             return !self.setup.blocksAutomaticJoin && !self.isJoining && !self.isInConference && !self.isLeaving &&
+                !self.calendar.showingMacSettings && self.calendar.reminders.editing == nil &&
                 !self.calendar.reminders.hasOpenIntent &&
                 !self.calendar.reminders.presenting &&
-                self.siteSelection == nil && self.engineSelection == nil &&
+                self.siteSelection == nil && self.engineSelection == nil && self.joinAwaitingName == nil &&
                 meeting.engine?.inputPolicy.accepts(name: self.displayName) == true &&
                 self.continuation.candidates.isEmpty && !self.continuation.moving
         }
         self.calendar.onAutomaticJoin = { [weak self] in self?.joinCalendarMeeting($0) }
+        self.calendar.onScheduledJoin = { [weak self] in self?.joinScheduledMeeting($0) }
+        self.calendar.onScheduledInvalidation = { [weak self] in
+            guard let self, self.scheduledJoinPending, self.isJoining else { return }
+            self.leave()
+        }
         setup.onBegin = { [weak self] in self?.calendar.pauseAutomaticJoin() }
         setup.onEnd = { [weak self] in self?.calendar.pauseAutomaticJoin() }
         setup.onCloudStep = { [weak self] in self?.sync.dismissOffer() }
@@ -457,15 +466,20 @@ final class ConferenceModel: ObservableObject {
     }
 
     private func startJoin(_ target: JoinDestination, nameOverride: String? = nil, quiet: Bool = false, title: String? = nil,
-                           engineWasChosen: Bool = false, audioOnly: Bool = false) {
-        guard !isJoining && !isInConference && !isLeaving else { return }
+                           engineWasChosen: Bool = false, audioOnly: Bool = false,
+                           scheduledAdmission: (() -> Bool)? = nil) {
+        guard !isJoining && !isInConference && !isLeaving else {
+            if scheduledAdmission != nil && !scheduledJoinPending { calendar.finishScheduledTransportPreparation() }
+            return
+        }
+        guard scheduledAdmission?() != false else { calendar.finishScheduledTransportPreparation(); return }
         if setup.needsDismissal {
             setup.performMeetingIntent { [weak self] in self?.startJoin(target, nameOverride: nameOverride, quiet: quiet,
-                title: title, engineWasChosen: engineWasChosen, audioOnly: audioOnly) }; return
+                title: title, engineWasChosen: engineWasChosen, audioOnly: audioOnly, scheduledAdmission: scheduledAdmission) }; return
         }
         setup.suspendForMeeting()
         dismissEngineSelection()
-        calendar.cancelAutomaticJoin(suppress: true)
+        calendar.cancelAutomaticJoin(suppress: scheduledAdmission == nil, preservingActivity: scheduledAdmission != nil)
         #if DEBUG
         let requestedName = nameOverride ?? testDisplayNameOverride ?? displayName
         testDisplayNameOverride = nil
@@ -479,6 +493,11 @@ final class ConferenceModel: ObservableObject {
             return clean.isEmpty ? nil : clean
         }
         guard target.inputPolicy.accepts(name: name) else {
+            if scheduledAdmission != nil {
+                calendar.finishScheduledTransportPreparation()
+                status = L("Automatic joining was cancelled."); statusIsError = false
+                return
+            }
             joinAwaitingName = target
             nameRequiredTitle = visitTitle.map { (target.invitationURL, $0) }
             status = L("Choose the name other musicians will see.")
@@ -488,13 +507,16 @@ final class ConferenceModel: ObservableObject {
         joinAwaitingName = nil
         nameRequiredTitle = nil
         guard let container else {
+            if scheduledAdmission != nil { calendar.finishScheduledTransportPreparation() }
             status = L("Jam view is unavailable.")
             statusIsError = true
             return
         }
         let knownEngine = rejoinEvidence.flatMap { $0.invitation == target.invitationURL ? $0.engine : nil } ??
             history.matching(target.invitationURL)?.engine
-        let request = JoinRequest(target: target, name: name, quiet: quiet, audioOnly: audioOnly, knownEngine: knownEngine, title: visitTitle)
+        let request = JoinRequest(target: target, name: name, quiet: quiet, audioOnly: audioOnly, knownEngine: knownEngine, title: visitTitle,
+                                  admission: scheduledAdmission)
+        scheduledJoinPending = scheduledAdmission != nil
         rejoinEvidence = nil
         sessionGeneration &+= 1
         let generation = sessionGeneration
@@ -515,14 +537,31 @@ final class ConferenceModel: ObservableObject {
         #endif
         joinTask = Task { [weak self] in
             guard let self else { return }
+            @MainActor func finishPreparation() {
+                guard request.admission != nil, sessionGeneration == generation, scheduledJoinPending else { return }
+                calendar.finishScheduledTransportPreparation()
+                scheduledJoinPending = false
+            }
+            defer { finishPreparation() }
+            @MainActor func checkAdmission() throws {
+                try Task.checkCancellation()
+                if request.admission?() == false { throw CancellationError() }
+            }
+            @MainActor func handoffToTransport() throws {
+                try checkAdmission()
+                scheduledJoinPending = false
+                if request.admission != nil { calendar.finishScheduledTransportPreparation() }
+            }
             do {
+                try checkAdmission()
                 var destination = request.target
                 if case .guest(let guest) = destination, !engineWasChosen {
                     let detection = try await engineDetector.detect(guest.invitationURL)
-                    try Task.checkCancellation()
+                    try checkAdmission()
                     guard sessionGeneration == generation else { return }
                     guard let resolved = try JoinDestination.resolve(guest.invitationURL, detection: detection,
                                                                      knownEngine: request.knownEngine) else {
+                        if request.admission != nil { throw CancellationError() }
                         joinTask = nil; phase = .idle; activeRoute = nil
                         companionAudioPaused = false; liveSessionID = nil
                         engineChoiceRequest = request
@@ -538,10 +577,11 @@ final class ConferenceModel: ObservableObject {
                         endpointCache[target.originURL] = try await resolver.resolve(for: target)
                     }
                 }
-                try Task.checkCancellation()
+                try checkAdmission()
                 guard sessionGeneration == generation, phase == .joining else { return }
                 activeRoute = destination
                 if !destination.inputPolicy.accepts(name: request.name) {
+                    if request.admission != nil { throw CancellationError() }
                     joinTask = nil; phase = .idle; activeRoute = nil
                     companionAudioPaused = false; liveSessionID = nil
                     joinAwaitingName = destination
@@ -550,7 +590,11 @@ final class ConferenceModel: ObservableObject {
                     return
                 }
                 #if DEBUG
+                await beforeJoinTransportForTesting?()
+                try checkAdmission()
                 if let joinTransportForTesting {
+                    scheduledJoinPending = false
+                    if request.admission != nil { calendar.finishScheduledTransportPreparation() }
                     joinTransportForTesting(destination) { [weak self] event in
                         guard let self, self.sessionGeneration == generation else { return }
                         self.handle(event: event)
@@ -566,7 +610,7 @@ final class ConferenceModel: ObservableObject {
                     } else {
                         networkURL = try await resolver.resolve(for: guest)
                     }
-                    try Task.checkCancellation()
+                    try checkAdmission()
                     endpointCache[guest.originURL] = networkURL
                     #if DEBUG
                     print("Jam join: endpoint ready after \(self.joinElapsed)s")
@@ -584,12 +628,13 @@ final class ConferenceModel: ObservableObject {
                         guard let self, self.sessionGeneration == generation else { return }
                         self.setActiveRoomTitle(title)
                     }
+                    try handoffToTransport()
                     try engine.configure(container: container, networkURL: networkURL,
                                          displayName: request.name)
                     try engine.join(target: guest, displayName: request.name, audioOnly: request.audioOnly)
                 case .jam(let jam):
                     let credentials = try await jamService.join(jam, name: request.name)
-                    try Task.checkCancellation()
+                    try checkAdmission()
                     #if DEBUG
                     print("Jam join: credentials ready after \(self.joinElapsed)s")
                     #endif
@@ -604,9 +649,11 @@ final class ConferenceModel: ObservableObject {
                         self.mediaStatus = self.isJoining || self.isInConference ? message : nil
                         selected?.showMediaStatus(message)
                     }
+                    try handoffToTransport()
                     macCallActivity.retainForGraphicsResources()
                     try selected.join(target: jam, credentials: credentials, container: container, quiet: request.quiet)
                 case .telemost(let target):
+                    try handoffToTransport()
                     let selected = TelemostCallEngine(systemCall: systemCall, catchUp: catchUpStore, chat: chat)
                     telemostEngine = selected
                     selected.onEvent = { [weak self] event in
@@ -624,6 +671,7 @@ final class ConferenceModel: ObservableObject {
                     macCallActivity.retainForGraphicsResources()
                     try selected.join(target: target, name: request.name, container: container, quiet: request.quiet, title: activeRoomTitle)
                 case .trueconf(let target):
+                    try handoffToTransport()
                     let selected = TrueConfCallEngine(systemCall: systemCall, catchUp: catchUpStore, chat: chat)
                     trueconfEngine = selected
                     selected.onEvent = { [weak self] event in
@@ -649,6 +697,7 @@ final class ConferenceModel: ObservableObject {
                 joinTask = nil
                 status = L("Connecting with microphone and camera off…")
             } catch {
+                finishPreparation()
                 await engineDetector.invalidate(target.invitationURL)
                 guard sessionGeneration == generation, !Task.isCancelled else { return }
                 joinTask = nil
@@ -657,13 +706,15 @@ final class ConferenceModel: ObservableObject {
                 continuation.targetDidFail()
                 releaseJamEngineIfSelected()
                 activeRoute = nil
-                status = error.localizedDescription
-                statusIsError = true
+                status = error is CancellationError ? L("Automatic joining was cancelled.") : error.localizedDescription
+                statusIsError = !(error is CancellationError)
             }
         }
     }
 
     func leave() {
+        if scheduledJoinPending { calendar.finishScheduledTransportPreparation() }
+        scheduledJoinPending = false
         dismissEngineSelection()
         guard !isLeaving, isJoining || isInConference else { return }
         let didStartConference = activeEngine?.hasJoinStarted == true
@@ -735,6 +786,17 @@ final class ConferenceModel: ObservableObject {
             let target = try destination(for: invitation.absoluteString, verifiedEngine: meeting.engine)
             receive(target: target, autoJoin: true, title: meeting.title)
         } catch { status = error.localizedDescription; statusIsError = true }
+    }
+
+    /// Scheduled attendance never enters the invitation replacement/confirmation path.
+    func joinScheduledMeeting(_ meeting: CalendarMeeting) {
+        guard calendar.canAutomaticallyJoin(meeting), calendar.schedulingIsAvailable(),
+              let current = calendar.meetings.first(where: { $0.id == meeting.id }), current == meeting,
+              let invitation = current.invitation,
+              let target = try? destination(for: invitation.absoluteString, verifiedEngine: current.engine) else {
+            calendar.finishScheduledTransportPreparation(); return
+        }
+        startJoin(target, title: current.title, scheduledAdmission: calendar.scheduledTransportAdmission(for: current))
     }
 
     func calendarForegrounded() {

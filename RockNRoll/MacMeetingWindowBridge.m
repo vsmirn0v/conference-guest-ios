@@ -10,6 +10,7 @@
 - (void)activateIgnoringOtherApps:(BOOL)flag;
 - (void)terminate:(id)sender;
 - (BOOL)isHidden;
+- (BOOL)isProtectedDataAvailable;
 @end
 @protocol RockNativeWindow <NSObject>
 - (id)delegate;
@@ -26,6 +27,10 @@
 @end
 @interface NSObject (RockPublicAppKit)
 + (id)sharedApplication;
++ (id)sharedWorkspace;
+- (NSNotificationCenter *)notificationCenter;
+- (id)frontmostApplication;
+- (pid_t)processIdentifier;
 + (id)systemStatusBar;
 + (id)imageWithSystemSymbolName:(NSString *)name accessibilityDescription:(NSString *)description;
 - (id)statusItemWithLength:(CGFloat)length;
@@ -121,6 +126,11 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
 @property(nonatomic) SEL closeAction;
 @property(nonatomic) NSUInteger visibilityRevision;
 @property(nonatomic, readwrite) BOOL hiddenForMeeting;
+@property(nonatomic, strong) NSNotificationCenter *workspaceNotifications;
+@property(nonatomic) BOOL sleeping;
+@property(nonatomic) BOOL displaySleeping;
+@property(nonatomic) BOOL sessionInactive;
+@property(nonatomic) BOOL protectedUnavailable;
 @end
 
 @implementation RockMacMeetingWindowBridge
@@ -143,6 +153,18 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
         }
         _application = app;
         _statusBar = [statusBar systemStatusBar];
+        id workspace = [NSClassFromString(@"NSWorkspace") sharedWorkspace];
+        _workspaceNotifications = [workspace notificationCenter];
+        for (NSString *name in @[@"NSWorkspaceWillSleepNotification", @"NSWorkspaceDidWakeNotification",
+                                  @"NSWorkspaceScreensDidSleepNotification", @"NSWorkspaceScreensDidWakeNotification",
+                                  @"NSWorkspaceSessionDidResignActiveNotification", @"NSWorkspaceSessionDidBecomeActiveNotification"]) {
+            [_workspaceNotifications addObserver:self selector:@selector(schedulingChanged:) name:name object:nil];
+        }
+        for (NSString *name in @[@"NSApplicationProtectedDataWillBecomeUnavailableNotification",
+                                  @"NSApplicationProtectedDataDidBecomeAvailableNotification",
+                                  @"NSSystemClockDidChangeNotification", @"NSSystemTimeZoneDidChangeNotification"]) {
+            [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(schedulingChanged:) name:name object:nil];
+        }
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(willTerminate:)
             name:@"NSApplicationWillTerminateNotification" object:app];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(nativeWindowReady:)
@@ -223,7 +245,7 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
     if (self.closeAction) [(id)self.application sendAction:self.closeAction to:self.closeTarget from:sender];
 }
 - (BOOL)hideMeeting {
-    if (!self.active || !self.statusItem || !self.window || [self.window delegate] != self.proxy) return NO;
+    if ((!self.active && !self.residentEnabled) || !self.statusItem || !self.window || [self.window delegate] != self.proxy) return NO;
     self.hiddenForMeeting = YES;
     self.visibilityRevision++;
     [self.application hide:nil];
@@ -269,7 +291,7 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
 - (void)updateActive:(BOOL)active title:(NSString *)title microphoneOn:(BOOL)microphoneOn menu:(NSArray<NSDictionary *> *)items {
     NSAssert(NSThread.isMainThread, @"Mac menu updates must be on main");
     self.active = active;
-    if (!active) {
+    if (!active && !self.residentEnabled) {
         if (self.hiddenForMeeting) [self showMeeting];
         if (self.statusItem) [self.statusBar removeStatusItem:self.statusItem];
         self.statusItem = nil;
@@ -278,7 +300,7 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
     if (!self.application || !self.window || [self.window delegate] != self.proxy) return;
     if (!self.statusItem) self.statusItem = [self.statusBar statusItemWithLength:-1]; // NSVariableStatusItemLength
     id image = [NSClassFromString(@"NSImage") imageWithSystemSymbolName:
-        microphoneOn ? @"mic.fill" : @"mic.slash.fill" accessibilityDescription:title];
+        active ? (microphoneOn ? @"mic.fill" : @"mic.slash.fill") : @"calendar" accessibilityDescription:title];
     [image setTemplate:YES];
     id button = [self.statusItem button];
     [button setImage:image];
@@ -289,7 +311,7 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
     NSString *action = [sender representedObject];
     if ([action isEqualToString:@"show"]) [self showMeeting];
     else if ([action isEqualToString:@"quit"]) [self.application terminate:nil];
-    else if (self.active && self.action) self.action(action);
+    else if ((self.active || self.residentEnabled) && self.action) self.action(action);
 }
 - (void)closeMeetingWindow {
     if (![self hideMeeting]) [self.window performClose:nil];
@@ -326,6 +348,23 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
 - (void)markVisible {
     if (self.window && ![self.application isHidden] && [self.window isVisible]) self.hiddenForMeeting = NO;
 }
+- (BOOL)schedulingAvailable {
+    return !self.invalidated && !self.sleeping && !self.displaySleeping && !self.sessionInactive && !self.protectedUnavailable &&
+        [self.application respondsToSelector:@selector(isProtectedDataAvailable)] && [self.application isProtectedDataAvailable];
+}
+- (void)schedulingChanged:(NSNotification *)notification {
+    NSString *name = notification.name;
+    if ([name isEqual:@"NSWorkspaceWillSleepNotification"]) self.sleeping = YES;
+    if ([name isEqual:@"NSWorkspaceDidWakeNotification"]) self.sleeping = NO;
+    if ([name isEqual:@"NSWorkspaceScreensDidSleepNotification"]) self.displaySleeping = YES;
+    if ([name isEqual:@"NSWorkspaceScreensDidWakeNotification"]) self.displaySleeping = NO;
+    if ([name isEqual:@"NSWorkspaceSessionDidResignActiveNotification"]) self.sessionInactive = YES;
+    if ([name isEqual:@"NSWorkspaceSessionDidBecomeActiveNotification"]) self.sessionInactive = NO;
+    BOOL unavailable = [name isEqual:@"NSApplicationProtectedDataWillBecomeUnavailableNotification"];
+    if (unavailable) self.protectedUnavailable = YES;
+    if ([name isEqual:@"NSApplicationProtectedDataDidBecomeAvailableNotification"]) self.protectedUnavailable = NO;
+    if (self.action) self.action(!unavailable && self.schedulingAvailable ? @"scheduling:resume" : @"scheduling:unavailable");
+}
 - (void)willTerminate:(NSNotification *)notification {
     self.active = NO;
     if (self.action) self.action(@"terminate");
@@ -339,6 +378,7 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
     if (self.statusItem) [self.statusBar removeStatusItem:self.statusItem];
     self.statusItem = nil; self.proxy = nil; self.window = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self.workspaceNotifications removeObserver:self];
 }
 - (void)dealloc { [self invalidate]; }
 #if DEBUG
@@ -350,6 +390,9 @@ static id RockUniqueMeetingWindow(NSArray *windows) {
 - (NSDictionary *)stateForTesting {
     return @{@"bound": @(self.window && [self.window delegate] == self.proxy),
         @"hidden": @(self.hiddenForMeeting), @"active": @(self.active), @"statusItem": @(self.statusItem != nil),
+        @"resident": @(self.residentEnabled), @"schedulingAvailable": @(self.schedulingAvailable),
+        @"frontmostPID": @([[NSClassFromString(@"NSWorkspace") sharedWorkspace] frontmostApplication] ?
+            [[[NSClassFromString(@"NSWorkspace") sharedWorkspace] frontmostApplication] processIdentifier] : 0),
         @"sceneState": @(self.owningWindow.windowScene.activationState), @"uiKey": @(self.owningWindow.isKeyWindow),
         @"uiHidden": @(self.owningWindow.isHidden)};
 }

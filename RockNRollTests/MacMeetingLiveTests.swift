@@ -5,6 +5,49 @@ import XCTest
 
 @MainActor
 final class MacMeetingLiveTests: XCTestCase {
+    func testFreshProcessIdleMenuSchedulesWhileWindowIsHidden() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              let seconds = Double(ProcessInfo.processInfo.environment["ROCKNROLL_TEST_MAC_SCHEDULE_SECONDS"] ?? ""), seconds >= 5 else {
+            throw XCTSkip("Opt-in fresh-process hidden calendar timing qualification")
+        }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = try XCTUnwrap((scene.delegate as? SceneDelegate)?.window)
+        let preferences = UserDefaults(suiteName: "MacScheduleLive-" + UUID().uuidString)!
+        preferences.set(true, forKey: "calendarMeetings.enabled"); preferences.set(["work"], forKey: "calendarMeetings.selected")
+        let due = Date().addingTimeInterval(seconds)
+        let event = CalendarMeeting(id: "native-idle", seriesID: "native-idle", calendarID: "work", calendarTitle: "QA",
+            title: "Local calendar timing check", start: due, end: due.addingTimeInterval(60),
+            links: [URL(string: "https://jazz.example.test/calls/room")!])
+        let reader = CalendarMeetingStoreTests.Reader(events: [event])
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CalendarMeetingStoreTests.Response.self]
+        let reminders = CalendarReminderCoordinator(preferences: preferences, storage: CalendarReminderTests.Storage(), notifications: CalendarReminderTests.Notifications())
+        let calendar = CalendarMeetingStore(reader: reader, detector: MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config)),
+            preferences: preferences, storage: RoomSyncCoordinatorTests.Storage(), reminders: reminders)
+        calendar.setAutomaticJoinMode(.scheduled); calendar.canAutomaticallyJoin = { _ in true }
+        let session = MeetingSessionStub(); session.desktopMeetingActive = false; session.isInConference = false; session.desktopCalendar = calendar
+        let desktop = MacMeetingCoordinator(model: session, window: window, audioDevices: MacAudioDevices(isMac: false))
+        defer { calendar.setEnabled(false); desktop.showForTesting(); desktop.invalidate() }
+        desktop.becameActive()
+        for _ in 0..<30 where desktop.stateForTesting["bound"] as? Bool != true { try await Task.sleep(for: .milliseconds(100)) }
+        XCTAssertEqual(desktop.stateForTesting["bound"] as? Bool, true)
+        XCTAssertEqual(desktop.stateForTesting["schedulingAvailable"] as? Bool, true)
+        let joined = expectation(description: "Scheduled boundary executes without foreground activation")
+        var joinedAt: Date?
+        calendar.onScheduledJoin = { _ in joinedAt = Date(); joined.fulfill() }
+        try await MacCalendarSchedulingTests().ready(calendar)
+        desktop.closeForTesting(); calendar.backgrounded()
+        XCTAssertEqual(desktop.stateForTesting["hidden"] as? Bool, true)
+        let frontmost = desktop.stateForTesting["frontmostPID"] as? Int
+        print("MAC_IDLE_SCHEDULE_ARMED due=\(due) seconds=\(seconds) frontmost=\(String(describing: frontmost)) pid=\(getpid())")
+        await fulfillment(of: [joined], timeout: seconds + 20)
+        let elapsed = try XCTUnwrap(joinedAt).timeIntervalSince(due)
+        XCTAssertGreaterThanOrEqual(elapsed, 4); XCTAssertLessThan(elapsed, 10)
+        XCTAssertEqual(desktop.stateForTesting["hidden"] as? Bool, true)
+        XCTAssertEqual(desktop.stateForTesting["frontmostPID"] as? Int, frontmost)
+        XCTAssertNotEqual(frontmost, Int(getpid()))
+        print("MAC_IDLE_SCHEDULE_VERIFIED lateness_seconds=\(elapsed) state=\(desktop.stateForTesting)")
+    }
+
     func testLiveGuestMediaSurvivesCloseAndRestoreWithoutJoiningAgain() async throws {
         guard ProcessInfo.processInfo.isiOSAppOnMac,
               let invite = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_MAC_BACKGROUND_INVITE"] else {

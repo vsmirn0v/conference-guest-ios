@@ -102,6 +102,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         #endif
         model.setup.finishLaunch(hasMeetingIntent: !connectionOptions.urlContexts.isEmpty || !connectionOptions.userActivities.isEmpty ||
             CalendarReminderBroker.shared.hasPendingIntent || model.calendar.reminders.hasOpenIntent)
+        #if DEBUG
+        if CalendarUIFixture.mode == "mac-idle-schedule" { qualifyIdleScheduling(model) }
+        #endif
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
@@ -157,4 +160,49 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         #endif
     }
+    #if DEBUG
+    private func qualifyIdleScheduling(_ model: ConferenceModel) {
+        guard ProcessInfo.processInfo.isiOSAppOnMac else { return }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("rock-mac-idle-calendar-qa.json")
+        func record(_ values: [String: Any]) {
+            if let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys, .prettyPrinted]) {
+                try? data.write(to: file, options: .atomic)
+                FileHandle.standardError.write(data + Data("\n".utf8))
+            }
+            NSLog("MAC_IDLE_QUALIFICATION %@", file.path)
+        }
+        model.setup.suspendForMeeting()
+        model.calendar.canAutomaticallyJoin = { _ in true }
+        let fresh = !MacCallActivity.shared.hasActivityForTesting && NSClassFromString("XCTestCase") == nil
+        var frontmost: Int?
+        model.calendar.onScheduledJoin = { [weak self, weak model] meeting in
+            guard let model else { return }
+            let state = self?.macMeeting?.stateForTesting ?? [:]
+            model.calendar.finishScheduledTransportPreparation()
+            record(["stage": "completed", "freshWithoutMediaOrXCTest": fresh,
+                "latenessSeconds": Date().timeIntervalSince(meeting.start), "hidden": state["hidden"] as? Bool ?? false,
+                "frontmostUnchanged": frontmost == state["frontmostPID"] as? Int,
+                "graphicsActivity": MacCallActivity.shared.hasActivityForTesting,
+                "pid": getpid(), "schedulingAvailable": state["schedulingAvailable"] as? Bool ?? false])
+        }
+        Task { @MainActor [weak self] in
+            for _ in 0..<30 {
+                guard let self, let desktop = self.macMeeting else { return }
+                desktop.becameActive()
+                if desktop.canHideMeeting {
+                    desktop.closeForTesting()
+                    model.calendar.backgrounded()
+                    try? await Task.sleep(for: .milliseconds(300))
+                    frontmost = desktop.stateForTesting["frontmostPID"] as? Int
+                    record(["stage": "armed", "freshWithoutMediaOrXCTest": fresh, "pid": getpid(),
+                        "hidden": desktop.stateForTesting["hidden"] as? Bool ?? false,
+                        "frontmostPID": frontmost ?? 0])
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            record(["stage": "failed-binding", "pid": getpid()])
+        }
+    }
+    #endif
 }

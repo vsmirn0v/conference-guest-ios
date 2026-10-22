@@ -292,6 +292,7 @@ final class MeetingEngineRoutingTests: XCTestCase {
         XCTAssertTrue(model.isNameRequiredForJoin)
         XCTAssertTrue(model.history.rooms.isEmpty)
         model.displayName = "Ani"
+        XCTAssertFalse(model.calendar.canAutomaticallyJoin(meeting), "An explicit invitation awaiting confirmation keeps priority after the name is filled")
         var complete: ((CallEvent) -> Void)?
         let first = expectation(description: "First transport")
         model.joinTransportForTesting = { _, callback in complete = callback; first.fulfill() }

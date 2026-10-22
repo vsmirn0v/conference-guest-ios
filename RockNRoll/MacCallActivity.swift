@@ -12,6 +12,9 @@ final class MacCallActivity {
     private var token: AnyObject?
     private let begin: @MainActor () -> AnyObject?
     private let end: @MainActor (AnyObject) -> Void
+    #if DEBUG
+    var hasActivityForTesting: Bool { token != nil }
+    #endif
 
     init(isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac, begin: @escaping @MainActor () -> AnyObject? = MacCallActivity.beginNative,
          end: @escaping @MainActor (AnyObject) -> Void = MacCallActivity.endNative) {
@@ -36,6 +39,10 @@ final class MacCallActivity {
     }
 
     private static func beginNative() -> AnyObject? {
+        beginNative(reason: "Meeting media and graphics resources")
+    }
+    static func beginScheduledActivity() -> AnyObject? { beginNative(reason: "Preparing a scheduled meeting") }
+    private static func beginNative(reason: String) -> AnyObject? {
         guard ProcessInfo.processInfo.isiOSAppOnMac else { return nil }
         let process = ProcessInfo.processInfo
         let selector = NSSelectorFromString("beginActivityWithOptions:reason:")
@@ -45,7 +52,7 @@ final class MacCallActivity {
         typealias Begin = @convention(c) (AnyObject, Selector, UInt64, NSString) -> Unmanaged<AnyObject>
         let invoke = unsafeBitCast(method, to: Begin.self)
         let options = ProcessInfo.ActivityOptions.userInitiatedAllowingIdleSystemSleep.rawValue
-        let token = invoke(process, selector, options, "Meeting media and graphics resources").takeUnretainedValue()
+        let token = invoke(process, selector, options, reason as NSString).takeUnretainedValue()
         #if DEBUG
         NSLog("Mac meeting activity began")
         #endif

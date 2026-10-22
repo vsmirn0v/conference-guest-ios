@@ -142,6 +142,7 @@ struct JoinView: View {
             .onChange(of: setup.launchReady) { _ in offerSetup() }
             .onChange(of: showingAgenda) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
             .onChange(of: showingDevices) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
+            .onChange(of: blocksScheduledJoining) { calendar.setScheduledUIBlocked($0) }
             .onChange(of: confirmingStaleContinuation) { if !$0 { staleContinuation = nil } }
             .onReceive(calendar.$meetings) { refreshHome(meetings: $0) }
             .onReceive(calendar.$now) { _ in refreshHome() }
@@ -168,11 +169,20 @@ struct JoinView: View {
             }
             .onChange(of: model.invite) { _ in calendar.cancelAutomaticJoin(suppress: true) }
             .onChange(of: showingSettings) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
+            .sheet(isPresented: $calendar.showingMacSettings) {
+                NavigationStack {
+                    CalendarSettingsView(calendar: calendar)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) {
+                            Button(L("Done")) { calendar.showingMacSettings = false }
+                        } }
+                }
+            }
             .onChange(of: mediaCheck.presented) { if $0 { calendar.cancelAutomaticJoin(suppress: true) } }
             .onChange(of: model.isNameRequiredForJoin) { required in
                 if required { nameFocused = true }
             }
             .onAppear {
+                calendar.setScheduledUIBlocked(blocksScheduledJoining)
                 homeInteraction.resume(); homeVisible = false; refreshHome(); homeVisible = true
                 offerSetup()
                 calendar.reminders.isEventVisible = { id in
@@ -256,6 +266,10 @@ struct JoinView: View {
         .tint(linkAccent)
     }
 
+    private var blocksScheduledJoining: Bool {
+        nameFocused || linkFocused || showingSettings || showingAgenda || showingDevices || mediaCheck.presented ||
+            editingRoom != nil || calendar.choosingMeeting != nil || confirmingStaleContinuation || showingSavedHistory
+    }
     private var busy: Bool { model.isJoining || model.isInConference || model.isLeaving || continuation.moving }
     private var homeInteracting: Bool {
         setup.isPresented || homeInteraction.active || nameFocused || linkFocused || favoriteDrag.session != nil || showingSettings || showingAgenda ||

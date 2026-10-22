@@ -24,6 +24,7 @@ final class CalendarReminderCoordinator: ObservableObject {
     var beforeOpen: () async -> Bool = { true }
     var onNeedsSnapshot: () -> Void = {}
     var onEditing: () -> Void = {}
+    var onSkip: (String) -> Void = { _ in }
     var activeRoom: () -> MeetingRoomIdentity? = { nil }
     var isEventVisible: (String) -> Bool = { _ in false }
     var canPresent: () -> Bool = { false }
@@ -161,6 +162,10 @@ final class CalendarReminderCoordinator: ObservableObject {
         guard let occurrence = ReminderOccurrence(meeting: meeting) else { return nil }
         repository.occurrences.append(occurrence); _ = save(); return occurrence
     }
+    func skipped(_ meeting: CalendarMeeting) -> Bool {
+        guard let occurrence = existingOccurrence(for: meeting) else { return false }
+        return repository.states[occurrence.id]?.skipped == true
+    }
     func existingOccurrence(for meeting: CalendarMeeting) -> ReminderOccurrence? {
         repository.occurrences.first { $0.eventID == meeting.id ||
             $0.room == meeting.roomIdentity && $0.start == meeting.start && $0.end == meeting.end }
@@ -240,7 +245,10 @@ final class CalendarReminderCoordinator: ObservableObject {
                 deferCard(reference: reference); error = L("Some reminders could not be scheduled. Try again."); return
             }
             if scope == .system { expectedSnooze = plan.first { $0.reference == reference && $0.phase == .snooze } }
-        } else { repository.skip(reference: reference) }
+        } else {
+            repository.skip(reference: reference)
+            if let occurrence = repository.occurrences.first(where: { $0.reference == reference }) { onSkip(occurrence.eventID) }
+        }
         foregroundOffers = foregroundOffers.filter { $0.value.plan.reference != reference }
         changed() // Persist intent before any asynchronous notification operation.
         if let occurrence = repository.occurrences.first(where: { $0.reference == reference }) {

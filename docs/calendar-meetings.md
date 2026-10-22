@@ -73,7 +73,7 @@ the index to 300 upcoming and 50 recent occurrences. All-day events without a
 meeting link and declined/cancelled events are excluded. Reads occur on an actor;
 EventKit objects never reach the UI. Calendar notifications coalesce for 300 ms.
 Foreground time-boundary updates do not poll the network. Backgrounding cancels
-calendar jobs and countdowns.
+calendar jobs and countdowns unless Mac scheduled joining is explicitly enabled.
 
 ## Optional automatic joining
 
@@ -88,6 +88,41 @@ checks or choosing another room cancels the countdown. Cancelling or deliberatel
 joining an occurrence suppresses another automatic attempt until that occurrence
 ends. A calendar update or background transition cancels the pending countdown.
 Calendar end times never end calls. Microphone and camera start off.
+
+### Scheduled joining on Mac
+
+Mac Calendars settings offer **Off**, **When opening the app** and **At scheduled
+time on this Mac**. Existing enabled settings migrate to When opening the app;
+scheduled joining is a separate, device-local opt-in. iPhone/iPad retain the
+opening-only option.
+
+Scheduled mode enables **Keep running in menu bar**. The red close button hides
+the window, including between meetings. Dock/Open restores the existing session.
+The menu shows the next event, a five-second countdown, Join, Skip, Pause today,
+Settings and Quit. Leaving a meeting keeps a resident app hidden. Quit stops
+scheduling. Residence can also be enabled independently of automatic joining.
+
+The Mac must be awake and available. Screen sleep, system sleep, session changes
+and protected-data unavailability cancel preparation. Unlock/wake and clock or
+timezone changes reset eligibility; an event that started before resuming is not
+joined. This feature does not wake the Mac, launch after Quit or run a helper.
+
+Exactly one verified, non-tentative timed event may start a countdown at its start,
+within ten seconds of that boundary. Transport preparation must finish by start
++15 seconds. Admission is checked again after asynchronous discovery/credentials
+and immediately before engine startup. Existing meetings, conflicting or
+unresolved events, missing names, settings and reminder editing block attendance.
+Mic/camera stay off and meeting audio plays. Calendar changes invalidate pending
+admission immediately. Skip and manual attendance suppress that occurrence;
+pause expires at the next local midnight.
+
+The scheduler uses event deadlines, not an idle polling loop. A separate finite
+activity assertion covers only the preflight window (start−30 seconds through
+start+15 seconds), then releases at cancellation, failure or engine handoff.
+It allows system sleep and does not reuse the media graphics assertion. macOS
+may defer a fully idle process; late preparation skips instead of joining stale
+events. A real locked/sleeping-device acceptance check remains separate from
+synthetic timing and admission tests.
 
 ## Persistence and compatibility
 
@@ -167,3 +202,30 @@ was joined. That fixture was removed after the check. No user event was edited.
 
 Test fixtures are debug-only and use synthetic event names/invitations. Production
 defaults remain opt-in. This implementation does not upload a new TestFlight build.
+
+## Mac scheduling validation — 22 October 2026
+
+- Mac: 138 selected checks, 135 passed and three skipped; Simulator: 138 checks,
+  137 passed and one skipped. Coverage includes migration, busy/overlapping and
+  unresolved events, late/wake invalidation, pending discovery cancellation,
+  activity cleanup, persisted Skip, settings/input gates, delayed window binding,
+  stale menu actions, notification joins and handoff.
+- Final admission changes were additionally checked on both targets. English and
+  Russian string tables and whitespace validation passed. Astra reviewed the
+  lifecycle/admission changes through final sign-off. The signed Release build
+  and deep signature verification passed.
+- A normal signed Debug app (not XCTest and never joined to media) was hidden for
+  185 seconds before its synthetic event. Its scheduled callback completed 6.446
+  seconds after start, including the five-second countdown. The window stayed
+  hidden, the other app stayed frontmost, and no graphics activity was held.
+  Preflight activity began at start−30 seconds and ended at callback. The fixture
+  was then terminated. It uses an isolated preferences suite and does not edit
+  real calendar events.
+- Reproduce the standalone timing fixture by launching the Debug iOS-on-Mac app
+  wrapper with `--mac-calendar-idle-check` and redirecting stderr. The fixture
+  emits JSON `armed`/`completed` records and replaces transport with a callback.
+  Local evidence is under `.build/mac-calendar-residence/`.
+- This qualifies hidden scheduling/window behavior, not a live meeting's media.
+  Actual lock/sleep/session-switch combinations and a real scheduled hidden
+  meeting with audible audio still need acceptance testing. Existing calls and
+  input-gating behavior are covered by deterministic transport tests.

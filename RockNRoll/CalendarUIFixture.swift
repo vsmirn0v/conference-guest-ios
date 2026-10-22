@@ -3,6 +3,10 @@ import ConferenceCore
 import Foundation
 
 enum CalendarUIFixture {
+    static var mode: String? {
+        ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] ??
+            (ProcessInfo.processInfo.arguments.contains("--mac-calendar-idle-check") ? "mac-idle-schedule" : nil)
+    }
     final class Storage: RoomHistoryStorage, ReminderStorage {
         var data: Data?
         func read() -> Data? { data }
@@ -23,8 +27,13 @@ enum CalendarUIFixture {
                       linkGroups: CalendarLinkDiscovery.groups(url: nil, location: link, notes: quoted,
                         knownOrigins: ["https://meeting.example.test", "https://music.example.test"], hintedHostFragments: []))
             }
-            let choice = ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] == "engine-choice"
-            let mode = ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] ?? ""
+            let choice = CalendarUIFixture.mode == "engine-choice"
+            let mode = CalendarUIFixture.mode ?? ""
+            if mode == "mac-idle-schedule" {
+                return .init(calendars: [.init(id: "work", name: "Work", source: "Local synthetic calendar")],
+                    meetings: [event("idle-check", title: "Local calendar timing check", offset: 185,
+                                     link: "https://meeting.example.test/calls/idle-check")])
+            }
             let home = mode.hasPrefix("home")
             let preview = mode.hasPrefix("home-preview")
             var events = [event("daily", title: preview ? "Rehearsal and arrangements for the upcoming community concert" : "Daily rehearsal",
@@ -72,7 +81,7 @@ enum CalendarUIFixture {
         override func stopLoading() {}
     }
     @MainActor static func makeModel() -> ConferenceModel? {
-        guard let mode = ProcessInfo.processInfo.environment["CONFERENCE_TEST_CALENDAR"] else { return nil }
+        guard let mode else { return nil }
         let preferences = UserDefaults(suiteName: "CalendarUIFixture")!
         if mode != "restore" { preferences.removePersistentDomain(forName: "CalendarUIFixture") }
         preferences.set(true, forKey: "calendarMeetings.enabled")
@@ -87,6 +96,10 @@ enum CalendarUIFixture {
         let model = ConferenceModel(jamService: JamService(session: URLSession(configuration: config)),
                                history: RoomHistoryStore(storage: Storage()), preferences: preferences,
                                engineDetector: detector, calendar: calendar)
+        if mode == "mac-idle-schedule" {
+            calendar.setAutomaticJoinMode(.scheduled)
+            model.setup.suspendForMeeting()
+        }
         if mode.hasPrefix("home") {
             let titles = ["Warm-up", "Thursday rehearsal", "Songwriting circle", "Quartet", "Arrangement", "Practice"]
             let favorites = titles.enumerated().map { index, title in

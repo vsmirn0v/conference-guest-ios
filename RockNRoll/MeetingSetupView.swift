@@ -110,13 +110,16 @@ struct MeetingSetupView: View {
         } footer: {
             Text(L("Calendar access is optional. You can always join by invitation link."))
         }
-        Section {
+        if calendar.supportsScheduledJoining {
+            CalendarAutomaticJoinSettings(calendar: calendar)
+            MacCalendarResidenceSettings(calendar: calendar)
+        } else { Section {
             Toggle(L("Join when opening the app"), isOn: Binding(get: { calendar.automaticJoin }, set: calendar.setAutomaticJoin))
                 .disabled(!calendar.automaticJoin && (!calendar.enabled || calendar.access != .allowed || calendar.selected.isEmpty))
                 .accessibilityIdentifier("setup.autoJoin")
         } footer: {
             Text(L("Off by default. For one verified meeting near its start, a five-second countdown gives you time to cancel. Microphone and camera start off."))
-        }
+        } }
         if let error = calendar.error { Section { Text(error).foregroundStyle(.red) } }
     }
     @ViewBuilder private var reminderOptions: some View {

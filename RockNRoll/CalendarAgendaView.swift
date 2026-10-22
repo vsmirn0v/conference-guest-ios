@@ -221,6 +221,10 @@ struct CalendarSettingsView: View {
             } footer: {
                 Text(L("Find meeting links in calendars you choose. Event details stay on this device. Your calendar is never edited."))
             }
+            if calendar.supportsScheduledJoining {
+                CalendarAutomaticJoinSettings(calendar: calendar)
+                MacCalendarResidenceSettings(calendar: calendar)
+            }
             if calendar.enabled {
                 if calendar.access == .denied {
                     Section {
@@ -231,12 +235,7 @@ struct CalendarSettingsView: View {
                     Section { Button(L("Allow calendar access")) { calendar.refresh(requestPermission: true) } }
                 } else {
                     CalendarSelectionSections(calendar: calendar)
-                    Section {
-                        Toggle(L("Join scheduled meetings when opening the app"), isOn: Binding(get: { calendar.automaticJoin }, set: calendar.setAutomaticJoin))
-                            .accessibilityIdentifier("calendar.automaticJoin")
-                    } footer: {
-                        Text(L("Off by default. A five-second countdown appears only for one verified meeting near its start. Mic and camera stay off. Active calls and invitations take priority."))
-                    }
+                    if !calendar.supportsScheduledJoining { CalendarAutomaticJoinSettings(calendar: calendar) }
                     Section {
                         Button(L("Refresh calendar")) { calendar.refresh() }.disabled(calendar.loading)
                         Button(L("Forget room associations"), role: .destructive) { calendar.forgetBindings() }
@@ -250,6 +249,37 @@ struct CalendarSettingsView: View {
         }
         .navigationTitle(L("Calendars"))
         .onAppear { calendar.refresh() }
+    }
+}
+
+struct CalendarAutomaticJoinSettings: View {
+    @ObservedObject var calendar: CalendarMeetingStore
+    var body: some View {
+        Section {
+            if calendar.supportsScheduledJoining {
+                Picker(L("Automatic joining"), selection: Binding(get: { calendar.automaticJoinMode }, set: calendar.setAutomaticJoinMode)) {
+                    ForEach(CalendarAutomaticJoinMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                }.accessibilityIdentifier("calendar.automaticJoinMode")
+            } else {
+                Toggle(L("Join scheduled meetings when opening the app"), isOn: Binding(get: { calendar.automaticJoin }, set: calendar.setAutomaticJoin))
+                    .accessibilityIdentifier("calendar.automaticJoin")
+            }
+        } footer: {
+            Text(L(calendar.supportsScheduledJoining
+                ? "Scheduled joining works while this Mac is awake and available, including with the window closed. A five-second countdown lets you skip. Microphone and camera stay off; meeting audio plays. Active meetings take priority. Quit stops scheduling."
+                : "Off by default. A five-second countdown appears only for one verified meeting near its start. Mic and camera stay off. Active calls and invitations take priority."))
+        }
+    }
+}
+
+struct MacCalendarResidenceSettings: View {
+    @ObservedObject var calendar: CalendarMeetingStore
+    var body: some View {
+        Section {
+            Toggle(L("Keep running in menu bar"), isOn: Binding(get: { calendar.keepInMenuBar }, set: calendar.setKeepInMenuBar))
+                .disabled(calendar.automaticJoinMode == .scheduled)
+                .accessibilityIdentifier("calendar.keepInMenuBar")
+        }
     }
 }
 

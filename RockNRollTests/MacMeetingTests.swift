@@ -1,4 +1,5 @@
 import Combine
+import ConferenceCore
 import XCTest
 import UIKit
 @testable import RockNRoll
@@ -137,12 +138,70 @@ final class MacMeetingTests: XCTestCase {
         let coordinator = makeCoordinator(model, presentation)
         coordinator.becameActive(); await settle()
         presentation.action?("1:leave"); await settle()
-        XCTAssertEqual(presentation.shows, 1)
+        XCTAssertEqual(presentation.shows, 0, "Leaving must not steal focus")
         XCTAssertEqual(model.leaves, 1)
         XCTAssertFalse(presentation.states.last!.active)
         coordinator.invalidate()
         presentation.action?("1:leave")
         XCTAssertEqual(model.leaves, 1)
+    }
+
+    func testIdleResidenceAllowsCloseAndLeavePreservesHiddenWindow() async {
+        let model = MeetingSessionStub(), presentation = MeetingPresentationStub()
+        let f = MacCalendarSchedulingTests().fixture()
+        defer { f.store.setEnabled(false) }
+        f.store.setKeepInMenuBar(true); model.desktopCalendar = f.store
+        let coordinator = makeCoordinator(model, presentation)
+        defer { coordinator.invalidate() }
+        coordinator.becameActive(); await settle()
+        coordinator.hideMeeting()
+        XCTAssertTrue(presentation.hiddenForMeeting)
+        presentation.action?("1:leave"); await settle()
+        XCTAssertFalse(presentation.states.last!.active)
+        XCTAssertTrue(presentation.states.last!.resident)
+        XCTAssertTrue(coordinator.canHideMeeting)
+        XCTAssertTrue(presentation.hiddenForMeeting)
+        XCTAssertEqual(presentation.shows, 0)
+        XCTAssertTrue(presentation.states.last!.menu.contains { $0["action"] as? String == "calendar:settings" })
+    }
+
+    func testIdleMenuRejectsMovedOccurrenceAndActiveCallDoesNotAcceptJoin() async throws {
+        let f = MacCalendarSchedulingTests().fixture(), model = MeetingSessionStub(), presentation = MeetingPresentationStub()
+        defer { f.store.setEnabled(false) }
+        f.store.setKeepInMenuBar(true); f.store.refresh()
+        try await MacCalendarSchedulingTests().ready(f.store)
+        model.desktopCalendar = f.store; model.desktopMeetingActive = false; model.isInConference = false
+        let coordinator = makeCoordinator(model, presentation)
+        defer { coordinator.invalidate() }
+        coordinator.becameActive(); await settle()
+        let old = try XCTUnwrap(f.store.meetings.first)
+        let action = "calendar:join:" + MacMeetingCoordinator.calendarAction(old)
+        let moved = MacCalendarSchedulingTests().meeting(clock: f.clock, offset: 180)
+        await f.reader.setEvents([moved], delay: .zero); f.store.refresh()
+        try await MacCalendarSchedulingTests().ready(f.store)
+        presentation.action?(action)
+        XCTAssertEqual(model.calendarJoins, 0)
+        model.desktopMeetingActive = true
+        presentation.action?("calendar:join:" + MacMeetingCoordinator.calendarAction(moved))
+        XCTAssertEqual(model.calendarJoins, 0)
+    }
+
+    func testDelayedWindowBindingEnablesScheduledAdmissionWithoutAnotherFocusEvent() async throws {
+        let f = MacCalendarSchedulingTests().fixture(), model = MeetingSessionStub(), presentation = MeetingPresentationStub()
+        defer { f.store.setEnabled(false) }
+        model.desktopMeetingActive = false; model.isInConference = false; model.desktopCalendar = f.store
+        f.store.setAutomaticJoinMode(.scheduled)
+        presentation.canBind = false
+        let coordinator = makeCoordinator(model, presentation)
+        defer { coordinator.invalidate() }
+        coordinator.becameActive()
+        presentation.canBind = true
+        try await Task.sleep(for: .milliseconds(180))
+        try await MacCalendarSchedulingTests().ready(f.store)
+        f.clock.now.addTimeInterval(60); f.store.refresh()
+        try await MacCalendarSchedulingTests().ready(f.store)
+        XCTAssertNotNil(f.store.countdown, "The binding retry must enable scheduling itself")
+        XCTAssertTrue(presentation.states.last!.resident)
     }
 
     func testTerminationDoesNotEnqueueAnotherMenuUpdate() async {
@@ -189,7 +248,7 @@ final class MacMeetingTests: XCTestCase {
 }
 
 @MainActor
-private final class MeetingSessionStub: MacMeetingSession {
+final class MeetingSessionStub: MacMeetingSession {
     let changes = PassthroughSubject<Void, Never>()
     let engine = MeetingEngineStub()
     var desktopChanges: AnyPublisher<Void, Never> { changes.eraseToAnyPublisher() }
@@ -200,6 +259,9 @@ private final class MeetingSessionStub: MacMeetingSession {
     var isInConference = true
     var leaves = 0
     var restores = 0
+    var desktopCalendar: CalendarMeetingStore?
+    var calendarJoins = 0
+    func desktopJoinCalendarMeeting(_ meeting: CalendarMeeting) { calendarJoins += 1 }
     func leave() { leaves += 1; desktopMeetingActive = false; isInConference = false; changes.send() }
     func prepareToFloat() {}
     func backgroundedWithoutFloatingVideo() {}
@@ -207,7 +269,7 @@ private final class MeetingSessionStub: MacMeetingSession {
 }
 
 @MainActor
-private final class MeetingEngineStub: CallEngine {
+final class MeetingEngineStub: CallEngine {
     let controls = CurrentValueSubject<CallWorkspaceControls?, Never>(CallWorkspaceControls())
     var callWorkspacePublisher: AnyPublisher<CallWorkspaceControls?, Never> { controls.eraseToAnyPublisher() }
     var hasJoinStarted = true
@@ -233,7 +295,7 @@ private final class MeetingPresentationStub: MacMeetingPresentation {
     func markVisible() {}
     func update(_ state: MacMeetingMenuState) { states.append(state) }
     func showMeeting() { shows += 1 }
-    func closeMeetingWindow() { stateAtClose = states.last; hiddenForMeeting = states.last?.active == true }
+    func closeMeetingWindow() { stateAtClose = states.last; hiddenForMeeting = states.last?.active == true || states.last?.resident == true }
     func hideMeeting() -> Bool { hiddenForMeeting = true; return true }
     func invalidate() { invalidated = true }
 }

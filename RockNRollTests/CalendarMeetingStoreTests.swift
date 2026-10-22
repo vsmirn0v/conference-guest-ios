@@ -133,7 +133,8 @@ final class CalendarMeetingStoreTests: XCTestCase {
         preferences.set(["work"], forKey: "calendarMeetings.selected")
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [Response.self]
         let detector = MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config))
-        return (CalendarMeetingStore(reader: reader, detector: detector, preferences: preferences, storage: storage), preferences)
+        let reminders = CalendarReminderCoordinator(preferences: preferences, storage: CalendarReminderTests.Storage(), notifications: CalendarReminderTests.Notifications())
+        return (CalendarMeetingStore(reader: reader, detector: detector, preferences: preferences, storage: storage, reminders: reminders), preferences)
     }
     private func ready(_ store: CalendarMeetingStore, timeout: TimeInterval = 3) async throws {
         let end = Date().addingTimeInterval(timeout)
@@ -403,5 +404,285 @@ final class CalendarMeetingStoreTests: XCTestCase {
         XCTAssertTrue(store.upcoming.first?.invitation == fixture.current, "The current structured invitation must win.")
         XCTAssertEqual(store.upcoming.first?.engine, .guest)
         XCTAssertNil(store.countdown)
+    }
+}
+
+@MainActor
+final class MacCalendarSchedulingTests: XCTestCase {
+    final class Clock { var now = Date(timeIntervalSince1970: 1_800_000_000) }
+    struct Fixture {
+        let clock: Clock
+        let reader: CalendarMeetingStoreTests.Reader
+        let store: CalendarMeetingStore
+        let preferences: UserDefaults
+        let storage: RoomSyncCoordinatorTests.Storage
+        let reminderStorage: CalendarReminderTests.Storage
+    }
+    func fixture(offset: Double = 60, interval: Duration = .seconds(1), isMac: Bool = true) -> Fixture {
+        let clock = Clock(), preferences = UserDefaults(suiteName: "MacCalendar-" + UUID().uuidString)!
+        preferences.set(true, forKey: "calendarMeetings.enabled")
+        preferences.set(["work"], forKey: "calendarMeetings.selected")
+        let event = meeting(clock: clock, offset: offset)
+        let reader = CalendarMeetingStoreTests.Reader(events: [event])
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CalendarMeetingStoreTests.Response.self]
+        let detector = MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config))
+        let storage = RoomSyncCoordinatorTests.Storage()
+        let reminderStorage = CalendarReminderTests.Storage()
+        let reminders = CalendarReminderCoordinator(preferences: preferences, storage: reminderStorage, notifications: CalendarReminderTests.Notifications(), clock: { clock.now })
+        let store = CalendarMeetingStore(reader: reader, detector: detector, preferences: preferences, storage: storage,
+            reminders: reminders, isMac: isMac, clock: { clock.now }, countdownInterval: interval)
+        store.canAutomaticallyJoin = { _ in true }
+        return Fixture(clock: clock, reader: reader, store: store, preferences: preferences, storage: storage, reminderStorage: reminderStorage)
+    }
+    func meeting(clock: Clock, offset: Double = 60, id: String = "event", links: Bool = true) -> CalendarMeeting {
+        .init(id: id, seriesID: id, calendarID: "work", calendarTitle: "Work", title: "Scheduled room",
+            start: clock.now.addingTimeInterval(offset), end: clock.now.addingTimeInterval(3600),
+            links: links ? [URL(string: "https://jazz.example.test/calls/room")!] : [])
+    }
+    func ready(_ store: CalendarMeetingStore) async throws {
+        for _ in 0..<300 where store.loading { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(store.loading)
+    }
+    func arm(_ fixture: Fixture) async throws {
+        fixture.store.setAutomaticJoinMode(.scheduled)
+        fixture.store.setSchedulingAvailable(true)
+        try await ready(fixture.store)
+    }
+    func testMigrationPreservesOpeningModeAndIOSCannotEnableScheduling() async throws {
+        let f = fixture(isMac: false)
+        defer { f.store.setEnabled(false) }
+        f.store.setAutomaticJoin(true)
+        XCTAssertEqual(f.store.automaticJoinMode, .whenOpening)
+        f.store.setAutomaticJoinMode(.scheduled)
+        XCTAssertEqual(f.store.automaticJoinMode, .whenOpening)
+        XCTAssertFalse(f.store.keepInMenuBar)
+        let restored = CalendarMeetingStore(reader: f.reader, detector: MeetingEngineDetector(serviceName: "fixture"),
+            preferences: f.preferences, storage: f.storage, isMac: true)
+        XCTAssertEqual(restored.automaticJoinMode, .whenOpening)
+        XCTAssertFalse(restored.keepInMenuBar)
+        restored.setEnabled(false)
+    }
+    func testHiddenScheduledJoinOccursOnceAtStartAndNeverEarly() async throws {
+        let f = fixture(interval: .milliseconds(2)); defer { f.store.setEnabled(false) }
+        var joins = 0; f.store.onScheduledJoin = { _ in joins += 1 }
+        try await arm(f)
+        XCTAssertTrue(f.store.keepInMenuBar)
+        f.store.backgrounded()
+        f.clock.now.addTimeInterval(59); f.store.refresh(); try await ready(f.store)
+        XCTAssertNil(f.store.countdown); XCTAssertEqual(joins, 0)
+        f.clock.now.addTimeInterval(1); f.store.refresh(); try await ready(f.store)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(joins, 1)
+        f.store.foregrounded(allowAutomaticJoin: true); try await ready(f.store)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(joins, 1)
+    }
+    func testLateLaunchWakeAndLockDuringCountdownNeverJoinOldOccurrence() async throws {
+        let f = fixture(); defer { f.store.setEnabled(false) }
+        var joins = 0; f.store.onScheduledJoin = { _ in joins += 1 }
+        try await arm(f)
+        f.clock.now.addTimeInterval(60); f.store.refresh(); try await ready(f.store)
+        XCTAssertNotNil(f.store.countdown)
+        f.store.setSchedulingAvailable(false)
+        XCTAssertNil(f.store.countdown)
+        f.clock.now.addTimeInterval(1)
+        f.store.setSchedulingAvailable(true, resetEligibility: true); try await ready(f.store)
+        XCTAssertNil(f.store.countdown); XCTAssertEqual(joins, 0)
+        let late = fixture(offset: -1); defer { late.store.setEnabled(false) }
+        try await arm(late); XCTAssertNil(late.store.countdown)
+    }
+    func testUnavailableRuntimeAndAbsoluteLateDeadlineCancelCountdown() async throws {
+        let f = fixture(interval: .milliseconds(5)); defer { f.store.setEnabled(false) }
+        var available = true, joins = 0
+        f.store.schedulingIsAvailable = { available }
+        f.store.onScheduledJoin = { _ in joins += 1 }
+        try await arm(f)
+        f.clock.now.addTimeInterval(60); f.store.refresh(); try await ready(f.store)
+        available = false
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertNil(f.store.countdown); XCTAssertEqual(joins, 0)
+        available = true; f.store.refresh(); try await ready(f.store)
+        f.clock.now.addTimeInterval(60)
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertNil(f.store.countdown); XCTAssertEqual(joins, 0)
+    }
+    func testBusyConflictingOrUnresolvedMeetingsDoNotAutoJoin() async throws {
+        let f = fixture(); defer { f.store.setEnabled(false) }
+        try await arm(f)
+        f.store.canAutomaticallyJoin = { _ in false }
+        f.clock.now.addTimeInterval(60); f.store.refresh(); try await ready(f.store)
+        XCTAssertNil(f.store.countdown)
+        f.store.canAutomaticallyJoin = { _ in true }
+        let conflict = meeting(clock: f.clock, offset: -1, id: "conflict", links: false)
+        await f.reader.setEvents([meeting(clock: f.clock, offset: 0), conflict], delay: .zero)
+        f.store.refresh(); try await ready(f.store)
+        XCTAssertNil(f.store.countdown)
+    }
+    func testSkipPauseAndEventCancellationRetireCountdownAndActivity() async throws {
+        let f = fixture(); defer { f.store.setEnabled(false) }
+        var activity = false
+        f.store.onScheduledActivity = { activity = $0 != nil }
+        try await arm(f)
+        f.clock.now.addTimeInterval(60); f.store.refresh(); try await ready(f.store)
+        XCTAssertNotNil(f.store.countdown); XCTAssertTrue(activity)
+        f.store.reminders.onSkip("event")
+        XCTAssertNil(f.store.countdown); XCTAssertFalse(activity)
+        f.store.refresh(); try await ready(f.store); XCTAssertNil(f.store.countdown)
+        f.store.pauseScheduledJoiningToday()
+        XCTAssertFalse(f.store.scheduledJoiningEnabled)
+        XCTAssertEqual(f.store.automaticJoinMode, .scheduled)
+        f.store.resumeScheduledJoining(); XCTAssertTrue(f.store.scheduledJoiningEnabled)
+        await f.reader.setEvents([], delay: .zero)
+        f.store.calendarDidChange(); try await Task.sleep(for: .milliseconds(350)); try await ready(f.store)
+        XCTAssertTrue(f.store.meetings.isEmpty); XCTAssertFalse(activity)
+    }
+
+    func testSettingsAndPersistedReminderSkipBlockScheduledAdmission() async throws {
+        let f = fixture(); defer { f.store.setEnabled(false) }
+        try await arm(f)
+        let meeting = try XCTUnwrap(f.store.meetings.first)
+        let occurrence = try XCTUnwrap(f.store.reminders.occurrence(for: meeting))
+        await f.store.reminders.action(reference: occurrence.reference, snooze: false)
+        f.clock.now.addTimeInterval(60); f.store.refresh(); try await ready(f.store)
+        XCTAssertNil(f.store.countdown)
+        XCTAssertTrue(f.store.reminders.skipped(meeting))
+        let g = fixture(); defer { g.store.setEnabled(false) }
+        try await arm(g)
+        g.clock.now.addTimeInterval(60); g.store.refresh(); try await ready(g.store)
+        XCTAssertNotNil(g.store.countdown)
+        g.store.showingMacSettings = true
+        XCTAssertNil(g.store.countdown)
+        g.store.refresh(); try await ready(g.store)
+        XCTAssertNil(g.store.countdown)
+        let h = fixture(); defer { h.store.setEnabled(false) }
+        try await arm(h)
+        h.store.setScheduledUIBlocked(true)
+        h.clock.now.addTimeInterval(60); h.store.refresh(); try await ready(h.store)
+        XCTAssertNil(h.store.countdown, "An editor opened before the boundary must still block attendance")
+        XCTAssertFalse(h.store.scheduledTransportAdmission(for: try XCTUnwrap(h.store.meetings.first))())
+    }
+
+    func testScheduledTransportCannotStartAfterLockOrLateDiscovery() async throws {
+        for invalidation in 0..<4 {
+            let f = fixture(); defer { f.store.setEnabled(false) }
+            f.preferences.set("Calendar QA", forKey: "savedDisplayName")
+            let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CalendarMeetingStoreTests.Response.self]
+            let model = ConferenceModel(history: RoomHistoryStore(storage: RoomSyncCoordinatorTests.Storage()), preferences: f.preferences,
+                engineDetector: MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config)), calendar: f.store)
+            let container = MeetingContainerViewController(); model.configure(container: container)
+            model.setup.suspendForMeeting()
+            try await arm(f)
+            f.clock.now.addTimeInterval(60); f.store.refresh(); try await ready(f.store)
+            f.store.cancelAutomaticJoin()
+            let waiting = expectation(description: "Discovery complete, transport pending")
+            var release: CheckedContinuation<Void, Never>?
+            model.beforeJoinTransportForTesting = {
+                await withCheckedContinuation { release = $0; waiting.fulfill() }
+            }
+            model.joinTransportForTesting = { _, _ in XCTFail("Scheduled transport must not start after invalidation") }
+            model.joinScheduledMeeting(try XCTUnwrap(f.store.meetings.first))
+            await fulfillment(of: [waiting], timeout: 3)
+            switch invalidation {
+            case 0: f.store.setSchedulingAvailable(false)
+            case 1: f.clock.now.addTimeInterval(30)
+            case 2: f.store.calendarDidChange()
+            default:
+                let original = try XCTUnwrap(f.store.meetings.first)
+                let conflict = meeting(clock: f.clock, offset: -1, id: "conflict", links: false)
+                await f.reader.setEvents([original, conflict], delay: .zero)
+                f.store.refresh(); try await ready(f.store)
+            }
+            release?.resume(); release = nil
+            for _ in 0..<100 where model.isJoining { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertFalse(model.isJoining)
+            XCTAssertFalse(model.isInConference)
+            model.leave()
+            withExtendedLifetime(container) {}
+        }
+    }
+
+    func testLeaveDuringScheduledDiscoveryAndMissingContainerReleasePreflightImmediately() async throws {
+        for hasContainer in [true, false] {
+            let f = fixture(interval: .milliseconds(2)); defer { f.store.setEnabled(false) }
+            f.preferences.set("Calendar QA", forKey: "savedDisplayName")
+            let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CalendarMeetingStoreTests.Response.self]
+            let model = ConferenceModel(history: RoomHistoryStore(storage: RoomSyncCoordinatorTests.Storage()), preferences: f.preferences,
+                engineDetector: MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config)), calendar: f.store)
+            let container = MeetingContainerViewController()
+            if hasContainer { model.configure(container: container) }
+            model.setup.suspendForMeeting()
+            var deadline: Date?
+            f.store.onScheduledActivity = { deadline = $0 }
+            let waiting = expectation(description: hasContainer ? "Discovery pending" : "Preflight released")
+            var release: CheckedContinuation<Void, Never>?
+            if hasContainer {
+                model.beforeJoinTransportForTesting = {
+                    await withCheckedContinuation { release = $0; waiting.fulfill() }
+                }
+            } else {
+                f.store.onScheduledActivity = {
+                    if deadline != nil && $0 == nil { waiting.fulfill() }
+                    deadline = $0
+                }
+            }
+            model.joinTransportForTesting = { _, _ in XCTFail("Cancelled/unavailable transport must not start") }
+            try await arm(f)
+            f.clock.now.addTimeInterval(60); f.store.refresh()
+            await fulfillment(of: [waiting], timeout: 3)
+            if hasContainer {
+                XCTAssertNotNil(deadline)
+                model.leave()
+                XCTAssertNil(deadline, "Leave releases the activity before the suspended task resumes")
+                release?.resume(); release = nil
+            } else { XCTAssertNil(deadline) }
+            XCTAssertFalse(model.isJoining)
+            XCTAssertNil(model.engineSelection)
+            XCTAssertFalse(model.isNameRequiredForJoin)
+            withExtendedLifetime(container) {}
+        }
+    }
+
+    func testPersistedSkipIsRespectedAfterColdSnapshotLoad() async throws {
+        let f = fixture(); defer { f.store.setEnabled(false) }
+        try await arm(f)
+        let meeting = try XCTUnwrap(f.store.meetings.first)
+        let occurrence = try XCTUnwrap(f.store.reminders.occurrence(for: meeting))
+        await f.store.reminders.action(reference: occurrence.reference, snooze: false)
+        f.store.setSchedulingAvailable(false)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CalendarMeetingStoreTests.Response.self]
+        let reminders = CalendarReminderCoordinator(preferences: f.preferences, storage: f.reminderStorage,
+            notifications: CalendarReminderTests.Notifications(), clock: { f.clock.now })
+        let restored = CalendarMeetingStore(reader: f.reader,
+            detector: MeetingEngineDetector(serviceName: "fixture", session: URLSession(configuration: config)),
+            preferences: f.preferences, storage: RoomSyncCoordinatorTests.Storage(), reminders: reminders,
+            isMac: true, clock: { f.clock.now })
+        defer { restored.setEnabled(false) }
+        restored.canAutomaticallyJoin = { _ in true }
+        restored.setSchedulingAvailable(true); try await ready(restored)
+        f.clock.now.addTimeInterval(60); restored.refresh(); try await ready(restored)
+        XCTAssertTrue(restored.reminders.skipped(try XCTUnwrap(restored.meetings.first)))
+        XCTAssertNil(restored.countdown)
+    }
+
+    func testPreflightLeaseSurvivesRefreshAndCountdownUntilTransportHandoff() async throws {
+        let f = fixture(interval: .milliseconds(2)); defer { f.store.setEnabled(false) }
+        var deadline: Date?
+        f.store.onScheduledActivity = { deadline = $0 }
+        try await arm(f)
+        let event = try XCTUnwrap(f.store.meetings.first)
+        f.clock.now.addTimeInterval(31)
+        await f.reader.setEvents([event], delay: .milliseconds(100))
+        f.store.refresh()
+        XCTAssertEqual(deadline, event.start.addingTimeInterval(15), "Protect reader/probes before awaiting them")
+        try await ready(f.store)
+        let joined = expectation(description: "Admission handed to transport preparation")
+        f.store.onScheduledJoin = { _ in joined.fulfill() }
+        f.clock.now.addTimeInterval(29); f.store.refresh()
+        await fulfillment(of: [joined], timeout: 2)
+        XCTAssertEqual(deadline, event.start.addingTimeInterval(15))
+        f.store.refresh(); try await ready(f.store)
+        XCTAssertEqual(deadline, event.start.addingTimeInterval(15), "Self-suppression must not end the admitted transport lease")
+        f.store.finishScheduledTransportPreparation()
+        XCTAssertNil(deadline)
     }
 }

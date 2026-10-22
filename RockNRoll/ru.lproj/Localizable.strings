@@ -1007,3 +1007,27 @@
 "Experimental background audio join" = "Экспериментальное фоновое подключение";
 
 "Adds Join audio to reminders for guest meetings. Microphone and camera start off. Requires prior microphone permission and System call controls off. Device validation is pending." = "Добавляет действие «Подключить звук» в напоминания о гостевых встречах. Микрофон и камера изначально выключены. Требуются разрешение на микрофон и отключённые системные элементы звонка. Проверка на устройстве ещё не выполнена.";
+
+"When I open the app" = "При открытии приложения";
+
+"At scheduled time on this Mac" = "По расписанию на этом Mac";
+
+"Automatic joining" = "Автоматическое подключение";
+
+"Keep running in menu bar" = "Продолжать работу в строке меню";
+
+"Skip automatic join for this meeting" = "Пропустить автоподключение к этой встрече";
+
+"Pause automatic joining today" = "Приостановить автоподключение до завтра";
+
+"Resume automatic joining" = "Возобновить автоподключение";
+
+"Open Rock’n’Roll" = "Открыть Rock’n’Roll";
+
+"Scheduled joining works while this Mac is awake and available, including with the window closed. A five-second countdown lets you skip. Microphone and camera stay off; meeting audio plays. Active meetings take priority. Quit stops scheduling." = "Автоподключение работает, когда этот Mac не спит и доступен, даже при закрытом окне. Пятисекундный отсчёт позволяет отменить подключение. Микрофон и камера выключены; звук встречи воспроизводится. Текущие встречи имеют приоритет. Выход из приложения останавливает автоподключение.";
+
+"Automatic joining was cancelled." = "Автоподключение отменено.";
+
+"Automatic join skipped" = "Автоподключение пропущено";
+
+"Joining in %d…" = "Подключение через %d…";
