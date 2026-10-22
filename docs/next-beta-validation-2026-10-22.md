@@ -324,3 +324,32 @@ installed over the existing app, version still 0.2.0 (103). No release uploaded.
   lock/sleep/session-switch coverage remains deferred, as does actual power
   measurement. Passing production checks must not be described as qualification
   of those deferred scenarios.
+
+- Final post-live Mac cleanup and read-only audit passed. Persistent history no
+  longer contains the exact QA room; its replica record is not visible and retains
+  a tombstone. The saved name is not the QA name; unrelated records are unchanged.
+- Reviewed source `d7352ce` includes the completed peer commits `c3b539e` and
+  `32dc3e1`, is pushed on `main`, and reserves 0.2.0 (104) consistently across the
+  app and three extensions. The distribution archive succeeded without errors.
+  Distribution export verification passed for all four bundles, including
+  signatures, entitlements, matching app/extension symbols and exclusion of
+  DEBUG/prototype markers. Upload succeeded at 16:40 MSK; TestFlight readback
+  follows after Apple processing.
+
+- The separate local Mac Release smoke displayed Home and opened/dismissed
+  Settings, then quit through the application menu. This development-signed
+  Designed for iPad wrapper is separate from the distribution IPA.
+- Release smoke exposed a second test-owned history entry from the background
+  audio unit-test helper. Astra isolated that helper's calendar, reminders, sync
+  replica, preferences and shared-owner teardown. The exact source invitation
+  and fixture title were verified before normal-owner tombstoning. Cleanup
+  passed with unrelated history/replica fields and saved name unchanged; normal
+  cloud sync was disabled and cloud state was not inspected.
+- All 16 affected background audio tests passed on both Mac and iOS 27
+  Simulator after isolation. Astra's second review found no actionable issue.
+  Only test files and documents changed after archive source `d7352ce`;
+  shipping-source equivalence is recorded in
+  `.build/release104/source-equivalence.json`.
+- The final read-only Mac audit after the isolated test runs passed: the exact
+  background-audio fixture is absent from history and not visible in the replica;
+  its tombstone remains. The saved name is not the fixture name.

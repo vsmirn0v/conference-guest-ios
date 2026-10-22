@@ -14,11 +14,15 @@ Physical iPhone checks passed existing PiP share handover, Wi-Fi/cellular switch
 
 Receiver routing was not offered by the observed picker. Actual battery-power measurement, the stronger initial handover assertion, extended renderer permutations and real Mac lock/sleep/session switching remain deferred. No further iPhone tests ran after the user requested disconnection. The temporary independent-audio harness was removed.
 
-Astra 6 xhigh reviewed planning, source/test changes and the final runtime disposition. Test fixtures now isolate calendar/history/sync state. The exact disposable QA history entry was removed through normal tombstoning, preserving unrelated saved data; cloud state was not inspected.
+Astra 6 xhigh reviewed planning, source/test changes and the final runtime disposition. Test fixtures now isolate calendar/history/sync state. Both exact disposable QA history entries were removed through normal tombstoning, preserving unrelated saved data; cloud state was not inspected. All 16 background-audio tests passed on Mac and Simulator after full fixture isolation; a final read-only audit confirmed no recurrence. These follow-up changes affect only tests and documents, with shipping-source equivalence to the archive verified.
 
 ## Distribution
 
-Pending signed distribution verification and TestFlight readback. Build 103 remains published until this record is updated with verified distribution evidence.
+Artifact source: `d7352ce` on `main`, pushed. Archive: `/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-10-22/RockNRoll-0.2.0-b104.xcarchive`. The distribution-signed export passes strict/deep signature verification for all four bundles, matching 0.2.0/build104, team `5V64BP2H3P`, matching app/extension dSYMs, Production iCloud, no debugger entitlement and absence of DEBUG/prototype markers. The Activity extension links no media frameworks. Evidence: `.build/release104/artifact-verification.json`.
+
+Local exported IPA SHA-256: `c2e7a63fe2e6f84597ca640590ab4ea35607e7a87224c7222961726117d3673d`. A separate development-signed local Mac Release build launched through the normal Designed for iPad wrapper, displayed Home, opened/dismissed Settings and quit through its application menu. That smoke is not a runtime test of the distribution IPA.
+
+Upload completed successfully at 16:40 MSK on October 22, 2026. App Store Connect lists build 104 as Processing. TestFlight group assignment and Testing status readback remain pending. The upload reported missing vendor-framework dSYMs for six dependencies; app and extension symbols were verified separately.
 
 ## What to Test
 

@@ -210,9 +210,30 @@ import XCTest
         XCTAssertTrue(category.actions.allSatisfy { $0.options.contains(.foreground) })
     }
     private func model() -> (ConferenceModel, UIViewController) {
-        let preferences = UserDefaults(suiteName: "BackgroundJoin-" + UUID().uuidString)!
+        let originalReminders = CalendarReminderBroker.shared.sharedCoordinator
+        let originalSync = RoomSyncCoordinator.active
+        let originalContinuation = MeetingContinuationCoordinator.active
+        let suite = "BackgroundJoin-" + UUID().uuidString
+        let preferences = UserDefaults(suiteName: suite)!
         preferences.set("Test listener", forKey: "savedDisplayName")
-        let model = ConferenceModel(history: RoomHistoryStore(storage: RoomSyncCoordinatorTests.Storage()), preferences: preferences)
+        let detector = VendorEndpointResolver.makeDetector()
+        let reminders = CalendarReminderCoordinator(preferences: preferences,
+            storage: CalendarReminderTests.Storage(), notifications: CalendarReminderTests.Notifications())
+        let calendar = CalendarMeetingStore(reader: CalendarMeetingStoreTests.Reader(events: []),
+            detector: detector, preferences: preferences, storage: RoomSyncCoordinatorTests.Storage(), reminders: reminders)
+        let model = ConferenceModel(history: RoomHistoryStore(storage: RoomSyncCoordinatorTests.Storage()),
+            preferences: preferences, engineDetector: detector, calendar: calendar)
+        model.installSyncFixture(RoomSyncCoordinator(history: model.history, name: model.displayName,
+            preferences: preferences, storage: RoomSyncCoordinatorTests.Storage(), transport: RoomSyncCoordinatorTests.Cloud()))
+        model.installContinuationFixture(model.makeContinuationCoordinator(preferences: preferences))
+        addTeardownBlock { @MainActor in
+            model.leave(); calendar.setEnabled(false)
+            await reminders.waitForReconciliation()
+            RoomSyncCoordinator.active = originalSync
+            MeetingContinuationCoordinator.active = originalContinuation
+            CalendarReminderBroker.shared.attach(originalReminders)
+            preferences.removePersistentDomain(forName: suite)
+        }
         let container = UIViewController(); model.configure(container: container)
         model.setup.suspendForMeeting()
         return (model, container)

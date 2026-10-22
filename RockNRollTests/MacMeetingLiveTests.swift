@@ -9,6 +9,15 @@ import XCTest
 
 @MainActor
 final class MacMeetingLiveTests: XCTestCase {
+    private var backgroundAudioFixture: Bool {
+        ProcessInfo.processInfo.environment["ROCKNROLL_TEST_QA_FIXTURE"] == "background-audio"
+    }
+    private var ownedQAHash: String {
+        backgroundAudioFixture
+            ? "0c1de41f3c7c41d1b6786a077910d088b128a6f90ec2f2de1bdd210f5ef82977"
+            : "e566d10a8f9cc7b185af5736bfe330dd20b8e3a08da32fc46d32d2598984872f"
+    }
+
     func testOwnedScheduledQAPersistenceAudit() throws {
         guard ProcessInfo.processInfo.isiOSAppOnMac,
               ProcessInfo.processInfo.environment["ROCKNROLL_TEST_MAC_QA_AUDIT"] == "1",
@@ -18,11 +27,12 @@ final class MacMeetingLiveTests: XCTestCase {
         }
         let identity = invitation.absoluteString
         let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
-        guard digest == "e566d10a8f9cc7b185af5736bfe330dd20b8e3a08da32fc46d32d2598984872f" else {
+        guard digest == ownedQAHash else {
             XCTFail("Audit is restricted to the recorded disposable QA invitation"); return
         }
         var audit: [String: Any] = ["cloudRecordID": "item-" + digest, "cloudInspected": false,
-            "savedNameIsQA": UserDefaults.standard.string(forKey: "savedDisplayName") == "Hidden scheduled QA"]
+            "backgroundAudioFixture": backgroundAudioFixture,
+            "savedNameIsQA": UserDefaults.standard.string(forKey: "savedDisplayName") == (backgroundAudioFixture ? "Test listener" : "Hidden scheduled QA")]
         func read(_ service: String, label: String) -> Data? {
             let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service, kSecAttrAccount as String: "saved-rooms",
@@ -55,7 +65,7 @@ final class MacMeetingLiveTests: XCTestCase {
         }
         let data = try JSONSerialization.data(withJSONObject: audit, options: [.sortedKeys])
         let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("mac-scheduled-qa-persistence-audit.json")
+            .appendingPathComponent(backgroundAudioFixture ? "background-audio-qa-persistence-audit.json" : "mac-scheduled-qa-persistence-audit.json")
         try data.write(to: file, options: .atomic)
         print("MAC_SCHEDULED_QA_AUDIT \(String(decoding: data, as: UTF8.self))")
         for label in ["history", "replica"] {
@@ -75,7 +85,7 @@ final class MacMeetingLiveTests: XCTestCase {
         }
         let identity = invitation.absoluteString
         let digest = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
-        guard digest == "e566d10a8f9cc7b185af5736bfe330dd20b8e3a08da32fc46d32d2598984872f" else {
+        guard digest == ownedQAHash else {
             XCTFail("Cleanup is restricted to the recorded disposable QA invitation"); return
         }
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
@@ -129,6 +139,12 @@ final class MacMeetingLiveTests: XCTestCase {
             XCTFail("Existing history owner is stale; no cleanup performed"); return
         }
         let owned = try XCTUnwrap(beforeReplica.document.rooms[identity], "Expected owned replica record is missing")
+        if backgroundAudioFixture {
+            guard owned.title.value == "Background audio",
+                  beforeHistory.items.filter({ $0.id == identity }).allSatisfy({ $0.title == "Background audio" }) else {
+                XCTFail("Owned fixture title differs; no cleanup performed"); return
+            }
+        }
         if beforeHistory.items.contains(where: { $0.id == identity }) || owned.exists.value {
             // No replacement stores, cloud toggles or raw Keychain writes: the
             // existing owner persists and schedules its ordinary sync tombstone.
@@ -138,6 +154,7 @@ final class MacMeetingLiveTests: XCTestCase {
         let afterReplicaData = try read(replicaService)
         let afterReplica = try decode(Replica.self, afterReplicaData)
         let audit: [String: Any] = ["cloudRecordID": "item-" + digest, "cloudInspected": false,
+            "backgroundAudioFixture": backgroundAudioFixture,
             "normalCloudSyncEnabled": sync.enabled,
             "historyContainsQA": afterHistory.items.contains { $0.id == identity },
             "replicaQATombstone": afterReplica.document.rooms[identity]?.exists.value == false,
@@ -147,7 +164,7 @@ final class MacMeetingLiveTests: XCTestCase {
             "persistenceSucceeded": model.history.persistenceWarning == nil && sync.storageWarning == nil]
         let data = try JSONSerialization.data(withJSONObject: audit, options: [.sortedKeys])
         let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("mac-scheduled-qa-cleanup.json")
+            .appendingPathComponent(backgroundAudioFixture ? "background-audio-qa-cleanup.json" : "mac-scheduled-qa-cleanup.json")
         try data.write(to: file, options: .atomic)
         print("MAC_SCHEDULED_QA_CLEANUP \(String(decoding: data, as: UTF8.self))")
         XCTAssertEqual(audit["historyContainsQA"] as? Bool, false)
