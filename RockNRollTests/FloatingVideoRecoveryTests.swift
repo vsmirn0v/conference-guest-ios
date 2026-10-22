@@ -280,6 +280,124 @@ import XCTest
         XCTAssertEqual(fixture.starts, 0)
     }
 
+    func testUnsolicitedEmptyAnchorCallbacksCannotEstablishPiPContinuity() throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
+        for didStartFirst in [false, true] {
+            let fixture = Fixture(); fixture.allowsFirstBackgroundStart = true
+            defer { fixture.floating.end() }
+            fixture.floating.prepareAnchor(fixture.source)
+            let controller = try XCTUnwrap(fixture.floating.controllerForTesting)
+            var presentation = false
+            fixture.floating.onPresentationChanged = { presentation = $0 }
+            fixture.state = .background
+            if didStartFirst { fixture.floating.pictureInPictureControllerDidStartPictureInPicture(controller) }
+            else { fixture.floating.pictureInPictureControllerWillStartPictureInPicture(controller) }
+            XCTAssertNil(fixture.floating.controllerForTesting)
+            fixture.floating.pictureInPictureControllerWillStartPictureInPicture(controller)
+            fixture.floating.pictureInPictureControllerDidStartPictureInPicture(controller)
+            fixture.floating.pictureInPictureControllerDidStopPictureInPicture(controller)
+            XCTAssertFalse(presentation); XCTAssertFalse(fixture.floating.isPresenting)
+            XCTAssertFalse(fixture.floating.needsRecoveryFrames)
+            fixture.floating.setSourceView(fixture.source)
+            XCTAssertEqual(fixture.starts, 0)
+        }
+    }
+
+    func testOptOutRetiresUnusedAnchorAndRevokesPendingFirstStart() throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
+        for stage in 0...2 {
+            let fixture = Fixture(); fixture.allowsFirstBackgroundStart = true
+            defer { fixture.floating.end() }
+            fixture.floating.prepareAnchor(fixture.source)
+            let controller = try XCTUnwrap(fixture.floating.controllerForTesting)
+            fixture.state = .background
+            fixture.floating.requestBackgroundFrames(isScreenShare: true)
+            if stage > 0 { fixture.floating.setSourceView(fixture.source) }
+            if stage == 2 { fixture.floating.pictureInPictureControllerWillStartPictureInPicture(controller) }
+            fixture.allowsFirstBackgroundStart = false; fixture.floating.refreshPreference()
+            XCTAssertNil(fixture.floating.controllerForTesting)
+            XCTAssertFalse(fixture.floating.needsRecoveryFrames)
+            let starts = fixture.starts
+            fixture.floating.pictureInPictureControllerWillStartPictureInPicture(controller)
+            fixture.floating.pictureInPictureControllerDidStartPictureInPicture(controller)
+            fixture.floating.setSourceView(fixture.source)
+            XCTAssertEqual(fixture.starts, starts); XCTAssertFalse(fixture.floating.isPresenting)
+        }
+    }
+
+    func testOptOutBeforePreferenceDeliveryRejectsQueuedFirstStartCallbacks() throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
+        for willStartReceived in [false, true] {
+            let fixture = Fixture(); fixture.allowsFirstBackgroundStart = true
+            defer { fixture.floating.end() }
+            fixture.floating.prepareAnchor(fixture.source)
+            let controller = try XCTUnwrap(fixture.floating.controllerForTesting)
+            fixture.state = .background
+            fixture.floating.requestBackgroundFrames(isScreenShare: true)
+            fixture.floating.setSourceView(fixture.source)
+            if willStartReceived { fixture.floating.pictureInPictureControllerWillStartPictureInPicture(controller) }
+            fixture.allowsFirstBackgroundStart = false
+            if !willStartReceived { fixture.floating.pictureInPictureControllerWillStartPictureInPicture(controller) }
+            fixture.floating.pictureInPictureControllerDidStartPictureInPicture(controller)
+            XCTAssertNil(fixture.floating.controllerForTesting)
+            XCTAssertFalse(fixture.floating.isPresenting); XCTAssertFalse(fixture.floating.needsRecoveryFrames)
+        }
+    }
+
+    func testLateDidStartDuringCallPreservesOrdinaryPiPRecoveryWithExperimentOff() throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
+        let fixture = Fixture()
+        defer { fixture.floating.end() }
+        fixture.floating.setSourceView(fixture.source); fixture.floating.start()
+        let controller = try XCTUnwrap(fixture.floating.controllerForTesting)
+        fixture.floating.pictureInPictureControllerWillStartPictureInPicture(controller)
+        fixture.state = .background
+        var presentation = true
+        fixture.floating.onPresentationChanged = { presentation = $0 }
+        fixture.floating.setSuspended(true)
+        fixture.floating.pictureInPictureControllerDidStartPictureInPicture(controller)
+        XCTAssertTrue(fixture.floating.controllerForTesting === controller)
+        XCTAssertFalse(presentation)
+        fixture.floating.setSuspended(false)
+        XCTAssertTrue(fixture.floating.controllerForTesting === controller)
+        XCTAssertEqual(fixture.starts, 2)
+        fixture.floating.pictureInPictureControllerWillStartPictureInPicture(controller)
+        fixture.floating.pictureInPictureControllerDidStartPictureInPicture(controller)
+        XCTAssertTrue(presentation); XCTAssertFalse(fixture.floating.needsRecoveryFrames)
+    }
+
+    func testInterruptionCannotErasePendingExperimentalStartOwnership() throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
+        let fixture = Fixture(); fixture.allowsFirstBackgroundStart = true
+        defer { fixture.floating.end() }
+        fixture.floating.prepareAnchor(fixture.source)
+        let controller = try XCTUnwrap(fixture.floating.controllerForTesting)
+        fixture.state = .background
+        fixture.floating.requestBackgroundFrames(isScreenShare: true)
+        fixture.floating.setSourceView(fixture.source)
+        fixture.floating.pictureInPictureControllerWillStartPictureInPicture(controller)
+        fixture.floating.setSuspended(true)
+        XCTAssertNil(fixture.floating.controllerForTesting)
+        fixture.allowsFirstBackgroundStart = false; fixture.floating.refreshPreference()
+        fixture.floating.setSuspended(false)
+        fixture.floating.pictureInPictureControllerDidStartPictureInPicture(controller)
+        XCTAssertNil(fixture.floating.controllerForTesting)
+        XCTAssertFalse(fixture.floating.isPresenting); XCTAssertFalse(fixture.floating.needsRecoveryFrames)
+        XCTAssertEqual(fixture.starts, 1)
+    }
+
+    func testOptOutKeepsEstablishedPiPWaitingForReplacementShare() throws {
+        let fixture = Fixture(); fixture.allowsFirstBackgroundStart = true
+        defer { fixture.floating.end() }
+        let controller = try fixture.present(), stops = fixture.stops
+        fixture.floating.setSourceView(nil, preservingPresentation: true)
+        fixture.allowsFirstBackgroundStart = false; fixture.floating.refreshPreference()
+        XCTAssertTrue(fixture.floating.controllerForTesting === controller)
+        XCTAssertTrue(fixture.floating.isPresenting); XCTAssertEqual(fixture.stops, stops)
+        fixture.floating.setSourceView(fixture.source)
+        XCTAssertTrue(fixture.floating.isPresenting)
+    }
+
     func testCancellingExperimentalStartBeforeWillStartRejectsLateSystemCallbacks() throws {
         try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
         for interruption in [false, true] {

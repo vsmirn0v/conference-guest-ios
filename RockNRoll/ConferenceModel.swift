@@ -1027,7 +1027,6 @@ final class ConferenceModel: ObservableObject {
     #endif
 }
 
-#if DEBUG
 extension ConferenceModel: BackgroundAudioJoinSession {
     func resolveBackgroundJoin(reference: String) async -> ReminderOccurrence? {
         await calendar.reminders.resolve(reference: reference)
@@ -1057,7 +1056,6 @@ extension ConferenceModel: BackgroundAudioJoinSession {
         leave()
     }
 }
-#endif
 
 struct LinkSiteSelection: Identifiable {
     let id = UUID()

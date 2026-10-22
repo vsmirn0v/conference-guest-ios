@@ -209,6 +209,64 @@ import XCTest
         XCTAssertFalse(category.actions.contains { $0.identifier == BackgroundAudioJoinPrototype.action })
         XCTAssertTrue(category.actions.allSatisfy { $0.options.contains(.foreground) })
     }
+    func testCategoryOptOutRemovesOnlyBackgroundJoinAction() throws {
+        let unrelated = UNNotificationCategory(identifier: "unrelated", actions: [], intentIdentifiers: [], options: [])
+        let enabled = CalendarReminderBroker.categories(replacing: [unrelated], backgroundAudioJoin: true)
+        let active = try XCTUnwrap(enabled.first { $0.identifier == CalendarReminderBroker.category })
+        XCTAssertEqual(active.actions.map(\.identifier), [CalendarReminderBroker.join, BackgroundAudioJoinPrototype.action,
+            CalendarReminderBroker.snooze, CalendarReminderBroker.skip])
+        let disabled = CalendarReminderBroker.categories(replacing: enabled, backgroundAudioJoin: false)
+        XCTAssertTrue(disabled.contains(unrelated))
+        let ordinary = try XCTUnwrap(disabled.first { $0.identifier == CalendarReminderBroker.category })
+        XCTAssertEqual(ordinary.actions.map(\.identifier), [CalendarReminderBroker.join, CalendarReminderBroker.snooze, CalendarReminderBroker.skip])
+        XCTAssertTrue(ordinary.actions[0].options.contains(.foreground))
+        XCTAssertEqual(disabled.filter { $0.identifier == BackgroundAudioJoinPrototype.fallbackCategory }.count, 1)
+    }
+    func testDisabledStaleNotificationDoesNotCreateAConferenceOwner() async {
+        let (model, container) = model()
+        var cleared = 0
+        let prototype = BackgroundAudioJoinPrototype(enabled: { false }, makePrepared: {
+            XCTFail("Disabled notification action must not create a model")
+            return .init(model: model, container: MeetingContainerViewController())
+        }, notify: { _ in XCTFail("Disabled action must not issue a fallback") }, clearFallback: { cleared += 1 })
+        await prototype.join(reference: "stale-action")
+        XCTAssertFalse(prototype.hasPendingIntent)
+        XCTAssertNil(prototype.takePreparedForScene())
+        XCTAssertEqual(cleared, 0)
+        withExtendedLifetime(container) {}
+    }
+    func testOptOutCancelsPendingResolutionAndClearsFallbackBeforeLateCompletion() async throws {
+        let execution = Execution(), session = Session(); session.delayResolution = true
+        let attempt = BackgroundAudioJoinAttempt(execution: execution)
+        var cleared = 0, notices = 0
+        let prototype = BackgroundAudioJoinPrototype(attempt: attempt, enabled: { false },
+            notify: { _ in notices += 1 }, clearFallback: { cleared += 1 })
+        let task = Task { await attempt.join(reference: "r", session: session) }
+        try await wait { session.resolution != nil }
+        prototype.cancel()
+        let result = await task.value
+        XCTAssertEqual(result, .cancelled); XCTAssertEqual(cleared, 1)
+        session.resolution?.resume(returning: session.occurrence); session.resolution = nil
+        await Task.yield()
+        XCTAssertEqual(session.starts, 0); XCTAssertEqual(notices, 0)
+        XCTAssertEqual(execution.ends, 1)
+    }
+    func testOptOutCancelsOnlyPendingTransportAndKeepsSuccessfulMeeting() async throws {
+        for connected in [false, true] {
+            let execution = Execution(), session = Session()
+            let attempt = BackgroundAudioJoinAttempt(execution: execution)
+            var cleared = 0
+            let prototype = BackgroundAudioJoinPrototype(attempt: attempt, enabled: { false }, notify: { _ in
+                XCTFail("Opt-out must not issue a fallback")
+            }, clearFallback: { cleared += 1 })
+            let task = Task { await attempt.join(reference: "r", session: session) }
+            try await wait { session.starts == 1 }
+            if connected { session.progress = .ready; _ = await task.value }
+            prototype.cancel(); _ = await task.value
+            XCTAssertEqual(session.cancelled, connected ? [] : [42])
+            XCTAssertEqual(cleared, 1); XCTAssertEqual(execution.ends, 1)
+        }
+    }
     private func model() -> (ConferenceModel, UIViewController) {
         let originalReminders = CalendarReminderBroker.shared.sharedCoordinator
         let originalSync = RoomSyncCoordinator.active

@@ -7,11 +7,17 @@ enum FloatingVideoPreference {
         get { UserDefaults.standard.object(forKey: key) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: key) }
     }
-    #if DEBUG
-    /// No release setting: iPhone scheduling/energy acceptance is pending.
     static var experimentalBackgroundStart: Bool {
-        ProcessInfo.processInfo.environment["CONFERENCE_EXPERIMENT_BACKGROUND_PIP"] == "1" ||
-            UserDefaults.standard.bool(forKey: "experiments.firstBackgroundPiP")
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_EXPERIMENT_BACKGROUND_PIP"] == "1" { return true }
+        #endif
+        return !ProcessInfo.processInfo.isiOSAppOnMac &&
+            UserDefaults.standard.bool(forKey: BackgroundExperimentPreferences.firstPiPKey)
     }
-    #endif
+}
+
+enum BackgroundExperimentPreferences {
+    static let audioJoinKey = "experiments.backgroundAudioJoin"
+    static let firstPiPKey = "experiments.firstBackgroundPiP"
+    static let changed = Notification.Name("BackgroundMeetingExperimentsChanged")
 }

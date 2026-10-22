@@ -1033,3 +1033,31 @@
 "Automatic join skipped" = "Automatic join skipped";
 
 "Joining in %d…" = "Joining in %d…";
+
+"Experimental features" = "Experimental features";
+
+"These features are off by default and unverified on physical devices. They may fail or ask you to open the app." = "These features are off by default and unverified on physical devices. They may fail or ask you to open the app.";
+
+"Background audio join" = "Background audio join";
+
+"Touch and hold a calendar meeting notification, then choose Join audio. A normal tap opens the app." = "Touch and hold a calendar meeting notification, then choose Join audio. A normal tap opens the app.";
+
+"Guest meetings only. Microphone and camera start off. Save your name, grant microphone access in advance, and turn off System call controls in Settings > Phone calls." = "Guest meetings only. Microphone and camera start off. Save your name, grant microphone access in advance, and turn off System call controls in Settings > Phone calls.";
+
+"Configure meeting reminders" = "Configure meeting reminders";
+
+"Allow microphone access" = "Allow microphone access";
+
+"Allow microphone access in Settings" = "Allow microphone access in Settings";
+
+"Audio from a reminder" = "Audio from a reminder";
+
+"Enable calendar reminders separately. Turning this experiment off keeps a meeting that has already connected." = "Enable calendar reminders separately. Turning this experiment off keeps a meeting that has already connected.";
+
+"First screen share in the background" = "First screen share in the background";
+
+"Open a guest meeting in the foreground, then go Home before anyone shares. The first incoming screen share may start Picture in Picture." = "Open a guest meeting in the foreground, then go Home before anyone shares. The first incoming screen share may start Picture in Picture.";
+
+"Requires Floating video when multitasking to be on in the meeting. iOS decides whether Picture in Picture can start." = "Requires Floating video when multitasking to be on in the meeting. iOS decides whether Picture in Picture can start.";
+
+"Picture in Picture" = "Picture in Picture";

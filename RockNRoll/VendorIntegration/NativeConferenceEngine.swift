@@ -178,13 +178,11 @@ final class NativeConferenceEngine: CallEngine {
 
     func showMediaStatus(_ message: String?) { activeControls?.showMediaStatus(message) }
     func registerUnderlay(_ view: UIView) { screenPresenter?.registerUnderlay(view) }
-    #if DEBUG
     var backgroundAudioReadyForPrototype: Bool {
         hasBecomeActive && isSDKActive && mediaConnectionConfirmed && activeCoordinator != nil &&
             isCallAudioReady && !isSystemHeld && !isAudioInterrupted && !isMediaReconnecting &&
             !microphoneIntentOn && !cameraIntentOn && displayMode == .audioOnly
     }
-    #endif
 
     func prepareToFloat() {
         streamViews.setBackgrounded(UIApplication.shared.applicationState != .active)
@@ -437,9 +435,7 @@ final class NativeConferenceEngine: CallEngine {
         guard let floatingSourceView else { return }
         let epoch = sessionEpoch
         var environment = FloatingVideoController.Environment()
-        #if DEBUG
         environment.allowsFirstBackgroundStart = { FloatingVideoPreference.experimentalBackgroundStart }
-        #endif
         let floating = GuestVideoPictureInPicture(sourceView: floatingSourceView, speaker: activeSpeaker, floatingEnvironment: environment)
         floating.rendersSelectedViewport = false
         floating.wantsInlineFrames = activeControls?.wantsStageFrames ?? true

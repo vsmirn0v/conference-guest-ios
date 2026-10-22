@@ -1,10 +1,9 @@
-#if DEBUG
 import AVFAudio
 import ConferenceCore
 import UIKit
 import UserNotifications
 
-/// Deliberately excluded from Release until physical-device acceptance.
+/// Opt-in background admission; all permissions must already be granted.
 struct BackgroundJoinAccess {
     let protectedData: Bool
     let microphone: Bool
@@ -131,7 +130,7 @@ enum BackgroundJoinResult: Equatable { case connected, alreadyConnected, openApp
 
 @MainActor final class BackgroundAudioJoinPrototype {
     static let shared = BackgroundAudioJoinPrototype()
-    static let enabledKey = "experiments.backgroundAudioJoin"
+    static let enabledKey = BackgroundExperimentPreferences.audioJoinKey
     static let action = "REMINDER_JOIN_AUDIO_PROTOTYPE"
     static let fallbackCategory = "MEETING_JOIN_OPEN_APP"
     static let fallbackID = "meeting.background-join.result"
@@ -154,16 +153,23 @@ enum BackgroundJoinResult: Equatable { case connected, alreadyConnected, openApp
     private let attempt: BackgroundAudioJoinAttempt
     private let isEnabled: @MainActor () -> Bool
     private let makePrepared: @MainActor () -> Prepared
+    private let removeFallback: @MainActor () -> Void
     var enabled: Bool { isEnabled() }
     var hasPendingIntent: Bool { attempt.isPending }
 
     init(attempt: BackgroundAudioJoinAttempt? = nil,
-         enabled: @escaping @MainActor () -> Bool = { UserDefaults.standard.bool(forKey: BackgroundAudioJoinPrototype.enabledKey) },
+         enabled: @escaping @MainActor () -> Bool = {
+             !ProcessInfo.processInfo.isiOSAppOnMac && UserDefaults.standard.bool(forKey: BackgroundAudioJoinPrototype.enabledKey)
+         },
          makePrepared: @escaping @MainActor () -> Prepared = { .init(model: ConferenceModel(), container: MeetingContainerViewController()) },
          notify: @escaping @MainActor (String) -> Void = { reference in
              UNUserNotificationCenter.current().add(BackgroundAudioJoinPrototype.fallback(reference: reference), withCompletionHandler: nil)
+         }, clearFallback: @escaping @MainActor () -> Void = {
+             UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [BackgroundAudioJoinPrototype.fallbackID])
+             UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [BackgroundAudioJoinPrototype.fallbackID])
          }) {
         self.isEnabled = enabled; self.makePrepared = makePrepared
+        self.removeFallback = clearFallback
         self.attempt = attempt ?? BackgroundAudioJoinAttempt(execution: SystemBackgroundJoinExecution())
         self.attempt.onFinished = { reference, result in
             guard result == .openApp else { return }
@@ -185,8 +191,7 @@ enum BackgroundJoinResult: Equatable { case connected, alreadyConnected, openApp
     }
     func join(reference: String) async {
         guard enabled else { return }
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [Self.fallbackID])
-        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Self.fallbackID])
+        clearFallback()
         let model: ConferenceModel
         if let attached, let attachedContainer {
             model = attached; prepared = Prepared(model: attached, container: attachedContainer)
@@ -199,11 +204,20 @@ enum BackgroundJoinResult: Equatable { case connected, alreadyConnected, openApp
         }
         _ = await attempt.join(reference: reference, session: model)
     }
-    func cancel() { attempt.cancel() }
+    func cancel() {
+        attempt.cancel()
+        clearFallback()
+    }
+    func preferencesChanged() {
+        if !enabled { cancel() }
+        CalendarReminderBroker.shared.install()
+    }
+    private func clearFallback() {
+        removeFallback()
+    }
     func supersedeForForeground() {
         _ = attempt.foregrounded()
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [Self.fallbackID])
-        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Self.fallbackID])
+        clearFallback()
     }
     func foregrounded() {
         if let reference = attempt.foregrounded() {
@@ -219,4 +233,3 @@ enum BackgroundJoinResult: Equatable { case connected, alreadyConnected, openApp
         return .init(identifier: fallbackID, content: content, trigger: nil)
     }
 }
-#endif

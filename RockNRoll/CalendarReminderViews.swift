@@ -1,5 +1,6 @@
 import ConferenceCore
 import SwiftUI
+import AVFAudio
 
 struct CalendarReminderSheet: ViewModifier {
     @ObservedObject var reminders: CalendarReminderCoordinator
@@ -43,9 +44,6 @@ struct CalendarReminderSettingsView: View {
 
 private struct ReminderDeliveryView: View {
     @ObservedObject var reminders: CalendarReminderCoordinator
-    #if DEBUG
-    @AppStorage(BackgroundAudioJoinPrototype.enabledKey) private var backgroundAudioJoin = false
-    #endif
     private func binding(_ key: WritableKeyPath<ReminderProfile, Bool>) -> Binding<Bool> {
         Binding(get: { reminders.profile[keyPath: key] }, set: {
             var profile = reminders.profile; profile[keyPath: key] = $0; reminders.setProfile(profile)
@@ -60,17 +58,79 @@ private struct ReminderDeliveryView: View {
             Section {
                 Toggle(L("Show meeting details"), isOn: binding(\.details))
             } footer: { Text(L("When off, notifications show only the scheduled time.")) }
-            #if DEBUG
-            Section {
-                Toggle(L("Experimental background audio join"), isOn: $backgroundAudioJoin)
-                    .accessibilityIdentifier("reminders.backgroundAudioJoin")
-                    .onChange(of: backgroundAudioJoin) { enabled in
-                        if !enabled { BackgroundAudioJoinPrototype.shared.cancel() }
-                        CalendarReminderBroker.shared.install()
-                    }
-            } footer: { Text(L("Adds Join audio to reminders for guest meetings. Microphone and camera start off. Requires prior microphone permission and System call controls off. Device validation is pending.")) }
-            #endif
         }.navigationTitle(L("Delivery and privacy"))
+    }
+}
+
+struct ExperimentalFeaturesView: View {
+    @ObservedObject var calendar: CalendarMeetingStore
+    @AppStorage(BackgroundExperimentPreferences.audioJoinKey) private var backgroundAudioJoin = false
+    @AppStorage(BackgroundExperimentPreferences.firstPiPKey) private var firstBackgroundPiP = false
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var microphonePermission = AVAudioSession.sharedInstance().recordPermission
+    @State private var requestingMicrophone = false
+
+    var body: some View {
+        Form {
+            Section {
+                Text(L("These features are off by default and unverified on physical devices. They may fail or ask you to open the app."))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Section {
+                Toggle(isOn: $backgroundAudioJoin) {
+                    Text(L("Background audio join")).fixedSize(horizontal: false, vertical: true)
+                }
+                    .accessibilityIdentifier("reminders.backgroundAudioJoin")
+                    .onChange(of: backgroundAudioJoin) { _ in
+                        BackgroundAudioJoinPrototype.shared.preferencesChanged()
+                    }
+                Text(L("Touch and hold a calendar meeting notification, then choose Join audio. A normal tap opens the app."))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("experiments.audioInstructions")
+                Text(L("Guest meetings only. Microphone and camera start off. Save your name, grant microphone access in advance, and turn off System call controls in Settings > Phone calls."))
+                    .fixedSize(horizontal: false, vertical: true)
+                NavigationLink(L("Configure meeting reminders")) { CalendarSettingsView(calendar: calendar) }
+                    .accessibilityIdentifier("experiments.reminders")
+                if microphonePermission == .undetermined {
+                    Button(L("Allow microphone access")) {
+                        requestingMicrophone = true
+                        AVAudioSession.sharedInstance().requestRecordPermission { _ in
+                            Task { @MainActor in
+                                microphonePermission = AVAudioSession.sharedInstance().recordPermission
+                                requestingMicrophone = false
+                            }
+                        }
+                    }.disabled(requestingMicrophone).accessibilityIdentifier("experiments.microphonePermission")
+                } else if microphonePermission == .denied {
+                    Button(L("Allow microphone access in Settings")) {
+                        UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
+                    }.accessibilityIdentifier("experiments.microphoneSettings")
+                }
+            } header: { Text(L("Audio from a reminder")) } footer: {
+                Text(L("Enable calendar reminders separately. Turning this experiment off keeps a meeting that has already connected."))
+            }
+            Section {
+                Toggle(isOn: $firstBackgroundPiP) {
+                    Text(L("First screen share in the background")).fixedSize(horizontal: false, vertical: true)
+                }
+                    .accessibilityIdentifier("experiments.firstBackgroundPiP")
+                    .onChange(of: firstBackgroundPiP) { _ in
+                        NotificationCenter.default.post(name: BackgroundExperimentPreferences.changed, object: nil)
+                    }
+                Text(L("Open a guest meeting in the foreground, then go Home before anyone shares. The first incoming screen share may start Picture in Picture."))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("experiments.pipInstructions")
+            } header: { Text(L("Picture in Picture")) } footer: {
+                Text(L("Requires Floating video when multitasking to be on in the meeting. iOS decides whether Picture in Picture can start."))
+            }
+        }
+        .accessibilityIdentifier("experiments.form")
+        .navigationTitle(L("Experimental features"))
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { microphonePermission = AVAudioSession.sharedInstance().recordPermission }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { microphonePermission = AVAudioSession.sharedInstance().recordPermission }
+        }
     }
 }
 

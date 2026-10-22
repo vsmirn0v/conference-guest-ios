@@ -17,6 +17,7 @@ final class GuestVideoPictureInPicture {
     private var hasFrame = false
     private var presenting = false
     private var energySubscription: AnyCancellable?
+    private var experimentSubscription: AnyCancellable?
     var onPresentationChanged: ((Bool) -> Void)? { didSet { floating.onPresentationChanged = onPresentationChanged } }
     var onRecoveryDemandChanged: ((Bool) -> Void)?
     private var signaledSource: GuestStreamViews.PinTarget?
@@ -97,6 +98,9 @@ final class GuestVideoPictureInPicture {
             self.replayShareSnapshot()
         }
         floating.prepareAnchor(sourceView)
+        experimentSubscription = NotificationCenter.default.publisher(for: BackgroundExperimentPreferences.changed).sink { [weak self] _ in
+            DispatchQueue.main.async { self?.refreshPreference() }
+        }
         energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -173,9 +177,7 @@ final class GuestVideoPictureInPicture {
         #endif
         guard let viewport else {
             clear()
-            #if DEBUG
             if !isInBackground { floating.prepareAnchor(sourceView) }
-            #endif
             return
         }
         if selectedViewport !== viewport { selectedViewport?.clearCorrectedVideo() }
@@ -285,13 +287,14 @@ final class GuestVideoPictureInPicture {
     func start() { if canShow { floating.start() } }
     func bindMicrophoneActivity(_ activity: MicrophoneActivity) { floating.bindMicrophoneActivity(activity) }
     func setMicrophoneStatus(_ status: PiPMicrophoneStatus) { floating.setMicrophoneStatus(status) }
-    func refreshPreference() { floating.refreshPreference() }
+    func refreshPreference() {
+        floating.refreshPreference()
+        if !isInBackground { floating.prepareAnchor(sourceView) }
+    }
     func foregrounded() {
         background = false
         floating.foregrounded()
-        #if DEBUG
         floating.prepareAnchor(sourceView)
-        #endif
         refreshInlineDelivery()
         processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
         processor.setEnabled(shouldProcessFrames)

@@ -117,7 +117,7 @@ enum ReminderFormatting {
     }
 }
 
-/// Installed before scenes are made. Release background actions only edit reminder state.
+/// Installed before scenes are made; background admission is explicitly opt-in.
 final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
     static let shared = CalendarReminderBroker()
     static let category = "MEETING_REMINDER"
@@ -145,21 +145,22 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
         let center = UNUserNotificationCenter.current(); center.delegate = self
         // Preserve any categories owned by other features.
         Task {
-            var categories = await center.notificationCategories().filter { $0.identifier != Self.category }
-            var actions = [
-                .init(identifier: Self.join, title: L("Join"), options: [.foreground, .authenticationRequired]),
-                .init(identifier: Self.snooze, title: L("In 2 min"), options: []),
-                .init(identifier: Self.skip, title: L("Skip reminders"), options: [])
-            ] as [UNNotificationAction]
-            #if DEBUG
-            if BackgroundAudioJoinPrototype.shared.enabled {
-                actions.insert(BackgroundAudioJoinPrototype.notificationAction, at: 1)
-            }
-            categories.insert(BackgroundAudioJoinPrototype.notificationCategory)
-            #endif
-            categories.insert(UNNotificationCategory(identifier: Self.category, actions: actions, intentIdentifiers: [], options: []))
-            center.setNotificationCategories(categories)
+            let current = await center.notificationCategories()
+            center.setNotificationCategories(Self.categories(replacing: current,
+                backgroundAudioJoin: BackgroundAudioJoinPrototype.shared.enabled))
         }
+    }
+    @MainActor static func categories(replacing current: Set<UNNotificationCategory>, backgroundAudioJoin: Bool) -> Set<UNNotificationCategory> {
+        var categories = current.filter { $0.identifier != Self.category && $0.identifier != BackgroundAudioJoinPrototype.fallbackCategory }
+        var actions = [
+            .init(identifier: Self.join, title: L("Join"), options: [.foreground, .authenticationRequired]),
+            .init(identifier: Self.snooze, title: L("In 2 min"), options: []),
+            .init(identifier: Self.skip, title: L("Skip reminders"), options: [])
+        ] as [UNNotificationAction]
+        if backgroundAudioJoin { actions.insert(BackgroundAudioJoinPrototype.notificationAction, at: 1) }
+        categories.insert(BackgroundAudioJoinPrototype.notificationCategory)
+        categories.insert(UNNotificationCategory(identifier: Self.category, actions: actions, intentIdentifiers: [], options: []))
+        return categories
     }
     @MainActor func attach(_ coordinator: CalendarReminderCoordinator) {
         self.coordinator = coordinator
@@ -168,17 +169,13 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
         queued = []; background = nil
     }
     @MainActor var hasPendingIntent: Bool {
-        #if DEBUG
         if BackgroundAudioJoinPrototype.shared.hasPendingIntent { return true }
-        #endif
         return !queued.isEmpty
     }
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         var acceptedCategory = response.notification.request.content.categoryIdentifier == Self.category
-        #if DEBUG
         acceptedCategory = acceptedCategory || response.notification.request.content.categoryIdentifier == BackgroundAudioJoinPrototype.fallbackCategory
-        #endif
         guard acceptedCategory,
               let reference = response.notification.request.content.userInfo["reference"] as? String else {
             completionHandler(); return
@@ -190,18 +187,14 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
     }
     @MainActor func respond(reference: String, action: String) async {
         switch action {
-        #if DEBUG
         case BackgroundAudioJoinPrototype.action:
             await BackgroundAudioJoinPrototype.shared.join(reference: reference)
-        #endif
         case Self.snooze, Self.skip:
             let owner = sharedCoordinator
             prepareBackgroundCalendar(owner: owner)
             await owner.action(reference: reference, snooze: action == Self.snooze)
         case Self.join, UNNotificationDefaultActionIdentifier:
-            #if DEBUG
             BackgroundAudioJoinPrototype.shared.supersedeForForeground()
-            #endif
             if let coordinator { coordinator.open(reference: reference, join: true) }
             else if !queued.contains(where: { $0.0 == reference && $0.1 }) { queued.append((reference, true)) }
         default: break

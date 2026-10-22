@@ -1031,3 +1031,31 @@
 "Automatic join skipped" = "Автоподключение пропущено";
 
 "Joining in %d…" = "Подключение через %d…";
+
+"Experimental features" = "Экспериментальные функции";
+
+"These features are off by default and unverified on physical devices. They may fail or ask you to open the app." = "Эти функции изначально выключены и ещё не проверены на реальных устройствах. Они могут не сработать или предложить открыть приложение.";
+
+"Background audio join" = "Фоновое подключение звука";
+
+"Touch and hold a calendar meeting notification, then choose Join audio. A normal tap opens the app." = "Нажмите и удерживайте уведомление о встрече из календаря, затем выберите «Подключить звук». Обычное нажатие открывает приложение.";
+
+"Guest meetings only. Microphone and camera start off. Save your name, grant microphone access in advance, and turn off System call controls in Settings > Phone calls." = "Только для гостевых встреч. Микрофон и камера изначально выключены. Сохраните имя, заранее разрешите доступ к микрофону и выключите «Системные элементы звонка» в разделе «Настройки» > «Телефонные звонки».";
+
+"Configure meeting reminders" = "Настроить напоминания о встречах";
+
+"Allow microphone access" = "Разрешить доступ к микрофону";
+
+"Allow microphone access in Settings" = "Разрешить доступ к микрофону в настройках";
+
+"Audio from a reminder" = "Звук из напоминания";
+
+"Enable calendar reminders separately. Turning this experiment off keeps a meeting that has already connected." = "Напоминания календаря включаются отдельно. Выключение эксперимента не прерывает уже подключённую встречу.";
+
+"First screen share in the background" = "Первая демонстрация экрана в фоне";
+
+"Open a guest meeting in the foreground, then go Home before anyone shares. The first incoming screen share may start Picture in Picture." = "Откройте гостевую встречу в приложении, затем перейдите на экран «Домой» до начала демонстрации. Первая входящая демонстрация экрана может запустить «Картинку в картинке».";
+
+"Requires Floating video when multitasking to be on in the meeting. iOS decides whether Picture in Picture can start." = "Во встрече должно быть включено «Видео в отдельном окне при переключении приложений». Возможность запуска «Картинки в картинке» определяет iOS.";
+
+"Picture in Picture" = "Картинка в картинке";
