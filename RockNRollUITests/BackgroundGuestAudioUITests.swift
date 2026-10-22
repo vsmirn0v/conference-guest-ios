@@ -4,6 +4,144 @@ import Vision
 /// Opt-in live test. An independent browser unmutes/joins only after HOME.
 /// Read guest-media-recovery.jsonl for background RTP energy/sample evidence.
 final class BackgroundGuestAudioUITests: XCTestCase {
+    private var coldFixtureNeedsCleanup = false
+    override func tearDownWithError() throws {
+        if coldFixtureNeedsCleanup { cleanupColdFixture() }
+        try super.tearDownWithError()
+    }
+    private func cleanupColdFixture() {
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        if app.state != .notRunning {
+            app.activate()
+            let leave = app.buttons.matching(NSPredicate(format: "label IN %@", ["Leave", "Выйти"])).firstMatch
+            if leave.exists { leave.tap() }
+            app.terminate()
+        }
+        app.launchEnvironment = ["CONFERENCE_TEST_COLD_JOIN_CLEANUP": "1", "CONFERENCE_TEST_CAMERA_TRACE": "1"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["cold-join-cleaned"].waitForExistence(timeout: 8))
+        app.terminate()
+        coldFixtureNeedsCleanup = false
+    }
+    func testCleanupColdNotificationFixture() throws {
+        guard ProcessInfo.processInfo.environment["ROCKNROLL_TEST_BACKGROUND_AUDIO_INVITE"] != nil else { throw XCTSkip("Owned fixture cleanup only") }
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchEnvironment = ["CONFERENCE_TEST_COLD_JOIN_CLEANUP": "1", "CONFERENCE_TEST_CAMERA_TRACE": "1"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["cold-join-cleaned"].waitForExistence(timeout: 8))
+        app.terminate()
+    }
+    func testColdNotificationJoinThenLateUnmute() throws {
+        try coldNotificationJoin(empty: false)
+    }
+    func testColdEmptyNotificationJoinThenLateParticipant() throws {
+        try coldNotificationJoin(empty: true)
+    }
+    private func coldNotificationJoin(empty: Bool) throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Physical cold notification admission qualification")
+        #endif
+        guard let invite = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_BACKGROUND_AUDIO_INVITE"] else {
+            throw XCTSkip("Disposable guest room required")
+        }
+        executionTimeAllowance = 240
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment = ["CONFERENCE_TEST_COLD_JOIN_SETUP": invite]
+        addUIInterruptionMonitor(withDescription: "Calendar permission") { alert in
+            let full = alert.buttons["Allow Full Access"]
+            if full.exists { full.tap(); return true }
+            return false
+        }
+        app.launch()
+        coldFixtureNeedsCleanup = true
+        let armed = app.staticTexts["cold-join-armed"]
+        XCTAssertTrue(armed.waitForExistence(timeout: 45), "Persist an owned EventKit occurrence and its real reminder reference")
+        XCUIApplication(bundleIdentifier: "com.apple.calculator").activate()
+        app.terminate()
+        XCTAssertEqual(app.state, .notRunning)
+        print("COLD_JOIN_PROCESS_TERMINATED")
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let banner = springboard.staticTexts["Cold notification join QA"].firstMatch
+        XCTAssertTrue(banner.waitForExistence(timeout: 25))
+        banner.press(forDuration: 1)
+        let join = springboard.buttons["Join audio"].firstMatch
+        XCTAssertTrue(join.waitForExistence(timeout: 8))
+        join.tap()
+        RunLoop.current.run(until: Date().addingTimeInterval(5))
+        XCTAssertEqual(app.state, .runningBackground, "The notification action must launch without activating a scene")
+        print("COLD_JOIN_ACTION_DELIVERED")
+        RunLoop.current.run(until: Date().addingTimeInterval(30))
+        XCTAssertEqual(app.state, .runningBackground)
+        print(empty ? "COLD_JOIN_PARTICIPANT_NOW" : "COLD_JOIN_UNMUTE_NOW")
+        RunLoop.current.run(until: Date().addingTimeInterval(35))
+        XCTAssertEqual(app.state, .runningBackground, "Receive audio before foreground adoption")
+        print("COLD_JOIN_ADOPT_NOW")
+        app.activate()
+        attach(app, name: "cold-notification-before-adoption-assertions")
+        print(app.debugDescription)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label IN %@", ["Leave", "Выйти"])).firstMatch.waitForExistence(timeout: 12))
+        XCTAssertFalse(app.staticTexts["Audio only\nJam audio continues"].exists)
+        XCTAssertFalse(app.staticTexts["Только звук\nЗвук джема продолжается"].exists)
+        XCTAssertTrue(app.staticTexts["Background QA"].firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label IN %@", ["Unmute microphone", "Включить микрофон"])).firstMatch.exists)
+        attach(app, name: "cold-notification-adopted")
+        app.buttons.matching(NSPredicate(format: "label IN %@", ["Leave", "Выйти"])).firstMatch.tap()
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label IN %@", ["Leave", "Выйти"])).firstMatch.waitForExistence(timeout: 2))
+    }
+    func testBackgroundAdmissionIntoSilentRoomThenForegroundAdoptsVideo() throws {
+        try backgroundAdmission(notification: false)
+    }
+    func testNotificationBackgroundJoinIntoSilentRoom() throws {
+        try backgroundAdmission(notification: true)
+    }
+    func testHeadlessEmptyNotificationJoinThenLateParticipant() throws {
+        try backgroundAdmission(notification: true, headless: true)
+    }
+    private func backgroundAdmission(notification: Bool, headless: Bool = false) throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("Physical background audio admission qualification")
+        #endif
+        guard let invite = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_BACKGROUND_AUDIO_INVITE"] else {
+            throw XCTSkip("Controlled silent room required")
+        }
+        executionTimeAllowance = 180
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-SystemCallControlsEnabled", "NO",
+            "-experiments.backgroundAudioJoin", "YES"]
+        app.launchEnvironment["CONFERENCE_TEST_BACKGROUND_JOIN_NOTIFICATION"] = notification ? "1" : "0"
+        app.launchEnvironment["CONFERENCE_TEST_BACKGROUND_JOIN_HEADLESS"] = headless ? "1" : "0"
+        app.launchEnvironment["CONFERENCE_TEST_BACKGROUND_JOIN_INVITE"] = invite
+        app.launchEnvironment["CONFERENCE_TEST_MEDIA_TRACE"] = "1"
+        app.launchEnvironment["CONFERENCE_TEST_CAMERA_TRACE"] = "1"
+        app.launchEnvironment["CONFERENCE_TEST_APP_AUDIO_SESSION"] = "1"
+        app.launch()
+        defer { app.activate(); if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
+        XCUIApplication(bundleIdentifier: "com.apple.calculator").activate()
+        if notification {
+            let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            let banner = springboard.staticTexts["Background join QA"].firstMatch
+            XCTAssertTrue(banner.waitForExistence(timeout: 12))
+            banner.press(forDuration: 1)
+            let action = springboard.buttons["Join audio"].firstMatch
+            XCTAssertTrue(action.waitForExistence(timeout: 8))
+            action.tap()
+            XCTAssertNotEqual(app.state, .runningForeground)
+        }
+        print("GUEST_BACKGROUND_JOIN_WAIT_SILENT")
+        RunLoop.current.run(until: Date().addingTimeInterval(35))
+        print(headless ? "GUEST_BACKGROUND_JOIN_PARTICIPANT_NOW" : "GUEST_BACKGROUND_JOIN_UNMUTE_NOW")
+        RunLoop.current.run(until: Date().addingTimeInterval(35))
+        app.activate()
+        XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 8), "A silent-room join must remain admitted")
+        XCTAssertFalse(app.staticTexts["Audio only\nJam audio continues"].exists)
+        XCTAssertTrue(app.staticTexts["Background QA"].firstMatch.waitForExistence(timeout: 8),
+                      "Foreground adoption must show the existing remote participant")
+        XCTAssertTrue(app.buttons["Unmute microphone"].exists)
+    }
+
     func testBoundedGuestAudioAndPiPActivityThenLeave() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("Physical activity/cleanup qualification")
@@ -16,7 +154,7 @@ final class BackgroundGuestAudioUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US",
-            "-experiments.firstBackgroundPiP", "NO", "-experiments.backgroundAudioJoin", "NO"]
+            "-experiments.backgroundAudioJoin", "NO"]
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invite
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Bounded activity QA"
         app.launchEnvironment["CONFERENCE_TEST_MEDIA_TRACE"] = "1"
@@ -87,7 +225,7 @@ final class BackgroundGuestAudioUITests: XCTestCase {
         }
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US",
-            "-experiments.firstBackgroundPiP", "NO", "-experiments.backgroundAudioJoin", "NO"]
+            "-experiments.backgroundAudioJoin", "NO"]
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invite
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Background PiP QA"
         app.launchEnvironment["CONFERENCE_TEST_MEDIA_TRACE"] = "1"
@@ -131,10 +269,6 @@ final class BackgroundGuestAudioUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [unwanted], timeout: 3), .completed)
     }
 
-    func testFirstRemoteShareCanStartExperimentalPiPWhileBackgrounded() throws {
-        try firstRemoteShare(experimental: true)
-    }
-
     func testGuestPiPSurvivesWiFiCellularTransition() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("USB-connected iPhone with cellular data required")
@@ -145,7 +279,7 @@ final class BackgroundGuestAudioUITests: XCTestCase {
         }
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US",
-            "-experiments.firstBackgroundPiP", "NO", "-experiments.backgroundAudioJoin", "NO"]
+            "-experiments.backgroundAudioJoin", "NO"]
         app.launchEnvironment = ["CONFERENCE_TEST_INVITE": invite, "CONFERENCE_TEST_NAME": "Network PiP QA",
             "CONFERENCE_TEST_MEDIA_TRACE": "1", "CONFERENCE_TEST_CAMERA_TRACE": "1",
             "CONFERENCE_TEST_RESET_FLOATING_VIDEO": "1"]
@@ -191,11 +325,11 @@ final class BackgroundGuestAudioUITests: XCTestCase {
         attach(pip, name: "Moving PiP after Wi-Fi cellular Wi-Fi transition")
     }
 
-    func testFirstRemoteShareDoesNotOpenPiPByDefault() throws {
-        try firstRemoteShare(experimental: false)
+    func testFirstRemoteShareDoesNotOpenPiPWhileAlreadyBackgrounded() throws {
+        try firstRemoteShare()
     }
 
-    private func firstRemoteShare(experimental: Bool) throws {
+    private func firstRemoteShare() throws {
         #if targetEnvironment(simulator)
         throw XCTSkip("Actual first-time AVKit acceptance requires a physical iPhone")
         #endif
@@ -204,10 +338,10 @@ final class BackgroundGuestAudioUITests: XCTestCase {
         }
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US",
-            "-experiments.firstBackgroundPiP", "NO", "-experiments.backgroundAudioJoin", "NO"]
+            "-experiments.backgroundAudioJoin", "NO"]
         app.launchEnvironment = ["CONFERENCE_TEST_INVITE": invite, "CONFERENCE_TEST_NAME": "First background PiP QA",
             "CONFERENCE_TEST_MEDIA_TRACE": "1", "CONFERENCE_TEST_CAMERA_TRACE": "1",
-            "CONFERENCE_TEST_RESET_FLOATING_VIDEO": "1", "CONFERENCE_EXPERIMENT_BACKGROUND_PIP": experimental ? "1" : "0"]
+            "CONFERENCE_TEST_RESET_FLOATING_VIDEO": "1"]
         app.launch()
         defer { app.activate(); if app.buttons["Leave"].exists { app.buttons["Leave"].tap() } }
         XCTAssertTrue(app.buttons["Leave"].waitForExistence(timeout: 50))
@@ -220,21 +354,11 @@ final class BackgroundGuestAudioUITests: XCTestCase {
         guard XCTWaiter.wait(for: [premature], timeout: 5) == .completed else {
             XCTFail("The first-start test must begin without an existing PiP window"); return
         }
-        print("GUEST_FIRST_PIP_START_SHARE enabled=\(experimental) \(Date().timeIntervalSince1970)"); fflush(stdout)
-        if !experimental {
-            let unwanted = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: pip)
-            unwanted.isInverted = true
-            XCTAssertEqual(XCTWaiter.wait(for: [unwanted], timeout: 15), .completed)
-            XCTAssertEqual(calculator.state, .runningForeground)
-            return
-        }
-        guard pip.waitForExistence(timeout: 25) else {
-            XCTFail("A first remote share must request actual system PiP"); return
-        }
-        assertMovingFixture(in: pip)
-        assertSender("A", in: pip)
-        XCTAssertEqual(calculator.state, .runningForeground, "PiP must not replace the other foreground app")
-        attach(pip, name: "Experimental first share opened PiP from background")
+        print("GUEST_FIRST_PIP_START_SHARE \(Date().timeIntervalSince1970)"); fflush(stdout)
+        let unwanted = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true"), object: pip)
+        unwanted.isInverted = true
+        XCTAssertEqual(XCTWaiter.wait(for: [unwanted], timeout: 15), .completed)
+        XCTAssertEqual(calculator.state, .runningForeground)
     }
 
     private func assertSender(_ sender: String, in pip: XCUIElement) {

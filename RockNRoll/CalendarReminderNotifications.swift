@@ -117,7 +117,7 @@ enum ReminderFormatting {
     }
 }
 
-/// Installed before scenes are made; background admission is explicitly opt-in.
+/// Installed before scenes are made; background admission requires an explicit notification action.
 final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
     static let shared = CalendarReminderBroker()
     static let category = "MEETING_REMINDER"
@@ -186,6 +186,9 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
         }
     }
     @MainActor func respond(reference: String, action: String) async {
+        #if DEBUG
+        if await BackgroundJoinDeviceFixture.respond(reference: reference, action: action) { return }
+        #endif
         switch action {
         case BackgroundAudioJoinPrototype.action:
             await BackgroundAudioJoinPrototype.shared.join(reference: reference)

@@ -20,6 +20,34 @@ enum RoomSyncUIFixture {
         return ConferenceModel(history: RoomHistoryStore(storage: Storage()),
             preferences: UserDefaults(suiteName: "SyncUIFixture")!)
     }
+    static func isolateColdModel(_ model: ConferenceModel, preferences: UserDefaults, storage: any RoomHistoryStorage) {
+        model.installSyncFixture(RoomSyncCoordinator(history: model.history, name: model.displayName,
+            preferences: preferences, storage: storage, transport: Cloud(available: false)))
+        model.installContinuationFixture(model.makeContinuationCoordinator(preferences: preferences))
+    }
+    static func makeBackgroundJoinModel() -> ConferenceModel? {
+        if let model = ColdJoinDeviceFixture.makeModel() { return model }
+        guard ProcessInfo.processInfo.environment["CONFERENCE_TEST_BACKGROUND_JOIN_INVITE"] != nil else { return nil }
+        let suite = "BackgroundJoinDeviceFixture"
+        let preferences = UserDefaults(suiteName: suite)!
+        preferences.removePersistentDomain(forName: suite)
+        preferences.set("Background listener QA", forKey: "savedDisplayName")
+        preferences.set(true, forKey: "iCloudSyncOfferSeen")
+        let detector = VendorEndpointResolver.makeDetector()
+        let reminders = CalendarReminderCoordinator(preferences: preferences,
+            storage: CalendarUIFixture.Storage(), notifications: BackgroundJoinDeviceFixture.Notifications())
+        let calendar = CalendarMeetingStore(reader: BackgroundJoinDeviceFixture.Reader(), detector: detector,
+            preferences: preferences, storage: Storage(), reminders: reminders)
+        let model = ConferenceModel(history: RoomHistoryStore(storage: Storage()), preferences: preferences,
+            engineDetector: detector, calendar: calendar, catchUp: CatchUpStore(storageURL:
+                FileManager.default.temporaryDirectory.appendingPathComponent("BackgroundJoinDeviceFixture-catchup.json")))
+        model.installSyncFixture(RoomSyncCoordinator(history: model.history, name: model.displayName,
+            preferences: preferences, storage: Storage(), transport: Cloud(available: false)))
+        model.installContinuationFixture(model.makeContinuationCoordinator(preferences: preferences))
+        model.setup.suspendForMeeting()
+        return model
+    }
+
     private final class PersistentStorage: RoomHistoryStorage {
         let preferences: UserDefaults
         let key: String

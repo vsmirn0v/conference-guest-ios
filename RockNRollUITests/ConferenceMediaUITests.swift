@@ -1466,7 +1466,7 @@ final class ConferenceMediaUITests: XCTestCase {
         }
         let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US",
-            "-experiments.firstBackgroundPiP", "NO", "-experiments.backgroundAudioJoin", "NO"]
+            "-experiments.backgroundAudioJoin", "NO"]
         app.launchEnvironment["CONFERENCE_TEST_INVITE"] = invitation
         app.launchEnvironment["CONFERENCE_TEST_NAME"] = "Network Acceptance QA"
         app.launchEnvironment["CONFERENCE_TEST_MEDIA_TRACE"] = "1"

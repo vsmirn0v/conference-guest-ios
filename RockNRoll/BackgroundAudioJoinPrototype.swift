@@ -3,7 +3,7 @@ import ConferenceCore
 import UIKit
 import UserNotifications
 
-/// Opt-in background admission; all permissions must already be granted.
+/// Explicit background admission; all permissions must already be granted.
 struct BackgroundJoinAccess {
     let protectedData: Bool
     let microphone: Bool
@@ -130,7 +130,12 @@ enum BackgroundJoinResult: Equatable { case connected, alreadyConnected, openApp
 
 @MainActor final class BackgroundAudioJoinPrototype {
     static let shared = BackgroundAudioJoinPrototype()
-    static let enabledKey = BackgroundExperimentPreferences.audioJoinKey
+    // Keep the original storage key to preserve existing per-device choices.
+    static let enabledKey = "experiments.backgroundAudioJoin"
+    static let defaultEnabled = true
+    static func preferenceEnabled(in preferences: UserDefaults = .standard) -> Bool {
+        preferences.object(forKey: enabledKey) as? Bool ?? defaultEnabled
+    }
     static let action = "REMINDER_JOIN_AUDIO_PROTOTYPE"
     static let fallbackCategory = "MEETING_JOIN_OPEN_APP"
     static let fallbackID = "meeting.background-join.result"
@@ -159,9 +164,17 @@ enum BackgroundJoinResult: Equatable { case connected, alreadyConnected, openApp
 
     init(attempt: BackgroundAudioJoinAttempt? = nil,
          enabled: @escaping @MainActor () -> Bool = {
-             !ProcessInfo.processInfo.isiOSAppOnMac && UserDefaults.standard.bool(forKey: BackgroundAudioJoinPrototype.enabledKey)
+             #if DEBUG
+             if ColdJoinDeviceFixture.active { return true }
+             #endif
+             return !ProcessInfo.processInfo.isiOSAppOnMac && BackgroundAudioJoinPrototype.preferenceEnabled()
          },
-         makePrepared: @escaping @MainActor () -> Prepared = { .init(model: ConferenceModel(), container: MeetingContainerViewController()) },
+         makePrepared: @escaping @MainActor () -> Prepared = {
+             #if DEBUG
+             if let model = ColdJoinDeviceFixture.makeModel() { return .init(model: model, container: MeetingContainerViewController()) }
+             #endif
+             return .init(model: ConferenceModel(), container: MeetingContainerViewController())
+         },
          notify: @escaping @MainActor (String) -> Void = { reference in
              UNUserNotificationCenter.current().add(BackgroundAudioJoinPrototype.fallback(reference: reference), withCompletionHandler: nil)
          }, clearFallback: @escaping @MainActor () -> Void = {
@@ -192,6 +205,9 @@ enum BackgroundJoinResult: Equatable { case connected, alreadyConnected, openApp
     func join(reference: String) async {
         guard enabled else { return }
         clearFallback()
+        #if DEBUG
+        CameraBackgroundTrace.event("background-join-production-action", ["pid": ProcessInfo.processInfo.processIdentifier])
+        #endif
         let model: ConferenceModel
         if let attached, let attachedContainer {
             model = attached; prepared = Prepared(model: attached, container: attachedContainer)
@@ -202,7 +218,10 @@ enum BackgroundJoinResult: Equatable { case connected, alreadyConnected, openApp
             prepared = new; needsAdoption = true; model = new.model
             model.configure(container: new.container)
         }
-        _ = await attempt.join(reference: reference, session: model)
+        let result = await attempt.join(reference: reference, session: model)
+        #if DEBUG
+        CameraBackgroundTrace.event("background-join-production-result", ["result": String(describing: result), "pid": ProcessInfo.processInfo.processIdentifier])
+        #endif
     }
     func cancel() {
         attempt.cancel()
@@ -233,3 +252,285 @@ enum BackgroundJoinResult: Equatable { case connected, alreadyConnected, openApp
         return .init(identifier: fallbackID, content: content, trigger: nil)
     }
 }
+
+#if DEBUG
+/// Real background admission with isolated local history/name, no Calendar writes.
+/// This exercises the notification handler's transaction after a real background
+/// transition; notification presentation and reference lookup have separate tests.
+@MainActor final class BackgroundJoinDeviceFixture: BackgroundAudioJoinSession {
+    private static weak var active: BackgroundJoinDeviceFixture?
+    private static let reference = "background-join-device-fixture"
+    static func respond(reference: String, action: String) async -> Bool {
+        guard reference == Self.reference, action == BackgroundAudioJoinPrototype.action, let active else { return false }
+        await active.join(); return true
+    }
+    private weak var window: UIWindow?
+    private var detachedRoot: UIViewController?
+    func foregrounded() {
+        if let detachedRoot { window?.rootViewController = detachedRoot; self.detachedRoot = nil }
+        _ = attempt.foregrounded()
+    }
+
+    actor Reader: CalendarReading {
+        func access() -> CalendarAccess { .denied }
+        func requestAccess() -> Bool { false }
+        func read(selected: Set<String>, now: Date, knownOrigins: Set<String>, aliases: [String: URL]) -> CalendarSnapshot {
+            .init(calendars: [], meetings: [])
+        }
+    }
+    final class Notifications: ReminderNotifying {
+        func authorization() -> ReminderAuthorization { .denied }
+        func request(sensitive: Bool) -> Bool { false }
+        func pending() -> [String: String] { [:] }
+        func add(_ reminder: ReminderNotification) {}
+        func removePending(_ ids: [String]) {}
+        func removeDelivered(occurrenceIDs: Set<String>) {}
+        func removeAllDelivered() {}
+    }
+    private let model: ConferenceModel
+    private let occurrence: ReminderOccurrence
+    private let attempt = BackgroundAudioJoinAttempt(execution: SystemBackgroundJoinExecution())
+    private var observer: NSObjectProtocol?
+    private var started = false
+    private var nextTrace = Date.distantPast
+    private var work: Task<Void, Never>?
+    static func make(model: ConferenceModel, window: UIWindow) -> BackgroundJoinDeviceFixture? {
+        guard let raw = ProcessInfo.processInfo.environment["CONFERENCE_TEST_BACKGROUND_JOIN_INVITE"],
+              let url = URL(string: raw), url.scheme == "https" else { return nil }
+        var meeting = CalendarMeeting(id: "background-device-qa", seriesID: "background-device-qa",
+            calendarID: "synthetic", calendarTitle: "Synthetic test", title: "Background join QA",
+            start: Date().addingTimeInterval(-60), end: Date().addingTimeInterval(600))
+        meeting.invitation = url; meeting.engine = .guest
+        guard let occurrence = ReminderOccurrence(meeting: meeting) else { return nil }
+        let fixture = BackgroundJoinDeviceFixture(model: model, occurrence: occurrence)
+        fixture.window = window
+        return fixture
+    }
+    private init(model: ConferenceModel, occurrence: ReminderOccurrence) {
+        self.model = model; self.occurrence = occurrence
+        observer = NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+            object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.begin() }
+            }
+        Self.active = self
+        CameraBackgroundTrace.event("background-join-fixture-ready")
+    }
+    private func begin() {
+        guard !started else { return }
+        started = true
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_BACKGROUND_JOIN_HEADLESS"] == "1" {
+            detachedRoot = window?.rootViewController
+            window?.rootViewController = UIViewController()
+        }
+        work = Task { [weak self] in
+            guard let self else { return }
+            if ProcessInfo.processInfo.environment["CONFERENCE_TEST_BACKGROUND_JOIN_NOTIFICATION"] == "1" {
+                let content = UNMutableNotificationContent()
+                content.title = "Background join QA"
+                content.categoryIdentifier = CalendarReminderBroker.category
+                content.userInfo = ["reference": Self.reference]
+                do {
+                    try await UNUserNotificationCenter.current().add(.init(identifier: Self.reference,
+                        content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false)))
+                } catch { CameraBackgroundTrace.event("background-join-fixture-notification-failed") }
+            } else { await join() }
+        }
+    }
+    private func join() async {
+        CameraBackgroundTrace.event("background-join-fixture-begin")
+        let result = await attempt.join(reference: Self.reference, session: self)
+        CameraBackgroundTrace.event("background-join-fixture-result", ["result": String(describing: result)])
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [Self.reference])
+    }
+    func resolveBackgroundJoin(reference: String) async -> ReminderOccurrence? { occurrence }
+    func beginBackgroundJoin(_ occurrence: ReminderOccurrence, access: BackgroundJoinAccess) -> BackgroundJoinStart {
+        model.beginBackgroundJoin(occurrence, access: access)
+    }
+    func backgroundJoinProgress(token: UInt64) -> BackgroundJoinProgress {
+        if Date() >= nextTrace {
+            nextTrace = Date().addingTimeInterval(2)
+            CameraBackgroundTrace.event("background-join-fixture-progress", model.backgroundJoinEvidenceForTesting)
+        }
+        return model.backgroundJoinProgress(token: token)
+    }
+    func cancelBackgroundJoin(token: UInt64) { model.cancelBackgroundJoin(token: token) }
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) }; work?.cancel() }
+}
+#endif
+
+#if DEBUG
+import EventKit
+
+/// TTL-bounded device qualification. Only the owned event/notification and a
+/// separate sandbox document are changed; normal reminder reconciliation is inert.
+@MainActor enum ColdJoinDeviceFixture {
+    struct Manifest: Codable {
+        var id: String
+        var expires: Date
+        var invitation: URL
+        var eventID: String?
+        var calendarID: String?
+        var reference: String?
+        var title: String { "Cold notification QA " + id }
+    }
+    static let notificationID = "cold-join-device-fixture"
+    private static let suite = "ColdJoinDeviceFixture"
+    private static var manifest: Manifest?
+    private static var modelID: ObjectIdentifier?
+    static private(set) var cleanupSucceeded = false
+    static var active: Bool { manifest.map { $0.expires > Date() } ?? false }
+    nonisolated private static var folder: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ColdJoinDeviceFixture")
+    }
+    private static var manifestURL: URL { folder.appendingPathComponent("manifest.json") }
+    static func bootstrap() {
+        if let data = try? Data(contentsOf: manifestURL) { manifest = try? JSONDecoder().decode(Manifest.self, from: data) }
+        if let raw = ProcessInfo.processInfo.environment["CONFERENCE_TEST_COLD_JOIN_SETUP"],
+           let url = URL(string: raw), url.scheme == "https", manifest == nil {
+            manifest = Manifest(id: UUID().uuidString, expires: Date().addingTimeInterval(1800), invitation: url)
+            // Model a person who completed setup before opting into the experiment.
+            let setup = MeetingSetupCoordinator(preferences: UserDefaults(suiteName: suite)!)
+            setup.begin()
+            for _ in MeetingSetupCoordinator.Step.allCases { setup.next() }
+        }
+        guard active else { return }
+        for key in ["CONFERENCE_TEST_CAMERA_TRACE", "CONFERENCE_TEST_MEDIA_TRACE"] { setenv(key, "1", 1) }
+        CameraBackgroundTrace.start()
+        CameraBackgroundTrace.event("background-join-cold-process", ["pid": ProcessInfo.processInfo.processIdentifier,
+            "persisted": manifest?.reference != nil])
+    }
+    private static func persist() throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
+            attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication, .posixPermissions: 0o700])
+        try JSONEncoder().encode(manifest).write(to: manifestURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        var values = URLResourceValues(); values.isExcludedFromBackup = true
+        var url = folder; try url.setResourceValues(values)
+    }
+    final class Storage: RoomHistoryStorage, ReminderStorage {
+        private let url: URL
+        init(_ name: String) { url = ColdJoinDeviceFixture.folder.appendingPathComponent(name + ".json") }
+        func read() -> Data? { try? Data(contentsOf: url) }
+        func write(_ data: Data) throws {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
+    }
+    actor OwnedReader: CalendarReading {
+        private let title: String
+        private let reader = AppleCalendarReader()
+        init(title: String) { self.title = title }
+        func access() async -> CalendarAccess { await reader.access() }
+        func requestAccess() async throws -> Bool { try await reader.requestAccess() }
+        func read(selected: Set<String>, now: Date, knownOrigins: Set<String>, aliases: [String: URL]) async -> CalendarSnapshot {
+            let snapshot = await reader.read(selected: selected, now: now, knownOrigins: knownOrigins, aliases: aliases)
+            return .init(calendars: snapshot.calendars, meetings: snapshot.meetings.filter { $0.title == title })
+        }
+    }
+    static func makeModel() -> ConferenceModel? {
+        guard active else { return nil }
+        let preferences = UserDefaults(suiteName: suite)!
+        preferences.set("Cold listener QA", forKey: "savedDisplayName")
+        preferences.set(true, forKey: "iCloudSyncOfferSeen")
+        preferences.set(true, forKey: "calendarMeetings.enabled")
+        preferences.set(true, forKey: "calendarReminders.enabled")
+        if let id = manifest?.calendarID { preferences.set([id], forKey: "calendarMeetings.selected") }
+        let detector = VendorEndpointResolver.makeDetector()
+        let reminders = CalendarReminderCoordinator(preferences: preferences, storage: Storage("reminders"),
+            notifications: BackgroundJoinDeviceFixture.Notifications())
+        let calendar = CalendarMeetingStore(reader: OwnedReader(title: manifest!.title), detector: detector,
+            preferences: preferences, storage: Storage("calendar"), reminders: reminders)
+        let model = ConferenceModel(history: RoomHistoryStore(storage: Storage("history")), preferences: preferences,
+            engineDetector: detector, calendar: calendar,
+            catchUp: CatchUpStore(storageURL: folder.appendingPathComponent("catchup.json")))
+        modelID = ObjectIdentifier(model)
+        RoomSyncUIFixture.isolateColdModel(model, preferences: preferences, storage: Storage("sync"))
+        CameraBackgroundTrace.event("background-join-cold-model", ["pid": ProcessInfo.processInfo.processIdentifier,
+            "persistedReference": manifest?.reference != nil])
+        Task { [weak model] in
+            for _ in 0..<90 {
+                try? await Task.sleep(for: .seconds(2))
+                guard let model else { return }
+                CameraBackgroundTrace.event("background-join-cold-progress", model.backgroundJoinEvidenceForTesting)
+            }
+        }
+        return model
+    }
+    static func prepareIfRequested(model: ConferenceModel) {
+        guard active, ObjectIdentifier(model) == modelID,
+              ProcessInfo.processInfo.environment["CONFERENCE_TEST_COLD_JOIN_SETUP"] != nil else { return }
+        Task {
+            do {
+                guard #available(iOS 17, *), var value = manifest else { return }
+                let store = EKEventStore()
+                guard try await store.requestFullAccessToEvents(), let calendar = store.defaultCalendarForNewEvents,
+                      calendar.allowsContentModifications else { throw CocoaError(.fileWriteNoPermission) }
+                if let id = value.eventID {
+                    guard let event = store.event(withIdentifier: id), event.title == value.title,
+                          event.url == value.invitation, event.calendar.calendarIdentifier == value.calendarID else {
+                        throw CocoaError(.fileReadNoSuchFile)
+                    }
+                } else {
+                    // Persist ownership before creating an EventKit object; retry never
+                    // overwrites the only identifier of a previously created event.
+                    try persist()
+                    let event = EKEvent(eventStore: store)
+                    event.calendar = calendar; event.title = value.title; event.url = value.invitation
+                    event.startDate = Date().addingTimeInterval(-60); event.endDate = value.expires
+                    try store.save(event, span: .thisEvent)
+                    value.eventID = event.eventIdentifier; value.calendarID = calendar.calendarIdentifier
+                    manifest = value; try persist()
+                }
+                model.calendar.select(value.calendarID!, included: true)
+                model.calendar.foregrounded(allowAutomaticJoin: false)
+                for _ in 0..<200 {
+                    if let occurrence = model.calendar.reminders.repository.occurrences.first(where: { $0.title == value.title && $0.eligible }) {
+                        value.reference = occurrence.reference; manifest = value; try persist()
+                        let content = UNMutableNotificationContent()
+                        content.title = "Cold notification join QA"; content.categoryIdentifier = CalendarReminderBroker.category
+                        content.userInfo = ["reference": occurrence.reference]
+                        try await UNUserNotificationCenter.current().add(.init(identifier: notificationID, content: content,
+                            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 12, repeats: false)))
+                        CameraBackgroundTrace.event("background-join-cold-armed", ["pid": ProcessInfo.processInfo.processIdentifier])
+                        let label = UILabel(); label.text = "Cold notification armed"; label.accessibilityIdentifier = "cold-join-armed"
+                        label.frame = CGRect(x: 30, y: 120, width: 300, height: 60)
+                        model.continuationHostView?.addSubview(label)
+                        return
+                    }
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                throw CocoaError(.fileReadUnknown)
+            } catch { CameraBackgroundTrace.event("background-join-cold-setup-error", ["error": String(describing: error)]) }
+        }
+    }
+    static func cleanupIfRequested() async {
+        guard ProcessInfo.processInfo.environment["CONFERENCE_TEST_COLD_JOIN_CLEANUP"] == "1" else { return }
+        do {
+            if let value = manifest, let id = value.eventID {
+                let status = EKEventStore.authorizationStatus(for: .event)
+                if #available(iOS 17, *) {
+                    guard status == .fullAccess else { throw CocoaError(.fileReadNoPermission) }
+                } else { guard status == .authorized else { throw CocoaError(.fileReadNoPermission) } }
+                let store = EKEventStore()
+                if let event = store.event(withIdentifier: id) {
+                    guard event.title == value.title, event.url == value.invitation else { throw CocoaError(.fileWriteNoPermission) }
+                    try store.remove(event, span: .thisEvent)
+                }
+                guard EKEventStore().event(withIdentifier: id) == nil else { throw CocoaError(.fileWriteUnknown) }
+            }
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [notificationID])
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [notificationID])
+            let pending = await UNUserNotificationCenter.current().pendingNotificationRequests()
+            let delivered = await UNUserNotificationCenter.current().deliveredNotifications()
+            guard !pending.contains(where: { $0.identifier == notificationID }),
+                  !delivered.contains(where: { $0.request.identifier == notificationID }) else { throw CocoaError(.fileWriteUnknown) }
+            if FileManager.default.fileExists(atPath: folder.path) { try FileManager.default.removeItem(at: folder) }
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+            manifest = nil; modelID = nil; cleanupSucceeded = !FileManager.default.fileExists(atPath: folder.path)
+            CalendarReminderBroker.shared.install()
+            CameraBackgroundTrace.event("background-join-cold-cleaned", ["verified": cleanupSucceeded,
+                "eventAbsent": true, "notificationAbsent": true])
+        } catch { CameraBackgroundTrace.event("background-join-cold-cleanup-error", ["error": String(describing: error)]) }
+    }
+}
+#endif

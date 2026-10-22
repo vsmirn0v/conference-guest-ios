@@ -8,12 +8,12 @@ final class CalendarReminderUITests: XCTestCase {
         } ?? .zero
     }
     override func setUp() { super.setUp(); continueAfterFailure = false }
-    private var resetExperimentsAfterTest = false
+    private var resetAudioJoinAfterTest = false
     private var launchLanguage = "en"
     override func tearDown() {
         XCUIDevice.shared.orientation = .portrait
         app.terminate()
-        if resetExperimentsAfterTest {
+        if resetAudioJoinAfterTest {
             app.launchEnvironment["CONFERENCE_TEST_RESET_BACKGROUND_EXPERIMENTS"] = "1"
             app.launch()
             _ = app.buttons[launchLanguage == "ru" ? "Настройки" : "Settings"].waitForExistence(timeout: 10)
@@ -58,19 +58,19 @@ final class CalendarReminderUITests: XCTestCase {
         XCTAssertTrue(app.buttons["calendar.join.daily"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["calendar.join.daily"].frame.minY, before.minY, accuracy: 2)
     }
-    private func launchExperiments(_ language: String, largeText: Bool = false) {
-        resetExperimentsAfterTest = true
+    private func launchAudioJoinSettings(_ language: String, largeText: Bool = false) {
+        resetAudioJoinAfterTest = true
         app.launchEnvironment["CONFERENCE_TEST_RESET_BACKGROUND_EXPERIMENTS"] = "1"
         launch(language, largeText: largeText)
         app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_RESET_BACKGROUND_EXPERIMENTS")
-        openExperiments(language)
+        openAudioJoinSettings(language)
     }
-    private func openExperiments(_ language: String) {
+    private func openAudioJoinSettings(_ language: String) {
         app.buttons[language == "ru" ? "Настройки" : "Settings"].tap()
-        let experiments = app.buttons["settings.experiments"]
-        for _ in 0..<6 where !experiments.isHittable { app.swipeUp() }
-        XCTAssertTrue(experiments.isHittable); experiments.tap()
-        XCTAssertTrue(app.collectionViews["experiments.form"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["settings.experiments"].exists)
+        app.buttons["calendar.settings"].tap()
+        app.buttons["calendar.reminders"].tap()
+        XCTAssertTrue(app.collectionViews["reminders.settingsForm"].waitForExistence(timeout: 5))
     }
     private func reveal(_ element: XCUIElement, in form: XCUIElement) {
         var unlocatedAttempts = 0
@@ -98,22 +98,24 @@ final class CalendarReminderUITests: XCTestCase {
         let nested = element.descendants(matching: .switch).firstMatch
         let control = nested.exists ? nested : element
         let frame = control.frame
-        print("EXPERIMENT_SWITCH_ACTIVATE row=\(element.frame) control=\(frame) center=(\(frame.midX),\(frame.midY)) expected=\(expected)")
+        print("AUDIO_JOIN_SWITCH_ACTIVATE row=\(element.frame) control=\(frame) center=(\(frame.midX),\(frame.midY)) expected=\(expected)")
         control.tap()
         let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: element)
         let result = XCTWaiter.wait(for: [changed], timeout: 3)
         if result != .completed {
             let hierarchy = XCTAttachment(string: app.debugDescription)
-            hierarchy.name = "Experimental switch activation hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+            hierarchy.name = "Audio join switch activation hierarchy"; hierarchy.lifetime = .keepAlways; add(hierarchy)
             let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-            screenshot.name = "Experimental switch activation failure"; screenshot.lifetime = .keepAlways; add(screenshot)
+            screenshot.name = "Audio join switch activation failure"; screenshot.lifetime = .keepAlways; add(screenshot)
         }
         XCTAssertEqual(result, .completed, "Switch did not reach value \(expected) after activation")
     }
-    func testReleaseExperimentalSwitchesAreAvailable() {
-        app.launchEnvironment = [:]
+    func testReleaseAudioJoinSettingIsAvailableInMeetingReminders() {
+        resetAudioJoinAfterTest = true
+        app.launchEnvironment = ["CONFERENCE_TEST_RESET_BACKGROUND_EXPERIMENTS": "1"]
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
+        app.launchEnvironment.removeValue(forKey: "CONFERENCE_TEST_RESET_BACKGROUND_EXPERIMENTS")
         let settings = app.buttons["Settings"], finishLater = app.buttons["setup.later"]
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             settings.isHittable || finishLater.isHittable
@@ -121,58 +123,43 @@ final class CalendarReminderUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 10), .completed)
         if finishLater.isHittable { finishLater.tap() }
         XCTAssertTrue(settings.waitForExistence(timeout: 5))
-        openExperiments("en")
-        let form = app.collectionViews["experiments.form"]
+        openAudioJoinSettings("en")
+        let form = app.collectionViews["reminders.settingsForm"]
         let audio = app.switches["reminders.backgroundAudioJoin"]
-        let pip = app.switches["experiments.firstBackgroundPiP"]
-        reveal(audio, in: form); XCTAssertEqual(audio.value as? String, "0")
-        reveal(pip, in: form); XCTAssertEqual(pip.value as? String, "0")
-        flip(audio, in: form); XCTAssertEqual(audio.value as? String, "1")
+        reveal(audio, in: form); XCTAssertEqual(audio.value as? String, "1")
+        XCTAssertFalse(app.switches["experiments.firstBackgroundPiP"].exists)
         flip(audio, in: form); XCTAssertEqual(audio.value as? String, "0")
-        flip(pip, in: form); XCTAssertEqual(pip.value as? String, "1")
-        flip(pip, in: form); XCTAssertEqual(pip.value as? String, "0")
+        flip(audio, in: form); XCTAssertEqual(audio.value as? String, "1")
         XCTAssertFalse(app.alerts.firstMatch.exists)
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        screenshot.name = "Release experimental switches"; screenshot.lifetime = .keepAlways; add(screenshot)
+        screenshot.name = "Audio join in meeting reminders"; screenshot.lifetime = .keepAlways; add(screenshot)
     }
-    func testExperimentsDefaultOffPersistIndependentlyAndDoNotEnableReminders() {
-        launchExperiments("en")
+    func testAudioJoinDefaultsOnAndPreservesOptOutWithoutEnablingReminders() {
+        launchAudioJoinSettings("en")
         let audio = app.switches["reminders.backgroundAudioJoin"]
-        let pip = app.switches["experiments.firstBackgroundPiP"]
-        let form = app.collectionViews["experiments.form"]
-        XCTAssertEqual(audio.value as? String, "0")
-        reveal(pip, in: form); XCTAssertEqual(pip.value as? String, "0")
-        reveal(audio, in: form); flip(audio, in: form)
-        XCTAssertEqual(audio.value as? String, "1")
-        reveal(pip, in: form); XCTAssertEqual(pip.value as? String, "0")
-        XCTAssertFalse(app.alerts.firstMatch.exists, "Opting in must not request permissions")
-        let configure = app.buttons["experiments.reminders"]
-        reveal(configure, in: form); configure.tap()
-        app.buttons["calendar.reminders"].tap()
-        XCTAssertEqual(app.switches["reminders.enabled"].value as? String, "0")
-        app.buttons["reminders.delivery"].tap()
+        let form = app.collectionViews["reminders.settingsForm"]
+        reveal(audio, in: form); XCTAssertEqual(audio.value as? String, "1")
+        reveal(app.staticTexts["reminders.audioInstructions"], in: form)
+        XCTAssertFalse(app.alerts.firstMatch.exists, "The default must not request permissions")
+        let enabled = app.switches["reminders.enabled"]
+        reveal(enabled, in: form); XCTAssertEqual(enabled.value as? String, "0")
+        flip(audio, in: form); XCTAssertEqual(audio.value as? String, "0")
+        app.terminate(); launch("en"); openAudioJoinSettings("en")
+        reveal(audio, in: form); XCTAssertEqual(audio.value as? String, "0")
+        XCTAssertFalse(app.staticTexts["reminders.audioInstructions"].exists)
+        flip(audio, in: form); XCTAssertEqual(audio.value as? String, "1")
+        XCTAssertFalse(app.alerts.firstMatch.exists, "Enabling the action must not request permissions")
+        app.terminate(); launch("en"); openAudioJoinSettings("en")
+        reveal(audio, in: form); XCTAssertEqual(audio.value as? String, "1")
+        reveal(enabled, in: form); XCTAssertEqual(enabled.value as? String, "0")
+        let delivery = app.buttons["reminders.delivery"]
+        reveal(delivery, in: form); delivery.tap()
         XCTAssertFalse(app.switches["reminders.backgroundAudioJoin"].exists)
-        app.terminate(); launch("en"); openExperiments("en")
-        XCTAssertEqual(audio.value as? String, "1")
-        reveal(pip, in: form); XCTAssertEqual(pip.value as? String, "0")
-        flip(pip, in: form)
-        reveal(audio, in: form); flip(audio, in: form)
-        XCTAssertEqual(audio.value as? String, "0")
-        app.terminate(); launch("en"); openExperiments("en")
-        XCTAssertEqual(audio.value as? String, "0")
-        reveal(pip, in: form); XCTAssertEqual(pip.value as? String, "1")
-        flip(pip, in: form)
-        reveal(configure, in: form); configure.tap()
-        app.buttons["calendar.reminders"].tap()
-        let remindersEnabled = app.switches["reminders.enabled"]
-        XCTAssertTrue(remindersEnabled.waitForExistence(timeout: 5))
-        XCTAssertEqual(remindersEnabled.value as? String, "0")
     }
-    func testRussianAccessibilitySizeExperimentsRemainReadableAndReachable() {
-        launchExperiments("ru", largeText: true)
-        let form = app.collectionViews["experiments.form"]
+    func testRussianAccessibilitySizeAudioJoinRemainsReadableAndReachable() {
+        launchAudioJoinSettings("ru", largeText: true)
+        let form = app.collectionViews["reminders.settingsForm"]
         let audio = app.switches["reminders.backgroundAudioJoin"]
-        let pip = app.switches["experiments.firstBackgroundPiP"]
         for orientation in [UIDeviceOrientation.landscapeLeft, .portrait] {
             XCUIDevice.shared.orientation = orientation
             let layout = XCTNSPredicateExpectation(predicate: NSPredicate { [self] _, _ in
@@ -182,21 +169,14 @@ final class CalendarReminderUITests: XCTestCase {
             }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [layout], timeout: 5), .completed)
             reveal(audio, in: form)
-            XCTAssertEqual(audio.value as? String, "0")
-            let instructions = app.staticTexts["experiments.audioInstructions"]
+            XCTAssertEqual(audio.value as? String, "1")
+            XCTAssertGreaterThanOrEqual(audio.frame.minX, form.frame.minX)
+            XCTAssertLessThanOrEqual(audio.frame.maxX, form.frame.maxX)
+            let instructions = app.staticTexts["reminders.audioInstructions"]
             reveal(instructions, in: form)
             XCTAssertGreaterThan(instructions.frame.height, 40)
             XCTAssertGreaterThanOrEqual(instructions.frame.minX, form.frame.minX)
             XCTAssertLessThanOrEqual(instructions.frame.maxX, form.frame.maxX)
-            reveal(pip, in: form)
-            XCTAssertEqual(pip.value as? String, "0")
-            XCTAssertGreaterThanOrEqual(pip.frame.minX, form.frame.minX)
-            XCTAssertLessThanOrEqual(pip.frame.maxX, form.frame.maxX)
-            let pipInstructions = app.staticTexts["experiments.pipInstructions"]
-            reveal(pipInstructions, in: form)
-            XCTAssertGreaterThan(pipInstructions.frame.height, 40)
-            XCTAssertGreaterThanOrEqual(pipInstructions.frame.minX, form.frame.minX)
-            XCTAssertLessThanOrEqual(pipInstructions.frame.maxX, form.frame.maxX)
             let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             screenshot.lifetime = .keepAlways; add(screenshot)
         }

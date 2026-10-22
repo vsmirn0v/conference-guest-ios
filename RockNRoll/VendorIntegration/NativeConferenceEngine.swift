@@ -58,6 +58,7 @@ final class NativeConferenceEngine: CallEngine {
     private let videoDemand = MeetingVideoDemand()
     private var incomingVideoEnabled: Bool?
     private var displayMode: ConferenceDisplayMode = .all
+    private var preservesJoinAudioRoute = false
     private var isAudioInterrupted = false { didSet { updatePiPMicrophoneStatus() } }
     private var microphoneIntentOn = false
     private var cameraIntentOn = false
@@ -86,6 +87,14 @@ final class NativeConferenceEngine: CallEngine {
     func reconnectReactionsForTesting() { beginMediaReconnect(forNetwork: false) }
     var mediaAttemptForTesting: UUID { mediaAttemptEpoch }
     var mediaReadyForTesting: Bool { isSDKActive && mediaConnectionConfirmed && !isMediaReconnecting }
+    var backgroundJoinEvidenceForTesting: [String: Any] {
+        ["admitted": hasBecomeActive, "sdkActive": isSDKActive,
+         "mediaConnected": mediaConnectionConfirmed, "coordinator": activeCoordinator != nil,
+         "audioReady": isCallAudioReady, "interrupted": isAudioInterrupted,
+         "held": isSystemHeld, "peers": GuestPeerRegistry.snapshot().count,
+         "microphoneIntent": microphoneIntentOn, "cameraIntent": cameraIntentOn,
+         "transport": mediaAttemptEpoch.uuidString]
+    }
     var streamViewsForTesting: GuestStreamViews { streamViews }
     var hasReceivedVideoFrameForTesting: Bool {
         if (floatingVideo?.convertedFramesForTesting ?? 0) > 0 { return true }
@@ -181,7 +190,7 @@ final class NativeConferenceEngine: CallEngine {
     var backgroundAudioReadyForPrototype: Bool {
         hasBecomeActive && isSDKActive && mediaConnectionConfirmed && activeCoordinator != nil &&
             isCallAudioReady && !isSystemHeld && !isAudioInterrupted && !isMediaReconnecting &&
-            !microphoneIntentOn && !cameraIntentOn && displayMode == .audioOnly
+            !microphoneIntentOn && !cameraIntentOn
     }
 
     func prepareToFloat() {
@@ -195,6 +204,11 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     func restoreFromFloatingVideo() {
+        videoDemand.setForeground(true)
+        if hasJoinStarted, !leaveRequested, finishing == nil, displayMode != .audioOnly, floatingVideo == nil {
+            beginFloatingVideoSession()
+            streamViews.refreshSelection()
+        }
         streamViews.setBackgrounded(false)
         updateFloatingSuspension()
         floatingVideo?.foregrounded()
@@ -434,8 +448,7 @@ final class NativeConferenceEngine: CallEngine {
         #endif
         guard let floatingSourceView else { return }
         let epoch = sessionEpoch
-        var environment = FloatingVideoController.Environment()
-        environment.allowsFirstBackgroundStart = { FloatingVideoPreference.experimentalBackgroundStart }
+        let environment = FloatingVideoController.Environment()
         let floating = GuestVideoPictureInPicture(sourceView: floatingSourceView, speaker: activeSpeaker, floatingEnvironment: environment)
         floating.rendersSelectedViewport = false
         floating.wantsInlineFrames = activeControls?.wantsStageFrames ?? true
@@ -827,7 +840,7 @@ final class NativeConferenceEngine: CallEngine {
         if let codecFallbackObserver { NotificationCenter.default.removeObserver(codecFallbackObserver) }
         codecFallbackObserver = nil
     }
-    func join(target: JoinTarget, displayName: String, audioOnly: Bool = false) throws {
+    func join(target: JoinTarget, displayName: String, backgroundJoin: Bool = false) throws {
         guard finishing == nil else { throw ProviderError.teardownInProgress }
         terminalEventTask?.cancel(); terminalEventTask = nil
         connectionSubscription?.cancel(); connectionSubscription = nil
@@ -844,7 +857,10 @@ final class NativeConferenceEngine: CallEngine {
         resetPiPMicrophoneObservation()
         streamViews.reset()
         offeredShare = nil
-        streamViews.displayMode = audioOnly ? .audioOnly : .all
+        streamViews.displayMode = .all
+        preservesJoinAudioRoute = backgroundJoin
+        videoDemand.beginJoin(inBackground: backgroundJoin && UIApplication.shared.applicationState != .active)
+        streamViews.setBackgrounded(videoDemand.awaitingForeground)
         activeInvitationURL = target.invitationURL
         activeRoomIdentifier = target.roomID
         chat?.clear()
@@ -881,7 +897,7 @@ final class NativeConferenceEngine: CallEngine {
         cameraIntentOn = false
         isSystemHeld = false
         audioGate = CallAudioRecoveryGate()
-        displayMode = audioOnly ? .audioOnly : .all
+        displayMode = .all
         isAudioInterrupted = false
         needsMediaReconnect = false
         isMediaReconnecting = false
@@ -916,10 +932,10 @@ final class NativeConferenceEngine: CallEngine {
         #endif
         GuestPublishingCodecPolicy.shared.begin(generation: sessionEpoch, roomID: target.roomID)
         installCodecRecovery()
-        if !audioOnly { beginFloatingVideoSession() }
+        if !videoDemand.awaitingForeground { beginFloatingVideoSession() }
         else { videoDemand.onChange = { [weak self] in self?.updateIncomingVideoDemand() } }
         installCallHandlers()
-        audio.start(preserveCurrentRoute: audioOnly, ready: { [weak self] in
+        audio.start(preserveCurrentRoute: backgroundJoin, ready: { [weak self] in
             guard let self, self.hasJoinStarted, !self.leaveRequested else { return }
             #if DEBUG && targetEnvironment(simulator)
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
@@ -981,7 +997,7 @@ final class NativeConferenceEngine: CallEngine {
             joinConferenceType: .skipIntermidiateScreen(room: room),
             mediaSettings: .allOff,
             analyticsConferenceType: nil,
-            preferredSpeaker: displayMode == .audioOnly && AVAudioSession.sharedInstance().currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) ? .receiver : Self.joinSpeakerPreference(
+            preferredSpeaker: preservesJoinAudioRoute && AVAudioSession.sharedInstance().currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) ? .receiver : Self.joinSpeakerPreference(
                 outputTypes: AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType),
                 isMac: ProcessInfo.processInfo.isiOSAppOnMac),
             customRepresentation: minimalRepresentation()

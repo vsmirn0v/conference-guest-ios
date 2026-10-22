@@ -7,10 +7,16 @@ final class MeetingVideoDemand {
     private(set) var floating = false
     private var recovering = false
     private var backgroundGrace = false
+    private(set) var awaitingForeground = false
     private var grace: Task<Void, Never>?
     private var observers: [NSObjectProtocol] = []
     var onChange: (() -> Void)?
-    var wantsVideo: Bool { foreground || floating || recovering || backgroundGrace }
+    var wantsVideo: Bool { !awaitingForeground && (foreground || floating || recovering || backgroundGrace) }
+    /// Joining from a notification changes delivery demand, never the user's view mode.
+    func beginJoin(inBackground: Bool) {
+        awaitingForeground = inBackground
+        onChange?()
+    }
     init(observeLifecycle: Bool = true) {
         if observeLifecycle {
             foreground = UIApplication.shared.applicationState != .background
@@ -24,6 +30,7 @@ final class MeetingVideoDemand {
     }
     func setForeground(_ value: Bool, graceNanoseconds: UInt64 = 3_000_000_000) {
         grace?.cancel(); grace = nil; foreground = value
+        if value { awaitingForeground = false }
         backgroundGrace = !value && FloatingVideoPreference.enabled
         onChange?()
         if backgroundGrace {

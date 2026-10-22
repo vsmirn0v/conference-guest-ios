@@ -5,6 +5,21 @@ import XCTest
 @testable import RockNRoll
 
 @MainActor final class BackgroundAudioJoinTests: XCTestCase {
+    func testAudioJoinDefaultsOnWithoutOverwritingExplicitPreferences() throws {
+        let suite = "BackgroundAudioJoinPreferences-" + UUID().uuidString
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        XCTAssertTrue(BackgroundAudioJoinPrototype.preferenceEnabled(in: preferences))
+        XCTAssertNil(preferences.object(forKey: BackgroundAudioJoinPrototype.enabledKey),
+                     "Reading the default must not persist a new preference")
+        preferences.set(false, forKey: BackgroundAudioJoinPrototype.enabledKey)
+        XCTAssertFalse(BackgroundAudioJoinPrototype.preferenceEnabled(in: preferences))
+        preferences.set(true, forKey: BackgroundAudioJoinPrototype.enabledKey)
+        XCTAssertTrue(BackgroundAudioJoinPrototype.preferenceEnabled(in: preferences))
+        preferences.removeObject(forKey: BackgroundAudioJoinPrototype.enabledKey)
+        XCTAssertTrue(BackgroundAudioJoinPrototype.preferenceEnabled(in: preferences))
+    }
+
     final class Execution: BackgroundJoinExecution {
         var expired: (() -> Void)?
         var available = true, starts = 0, ends = 0

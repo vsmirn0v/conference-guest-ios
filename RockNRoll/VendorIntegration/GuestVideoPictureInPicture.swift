@@ -17,7 +17,6 @@ final class GuestVideoPictureInPicture {
     private var hasFrame = false
     private var presenting = false
     private var energySubscription: AnyCancellable?
-    private var experimentSubscription: AnyCancellable?
     var onPresentationChanged: ((Bool) -> Void)? { didSet { floating.onPresentationChanged = onPresentationChanged } }
     var onRecoveryDemandChanged: ((Bool) -> Void)?
     private var signaledSource: GuestStreamViews.PinTarget?
@@ -97,10 +96,6 @@ final class GuestVideoPictureInPicture {
             self.onRecoveryDemandChanged?(demand)
             self.replayShareSnapshot()
         }
-        floating.prepareAnchor(sourceView)
-        experimentSubscription = NotificationCenter.default.publisher(for: BackgroundExperimentPreferences.changed).sink { [weak self] _ in
-            DispatchQueue.main.async { self?.refreshPreference() }
-        }
         energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -144,8 +139,7 @@ final class GuestVideoPictureInPicture {
         guard !floating.isEnded, signaledSource != target else { return }
         signaledSource = target
         clear()
-        if let target { floating.requestBackgroundFrames(isScreenShare: target.isShare) }
-        else { floating.cancelExperimentalStart() }
+        if target != nil { floating.requestBackgroundFrames() }
     }
 
     private func willStartFloating() {
@@ -172,12 +166,10 @@ final class GuestVideoPictureInPicture {
         #if DEBUG
         CameraBackgroundTrace.event("guest-select", ["hasViewport": viewport != nil, "presenting": presenting,
             "rendererChanged": selectedRenderer !== viewport?.rendererView, "hasFrame": hasFrame,
-            "anchorInWindow": sourceView.window != nil, "hasPiPController": floating.controllerForTesting != nil,
-            "experimentalFirstStart": FloatingVideoPreference.experimentalBackgroundStart])
+            "anchorInWindow": sourceView.window != nil, "hasPiPController": floating.controllerForTesting != nil])
         #endif
         guard let viewport else {
             clear()
-            if !isInBackground { floating.prepareAnchor(sourceView) }
             return
         }
         if selectedViewport !== viewport { selectedViewport?.clearCorrectedVideo() }
@@ -190,7 +182,7 @@ final class GuestVideoPictureInPicture {
                 retireCameraSink()
                 video.clear()
                 floating.setSourceView(nil, preservingPresentation: true)
-                floating.requestBackgroundFrames(isScreenShare: false, allowExperimental: false)
+                floating.requestBackgroundFrames()
                 cameraPreview = capture; hasFrame = false
                 let delivery = video.makeFrameDelivery { [weak self, weak capture] size, rotation in
                     guard let self, self.cameraPreview === capture, !self.suspended, !self.floating.isEnded else { return }
@@ -234,7 +226,7 @@ final class GuestVideoPictureInPicture {
             // stays visible until a frame from this renderer is prepared.
             video.clear()
             floating.setSourceView(nil, preservingPresentation: true)
-            floating.requestBackgroundFrames(isScreenShare: isScreenShare, allowExperimental: false)
+            floating.requestBackgroundFrames()
             onAvailabilityChanged?(false)
             selectedRenderer = viewport.rendererView
             let delivery = video.makeFrameDelivery { [weak self, weak renderer = viewport.rendererView] size, rotation in
@@ -289,12 +281,10 @@ final class GuestVideoPictureInPicture {
     func setMicrophoneStatus(_ status: PiPMicrophoneStatus) { floating.setMicrophoneStatus(status) }
     func refreshPreference() {
         floating.refreshPreference()
-        if !isInBackground { floating.prepareAnchor(sourceView) }
     }
     func foregrounded() {
         background = false
         floating.foregrounded()
-        floating.prepareAnchor(sourceView)
         refreshInlineDelivery()
         processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
         processor.setEnabled(shouldProcessFrames)

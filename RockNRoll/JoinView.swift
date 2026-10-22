@@ -609,9 +609,6 @@ struct JoinView: View {
                         NavigationLink { Form { phoneSettings }.navigationTitle(L("Phone calls")) } label: {
                             Label(L("Phone calls"), systemImage: "phone")
                         }.accessibilityIdentifier("settings.phone")
-                        NavigationLink { ExperimentalFeaturesView(calendar: calendar) } label: {
-                            Label(L("Experimental features"), systemImage: "flask")
-                        }.accessibilityIdentifier("settings.experiments")
                     }
                     NavigationLink { Form { websiteSettings }.navigationTitle(L("Meeting websites")) } label: {
                         Label(L("Meeting websites"), systemImage: "globe")

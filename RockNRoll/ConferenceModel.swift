@@ -42,7 +42,7 @@ final class ConferenceModel: ObservableObject {
     private let systemCall = SystemCallCoordinator()
     private var meetingActivity: MeetingActivitySession?
     private var meetingReconnecting = false
-    let catchUpStore = CatchUpStore()
+    let catchUpStore: CatchUpStore
     private lazy var engine = NativeConferenceEngine(systemCall: systemCall, catchUp: catchUpStore)
     let chat = ChatStore()
     let history: RoomHistoryStore
@@ -77,6 +77,15 @@ final class ConferenceModel: ObservableObject {
         applyingSyncedName = false
     }
     #if DEBUG
+    var backgroundJoinEvidenceForTesting: [String: Any] {
+        var fields = engine.backgroundJoinEvidenceForTesting
+        fields["model"] = String(describing: ObjectIdentifier(self)); fields["session"] = desktopSessionToken
+        fields["pid"] = ProcessInfo.processInfo.processIdentifier
+        fields["setupCompleted"] = setup.completed; fields["setupNeedsDismissal"] = setup.needsDismissal
+        fields["setupLaunchReady"] = setup.launchReady
+        fields["systemControlsPreference"] = UserDefaults.standard.bool(forKey: SystemCallCoordinator.controlsPreferenceKey)
+        return fields
+    }
     var awaitingNameEngineForTesting: MeetingEngineKind? { joinAwaitingName?.engineKind }
     func installSyncFixture(_ coordinator: RoomSyncCoordinator) {
         sync = coordinator
@@ -97,7 +106,7 @@ final class ConferenceModel: ObservableObject {
         let target: JoinDestination
         let name: String
         let quiet: Bool
-        let audioOnly: Bool
+        let backgroundJoin: Bool
         let knownEngine: MeetingEngineKind?
         let title: String?
         var admission: (() -> Bool)? = nil
@@ -130,8 +139,9 @@ final class ConferenceModel: ObservableObject {
     #endif
 
     init(jamService: JamService = JamService(), history: RoomHistoryStore? = nil, preferences: UserDefaults = .standard,
-         engineDetector: MeetingEngineDetector? = nil, calendar: CalendarMeetingStore? = nil) {
+         engineDetector: MeetingEngineDetector? = nil, calendar: CalendarMeetingStore? = nil, catchUp: CatchUpStore? = nil) {
         self.jamService = jamService; self.history = history ?? RoomHistoryStore(); self.preferences = preferences
+        self.catchUpStore = catchUp ?? CatchUpStore()
         setup = MeetingSetupCoordinator(preferences: preferences)
         let detector = engineDetector ?? VendorEndpointResolver.makeDetector()
         self.engineDetector = detector
@@ -466,7 +476,7 @@ final class ConferenceModel: ObservableObject {
     }
 
     private func startJoin(_ target: JoinDestination, nameOverride: String? = nil, quiet: Bool = false, title: String? = nil,
-                           engineWasChosen: Bool = false, audioOnly: Bool = false,
+                           engineWasChosen: Bool = false, backgroundJoin: Bool = false,
                            scheduledAdmission: (() -> Bool)? = nil) {
         guard !isJoining && !isInConference && !isLeaving else {
             if scheduledAdmission != nil && !scheduledJoinPending { calendar.finishScheduledTransportPreparation() }
@@ -475,7 +485,7 @@ final class ConferenceModel: ObservableObject {
         guard scheduledAdmission?() != false else { calendar.finishScheduledTransportPreparation(); return }
         if setup.needsDismissal {
             setup.performMeetingIntent { [weak self] in self?.startJoin(target, nameOverride: nameOverride, quiet: quiet,
-                title: title, engineWasChosen: engineWasChosen, audioOnly: audioOnly, scheduledAdmission: scheduledAdmission) }; return
+                title: title, engineWasChosen: engineWasChosen, backgroundJoin: backgroundJoin, scheduledAdmission: scheduledAdmission) }; return
         }
         setup.suspendForMeeting()
         dismissEngineSelection()
@@ -514,7 +524,7 @@ final class ConferenceModel: ObservableObject {
         }
         let knownEngine = rejoinEvidence.flatMap { $0.invitation == target.invitationURL ? $0.engine : nil } ??
             history.matching(target.invitationURL)?.engine
-        let request = JoinRequest(target: target, name: name, quiet: quiet, audioOnly: audioOnly, knownEngine: knownEngine, title: visitTitle,
+        let request = JoinRequest(target: target, name: name, quiet: quiet, backgroundJoin: backgroundJoin, knownEngine: knownEngine, title: visitTitle,
                                   admission: scheduledAdmission)
         scheduledJoinPending = scheduledAdmission != nil
         rejoinEvidence = nil
@@ -631,7 +641,7 @@ final class ConferenceModel: ObservableObject {
                     try handoffToTransport()
                     try engine.configure(container: container, networkURL: networkURL,
                                          displayName: request.name)
-                    try engine.join(target: guest, displayName: request.name, audioOnly: request.audioOnly)
+                    try engine.join(target: guest, displayName: request.name, backgroundJoin: request.backgroundJoin)
                 case .jam(let jam):
                     let credentials = try await jamService.join(jam, name: request.name)
                     try checkAdmission()
@@ -1029,7 +1039,12 @@ final class ConferenceModel: ObservableObject {
 
 extension ConferenceModel: BackgroundAudioJoinSession {
     func resolveBackgroundJoin(reference: String) async -> ReminderOccurrence? {
-        await calendar.reminders.resolve(reference: reference)
+        let occurrence = await calendar.reminders.resolve(reference: reference)
+        #if DEBUG
+        CameraBackgroundTrace.event("background-join-reference-resolved", ["found": occurrence != nil,
+            "pid": ProcessInfo.processInfo.processIdentifier])
+        #endif
+        return occurrence
     }
     func beginBackgroundJoin(_ occurrence: ReminderOccurrence, access: BackgroundJoinAccess) -> BackgroundJoinStart {
         if isInConference, let connectedURL,
@@ -1044,7 +1059,7 @@ extension ConferenceModel: BackgroundAudioJoinSession {
         calendar.cancelAutomaticJoin(suppress: true)
         calendarReminderTarget = occurrence.room.map { ($0, occurrence.eventID) }
         set(target: target)
-        startJoin(target, quiet: false, title: occurrence.title, engineWasChosen: true, audioOnly: true)
+        startJoin(target, quiet: false, title: occurrence.title, engineWasChosen: true, backgroundJoin: true)
         return isJoining ? .started(sessionGeneration) : .openApp
     }
     func backgroundJoinProgress(token: UInt64) -> BackgroundJoinProgress {

@@ -48,6 +48,12 @@ enum CameraBackgroundTrace {
             var contents = (try? Data(contentsOf: file)) ?? Data()
             if contents.count > 262_144 { contents.removeAll(keepingCapacity: true) }
             contents.append(data); try? contents.write(to: file, options: .atomic)
+            if event.hasPrefix("pip-") || event.hasPrefix("background-join-") {
+                let lifecycle = directory.appendingPathComponent("pip-lifecycle.jsonl")
+                var events = (try? Data(contentsOf: lifecycle)) ?? Data()
+                if events.count > 131_072 { events.removeAll(keepingCapacity: true) }
+                events.append(data); try? events.write(to: lifecycle, options: .atomic)
+            }
         }
     }
     static func outgoing(records: [CameraUplinkStatistics.Record], cameraMID: String) {

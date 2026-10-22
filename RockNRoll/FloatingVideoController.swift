@@ -14,7 +14,6 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         var start: (AVPictureInPictureController) -> Void = { $0.startPictureInPicture() }
         var stop: (AVPictureInPictureController) -> Void = { $0.stopPictureInPicture() }
         var recoveryTimeoutNanoseconds: UInt64 = 10_000_000_000
-        var allowsFirstBackgroundStart: () -> Bool = { false }
     }
     private let environment: Environment
     private enum Phase { case idle, starting, active, stopping }
@@ -33,13 +32,12 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     private var continuityArmed = false
     private var interruptionStopPending = false
     private var hasVideo = false
-    private var firstBackgroundStartPending = false
     private var recoveryAttempts = 0
     private var recoveryTask: Task<Void, Never>?
     private var recoveryDeadline: Task<Void, Never>?
     private var recoveryDemand = false
     var onRecoveryDemandChanged: ((Bool) -> Void)?
-    var needsRecoveryFrames: Bool { (resumePending || experimentalStartPending) && !suspended && !closedWhileBackgrounded && !isEnded }
+    var needsRecoveryFrames: Bool { resumePending && !suspended && !closedWhileBackgrounded && !isEnded }
     var isPresenting: Bool { phase == .active || phase == .starting }
     private weak var microphoneActivity: MicrophoneActivity?
     var onPresentationChanged: ((Bool) -> Void)?
@@ -51,12 +49,6 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     var controllerForTesting: AVPictureInPictureController? { controller }
     var waitingForVideoForTesting: Bool { !hasVideo }
     #endif
-    private var experimentalStartPending: Bool {
-        return firstBackgroundStartPending
-    }
-    private var allowsFirstBackgroundStart: Bool {
-        return environment.allowsFirstBackgroundStart()
-    }
     var preferredSize = CGSize(width: 320, height: 180) {
         didSet { if oldValue != preferredSize { contentController?.preferredContentSize = preferredSize } }
     }
@@ -93,7 +85,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
             // An active meeting can temporarily have no video. Keep its stable
             // PiP window/anchor while waiting for a replacement share or rejoin.
             controller?.canStartPictureInPictureAutomaticallyFromInline = false
-            if preservingPresentation && (continuityArmed || phase == .starting || resumePending || allowsFirstBackgroundStart && controller != nil) { return }
+            if preservingPresentation && (continuityArmed || phase == .starting || resumePending) { return }
             sourceView = nil
             continuityArmed = false
             cancelPendingStart()
@@ -105,31 +97,13 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         startPendingManualRequest()
     }
 
-    /// Pre-arm only the opt-in experiment while a real foreground anchor exists.
-    func prepareAnchor(_ view: UIView) {
-        #if DEBUG
-        CameraBackgroundTrace.event("pip-anchor", ["enabled": allowsFirstBackgroundStart,
-            "sourceInWindow": view.window != nil, "sourceHidden": view.isHidden,
-            "hasController": controller != nil, "suspended": suspended, "phase": String(describing: phase)])
-        #endif
-        guard !isEnded, allowsFirstBackgroundStart else { return }
-        sourceView = view
-        contentView.setWaitingForVideo(!hasVideo)
-        prepare()
-        traceRecovery("pip-anchor-prepared")
-    }
-
-    /// Called for a new signaled source, before the SDK has a renderer/frame.
-    /// A duplicate event must not replenish the bounded startup budget.
-    func requestBackgroundFrames(isScreenShare: Bool, allowExperimental: Bool = true) {
+    /// Reacquire frames only for a PiP window that was already presented.
+    /// A new remote source cannot create the first PiP while backgrounded.
+    func requestBackgroundFrames() {
         guard !isEnded, !suspended, !closedWhileBackgrounded, FloatingVideoPreference.enabled,
               environment.applicationState() == .background, controller != nil,
-              phase == .idle, !needsRecoveryFrames else { return }
-        if continuityArmed { resumePending = true }
-        else {
-            guard allowExperimental, isScreenShare, allowsFirstBackgroundStart else { return }
-            firstBackgroundStartPending = true
-        }
+              continuityArmed, phase == .idle, !needsRecoveryFrames else { return }
+        resumePending = true
         recoveryAttempts = 0
         beginRecoveryDeadline()
         updateRecoveryDemand()
@@ -138,17 +112,9 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
 
     func cancelPendingStart() {
         resumePending = false
-        firstBackgroundStartPending = false
         recoveryTask?.cancel(); recoveryTask = nil
         recoveryDeadline?.cancel(); recoveryDeadline = nil
         updateRecoveryDemand()
-    }
-
-    func cancelExperimentalStart() {
-        guard experimentalStartPending else { return }
-        let unconfirmedStart = phase == .starting
-        cancelPendingStart()
-        if unconfirmedStart { continuityArmed = false; tearDown() }
     }
 
     private func beginRecoveryDeadline() {
@@ -165,7 +131,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     }
 
     private func prepare(manual: Bool = false) {
-        guard !isEnded, !suspended, environment.supported(), hasVideo || allowsFirstBackgroundStart,
+        guard !isEnded, !suspended, environment.supported(), hasVideo,
               manual || FloatingVideoPreference.enabled,
               environment.applicationState() != .background,
               phase == .idle, let sourceView, sourceView.window != nil else { return }
@@ -216,11 +182,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         guard FloatingVideoPreference.enabled else {
             continuityArmed = false; cancelPendingStart(); tearDown(); return
         }
-        if !allowsFirstBackgroundStart {
-            let pendingFirstStart = experimentalStartPending
-            cancelExperimentalStart()
-            if pendingFirstStart || !hasVideo && !continuityArmed { tearDown() }
-        }
+        if !hasVideo && !continuityArmed { tearDown() }
         prepare()
     }
 
@@ -229,7 +191,6 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         self.suspended = suspended
         traceRecovery(suspended ? "pip-suspend" : "pip-resume")
         if suspended {
-            cancelExperimentalStart()
             interruptionStopPending = interruptionStopPending || phase == .active || phase == .starting
             resumePending = resumePending || phase == .active || phase == .starting
             recoveryTask?.cancel(); recoveryTask = nil
@@ -341,12 +302,11 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         cancelPendingStart(); recoveryAttempts = 0
     }
 
-    /// AVKit may start a pre-armed empty anchor despite automatic start being
-    /// disabled. Reject it before it can establish continuity or media demand.
+    /// Stale callbacks cannot establish continuity without video or a previously
+    /// presented PiP window.
     private func acceptStart() -> Bool {
         guard !isEnded, !closedWhileBackgrounded, phase != .stopping,
-              hasVideo || continuityArmed,
-              !experimentalStartPending || allowsFirstBackgroundStart else {
+              hasVideo || continuityArmed else {
             continuityArmed = false
             cancelPendingStart()
             tearDown()
@@ -385,7 +345,10 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
                                     failedToStartPictureInPictureWithError error: Error) {
         guard controller === self.controller else { return }
         #if DEBUG
-        CameraBackgroundTrace.event("pip-failed", ["error": (error as NSError).code])
+        CameraBackgroundTrace.event("pip-failed", ["error": (error as NSError).code,
+            "domain": (error as NSError).domain, "description": error.localizedDescription,
+            "underlying": ((error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError)?.localizedDescription ?? "",
+            "reason": (error as NSError).localizedFailureReason ?? ""])
         #endif
         phase = .idle
         microphoneActivity?.setFloating(false)
@@ -394,8 +357,8 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         guard needsRecoveryFrames else { return }
         recoveryAttempts += 1
         guard recoveryAttempts <= 2 else { cancelPendingStart(); return }
-        // AVKit may still be handing video back. The same bounded budget serves
-        // retained-window recovery and the opt-in development experiment.
+        // AVKit may still be handing video back. Keep recovery within the
+        // retained window's bounded retry budget.
         recoveryTask = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
             self?.startPendingManualRequest()

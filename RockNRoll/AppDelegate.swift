@@ -4,6 +4,9 @@ import CloudKit
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions options: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        #if DEBUG
+        ColdJoinDeviceFixture.bootstrap()
+        #endif
         NativeH264ColorEncoder.prepare()
         CalendarReminderBroker.shared.install()
         return true

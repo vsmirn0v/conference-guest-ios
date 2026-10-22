@@ -15,6 +15,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
     private var presenterExperiment: MacPresenterQualification?
     private var previewExperiment: PreviewCadenceExperiment?
+    private var backgroundJoinFixture: BackgroundJoinDeviceFixture?
     #endif
 
     func scene(
@@ -24,6 +25,19 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     ) {
         guard let windowScene = scene as? UIWindowScene else { return }
         #if DEBUG
+        if ProcessInfo.processInfo.environment["CONFERENCE_TEST_COLD_JOIN_CLEANUP"] == "1" {
+            let window = UIWindow(windowScene: windowScene)
+            let controller = UIViewController()
+            let label = UILabel(frame: CGRect(x: 30, y: 120, width: 300, height: 60))
+            label.text = "Cleaning owned fixture"
+            controller.view.addSubview(label); window.rootViewController = controller
+            window.makeKeyAndVisible(); self.window = window
+            Task { @MainActor in
+                await ColdJoinDeviceFixture.cleanupIfRequested()
+                label.text = ColdJoinDeviceFixture.cleanupSucceeded ? "cold-join-cleaned" : "cold-join-cleanup-failed"
+            }
+            return
+        }
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_RENDERER_RESET_PROBE"] == "1" {
             let window = UIWindow(windowScene: windowScene)
             window.rootViewController = RendererResetProbeViewController()
@@ -46,15 +60,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             UserDefaults.standard.removeObject(forKey: "savedDisplayName")
         }
         if ProcessInfo.processInfo.environment["CONFERENCE_TEST_RESET_BACKGROUND_EXPERIMENTS"] == "1" {
-            UserDefaults.standard.removeObject(forKey: BackgroundExperimentPreferences.audioJoinKey)
-            UserDefaults.standard.removeObject(forKey: BackgroundExperimentPreferences.firstPiPKey)
+            UserDefaults.standard.removeObject(forKey: BackgroundAudioJoinPrototype.enabledKey)
             BackgroundAudioJoinPrototype.shared.preferencesChanged()
         }
         #endif
         let backgroundMeeting = BackgroundAudioJoinPrototype.shared.takePreparedForScene()
         #if DEBUG
         CameraBackgroundTrace.start()
-        let model = backgroundMeeting?.model ?? MeetingSetupUIFixture.makeModel() ?? CalendarUIFixture.makeModel() ?? RoomSyncUIFixture.makeModel()
+        let model = backgroundMeeting?.model ?? RoomSyncUIFixture.makeBackgroundJoinModel() ?? MeetingSetupUIFixture.makeModel() ?? CalendarUIFixture.makeModel() ?? RoomSyncUIFixture.makeModel()
         RoomSyncUIFixture.configure(model)
         MeetingContinuationUIFixture.configure(model)
         MeetingContinuationLiveFixture.configure(model)
@@ -83,6 +96,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         controller.hideMeeting = { [weak self] in self?.macMeeting?.hideMeeting() }
 
         #if DEBUG
+        ColdJoinDeviceFixture.prepareIfRequested(model: model)
+        backgroundJoinFixture = BackgroundJoinDeviceFixture.make(model: model, window: window)
         if RoomSyncLiveProbe.runIfRequested(window: window) { return }
         if configureFixtures(model: model, controller: controller, window: window) { return }
         #endif
@@ -96,8 +111,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         #if DEBUG
         let environment = ProcessInfo.processInfo.environment
-        if (environment.keys.contains { $0.hasPrefix("CONFERENCE_TEST_") } && environment["CONFERENCE_TEST_MEETING_SETUP"] == nil) ||
-            NSClassFromString("XCTestCase") != nil { model.setup.suspendForMeeting() }
+        if !ColdJoinDeviceFixture.active &&
+            ((environment.keys.contains { $0.hasPrefix("CONFERENCE_TEST_") } && environment["CONFERENCE_TEST_MEETING_SETUP"] == nil) ||
+             NSClassFromString("XCTestCase") != nil) { model.setup.suspendForMeeting() }
         #endif
         model.setup.finishLaunch(hasMeetingIntent: !connectionOptions.urlContexts.isEmpty || !connectionOptions.userActivities.isEmpty ||
             CalendarReminderBroker.shared.hasPendingIntent || model.calendar.reminders.hasOpenIntent)
@@ -121,6 +137,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneDidBecomeActive(_ scene: UIScene) {
         BackgroundAudioJoinPrototype.shared.foregrounded()
+        #if DEBUG
+        backgroundJoinFixture?.foregrounded()
+        #endif
         if !ProcessInfo.processInfo.isiOSAppOnMac { conference?.reminderVisibilityChanged(true) }
         conference?.meetingActivityForegrounded()
         macMeeting?.becameActive()

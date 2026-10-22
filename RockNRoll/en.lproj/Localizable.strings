@@ -1034,30 +1034,24 @@
 
 "Joining in %d…" = "Joining in %d…";
 
-"Experimental features" = "Experimental features";
-
-"These features are off by default and unverified on physical devices. They may fail or ask you to open the app." = "These features are off by default and unverified on physical devices. They may fail or ask you to open the app.";
-
-"Background audio join" = "Background audio join";
-
 "Touch and hold a calendar meeting notification, then choose Join audio. A normal tap opens the app." = "Touch and hold a calendar meeting notification, then choose Join audio. A normal tap opens the app.";
-
-"Guest meetings only. Microphone and camera start off. Save your name, grant microphone access in advance, and turn off System call controls in Settings > Phone calls." = "Guest meetings only. Microphone and camera start off. Save your name, grant microphone access in advance, and turn off System call controls in Settings > Phone calls.";
-
-"Configure meeting reminders" = "Configure meeting reminders";
 
 "Allow microphone access" = "Allow microphone access";
 
 "Allow microphone access in Settings" = "Allow microphone access in Settings";
 
-"Audio from a reminder" = "Audio from a reminder";
-
-"Enable calendar reminders separately. Turning this experiment off keeps a meeting that has already connected." = "Enable calendar reminders separately. Turning this experiment off keeps a meeting that has already connected.";
-
-"First screen share in the background" = "First screen share in the background";
-
-"Open a guest meeting in the foreground, then go Home before anyone shares. The first incoming screen share may start Picture in Picture." = "Open a guest meeting in the foreground, then go Home before anyone shares. The first incoming screen share may start Picture in Picture.";
-
-"Requires Floating video when multitasking to be on in the meeting. iOS decides whether Picture in Picture can start." = "Requires Floating video when multitasking to be on in the meeting. iOS decides whether Picture in Picture can start.";
-
 "Picture in Picture" = "Picture in Picture";
+
+"Join audio from notifications" = "Join audio from notifications";
+
+"Joining from notifications" = "Joining from notifications";
+
+"Join guest meetings without opening the app. Microphone and camera start off." = "Join guest meetings without opening the app. Microphone and camera start off.";
+
+"Save your name on Home before joining from a notification." = "Save your name on Home before joining from a notification.";
+
+"Turn off System call controls in Settings > Phone calls to join without opening the app." = "Turn off System call controls in Settings > Phone calls to join without opening the app.";
+
+"Microphone access is required to connect audio. Your microphone stays off until you turn it on." = "Microphone access is required to connect audio. Your microphone stays off until you turn it on.";
+
+"If audio cannot connect, a notification asks you to open the app. Live Activity can appear after you open it. Turning this off keeps a connected meeting." = "If audio cannot connect, a notification asks you to open the app. Live Activity can appear after you open it. Turning this off keeps a connected meeting.";

@@ -32,12 +32,14 @@ struct CalendarReminderSettingsView: View {
             ReminderTimingEditor(timing: Binding(get: { reminders.profile.timing }, set: { timing in
                 var value = reminders.profile; value.timing = timing; reminders.setProfile(value)
             }))
+            if !ProcessInfo.processInfo.isiOSAppOnMac { BackgroundAudioJoinSettingsSection() }
             Section {
                 NavigationLink(L("Delivery and privacy")) { ReminderDeliveryView(reminders: reminders) }
                     .accessibilityIdentifier("reminders.delivery")
             }
             if let error = reminders.error { Section { Text(error).foregroundStyle(.red) } }
-        }.navigationTitle(L("Meeting reminders"))
+        }.accessibilityIdentifier("reminders.settingsForm")
+            .navigationTitle(L("Meeting reminders"))
             .onAppear { reminders.foregrounded() }
     }
 }
@@ -62,35 +64,41 @@ private struct ReminderDeliveryView: View {
     }
 }
 
-struct ExperimentalFeaturesView: View {
-    @ObservedObject var calendar: CalendarMeetingStore
-    @AppStorage(BackgroundExperimentPreferences.audioJoinKey) private var backgroundAudioJoin = false
-    @AppStorage(BackgroundExperimentPreferences.firstPiPKey) private var firstBackgroundPiP = false
+private struct BackgroundAudioJoinSettingsSection: View {
+    @AppStorage(BackgroundAudioJoinPrototype.enabledKey) private var backgroundAudioJoin = BackgroundAudioJoinPrototype.defaultEnabled
+    @AppStorage(SystemCallCoordinator.controlsPreferenceKey) private var systemCallControls = false
+    @AppStorage("savedDisplayName") private var displayName = ""
     @Environment(\.scenePhase) private var scenePhase
     @State private var microphonePermission = AVAudioSession.sharedInstance().recordPermission
     @State private var requestingMicrophone = false
 
     var body: some View {
-        Form {
-            Section {
-                Text(L("These features are off by default and unverified on physical devices. They may fail or ask you to open the app."))
-                    .fixedSize(horizontal: false, vertical: true)
+        Section {
+            Toggle(isOn: $backgroundAudioJoin) {
+                Text(L("Join audio from notifications")).fixedSize(horizontal: false, vertical: true)
             }
-            Section {
-                Toggle(isOn: $backgroundAudioJoin) {
-                    Text(L("Background audio join")).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("reminders.backgroundAudioJoin")
+                .onChange(of: backgroundAudioJoin) { _ in
+                    BackgroundAudioJoinPrototype.shared.preferencesChanged()
                 }
-                    .accessibilityIdentifier("reminders.backgroundAudioJoin")
-                    .onChange(of: backgroundAudioJoin) { _ in
-                        BackgroundAudioJoinPrototype.shared.preferencesChanged()
-                    }
+            if backgroundAudioJoin {
                 Text(L("Touch and hold a calendar meeting notification, then choose Join audio. A normal tap opens the app."))
                     .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("experiments.audioInstructions")
-                Text(L("Guest meetings only. Microphone and camera start off. Save your name, grant microphone access in advance, and turn off System call controls in Settings > Phone calls."))
-                    .fixedSize(horizontal: false, vertical: true)
-                NavigationLink(L("Configure meeting reminders")) { CalendarSettingsView(calendar: calendar) }
-                    .accessibilityIdentifier("experiments.reminders")
+                    .accessibilityIdentifier("reminders.audioInstructions")
+                if !MeetingEngineKind.guest.inputPolicy.accepts(name: displayName) {
+                    Text(L("Save your name on Home before joining from a notification."))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("reminders.audioNameRequired")
+                }
+                if systemCallControls {
+                    Text(L("Turn off System call controls in Settings > Phone calls to join without opening the app."))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("reminders.audioSystemControls")
+                }
+                if microphonePermission != .granted {
+                    Text(L("Microphone access is required to connect audio. Your microphone stays off until you turn it on."))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if microphonePermission == .undetermined {
                     Button(L("Allow microphone access")) {
                         requestingMicrophone = true
@@ -100,33 +108,21 @@ struct ExperimentalFeaturesView: View {
                                 requestingMicrophone = false
                             }
                         }
-                    }.disabled(requestingMicrophone).accessibilityIdentifier("experiments.microphonePermission")
+                    }.disabled(requestingMicrophone).accessibilityIdentifier("reminders.microphonePermission")
                 } else if microphonePermission == .denied {
                     Button(L("Allow microphone access in Settings")) {
                         UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
-                    }.accessibilityIdentifier("experiments.microphoneSettings")
+                    }.accessibilityIdentifier("reminders.microphoneSettings")
                 }
-            } header: { Text(L("Audio from a reminder")) } footer: {
-                Text(L("Enable calendar reminders separately. Turning this experiment off keeps a meeting that has already connected."))
             }
-            Section {
-                Toggle(isOn: $firstBackgroundPiP) {
-                    Text(L("First screen share in the background")).fixedSize(horizontal: false, vertical: true)
+        } header: { Text(L("Joining from notifications")) } footer: {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L("Join guest meetings without opening the app. Microphone and camera start off."))
+                if backgroundAudioJoin {
+                    Text(L("If audio cannot connect, a notification asks you to open the app. Live Activity can appear after you open it. Turning this off keeps a connected meeting."))
                 }
-                    .accessibilityIdentifier("experiments.firstBackgroundPiP")
-                    .onChange(of: firstBackgroundPiP) { _ in
-                        NotificationCenter.default.post(name: BackgroundExperimentPreferences.changed, object: nil)
-                    }
-                Text(L("Open a guest meeting in the foreground, then go Home before anyone shares. The first incoming screen share may start Picture in Picture."))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityIdentifier("experiments.pipInstructions")
-            } header: { Text(L("Picture in Picture")) } footer: {
-                Text(L("Requires Floating video when multitasking to be on in the meeting. iOS decides whether Picture in Picture can start."))
             }
         }
-        .accessibilityIdentifier("experiments.form")
-        .navigationTitle(L("Experimental features"))
-        .navigationBarTitleDisplayMode(.inline)
         .onAppear { microphonePermission = AVAudioSession.sharedInstance().recordPermission }
         .onChange(of: scenePhase) { phase in
             if phase == .active { microphonePermission = AVAudioSession.sharedInstance().recordPermission }
