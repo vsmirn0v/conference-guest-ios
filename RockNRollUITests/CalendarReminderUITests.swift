@@ -74,7 +74,8 @@ final class CalendarReminderUITests: XCTestCase {
     }
     private func reveal(_ element: XCUIElement, in form: XCUIElement) {
         var unlocatedAttempts = 0
-        for _ in 0..<16 where !element.isHittable {
+        for _ in 0..<16 {
+            if element.isHittable { return }
             let viewport = form.frame.intersection(appWindowFrame)
             let target = element.exists ? element.frame : .zero
             if target.width > 1, target.height > 1, target.midY < viewport.minY {
@@ -97,9 +98,8 @@ final class CalendarReminderUITests: XCTestCase {
         // Activate the actual control, whose center excludes the row label.
         let nested = element.descendants(matching: .switch).firstMatch
         let control = nested.exists ? nested : element
-        let frame = control.frame
-        print("AUDIO_JOIN_SWITCH_ACTIVATE row=\(element.frame) control=\(frame) center=(\(frame.midX),\(frame.midY)) expected=\(expected)")
-        control.tap()
+        // Exercise the native switch with one deliberate press.
+        control.press(forDuration: 0.2)
         let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: element)
         let result = XCTWaiter.wait(for: [changed], timeout: 3)
         if result != .completed {
@@ -126,13 +126,43 @@ final class CalendarReminderUITests: XCTestCase {
         openAudioJoinSettings("en")
         let form = app.collectionViews["reminders.settingsForm"]
         let audio = app.switches["reminders.backgroundAudioJoin"]
-        reveal(audio, in: form); XCTAssertEqual(audio.value as? String, "1")
+        reveal(audio, in: form)
+        let initial = audio.value as? String
+        XCTAssertTrue(initial == "0" || initial == "1")
         XCTAssertFalse(app.switches["experiments.firstBackgroundPiP"].exists)
-        flip(audio, in: form); XCTAssertEqual(audio.value as? String, "0")
-        flip(audio, in: form); XCTAssertEqual(audio.value as? String, "1")
+        flip(audio, in: form)
+        XCTAssertNotEqual(audio.value as? String, initial)
+        flip(audio, in: form)
+        XCTAssertEqual(audio.value as? String, initial)
         XCTAssertFalse(app.alerts.firstMatch.exists)
         let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         screenshot.name = "Audio join in meeting reminders"; screenshot.lifetime = .keepAlways; add(screenshot)
+    }
+    func testReleaseAudioJoinNativePressAndPersistence() {
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
+        openAudioJoinSettings("en")
+        let form = app.collectionViews["reminders.settingsForm"]
+        let audio = app.switches["reminders.backgroundAudioJoin"]
+        reveal(audio, in: form)
+        var expected = audio.value as? String ?? ""
+        for _ in 0..<3 {
+            expected = expected == "1" ? "0" : "1"
+            let nested = audio.descendants(matching: .switch).firstMatch
+            let control = nested.exists ? nested : audio
+            print("AUDIO_JOIN_NATIVE_PRESS expected=\(expected) frame=\(control.frame)")
+            control.press(forDuration: 0.2)
+            let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: audio)
+            XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+        }
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Native switch after deliberate press"; screenshot.lifetime = .keepAlways; add(screenshot)
+        app.terminate(); app.launch()
+        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
+        openAudioJoinSettings("en")
+        reveal(audio, in: form)
+        XCTAssertEqual(audio.value as? String, expected)
     }
     func testAudioJoinDefaultsOnAndPreservesOptOutWithoutEnablingReminders() {
         launchAudioJoinSettings("en")

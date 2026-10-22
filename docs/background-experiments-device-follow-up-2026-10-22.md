@@ -192,3 +192,7 @@ Post-decision checks:
   Earlier physical existing-PiP and cold-notification evidence above, plus the
   user's successful audible background/call recovery check, remain the device
   acceptance evidence. No beta was published by this change.
+
+## Build 106 distribution
+
+The follow-up was integrated into 0.2.0 (106), published to Internal and Public Beta after Mac, simulator, Release artifact and settings UI qualification. Background Join audio is now a normal default-on Meeting reminders feature, preserving explicit choices; first-time background PiP is removed. Existing PiP recovery remains automatic. See [build 106 release record](release-0.2.0-build106.md) for validation, limitations and distribution readback.
