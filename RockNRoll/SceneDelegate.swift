@@ -44,7 +44,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         #endif
         #if DEBUG
         CameraBackgroundTrace.start()
-        let model = MeetingSetupUIFixture.makeModel() ?? CalendarUIFixture.makeModel() ?? RoomSyncUIFixture.makeModel()
+        let backgroundMeeting = BackgroundAudioJoinPrototype.shared.takePreparedForScene()
+        let model = backgroundMeeting?.model ?? MeetingSetupUIFixture.makeModel() ?? CalendarUIFixture.makeModel() ?? RoomSyncUIFixture.makeModel()
         RoomSyncUIFixture.configure(model)
         MeetingContinuationUIFixture.configure(model)
         MeetingContinuationLiveFixture.configure(model)
@@ -58,23 +59,22 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                                                             continuation: model.continuation,
                                                             calendar: model.calendar,
                                                             setup: model.setup))
+        #if DEBUG
+        let controller = backgroundMeeting?.container ?? MeetingContainerViewController()
+        #else
         let controller = MeetingContainerViewController()
-        controller.addChild(hosting)
-        controller.view.addSubview(hosting.view)
-        hosting.view.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            hosting.view.leadingAnchor.constraint(equalTo: controller.view.leadingAnchor),
-            hosting.view.trailingAnchor.constraint(equalTo: controller.view.trailingAnchor),
-            hosting.view.topAnchor.constraint(equalTo: controller.view.topAnchor),
-            hosting.view.bottomAnchor.constraint(equalTo: controller.view.bottomAnchor)
-        ])
-        hosting.didMove(toParent: controller)
+        #endif
+        controller.mountHome(hosting)
         let window = UIWindow(windowScene: windowScene)
         window.rootViewController = controller
         window.makeKeyAndVisible()
         self.window = window
         self.conference = model
         model.configure(container: controller)
+        model.registerMeetingUnderlay(hosting.view)
+        #if DEBUG
+        BackgroundAudioJoinPrototype.shared.attach(model, container: controller)
+        #endif
         if ProcessInfo.processInfo.isiOSAppOnMac { macMeeting = MacMeetingCoordinator(model: model, window: window) }
         controller.canHideMeeting = { [weak self] in self?.macMeeting?.canHideMeeting == true }
         controller.hideMeeting = { [weak self] in self?.macMeeting?.hideMeeting() }
@@ -85,8 +85,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         #endif
 
         if let url = connectionOptions.urlContexts.first?.url {
+            #if DEBUG
+            BackgroundAudioJoinPrototype.shared.supersedeForForeground()
+            #endif
             model.receive(url: url)
         } else if let activity = connectionOptions.userActivities.first {
+            #if DEBUG
+            BackgroundAudioJoinPrototype.shared.supersedeForForeground()
+            #endif
             if !model.receiveContinuationActivity(activity), let url = activity.webpageURL { model.receive(url: url) }
         }
         #if DEBUG
@@ -100,16 +106,25 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
         guard let url = URLContexts.first?.url else { return }
+        #if DEBUG
+        BackgroundAudioJoinPrototype.shared.supersedeForForeground()
+        #endif
         conference?.receive(url: url)
     }
 
     func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+        #if DEBUG
+        BackgroundAudioJoinPrototype.shared.supersedeForForeground()
+        #endif
         if conference?.receiveContinuationActivity(userActivity) == true { return }
         guard let url = userActivity.webpageURL else { return }
         conference?.receive(url: url)
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
+        #if DEBUG
+        BackgroundAudioJoinPrototype.shared.foregrounded()
+        #endif
         if !ProcessInfo.processInfo.isiOSAppOnMac { conference?.reminderVisibilityChanged(true) }
         conference?.meetingActivityForegrounded()
         macMeeting?.becameActive()
@@ -136,5 +151,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         conference?.reminderVisibilityChanged(false)
         macMeeting?.invalidate()
         macMeeting = nil
+        #if DEBUG
+        if let conference, BackgroundAudioJoinPrototype.shared.sceneDisconnected(conference) {
+            window?.rootViewController = nil; window = nil
+        }
+        #endif
     }
 }

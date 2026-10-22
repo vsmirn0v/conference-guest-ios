@@ -179,7 +179,7 @@ final class AudioCoordinator {
         mixingTask?.cancel(); mixingTask = nil
     }
 
-    func start(ready: @escaping @MainActor () async throws -> Void,
+    func start(preserveCurrentRoute: Bool = false, ready: @escaping @MainActor () async throws -> Void,
                failure: @escaping @MainActor (Error) -> Void) {
         beginSession()
         startupReady = ready; startupFailure = failure
@@ -187,7 +187,7 @@ final class AudioCoordinator {
         startupTask = Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.prepareForJoin()
+                try await self.prepareForJoin(preserveCurrentRoute: preserveCurrentRoute)
                 guard self.lease === expected, expected.isActive else { return }
                 try await ready()
                 if self.lease === expected { self.startupReady = nil; self.startupFailure = nil }
@@ -198,9 +198,10 @@ final class AudioCoordinator {
     }
 
     /// The provider may reconfigure the shared session later; real-device validation is required.
-    func prepareForJoin() async throws {
+    func prepareForJoin(preserveCurrentRoute: Bool = false) async throws {
         let expected = lease
-        let prepare = needsInitialPreparation ? prepareInitialSession : prepareSession
+        let prepare = preserveCurrentRoute && needsInitialPreparation ? Self.prepareListeningSession :
+            needsInitialPreparation ? prepareInitialSession : prepareSession
         try await worker.perform(lease: expected, operation: prepare)
         guard lease === expected, expected.isActive else { throw CancellationError() }
         needsInitialPreparation = false
@@ -273,6 +274,17 @@ final class AudioCoordinator {
 
     nonisolated static var communicationOptions: AVAudioSession.CategoryOptions {
         [.mixWithOthers, .allowBluetoothHFP, .allowBluetoothA2DP]
+    }
+
+    /// Background listening retains a receiver/speaker selection as well as an external route.
+    private nonisolated static func prepareListeningSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        let outputs = session.currentRoute.outputs.map(\.portType)
+        let receiver = outputs.contains(.builtInReceiver)
+        let speaker = outputs.contains(.builtInSpeaker)
+        try session.setCategory(.playAndRecord, mode: receiver ? .voiceChat : .videoChat, options: communicationOptions)
+        if receiver || speaker { try session.overrideOutputAudioPort(speaker ? .speaker : .none) }
+        if session.preferredSampleRate != 48_000 { try? session.setPreferredSampleRate(48_000) }
     }
 
     private nonisolated static func prepareCommunicationSession(resetBuiltInRoute: Bool = false) throws {

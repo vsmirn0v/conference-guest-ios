@@ -175,6 +175,14 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     func showMediaStatus(_ message: String?) { activeControls?.showMediaStatus(message) }
+    func registerUnderlay(_ view: UIView) { screenPresenter?.registerUnderlay(view) }
+    #if DEBUG
+    var backgroundAudioReadyForPrototype: Bool {
+        hasBecomeActive && isSDKActive && mediaConnectionConfirmed && activeCoordinator != nil &&
+            isCallAudioReady && !isSystemHeld && !isAudioInterrupted && !isMediaReconnecting &&
+            !microphoneIntentOn && !cameraIntentOn && displayMode == .audioOnly
+    }
+    #endif
 
     func prepareToFloat() {
         streamViews.setBackgrounded(UIApplication.shared.applicationState != .active)
@@ -283,6 +291,10 @@ final class NativeConferenceEngine: CallEngine {
         streamViews.onFloatingVideo = { [weak self] viewport, name, isShare, isStageSource in
             guard let self, self.hasJoinStarted, !self.leaveRequested, self.finishing == nil else { return }
             self.floatingVideo?.select(viewport: viewport, name: name, isScreenShare: isShare, isStageSource: isStageSource)
+        }
+        streamViews.onFloatingTargetChanged = { [weak self] target in
+            guard let self, self.hasJoinStarted, !self.leaveRequested, self.finishing == nil else { return }
+            self.floatingVideo?.selectSignaledSource(target)
         }
         streamViews.onStagePresentation = { [weak self] presentation in
             guard let self else { return }
@@ -422,7 +434,11 @@ final class NativeConferenceEngine: CallEngine {
         #endif
         guard let floatingSourceView else { return }
         let epoch = sessionEpoch
-        let floating = GuestVideoPictureInPicture(sourceView: floatingSourceView, speaker: activeSpeaker)
+        var environment = FloatingVideoController.Environment()
+        #if DEBUG
+        environment.allowsFirstBackgroundStart = { FloatingVideoPreference.experimentalBackgroundStart }
+        #endif
+        let floating = GuestVideoPictureInPicture(sourceView: floatingSourceView, speaker: activeSpeaker, floatingEnvironment: environment)
         floating.rendersSelectedViewport = false
         floating.wantsInlineFrames = activeControls?.wantsStageFrames ?? true
         floating.onAvailabilityChanged = { [weak self] available in
@@ -813,7 +829,7 @@ final class NativeConferenceEngine: CallEngine {
         if let codecFallbackObserver { NotificationCenter.default.removeObserver(codecFallbackObserver) }
         codecFallbackObserver = nil
     }
-    func join(target: JoinTarget, displayName: String) throws {
+    func join(target: JoinTarget, displayName: String, audioOnly: Bool = false) throws {
         guard finishing == nil else { throw ProviderError.teardownInProgress }
         terminalEventTask?.cancel(); terminalEventTask = nil
         connectionSubscription?.cancel(); connectionSubscription = nil
@@ -830,7 +846,7 @@ final class NativeConferenceEngine: CallEngine {
         resetPiPMicrophoneObservation()
         streamViews.reset()
         offeredShare = nil
-        streamViews.displayMode = .all
+        streamViews.displayMode = audioOnly ? .audioOnly : .all
         activeInvitationURL = target.invitationURL
         activeRoomIdentifier = target.roomID
         chat?.clear()
@@ -867,7 +883,7 @@ final class NativeConferenceEngine: CallEngine {
         cameraIntentOn = false
         isSystemHeld = false
         audioGate = CallAudioRecoveryGate()
-        displayMode = .all
+        displayMode = audioOnly ? .audioOnly : .all
         isAudioInterrupted = false
         needsMediaReconnect = false
         isMediaReconnecting = false
@@ -902,9 +918,10 @@ final class NativeConferenceEngine: CallEngine {
         #endif
         GuestPublishingCodecPolicy.shared.begin(generation: sessionEpoch, roomID: target.roomID)
         installCodecRecovery()
-        beginFloatingVideoSession()
+        if !audioOnly { beginFloatingVideoSession() }
+        else { videoDemand.onChange = { [weak self] in self?.updateIncomingVideoDemand() } }
         installCallHandlers()
-        audio.start(ready: { [weak self] in
+        audio.start(preserveCurrentRoute: audioOnly, ready: { [weak self] in
             guard let self, self.hasJoinStarted, !self.leaveRequested else { return }
             #if DEBUG && targetEnvironment(simulator)
             if ProcessInfo.processInfo.environment["CONFERENCE_TEST_DIRECT_MEDIA"] == "1" {
@@ -966,7 +983,7 @@ final class NativeConferenceEngine: CallEngine {
             joinConferenceType: .skipIntermidiateScreen(room: room),
             mediaSettings: .allOff,
             analyticsConferenceType: nil,
-            preferredSpeaker: Self.joinSpeakerPreference(
+            preferredSpeaker: displayMode == .audioOnly && AVAudioSession.sharedInstance().currentRoute.outputs.contains(where: { $0.portType == .builtInReceiver }) ? .receiver : Self.joinSpeakerPreference(
                 outputTypes: AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType),
                 isMac: ProcessInfo.processInfo.isiOSAppOnMac),
             customRepresentation: minimalRepresentation()
@@ -1544,6 +1561,7 @@ final class NativeConferenceEngine: CallEngine {
                                         onDisplayMode: { [weak self] mode in
                                             guard let self, self.sessionEpoch == epoch else { return }
                                             self.displayMode = mode
+                                            if mode != .audioOnly && self.floatingVideo == nil { self.beginFloatingVideoSession() }
                                             if mode == .audioOnly { self.floatingVideo?.clear(preservingPresentation: false) }
                                             self.streamViews.displayMode = mode
                                             self.updateIncomingVideoDemand()

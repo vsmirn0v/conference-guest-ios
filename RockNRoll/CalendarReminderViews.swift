@@ -33,6 +33,7 @@ struct CalendarReminderSettingsView: View {
             }))
             Section {
                 NavigationLink(L("Delivery and privacy")) { ReminderDeliveryView(reminders: reminders) }
+                    .accessibilityIdentifier("reminders.delivery")
             }
             if let error = reminders.error { Section { Text(error).foregroundStyle(.red) } }
         }.navigationTitle(L("Meeting reminders"))
@@ -42,6 +43,9 @@ struct CalendarReminderSettingsView: View {
 
 private struct ReminderDeliveryView: View {
     @ObservedObject var reminders: CalendarReminderCoordinator
+    #if DEBUG
+    @AppStorage(BackgroundAudioJoinPrototype.enabledKey) private var backgroundAudioJoin = false
+    #endif
     private func binding(_ key: WritableKeyPath<ReminderProfile, Bool>) -> Binding<Bool> {
         Binding(get: { reminders.profile[keyPath: key] }, set: {
             var profile = reminders.profile; profile[keyPath: key] = $0; reminders.setProfile(profile)
@@ -56,6 +60,16 @@ private struct ReminderDeliveryView: View {
             Section {
                 Toggle(L("Show meeting details"), isOn: binding(\.details))
             } footer: { Text(L("When off, notifications show only the scheduled time.")) }
+            #if DEBUG
+            Section {
+                Toggle(L("Experimental background audio join"), isOn: $backgroundAudioJoin)
+                    .accessibilityIdentifier("reminders.backgroundAudioJoin")
+                    .onChange(of: backgroundAudioJoin) { enabled in
+                        if !enabled { BackgroundAudioJoinPrototype.shared.cancel() }
+                        CalendarReminderBroker.shared.install()
+                    }
+            } footer: { Text(L("Adds Join audio to reminders for guest meetings. Microphone and camera start off. Requires prior microphone permission and System call controls off. Device validation is pending.")) }
+            #endif
         }.navigationTitle(L("Delivery and privacy"))
     }
 }

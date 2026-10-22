@@ -5,6 +5,88 @@ import XCTest
 
 @MainActor
 final class GuestGalleryTests: XCTestCase {
+    func testReassignedRendererWithdrawsOldParticipantBeforeNewFramesArrive() async {
+        let streams = GuestStreamViews()
+        defer { streams.reset() }
+        streams.updateParticipants(["first", "second"].map {
+            .init(id: $0, name: $0, isLocal: false, microphoneOn: false, cameraOn: true, sharing: false)
+        })
+        let renderer = UIView()
+        func model(_ id: String) -> JazzParticipantViewModel {
+            .init(name: id, isAudioOn: false, isVideoOn: true, isPinned: false, isSharingScreen: false,
+                  isLocal: false, id: id, isDominantSpeaker: false, shouldShowParticipantInfo: true,
+                  isZoomable: false, watermarkState: .hidden, displayMode: .speaker)
+        }
+        let first = streams.makeView(model: model("first"), video: renderer)
+        var items = await snapshot(streams)
+        XCTAssertTrue(items.first { $0.id.participant == "first" }?.renderer === renderer)
+        streams.onGalleryPresentation = { items = $0 }
+        let second = streams.makeView(model: model("second"), video: renderer)
+        XCTAssertNil(items.first { $0.id.participant == "first" }?.renderer,
+                     "The old tile must retire synchronously before reassigned renderer callbacks arrive")
+        items = await snapshot(streams)
+        XCTAssertNil(items.first { $0.id.participant == "first" }?.renderer)
+        XCTAssertTrue(items.first { $0.id.participant == "second" }?.renderer === renderer)
+        let originalCamera = UIView()
+        let restored = streams.makeView(model: model("first"), video: originalCamera)
+        items = await snapshot(streams)
+        XCTAssertTrue(items.first { $0.id.participant == "first" }?.renderer === originalCamera)
+        XCTAssertTrue(items.first { $0.id.participant == "second" }?.renderer === renderer)
+        withExtendedLifetime([first, second, restored]) {}
+    }
+
+    func testNewSignaledSharePrecedesRendererAndDoesNotReuseOldCameraPixels() async {
+        let streams = GuestStreamViews()
+        defer { streams.reset() }
+        let camera = streams.makeView(model: JazzParticipantViewModel(name: "Camera", isAudioOn: false,
+            isVideoOn: true, isPinned: false, isSharingScreen: false, isLocal: false, id: "camera",
+            isDominantSpeaker: false, shouldShowParticipantInfo: false, isZoomable: false,
+            watermarkState: .hidden, displayMode: .speaker), video: UIView())
+        streams.setBackgrounded(true)
+        var signaled: GuestStreamViews.PinTarget?, selected: StreamViewport?
+        streams.onFloatingTargetChanged = { signaled = $0 }
+        streams.onFloatingVideo = { viewport, _, _, _ in selected = viewport }
+        streams.updateParticipants([
+            .init(id: "camera", name: "Camera", isLocal: false, microphoneOn: false, cameraOn: true, sharing: false),
+            .init(id: "presenter", name: "Presenter", isLocal: false, microphoneOn: false, cameraOn: false, sharing: true)
+        ])
+        _ = await snapshot(streams)
+        XCTAssertEqual(signaled, .init(participant: "presenter", isShare: true))
+        XCTAssertNil(selected, "A share startup must not use the previous camera's prepared frame")
+        streams.setPin(.init(participant: "camera", isShare: false))
+        _ = await snapshot(streams)
+        XCTAssertEqual(signaled, .init(participant: "camera", isShare: false))
+        XCTAssertTrue(selected === camera, "An explicit pin retains precedence over automatic screen sharing")
+        streams.displayMode = .audioOnly
+        _ = await snapshot(streams)
+        XCTAssertNil(signaled); XCTAssertNil(selected)
+    }
+
+    func testMultipleSharesUseTheSameSignaledAndRenderedTargetWhenJoinOrderDiffers() async {
+        let streams = GuestStreamViews()
+        defer { streams.reset() }
+        func participant(_ id: String) -> GuestStreamViews.Participant {
+            .init(id: id, name: id, isLocal: false, microphoneOn: false, cameraOn: false, sharing: true)
+        }
+        streams.updateParticipants([participant("b")])
+        _ = await snapshot(streams)
+        streams.updateParticipants([participant("b"), participant("a")])
+        let tiles = ["a", "b"].map { id in
+            streams.makeView(model: JazzParticipantViewModel(name: id, isAudioOn: false, isVideoOn: true,
+                isPinned: false, isSharingScreen: true, isLocal: false, id: id, isDominantSpeaker: false,
+                shouldShowParticipantInfo: false, isZoomable: false, watermarkState: .hidden,
+                displayMode: .speaker), video: UIView())
+        }
+        streams.setBackgrounded(true)
+        var signaled: GuestStreamViews.PinTarget?, selected: StreamViewport?
+        streams.onFloatingTargetChanged = { signaled = $0 }
+        streams.onFloatingVideo = { viewport, _, _, _ in selected = viewport }
+        _ = await snapshot(streams)
+        XCTAssertEqual(signaled, .init(participant: "a", isShare: true))
+        XCTAssertTrue(selected === tiles[0])
+        withExtendedLifetime(tiles) {}
+    }
+
     func testExplicitSelectionResetsBrowsingCursorIncludingSamePinAndUnpin() async {
         let streams = GuestStreamViews()
         streams.updateParticipants((0..<5).map {

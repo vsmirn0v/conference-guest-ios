@@ -995,3 +995,15 @@
 "Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device." = "Используйте один Аккаунт Apple на всех устройствах. Сохранённые приглашения могут содержать коды доступа. Аудио, видео, чат и расшифровки не синхронизируются. Выбор календарей и включение уведомлений настраиваются отдельно на каждом устройстве.";
 "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings." = "Вы можете завершить настройку, пока iCloud подключается, или хранить всё только на этом устройстве. Эти параметры можно изменить в настройках.";
 "Continue meeting setup" = "Продолжить настройку встреч";
+
+"Join audio" = "Подключить звук";
+
+"Open to finish joining" = "Откройте приложение для подключения";
+
+"Open Rock’n’Roll to connect to the meeting." = "Откройте Rock’n’Roll, чтобы подключиться к встрече.";
+
+"Open to continue" = "Открыть и продолжить";
+
+"Experimental background audio join" = "Экспериментальное фоновое подключение";
+
+"Adds Join audio to reminders for guest meetings. Microphone and camera start off. Requires prior microphone permission and System call controls off. Device validation is pending." = "Добавляет действие «Подключить звук» в напоминания о гостевых встречах. Микрофон и камера изначально выключены. Требуются разрешение на микрофон и отключённые системные элементы звонка. Проверка на устройстве ещё не выполнена.";

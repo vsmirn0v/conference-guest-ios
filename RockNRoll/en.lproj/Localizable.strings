@@ -997,3 +997,15 @@
 "Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device." = "Use the same Apple Account on your devices. Saved invitations can include access codes. Audio, video, chat and transcripts are not synced. Choose calendars and enable notifications separately on each device.";
 "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings." = "You can finish setup while iCloud connects, or keep everything on this device. Change these choices anytime in Settings.";
 "Continue meeting setup" = "Continue meeting setup";
+
+"Join audio" = "Join audio";
+
+"Open to finish joining" = "Open to finish joining";
+
+"Open Rock’n’Roll to connect to the meeting." = "Open Rock’n’Roll to connect to the meeting.";
+
+"Open to continue" = "Open to continue";
+
+"Experimental background audio join" = "Experimental background audio join";
+
+"Adds Join audio to reminders for guest meetings. Microphone and camera start off. Requires prior microphone permission and System call controls off. Device validation is pending." = "Adds Join audio to reminders for guest meetings. Microphone and camera start off. Requires prior microphone permission and System call controls off. Device validation is pending.";

@@ -18,7 +18,8 @@ final class GuestVideoPictureInPicture {
     private var presenting = false
     private var energySubscription: AnyCancellable?
     var onPresentationChanged: ((Bool) -> Void)? { didSet { floating.onPresentationChanged = onPresentationChanged } }
-    var onRecoveryDemandChanged: ((Bool) -> Void)? { didSet { floating.onRecoveryDemandChanged = onRecoveryDemandChanged } }
+    var onRecoveryDemandChanged: ((Bool) -> Void)?
+    private var signaledSource: GuestStreamViews.PinTarget?
     private var background = false
     private var isInBackground: Bool { background || UIApplication.shared.applicationState == .background }
     private var suspended = false
@@ -88,10 +89,18 @@ final class GuestVideoPictureInPicture {
         ])
         floating.onWillStart = { [weak self] in self?.willStartFloating() }
         floating.onStopped = { [weak self] in self?.didStopFloating() }
+        floating.onRecoveryDemandChanged = { [weak self] demand in
+            guard let self else { return }
+            self.processor.setEnabled(self.shouldProcessFrames)
+            self.refreshCameraDemand()
+            self.onRecoveryDemandChanged?(demand)
+            self.replayShareSnapshot()
+        }
+        floating.prepareAnchor(sourceView)
         energySubscription = MediaEnergyBudget.shared.$pressure.sink { [weak self] _ in
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.cameraSink?.setWanted(self.presenting && !self.suspended, fps: MediaEnergyBudget.shared.previewFPS)
+                self.refreshCameraDemand()
                 self.processor.setFrameRate(self.presenting ? MediaEnergyBudget.shared.previewFPS : MediaEnergyBudget.shared.inlineFPS)
             }
         }
@@ -117,15 +126,29 @@ final class GuestVideoPictureInPicture {
 
     private var shouldProcessFrames: Bool {
         cameraPreview == nil && !floating.isEnded && frameTap != nil && !suspended &&
-            (presenting || floating.needsRecoveryFrames && !hasFrame || !isInBackground && (isStageSource && wantsInlineFrames || !hasFrame))
+            (presenting || floating.needsRecoveryFrames || !isInBackground && (isStageSource && wantsInlineFrames || !hasFrame))
+    }
+
+    private func refreshCameraDemand() {
+        let wanted = !suspended && !floating.isEnded && (presenting || floating.needsRecoveryFrames)
+        cameraPreview?.setFloatingDemand(wanted)
+        cameraSink?.setWanted(wanted, fps: MediaEnergyBudget.shared.previewFPS)
+    }
+
+    /// Signaling precedes SDK renderer creation when background video is off.
+    func selectSignaledSource(_ target: GuestStreamViews.PinTarget?) {
+        guard !floating.isEnded, signaledSource != target else { return }
+        signaledSource = target
+        clear()
+        if let target { floating.requestBackgroundFrames(isScreenShare: target.isShare) }
+        else { floating.cancelExperimentalStart() }
     }
 
     private func willStartFloating() {
         guard !floating.isEnded, frameTap != nil || cameraPreview != nil, !suspended else { return }
         presenting = true
         frameDelivery?.setActive(true)
-        cameraPreview?.setFloatingDemand(true)
-        cameraSink?.setWanted(true, fps: MediaEnergyBudget.shared.previewFPS)
+        refreshCameraDemand()
         processor.setFrameRate(MediaEnergyBudget.shared.previewFPS)
         processor.setEnabled(shouldProcessFrames)
         replayShareSnapshot()
@@ -133,8 +156,7 @@ final class GuestVideoPictureInPicture {
     private func didStopFloating() {
         presenting = false
         frameDelivery?.setActive(false)
-        cameraPreview?.setFloatingDemand(false)
-        cameraSink?.setWanted(false, fps: MediaEnergyBudget.shared.previewFPS)
+        refreshCameraDemand()
         processor.setFrameRate(MediaEnergyBudget.shared.inlineFPS)
         processor.setEnabled(shouldProcessFrames)
     }
@@ -156,6 +178,9 @@ final class GuestVideoPictureInPicture {
             processor.setFrameDeliveries([])
             if cameraPreview !== capture {
                 retireCameraSink()
+                video.clear()
+                floating.setSourceView(nil, preservingPresentation: true)
+                floating.requestBackgroundFrames(isScreenShare: false, allowExperimental: false)
                 cameraPreview = capture; hasFrame = false
                 let delivery = video.makeFrameDelivery { [weak self, weak capture] size, rotation in
                     guard let self, self.cameraPreview === capture, !self.suspended, !self.floating.isEnded else { return }
@@ -173,8 +198,7 @@ final class GuestVideoPictureInPicture {
             }
             selectedRenderer = viewport.rendererView
             video.mirrored = isMirrored
-            cameraSink?.setWanted(presenting, fps: MediaEnergyBudget.shared.previewFPS)
-            capture.setFloatingDemand(presenting)
+            refreshCameraDemand()
             if rendersSelectedViewport && wantsInlineFrames { viewport.showCameraPreview(capture) }
             onInlineCameraPreview?(isStageSource && wantsInlineFrames ? capture : nil, isMirrored)
             caption.text = name.isEmpty ? nil : "  \(name)  "
@@ -196,17 +220,15 @@ final class GuestVideoPictureInPicture {
             let sourceID = processor.replaceSource()
             processor.setEnabled(false)
             hasFrame = false
-            // The SDK may replace a tile while the call is backgrounded. Keep
-            // the last displayed frame and the stable PiP anchor until the new
-            // renderer supplies a frame, so a layout refresh cannot close PiP.
-            if !presenting {
-                video.clear()
-                hasFrame = false
-                onAvailabilityChanged?(false)
-            }
+            // Retain the window, never a departed presenter's pixels. Waiting
+            // stays visible until a frame from this renderer is prepared.
+            video.clear()
+            floating.setSourceView(nil, preservingPresentation: true)
+            floating.requestBackgroundFrames(isScreenShare: isScreenShare, allowExperimental: false)
+            onAvailabilityChanged?(false)
             selectedRenderer = viewport.rendererView
-            let delivery = video.makeFrameDelivery { [weak self] size, rotation in
-                guard let self, !self.floating.isEnded else { return }
+            let delivery = video.makeFrameDelivery { [weak self, weak renderer = viewport.rendererView] size, rotation in
+                guard let self, let renderer, self.selectedRenderer === renderer, !self.floating.isEnded else { return }
                 self.video.mirrored = self.isMirrored
                 self.floating.preferredSize = rotation == 90 || rotation == 270
                     ? CGSize(width: size.height, height: size.width) : size
@@ -279,14 +301,12 @@ final class GuestVideoPictureInPicture {
         if suspended {
             selectedViewport?.clearCorrectedVideo(); hasFrame = false
             floating.setSourceView(nil, preservingPresentation: true)
-            cameraPreview?.setFloatingDemand(false); cameraSink?.setWanted(false, fps: MediaEnergyBudget.shared.previewFPS)
             onInlineCameraPreview?(nil, false)
         } else if let cameraPreview {
-            cameraPreview.setFloatingDemand(presenting)
             cameraSink?.prime()
-            cameraSink?.setWanted(presenting, fps: MediaEnergyBudget.shared.previewFPS)
             onInlineCameraPreview?(isStageSource && wantsInlineFrames ? cameraPreview : nil, isMirrored)
         }
+        refreshCameraDemand()
         refreshInlineDelivery()
         processor.setEnabled(shouldProcessFrames)
         replayShareSnapshot()
@@ -294,6 +314,7 @@ final class GuestVideoPictureInPicture {
     }
 
     func clear(preservingPresentation: Bool = true) {
+        if !preservingPresentation { signaledSource = nil; floating.cancelPendingStart() }
         inlineDelivery?.invalidate(); inlineDelivery = nil
         frameDelivery?.invalidate(); frameDelivery = nil
         processor.setFrameDeliveries([])
@@ -310,6 +331,7 @@ final class GuestVideoPictureInPicture {
         retireCameraSink()
         onInlineCameraPreview?(nil, false)
         video.clear()
+        caption.text = nil; caption.isHidden = true
         onAvailabilityChanged?(false)
     }
 

@@ -96,6 +96,7 @@ final class ConferenceModel: ObservableObject {
         let target: JoinDestination
         let name: String
         let quiet: Bool
+        let audioOnly: Bool
         let knownEngine: MeetingEngineKind?
         let title: String?
     }
@@ -456,11 +457,11 @@ final class ConferenceModel: ObservableObject {
     }
 
     private func startJoin(_ target: JoinDestination, nameOverride: String? = nil, quiet: Bool = false, title: String? = nil,
-                           engineWasChosen: Bool = false) {
+                           engineWasChosen: Bool = false, audioOnly: Bool = false) {
         guard !isJoining && !isInConference && !isLeaving else { return }
         if setup.needsDismissal {
             setup.performMeetingIntent { [weak self] in self?.startJoin(target, nameOverride: nameOverride, quiet: quiet,
-                title: title, engineWasChosen: engineWasChosen) }; return
+                title: title, engineWasChosen: engineWasChosen, audioOnly: audioOnly) }; return
         }
         setup.suspendForMeeting()
         dismissEngineSelection()
@@ -493,7 +494,7 @@ final class ConferenceModel: ObservableObject {
         }
         let knownEngine = rejoinEvidence.flatMap { $0.invitation == target.invitationURL ? $0.engine : nil } ??
             history.matching(target.invitationURL)?.engine
-        let request = JoinRequest(target: target, name: name, quiet: quiet, knownEngine: knownEngine, title: visitTitle)
+        let request = JoinRequest(target: target, name: name, quiet: quiet, audioOnly: audioOnly, knownEngine: knownEngine, title: visitTitle)
         rejoinEvidence = nil
         sessionGeneration &+= 1
         let generation = sessionGeneration
@@ -585,7 +586,7 @@ final class ConferenceModel: ObservableObject {
                     }
                     try engine.configure(container: container, networkURL: networkURL,
                                          displayName: request.name)
-                    try engine.join(target: guest, displayName: request.name)
+                    try engine.join(target: guest, displayName: request.name, audioOnly: request.audioOnly)
                 case .jam(let jam):
                     let credentials = try await jamService.join(jam, name: request.name)
                     try Task.checkCancellation()
@@ -688,6 +689,8 @@ final class ConferenceModel: ObservableObject {
     }
 
     func resumeSystemCallIfPossible() { activeEngine?.resumeSystemCallIfPossible() }
+
+    func registerMeetingUnderlay(_ view: UIView) { engine.registerUnderlay(view) }
 
     func chooseEngine(community: Bool) {
         guard let selection = engineSelection, let request = engineChoiceRequest else { return }
@@ -961,6 +964,38 @@ final class ConferenceModel: ObservableObject {
     }
     #endif
 }
+
+#if DEBUG
+extension ConferenceModel: BackgroundAudioJoinSession {
+    func resolveBackgroundJoin(reference: String) async -> ReminderOccurrence? {
+        await calendar.reminders.resolve(reference: reference)
+    }
+    func beginBackgroundJoin(_ occurrence: ReminderOccurrence, access: BackgroundJoinAccess) -> BackgroundJoinStart {
+        if isInConference, let connectedURL,
+           MeetingRoomIdentity(connectedURL, engine: activeRoute?.engineKind) == occurrence.room { return .alreadyConnected }
+        guard access.protectedData, access.microphone, !access.systemControls, !systemCall.hasCompetingCall,
+              phase == .idle, !setup.needsDismissal, siteSelection == nil, engineSelection == nil,
+              occurrence.engine == .guest, occurrence.eligible, occurrence.end > Date(),
+              MeetingEngineKind.guest.inputPolicy.accepts(name: displayName), container != nil,
+              let target = try? destination(for: occurrence.invitation.absoluteString, verifiedEngine: .guest),
+              case .guest = target else { return .openApp }
+        explicitCalendarEntry = true
+        calendar.cancelAutomaticJoin(suppress: true)
+        calendarReminderTarget = occurrence.room.map { ($0, occurrence.eventID) }
+        set(target: target)
+        startJoin(target, quiet: false, title: occurrence.title, engineWasChosen: true, audioOnly: true)
+        return isJoining ? .started(sessionGeneration) : .openApp
+    }
+    func backgroundJoinProgress(token: UInt64) -> BackgroundJoinProgress {
+        guard sessionGeneration == token, activeRoute?.engineKind == .guest, phase != .idle, !isLeaving else { return .ended }
+        return isInConference && engine.backgroundAudioReadyForPrototype ? .ready : .waiting
+    }
+    func cancelBackgroundJoin(token: UInt64) {
+        guard sessionGeneration == token else { return }
+        leave()
+    }
+}
+#endif
 
 struct LinkSiteSelection: Identifiable {
     let id = UUID()

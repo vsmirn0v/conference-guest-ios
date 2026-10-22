@@ -48,6 +48,12 @@ final class GuestScreenPresenter: NSObject, JazzMainScreenPresenter {
         ])
     }
     func beginJoin() { ended = false; if !recovering { progress.stopAnimating(); recoveryStack.isHidden = true } }
+    /// A scene may mount Home after an offscreen notification join has started.
+    func registerUnderlay(_ view: UIView) {
+        guard host.parent != nil, view !== host.view, !underlays.contains(where: { $0.view === view }) else { return }
+        underlays.append(Underlay(view: view, accessibilityHidden: view.accessibilityElementsHidden))
+        view.accessibilityElementsHidden = true
+    }
     func beginRecovery() {
         guard !ended, !recovering else { return }
         recoveryScreen = screen

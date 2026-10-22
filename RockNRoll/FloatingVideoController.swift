@@ -14,6 +14,9 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         var start: (AVPictureInPictureController) -> Void = { $0.startPictureInPicture() }
         var stop: (AVPictureInPictureController) -> Void = { $0.stopPictureInPicture() }
         var recoveryTimeoutNanoseconds: UInt64 = 10_000_000_000
+        #if DEBUG
+        var allowsFirstBackgroundStart: () -> Bool = { false }
+        #endif
     }
     private let environment: Environment
     private enum Phase { case idle, starting, active, stopping }
@@ -29,12 +32,18 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     private var closedWhileBackgrounded = false
     private var manualStartPending = false
     private var resumePending = false
+    private var continuityArmed = false
+    private var interruptionStopPending = false
+    private var hasVideo = false
+    #if DEBUG
+    private var firstBackgroundStartPending = false
+    #endif
     private var recoveryAttempts = 0
     private var recoveryTask: Task<Void, Never>?
     private var recoveryDeadline: Task<Void, Never>?
     private var recoveryDemand = false
     var onRecoveryDemandChanged: ((Bool) -> Void)?
-    var needsRecoveryFrames: Bool { resumePending && !suspended && !closedWhileBackgrounded && !isEnded }
+    var needsRecoveryFrames: Bool { (resumePending || experimentalStartPending) && !suspended && !closedWhileBackgrounded && !isEnded }
     var isPresenting: Bool { phase == .active || phase == .starting }
     private weak var microphoneActivity: MicrophoneActivity?
     var onPresentationChanged: ((Bool) -> Void)?
@@ -44,7 +53,22 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     #if DEBUG
     var hasSourceForTesting: Bool { sourceView != nil }
     var controllerForTesting: AVPictureInPictureController? { controller }
+    var waitingForVideoForTesting: Bool { !hasVideo }
     #endif
+    private var experimentalStartPending: Bool {
+        #if DEBUG
+        return firstBackgroundStartPending
+        #else
+        return false
+        #endif
+    }
+    private var allowsFirstBackgroundStart: Bool {
+        #if DEBUG
+        return environment.allowsFirstBackgroundStart()
+        #else
+        return false
+        #endif
+    }
     var preferredSize = CGSize(width: 320, height: 180) {
         didSet { if oldValue != preferredSize { contentController?.preferredContentSize = preferredSize } }
     }
@@ -59,7 +83,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     }
 
     var canShow: Bool {
-        !isEnded && environment.supported() && sourceView != nil && !suspended
+        !isEnded && environment.supported() && hasVideo && sourceView != nil && !suspended
     }
 
     func bindMicrophoneActivity(_ activity: MicrophoneActivity) {
@@ -75,21 +99,86 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
 
     func setSourceView(_ view: UIView?, preservingPresentation: Bool = false) {
         guard !isEnded else { return }
-        sourceView = view
+        hasVideo = view != nil
         contentView.setWaitingForVideo(view == nil)
         guard view != nil else {
             // An active meeting can temporarily have no video. Keep its stable
             // PiP window/anchor while waiting for a replacement share or rejoin.
-            if preservingPresentation && (phase == .active || phase == .starting || resumePending) { return }
-            resumePending = false; updateRecoveryDemand()
+            controller?.canStartPictureInPictureAutomaticallyFromInline = false
+            if preservingPresentation && (continuityArmed || phase == .starting || resumePending || allowsFirstBackgroundStart && controller != nil) { return }
+            sourceView = nil
+            continuityArmed = false
+            cancelPendingStart()
             tearDown(); return
         }
+        sourceView = view
+        controller?.canStartPictureInPictureAutomaticallyFromInline = FloatingVideoPreference.enabled && !closedWhileBackgrounded
         prepare()
         startPendingManualRequest()
     }
 
+    /// Pre-arm only the opt-in experiment while a real foreground anchor exists.
+    func prepareAnchor(_ view: UIView) {
+        guard !isEnded, allowsFirstBackgroundStart else { return }
+        sourceView = view
+        contentView.setWaitingForVideo(!hasVideo)
+        prepare()
+    }
+
+    /// Called for a new signaled source, before the SDK has a renderer/frame.
+    /// A duplicate event must not replenish the bounded startup budget.
+    func requestBackgroundFrames(isScreenShare: Bool, allowExperimental: Bool = true) {
+        guard !isEnded, !suspended, !closedWhileBackgrounded, FloatingVideoPreference.enabled,
+              environment.applicationState() == .background, controller != nil,
+              phase == .idle, !needsRecoveryFrames else { return }
+        if continuityArmed { resumePending = true }
+        else {
+            #if DEBUG
+            guard allowExperimental, isScreenShare, allowsFirstBackgroundStart else { return }
+            firstBackgroundStartPending = true
+            #else
+            return
+            #endif
+        }
+        recoveryAttempts = 0
+        beginRecoveryDeadline()
+        updateRecoveryDemand()
+        startPendingManualRequest()
+    }
+
+    func cancelPendingStart() {
+        resumePending = false
+        #if DEBUG
+        firstBackgroundStartPending = false
+        #endif
+        recoveryTask?.cancel(); recoveryTask = nil
+        recoveryDeadline?.cancel(); recoveryDeadline = nil
+        updateRecoveryDemand()
+    }
+
+    func cancelExperimentalStart() {
+        guard experimentalStartPending else { return }
+        let unconfirmedStart = phase == .starting && !continuityArmed
+        cancelPendingStart()
+        if unconfirmedStart { tearDown() }
+    }
+
+    private func beginRecoveryDeadline() {
+        guard recoveryDeadline == nil else { return }
+        recoveryDeadline = Task { [weak self, timeout = environment.recoveryTimeoutNanoseconds] in
+            do { try await Task.sleep(nanoseconds: timeout) } catch { return }
+            guard let self else { return }
+            self.traceRecovery("pip-recovery-timeout")
+            self.cancelPendingStart()
+            if self.phase == .starting { self.tearDown() }
+            // Retain the anchor for a genuinely new share/media event. No
+            // timers, frame callbacks or readiness changes restart this budget.
+        }
+    }
+
     private func prepare(manual: Bool = false) {
-        guard canShow, manual || FloatingVideoPreference.enabled,
+        guard !isEnded, !suspended, environment.supported(), hasVideo || allowsFirstBackgroundStart,
+              manual || FloatingVideoPreference.enabled,
               environment.applicationState() != .background,
               phase == .idle, let sourceView, sourceView.window != nil else { return }
         if configuredSource === sourceView, controller != nil { return }
@@ -111,7 +200,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         let pip = AVPictureInPictureController(contentSource: .init(
             activeVideoCallSourceView: sourceView, contentViewController: content))
         controller = pip
-        pip.canStartPictureInPictureAutomaticallyFromInline = FloatingVideoPreference.enabled
+        pip.canStartPictureInPictureAutomaticallyFromInline = hasVideo && FloatingVideoPreference.enabled && !closedWhileBackgrounded
         pip.delegate = self
         readiness = pip.observe(\.isPictureInPicturePossible, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async { self?.startPendingManualRequest() }
@@ -137,7 +226,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
 
     func refreshPreference() {
         if FloatingVideoPreference.enabled { prepare() }
-        else { resumePending = false; updateRecoveryDemand(); tearDown() }
+        else { continuityArmed = false; cancelPendingStart(); tearDown() }
     }
 
     func setSuspended(_ suspended: Bool) {
@@ -145,7 +234,12 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         self.suspended = suspended
         traceRecovery(suspended ? "pip-suspend" : "pip-resume")
         if suspended {
+            if !continuityArmed { cancelExperimentalStart() }
+            interruptionStopPending = interruptionStopPending || phase == .active || phase == .starting
             resumePending = resumePending || phase == .active || phase == .starting
+            #if DEBUG
+            firstBackgroundStartPending = false
+            #endif
             recoveryTask?.cancel(); recoveryTask = nil
             recoveryDeadline?.cancel(); recoveryDeadline = nil
             // AVKit owns window visibility during competing system calls. Stop
@@ -156,7 +250,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
             recoveryAttempts = 0
             if resumePending, let controller {
                 if environment.active(controller) {
-                    phase = .active; resumePending = false
+                    phase = .active; resumePending = false; interruptionStopPending = false
                     microphoneActivity?.setFloating(true)
                     onPresentationChanged?(true); onWillStart?()
                     traceRecovery("pip-resumed-existing-window")
@@ -168,16 +262,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
                     onPresentationChanged?(false); onStopped?()
                 }
             }
-            if resumePending {
-                recoveryDeadline = Task { [weak self, timeout = environment.recoveryTimeoutNanoseconds] in
-                    do { try await Task.sleep(nanoseconds: timeout) } catch { return }
-                    guard let self, self.resumePending else { return }
-                    self.traceRecovery("pip-recovery-timeout")
-                    self.resumePending = false
-                    self.updateRecoveryDemand()
-                    self.tearDown()
-                }
-            }
+            if resumePending { beginRecoveryDeadline() }
             prepare()
             startPendingManualRequest()
         }
@@ -196,11 +281,9 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     func foregrounded() {
         guard !isEnded else { return }
         closedWhileBackgrounded = false
-        resumePending = false; recoveryAttempts = 0
-        recoveryTask?.cancel(); recoveryTask = nil
-        recoveryDeadline?.cancel(); recoveryDeadline = nil
-        updateRecoveryDemand()
-        controller?.canStartPictureInPictureAutomaticallyFromInline = FloatingVideoPreference.enabled
+        continuityArmed = false; interruptionStopPending = false
+        cancelPendingStart(); recoveryAttempts = 0
+        controller?.canStartPictureInPictureAutomaticallyFromInline = hasVideo && FloatingVideoPreference.enabled
         if phase == .active || phase == .starting {
             phase = .stopping
             if let controller { environment.stop(controller) }
@@ -211,7 +294,8 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
     func end() {
         guard !isEnded else { return }
         isEnded = true
-        resumePending = false; updateRecoveryDemand()
+        continuityArmed = false; interruptionStopPending = false; hasVideo = false
+        cancelPendingStart()
         sourceView = nil
         tearDown()
         speakerSubscription = nil
@@ -247,6 +331,7 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         CameraBackgroundTrace.event("pip-will-start")
         #endif
         phase = .starting
+        continuityArmed = true
         microphoneActivity?.setFloating(true)
         onPresentationChanged?(true)
         onWillStart?()
@@ -258,9 +343,8 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         CameraBackgroundTrace.event("pip-started")
         #endif
         phase = .active
-        resumePending = false; recoveryAttempts = 0
-        recoveryDeadline?.cancel(); recoveryDeadline = nil
-        updateRecoveryDemand()
+        continuityArmed = true; interruptionStopPending = false
+        cancelPendingStart(); recoveryAttempts = 0
     }
 
     func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
@@ -268,14 +352,15 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         #if DEBUG
         CameraBackgroundTrace.event("pip-stopped")
         #endif
-        let userClosed = phase != .stopping && !suspended && !resumePending && environment.applicationState() == .background
+        let userClosed = phase != .stopping && !suspended && !interruptionStopPending && environment.applicationState() == .background
+        interruptionStopPending = false
         phase = .idle
         microphoneActivity?.setFloating(false)
         onPresentationChanged?(false)
         onStopped?()
         if userClosed {
             closedWhileBackgrounded = true
-            resumePending = false; updateRecoveryDemand()
+            continuityArmed = false; cancelPendingStart()
             controller.canStartPictureInPictureAutomaticallyFromInline = false
         } else if !FloatingVideoPreference.enabled {
             tearDown()
@@ -294,9 +379,9 @@ final class FloatingVideoController: NSObject, @preconcurrency AVPictureInPictur
         onStopped?()
         guard needsRecoveryFrames else { return }
         recoveryAttempts += 1
-        guard recoveryAttempts <= 2 else { resumePending = false; updateRecoveryDemand(); return }
-        // AVKit may still be handing video back from the competing call. Retry
-        // only a previously active PiP, never a user-dismissed or new window.
+        guard recoveryAttempts <= 2 else { cancelPendingStart(); return }
+        // AVKit may still be handing video back. The same bounded budget serves
+        // retained-window recovery and the opt-in development experiment.
         recoveryTask = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(500)) } catch { return }
             self?.startPendingManualRequest()

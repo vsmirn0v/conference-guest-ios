@@ -39,6 +39,38 @@ final class CalendarReminderUITests: XCTestCase {
         XCTAssertTrue(app.buttons["calendar.join.daily"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["calendar.join.daily"].frame.minY, before.minY, accuracy: 2)
     }
+    func testBackgroundAudioPrototypeIsExplicitOptInAndDoesNotEnableReminders() {
+        launch("en")
+        app.buttons["Settings"].tap(); app.buttons["calendar.settings"].tap(); app.buttons["calendar.reminders"].tap()
+        let remindersEnabled = app.switches["reminders.enabled"]
+        XCTAssertEqual(remindersEnabled.value as? String, "0")
+        app.buttons["reminders.delivery"].tap()
+        let prototype = app.switches["reminders.backgroundAudioJoin"]
+        XCTAssertTrue(prototype.waitForExistence(timeout: 5))
+        if !prototype.isHittable { app.swipeUp() }
+        if prototype.value as? String == "1" { prototype.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap() }
+        XCTAssertEqual(prototype.value as? String, "0")
+        prototype.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(prototype.value as? String, "1")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let window = app.windows.firstMatch
+        let landscape = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.frame.width > window.frame.height && prototype.frame.maxX <= window.frame.maxX
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 5), .completed)
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); screenshot.lifetime = .keepAlways
+        add(screenshot)
+        XCUIDevice.shared.orientation = .portrait
+        let portrait = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            window.frame.height > window.frame.width && prototype.frame.maxX <= window.frame.maxX
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [portrait], timeout: 5), .completed)
+        if !prototype.isHittable { app.swipeUp() }
+        prototype.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(prototype.value as? String, "0")
+        app.navigationBars["Delivery and privacy"].buttons.element(boundBy: 0).tap()
+        XCTAssertEqual(remindersEnabled.value as? String, "0")
+    }
     func testEnableRequestsNativeNotificationPermission() {
         launch("en")
         app.buttons["Settings"].tap(); app.buttons["calendar.settings"].tap(); app.buttons["calendar.reminders"].tap()

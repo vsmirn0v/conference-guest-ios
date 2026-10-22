@@ -99,4 +99,27 @@ final class FloatingVideoContentTests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
     }
+
+    func testWaitingStateCoversPreviousPresenterAndKeepsMicrophoneStatusVisible() throws {
+        let previous = UIView(); previous.backgroundColor = .red
+        let surface = FloatingVideoContentView(videoContent: previous)
+        surface.frame = CGRect(x: 0, y: 0, width: 320, height: 180)
+        surface.setMicrophoneStatus(.on)
+        surface.setWaitingForVideo(true)
+        surface.layoutIfNeeded()
+        let waiting = try XCTUnwrap(surface.subviews.first { $0.accessibilityIdentifier == "Floating video waiting" })
+        let microphone = try XCTUnwrap(surface.subviews.first { $0.accessibilityIdentifier == "Floating microphone status" })
+        XCTAssertFalse(waiting.isHidden)
+        XCTAssertEqual(waiting.frame, surface.bounds)
+        XCTAssertEqual(waiting.backgroundColor, .black)
+        XCTAssertGreaterThan(try XCTUnwrap(surface.subviews.firstIndex(of: waiting)),
+                             try XCTUnwrap(surface.subviews.firstIndex(of: previous)))
+        XCTAssertGreaterThan(try XCTUnwrap(surface.subviews.firstIndex(of: microphone)),
+                             try XCTUnwrap(surface.subviews.firstIndex(of: waiting)))
+        let image = UIGraphicsImageRenderer(size: surface.bounds.size).image { context in surface.layer.render(in: context.cgContext) }
+        let attachment = XCTAttachment(image: image); attachment.name = "PiP between presenters"
+        attachment.lifetime = .keepAlways; add(attachment)
+        surface.setWaitingForVideo(false)
+        XCTAssertTrue(waiting.isHidden)
+    }
 }

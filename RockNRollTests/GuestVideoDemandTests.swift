@@ -237,15 +237,25 @@ final class GuestVideoDemandTests: XCTestCase {
     }
 
     func testActiveFloatingRendererReplacementKeepsCameraEligibilityAnchor() async throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UIViewController(); window.makeKeyAndVisible()
+        let source = try XCTUnwrap(window.rootViewController?.view)
         let first = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
         let second = RTCEAGLVideoView(frame: first.frame)
-        let floating = GuestVideoPictureInPicture(sourceView: UIView())
-        defer { floating.end() }
+        var state = UIApplication.State.active
+        let floating = GuestVideoPictureInPicture(sourceView: source, floatingEnvironment: .init(
+            applicationState: { state }, supported: { true }, possible: { _ in true }, start: { _ in }, stop: { _ in }))
+        defer { floating.end(); window.isHidden = true }
         let firstViewport = makeViewport(first), secondViewport = makeViewport(second)
         floating.select(viewport: firstViewport, name: "First", isScreenShare: false)
         try await feed(first)
         XCTAssertTrue(floating.hasSourceForTesting)
-        floating.setFloatingForTesting(true)
+        floating.start()
+        let controller = try XCTUnwrap(floating.lifecycleForTesting.controllerForTesting)
+        floating.lifecycleForTesting.pictureInPictureControllerWillStartPictureInPicture(controller)
+        floating.lifecycleForTesting.pictureInPictureControllerDidStartPictureInPicture(controller)
+        state = .background; floating.backgrounded()
         floating.select(viewport: secondViewport, name: "Second", isScreenShare: false)
         XCTAssertFalse(floating.hasPreparedFrameForTesting)
         XCTAssertTrue(floating.hasSourceForTesting, "Replacing a renderer must not revoke active video-call PiP")
@@ -255,7 +265,10 @@ final class GuestVideoDemandTests: XCTestCase {
         try await feed(second)
         XCTAssertGreaterThan(floating.convertedFramesForTesting, before)
         floating.clear()
-        XCTAssertFalse(floating.hasSourceForTesting, "Actual stream termination still clears the anchor")
+        XCTAssertTrue(floating.hasSourceForTesting, "An active PiP retains its anchor between presenters")
+        XCTAssertTrue(floating.lifecycleForTesting.waitingForVideoForTesting)
+        floating.clear(preservingPresentation: false)
+        XCTAssertFalse(floating.hasSourceForTesting, "Audio only explicitly retires the anchor")
     }
 
     func testFallbackSelfVideoNeverPaintsTheSelectedRemoteStage() async throws {
@@ -352,6 +365,122 @@ final class GuestVideoDemandTests: XCTestCase {
         try await feed(first)
         XCTAssertEqual(floating.convertedFramesForTesting, stopped)
         XCTAssertFalse(floating.hasPreparedFrameForTesting)
+    }
+
+    func testSignalingBootstrapsExperimentalBackgroundReceiveBeforeAnyRendererExists() async throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UIViewController(); window.makeKeyAndVisible()
+        let source = try XCTUnwrap(window.rootViewController?.view)
+        var state = UIApplication.State.active, starts = 0
+        let floating = GuestVideoPictureInPicture(sourceView: source, floatingEnvironment: .init(
+            applicationState: { state }, supported: { true }, possible: { _ in true },
+            start: { _ in starts += 1 }, stop: { _ in }, allowsFirstBackgroundStart: { true }))
+        defer { floating.end(); window.isHidden = true }
+        let demand = MeetingVideoDemand(observeLifecycle: false)
+        demand.setForeground(false, graceNanoseconds: 1)
+        try await Task.sleep(for: .milliseconds(10))
+        XCTAssertFalse(demand.wantsVideo)
+        floating.onRecoveryDemandChanged = { demand.setRecovering($0) }
+        state = .background; floating.backgrounded()
+        floating.selectSignaledSource(.init(participant: "presenter", isShare: true))
+        XCTAssertTrue(demand.wantsVideo, "Signaling must request SDK video before a renderer can be created")
+        XCTAssertEqual(starts, 0)
+        let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        floating.select(viewport: makeViewport(renderer), name: "Presenter", isScreenShare: true)
+        renderer.renderFrame(staticFrame(luma: 128))
+        let deadline = Date().addingTimeInterval(2)
+        while starts == 0 && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(starts, 1)
+        XCTAssertTrue(floating.hasPreparedFrameForTesting)
+    }
+
+    func testExperimentalTimeoutIsNotRearmedByDuplicateMetadataOrLateFrames() async throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UIViewController(); window.makeKeyAndVisible()
+        let source = try XCTUnwrap(window.rootViewController?.view)
+        var state = UIApplication.State.active, starts = 0
+        let floating = GuestVideoPictureInPicture(sourceView: source, floatingEnvironment: .init(
+            applicationState: { state }, supported: { true }, possible: { _ in true },
+            start: { _ in starts += 1 }, stop: { _ in }, recoveryTimeoutNanoseconds: 10_000_000,
+            allowsFirstBackgroundStart: { true }))
+        defer { floating.end(); window.isHidden = true }
+        state = .background; floating.backgrounded()
+        let target = GuestStreamViews.PinTarget(participant: "presenter", isShare: true)
+        floating.selectSignaledSource(target)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertFalse(floating.lifecycleForTesting.needsRecoveryFrames)
+        floating.selectSignaledSource(target)
+        XCTAssertFalse(floating.lifecycleForTesting.needsRecoveryFrames)
+        let renderer = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        floating.select(viewport: makeViewport(renderer), name: "Late", isScreenShare: true)
+        renderer.renderFrame(staticFrame(luma: 128))
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(starts, 0)
+        XCTAssertEqual(floating.convertedFramesForTesting, 0)
+    }
+
+    func testDirectPresenterReplacementShowsWaitingAndRejectsOldPixelsInBackground() async throws {
+        let floating = GuestVideoPictureInPicture(sourceView: UIView())
+        defer { floating.end() }
+        let first = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        let second = RTCEAGLVideoView(frame: first.frame)
+        floating.select(viewport: makeViewport(first), name: "A", isScreenShare: true)
+        try await feed(first)
+        floating.setFloatingForTesting(true); floating.backgrounded()
+        floating.select(viewport: makeViewport(second), name: "B", isScreenShare: true)
+        XCTAssertTrue(floating.lifecycleForTesting.waitingForVideoForTesting)
+        XCTAssertFalse(floating.hasPreparedFrameForTesting)
+        let count = floating.convertedFramesForTesting
+        try await feed(first)
+        XCTAssertEqual(floating.convertedFramesForTesting, count)
+        XCTAssertTrue(floating.lifecycleForTesting.waitingForVideoForTesting)
+        try await feed(second)
+        XCTAssertGreaterThan(floating.convertedFramesForTesting, count)
+        XCTAssertFalse(floating.lifecycleForTesting.waitingForVideoForTesting)
+    }
+
+    func testSamePresenterNewRendererRearmsExpiredRecoveryButRepeatedRendererDoesNot() async throws {
+        try XCTSkipUnless(AVPictureInPictureController.isPictureInPictureSupported())
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UIViewController(); window.makeKeyAndVisible()
+        let source = try XCTUnwrap(window.rootViewController?.view)
+        var state = UIApplication.State.active, possible = true
+        let floating = GuestVideoPictureInPicture(sourceView: source, floatingEnvironment: .init(
+            applicationState: { state }, supported: { true }, possible: { _ in possible },
+            start: { _ in }, stop: { _ in }, recoveryTimeoutNanoseconds: 40_000_000))
+        defer { floating.end(); window.isHidden = true }
+        let target = GuestStreamViews.PinTarget(participant: "presenter", isShare: true)
+        let first = RTCEAGLVideoView(frame: CGRect(x: 0, y: 0, width: 32, height: 32))
+        let original = makeViewport(first)
+        floating.selectSignaledSource(target)
+        floating.select(viewport: original, name: "Presenter", isScreenShare: true)
+        try await feed(first)
+        floating.start()
+        let lifecycle = floating.lifecycleForTesting
+        let controller = try XCTUnwrap(lifecycle.controllerForTesting)
+        lifecycle.pictureInPictureControllerWillStartPictureInPicture(controller)
+        lifecycle.pictureInPictureControllerDidStartPictureInPicture(controller)
+        state = .background; floating.backgrounded()
+        floating.setSuspended(true)
+        lifecycle.pictureInPictureControllerDidStopPictureInPicture(controller)
+        possible = false; floating.setSuspended(false)
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertFalse(lifecycle.needsRecoveryFrames)
+        floating.selectSignaledSource(target)
+        floating.select(viewport: original, name: "Renamed presenter", isScreenShare: true)
+        XCTAssertFalse(lifecycle.needsRecoveryFrames, "Repeated metadata or renderer callbacks cannot replenish the budget")
+        let replacement = RTCEAGLVideoView(frame: first.frame)
+        floating.select(viewport: makeViewport(replacement), name: "Presenter", isScreenShare: true)
+        XCTAssertTrue(lifecycle.needsRecoveryFrames, "A distinct renderer is a genuine media-change event")
+        XCTAssertTrue(lifecycle.controllerForTesting === controller)
+        // Losing all sources during an interruption must not erase previously
+        // active PiP recovery intent when the coordinator resets its roster.
+        floating.setSuspended(true)
+        floating.selectSignaledSource(nil)
+        floating.setSuspended(false)
+        XCTAssertTrue(lifecycle.needsRecoveryFrames)
     }
 
     private func makeViewport(_ renderer: UIView) -> StreamViewport {

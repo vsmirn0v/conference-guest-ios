@@ -85,6 +85,7 @@ final class GuestStreamViews {
     var onPreferredVideo: ((StreamViewport?, String, Bool) -> Void)?
     #endif
     var onFloatingVideo: ((StreamViewport?, String, Bool, Bool) -> Void)?
+    var onFloatingTargetChanged: ((PinTarget?) -> Void)?
     var onShareOffer: ((String?, PinTarget?) -> Void)?
     var displayMode: ConferenceDisplayMode = .all {
         didSet { updatePreferredVideo() }
@@ -118,6 +119,7 @@ final class GuestStreamViews {
         #if DEBUG
         onPreferredVideo?(nil, "", false)
         #endif
+        onFloatingTargetChanged?(nil)
         onFloatingVideo?(nil, "", false, false)
         onShareOffer?(nil, nil)
     }
@@ -430,9 +432,23 @@ final class GuestStreamViews {
         let floating = preferred ?? (displayMode == .all && requested == nil
             ? candidates.values.first { $0.model.isLocal && !$0.model.isSharingScreen && isActiveStream($0.model) && $0.video != nil }
             : nil)
-        onFloatingVideo?(floating?.view, floating?.model.name ?? "",
-                         floating?.model.isSharingScreen == true,
-                         floating?.view === preferred?.view && floating != nil)
+        let renderedTarget = floating.map { PinTarget(participant: $0.model.id, isShare: $0.model.isSharingScreen) }
+        let automaticShare = requested == nil && renderedTarget?.isShare != true ? orderedTargets.first {
+            $0.isShare && participants?[$0.participant]?.isLocal == false
+        } : nil
+        let signaledTarget = automaticShare ?? renderedTarget
+            ?? selectedTarget.flatMap { target -> PinTarget? in
+                guard let participant = participants?[target.participant],
+                      target.isShare ? participant.sharing : participant.cameraOn else { return nil }
+                return target
+            }
+        onFloatingTargetChanged?(displayMode == .audioOnly ? nil : signaledTarget)
+        // A new signaled share can precede its renderer. Do not start that
+        // share's background request using an old camera/presenter's frame.
+        let current = renderedTarget == signaledTarget ? floating : nil
+        onFloatingVideo?(current?.view, current?.model.name ?? "",
+                         current?.model.isSharingScreen == true,
+                         current?.view === preferred?.view && current != nil)
     }
 
     private func publishGallery() {

@@ -4,6 +4,27 @@ import XCTest
 
 @MainActor
 final class GuestScreenPresenterTests: XCTestCase {
+    func testDetachedMeetingCanAdoptLateHomeWithoutLosingScreenOrAccessibility() {
+        let root = MeetingContainerViewController(), screen = UIViewController()
+        let presenter = GuestScreenPresenter(container: root)
+        presenter.beginJoin(); presenter.presentScreen(screen: screen)
+        XCTAssertNil(root.view.window)
+        let firstHome = UIViewController()
+        root.mountHome(firstHome)
+        let replacement = UIViewController()
+        root.mountHome(replacement)
+        let home = replacement.view!
+        presenter.registerUnderlay(home); presenter.registerUnderlay(home)
+        XCTAssertNil(firstHome.parent)
+        XCTAssertEqual(root.children.count, 2, "One Home and one SDK host after reconnection")
+        XCTAssertTrue(home.accessibilityElementsHidden)
+        XCTAssertTrue(screen.parent === presenter.hostForTesting)
+        XCTAssertTrue(presenter.hostForTesting.parent === root)
+        XCTAssertTrue(root.view.subviews.last === presenter.hostForTesting.view)
+        presenter.end()
+        XCTAssertFalse(home.accessibilityElementsHidden)
+        XCTAssertTrue(root.view.subviews.contains(home))
+    }
     func testSDKChildSheetSharesVisibleHostAndRemainsInteractiveAfterScreenReplacement() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene), page = UIViewController()
