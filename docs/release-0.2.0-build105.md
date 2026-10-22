@@ -15,7 +15,7 @@ PiP start callbacks reject an empty initial window before establishing continuit
 
 Astra 6 xhigh planning and iterative source review identified interruption and opt-out event-ordering issues; these were fixed with regression coverage. Final source review has no remaining blocker.
 
-Mac regression: 136 cases, 2 capability skips, zero failures. iPhone Simulator: 136 unit/capability cases (29 skips) and two UI tests, zero failures. English persistence/independence and Russian largest-text portrait/landscape checks pass. iPad largest-text rotation passes; toggle automation and Release artifact checks are pending.
+Mac regression: 136 cases, 2 capability skips, zero failures. iPhone Simulator: 136 unit/capability cases (29 skips) and two UI tests, zero failures. English persistence/independence and Russian largest-text portrait/landscape checks pass. iPad largest-text portrait/landscape and persistence/independence checks pass. Two initial iPad automation attempts did not activate the broad accessibility row; targeting its native child switch passes. Release archive/export signature, bundle versions, dSYM UUIDs, Production iCloud, promoted feature markers and DEBUG-fixture exclusion checks pass. Release Simulator UI smoke and TestFlight distribution remain pending.
 
 These are opt-in experiments for remote hardware validation. Their actual warm/cold notification and first-time PiP behavior has not passed physical-device acceptance. The earlier empty-window symptom may still prevent background startup: rejecting an unsolicited empty start retires the anchor until the meeting returns to the foreground. No latency, battery or energy benefit is claimed.
 
