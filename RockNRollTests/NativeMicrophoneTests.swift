@@ -9,6 +9,107 @@ import XCTest
 /// custom device never opens a microphone and cannot capture another meeting.
 @MainActor
 final class NativeMicrophoneTests: XCTestCase {
+    func testMacIncomingAudioSurvivesLocalMicrophoneToggles() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              ProcessInfo.processInfo.environment["ROCKNROLL_TEST_NATIVE_DUPLEX"] == "1" else {
+            throw XCTSkip("Opt-in Mac audio-device playback and microphone lifecycle check")
+        }
+        let session = AVAudioSession.sharedInstance(), rtc = LKRTCAudioSession.sharedInstance()
+        let allowed = await withCheckedContinuation { c in session.requestRecordPermission { c.resume(returning: $0) } }
+        guard allowed else { throw XCTSkip("Mac microphone permission is required") }
+        let category = session.category, mode = session.mode, options = session.categoryOptions
+        let manual = rtc.useManualAudio, enabled = rtc.isAudioEnabled
+        defer {
+            rtc.isAudioEnabled = false; rtc.audioSessionDidDeactivate(session)
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            try? session.setCategory(category, mode: mode, options: options)
+            rtc.useManualAudio = manual; rtc.isAudioEnabled = enabled
+        }
+        try await AudioCoordinator().prepareForJoin()
+        rtc.useManualAudio = true; rtc.isAudioEnabled = false
+        try session.setActive(true); rtc.audioSessionDidActivate(session); rtc.isAudioEnabled = true
+        let local = try NativeRTCPeer.makeFactory()
+        let owner = SystemCallCoordinator(transactionRequester: { _, _ in XCTFail("Unexpected system transaction") },
+            callSnapshot: { [] }, systemCallRegistration: false, activateAudioSession: {})
+        owner.start(); owner.markConnected()
+        let callAudio = NativeCallAudio(owner: owner, audio: AudioCoordinator())
+        callAudio.begin(); callAudio.activate()
+        let state = NativeCallAudioState(joined: true, connected: true, leaving: false, held: false, quiet: false, microphoneIntent: false)
+        XCTAssertEqual(callAudio.restore(state), .reconnect)
+        defer { callAudio.finish(); owner.end() }
+        let remoteDevice = MicrophoneFixtureDevice()
+        let remote = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
+            decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: remoteDevice)
+        var publisher = try NativeRTCPeer(target: "PUBLISHER", factory: local, ice: [])
+        var subscriber = try NativeRTCPeer(target: "SUBSCRIBER", factory: local, ice: [])
+        var remoteSender = try NativeRTCPeer(target: "PUBLISHER", factory: remote, ice: [])
+        var remoteReceiver = try NativeRTCPeer(target: "SUBSCRIBER", factory: remote, ice: [])
+        func negotiate(_ from: NativeRTCPeer, _ to: NativeRTCPeer) async throws {
+            from.onCandidate = { value in Task { try? await to.addCandidate(Self.wireCandidate(value)) } }
+            to.onCandidate = { value in Task { try? await from.addCandidate(Self.wireCandidate(value)) } }
+            let offer = try await from.offer(), answer = try await to.answer(offer)
+            from.localSDPSent(); to.localSDPSent(); try await from.accept(answer)
+        }
+        func samples() async -> Double {
+            let report: LKRTCStatisticsReport = await withCheckedContinuation { c in subscriber.connection.statistics { c.resume(returning: $0) } }
+            return report.statistics.values.filter { $0.type == "inbound-rtp" && $0.values["kind"] as? String == "audio" }
+                .compactMap { ($0.values["jitterBufferEmittedCount"] as? NSNumber)?.doubleValue }.reduce(0, +)
+        }
+        do {
+            remoteSender.setMicrophone(true, profile: .music)
+            try await negotiate(remoteSender, subscriber)
+            try await negotiate(publisher, remoteReceiver)
+            try await Task.sleep(for: .seconds(2))
+            for (index, on) in [false, true, false, true, false].enumerated() {
+                publisher.setMicrophone(on, profile: .conversation)
+                try await negotiate(publisher, remoteReceiver)
+                try await Task.sleep(for: .seconds(1))
+                let before = await samples()
+                remoteDevice.resetWindow()
+                try await Task.sleep(for: .seconds(2))
+                let delta = await samples() - before
+                print("NATIVE_DUPLEX phase=\(index) mic=\(on) renderedSamples=\(delta) route=\(session.currentRoute.outputs.map(\.portName))")
+                XCTAssertGreaterThan(delta, 48_000, "Incoming playout stopped after microphone toggle")
+                XCTAssertEqual(publisher.microphoneSending, on)
+                if !on { XCTAssertLessThan(remoteDevice.window.rms, 0.001, "Muted microphone leaked real capture") }
+                if on {
+                    XCTAssertTrue(local.audioProcessingState.echoCancellation.isSoftwareActive ||
+                        local.audioProcessingState.echoCancellation.isPlatformActive, "Echo protection must stay active")
+                }
+            }
+            callAudio.pause()
+            try await Task.sleep(for: .milliseconds(300))
+            let paused = await samples()
+            try await Task.sleep(for: .seconds(1))
+            let afterPause = await samples()
+            XCTAssertEqual(afterPause, paused, "Held audio must not keep playing")
+            // The engines honor .reconnect by retiring the old transports.
+            // Exercise that contract with the same shared hardware factory.
+            XCTAssertEqual(callAudio.restore(state), .reconnect)
+            await publisher.close(); await subscriber.close(); await remoteSender.close(); await remoteReceiver.close()
+            publisher = try NativeRTCPeer(target: "PUBLISHER", factory: local, ice: [])
+            subscriber = try NativeRTCPeer(target: "SUBSCRIBER", factory: local, ice: [])
+            remoteSender = try NativeRTCPeer(target: "PUBLISHER", factory: remote, ice: [])
+            remoteReceiver = try NativeRTCPeer(target: "SUBSCRIBER", factory: remote, ice: [])
+            remoteSender.setMicrophone(true, profile: .music)
+            try await negotiate(remoteSender, subscriber)
+            try await negotiate(publisher, remoteReceiver)
+            try await Task.sleep(for: .seconds(2))
+            let resumed = await samples()
+            try await Task.sleep(for: .seconds(1))
+            let afterResume = await samples()
+            XCTAssertGreaterThan(afterResume - resumed, 24_000, "Hold release must restore playback")
+            await publisher.close(); await subscriber.close(); await remoteSender.close(); await remoteReceiver.close()
+            XCTAssertFalse(local.audioDeviceModule.isPlaying)
+            XCTAssertFalse(local.audioDeviceModule.isRecording)
+        } catch {
+            await publisher.close(); await subscriber.close(); await remoteSender.close(); await remoteReceiver.close(); throw error
+        }
+    }
+    private static func wireCandidate(_ value: [String: Any]) throws -> [String: Any] {
+        // Live signaling crosses JSON, including Int32-to-NSNumber conversion.
+        try JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: value)) as! [String: Any]
+    }
     func testMacDefaultMicrophonePublishesRealInputAndMutesSamples() async throws {
         guard ProcessInfo.processInfo.isiOSAppOnMac,
               ProcessInfo.processInfo.environment["ROCKNROLL_TEST_NATIVE_MICROPHONE"] == "1" else {
@@ -35,8 +136,8 @@ final class NativeMicrophoneTests: XCTestCase {
             decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: output)
         let sender = try NativeRTCPeer(target: "PUBLISHER", factory: inputFactory, ice: [])
         let receiver = try NativeRTCPeer(target: "SUBSCRIBER", factory: outputFactory, ice: [])
-        sender.onCandidate = { value in Task { try? await receiver.addCandidate(value) } }
-        receiver.onCandidate = { value in Task { try? await sender.addCandidate(value) } }
+        sender.onCandidate = { value in Task { try? await receiver.addCandidate(Self.wireCandidate(value)) } }
+        receiver.onCandidate = { value in Task { try? await sender.addCandidate(Self.wireCandidate(value)) } }
         do {
             let offer = try await sender.offer(), answer = try await receiver.answer(offer)
             sender.localSDPSent(); receiver.localSDPSent(); try await sender.accept(answer)
@@ -87,8 +188,8 @@ final class NativeMicrophoneTests: XCTestCase {
         let composite = topology == .composite
         let sender = try NativeRTCPeer(target: composite ? "COMPOSITE" : "PUBLISHER", factory: factory, ice: [], topology: topology)
         let receiver = try NativeRTCPeer(target: composite ? "PUBLISHER" : "SUBSCRIBER", factory: factory, ice: [])
-        sender.onCandidate = { candidate in Task { try? await receiver.addCandidate(candidate) } }
-        receiver.onCandidate = { candidate in Task { try? await sender.addCandidate(candidate) } }
+        sender.onCandidate = { candidate in Task { try? await receiver.addCandidate(Self.wireCandidate(candidate)) } }
+        receiver.onCandidate = { candidate in Task { try? await sender.addCandidate(Self.wireCandidate(candidate)) } }
         func negotiate(_ from: NativeRTCPeer, _ to: NativeRTCPeer) async throws {
             let offer = try await from.offer()
             let answer = try await to.answer(offer)

@@ -1,7 +1,35 @@
 import ConferenceCore
 import CryptoKit
 import Foundation
+import UIKit
 import UserNotifications
+
+@MainActor enum NotificationSettingsLink {
+    static func destinations(isMac: Bool, bundleIdentifier: String?) -> [URL] {
+        if isMac {
+            // iPad apps on Mac map the generic UIKit settings URL to Touch Alternatives.
+            // Open the system Notifications pane directly; retain a pane-level fallback.
+            let pane = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!
+            guard let bundleIdentifier, !bundleIdentifier.isEmpty else { return [pane] }
+            var app = URLComponents(url: pane, resolvingAgainstBaseURL: false)!
+            app.queryItems = [URLQueryItem(name: "id", value: bundleIdentifier)]
+            return [app.url!, pane]
+        }
+        return [URL(string: UIApplication.openNotificationSettingsURLString)!,
+                URL(string: UIApplication.openSettingsURLString)!]
+    }
+
+    @discardableResult static func open(
+        isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
+        bundleIdentifier: String? = Bundle.main.bundleIdentifier,
+        using opener: (URL) async -> Bool = { await UIApplication.shared.open($0) }
+    ) async -> Bool {
+        for url in destinations(isMac: isMac, bundleIdentifier: bundleIdentifier) {
+            if await opener(url) { return true }
+        }
+        return false
+    }
+}
 
 struct ReminderNotification: Equatable {
     let plan: PlannedReminder

@@ -23,7 +23,8 @@ struct CalendarReminderSettingsView: View {
                 })).accessibilityIdentifier("reminders.enabled")
                 if reminders.authorization == .denied {
                     Text(L("Notifications are off in Settings")).foregroundStyle(.secondary)
-                    Button(L("Open Settings")) { UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!) }
+                    Button(L("Open Settings")) { Task { await NotificationSettingsLink.open() } }
+                        .accessibilityIdentifier("reminders.notificationSettings")
                 }
                 if !calendar.enabled || calendar.access != .allowed || calendar.selected.isEmpty {
                     Text(L("Choose calendars with supported meeting invitations in Calendars.")).foregroundStyle(.secondary)

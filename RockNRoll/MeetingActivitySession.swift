@@ -84,7 +84,8 @@ final class MeetingActivitySession {
         let status: MeetingActivityState.Microphone
         if connection != .connected { status = microphone == .muted ? .muted : .paused }
         else { status = microphone == .on ? .on : microphone == .muted ? .muted : .unknown }
-        let title = preferences.bool(forKey: MeetingActivityCoordinator.titleKey) ? context.title.map { String($0.prefix(120)) } : nil
+        let showsTitle = preferences.object(forKey: MeetingActivityCoordinator.titleKey) as? Bool ?? true
+        let title = showsTitle ? context.title.map { String($0.prefix(120)) } : nil
         let route = controls?.routeName.trimmingCharacters(in: .whitespacesAndNewlines)
         let state = MeetingActivityState(startedAt: startedAt ?? Date(), connection: connection, microphone: status,
             title: title, route: route.flatMap { $0.isEmpty ? nil : String($0.prefix(80)) })

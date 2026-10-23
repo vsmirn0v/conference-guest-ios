@@ -1,5 +1,6 @@
 import ConferenceCore
 import UserNotifications
+import UIKit
 import XCTest
 @testable import RockNRoll
 
@@ -524,4 +525,48 @@ import XCTest
         }
     }
 
+    func testMacNotificationSettingsFallsBackWithinSystemNotifications() async throws {
+        var opened: [URL] = []
+        let result = await NotificationSettingsLink.open(isMac: true, bundleIdentifier: "dev.example.meeting") {
+            opened.append($0)
+            return opened.count == 2
+        }
+        XCTAssertTrue(result)
+        XCTAssertEqual(opened.count, 2)
+        let app = try XCTUnwrap(URLComponents(url: opened[0], resolvingAgainstBaseURL: false))
+        XCTAssertEqual(app.scheme, "x-apple.systempreferences")
+        XCTAssertEqual(app.path, "com.apple.Notifications-Settings.extension")
+        XCTAssertEqual(app.queryItems, [URLQueryItem(name: "id", value: "dev.example.meeting")])
+        XCTAssertNil(URLComponents(url: opened[1], resolvingAgainstBaseURL: false)?.query)
+        XCTAssertFalse(opened.contains(URL(string: UIApplication.openSettingsURLString)!))
+    }
+
+    func testIOSNotificationSettingsUsesDedicatedDestinationAndStopsOnSuccess() async {
+        var opened: [URL] = []
+        let result = await NotificationSettingsLink.open(isMac: false, bundleIdentifier: "dev.example.meeting") {
+            opened.append($0); return true
+        }
+        XCTAssertTrue(result)
+        XCTAssertEqual(opened, [URL(string: UIApplication.openNotificationSettingsURLString)!])
+    }
+
+    func testMissingMacBundleIdentityOpensOnlyNotificationsPane() async {
+        var opened: [URL] = []
+        let result = await NotificationSettingsLink.open(isMac: true, bundleIdentifier: nil) {
+            opened.append($0); return false
+        }
+        XCTAssertFalse(result)
+        XCTAssertEqual(opened.count, 1)
+        XCTAssertEqual(opened.first?.scheme, "x-apple.systempreferences")
+        XCTAssertNil(opened.first?.query)
+    }
+
+    func testOpenMacNotificationSettingsWhenRequested() async throws {
+        guard ProcessInfo.processInfo.isiOSAppOnMac,
+              ProcessInfo.processInfo.environment["ROCK_TEST_OPEN_NOTIFICATION_SETTINGS"] == "1" else {
+            throw XCTSkip("Opt-in live Mac settings destination check")
+        }
+        let opened = await NotificationSettingsLink.open()
+        XCTAssertTrue(opened)
+    }
 }

@@ -33,7 +33,7 @@ final class MeetingActivitySessionTests: XCTestCase {
         XCTAssertEqual(driver.started.count, 1)
         oldStudio.end(); replacement.end()
     }
-    func testAllEngineStateUsesConfirmedMicrophoneNotButtonIntentAndHidesTitle() async {
+    func testAllEngineStateUsesConfirmedMicrophoneAndShowsTitleUnlessDisabled() async {
         let preferences = UserDefaults(suiteName: UUID().uuidString)!
         let changes = PassthroughSubject<Void, Never>()
         let engine = ActivityEngineStub(), driver = ActivityDriverStub()
@@ -44,12 +44,18 @@ final class MeetingActivitySessionTests: XCTestCase {
             driver: driver, foreground: { true }, source: { context })
         session.foregrounded(); await session.coordinator.task?.value
         XCTAssertEqual(driver.started.first?.state.microphone, .unknown)
-        XCTAssertNil(driver.started.first?.state.title)
+        XCTAssertEqual(driver.started.first?.state.title, "Private calendar title")
         engine.microphone.send(.on); session.foregrounded(); await session.coordinator.task?.value
         XCTAssertEqual(driver.updates.last?.state.microphone, .on)
-        preferences.set(true, forKey: MeetingActivityCoordinator.titleKey)
+        preferences.set(false, forKey: MeetingActivityCoordinator.titleKey)
         session.foregrounded(); await session.coordinator.task?.value
-        XCTAssertEqual(driver.updates.last?.state.title, "Private calendar title")
+        XCTAssertNil(driver.updates.last?.state.title)
+        // A new session must also honor the persisted opt-out.
+        let reopenedDriver = ActivityDriverStub()
+        let reopened = MeetingActivitySession(changes: Empty().eraseToAnyPublisher(), preferences: preferences,
+            driver: reopenedDriver, foreground: { true }, source: { context })
+        reopened.foregrounded(); await reopened.coordinator.task?.value
+        XCTAssertNil(reopenedDriver.started.first?.state.title)
         preferences.set(false, forKey: MeetingActivityCoordinator.enabledKey)
         session.foregrounded(); await session.coordinator.task?.value
         XCTAssertEqual(driver.ends, ["activity-1"])

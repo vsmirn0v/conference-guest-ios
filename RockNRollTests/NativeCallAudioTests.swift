@@ -6,7 +6,8 @@ import XCTest
 final class NativeCallAudioTests: XCTestCase {
     private final class Audio: NativeRTCAudioControl {
         var useManualAudio = false
-        var isAudioEnabled = true
+        var rejectsEnable = false
+        var isAudioEnabled = true { didSet { if rejectsEnable && isAudioEnabled { isAudioEnabled = false } } }
         var activations = 0, deactivations = 0
         func audioSessionDidActivate(_ audioSession: AVAudioSession) { activations += 1 }
         func audioSessionDidDeactivate(_ audioSession: AVAudioSession) { deactivations += 1 }
@@ -55,6 +56,19 @@ final class NativeCallAudioTests: XCTestCase {
         session.pause()
         XCTAssertFalse(session.shouldSendMicrophone(connected))
         XCTAssertEqual(session.microphoneStatus(connected, sending: true), .unavailable)
+    }
+    func testFailedDeviceActivationCannotAdvertiseWorkingAudio() {
+        let owner = owner(), rtc = Audio()
+        defer { owner.end() }
+        let session = NativeCallAudio(owner: owner, audio: AudioCoordinator(), rtc: rtc)
+        session.begin(); rtc.rejectsEnable = true
+        XCTAssertEqual(session.restore(connected), .blocked)
+        XCTAssertFalse(session.shouldSendMicrophone(connected))
+        XCTAssertEqual(session.microphoneStatus(connected, sending: true), .unavailable)
+        rtc.rejectsEnable = false
+        XCTAssertEqual(session.restore(connected), .reconnect)
+        XCTAssertTrue(session.shouldSendMicrophone(connected))
+        session.finish()
     }
     func testInterruptionOwnershipBlocksSendingUntilFreshRelease() {
         let owner = owner(), rtc = Audio()

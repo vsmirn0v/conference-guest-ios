@@ -27,7 +27,7 @@ struct JoinView: View {
     @State private var showingSettings = false
     @AppStorage(SystemCallCoordinator.controlsPreferenceKey) private var systemCallControls = false
     @AppStorage(MeetingActivityCoordinator.enabledKey) private var meetingActivityEnabled = true
-    @AppStorage(MeetingActivityCoordinator.titleKey) private var meetingActivityShowTitle = false
+    @AppStorage(MeetingActivityCoordinator.titleKey) private var meetingActivityShowTitle = true
     @State private var showingAllRooms = false
     @StateObject private var mediaCheck = StudioModel(audioControl: .fullProcessing, preferences: .standard)
     @StateObject private var favoriteDrag = FavoriteDragState()

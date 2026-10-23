@@ -131,7 +131,8 @@ struct MeetingSetupView: View {
             if requestingNotifications { ProgressView(L("Updating notifications…")) }
             if reminders.authorization == .denied {
                 Text(L("Notifications are off in Settings")).font(.subheadline).foregroundStyle(.secondary)
-                settingsButton
+                Button(L("Open Settings")) { Task { await NotificationSettingsLink.open() } }
+                    .accessibilityIdentifier("setup.notificationSettings")
             }
             if !calendar.enabled || calendar.access != .allowed || calendar.selected.isEmpty {
                 Text(L("Reminders need at least one calendar with supported meeting links."))

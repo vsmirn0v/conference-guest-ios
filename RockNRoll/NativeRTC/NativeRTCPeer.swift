@@ -17,7 +17,14 @@ final class NativeRTCPeer: NSObject, LKRTCPeerConnectionDelegate, @unchecked Sen
         NativeH264ColorEncoder.prepare()
         let encoder = LKRTCDefaultVideoEncoderFactory()
         if let codec = LKRTCDefaultVideoEncoderFactory.supportedCodecs().first(where: { $0.name == "H264" }) { encoder.preferredCodec = codec }
-        return LKRTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: NativeH264DecoderFactory(base: NativeVideoDecoderFactory()))
+        let decoder = NativeH264DecoderFactory(base: NativeVideoDecoderFactory())
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            // The legacy iOS VPIO device stops Mac playout when its input is
+            // removed on mute. AVAudioEngine keeps receive and capture separate.
+            return LKRTCPeerConnectionFactory(audioDeviceModuleType: .audioEngine, bypassVoiceProcessing: false,
+                encoderFactory: encoder, decoderFactory: decoder, audioProcessingModule: nil)
+        }
+        return LKRTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: decoder)
     }
     static func makeFactory() throws -> LKRTCPeerConnectionFactory { try sharedFactory.get() }
     deinit { if let decoderObservation { NotificationCenter.default.removeObserver(decoderObservation) } }

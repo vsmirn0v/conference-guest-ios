@@ -20,6 +20,29 @@ protocol NativeRTCAudioControl: AnyObject {
 }
 extension LKRTCAudioSession: NativeRTCAudioControl {}
 
+/// AVAudioEngine does not consume RTCAudioSession's manual-audio bit. Gate its
+/// input and output explicitly so hold/interruption/teardown retain ownership.
+private final class NativeMacAudioControl: NativeRTCAudioControl {
+    private let session = LKRTCAudioSession.sharedInstance()
+    var useManualAudio: Bool {
+        get { session.useManualAudio }
+        set { session.useManualAudio = newValue }
+    }
+    var isAudioEnabled: Bool {
+        get { session.isAudioEnabled }
+        set {
+            guard let factory = try? NativeRTCPeer.makeFactory() else {
+                session.isAudioEnabled = false; return
+            }
+            let result = factory.audioDeviceModule.setEngineAvailability(
+                .init(isInputAvailable: ObjCBool(newValue), isOutputAvailable: ObjCBool(newValue)))
+            session.isAudioEnabled = newValue && result == 0
+        }
+    }
+    func audioSessionDidActivate(_ audioSession: AVAudioSession) { session.audioSessionDidActivate(audioSession) }
+    func audioSessionDidDeactivate(_ audioSession: AVAudioSession) { session.audioSessionDidDeactivate(audioSession) }
+}
+
 /// Owns the WebRTC audio-session lifecycle; each engine retains its signaling,
 /// media negotiation and screen-sharing teardown.
 @MainActor
@@ -32,8 +55,9 @@ final class NativeCallAudio {
     private var active = false
 
     init(owner: SystemCallCoordinator, audio: AudioCoordinator,
-         rtc: NativeRTCAudioControl = LKRTCAudioSession.sharedInstance()) {
-        self.owner = owner; self.audio = audio; self.rtc = rtc
+         rtc: NativeRTCAudioControl? = nil) {
+        self.owner = owner; self.audio = audio
+        self.rtc = rtc ?? (ProcessInfo.processInfo.isiOSAppOnMac ? NativeMacAudioControl() : LKRTCAudioSession.sharedInstance())
     }
 
     func begin() {
@@ -74,6 +98,7 @@ final class NativeCallAudio {
         guard state.permitsAudio, canUseCallAudio else { return .blocked }
         let wasPaused = !rtc.isAudioEnabled
         rtc.isAudioEnabled = true
+        guard rtc.isAudioEnabled else { return .blocked }
         audio.ensureMixing()
         return state.connected && wasPaused ? .reconnect : .updateMedia
     }
