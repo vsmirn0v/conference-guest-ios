@@ -108,7 +108,7 @@ enum MeetingActionGroup: String, CaseIterable {
     }
 }
 
-private struct MeetingActionRows: View {
+struct MeetingActionRows: View {
     let elements: [UIMenuElement]
     let perform: (UIAction) -> Void
     var body: some View {
@@ -312,6 +312,7 @@ final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPre
     }
 
     static func showView(state: MeetingViewState, from anchor: UIView, owner: MeetingPanelOwner,
+                         companionActions: [UIMenuElement] = [],
                          chooseLayout: @escaping (MeetingLayoutMode) -> Void,
                          chooseDisplay: @escaping (ConferenceDisplayMode) -> Void,
                          followSpeaker: @escaping () -> Void, onVisibilityChanged: @escaping (Bool) -> Void) {
@@ -321,6 +322,7 @@ final class MeetingActionsController: UIHostingController<AnyView>, UIPopoverPre
             controller.dismissAndPerform(action)
         }
         controller.rootView = AnyView(MeetingViewContent(state: state,
+            companionActions: companionActions, performAction: { action in perform { UIButton(primaryAction: action).sendActions(for: .touchUpInside) } },
             close: { [weak controller] in controller?.dismiss(animated: true) },
             chooseLayout: { mode in guard state.permitsLayout else { return }; perform { chooseLayout(mode) } },
             chooseDisplay: { mode in perform { chooseDisplay(mode) } }, followSpeaker: { perform(followSpeaker) }))

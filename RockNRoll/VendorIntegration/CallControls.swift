@@ -116,6 +116,21 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private let stageStatus = UILabel()
     private let shareOffer = UIButton(type: .system)
     private var stageViewport: StreamViewport?
+    private var focusState = GuestStreamViews.FocusState()
+    private var stageViewportStates: [GuestStreamViews.PinTarget: StreamViewportState] {
+        get { focusState.viewports }
+        set { focusState.viewports = newValue }
+    }
+    private let presenterCompanion = PresenterCompanionView()
+    private var companionPreview: GuestGalleryTile?
+    private var companionTarget: GuestStreamViews.PinTarget?
+    private var returnToShareTarget: GuestStreamViews.PinTarget? {
+        get { focusState.returnToShare }
+        set { focusState.returnToShare = newValue }
+    }
+    private var focusedCameraPreview: GuestGalleryTile?
+    private var focusedCameraTarget: GuestStreamViews.PinTarget?
+    private var companionForeground = ProcessInfo.processInfo.isiOSAppOnMac || UIApplication.shared.applicationState == .active
     private var lastPresentation: GuestStreamViews.Presentation?
     private var stageID: String?
     private var stageName: String?
@@ -353,6 +368,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 display: self.displayMode, manualFocus: self.stagePinned || self.lastPresentation?.browsing == true,
                 effectiveLayout: self.gridVisible ? .grid : .speaker, galleryAvailable: self.galleryCount > 1 && !self.isWaitingForOthers),
                 from: self.accessControls.viewButton, owner: self.panelOwner,
+                companionActions: self.presenterCompanion.menuActions(),
                 chooseLayout: { [weak self] in self?.chooseLayout($0) },
                 chooseDisplay: { [weak self] mode in
                     guard let self else { return }
@@ -701,7 +717,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             layoutMode = .speaker; explicitLayout = true
         } else if let previous = self.pinnedParticipant, pinnedParticipant == nil,
                   !participantRoster.contains(where: { $0.id == previous.participant && (!previous.isShare || $0.sharing) }) {
-            layoutMode = .grid
+            // Ending a presentation releases its pin, not the viewer's layout.
+            if !previous.isShare { layoutMode = .grid }
         }
         self.pinnedParticipant = pinnedParticipant
         updateParticipantsPanel()
@@ -727,15 +744,18 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         surface.backgroundColor = .black
         surface.accessibilityIdentifier = "Meeting stage"
         updateDisplayBackdrops()
-        stageStatus.text = active ? L("Waiting for %@'s %@…", name ?? L("Musician"), isShare ? L("screen share") : L("video")) :
+        stageStatus.text = active && isShare && !presentation.rendererAvailable ? L("Reconnecting to shared screen…") : active ? L("Waiting for %@'s %@…", name ?? L("Musician"), isShare ? L("screen share") : L("video")) :
             L("%@ · %@ unavailable · Pinned", name ?? L("Musician"), isShare ? L("Screen share") : L("Camera"))
-        stageStatus.isHidden = !active || stageHasFrame
+        stageStatus.isHidden = !active || stageHasFrame && presentation.rendererAvailable
         if changed {
             stageVideo.clear()
             stageViewport?.removeFromSuperview()
             stageViewport = nil
             if name != nil {
-                let viewport = StreamViewport(video: stageVideo, state: StreamViewportState(),
+                let key = presentation.target
+                let state = key.flatMap { stageViewportStates[$0] } ?? StreamViewportState()
+                if let key, key.isShare { stageViewportStates[key] = state }
+                let viewport = StreamViewport(video: stageVideo, state: state,
                     zoomable: isShare, name: name ?? L("Musician"), showInfo: false,
                     microphoneOn: microphoneOn, pinned: !automatic, watermark: presentation.watermark)
                 viewport.updatePin(name: name ?? L("Musician"), isShare: isShare,
@@ -748,7 +768,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                     viewport.topAnchor.constraint(equalTo: stageView.topAnchor),
                     viewport.bottomAnchor.constraint(equalTo: stageView.bottomAnchor)
                 ])
-                viewport.onZoomChanged = { [weak self] in self?.updateShareScaleControl() }
+                viewport.onZoomChanged = { [weak self] in self?.updateShareScaleControl(); self?.layoutPresentation() }
                 viewport.onBrowse = { [weak self] step in self?.onBrowse?(step) }
                 viewport.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
                 viewport.onToggleControls = { [weak self] in self?.toggleControls() }
@@ -816,6 +836,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
 
     func updateParticipantRoster(_ roster: [GuestStreamViews.Participant], speaking: String?) {
+        let shares = Set(roster.filter { $0.sharing }.map { GuestStreamViews.PinTarget(participant: $0.id, isShare: true) })
+        stageViewportStates = stageViewportStates.filter { shares.contains($0.key) }
+        if let target = returnToShareTarget, !shares.contains(target) { returnToShareTarget = nil }
         participantRoster = roster.sorted {
             if $0.isLocal != $1.isLocal { return $0.isLocal }
             let order = $0.name.localizedStandardCompare($1.name)
@@ -829,6 +852,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         updateParticipantsPanel()
         updateStageMicrophoneStatus()
         galleryView.setSpeaker(speakingParticipant, available: speakerReceptionAvailable && !isHeld)
+        if let target = companionTarget, let person = participantRoster.first(where: { $0.id == target.participant }) {
+            companionPreview?.updateAudio(participantAudio(microphoneOn: person.microphoneOn, id: person.id))
+        }
         refreshLayoutControls()
     }
 
@@ -1052,6 +1078,39 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             child.translatesAutoresizingMaskIntoConstraints = true
             surface.addSubview(child)
         }
+        surface.addSubview(presenterCompanion)
+        presenterCompanion.onInteraction = { [weak self] in
+            guard let self else { return }
+            self.focusState.cameraCollapsed = self.presenterCompanion.isCollapsed
+            self.focusState.cameraCorner = self.presenterCompanion.corner
+            self.focus.interaction()
+        }
+        presenterCompanion.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
+        presenterCompanion.onVisibilityChanged = { [weak self] visible in
+            guard let self else { return }
+            self.companionPreview?.setVisible(visible && self.companionForeground && !self.isHeld)
+        }
+        presenterCompanion.onFocusCamera = { [weak self] in
+            guard let self, let target = self.lastPresentation?.target, target.isShare else { return }
+            self.returnToShareTarget = target
+            self.selectParticipant(.init(participant: target.participant, isShare: false))
+        }
+        presenterCompanion.onReturnToShare = { [weak self] in
+            guard let self, let target = self.returnToShareTarget else { return }
+            self.selectParticipant(target)
+        }
+        for notification in [UIApplication.willResignActiveNotification, UIApplication.didBecomeActiveNotification] {
+            NotificationCenter.default.publisher(for: notification).receive(on: DispatchQueue.main).sink { [weak self] note in
+                guard let self else { return }
+                self.companionForeground = ProcessInfo.processInfo.isiOSAppOnMac || note.name == UIApplication.didBecomeActiveNotification
+                self.layoutPresentation()
+            }.store(in: &subscriptions)
+        }
+        for notification in [UIWindow.didBecomeHiddenNotification, UIWindow.didBecomeVisibleNotification] {
+            NotificationCenter.default.publisher(for: notification).receive(on: DispatchQueue.main).sink { [weak self] _ in
+                self?.layoutPresentation()
+            }.store(in: &subscriptions)
+        }
         if let identity = headerView?.arrangedSubviews.first as? UIStackView {
             speakerLabel.removeFromSuperview()
             identity.addArrangedSubview(speakerLabel)
@@ -1141,7 +1200,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             if self.stageIsShare && !self.gridVisible { self.stageViewport?.toggleScale() }
             else { self.focus.hide() }
         }, for: .touchUpInside)
-        stageVideo.onDisplaySizeChanged = { [weak self] in self?.updateShareScaleControl() }
+        stageVideo.onDisplaySizeChanged = { [weak self] in self?.updateShareScaleControl(); self?.layoutPresentation() }
         compactHeader.pin.addAction(UIAction { [weak self] _ in self?.onPinStage?(); self?.focus.interaction() }, for: .touchUpInside)
         compactHeader.details.addAction(UIAction { [weak self] _ in
             guard let self else { return }
@@ -1251,6 +1310,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         for backdrop in [audioOnlyBackdrop, screenSharesBackdrop, waitingBackdrop] { backdrop.frame = stage }
         stageView.frame = surface.bounds
         stageViewport?.fittedContentRect = stageIsShare ? surface.bounds : stage
+        updatePresenterCompanion()
+        focusedCameraPreview?.frame = stage
         if gridVisible {
             galleryView.frame = access.stage
             galleryView.layoutIfNeeded()
@@ -1291,6 +1352,18 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             verticalFittingPriority: .fittingSizeLevel).height)
         localShareCard.frame = CGRect(x: stage.minX + 4, y: stage.maxY - cardHeight - 44,
             width: cardWidth, height: cardHeight)
+        let size = stageVideo.displaySize
+        let zoomed = lastPresentation?.target.flatMap { stageViewportStates[$0]?.scale }.map { $0 > 1.01 } ?? false
+        var shareFrame = surface.bounds
+        if !zoomed, size.width > 0, size.height > 0 {
+            let scale = min(surface.bounds.width / size.width, surface.bounds.height / size.height)
+            let fitted = CGSize(width: size.width * scale, height: size.height * scale)
+            shareFrame = CGRect(x: surface.bounds.midX - fitted.width / 2, y: surface.bounds.midY - fitted.height / 2, width: fitted.width, height: fitted.height)
+        }
+        presenterCompanion.place(in: access.stage, fittedShareFrame: shareFrame,
+            avoiding: [sourcePicker, shareOffer, localShareCard].filter { !$0.isHidden && $0.alpha > 0 }.map(\.frame))
+        surface.bringSubviewToFront(presenterCompanion)
+        for control in [toolbar, accessControls, compactHeader] { surface.bringSubviewToFront(control) }
         updateShareScaleControl()
         stageViewport?.controlsHidden = focus.hidden
         stageViewport?.pinInHeader = geometry.compactHeader
@@ -1404,6 +1477,41 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         updateDisplayBackdrops(); layoutPresentation()
         onPinParticipant?(target)
     }
+
+    /// Independent camera sinks keep SDK layout and system PiP on the share.
+    /// A temporary missing camera never changes the selected content source.
+    private func updatePresenterCompanion() {
+        let primary = lastPresentation?.target
+        let activeShares = Set(galleryItems.filter { $0.id.isShare && $0.active }.map(\.id))
+        let cameraFocused = primary?.isShare == false && returnToShareTarget?.participant == primary?.participant &&
+            returnToShareTarget.map { activeShares.contains($0) } == true
+        let share = primary?.isShare == true ? primary : cameraFocused ? returnToShareTarget : nil
+        let item = share.flatMap { target in galleryItems.first { $0.id.participant == target.participant && !$0.id.isShare && $0.active && $0.renderer != nil } }
+        if companionTarget != item?.id {
+            companionPreview?.setVisible(false); companionPreview?.removeFromSuperview()
+            companionPreview = item.map { GuestGalleryTile(item: $0, thumbnail: true, pin: {}) }
+            companionTarget = item?.id
+        }
+        if let item { companionPreview?.update(item, pin: {}) }
+        presenterCompanion.configure(name: item?.name ?? stageName ?? L("Presenter"), preview: companionPreview, cameraFocused: cameraFocused)
+        let visible = companionForeground && !stageView.isHidden && !surface.isHidden && mountedWindow?.isHidden == false && !isHeld
+        presenterCompanion.isHidden = presenterCompanion.isHidden || !visible || displayMode != .all
+        companionPreview?.setVisible(presenterCompanion.isPreviewVisible && visible)
+
+        // PiP deliberately stays on the presentation during an explicit camera
+        // focus, so the foreground camera needs a separate, bounded frame sink.
+        let focusedItem = primary?.isShare == false && !activeShares.isEmpty ? galleryItems.first { $0.id == primary } : nil
+        if focusedCameraTarget != focusedItem?.id {
+            focusedCameraPreview?.setVisible(false); focusedCameraPreview?.removeFromSuperview()
+            focusedCameraPreview = focusedItem.map { GuestGalleryTile(item: $0, thumbnail: false, pin: {}) }
+            focusedCameraTarget = focusedItem?.id
+            if let focusedCameraPreview { stageView.addSubview(focusedCameraPreview) }
+        }
+        if let focusedItem { focusedCameraPreview?.update(focusedItem, pin: {}) }
+        focusedCameraPreview?.isHidden = !visible
+        focusedCameraPreview?.setVisible(visible)
+        if focusedCameraPreview != nil { stageStatus.isHidden = true }
+    }
     private func chooseLayout(_ mode: MeetingLayoutMode) {
         layoutMode = mode; explicitLayout = true
         if mode == .grid { requestSDKGrid?() }
@@ -1436,6 +1544,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     }
     func bindStreams(_ streams: GuestStreamViews) {
         streamViews = streams
+        focusState = streams.focusState
+        let collapsed = focusState.cameraCollapsed, corner = focusState.cameraCorner
+        presenterCompanion.setCollapsed(collapsed)
+        presenterCompanion.move(to: corner)
         requestSDKGrid?()
         if galleryView.superview == nil { surface.addSubview(galleryView) }
         if let reactionOverlay { surface.bringSubviewToFront(reactionOverlay) }

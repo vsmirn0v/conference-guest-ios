@@ -210,6 +210,8 @@ struct MeetingAccessGeometry {
 
 struct MeetingViewContent: View {
     let state: MeetingViewState
+    var companionActions: [UIMenuElement] = []
+    var performAction: (UIAction) -> Void = { _ in }
     let close: () -> Void
     let chooseLayout: (MeetingLayoutMode) -> Void
     let chooseDisplay: (ConferenceDisplayMode) -> Void
@@ -217,6 +219,9 @@ struct MeetingViewContent: View {
     var body: some View {
         NavigationStack {
             List {
+                if !companionActions.isEmpty {
+                    Section(L("Presenter")) { MeetingActionRows(elements: companionActions, perform: performAction) }
+                }
                 Section {
                     ForEach(MeetingLayoutMode.allCases, id: \.self) { mode in
                         choice(mode.title, symbol: mode.symbol, selected: state.selectedLayout == mode,

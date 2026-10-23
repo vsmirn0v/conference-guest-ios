@@ -224,13 +224,233 @@ final class GuestStreamSelectionTests: XCTestCase {
         controller.view.addSubview(share)
         controller.view.layoutIfNeeded()
 
-        await assertSelection(streams, mode: .all, expected: camera)
+        await assertSelection(streams, mode: .all, expected: share)
         await assertSelection(streams, mode: .screenShares, expected: share)
         await assertSelection(streams, mode: .audioOnly, expected: nil)
         camera.isHidden = true
         await assertSelection(streams, mode: .all, expected: share)
         share.isHidden = true
+        await assertSelection(streams, mode: .all, expected: share)
+    }
+
+    func testSignaledShareWaitsForRendererDespiteSDKCameraPriority() async {
+        let streams = GuestStreamViews()
+        let cameraRenderer = UIView()
+        var cameraTiles: [UIView] = []
+        streams.updateParticipants([
+            participant("camera", sharing: false), participant("share", sharing: true)
+        ])
+        let shareTarget = GuestStreamViews.PinTarget(participant: "share", isShare: true)
+        for displayMode: JazzParticipantViewModel.DisplayMode in [.speaker, .tile, .pip] {
+            cameraTiles.append(streams.makeView(model: model("camera", pinned: true, share: false,
+                speaking: true, displayMode: displayMode), video: cameraRenderer))
+            let presentation = await stageSnapshot(streams)
+            XCTAssertEqual(presentation.target, shareTarget)
+            XCTAssertTrue(presentation.active)
+            XCTAssertFalse(presentation.rendererAvailable)
+            await assertSelection(streams, mode: .all, expected: nil)
+        }
+
+        let shareRenderer = UIView()
+        let share = streams.makeView(model: model("share", pinned: false, share: true,
+            displayMode: .tile), video: shareRenderer)
+        let presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation.target, shareTarget)
+        XCTAssertTrue(presentation.rendererAvailable)
+        await assertSelection(streams, mode: .all, expected: share)
+        withExtendedLifetime(cameraTiles + [cameraRenderer, share, shareRenderer]) {}
+    }
+
+    func testShareRendererDisappearanceKeepsSemanticTargetWithoutCameraFallback() async {
+        let streams = GuestStreamViews()
+        let cameraRenderer = UIView()
+        let camera = streams.makeView(model: model("camera", pinned: true, share: false,
+            speaking: true), video: cameraRenderer)
+        var shareRenderer: UIView? = UIView()
+        var share: UIView? = streams.makeView(model: model("share", pinned: false, share: true),
+                                             video: shareRenderer!)
+        streams.updateParticipants([
+            participant("camera", sharing: false), participant("share", sharing: true)
+        ])
+        _ = await stageSnapshot(streams)
+        await assertSelection(streams, mode: .all, expected: share)
+        weak var retiredShare = share
+        share = nil
+        shareRenderer = nil
+        XCTAssertNil(retiredShare)
+
+        let presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation.target, .init(participant: "share", isShare: true))
+        XCTAssertTrue(presentation.active)
+        XCTAssertFalse(presentation.rendererAvailable)
         await assertSelection(streams, mode: .all, expected: nil)
+        withExtendedLifetime([camera, cameraRenderer]) {}
+    }
+
+    func testReassignedShareRendererCannotDisplayCameraAsShare() async {
+        let streams = GuestStreamViews()
+        let renderer = UIView()
+        let share = streams.makeView(model: model("share", pinned: false, share: true), video: renderer)
+        streams.updateParticipants([
+            participant("camera", sharing: false), participant("share", sharing: true)
+        ])
+        _ = await stageSnapshot(streams)
+        await assertSelection(streams, mode: .all, expected: share)
+
+        let camera = streams.makeView(model: model("camera", pinned: true, share: false,
+            speaking: true), video: renderer)
+        let presentation = await stageSnapshot(streams)
+        XCTAssertEqual(presentation.target, .init(participant: "share", isShare: true))
+        XCTAssertTrue(presentation.active)
+        XCTAssertFalse(presentation.rendererAvailable)
+        await assertSelection(streams, mode: .all, expected: nil)
+        withExtendedLifetime([share, camera, renderer]) {}
+    }
+
+    func testAutomaticShareAffinitySurvivesNewSharesRosterReorderingAndExplicitCameraPin() async {
+        let streams = GuestStreamViews()
+        let originalRenderer = UIView()
+        let original = streams.makeView(model: model("z-original", pinned: false, share: true),
+                                        video: originalRenderer)
+        streams.updateParticipants([participant("z-original", sharing: true)])
+        let originalTarget = GuestStreamViews.PinTarget(participant: "z-original", isShare: true)
+        let initial = await stageSnapshot(streams)
+        XCTAssertEqual(initial.target, originalTarget)
+        let laterRenderer = UIView()
+        let later = streams.makeView(model: model("a-later", pinned: true, share: true,
+            speaking: true), video: laterRenderer)
+        let cameraRenderer = UIView()
+        let camera = streams.makeView(model: model("camera", pinned: true, share: false,
+            speaking: true), video: cameraRenderer)
+        let roster = [participant("a-later", sharing: true), participant("camera", sharing: false),
+                      participant("z-original", sharing: true)]
+        for reordered in [roster, Array(roster.reversed()), roster] {
+            streams.updateParticipants(reordered)
+            let presentation = await stageSnapshot(streams)
+            XCTAssertEqual(presentation.target, originalTarget)
+            await assertSelection(streams, mode: .all, expected: original)
+        }
+
+        streams.setPin(.init(participant: "camera", isShare: false))
+        let focused = await stageSnapshot(streams)
+        XCTAssertEqual(focused.target, .init(participant: "camera", isShare: false))
+        XCTAssertFalse(focused.automatic)
+        await assertSelection(streams, mode: .all, expected: camera)
+        streams.useAutomaticView()
+        let restored = await stageSnapshot(streams)
+        XCTAssertEqual(restored.target, originalTarget)
+        XCTAssertTrue(restored.automatic)
+        await assertSelection(streams, mode: .all, expected: original)
+        withExtendedLifetime([original, originalRenderer, later, laterRenderer, camera, cameraRenderer]) {}
+    }
+
+    func testAuthoritativeShareEndAndParticipantDepartureReleaseAutomaticShare() async {
+        for departed in [false, true] {
+            let streams = GuestStreamViews()
+            let cameraRenderer = UIView()
+            let camera = streams.makeView(model: model("camera", pinned: false, share: false),
+                                          video: cameraRenderer)
+            let shareRenderer = UIView()
+            let share = streams.makeView(model: model("share", pinned: false, share: true),
+                                         video: shareRenderer)
+            streams.updateParticipants([
+                participant("camera", sharing: false), participant("share", sharing: true)
+            ])
+            let initial = await stageSnapshot(streams)
+            XCTAssertEqual(initial.target, .init(participant: "share", isShare: true))
+            streams.updateParticipants(departed ? [participant("camera", sharing: false)] : [
+                participant("camera", sharing: false), participant("share", sharing: false)
+            ])
+            let presentation = await stageSnapshot(streams)
+            XCTAssertEqual(presentation.target, .init(participant: "camera", isShare: false))
+            await assertSelection(streams, mode: .all, expected: camera)
+            withExtendedLifetime([camera, cameraRenderer, share, shareRenderer]) {}
+        }
+    }
+
+    func testReconnectPreservesAutomaticShareButDiscardsOldRenderer() async {
+        let streams = GuestStreamViews()
+        let oldRenderer = UIView()
+        let oldShare = streams.makeView(model: model("share", pinned: false, share: true), video: oldRenderer)
+        streams.updateParticipants([participant("share", sharing: true)])
+        let target = GuestStreamViews.PinTarget(participant: "share", isShare: true)
+        _ = await stageSnapshot(streams)
+        await assertSelection(streams, mode: .all, expected: oldShare)
+
+        streams.reset(preservingSelection: true)
+        let pending = await stageSnapshot(streams)
+        XCTAssertEqual(pending.target, target)
+        XCTAssertTrue(pending.active)
+        XCTAssertFalse(pending.rendererAvailable)
+        await assertSelection(streams, mode: .all, expected: nil)
+        let freshRenderer = UIView()
+        let freshShare = streams.makeView(model: model("share", pinned: false, share: true), video: freshRenderer)
+        let restored = await stageSnapshot(streams)
+        XCTAssertEqual(restored.target, target)
+        XCTAssertTrue(restored.rendererAvailable)
+        await assertSelection(streams, mode: .all, expected: freshShare)
+        streams.reset()
+        let cleared = await stageSnapshot(streams)
+        XCTAssertEqual(cleared, .empty)
+        XCTAssertFalse(cleared.rendererAvailable)
+        withExtendedLifetime([oldShare, oldRenderer, freshShare, freshRenderer]) {}
+    }
+
+    func testPiPKeepsShareWhileCameraIsExplicitlyFocusedAndWaitsWhenShareRendererIsMissing() async {
+        let streams = GuestStreamViews()
+        let cameraRenderer = UIView()
+        let camera = streams.makeView(model: model("camera", pinned: true, share: false), video: cameraRenderer)
+        let shareRenderer = UIView()
+        let share = streams.makeView(model: model("share", pinned: false, share: true), video: shareRenderer)
+        streams.updateParticipants([
+            participant("camera", sharing: false), participant("share", sharing: true)
+        ])
+        _ = await stageSnapshot(streams)
+        streams.setPin(.init(participant: "camera", isShare: false))
+        await assertSelection(streams, mode: .all, expected: camera)
+        var floating = await floatingSnapshot(streams)
+        XCTAssertEqual(floating.target, .init(participant: "share", isShare: true))
+        XCTAssertTrue(floating.view === share)
+        XCTAssertTrue(floating.isShare)
+
+        let replacementCamera = streams.makeView(model: model("camera", pinned: true, share: false,
+            speaking: true), video: shareRenderer)
+        let focused = await stageSnapshot(streams)
+        XCTAssertEqual(focused.target, .init(participant: "camera", isShare: false))
+        floating = await floatingSnapshot(streams)
+        XCTAssertEqual(floating.target, .init(participant: "share", isShare: true))
+        XCTAssertNil(floating.view, "PiP must wait for share pixels rather than display the focused camera")
+        withExtendedLifetime([camera, cameraRenderer, share, shareRenderer, replacementCamera]) {}
+    }
+
+    func testExplicitShareSelectionBecomesPiPShareDuringThatPresentersCameraFocus() async {
+        for browseToShare in [false, true] {
+            let streams = GuestStreamViews()
+            let firstRenderer = UIView(), secondRenderer = UIView(), cameraRenderer = UIView()
+            let first = streams.makeView(model: model("a", pinned: false, share: true), video: firstRenderer)
+            let second = streams.makeView(model: model("b", pinned: false, share: true), video: secondRenderer)
+            let camera = streams.makeView(model: model("b", pinned: false, share: false), video: cameraRenderer)
+            streams.updateParticipants([participant("a", sharing: true), participant("b", sharing: true)])
+            let initial = await stageSnapshot(streams)
+            XCTAssertEqual(initial.target, .init(participant: "a", isShare: true))
+            if browseToShare {
+                // Navigation order is a.camera, a.screen, b.camera, b.screen.
+                streams.browse(2)
+            } else {
+                streams.setPin(.init(participant: "b", isShare: true))
+            }
+            let selected = await stageSnapshot(streams)
+            XCTAssertEqual(selected.target, .init(participant: "b", isShare: true))
+            streams.setPin(.init(participant: "b", isShare: false))
+            await assertSelection(streams, mode: .all, expected: camera)
+            let floating = await floatingSnapshot(streams)
+            XCTAssertEqual(floating.target, .init(participant: "b", isShare: true))
+            XCTAssertTrue(floating.view === second)
+            streams.useAutomaticView()
+            let restored = await stageSnapshot(streams)
+            XCTAssertEqual(restored.target, .init(participant: "b", isShare: true))
+            withExtendedLifetime([first, second, camera, firstRenderer, secondRenderer, cameraRenderer]) {}
+        }
     }
 
     func testTilePinOverridesAutomaticShareAndSurvivesDisplayFiltering() async throws {
@@ -355,10 +575,34 @@ final class GuestStreamSelectionTests: XCTestCase {
         streams.onPreferredVideo = nil
     }
 
+    private func floatingSnapshot(_ streams: GuestStreamViews) async
+        -> (target: GuestStreamViews.PinTarget?, view: UIView?, isShare: Bool) {
+        var target: GuestStreamViews.PinTarget?
+        var view: UIView?
+        var isShare = false
+        let delivered = expectation(description: "PiP stream selection")
+        streams.onFloatingTargetChanged = { target = $0 }
+        streams.onFloatingVideo = { viewport, _, sharing, _ in
+            view = viewport
+            isShare = sharing
+            delivered.fulfill()
+        }
+        streams.refreshSelection()
+        await fulfillment(of: [delivered], timeout: 2)
+        streams.onFloatingTargetChanged = nil
+        streams.onFloatingVideo = nil
+        return (target, view, isShare)
+    }
+
+    private func participant(_ id: String, sharing: Bool) -> GuestStreamViews.Participant {
+        .init(id: id, name: id, isLocal: false, microphoneOn: false, cameraOn: true, sharing: sharing)
+    }
+
     private func model(_ id: String, pinned: Bool, share: Bool, local: Bool = false,
-                       speaking: Bool = false) -> JazzParticipantViewModel {
+                       speaking: Bool = false,
+                       displayMode: JazzParticipantViewModel.DisplayMode = .speaker) -> JazzParticipantViewModel {
         JazzParticipantViewModel(name: id, isAudioOn: false, isVideoOn: !share, isPinned: pinned,
             isSharingScreen: share, isLocal: local, id: id, isDominantSpeaker: speaking,
-            shouldShowParticipantInfo: true, isZoomable: share, watermarkState: .hidden, displayMode: .speaker)
+            shouldShowParticipantInfo: true, isZoomable: share, watermarkState: .hidden, displayMode: displayMode)
     }
 }

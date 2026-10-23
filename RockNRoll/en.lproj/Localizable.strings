@@ -1055,3 +1055,13 @@
 "Microphone access is required to connect audio. Your microphone stays off until you turn it on." = "Microphone access is required to connect audio. Your microphone stays off until you turn it on.";
 
 "If audio cannot connect, a notification asks you to open the app. Live Activity can appear after you open it. Turning this off keeps a connected meeting." = "If audio cannot connect, a notification asks you to open the app. Live Activity can appear after you open it. Turning this off keeps a connected meeting.";
+
+/* Focus presenter companion */
+"Reconnecting to shared screen…" = "Reconnecting to shared screen…";
+"Back to share" = "Back to share";
+"Show %@" = "Show %@";
+"Hide %@" = "Hide %@";
+"Focus %@ camera" = "Focus %@ camera";
+"Move presenter" = "Move presenter";
+"Move presenter: %@" = "Move presenter: %@";
+"%@ presenter controls" = "%@ presenter controls";

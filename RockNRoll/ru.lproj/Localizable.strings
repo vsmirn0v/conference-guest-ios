@@ -1053,3 +1053,13 @@
 "Microphone access is required to connect audio. Your microphone stays off until you turn it on." = "Для подключения звука нужен доступ к микрофону. Микрофон остаётся выключенным, пока вы его не включите.";
 
 "If audio cannot connect, a notification asks you to open the app. Live Activity can appear after you open it. Turning this off keeps a connected meeting." = "Если звук не подключится, уведомление предложит открыть приложение. После открытия может появиться Live Activity. Выключение этой функции не прерывает подключённую встречу.";
+
+/* Focus presenter companion */
+"Reconnecting to shared screen…" = "Восстанавливаем показ экрана…";
+"Back to share" = "Назад к экрану";
+"Show %@" = "Показать %@";
+"Hide %@" = "Скрыть %@";
+"Focus %@ camera" = "Камера %@ крупным планом";
+"Move presenter" = "Переместить камеру докладчика";
+"Move presenter: %@" = "Переместить камеру докладчика: %@";
+"%@ presenter controls" = "Управление камерой докладчика %@";
