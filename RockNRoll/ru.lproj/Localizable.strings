@@ -884,7 +884,7 @@
 "Meeting status outside the app" = "Статус встречи вне приложения";
 "Show meeting name" = "Показывать название встречи";
 "Meeting status" = "Статус встречи";
-"Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default." = "Показывать состояние микрофона и подключения на экране блокировки и в Dynamic Island, когда системное управление звонками выключено. Название встречи скрыто по умолчанию.";
+"Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off." = "Показывать состояние микрофона и подключения на экране блокировки и в Dynamic Island, когда системное управление звонками выключено.";
 "Unknown" = "Неизвестно";
 "Screen sharing is active" = "Идёт показ экрана";
 "Choose what others see" = "Выберите, что увидят участники";

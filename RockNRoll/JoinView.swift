@@ -649,7 +649,7 @@ struct JoinView: View {
                         .accessibilityIdentifier("meeting.activity.title")
                 }
             } header: { Text(L("Meeting status")) } footer: {
-                Text(L("Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off. Meeting names are hidden by default."))
+                Text(L("Show microphone and connection status on the Lock Screen and Dynamic Island when System call controls are off."))
             }
         }
     }

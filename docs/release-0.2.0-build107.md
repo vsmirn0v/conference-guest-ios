@@ -4,6 +4,8 @@
 
 Mac Telemost microphone mute no longer stops incoming meeting audio. The shared native Telemost/TrueConf Mac path uses WebRTC’s AVAudioEngine backend, with explicit audio availability gating for hold, recovery and teardown. The iOS audio backend is unchanged. Notification permission shortcuts on Mac open the app’s Notifications settings instead of Touch Alternatives. Live Activities show meeting names by default; an explicit saved preference to hide names remains respected.
 
+Automatically hide controls remains off by default; the explicit in-meeting opt-in is preserved. Updated the English/Russian Live Activity settings description to match the visible-name default.
+
 ## Validation
 
 Mac and simulator selected regressions each ran 92 cases with no failures (nine Mac and 11 simulator platform/opt-in skips). A separate real Mac microphone test passed with generated speech, proving decoded outgoing capture after unmute and silence before unmute/after mute. The connected failing baseline reproduced stopped incoming playout after mute; the fixed Mac hardware duplex run sustained incoming samples through repeated mute/unmute, checked outgoing mute privacy and active echo cancellation, stopped playback on hold, recovered via the engines’ reconnect contract and stopped hardware input/output on teardown. Both split/composite synthetic audio privacy regressions pass.
