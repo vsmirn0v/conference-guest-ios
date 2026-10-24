@@ -12,12 +12,12 @@ final class CameraReactionObserver {
     var onReaction: ((MeetingReaction, String) -> Void)?
 
     func bind(_ device: AVCaptureDevice, sourceID: String) {
-        guard self.sourceID != sourceID else { return }
+        guard self.sourceID != sourceID || self.device !== device else { return }
         stop()
-        guard #available(iOS 17.0, *) else { return }
+        guard #available(iOS 17.0, macOS 14.0, *) else { return }
         self.device = device
         self.sourceID = sourceID
-        #if DEBUG
+        #if DEBUG && canImport(UIKit)
         GuestReactionFixtureActions.trace("Observe camera metadata")
         #endif
         let generation = epoch
@@ -25,7 +25,7 @@ final class CameraReactionObserver {
         seen = Set(device.reactionEffectsInProgress.compactMap { Self.identity($0, deviceID: device.uniqueID) })
         observation = device.observe(\.reactionEffectsInProgress, options: [.new]) { [weak self] device, change in
             let states = change.newValue ?? []
-            #if DEBUG
+            #if DEBUG && canImport(UIKit)
             GuestReactionFixtureActions.trace("Metadata: \(states.map { "\($0.reactionType.rawValue) start=\($0.startTime.isValid) end=\($0.endTime.isValid)" })")
             #endif
             let events = states.compactMap { state -> (MeetingReaction, String)? in
@@ -45,7 +45,7 @@ final class CameraReactionObserver {
             }
         }
     }
-    @available(iOS 17.0, *)
+    @available(iOS 17.0, macOS 14.0, *)
     nonisolated static func reaction(_ type: AVCaptureReactionType) -> MeetingReaction? {
         switch type {
         case .heart: return .heart
@@ -55,7 +55,7 @@ final class CameraReactionObserver {
         default: return nil
         }
     }
-    @available(iOS 17.0, *)
+    @available(iOS 17.0, macOS 14.0, *)
     nonisolated private static func identity(_ state: AVCaptureReactionEffectState, deviceID: String) -> String? {
         let time = state.startTime
         guard time.isValid, time.isNumeric else { return nil }
@@ -63,7 +63,7 @@ final class CameraReactionObserver {
     }
     func stop() {
         guard observation != nil || sourceID != nil || !seen.isEmpty else { return }
-        #if DEBUG
+        #if DEBUG && canImport(UIKit)
         GuestReactionFixtureActions.trace("Retire camera metadata")
         #endif
         observation = nil; device = nil; sourceID = nil; epoch = UUID(); seen = []

@@ -25,14 +25,14 @@ actor AppleCalendarReader: CalendarReading {
     private lazy var store = EKEventStore()
     func access() -> CalendarAccess {
         let status = EKEventStore.authorizationStatus(for: .event)
-        if #available(iOS 17, *) {
+        if #available(iOS 17, macOS 14, *) {
             if status == .fullAccess { return .allowed }
             if status == .writeOnly { return .notDetermined }
         } else if status == .authorized { return .allowed }
         return status == .notDetermined ? .notDetermined : .denied
     }
     func requestAccess() async throws -> Bool {
-        if #available(iOS 17, *) { return try await store.requestFullAccessToEvents() }
+        if #available(iOS 17, macOS 14, *) { return try await store.requestFullAccessToEvents() }
         return try await withCheckedThrowingContinuation { continuation in
             store.requestAccess(to: .event) { allowed, error in
                 if let error { continuation.resume(throwing: error) }

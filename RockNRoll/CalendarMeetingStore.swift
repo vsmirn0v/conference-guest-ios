@@ -16,6 +16,13 @@ enum CalendarAutomaticJoinMode: String, CaseIterable {
 
 @MainActor
 final class CalendarMeetingStore: ObservableObject {
+    nonisolated static var isMacPlatform: Bool {
+        #if os(macOS)
+        true
+        #else
+        ProcessInfo.processInfo.isiOSAppOnMac
+        #endif
+    }
     @Published private(set) var enabled: Bool
     @Published private(set) var automaticJoin: Bool
     @Published private(set) var automaticJoinMode: CalendarAutomaticJoinMode
@@ -81,7 +88,7 @@ final class CalendarMeetingStore: ObservableObject {
          preferences: UserDefaults = .standard,
          storage: any RoomHistoryStorage = KeychainRoomHistoryStorage(service: "dev.vsmirn0v.conferenceguest.calendar"),
          reminders: CalendarReminderCoordinator? = nil,
-         isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
+         isMac: Bool = CalendarMeetingStore.isMacPlatform,
          clock: @escaping () -> Date = Date.init, countdownInterval: Duration = .seconds(1)) {
         self.reader = reader; self.detector = detector; self.preferences = preferences; self.storage = storage
         self.isMac = isMac; self.clock = clock; self.countdownInterval = countdownInterval
@@ -166,9 +173,11 @@ final class CalendarMeetingStore: ObservableObject {
         scheduledUIBlocked = blocked
         if blocked { invalidateScheduledAdmission(); cancelAutomaticJoin(suppress: true) }
     }
-    var nextScheduledMeeting: CalendarMeeting? {
-        upcoming.filter { !$0.allDay && !$0.tentative && $0.start >= clock() }
-            .min { $0.start < $1.start }
+    /// Manual Join remains useful after an event starts or automatic attendance is skipped.
+    var suggestedMenuMeeting: CalendarMeeting? {
+        let current = clock()
+        return meetings.filter { $0.hasResolvedInvitation && !$0.allDay && !$0.tentative && $0.end > current }
+            .min { ($0.start, $0.id) < ($1.start, $1.id) }
     }
     func automaticJoinSuppressed(_ meeting: CalendarMeeting) -> Bool {
         state.suppressed[meeting.id] != nil || reminders.skipped(meeting)

@@ -1,4 +1,9 @@
 # Unified-diff blank context lines contain a required single space.
 Experiments/WebRTCHybrid/patches/*.patch whitespace=-blank-at-eol
+# Recorded port patches preserve upstream context and indentation byte-for-byte.
+Experiments/NativeGuest/*.patch -whitespace
+Experiments/WebRTCM155/*.patch -whitespace
+Experiments/WebRTCM156/*.patch -whitespace
+Experiments/WebRTCMaintenance/patches/*.patch -whitespace
 # Preserve upstream generated license notices byte-for-byte.
 RockNRoll/Resources/Legal/LiveKitWebRTC-notices.txt whitespace=-blank-at-eol,-blank-at-eof

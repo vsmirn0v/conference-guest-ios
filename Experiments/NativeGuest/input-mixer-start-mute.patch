@@ -1,0 +1,15 @@
+--- a/modules/audio_device/audio_engine_device.mm
++++ b/modules/audio_device/audio_engine_device.mm
+@@ -559,7 +559,11 @@
+ 
+   int32_t result = ModifyEngineState([](EngineState state) -> EngineState {
+     state.input_running = true;
+-    state.input_muted = false;  // Always unmute
++    // InputMixer clients manage mute independently of capture lifetime.
++    // Starting a sending stream must not clear their explicit mute state.
++    if (state.mute_mode != MuteMode::InputMixer) {
++      state.input_muted = false;
++    }
+     return state;
+   });
+ 

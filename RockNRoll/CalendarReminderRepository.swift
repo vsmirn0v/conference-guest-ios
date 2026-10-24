@@ -17,9 +17,15 @@ struct ReminderFileStorage: ReminderStorage {
     }
     func write(_ data: Data) throws {
         let folder = url.deletingLastPathComponent()
+        #if os(macOS)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        try data.write(to: url, options: [.atomic])
+        #else
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
             attributes: [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication, .posixPermissions: 0o700])
         try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        #endif
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         var resource = URLResourceValues(); resource.isExcludedFromBackup = true
         var saved = url; try saved.setResourceValues(resource)

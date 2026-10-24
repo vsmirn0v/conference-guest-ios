@@ -3,7 +3,11 @@ import Combine
 import ConferenceCore
 import Foundation
 import Network
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 @MainActor
 final class RoomSyncCoordinator: ObservableObject {
@@ -78,7 +82,7 @@ final class RoomSyncCoordinator: ObservableObject {
         Self.active = self
         if enabled {
             monitorNetwork()
-            UIApplication.shared.registerForRemoteNotifications()
+            registerForCloudNotifications()
         }
     }
 
@@ -123,7 +127,7 @@ final class RoomSyncCoordinator: ObservableObject {
         if value {
             status = L("Connecting to iCloud…")
             state.needsInitialNameCheck = state.needsInitialNameCheck || state.generation == nil
-            UIApplication.shared.registerForRemoteNotifications()
+            registerForCloudNotifications()
             monitorNetwork()
         } else {
             status = L("Stored on this device")
@@ -155,6 +159,14 @@ final class RoomSyncCoordinator: ObservableObject {
     }
 
     func foregrounded() { requestSync(immediate: true) }
+
+    private func registerForCloudNotifications() {
+        #if canImport(UIKit)
+        UIApplication.shared.registerForRemoteNotifications()
+        #else
+        NSApplication.shared.registerForRemoteNotifications()
+        #endif
+    }
 
     private func monitorNetwork() {
         guard networkMonitor == nil else { return }

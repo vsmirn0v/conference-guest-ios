@@ -186,6 +186,42 @@ final class MacMeetingTests: XCTestCase {
         XCTAssertEqual(model.calendarJoins, 0)
     }
 
+    func testIdleMenuOffersOngoingMeetingBeforeNextAndAdvancesAtEnd() async throws {
+        let f = MacCalendarSchedulingTests().fixture(), model = MeetingSessionStub(), presentation = MeetingPresentationStub()
+        defer { f.store.setEnabled(false) }
+        let start = f.clock.now.addingTimeInterval(-60)
+        func event(_ id: String, start: Date) -> CalendarMeeting {
+            .init(id: id, seriesID: id, calendarID: "work", calendarTitle: "Work", title: id,
+                  start: start, end: start.addingTimeInterval(3600),
+                  links: [URL(string: "https://jazz.example.test/calls/" + id)!])
+        }
+        let current = event("current", start: start), next = event("next", start: start.addingTimeInterval(3600))
+        await f.reader.setEvents([next, current], delay: .zero)
+        f.store.setKeepInMenuBar(true); f.store.refresh()
+        try await MacCalendarSchedulingTests().ready(f.store)
+        model.desktopCalendar = f.store; model.desktopMeetingActive = false; model.isInConference = false
+        let coordinator = makeCoordinator(model, presentation)
+        defer { coordinator.invalidate() }
+        coordinator.becameActive(); await settle()
+        let selected = try XCTUnwrap(presentation.states.last?.nextMeeting)
+        XCTAssertEqual(selected.id, current.id, "At 13:01, the 13:00–14:00 meeting must precede the 14:00 meeting")
+        let action = "calendar:join:" + MacMeetingCoordinator.calendarAction(selected)
+        XCTAssertTrue(presentation.states.last!.menu.contains { $0["action"] as? String == action })
+        presentation.action?(action)
+        XCTAssertEqual(model.calendarJoins, 1)
+
+        f.store.suppressAutomaticJoin(for: selected); await settle()
+        XCTAssertEqual(presentation.states.last?.nextMeeting?.id, current.id, "Skipping automatic attendance must preserve manual Join")
+        XCTAssertTrue(presentation.states.last!.nextSkipped)
+        f.clock.now = next.start; f.store.refresh()
+        try await MacCalendarSchedulingTests().ready(f.store); await settle()
+        XCTAssertEqual(presentation.states.last?.nextMeeting?.id, next.id)
+        XCTAssertFalse(presentation.states.last!.nextSkipped, "Skip state belongs to the displayed occurrence")
+        f.clock.now = next.end; f.store.refresh()
+        try await MacCalendarSchedulingTests().ready(f.store); await settle()
+        XCTAssertNil(presentation.states.last?.nextMeeting)
+    }
+
     func testDelayedWindowBindingEnablesScheduledAdmissionWithoutAnotherFocusEvent() async throws {
         let f = MacCalendarSchedulingTests().fixture(), model = MeetingSessionStub(), presentation = MeetingPresentationStub()
         defer { f.store.setEnabled(false) }

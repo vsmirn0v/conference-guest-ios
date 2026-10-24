@@ -1,0 +1,2 @@
+solutions = [{'name': 'src', 'url': None, 'managed': False, 'deps_file': '../DEPS', 'custom_deps': {}, 'custom_vars': {}}]
+target_os = ['mac', 'ios']

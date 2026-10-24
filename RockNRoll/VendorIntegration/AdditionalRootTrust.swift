@@ -1,6 +1,10 @@
 import Foundation
 import Security
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 /// Adds the bundled public CA only to requests made with this session.
 /// Normal iOS anchors remain valid, and the server's hostname must still match.

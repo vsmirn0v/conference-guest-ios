@@ -31,6 +31,13 @@ final class MediaConfigurationCoordinator<Key: Hashable, Value: Equatable> {
         worker?.cancel(); worker = nil
         desired.removeAll(); applied.removeAll(); failures.removeAll()
     }
+    func waitForReconciliation() async {
+        while let worker { await worker.value }
+    }
+    func isApplied(_ key: Key, value: Value) -> Bool { applied[key] == value }
+    func didFail(_ key: Key, value: Value) -> Bool {
+        desired[key]?.value == value && (failures[key] ?? 0) >= 3
+    }
     private func drain(epoch: Int) async {
         while generation == epoch, !Task.isCancelled,
               let request = desired.values.first(where: {

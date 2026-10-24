@@ -321,6 +321,36 @@ final class PresenterCompositorTests: XCTestCase {
 
 @MainActor
 final class PresenterModelTests: XCTestCase {
+    func testMissingOrUnknownLayoutDefaultsToCutoutWithoutCameraConsent() {
+        XCTAssertEqual(PresenterScene().layout, .cutout)
+        for stored in [nil, "unknown-layout"] as [String?] {
+            let suite = "presenter-default-test-" + UUID().uuidString
+            let preferences = UserDefaults(suiteName: suite)!
+            defer { preferences.removePersistentDomain(forName: suite) }
+            if let stored { preferences.set(stored, forKey: "presenter.layout.v1") }
+            let model = PresenterModel(observeLifecycle: false, preferences: preferences, cameraDevices: { [] })
+            XCTAssertEqual(model.scene.layout, .cutout)
+            XCTAssertFalse(model.includeCamera); XCTAssertFalse(model.running); XCTAssertFalse(model.hasCameraFrames)
+            XCTAssertEqual(preferences.string(forKey: "presenter.layout.v1"), stored,
+                           "Reading a default must not overwrite a stored choice")
+            model.end()
+        }
+    }
+    func testEverySavedLayoutSurvivesRestartWithoutEnablingCamera() {
+        for layout in PresenterScene.Layout.allCases {
+            let suite = "presenter-layout-test-" + UUID().uuidString
+            let preferences = UserDefaults(suiteName: suite)!
+            defer { preferences.removePersistentDomain(forName: suite) }
+            preferences.set(layout.rawValue, forKey: "presenter.layout.v1")
+            for _ in 0..<2 {
+                let model = PresenterModel(observeLifecycle: false, preferences: preferences, cameraDevices: { [] })
+                XCTAssertEqual(model.scene.layout, layout, "A new default must preserve an existing layout")
+                XCTAssertFalse(model.includeCamera); XCTAssertFalse(model.running)
+                model.end()
+            }
+            XCTAssertEqual(preferences.string(forKey: "presenter.layout.v1"), layout.rawValue)
+        }
+    }
     func testCameraMirroringDefaultsOnAndPersistsAcrossPresenterRestart() {
         let suite = "presenter-mirror-test-" + UUID().uuidString
         let preferences = UserDefaults(suiteName: suite)!

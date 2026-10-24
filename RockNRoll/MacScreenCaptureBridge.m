@@ -5,6 +5,9 @@
 #import <dlfcn.h>
 #import <math.h>
 #import <TargetConditionals.h>
+#if TARGET_OS_OSX
+#import <AppKit/AppKit.h>
+#endif
 
 static NSErrorDomain CaptureErrorDomain;
 static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatusKey;
@@ -19,6 +22,13 @@ static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatus
 - (void)removeObserver:(id)observer;
 - (void)present;
 - (void)presentPickerForStream:(NSObject *)stream;
+- (void)presentPickerUsingContentStyle:(NSInteger)style;
+- (void)presentPickerForStream:(NSObject *)stream usingContentStyle:(NSInteger)style;
+- (NSObject *)defaultConfiguration;
+- (void)setDefaultConfiguration:(NSObject *)configuration;
+- (NSNumber *)maximumStreamCount;
+- (void)setMaximumStreamCount:(NSNumber *)count;
+- (void)setAllowedPickerModes:(NSUInteger)modes;
 - (NSInteger)style;
 - (CGRect)contentRect;
 - (float)pointPixelScale;
@@ -130,6 +140,10 @@ static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatus
     NSLock *_routingLock;
     __weak ScreenCapturePickerSession *_pending;
     BOOL _registered;
+    NSObject *_previousConfiguration;
+    NSNumber *_previousMaximumStreamCount;
+    BOOL _ownsConfiguration;
+    BOOL _unregistering;
 }
 + (instancetype)sharedCoordinator {
     static ScreenCapturePickerCoordinator *shared;
@@ -149,7 +163,7 @@ static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatus
 - (BOOL)present:(ScreenCapturePickerSession *)session error:(NSError **)error {
     NSAssert(NSThread.isMainThread, @"Capture selection belongs to the main thread");
     [_routingLock lock];
-    BOOL busy = _pending && _pending != session, alreadyPending = _pending == session;
+    BOOL busy = _unregistering || (_pending && _pending != session), alreadyPending = _pending == session;
     [_routingLock unlock];
     if (!_picker || busy || ([_picker isActive] && !_registered)) {
         if (error) *error = [NSError errorWithDomain:@"RockScreenPicker" code:1 userInfo:@{NSLocalizedDescriptionKey:@"Another screen-sharing chooser is open."}];
@@ -159,10 +173,56 @@ static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatus
     [_routingLock lock];
     ++session.selectionGeneration; [_sessions addObject:session]; _pending = session;
     [_routingLock unlock];
-    if (!_registered) { [_picker addObserver:self]; _registered = YES; }
+    if (!_registered) {
+        if ([_picker respondsToSelector:@selector(defaultConfiguration)] && [_picker respondsToSelector:@selector(setDefaultConfiguration:)]) {
+            _previousConfiguration = [_picker defaultConfiguration];
+            _previousMaximumStreamCount = [_picker respondsToSelector:@selector(maximumStreamCount)] ? [_picker maximumStreamCount] : nil;
+            _ownsConfiguration = YES;
+        }
+        [_picker addObserver:self]; _registered = YES;
+    }
+    // A zero maximum disables new-stream picker UI. Set a positive, explicit
+    // capacity while we own the picker, and restore its old configuration last.
+    if ([_picker respondsToSelector:@selector(setMaximumStreamCount:)]) [_picker setMaximumStreamCount:@(MAX(1, _sessions.count))];
+    NSObject *configuration = [NSClassFromString(@"SCContentSharingPickerConfiguration") new];
+    if (configuration && [_picker respondsToSelector:@selector(setDefaultConfiguration:)] &&
+        [configuration respondsToSelector:@selector(setAllowedPickerModes:)]) {
+        NSUInteger modes = session.selectionMode == MacScreenCaptureSelectionModeWindow ? (1UL << 0) :
+                           session.selectionMode == MacScreenCaptureSelectionModeDisplay ? (1UL << 4) : 0;
+        [configuration setAllowedPickerModes:modes];
+        [_picker setDefaultConfiguration:configuration];
+    }
     [_picker setActive:YES];
-    if (session.stream && [_picker respondsToSelector:@selector(presentPickerForStream:)]) [_picker presentPickerForStream:session.stream];
-    else [_picker present];
+    #if TARGET_OS_OSX
+    [NSApp activateIgnoringOtherApps:YES];
+    #endif
+    NSUInteger generation = session.selectionGeneration;
+    // Foreground activation completes through AppKit's run loop. Defer display
+    // one main turn, fencing cancellation/replacement before showing any UI.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self->_routingLock lock];
+        BOOL current = self->_pending == session && [self->_sessions containsObject:session] && session.selectionGeneration == generation;
+        [self->_routingLock unlock];
+        if (!current) return;
+        NSInteger style = session.selectionMode == MacScreenCaptureSelectionModeWindow ? 1 :
+                          session.selectionMode == MacScreenCaptureSelectionModeDisplay ? 2 : 0;
+        if (style && session.stream && [self->_picker respondsToSelector:@selector(presentPickerForStream:usingContentStyle:)])
+            [self->_picker presentPickerForStream:session.stream usingContentStyle:style];
+        else if (style && [self->_picker respondsToSelector:@selector(presentPickerUsingContentStyle:)])
+            [self->_picker presentPickerUsingContentStyle:style];
+        else if (session.stream && [self->_picker respondsToSelector:@selector(presentPickerForStream:)])
+            [self->_picker presentPickerForStream:session.stream];
+        else [self->_picker present];
+        #if DEBUG
+        BOOL foreground = YES;
+        #if TARGET_OS_OSX
+        foreground = NSApp.isActive;
+        #endif
+        NSLog(@"RockScreenPicker presentation mode=%ld active=%d foreground=%d associatedStream=%d capacity=%@", (long)session.selectionMode,
+              [self->_picker isActive], foreground, session.stream != nil,
+              [self->_picker respondsToSelector:@selector(maximumStreamCount)] ? [self->_picker maximumStreamCount] : @"unavailable");
+        #endif
+    });
     return YES;
 }
 - (void)remove:(ScreenCapturePickerSession *)session {
@@ -170,9 +230,17 @@ static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatus
     if (_pending == session) _pending = nil;
     [_sessions removeObject:session];
     BOOL unregister = _registered && _sessions.count == 0;
-    if (unregister) _registered = NO;
+    if (unregister) { _registered = NO; _unregistering = YES; }
     [_routingLock unlock];
-    if (unregister) { [_picker removeObserver:self]; [_picker setActive:NO]; }
+    if (unregister) {
+        [_picker removeObserver:self]; [_picker setActive:NO];
+        if (_ownsConfiguration) {
+            if (_previousConfiguration) [_picker setDefaultConfiguration:_previousConfiguration];
+            if ([_picker respondsToSelector:@selector(setMaximumStreamCount:)]) [_picker setMaximumStreamCount:_previousMaximumStreamCount];
+            _previousConfiguration = nil; _previousMaximumStreamCount = nil; _ownsConfiguration = NO;
+        }
+        [_routingLock lock]; _unregistering = NO; [_routingLock unlock];
+    }
 }
 - (ScreenCapturePickerSession *)sessionForStream:(NSObject *)stream {
     if (!stream) return _pending;
@@ -194,13 +262,22 @@ static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatus
 }
 - (void)contentSharingPicker:(NSObject *)picker didUpdateWithFilter:(NSObject *)filter forStream:(NSObject *)stream {
     if (picker != _picker) return;
+    #if DEBUG
+    NSLog(@"RockScreenPicker selected sourceStyle=%ld associatedStream=%d", (long)([filter respondsToSelector:@selector(style)] ? [filter style] : 0), stream != nil);
+    #endif
     [self deliverForStream:stream action:^(ScreenCapturePickerSession *session) { if (session.onFilter) session.onFilter(filter); }];
 }
 - (void)contentSharingPicker:(NSObject *)picker didCancelForStream:(NSObject *)stream {
     if (picker != _picker) return;
+    #if DEBUG
+    NSLog(@"RockScreenPicker cancelled associatedStream=%d", stream != nil);
+    #endif
     [self deliverForStream:stream action:^(ScreenCapturePickerSession *session) { if (session.onCancel) session.onCancel(); }];
 }
 - (void)contentSharingPickerStartDidFailWithError:(NSError *)error {
+    #if DEBUG
+    NSLog(@"RockScreenPicker failed domain=%@ code=%ld", error.domain, (long)error.code);
+    #endif
     [self deliverForStream:nil action:^(ScreenCapturePickerSession *session) { if (session.onError) session.onError(error); }];
 }
 @end
@@ -396,7 +473,7 @@ static NSError *CaptureError(NSString *message) {
         _pickerSession.onError = ^(NSError *error) { [weakSelf fail:error]; };
     }
     if (!_stream) ++_generation;
-    _picking = YES; _pickerSession.stream = _stream;
+    _picking = YES; _pickerSession.stream = _stream; _pickerSession.selectionMode = self.selectionMode;
     if (![_pickerSession presentWithError:error]) { _picking = NO; return NO; }
     return YES;
 }

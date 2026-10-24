@@ -1,6 +1,7 @@
 import ConferenceCore
 import SwiftUI
 
+#if canImport(UIKit)
 struct HomeMeetingCard: View {
     let item: HomeMeeting
     let now: Date
@@ -158,6 +159,7 @@ struct HomeMeetingCard: View {
             L("Starts in %ld min", max(1, Int(ceil(meeting.start.timeIntervalSince(now) / 60))))
     }
 }
+#endif
 
 enum CalendarMeetingPresentation {
     static func compactTimeRange(_ meeting: CalendarMeeting) -> String {

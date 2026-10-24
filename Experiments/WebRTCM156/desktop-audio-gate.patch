@@ -1,0 +1,691 @@
+diff --git a/modules/audio_device/BUILD.gn b/modules/audio_device/BUILD.gn
+--- a/modules/audio_device/BUILD.gn
++++ b/modules/audio_device/BUILD.gn
+@@ -382,6 +382,7 @@
+       }
+       if (is_mac) {
+         sources += [
++          "mac/application_input_mute_state.h",
+           "mac/audio_device_mac.cc",
+           "mac/audio_device_mac.h",
+           "mac/audio_device_utils_mac.cc",
+@@ -466,6 +467,7 @@
+     sources = [ "fine_audio_buffer_unittest.cc" ]
+     deps = [
+       ":audio_device_buffer",
++      ":audio_device_impl",
+       ":mock_audio_device",
+       "../../test:create_test_environment",
+       "../../test:test_support",
+diff --git a/modules/audio_device/audio_device_buffer.cc b/modules/audio_device/audio_device_buffer.cc
+--- a/modules/audio_device/audio_device_buffer.cc
++++ b/modules/audio_device/audio_device_buffer.cc
+@@ -32,6 +32,36 @@
+ #include "system_wrappers/include/metrics.h"
+ 
+ namespace webrtc {
++
++namespace {
++std::atomic<uint64_t> application_capture_state{0};
++static_assert(std::atomic<uint64_t>::is_always_lock_free);
++}  // namespace
++
++void SetApplicationCaptureMuted(bool muted) {
++  uint64_t previous = application_capture_state.load(std::memory_order_acquire);
++  // Every mute invalidates pending opens, including while capture is already
++  // closed for an in-flight user unmute operation.
++  while (muted || (previous & 1) != static_cast<uint64_t>(muted)) {
++    const uint64_t next = ((previous & ~uint64_t{1}) + 2) |
++                          static_cast<uint64_t>(muted);
++    if (application_capture_state.compare_exchange_weak(
++            previous, next, std::memory_order_acq_rel,
++            std::memory_order_acquire)) return;
++  }
++}
++
++uint64_t ApplicationCaptureState() {
++  return application_capture_state.load(std::memory_order_acquire);
++}
++
++bool UnmuteApplicationCaptureIfState(uint64_t expected_state) {
++  const uint64_t next = (expected_state & 1)
++      ? ((expected_state & ~uint64_t{1}) + 2) : expected_state;
++  return application_capture_state.compare_exchange_strong(
++      expected_state, next, std::memory_order_acq_rel,
++      std::memory_order_acquire);
++}
+ 
+ static const char kTimerQueueName[] = "AudioDeviceBufferTimer";
+ 
+@@ -272,10 +302,16 @@
+     const void* audio_buffer,
+     size_t samples_per_channel,
+     std::optional<int64_t> capture_timestamp_ns) {
++  application_capture_state_ = ApplicationCaptureState();
+   // Copy the complete input buffer to the local buffer.
+   const size_t old_size = rec_buffer_.size();
+-  rec_buffer_.SetData(static_cast<const int16_t*>(audio_buffer),
+-                      rec_channels_ * samples_per_channel);
++  if (application_capture_state_ & 1) {
++    rec_buffer_.SetSize(rec_channels_ * samples_per_channel);
++    SilenceRecordedBuffer();
++  } else {
++    rec_buffer_.SetData(static_cast<const int16_t*>(audio_buffer),
++                        rec_channels_ * samples_per_channel);
++  }
+   // Keep track of the size of the recording buffer. Only updated when the
+   // size changes, which is a rare event.
+   if (old_size != rec_buffer_.size()) {
+@@ -325,7 +361,21 @@
+   return 0;
+ }
+ 
++void AudioDeviceBuffer::SilenceRecordedBuffer() {
++  if (rec_buffer_.size() != 0) {
++    memset(rec_buffer_.data(), 0, rec_buffer_.size() * sizeof(int16_t));
++  }
++}
++
+ int32_t AudioDeviceBuffer::DeliverRecordedData() {
++  const uint64_t capture_state = ApplicationCaptureState();
++  if ((capture_state & 1) || capture_state != application_capture_state_) {
++    // Keep the recording clock alive, without exposing microphone samples.
++    // An SFU may need silent RTP before it advertises the new audio track and
++    // acknowledges unmute. Dropping callbacks would deadlock that admission.
++    SilenceRecordedBuffer();
++  }
++  if (rec_buffer_.empty()) return 0;
+   if (!audio_transport_cb_) {
+     RTC_LOG(LS_WARNING) << "Invalid audio transport";
+     return 0;
+diff --git a/modules/audio_device/audio_device_buffer.h b/modules/audio_device/audio_device_buffer.h
+--- a/modules/audio_device/audio_device_buffer.h
++++ b/modules/audio_device/audio_device_buffer.h
+@@ -29,6 +29,13 @@
+ 
+ namespace webrtc {
+ 
++// Process-wide capture boundary. The OS accessory callback only writes this
++// packed atomic; transport/capture threads never wait for the app's queues.
++// Low bit is mute; remaining bits distinguish samples across rapid toggles.
++void SetApplicationCaptureMuted(bool muted);
++uint64_t ApplicationCaptureState();
++bool UnmuteApplicationCaptureIfState(uint64_t expected_state);
++
+ // Delta times between two successive playout callbacks are limited to this
+ // value before added to an internal array.
+ const size_t kMaxDeltaTimeInMs = 500;
+@@ -116,6 +123,8 @@
+       const void* audio_buffer,
+       size_t samples_per_channel,
+       std::optional<int64_t> capture_timestamp_ns);
++  // Scrubs the owned copy without advancing timestamps or recording counters.
++  void SilenceRecordedBuffer();
+   virtual void SetVQEData(int play_delay_ms, int rec_delay_ms);
+   virtual int32_t DeliverRecordedData();
+   uint32_t NewMicLevel() const;
+@@ -249,6 +258,8 @@
+   // Used for converting capture timestaps (received from AudioRecordThread
+   // via AudioRecordJni::DataIsRecorded) to RTC clock.
+   TimestampAligner timestamp_aligner_;
++  // Confined to the existing recording sequence, tagged before the PCM copy.
++  uint64_t application_capture_state_ = 0;
+ 
+ // Should *never* be defined in production builds. Only used for testing.
+ // When defined, the output signal will be replaced by a sinus tone at 440Hz.
+diff --git a/modules/audio_device/audio_engine_device.mm b/modules/audio_device/audio_engine_device.mm
+--- a/modules/audio_device/audio_engine_device.mm
++++ b/modules/audio_device/audio_engine_device.mm
+@@ -44,9 +44,64 @@
+ 
+ #if TARGET_OS_OSX
+ #import "./mac/audio_device_utils_mac.h"
++#include "modules/audio_device/mac/application_input_mute_state.h"
+ #endif
+ 
+ namespace webrtc {
++
++#if TARGET_OS_OSX
++namespace mac_adm {
++namespace {
++ApplicationInputMuteState& CurrentApplicationInputMute() {
++  // Process lifetime: queued main work and audio workers outlive owner teardown.
++  static auto* const state = new ApplicationInputMuteState;
++  return *state;
++}
++void ScheduleApplicationInputMuteRestore(int delay_ms = 0) {
++  if (!CurrentApplicationInputMute().QueueRestore()) return;
++  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, delay_ms * NSEC_PER_MSEC),
++                 dispatch_get_main_queue(), ^{
++    auto result = CurrentApplicationInputMute().Restore([](bool muted) {
++      if (@available(macOS 14.0, *)) {
++        AVAudioApplication* application = [AVAudioApplication sharedInstance];
++        if (application.isInputMuted != muted) {
++          NSError* error = nil;
++          if (![application setInputMuted:muted error:&error]) {
++            RTC_LOG(LS_ERROR) << "Could not restore application input mute";
++            return false;
++          }
++        }
++      }
++      return true;
++    });
++    if (result == ApplicationInputMuteState::RestoreResult::kRetry) {
++      ScheduleApplicationInputMuteRestore(250);
++    }
++  });
++}
++}  // namespace
++void SetApplicationInputMuteIntent(int muted) {
++  RTC_DCHECK([NSThread isMainThread]);
++  auto& state = CurrentApplicationInputMute();
++  state.SetIntent(muted);
++  if (state.IsReconfiguring()) ScheduleApplicationInputMuteRestore();
++}
++bool ApplicationInputMuteReconfiguring() {
++  return CurrentApplicationInputMute().IsReconfiguring();
++}
++ScopedApplicationInputMuteReconfiguration::ScopedApplicationInputMuteReconfiguration() {
++  if (@available(macOS 14.0, *)) {
++    active_ = true;
++    CurrentApplicationInputMute().BeginReconfiguration();
++  }
++}
++ScopedApplicationInputMuteReconfiguration::~ScopedApplicationInputMuteReconfiguration() {
++  if (!active_) return;
++  CurrentApplicationInputMute().EndReconfiguration();
++  ScheduleApplicationInputMuteRestore();
++}
++}  // namespace mac_adm
++#endif
+ 
+ NSString* const kAudioEngineInputMixerNodeKey = @"_audio_engine_input_mixer_node_key";
+ 
+@@ -1647,6 +1702,9 @@
+     // Re-configure is only for device mode
+     if (current_state.render_mode != RenderMode::Device) return;
+ 
++#if TARGET_OS_OSX
++    mac_adm::ScopedApplicationInputMuteReconfiguration preserve_application_mute;
++#endif
+     EngineState shutdown_state = this->engine_state_;
+     shutdown_state.input_enabled = false;
+     shutdown_state.input_running = false;
+@@ -1708,6 +1766,9 @@
+     return -1;
+   }
+ 
++#if TARGET_OS_OSX
++  mac_adm::ScopedApplicationInputMuteReconfiguration preserve_application_mute;
++#endif
+   int32_t shutdown_result = 0;
+   int32_t startup_result = 0;
+ 
+diff --git a/modules/audio_device/fine_audio_buffer.cc b/modules/audio_device/fine_audio_buffer.cc
+--- a/modules/audio_device/fine_audio_buffer.cc
++++ b/modules/audio_device/fine_audio_buffer.cc
+@@ -112,17 +112,43 @@
+     int record_delay_ms,
+     std::optional<int64_t> capture_time_ns) {
+   RTC_DCHECK(IsReadyForRecord());
++  const uint64_t capture_state = ApplicationCaptureState();
++  if (capture_state != application_capture_state_) {
++    // Scrub old residual PCM while preserving its duration in the clock.
++    if (record_buffer_.size() != 0) {
++      memset(record_buffer_.data(), 0, record_buffer_.size() * sizeof(int16_t));
++    }
++    application_capture_state_ = capture_state;
++  }
++  if (audio_buffer.empty()) return;
+   // Always append new data and grow the buffer when needed.
+-  record_buffer_.AppendData(audio_buffer.data(), audio_buffer.size());
++  if (capture_state & 1) {
++    const size_t old_size = record_buffer_.size();
++    record_buffer_.SetSize(old_size + audio_buffer.size());
++    memset(record_buffer_.data() + old_size, 0, audio_buffer.size() * sizeof(int16_t));
++  } else {
++    record_buffer_.AppendData(audio_buffer.data(), audio_buffer.size());
++  }
+   // Consume samples from buffer in chunks of 10ms until there is not
+   // enough data left. The number of remaining samples in the cache is given by
+   // the new size of the internal `record_buffer_`.
+   const size_t num_elements_10ms =
+       record_channels_ * record_samples_per_channel_10ms_;
+   while (record_buffer_.size() >= num_elements_10ms) {
++    if (ApplicationCaptureState() != capture_state) {
++      memset(record_buffer_.data(), 0, record_buffer_.size() * sizeof(int16_t));
++    }
+     audio_device_buffer_->SetRecordedBuffer(record_buffer_.data(),
+                                             record_samples_per_channel_10ms_,
+                                             capture_time_ns);
++    // Retain the original FineAudioBuffer epoch across ADB's copy. A rapid
++    // mute/unmute inside that call must not retag old residual PCM as current.
++    if (ApplicationCaptureState() != capture_state) {
++      // ADB may have observed a newer open epoch while copying old Fine PCM.
++      // Scrub that copy without counting/timestamping the same chunk twice.
++      memset(record_buffer_.data(), 0, record_buffer_.size() * sizeof(int16_t));
++      audio_device_buffer_->SilenceRecordedBuffer();
++    }
+     audio_device_buffer_->SetVQEData(playout_delay_ms_, record_delay_ms);
+     audio_device_buffer_->DeliverRecordedData();
+     memmove(record_buffer_.data(), record_buffer_.data() + num_elements_10ms,
+diff --git a/modules/audio_device/fine_audio_buffer.h b/modules/audio_device/fine_audio_buffer.h
+--- a/modules/audio_device/fine_audio_buffer.h
++++ b/modules/audio_device/fine_audio_buffer.h
+@@ -93,6 +93,7 @@
+   // Storage for input samples that are about to be delivered to the WebRTC
+   // ADB or remains from the last successful delivery of a 10ms audio buffer.
+   BufferT<int16_t> record_buffer_;
++  uint64_t application_capture_state_ = 0;
+   // Contains latest delay estimate given to GetPlayoutData().
+   int playout_delay_ms_ = 0;
+ };
+diff --git a/modules/audio_device/fine_audio_buffer_unittest.cc b/modules/audio_device/fine_audio_buffer_unittest.cc
+--- a/modules/audio_device/fine_audio_buffer_unittest.cc
++++ b/modules/audio_device/fine_audio_buffer_unittest.cc
+@@ -16,6 +16,9 @@
+ #include <span>
+ 
+ #include "modules/audio_device/mock_audio_device_buffer.h"
++#include "modules/audio_device/include/mock_audio_transport.h"
++#include <vector>
++#include "modules/audio_device/mac/application_input_mute_state.h"
+ #include "test/create_test_environment.h"
+ #include "test/gmock.h"
+ #include "test/gtest.h"
+@@ -24,6 +27,7 @@
+ using ::testing::AtLeast;
+ using ::testing::InSequence;
+ using ::testing::Return;
++using ::testing::WithArgs;
+ 
+ namespace webrtc {
+ 
+@@ -152,4 +156,221 @@
+   RunFineBufferTest(kFrameSizeSamples);
+ }
+ 
++
++// Keep the process-owned gate isolated from other sequential audio fixtures.
++class ApplicationCaptureGateTest : public ::testing::Test {
++ protected:
++  void SetUp() override { SetApplicationCaptureMuted(false); }
++  void TearDown() override { SetApplicationCaptureMuted(false); }
++  static void Configure(AudioDeviceBuffer& buffer) {
++    buffer.SetRecordingSampleRate(kSampleRate);
++    buffer.SetRecordingChannels(kChannels);
++  }
++};
++
++TEST_F(ApplicationCaptureGateTest, ConditionalOpenRejectsNewMuteWhileAlreadyClosed) {
++  SetApplicationCaptureMuted(true);
++  const uint64_t pending_unmute = ApplicationCaptureState();
++  SetApplicationCaptureMuted(true);  // OS mute races the pending confirmation.
++  EXPECT_NE(ApplicationCaptureState(), pending_unmute);
++  EXPECT_FALSE(UnmuteApplicationCaptureIfState(pending_unmute));
++  EXPECT_EQ(ApplicationCaptureState() & 1, 1u);
++  const uint64_t current = ApplicationCaptureState();
++  EXPECT_TRUE(UnmuteApplicationCaptureIfState(current));
++  EXPECT_EQ(ApplicationCaptureState() & 1, 0u);
++}
++
++TEST_F(ApplicationCaptureGateTest, DirectAndNewBuffersSilenceMutedOrStaleEpochs) {
++  AudioDeviceBuffer buffer(CreateTestEnvironment());
++  Configure(buffer);
++  test::MockAudioTransport transport;
++  buffer.RegisterAudioCallback(&transport);
++  std::vector<int16_t> samples(kChannels * kSamplesPer10Ms, 7);
++  const int expected[] = {7, 0, 0, 0, 0, 7};
++  int calls = 0;
++  EXPECT_CALL(transport, RecordedDataIsAvailable(_, _, _, _, _, _, _, _, _, _, _))
++      .Times(6).WillRepeatedly(WithArgs<0, 1, 3, 4>(
++          [&](const void* raw, size_t frames, size_t channels, uint32_t rate) {
++            EXPECT_EQ(frames, size_t(kSamplesPer10Ms));
++            EXPECT_EQ(channels, size_t(kChannels));
++            EXPECT_EQ(rate, uint32_t(kSampleRate));
++            const int16_t* pcm = static_cast<const int16_t*>(raw);
++            for (size_t n = 0; n < frames * channels; ++n) EXPECT_EQ(pcm[n], expected[calls]);
++            ++calls;
++            return 0;
++          }));
++  buffer.SetRecordedBuffer(samples.data(), kSamplesPer10Ms);
++  buffer.DeliverRecordedData();
++  buffer.SetRecordedBuffer(samples.data(), kSamplesPer10Ms);
++  SetApplicationCaptureMuted(true);
++  SetApplicationCaptureMuted(false);
++  buffer.DeliverRecordedData();
++  SetApplicationCaptureMuted(true);
++  buffer.SetRecordedBuffer(samples.data(), kSamplesPer10Ms);
++  buffer.DeliverRecordedData();
++  AudioDeviceBuffer replacement(CreateTestEnvironment());
++  Configure(replacement);
++  replacement.RegisterAudioCallback(&transport);
++  replacement.SetRecordedBuffer(samples.data(), kSamplesPer10Ms);
++  replacement.DeliverRecordedData();
++  SetApplicationCaptureMuted(false);
++  replacement.DeliverRecordedData();
++  replacement.SetRecordedBuffer(samples.data(), kSamplesPer10Ms);
++  replacement.DeliverRecordedData();
++}
++
++TEST_F(ApplicationCaptureGateTest, FineBufferScrubsPartialFramesWithoutLosingClock) {
++  MockAudioDeviceBuffer buffer(CreateTestEnvironment());
++  Configure(buffer);
++  FineAudioBuffer fine(&buffer);
++  std::vector<int16_t> old_half(kChannels * kSamplesPer10Ms / 2, 1);
++  std::vector<int16_t> new_half(kChannels * kSamplesPer10Ms / 2, 2);
++  int calls = 0;
++  EXPECT_CALL(buffer, SetRecordedBuffer(_, kSamplesPer10Ms, _))
++      .Times(2).WillRepeatedly([&](const void* raw, size_t, std::optional<int64_t>) {
++        const int16_t* pcm = static_cast<const int16_t*>(raw);
++        const int expected = calls++ == 0 ? 0 : 2;
++        for (int n = 0; n < kChannels * kSamplesPer10Ms; ++n) EXPECT_EQ(pcm[n], expected);
++        return 0;
++      });
++  EXPECT_CALL(buffer, SetVQEData(_, _)).Times(2);
++  EXPECT_CALL(buffer, DeliverRecordedData()).Times(2).WillRepeatedly(Return(0));
++  fine.DeliverRecordedData(old_half, 0);
++  SetApplicationCaptureMuted(true);
++  fine.DeliverRecordedData(old_half, 0);
++  SetApplicationCaptureMuted(false);
++  fine.DeliverRecordedData(new_half, 0);
++  fine.DeliverRecordedData(new_half, 0);
++}
++
++TEST_F(ApplicationCaptureGateTest, FineBufferScrubsToggleDuringADBCopyWithoutHole) {
++  MockAudioDeviceBuffer buffer(CreateTestEnvironment());
++  Configure(buffer);
++  FineAudioBuffer fine(&buffer);
++  test::MockAudioTransport transport;
++  buffer.RegisterAudioCallback(&transport);
++  std::vector<int16_t> samples(kChannels * kSamplesPer10Ms, 9);
++  EXPECT_CALL(buffer, SetRecordedBuffer(_, kSamplesPer10Ms, _))
++      .Times(1).WillOnce([&](const void* raw, size_t frames, std::optional<int64_t> time) {
++        // Force ADB to tag stale Fine PCM with a newer open epoch.
++        SetApplicationCaptureMuted(true); SetApplicationCaptureMuted(false);
++        return buffer.AudioDeviceBuffer::SetRecordedBuffer(raw, frames, time);
++      });
++  EXPECT_CALL(buffer, SetVQEData(_, _)).Times(1);
++  EXPECT_CALL(buffer, DeliverRecordedData()).Times(1).WillOnce([&] {
++    return buffer.AudioDeviceBuffer::DeliverRecordedData();
++  });
++  EXPECT_CALL(transport, RecordedDataIsAvailable(_, _, _, _, _, _, _, _, _, _, _))
++      .Times(1).WillOnce(WithArgs<0, 1, 3>(
++          [](const void* raw, size_t frames, size_t channels) {
++            EXPECT_EQ(frames, size_t(kSamplesPer10Ms));
++            const int16_t* pcm = static_cast<const int16_t*>(raw);
++            for (size_t n = 0; n < frames * channels; ++n) EXPECT_EQ(pcm[n], 0);
++            return 0;
++          }));
++  fine.DeliverRecordedData(samples, 0);
++}
++
++TEST_F(ApplicationCaptureGateTest, EmptyCallbacksDoNotAccessNullBuffers) {
++  AudioDeviceBuffer buffer(CreateTestEnvironment());
++  Configure(buffer);
++  FineAudioBuffer fine(&buffer);
++  SetApplicationCaptureMuted(true);
++  fine.DeliverRecordedData(std::span<const int16_t>(), 0);
++  buffer.SetRecordedBuffer(nullptr, 0);
++  buffer.DeliverRecordedData();
++}
++
++TEST_F(ApplicationCaptureGateTest, ClockedSilenceReachesActualTransportWithoutFrameHoles) {
++  AudioDeviceBuffer buffer(CreateTestEnvironment());
++  Configure(buffer);
++  FineAudioBuffer fine(&buffer);
++  test::MockAudioTransport transport;
++  buffer.RegisterAudioCallback(&transport);
++  constexpr size_t frames_per_callback = kSamplesPer10Ms + 37;
++  constexpr int callbacks = 40;
++  constexpr int delivered_frames = callbacks * frames_per_callback / kSamplesPer10Ms;
++  std::vector<int16_t> samples(kChannels * frames_per_callback, 12345);
++  EXPECT_CALL(transport, RecordedDataIsAvailable(_, _, _, _, _, _, _, _, _, _, _))
++      .Times(delivered_frames).WillRepeatedly(WithArgs<0, 1, 3, 4>(
++          [&](const void* raw, size_t frames, size_t channels, uint32_t rate) {
++            EXPECT_EQ(frames, size_t(kSamplesPer10Ms));
++            EXPECT_EQ(channels, size_t(kChannels));
++            EXPECT_EQ(rate, uint32_t(kSampleRate));
++            const int16_t* pcm = static_cast<const int16_t*>(raw);
++            for (size_t n = 0; n < frames * channels; ++n) EXPECT_EQ(pcm[n], 0);
++            return 0;
++          }));
++  SetApplicationCaptureMuted(true);
++  for (int n = 0; n < callbacks; ++n) {
++    // Repeated OS mute callbacks change epoch even while already closed.
++    if (n % 3 == 0) SetApplicationCaptureMuted(true);
++    fine.DeliverRecordedData(samples, 0);
++  }
++}
++
++
++TEST(ApplicationInputMuteRestoreTest, NestedScopesAndLatestOwner) {
++  mac_adm::ApplicationInputMuteState state;
++  state.SetIntent(0);
++  state.BeginReconfiguration();
++  state.BeginReconfiguration();
++  state.EndReconfiguration();
++  EXPECT_TRUE(state.IsReconfiguring());
++  EXPECT_TRUE(state.QueueRestore());
++  int writes = 0;
++  EXPECT_EQ(state.Restore([&](bool) { ++writes; return true; }),
++            mac_adm::ApplicationInputMuteState::RestoreResult::kIdle);
++  EXPECT_EQ(writes, 0);
++  state.SetIntent(1);  // Owner/intent replaced during device recreation.
++  state.EndReconfiguration();
++  EXPECT_TRUE(state.QueueRestore());
++  EXPECT_EQ(state.Restore([&](bool muted) { ++writes; EXPECT_TRUE(muted); return true; }),
++            mac_adm::ApplicationInputMuteState::RestoreResult::kComplete);
++  EXPECT_EQ(writes, 1);
++  EXPECT_FALSE(state.IsReconfiguring());
++}
++
++TEST(ApplicationInputMuteRestoreTest, ReleasedOwnerNeverWritesPlatform) {
++  mac_adm::ApplicationInputMuteState state;
++  state.SetIntent(1);
++  state.BeginReconfiguration();
++  state.EndReconfiguration();
++  state.SetIntent(-1);
++  EXPECT_TRUE(state.QueueRestore());
++  EXPECT_EQ(state.Restore([](bool) { ADD_FAILURE() << "Released owner wrote platform state"; return true; }),
++            mac_adm::ApplicationInputMuteState::RestoreResult::kComplete);
++  EXPECT_FALSE(state.IsReconfiguring());
++}
++
++TEST(ApplicationInputMuteRestoreTest, FailedPlatformRestoreHasBoundedRetries) {
++  mac_adm::ApplicationInputMuteState state;
++  state.SetIntent(1);
++  state.BeginReconfiguration();
++  state.EndReconfiguration();
++  int writes = 0;
++  for (int attempt = 1; attempt <= 5; ++attempt) {
++    EXPECT_TRUE(state.QueueRestore());
++    auto result = state.Restore([&](bool) { ++writes; return false; });
++    EXPECT_EQ(result, attempt == 5
++        ? mac_adm::ApplicationInputMuteState::RestoreResult::kComplete
++        : mac_adm::ApplicationInputMuteState::RestoreResult::kRetry);
++  }
++  EXPECT_EQ(writes, 5);
++  EXPECT_FALSE(state.IsReconfiguring());
++}
++
++TEST(ApplicationInputMuteRestoreTest, SupersedingIntentSurvivesOldRestoreCompletion) {
++  mac_adm::ApplicationInputMuteState state;
++  state.SetIntent(0);
++  state.BeginReconfiguration();
++  state.EndReconfiguration();
++  EXPECT_TRUE(state.QueueRestore());
++  state.Restore([&](bool) { state.SetIntent(1); return true; });
++  EXPECT_TRUE(state.IsReconfiguring());
++  EXPECT_TRUE(state.QueueRestore());
++  state.Restore([](bool muted) { EXPECT_TRUE(muted); return true; });
++  EXPECT_FALSE(state.IsReconfiguring());
++}
++
+ }  // namespace webrtc
+diff --git a/modules/audio_device/mac/application_input_mute_state.h b/modules/audio_device/mac/application_input_mute_state.h
+new file mode 100644
+--- /dev/null
++++ b/modules/audio_device/mac/application_input_mute_state.h
+@@ -0,0 +1,93 @@
++/* Copyright 2026 Rock'n'Roll contributors. BSD license: see LICENSE. */
++#ifndef MODULES_AUDIO_DEVICE_MAC_APPLICATION_INPUT_MUTE_STATE_H_
++#define MODULES_AUDIO_DEVICE_MAC_APPLICATION_INPUT_MUTE_STATE_H_
++
++#include <cassert>
++#include <cstdint>
++#include <mutex>
++
++namespace webrtc::mac_adm {
++// No platform calls under this lock. Platform reconciliation and app writes run
++// on main; native lifecycle scopes only publish pending work from their workers.
++class ApplicationInputMuteState {
++ public:
++  struct Snapshot { int intent; uint64_t generation; unsigned attempt; };
++  enum class RestoreResult { kIdle, kComplete, kRetry };
++  void SetIntent(int muted) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    intent_ = muted < 0 ? -1 : (muted != 0 ? 1 : 0);
++    ++generation_;
++    attempts_ = 0;
++  }
++  void BeginReconfiguration() {
++    std::lock_guard<std::mutex> lock(mutex_);
++    ++depth_;
++    ++generation_;
++    attempts_ = 0;
++  }
++  void EndReconfiguration() {
++    std::lock_guard<std::mutex> lock(mutex_);
++    assert(depth_ != 0);
++    --depth_;
++    ++generation_;
++    attempts_ = 0;
++    pending_ = true;
++  }
++  bool IsReconfiguring() const {
++    std::lock_guard<std::mutex> lock(mutex_);
++    return depth_ != 0 || pending_;
++  }
++  bool QueueRestore() {
++    std::lock_guard<std::mutex> lock(mutex_);
++    if (queued_ || (!pending_ && depth_ == 0)) return false;
++    queued_ = true;
++    return true;
++  }
++  bool SnapshotForRestore(Snapshot* snapshot) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    queued_ = false;
++    if (depth_ != 0 || !pending_) return false;
++    *snapshot = {intent_, generation_, ++attempts_};
++    return true;
++  }
++  template <typename Apply>
++  RestoreResult Restore(Apply apply) {
++    Snapshot current;
++    if (!SnapshotForRestore(&current)) return RestoreResult::kIdle;
++    // Platform writes happen outside the state lock, on main. A released owner
++    // (-1) must not override CallKit or another engine's platform mute state.
++    if (current.intent < 0 || apply(current.intent != 0)) {
++      DidRestore(current.generation);
++      return RestoreResult::kComplete;
++    }
++    if (current.attempt < 5) return RestoreResult::kRetry;
++    // Do not permanently disable accessory gestures after exhausting a bounded
++    // restore. The SDK's network mute is independent and stays unchanged.
++    DidRestore(current.generation);
++    return RestoreResult::kComplete;
++  }
++  void DidRestore(uint64_t generation) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    if (depth_ == 0 && generation_ == generation) pending_ = false;
++  }
++ private:
++  mutable std::mutex mutex_;
++  int intent_ = -1;  // No app-owned intent before the first app write.
++  unsigned depth_ = 0;
++  uint64_t generation_ = 0;
++  bool pending_ = false;
++  bool queued_ = false;
++  unsigned attempts_ = 0;
++};
++// Native-Mac ownership exports are implemented by AudioEngineDevice's TU.
++void SetApplicationInputMuteIntent(int muted);
++bool ApplicationInputMuteReconfiguring();
++class ScopedApplicationInputMuteReconfiguration {
++ public:
++  ScopedApplicationInputMuteReconfiguration();
++  ~ScopedApplicationInputMuteReconfiguration();
++ private:
++  bool active_ = false;
++};
++}  // namespace webrtc::mac_adm
++#endif
+diff --git a/sdk/BUILD.gn b/sdk/BUILD.gn
+--- a/sdk/BUILD.gn
++++ b/sdk/BUILD.gn
+@@ -1408,6 +1408,7 @@
+         "../api:make_ref_counted",
+         "../api/audio:audio_processing_state",
+         "../modules/audio_device:audio_device_impl",
++        "../modules/audio_device:audio_device_buffer",
+         "../p2p:port_allocator",
+       ]
+ 
+diff --git a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h
+@@ -21,6 +21,9 @@
+ // Synchronous PCM gate for macOS application/accessory mute handling.
+ RTC_EXTERN void RTC_OBJC_TYPE(RTCSetApplicationCaptureMuted)(int muted);
+ RTC_EXTERN int RTC_OBJC_TYPE(RTCApplicationCaptureMuted)(void);
++// Epoch-bound opening cannot overwrite a newer synchronous accessory mute.
++RTC_EXTERN uint64_t RTC_OBJC_TYPE(RTCApplicationCaptureState)(void);
++RTC_EXTERN BOOL RTC_OBJC_TYPE(RTCUnmuteApplicationCaptureIfState)(uint64_t expectedState);
+ RTC_EXTERN void RTC_OBJC_TYPE(RTCSetConferencePlayoutReserved)(int reserved);
+ // Main-queue app intent: -1 releases authority, 0 unmutes, 1 mutes.
+ // Workers restore the latest value after reconfiguration.
+diff --git a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
+--- a/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
++++ b/sdk/objc/api/peerconnection/RTCPeerConnectionFactory.mm
+@@ -39,6 +39,10 @@
+ #include "api/field_trials.h"
+ #include "api/make_ref_counted.h"
+ #include "modules/audio_device/audio_engine_device.h"
++#include "modules/audio_device/audio_device_buffer.h"
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++#include "modules/audio_device/mac/application_input_mute_state.h"
++#endif
+ #import "RTCAudioDeviceModule+Private.h"
+ #import "RTCAudioProcessingState+Private.h"
+ #import "components/audio/RTCAudioProcessingModule.h"
+@@ -67,6 +71,29 @@
+ 
+ #if defined(WEBRTC_IOS)
+ #import "sdk/objc/native/api/audio_device_module.h"
++#endif
++
++#if defined(WEBRTC_MAC) && !defined(WEBRTC_IOS)
++// Native AppKit uses AudioEngine/ObjC/custom/legacy ADM paths, all of which
++// converge at AudioDeviceBuffer. The iOS device implementation remains separate.
++void RTC_OBJC_TYPE(RTCSetApplicationCaptureMuted)(int muted) {
++  webrtc::SetApplicationCaptureMuted(muted != 0);
++}
++int RTC_OBJC_TYPE(RTCApplicationCaptureMuted)() {
++  return (webrtc::ApplicationCaptureState() & 1) ? 1 : 0;
++}
++uint64_t RTC_OBJC_TYPE(RTCApplicationCaptureState)() {
++  return webrtc::ApplicationCaptureState();
++}
++BOOL RTC_OBJC_TYPE(RTCUnmuteApplicationCaptureIfState)(uint64_t expected_state) {
++  return webrtc::UnmuteApplicationCaptureIfState(expected_state);
++}
++void RTC_OBJC_TYPE(RTCSetApplicationInputMuteIntent)(int muted) {
++  webrtc::mac_adm::SetApplicationInputMuteIntent(muted);
++}
++int RTC_OBJC_TYPE(RTCApplicationInputMuteReconfiguring)() {
++  return webrtc::mac_adm::ApplicationInputMuteReconfiguring() ? 1 : 0;
++}
+ #endif
+ 
+ static NSString *gFieldTrials = nil;

@@ -154,8 +154,13 @@ struct KeychainRoomHistoryStorage: RoomHistoryStorage {
     }
 
     private var query: [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: service,
-         kSecAttrAccount as String: "saved-rooms"]
+        var result: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service, kSecAttrAccount as String: "saved-rooms"]
+        #if os(macOS)
+        // Native sandboxed apps use their entitlement-scoped keychain rather than
+        // triggering legacy login-keychain ACL prompts for another executable.
+        result[kSecUseDataProtectionKeychain as String] = true
+        #endif
+        return result
     }
 }

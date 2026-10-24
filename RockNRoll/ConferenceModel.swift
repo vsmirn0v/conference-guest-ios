@@ -43,7 +43,12 @@ final class ConferenceModel: ObservableObject {
     private var meetingActivity: MeetingActivitySession?
     private var meetingReconnecting = false
     let catchUpStore: CatchUpStore
-    private lazy var engine = NativeConferenceEngine(systemCall: systemCall, catchUp: catchUpStore)
+    private var standardGuestInitialized = false
+    private weak var meetingUnderlay: UIView?
+    private lazy var engine: NativeConferenceEngine = {
+        standardGuestInitialized = true
+        return NativeConferenceEngine(systemCall: systemCall, catchUp: catchUpStore)
+    }()
     let chat = ChatStore()
     let history: RoomHistoryStore
     let calendar: CalendarMeetingStore
@@ -95,6 +100,8 @@ final class ConferenceModel: ObservableObject {
     var joinTransportForTesting: ((JoinDestination, @escaping (CallEvent) -> Void) -> Void)?
     var beforeJoinTransportForTesting: (() async -> Void)?
     #endif
+    private var nativeGuestEngine: NativeGuestCompanionEngine?
+    private var nativeGuestSelected = false
     private var jamEngine: RockRoomEngine?
     private var telemostEngine: TelemostCallEngine?
     private var trueconfEngine: TrueConfCallEngine?
@@ -179,18 +186,20 @@ final class ConferenceModel: ObservableObject {
 
     private var activeEngine: (any CallEngine)? {
         switch activeRoute {
-        case .guest: engine
-        case .jam: jamEngine
-        case .telemost: telemostEngine
-        case .trueconf: trueconfEngine
-        case nil: nil
+        case .guest:
+            if nativeGuestSelected { return nativeGuestEngine }
+            return engine
+        case .jam: return jamEngine
+        case .telemost: return telemostEngine
+        case .trueconf: return trueconfEngine
+        case nil: return nil
         }
     }
 
     func configure(container: UIViewController) {
         self.container = container
         configureReminders()
-        engine.chat = chat
+        if !NativeGuestPreference.enabled(defaults: preferences) { engine.chat = chat }
         if MeetingActivitySupport.supported, meetingActivity == nil {
             meetingActivity = MeetingActivitySession(changes: objectWillChange.eraseToAnyPublisher(), preferences: preferences) { [weak self] in
                 guard let self, self.isInConference, let id = self.liveSessionID, let engine = self.activeEngine else { return nil }
@@ -322,7 +331,7 @@ final class ConferenceModel: ObservableObject {
     func restoreFromFloatingVideo() { activeEngine?.restoreFromFloatingVideo() }
 
     func backgroundedWithoutFloatingVideo() {
-        if case .guest = activeRoute { engine.backgroundedWithoutFloatingVideo() }
+        if case .guest = activeRoute, !nativeGuestSelected { engine.backgroundedWithoutFloatingVideo() }
     }
 
     private func configuredJamEngine() -> RockRoomEngine {
@@ -532,6 +541,7 @@ final class ConferenceModel: ObservableObject {
         let generation = sessionGeneration
         terminalEventHandled = false
         meetingReconnecting = false
+        nativeGuestSelected = NativeGuestPreference.enabled(defaults: preferences)
         phase = .joining
         activeRoute = target
         companionAudioPaused = request.quiet
@@ -614,6 +624,29 @@ final class ConferenceModel: ObservableObject {
                 #endif
                 switch destination {
                 case .guest(let guest):
+                    if nativeGuestSelected {
+                        let selected = NativeGuestCompanionEngine()
+                        nativeGuestEngine = selected
+                        selected.onEvent = { [weak self] event in
+                            guard let self, self.sessionGeneration == generation else { return }
+                            let failure = self.mediaStatus
+                            self.handle(event: event)
+                            if case .failed = event, let failure { self.status = failure }
+                        }
+                        selected.onMediaStatus = { [weak self] message in
+                            guard let self, self.sessionGeneration == generation else { return }
+                            self.mediaStatus = message
+                        }
+                        selected.onRoomTitle = { [weak self] title in
+                            guard let self, self.sessionGeneration == generation else { return }
+                            self.setActiveRoomTitle(title)
+                        }
+                        try handoffToTransport()
+                        macCallActivity.retainForGraphicsResources()
+                        try selected.join(target: guest, displayName: request.name, in: container,
+                                          roomTitle: activeRoomTitle, quiet: request.quiet)
+                        break
+                    }
                     let networkURL: URL
                     if let cached = endpointCache[guest.originURL] {
                         networkURL = cached
@@ -639,8 +672,12 @@ final class ConferenceModel: ObservableObject {
                         self.setActiveRoomTitle(title)
                     }
                     try handoffToTransport()
+                    engine.chat = chat
                     try engine.configure(container: container, networkURL: networkURL,
                                          displayName: request.name)
+                    if ProcessInfo.processInfo.isiOSAppOnMac, let meetingUnderlay {
+                        engine.registerUnderlay(meetingUnderlay)
+                    }
                     try engine.join(target: guest, displayName: request.name, backgroundJoin: request.backgroundJoin)
                 case .jam(let jam):
                     let credentials = try await jamService.join(jam, name: request.name)
@@ -751,7 +788,16 @@ final class ConferenceModel: ObservableObject {
 
     func resumeSystemCallIfPossible() { activeEngine?.resumeSystemCallIfPossible() }
 
-    func registerMeetingUnderlay(_ view: UIView) { engine.registerUnderlay(view) }
+    func registerMeetingUnderlay(_ view: UIView) {
+        meetingUnderlay = view
+        if standardGuestInitialized || !NativeGuestPreference.enabled(defaults: preferences) {
+            engine.registerUnderlay(view)
+        }
+    }
+
+    #if DEBUG
+    var standardGuestInitializedForTesting: Bool { standardGuestInitialized }
+    #endif
 
     func chooseEngine(community: Bool) {
         guard let selection = engineSelection, let request = engineChoiceRequest else { return }
@@ -958,6 +1004,7 @@ final class ConferenceModel: ObservableObject {
     }
 
     private func releaseJamEngineIfSelected() {
+        if case .guest = activeRoute { nativeGuestEngine = nil }
         if case .jam = activeRoute { jamEngine = nil }
         if case .telemost = activeRoute { telemostEngine = nil }
         if case .trueconf = activeRoute { trueconfEngine = nil }
@@ -973,6 +1020,7 @@ final class ConferenceModel: ObservableObject {
     }
 
     func continuationSnapshot() -> ActiveJam? {
+        guard nativeGuestEngine == nil else { return nil }
         guard isInConference, let invitation = connectedURL, let id = liveSessionID else { return nil }
         return ActiveJam(deviceID: continuation.deviceID, sessionID: id, invitation: invitation,
                          title: activeRoomTitle ?? invitation.lastPathComponent,
@@ -1047,6 +1095,7 @@ extension ConferenceModel: BackgroundAudioJoinSession {
         return occurrence
     }
     func beginBackgroundJoin(_ occurrence: ReminderOccurrence, access: BackgroundJoinAccess) -> BackgroundJoinStart {
+        guard !NativeGuestPreference.enabled(defaults: preferences) else { return .openApp }
         if isInConference, let connectedURL,
            MeetingRoomIdentity(connectedURL, engine: activeRoute?.engineKind) == occurrence.room { return .alreadyConnected }
         guard access.protectedData, access.microphone, !access.systemControls, !systemCall.hasCompetingCall,
@@ -1063,7 +1112,8 @@ extension ConferenceModel: BackgroundAudioJoinSession {
         return isJoining ? .started(sessionGeneration) : .openApp
     }
     func backgroundJoinProgress(token: UInt64) -> BackgroundJoinProgress {
-        guard sessionGeneration == token, activeRoute?.engineKind == .guest, phase != .idle, !isLeaving else { return .ended }
+        guard sessionGeneration == token, activeRoute?.engineKind == .guest, !nativeGuestSelected,
+              phase != .idle, !isLeaving else { return .ended }
         return isInConference && engine.backgroundAudioReadyForPrototype ? .ready : .waiting
     }
     func cancelBackgroundJoin(token: UInt64) {

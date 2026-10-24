@@ -1,7 +1,11 @@
 import Combine
 import ConferenceCore
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 
 @MainActor
 final class CalendarReminderCoordinator: ObservableObject {
@@ -53,15 +57,24 @@ final class CalendarReminderCoordinator: ObservableObject {
         load()
         available = preferences.bool(forKey: "calendarMeetings.enabled") &&
             !(preferences.stringArray(forKey: "calendarMeetings.selected") ?? []).isEmpty
-        for name in [UIApplication.significantTimeChangeNotification, NSNotification.Name.NSSystemTimeZoneDidChange] {
+        #if canImport(UIKit)
+        let timeChanges = [UIApplication.significantTimeChangeNotification, NSNotification.Name.NSSystemTimeZoneDidChange]
+        let background = UIApplication.willResignActiveNotification
+        let foreground = UIApplication.didBecomeActiveNotification
+        #else
+        let timeChanges = [NSNotification.Name.NSSystemClockDidChange, NSNotification.Name.NSSystemTimeZoneDidChange]
+        let background = NSApplication.willResignActiveNotification
+        let foreground = NSApplication.didBecomeActiveNotification
+        #endif
+        for name in timeChanges {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.onNeedsSnapshot(); self?.changed() }
             })
         }
-        for name in [UIApplication.willResignActiveNotification, UIApplication.didBecomeActiveNotification] {
+        for name in [background, foreground] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 Task { @MainActor in
-                    if note.name == UIApplication.willResignActiveNotification { self?.backgrounded() }
+                    if note.name == background { self?.backgrounded() }
                     else { self?.foregrounded() }
                 }
             })

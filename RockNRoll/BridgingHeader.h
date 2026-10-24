@@ -4,3 +4,5 @@
 #import "MacInputMuteBridge.h"
 
 #import "MacMeetingWindowBridge.h"
+
+#import "NativeGuestCompanion/NativeGuestCompanionBridge.h"

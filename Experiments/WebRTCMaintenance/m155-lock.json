@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "release": "v155.0.1",
+  "source_sha": "623fcfe044d5037b3ecd92001c2ef80ca1d932d5",
+  "source_archive_sha256": "2b7d74ad4d5a3050ff71a8b2b5af86fadaab7576c24c02ab3a2de2a63692f437",
+  "binary_archive_sha256": "5189cc5864d917400174f5bcee3a62f27c55524a28bccec783575d5efbda2ae5",
+  "mac_binary_sha256": "d31e293af5f0ac5f0bec8eb103c71702abce30ae3088ec738d2378289a97caaf",
+  "binary_url": "https://github.com/jitsi/webrtc/releases/download/v155.0.1/WebRTC.xcframework.zip",
+  "source_url": "https://api.github.com/repos/jitsi/webrtc/tarball/623fcfe044d5037b3ecd92001c2ef80ca1d932d5"
+}

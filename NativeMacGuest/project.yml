@@ -1,0 +1,126 @@
+name: RockNativeGuest
+options:
+  developmentLanguage: en
+  knownRegions: [en, ru]
+  deploymentTarget:
+    macOS: '13.0'
+packages:
+  ConferenceCore:
+    path: ../ConferenceCore
+  LiveKit:
+    path: ../.build/native-desktop-dependencies/client-sdk-swift
+  NativeWebRTC:
+    path: ../.build/native-desktop-dependencies/webrtc-xcframework
+targets:
+  RockNRollNativeGuest:
+    type: application
+    platform: macOS
+    scheme:
+      testTargets: [NativeDesktopTests]
+    sources:
+      - path: .
+        excludes: ['*.yml', '*.py', '*.md', '*.sh', Tests, __pycache__, NativeGuest.entitlements, Info.plist]
+      - path: ../Experiments/NativeGuest
+        excludes: [Main.swift, GuestCompanionPeer.swift, '*.py', '*.md', '*.sh', '*.patch', __pycache__]
+      - path: ../Shared/NativeGuestCompanionProtocol.swift
+      - path: ../RockNRoll/NativeVideoPixelBuffer.swift
+      - path: ../Shared/GuestAudioOwnerLease.swift
+      - path: ../Shared/GuestAudioProfile.swift
+      - path: ../Shared/Localization.swift
+      - path: ../RockNRoll/RoomHistoryStore.swift
+      - path: ../RockNRoll/RoomSyncCoordinator.swift
+      - path: ../RockNRoll/RoomSyncSettingsView.swift
+      - path: ../RockNRoll/CloudRoomTransport.swift
+      - path: ../RockNRoll/AppleCalendarReader.swift
+      - path: ../RockNRoll/CalendarMeetingStore.swift
+      - path: ../RockNRoll/CalendarInvitationContext.swift
+      - path: ../RockNRoll/CalendarReminderRepository.swift
+      - path: ../RockNRoll/CalendarReminderCoordinator.swift
+      - path: ../RockNRoll/CalendarReminderNotifications.swift
+      - path: ../RockNRoll/ReminderProfileCloud.swift
+      - path: ../RockNRoll/MeetingContinuationCloud.swift
+      - path: ../RockNRoll/MeetingContinuationCoordinator.swift
+      - path: ../RockNRoll/MeetingSetupCoordinator.swift
+      - path: ../RockNRoll/VendorIntegration/VendorEndpointResolver.swift
+      - path: ../RockNRoll/VendorIntegration/AdditionalRootTrust.swift
+      - path: ../RockNRoll/VendorIntegration/GuestSiteLinkAdapter.swift
+      - path: ../RockNRoll/CameraReactionObserver.swift
+      - path: ../RockNRoll/ChatStore.swift
+      - path: ../RockNRoll/ReactionHistoryStore.swift
+      - path: ../RockNRoll/MeetingReactionsModel.swift
+      - path: ../RockNRoll/CatchUpStore.swift
+      - path: ../RockNRoll/HomeMeetingCard.swift
+      - path: ../RockNRoll/MacAudioDevices.swift
+      - path: ../RockNRoll/PresenterCanvasEdit.swift
+      - path: ../RockNRoll/PresenterCompositor.swift
+      - path: ../RockNRoll/H264InputColorSignalling.swift
+      - path: ../RockNRoll/VendorIntegration/H264ColorSignalling.swift
+      - path: ../RockNRoll/VideoSubscriptionCoordinator.swift
+      - path: ../RockNRoll/JamService.swift
+      - path: ../RockNRoll/MacScreenCaptureBridge.m
+      - path: ../RockNRoll/MacScreenCaptureBridge.h
+      - path: ../RockNRoll/Telemost/TelemostBootstrap.swift
+      - path: ../RockNRoll/Telemost/TelemostTransport.swift
+      - path: ../RockNRoll/Telemost/TelemostChat.swift
+      - path: ../RockNRoll/Telemost/TelemostChatWire.swift
+      - path: ../RockNRoll/TrueConf/TrueConfBootstrap.swift
+      - path: ../RockNRoll/TrueConf/TrueConfTransport.swift
+      - path: ../RockNRoll/TrueConf/TrueConfRoster.swift
+      - path: ../RockNRoll/en.lproj
+        type: folder
+        buildPhase: resources
+      - path: ../RockNRoll/ru.lproj
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - package: ConferenceCore
+      - package: LiveKit
+      - package: NativeWebRTC
+        product: LiveKitWebRTC
+    settings:
+      configs:
+        Debug:
+          CLOUDKIT_ENVIRONMENT: Development
+          APS_ENVIRONMENT: development
+        Release:
+          CLOUDKIT_ENVIRONMENT: Production
+          APS_ENVIRONMENT: production
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.nativeguest
+        PRODUCT_NAME: RockNRoll Native Guest
+        PRODUCT_MODULE_NAME: RockNativeDesktop
+        DEVELOPMENT_TEAM: 5V64BP2H3P
+        CODE_SIGN_STYLE: Automatic
+        REGISTER_APP_GROUPS: YES
+        CODE_SIGN_ENTITLEMENTS: $(SRCROOT)/../../../NativeMacGuest/NativeGuest.entitlements
+        SWIFT_VERSION: '5.0'
+        SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/../../../NativeMacGuest/NativeGuest-Bridging-Header.h
+        MARKETING_VERSION: '0.1'
+        CURRENT_PROJECT_VERSION: '1'
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: $(SRCROOT)/../../../NativeMacGuest/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_NativeGuestProtocolVersion: '1'
+        INFOPLIST_KEY_NSHighResolutionCapable: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: Share your camera when you turn video on in the native guest preview.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: Share your microphone when you unmute in the native guest preview.
+        ENABLE_HARDENED_RUNTIME: YES
+        ONLY_ACTIVE_ARCH: YES
+        ARCHS: arm64
+  NativeDesktopTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/Parity
+    dependencies:
+      - target: RockNRollNativeGuest
+      - package: ConferenceCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.nativeguest.tests
+        DEVELOPMENT_TEAM: 5V64BP2H3P
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/RockNRoll Native Guest.app/Contents/MacOS/RockNRoll Native Guest
+        BUNDLE_LOADER: $(TEST_HOST)
+        SWIFT_VERSION: '5.0'

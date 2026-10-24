@@ -1,0 +1,437 @@
+import AppKit
+import ConferenceCore
+import SwiftUI
+
+@MainActor final class NativeDesktopMeetingWindow: NSObject, NSWindowDelegate {
+    private let model: NativeDesktopMeetingModel
+    private let continuation: MeetingContinuationCoordinator?
+    private let window: NSWindow
+    private var mini: NSPanel?
+    init(model: NativeDesktopMeetingModel, continuation: MeetingContinuationCoordinator? = nil) {
+        self.model = model
+        self.continuation = continuation
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1240, height: 800),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        super.init()
+        window.title = model.title; window.minSize = NSSize(width: 740, height: 520)
+        window.isReleasedWhenClosed = false; window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden; window.delegate = self
+        window.setFrameAutosaveName("nativeDesktop.meeting"); window.center()
+    }
+    var isKeyWindow: Bool { window.isKeyWindow || mini?.isKeyWindow == true }
+    private func mountMeeting() {
+        if !(window.contentView is NSHostingView<NativeDesktopMeetingView>) { window.contentView = NSHostingView(rootView: NativeDesktopMeetingView(model: model, onMini: { [weak self] in self?.showMini() }, continuation: continuation)) }
+    }
+    func show() {
+        mini?.orderOut(nil); mini?.contentView = nil
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        mountMeeting(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        synchronizePresentation()
+    }
+    func close() { model.setMediaVisible(false); mini?.close(); mini = nil; window.orderOut(nil); window.contentView = nil }
+    func windowShouldClose(_ sender: NSWindow) -> Bool { sender.orderOut(nil); sender.contentView = nil; synchronizePresentation(); return false }
+    func windowWillMiniaturize(_ notification: Notification) {
+        model.setMediaPresentation(.hidden)
+    }
+    func windowDidMiniaturize(_ notification: Notification) { synchronizePresentation() }
+    func windowDidDeminiaturize(_ notification: Notification) { synchronizePresentation() }
+    func windowDidChangeOcclusionState(_ notification: Notification) { synchronizePresentation() }
+    private func synchronizePresentation() {
+        let mainVisible = window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
+        let miniVisible = mini.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false
+        if miniVisible {
+            if !(mini?.contentView is NSHostingView<NativeDesktopMiniMeeting>) {
+                mini?.contentView = NSHostingView(rootView: NativeDesktopMiniMeeting(model: model, onRestore: { [weak self] in self?.show() }))
+            }
+        }
+        // Keep editor/zoom state through occlusion. Only the media subtree is
+        // unmounted; destroying the shell would close a private Presenter draft.
+        if mainVisible { mountMeeting() }
+        model.setMediaPresentation(mainVisible ? .meeting : miniVisible ? .floating : .hidden)
+    }
+    func showMini() {
+        if mini == nil {
+            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 400, height: 270),
+                styleMask: [.titled, .closable, .resizable, .nonactivatingPanel], backing: .buffered, defer: false)
+            panel.delegate = self; panel.level = .floating; panel.isFloatingPanel = true; panel.hidesOnDeactivate = false
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]; panel.isReleasedWhenClosed = false
+            panel.title = model.title; panel.minSize = NSSize(width: 280, height: 210)
+            panel.contentView = NSHostingView(rootView: NativeDesktopMiniMeeting(model: model, onRestore: { [weak self] in self?.show() }))
+            panel.center(); mini = panel
+        }
+        if !(mini?.contentView is NSHostingView<NativeDesktopMiniMeeting>) { mini?.contentView = NSHostingView(rootView: NativeDesktopMiniMeeting(model: model, onRestore: { [weak self] in self?.show() })) }
+        mini?.orderFrontRegardless(); window.orderOut(nil)
+        synchronizePresentation()
+    }
+}
+
+struct NativeDesktopMeetingView: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    let onMini: () -> Void
+    var continuation: MeetingContinuationCoordinator? = nil
+    @State private var reactionsOpen = false
+    @StateObject private var focusedViewport = NativeDesktopVideoViewport()
+    var body: some View {
+        VStack(spacing: 0) {
+        if let continuation { NativeDesktopContinuationStatus(coordinator: continuation) }
+        GeometryReader { geometry in
+        HStack(spacing: 0) {
+            ZStack {
+                Color.black
+                if model.mediaPresentation == .meeting { media.padding(.horizontal, 14)
+                    .padding(.top, model.controlsHidden ? 12 : 70)
+                    .padding(.bottom, model.controlsHidden ? 12 : (model.showsFocus || model.viewMode == .audioOnly ? 90 : 160))
+                }
+                VStack(spacing: 0) {
+                    if !model.controlsHidden { header.padding(.horizontal, 18).padding(.top, 10) }
+                    HStack { reactionOverlay; Spacer() }.padding(.leading, 22).padding(.top, 12)
+                    Spacer(minLength: 0)
+                    if !model.controlsHidden { controls.padding(.bottom, 18) }
+                }
+                if model.controlsHidden {
+                    VStack { Spacer(); Button(L("Show controls")) { model.controlsHidden = false }.buttonStyle(.bordered).padding() }
+                }
+            }.foregroundStyle(.white)
+            if geometry.size.width >= 1040, let panel = model.panel {
+                inspector(panel).frame(width: 320).background(.regularMaterial)
+            }
+        }
+        .sheet(isPresented: Binding(get: { geometry.size.width < 1040 && model.panel != nil }, set: { if !$0 { model.panel = nil } })) {
+            if let panel = model.panel { inspector(panel).frame(width: 380, height: 560) }
+        }
+        }
+        }
+        .alert(L("Meeting"), isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
+            Button(L("OK")) { model.error = nil }
+        } message: { Text(model.error ?? "") }
+    }
+    private var header: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 10) {
+                if model.guestFeatures.transcriptionStatus == .active { Image(systemName: "text.bubble.fill").foregroundStyle(.orange).help(L("Meeting transcription is on")) }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.title).font(.headline).lineLimit(1)
+                    Text(model.connected ? L("%d participants", model.participants.count) : L(model.snapshot.phase.rawValue.capitalized)).font(.caption).foregroundStyle(.secondary)
+                }
+            }.padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome()
+            Spacer(minLength: 8)
+            HStack(spacing: 6) {
+                iconButton("person.2", L("Participants")) { togglePanel(.participants) }
+                iconButton("bubble.left", L("Conversation")) { togglePanel(.conversation) }
+                iconButton("pip.enter", L("Mini meeting"), action: onMini)
+            }.padding(6).nativeMeetingChrome()
+        }
+    }
+    private var controls: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                if model.galleryPages > 1 && !model.showsFocus {
+                    Button { model.galleryPage = max(0, model.galleryPage - 1) } label: { Image(systemName: "chevron.left") }.disabled(model.galleryPage == 0)
+                    Text("\(model.galleryPage + 1) / \(model.galleryPages)").font(.caption).monospacedDigit()
+                    Button { model.galleryPage = min(model.galleryPages - 1, model.galleryPage + 1) } label: { Image(systemName: "chevron.right") }.disabled(model.galleryPage == model.galleryPages - 1)
+                    Divider().frame(height: 18)
+                }
+                Menu {
+                    Picker(L("View"), selection: $model.viewMode) {
+                        ForEach(NativeDesktopMeetingModel.ViewMode.allCases, id: \.self) { Text(L($0.rawValue)).tag($0) }
+                    }
+                    ForEach(model.participants.filter { $0.sharing == true }) { person in
+                        Button(L("Screen · %@", person.name)) { model.focus(participantID: person.id, source: .screen) }
+                    }
+                    if model.pinnedID != nil { Button(L("Unpin")) { model.unpin() } }
+                } label: { Label(L(model.viewMode.rawValue), systemImage: model.showsFocus ? "rectangle.inset.filled" : "square.grid.2x2") }
+                Divider().frame(height: 18)
+                Menu {
+                    Button(L("Camera & sound")) { togglePanel(.studio) }
+                    Button(L("Presenter")) { togglePanel(.presenter) }
+                    Button(L("Reconnect")) { model.reconnect() }
+                    Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
+                    Button(L("Hide controls")) { model.controlsHidden = true }
+                } label: { Label(L("More"), systemImage: "ellipsis") }
+            }.buttonStyle(.plain).padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome()
+            HStack(spacing: 4) {
+                controlButton(model.snapshot.microphoneOn ? "mic.fill" : "mic.slash", L("Mic"), selected: model.snapshot.microphoneOn) { model.toggleMicrophone() }
+                    .help(L("Mute or unmute (Space or ⇧⌘M)"))
+                    .contextMenu { Button(L("Audio settings")) { model.panel = .studio } }
+                controlButton(model.snapshot.cameraOn ? "video.fill" : "video.slash", L("Video"), selected: model.snapshot.cameraOn) { model.toggleCamera() }
+                    .contextMenu { Button(L("Camera settings")) { model.panel = .studio } }
+                controlButton("rectangle.on.rectangle", L("Share"), selected: model.snapshot.sharing || model.sharingPending) { model.toggleSharing() }
+                controlButton(model.snapshot.playoutOn ? "speaker.wave.2.fill" : "speaker.slash", L("Sound"), selected: model.snapshot.playoutOn) { model.togglePlayout() }
+                controlButton("face.smiling", L("Reactions"), selected: reactionsOpen) { reactionsOpen.toggle() }
+                    .disabled(!model.canReact).popover(isPresented: $reactionsOpen, arrowEdge: .bottom) { reactionPicker }
+                Divider().frame(height: 34).padding(.horizontal, 6)
+                controlButton("phone.down.fill", L("Leave"), selected: false, destructive: true) { Task { await model.onLeave?() } }
+            }.padding(8).nativeMeetingChrome()
+        }
+    }
+    @ViewBuilder private var media: some View {
+        if model.viewMode == .audioOnly {
+            VStack(spacing: 18) { Image(systemName: "waveform").font(.system(size: 44)); Text(L("Audio only")).font(.title2); Text(model.title).foregroundStyle(.secondary) }
+        } else if model.showsFocus, let focused = model.focusedVideo {
+            VStack(spacing: 10) {
+                NativeDesktopZoomVideo(video: focused, name: name(focused.participantID), viewport: focusedViewport)
+                HStack(spacing: 8) {
+                    ForEach(model.participants.prefix(6)) { person in
+                        Button { model.focus(participantID: person.id, source: .camera) } label: {
+                            HStack(spacing: 6) { Image(systemName: person.microphoneOn == true ? "mic.fill" : "mic.slash"); Text(person.name).lineLimit(1) }.font(.caption).padding(9)
+                        }.buttonStyle(.bordered).frame(maxWidth: 170)
+                    }
+                }
+            }
+        } else if model.showsFocus, let focusedID = model.focusedParticipantID {
+            VStack(spacing: 16) { ProgressView(); Text(L("Waiting for stream…")); Text(name(focusedID)).foregroundStyle(.secondary) }
+        } else if !model.participants.isEmpty {
+            GeometryReader { geometry in
+                let columns = geometry.size.width < 850 ? 2 : 3
+                let rows = max(1, Int(ceil(Double(model.galleryParticipants.count) / Double(columns))))
+                let height = max(70, (geometry.size.height - CGFloat(rows - 1) * 10) / CGFloat(rows))
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: columns), spacing: 10) {
+                    ForEach(model.galleryParticipants) { person in participantTile(person, compact: height < 150).frame(height: height) }
+                }
+            }
+        } else {
+            VStack(spacing: 16) {
+                if let camera = model.localCamera { NativeDesktopVideoView(track: camera, mirrored: true) }
+                else { Image(systemName: "person.2").font(.system(size: 48)).foregroundStyle(.secondary) }
+                Text(model.connected ? L("You’re connected. Waiting for others.") : L("Connecting…")).font(.title3)
+            }
+        }
+    }
+    private func participantTile(_ person: NativeDesktopParticipant, compact: Bool) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            Color(white: 0.11)
+            if person.isLocal, let track = model.localCamera { NativeDesktopVideoView(track: track, mirrored: true) }
+            else if let video = model.videos.first(where: { $0.participantID == person.id && $0.source == .camera }) {
+                NativeDesktopVideoView(track: video.track, crop: video.crop)
+            } else {
+                VStack(spacing: 12) {
+                    Text(initials(person.name)).font(compact ? .body : .title).padding(compact ? 8 : 15).background(.white.opacity(0.08), in: Circle())
+                    if !compact { Text(person.name).font(.headline).lineLimit(2).multilineTextAlignment(.center) }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            HStack(spacing: 7) {
+                Text(person.name).lineLimit(1); Spacer(minLength: 4)
+                if person.microphoneOn == false { Image(systemName: "mic.slash").accessibilityLabel(L("Microphone off")) }
+                else if person.speaking == true { NativeDesktopLevelMeter(level: person.isLocal ? model.snapshot.microphoneLevel ?? 0 : 0.7) }
+            }.font(.caption).padding(10).background(.black.opacity(0.45))
+        }.clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(person.speaking == true ? Color.green : Color.white.opacity(0.12), lineWidth: person.speaking == true ? 2 : 1))
+        .contextMenu {
+            Button(L("Focus camera")) { model.focus(participantID: person.id, source: .camera) }
+            if person.sharing == true { Button(L("Focus screen")) { model.focus(participantID: person.id, source: .screen) } }
+        }
+    }
+    private func name(_ id: String) -> String { model.participants.first { $0.id == id }?.name ?? L("Participant") }
+    private func initials(_ name: String) -> String { name.split(whereSeparator: \.isWhitespace).prefix(2).compactMap(\.first).map(String.init).joined().uppercased() }
+    private var reactionOverlay: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(model.floatingReactions) { event in
+                HStack { Text(event.kind.emoji).font(.title); Text(event.displayName ?? L("Participant")).font(.caption) }
+                    .padding(.horizontal, 12).padding(.vertical, 6).background(.ultraThinMaterial, in: Capsule()).transition(.move(edge: .leading).combined(with: .opacity))
+            }
+        }.animation(.easeOut(duration: 0.2), value: model.floatingReactions.map(\.id)).allowsHitTesting(false)
+    }
+    private var reactionPicker: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(52)), count: 4), spacing: 8) {
+            ForEach(MeetingReaction.allCases, id: \.self) { kind in
+                Button { model.sendReaction(kind) } label: { Text(kind.emoji).font(.system(size: 28)).frame(width: 48, height: 48) }.buttonStyle(.plain).help(kind.title)
+            }
+        }.padding(14)
+    }
+    @ViewBuilder private func inspector(_ panel: NativeDesktopMeetingModel.Panel) -> some View {
+        VStack(spacing: 0) {
+            HStack { Text(L(panel.rawValue)).font(.headline); Spacer(); Button { model.panel = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).help(L("Close")) }.padding(18)
+            Divider()
+            switch panel {
+            case .participants:
+                List(model.participants) { person in
+                    HStack { Text(person.name).lineLimit(2); Spacer(); if person.microphoneOn == false { Image(systemName: "mic.slash") }; if person.sharing == true { Image(systemName: "rectangle.on.rectangle") } }
+                }.listStyle(.plain)
+            case .conversation: NativeDesktopConversationView(model: model, chat: model.chat)
+            case .studio: NativeDesktopDeviceSettings(liveTrack: model.localCamera,
+                liveAudioAvailable: true,
+                startLiveAudioCheck: { try await model.engine.startPrivateAudioCheck() },
+                stopLiveAudioCheck: { try await model.engine.stopPrivateAudioCheck() },
+                liveAudioLevel: { model.engine.privateAudioLevel })
+            case .presenter: NativeDesktopPresenterView(model: model)
+            }
+        }
+    }
+    private func togglePanel(_ panel: NativeDesktopMeetingModel.Panel) { model.panel = model.panel == panel ? nil : panel }
+    private func iconButton(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol).frame(width: 32, height: 30) }.buttonStyle(.plain).help(title).accessibilityLabel(title)
+    }
+    private func controlButton(_ symbol: String, _ title: String, selected: Bool, destructive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 5) { Image(systemName: symbol).font(.title3); Text(title).font(.caption) }
+                .foregroundStyle(destructive ? Color.red : selected ? .orange : .white).frame(width: 66, height: 48).contentShape(Rectangle())
+        }.buttonStyle(.plain).disabled(!model.connected && title != L("Leave"))
+    }
+}
+
+private struct NativeDesktopContinuationStatus: View {
+    @ObservedObject var coordinator: MeetingContinuationCoordinator
+    var body: some View {
+        if let status = coordinator.status {
+            HStack(spacing: 12) {
+                Text(status).font(.callout).frame(maxWidth: .infinity, alignment: .leading)
+                if coordinator.needsManualResume { Button(L("Resume here")) { coordinator.resumeHere() } }
+                if coordinator.moving { Button(coordinator.moveActionTitle) { coordinator.cancel() } }
+            }.padding(12).background(.regularMaterial)
+        }
+    }
+}
+
+struct NativeDesktopLevelMeter: View {
+    let level: Float
+    var body: some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(0..<4) { index in
+                Capsule().fill(level > Float(index) * 0.08 ? Color.green : Color.secondary.opacity(0.4))
+                    .frame(width: 3, height: CGFloat(5 + index * 3))
+            }
+        }.accessibilityLabel(L("Microphone level")).accessibilityValue(String(Int(max(0, min(1, level)) * 100)))
+    }
+}
+
+final class NativeDesktopVideoViewport: ObservableObject {
+    @Published var zoom: CGFloat = 1
+    var savedZoom: CGFloat = 1
+    @Published var pan = CGSize.zero
+    var savedPan = CGSize.zero
+    private var sourceID: String?
+    private var participantID: String?
+    func select(participant: String, source: NativeDesktopVideoSource) {
+        guard participantID != participant || sourceID != source.rawValue else { return }
+        participantID = participant; sourceID = source.rawValue
+        zoom = 1; savedZoom = 1; pan = .zero; savedPan = .zero
+    }
+}
+
+struct NativeDesktopZoomVideo: View {
+    let video: NativeDesktopExternalVideo
+    let name: String
+    @ObservedObject var viewport: NativeDesktopVideoViewport
+    private var zoom: CGFloat { get { viewport.zoom } nonmutating set { viewport.zoom = newValue } }
+    private var savedZoom: CGFloat { get { viewport.savedZoom } nonmutating set { viewport.savedZoom = newValue } }
+    private var pan: CGSize { get { viewport.pan } nonmutating set { viewport.pan = newValue } }
+    private var savedPan: CGSize { get { viewport.savedPan } nonmutating set { viewport.savedPan = newValue } }
+    var body: some View {
+        GeometryReader { geometry in
+            NativeDesktopVideoView(track: video.track, crop: video.crop, zoom: zoom, pan: pan)
+                .contentShape(Rectangle())
+                .gesture(MagnificationGesture().onChanged { zoom = min(8, max(1, savedZoom * $0)) }.onEnded { _ in savedZoom = zoom; if zoom == 1 { pan = .zero; savedPan = .zero } })
+                .simultaneousGesture(DragGesture().onChanged { value in
+                    guard zoom > 1 else { return }
+                    pan = CGSize(width: min(1, max(-1, savedPan.width + value.translation.width / max(1, geometry.size.width / 2))),
+                                 height: min(1, max(-1, savedPan.height + value.translation.height / max(1, geometry.size.height / 2))))
+                }.onEnded { _ in savedPan = pan })
+                .overlay(alignment: .bottomLeading) { Text(name + (video.source == .screen ? " · " + L("Screen") : "")).font(.caption).lineLimit(1).frame(maxWidth: max(80, min(400, geometry.size.width - 140)), alignment: .leading).padding(8).background(.black.opacity(0.5), in: Capsule()).padding(10) }
+                .overlay(alignment: .bottomTrailing) {
+                    HStack(spacing: 12) {
+                        Button { zoom = 1; savedZoom = 1; pan = .zero; savedPan = .zero } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }.help(L("Fit to screen"))
+                        Button { zoom = min(8, zoom + 0.5); savedZoom = zoom } label: { Image(systemName: "plus.magnifyingglass") }.help(L("Zoom in"))
+                    }.buttonStyle(.plain).padding(12).nativeMeetingChrome().padding(10)
+                }
+        }.clipShape(RoundedRectangle(cornerRadius: 14))
+            .onAppear { viewport.select(participant: video.participantID, source: video.source) }
+            .onChange(of: video.participantID) { _ in viewport.select(participant: video.participantID, source: video.source) }
+            .onChange(of: video.source.rawValue) { _ in viewport.select(participant: video.participantID, source: video.source) }
+    }
+}
+
+struct NativeDesktopConversationView: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    @ObservedObject var chat: ChatStore
+    private enum TimelineRow: Identifiable {
+        case message(ChatEntry), reaction(MeetingReactionEvent)
+        var id: String { switch self { case .message(let item): "chat-" + item.id; case .reaction(let item): "reaction-" + item.id } }
+        var date: Date { switch self { case .message(let item): item.sentAt; case .reaction(let item): item.timestamp } }
+    }
+    private var timeline: [TimelineRow] {
+        (chat.items.map(TimelineRow.message) + chat.reactionHistory.events.map(TimelineRow.reaction)).sorted {
+            $0.date == $1.date ? $0.id < $1.id : $0.date < $1.date
+        }
+    }
+    @State private var tab = 0
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker(L("Conversation"), selection: $tab) { Text(L("Chat")).tag(0); Text(L("Live text")).tag(1); Text(L("Catch up")).tag(2) }.pickerStyle(.segmented).labelsHidden().padding(12)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        if tab == 0 {
+                            if model.guestFeatures.chatHasMore { Button(L("Earlier messages")) { model.loadMoreChat() } }
+                            ForEach(timeline) { row in
+                                switch row {
+                                case .message(let item):
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack { Text(item.sender).font(.caption.bold()); Spacer(); Text(item.sentAt, style: .time).font(.caption2).foregroundStyle(.secondary) }
+                                        Text(item.text).textSelection(.enabled)
+                                        if item.delivery == .failed { Button(L("Retry")) { chat.retry(item.id) }.font(.caption) }
+                                    }
+                                case .reaction(let event):
+                                    HStack { Text(event.kind.emoji).font(.title2); Text(event.displayName ?? L("Participant")); Spacer(); Text(event.timestamp, style: .time).font(.caption2).foregroundStyle(.secondary) }
+                                }
+                            }
+                            if let reason = chat.unavailableReason { Text(reason).foregroundStyle(.secondary).font(.callout) }
+                        } else if tab == 2 {
+                            if let warning = model.catchUp.persistenceWarning { Text(warning).foregroundStyle(.orange) }
+                            if model.catchUp.timeline.intervals.isEmpty { Text(L("No missed intervals recorded in this meeting.")).foregroundStyle(.secondary) }
+                            ForEach(model.catchUp.timeline.intervals) { interval in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(interval.start, style: .time).font(.headline)
+                                    Text(interval.isOngoing ? L("Audio interruption in progress") : L("While meeting audio was unavailable")).font(.caption).foregroundStyle(.secondary)
+                                    let lines = model.catchUp.timeline.transcript(during: interval)
+                                    if lines.isEmpty { Text(L("No transcript is available for this interval.")).foregroundStyle(.secondary) }
+                                    ForEach(lines) { line in
+                                        Text((line.speaker.map { $0 + ": " } ?? "") + line.text).textSelection(.enabled)
+                                    }
+                                    Button(L("Mark reviewed")) { model.catchUp.markReviewed(interval.id) }.font(.caption)
+                                }.padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                            }
+                        } else {
+                            if model.guestFeatures.transcriptHasMore { Button(L("Earlier transcript")) { model.loadMoreTranscript() } }
+                            if model.transcript.isEmpty { Text(L("Transcript appears here when the meeting service provides it.")).foregroundStyle(.secondary) }
+                            ForEach(model.transcript.suffix(tab == 2 ? 40 : 1000)) { line in
+                                VStack(alignment: .leading, spacing: 4) { Text(line.participantName).font(.caption.bold()); Text(line.text).textSelection(.enabled) }
+                            }
+                            if model.guestFeatures.permissions.canManageTranscript {
+                                Button(model.guestFeatures.transcriptionStatus == .active ? L("Stop transcription") : L("Start transcription")) { model.setTranscription(model.guestFeatures.transcriptionStatus != .active) }
+                            }
+                        }
+                        Color.clear.frame(height: 1).id("latest")
+                    }.padding(16)
+                }.onChange(of: chat.items.last?.id) { _ in proxy.scrollTo("latest", anchor: .bottom) }
+            }
+            if tab == 0 && !chat.isReadOnly {
+                Divider()
+                HStack {
+                    TextField(L("Message"), text: $chat.draft).onSubmit { _ = chat.send(chat.draft) }.disabled(!chat.canSend)
+                    Button { _ = chat.send(chat.draft) } label: { Image(systemName: "arrow.up.circle.fill") }.buttonStyle(.plain).disabled(!chat.canSend || chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }.padding(14)
+            }
+        }.onAppear { chat.isConversationOpen = true }.onDisappear { chat.isConversationOpen = false }
+    }
+}
+
+struct NativeDesktopMiniMeeting: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    let onRestore: () -> Void
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Color.black
+                if model.mediaPresentation == .floating, model.viewMode != .audioOnly, let video = model.floatingVideo { NativeDesktopVideoView(track: video.track, crop: video.crop) }
+                else if model.mediaPresentation == .floating, model.viewMode != .audioOnly, let camera = model.localCamera { NativeDesktopVideoView(track: camera, mirrored: true) }
+                else { Text(model.title).foregroundStyle(.white).padding() }
+            }
+            HStack {
+                Button { model.toggleMicrophone() } label: { Image(systemName: model.snapshot.microphoneOn ? "mic.fill" : "mic.slash") }.help(L("Mute or unmute"))
+                NativeDesktopLevelMeter(level: model.snapshot.microphoneLevel ?? 0)
+                Spacer(); Button(L("Show meeting"), action: onRestore)
+                Button { Task { await model.onLeave?() } } label: { Image(systemName: "phone.down.fill").foregroundStyle(.red) }.help(L("Leave"))
+            }.padding(10).background(.ultraThinMaterial)
+        }
+    }
+}

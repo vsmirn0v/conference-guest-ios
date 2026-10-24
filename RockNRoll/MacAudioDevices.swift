@@ -78,7 +78,11 @@ protocol MacAudioHardware: AnyObject {
 
 @MainActor
 final class MacAudioDevices {
+    #if os(macOS)
+    static let shared = MacAudioDevices(isMac: true)
+    #else
     static let shared = MacAudioDevices()
+    #endif
     @Published private(set) var snapshot = MacAudioSnapshot()
     @Published private(set) var unavailable = false
     private let hardware: MacAudioHardware?
@@ -160,8 +164,10 @@ private final class MacCoreAudioHardware: MacAudioHardware {
     private let devicesSelector: UInt32 = 0x64657623 // dev#
 
     init?() {
-        guard ProcessInfo.processInfo.isiOSAppOnMac,
-              let handle = dlopen("/System/Library/Frameworks/CoreAudio.framework/CoreAudio", RTLD_LAZY | RTLD_LOCAL)
+        #if !os(macOS)
+        guard ProcessInfo.processInfo.isiOSAppOnMac else { return nil }
+        #endif
+        guard let handle = dlopen("/System/Library/Frameworks/CoreAudio.framework/CoreAudio", RTLD_LAZY | RTLD_LOCAL)
         else { return nil }
         guard let size = dlsym(handle, "AudioObjectGetPropertyDataSize"),
               let get = dlsym(handle, "AudioObjectGetPropertyData"),

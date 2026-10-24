@@ -1,0 +1,111 @@
+diff --git a/sdk/objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm b/sdk/objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm
+index e8f4e73..64df70a 100644
+--- a/sdk/objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm
++++ b/sdk/objc/unittests/RTCVideoDecoderVP9Hybrid_xctest.mm
+@@ -18,6 +18,7 @@
+ #include "api/environment/environment_factory.h"
+ #include "modules/video_coding/include/video_error_codes.h"
+ #include "sdk/objc/native/src/objc_video_decoder_factory.h"
++#include "test/gtest.h"
+ 
+ @interface VP9HybridProbeDecoder : NSObject <RTC_OBJC_TYPE(RTCVideoDecoder)>
+ @property(nonatomic) int starts;
+@@ -73,36 +74,29 @@ - (void)testPublicFactoryCreatesNativeHybrid {
+   VP9HybridProbeDecoder *hardware = [[VP9HybridProbeDecoder alloc] init];
+   auto decoder = BuildHybrid(
+       [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware]);
+-  XCTAssertTrue(decoder != nullptr);
+-  if (!decoder) return;
++  ASSERT_TRUE(decoder);
+   webrtc::VideoDecoder::Settings settings;
+   settings.set_codec_type(webrtc::kVideoCodecVP9);
+-  const bool configured = decoder->Configure(settings);
+-  XCTAssertTrue(configured);
+-  if (!configured) return;
++  ASSERT_TRUE(decoder->Configure(settings));
+   webrtc::EncodedImage image;
+   image.SetEncodedData(webrtc::EncodedImageBuffer::Create(8));
+   image.SetSpatialIndex(0);
+   image.SetSpatialLayerFrameSize(0, 8);
+-  XCTAssertEqual(decoder->Decode(image, 0), WEBRTC_VIDEO_CODEC_OK);
+-  XCTAssertEqual(hardware.starts, 1);
+-  XCTAssertEqual(hardware.decodes, 1);
+-  XCTAssertTrue(decoder->GetDecoderInfo().is_hardware_accelerated);
+-  XCTAssertEqual(decoder->Release(), WEBRTC_VIDEO_CODEC_OK);
+-  XCTAssertEqual(hardware.releases, 1);
++  EXPECT_EQ(decoder->Decode(image, 0), WEBRTC_VIDEO_CODEC_OK);
++  EXPECT_EQ(hardware.starts, 1);
++  EXPECT_EQ(hardware.decodes, 1);
++  EXPECT_TRUE(decoder->GetDecoderInfo().is_hardware_accelerated);
++  EXPECT_EQ(decoder->Release(), WEBRTC_VIDEO_CODEC_OK);
++  EXPECT_EQ(hardware.releases, 1);
+ }
+ 
+ - (void)testSpatialMetadataDoesNotReachObjectiveCDecoder {
+   VP9HybridProbeDecoder *hardware = [[VP9HybridProbeDecoder alloc] init];
+   auto decoder = BuildHybrid(
+       [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware]);
+-  XCTAssertTrue(decoder != nullptr);
+-  if (!decoder) return;
+   webrtc::VideoDecoder::Settings settings;
+   settings.set_codec_type(webrtc::kVideoCodecVP9);
+-  const bool configured = decoder->Configure(settings);
+-  XCTAssertTrue(configured);
+-  if (!configured) return;
++  ASSERT_TRUE(decoder->Configure(settings));
+   webrtc::EncodedImage image;
+   // Invalid VP9 payload: software may reject it; the invariant is routing.
+   const uint8_t invalid[] = {0};
+@@ -110,9 +104,9 @@ - (void)testSpatialMetadataDoesNotReachObjectiveCDecoder {
+   image.SetSpatialIndex(2);
+   image._frameType = webrtc::VideoFrameType::kVideoFrameKey;
+   decoder->Decode(image, 0);
+-  XCTAssertEqual(hardware.decodes, 0);
+-  XCTAssertEqual(hardware.releases, 1);
+-  XCTAssertFalse(decoder->GetDecoderInfo().is_hardware_accelerated);
++  EXPECT_EQ(hardware.decodes, 0);
++  EXPECT_EQ(hardware.releases, 1);
++  EXPECT_FALSE(decoder->GetDecoderInfo().is_hardware_accelerated);
+   decoder->Release();
+ }
+ 
+@@ -120,10 +114,9 @@ - (void)testProfileTwoBypassesHardware {
+   VP9HybridProbeDecoder *hardware = [[VP9HybridProbeDecoder alloc] init];
+   auto decoder = BuildHybrid(
+       [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware], "2");
+-  XCTAssertTrue(decoder != nullptr);
+-  if (!decoder) return;
+-  XCTAssertFalse(decoder->GetDecoderInfo().is_hardware_accelerated);
+-  XCTAssertEqual(hardware.starts, 0);
++  ASSERT_TRUE(decoder);
++  EXPECT_FALSE(decoder->GetDecoderInfo().is_hardware_accelerated);
++  EXPECT_EQ(hardware.starts, 0);
+ }
+ 
+ - (void)testHandleCannotShareHardwareBetweenStreams {
+@@ -132,19 +125,16 @@ - (void)testHandleCannotShareHardwareBetweenStreams {
+       [RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9DecoderWithHardwareDecoder:hardware];
+   auto first = BuildHybrid(handle);
+   auto second = BuildHybrid(handle);
+-  XCTAssertTrue(first != nullptr);
+-  if (!first) return;
+-  XCTAssertTrue(second != nullptr);
+-  if (!second) return;
+-  XCTAssertTrue(first->GetDecoderInfo().is_hardware_accelerated);
+-  XCTAssertFalse(second->GetDecoderInfo().is_hardware_accelerated);
++  ASSERT_TRUE(first);
++  ASSERT_TRUE(second);
++  EXPECT_TRUE(first->GetDecoderInfo().is_hardware_accelerated);
++  EXPECT_FALSE(second->GetDecoderInfo().is_hardware_accelerated);
+ }
+ 
+ - (void)testNativeHandleIsNotInvokedAsConcreteHardware {
+   auto decoder = BuildHybrid([RTC_OBJC_TYPE(RTCVideoDecoderVP9)
+       vp9DecoderWithHardwareDecoder:[RTC_OBJC_TYPE(RTCVideoDecoderVP9) vp9Decoder]]);
+-  XCTAssertTrue(decoder != nullptr);
+-  if (!decoder) return;
+-  XCTAssertFalse(decoder->GetDecoderInfo().is_hardware_accelerated);
++  ASSERT_TRUE(decoder);
++  EXPECT_FALSE(decoder->GetDecoderInfo().is_hardware_accelerated);
+ }
+ @end

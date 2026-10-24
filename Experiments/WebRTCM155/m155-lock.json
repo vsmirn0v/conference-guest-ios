@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "source_sha": "623fcfe044d5037b3ecd92001c2ef80ca1d932d5",
+  "source_archive_sha256": "2b7d74ad4d5a3050ff71a8b2b5af86fadaab7576c24c02ab3a2de2a63692f437",
+  "patch": {
+    "path": "m155-port.patch",
+    "sha256": "b367b079032dbeff61f7a70696aaba4ef5fd21ee454811b75685b9e8374104d0"
+  },
+  "source_manifest": {
+    "path": "source-manifest.json",
+    "sha256": "ecec70b42f72ebe391622027b52a226e048ef1340256c4cd2fee8147c63cf4f3"
+  },
+  "dependencies": {
+    "deps": {
+      "path": "DEPS",
+      "sha256": "44b6ac23b75309917d7d81d7c627ddf58fd999246199ff7f2d63078fe0c6afe5"
+    },
+    "gclient": {
+      "path": "gclient.template",
+      "sha256": "a6b0efd4e34aefe840b604d0855072e7ad9e1777077f56a10492f4b09d9763ac"
+    },
+    "roots": [
+      ".landmines",
+      "build",
+      "buildtools",
+      "ios",
+      "out",
+      "testing",
+      "third_party",
+      "tools"
+    ]
+  }
+}

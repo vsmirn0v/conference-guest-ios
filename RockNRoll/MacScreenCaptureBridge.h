@@ -3,6 +3,12 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+typedef NS_ENUM(NSInteger, MacScreenCaptureSelectionMode) {
+    MacScreenCaptureSelectionModeAutomatic,
+    MacScreenCaptureSelectionModeWindow,
+    MacScreenCaptureSelectionModeDisplay,
+};
+
 /// Public macOS 14 ScreenCaptureKit ABI, loaded only inside the Mac host.
 /// Deliberately independent of the iOS 27 ScreenCaptureKit declarations.
 @interface MacScreenCaptureBridge : NSObject
@@ -11,6 +17,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (CGSize)outputSizeForContent:(CGSize)content NS_SWIFT_NAME(outputSize(for:));
 /// Enabled only for transports qualified with native Retina/4K input.
 @property(nonatomic) BOOL preserveDetail;
+/// Automatic retains the system's screen/window choice; explicit modes still require user selection.
+@property(nonatomic) MacScreenCaptureSelectionMode selectionMode;
 - (CGSize)captureSizeForContent:(CGSize)content NS_SWIFT_NAME(captureSize(for:));
 /// Public Mac timing properties missing from UIKit's ScreenCaptureKit surface.
 + (void)configureTiming:(NSObject *)configuration fps:(NSInteger)fps queueDepth:(NSInteger)depth;
@@ -50,6 +58,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)contentSharingPickerStartDidFailWithError:(NSError *)error;
 @end
 @interface ScreenCapturePickerSession : NSObject
+@property(nonatomic) MacScreenCaptureSelectionMode selectionMode;
 @property(atomic, weak, nullable) NSObject *stream;
 @property(nonatomic, copy, nullable) void (^onFilter)(NSObject *filter);
 @property(nonatomic, copy, nullable) void (^onCancel)(void);

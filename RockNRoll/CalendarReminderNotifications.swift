@@ -1,7 +1,11 @@
 import ConferenceCore
 import CryptoKit
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import UserNotifications
 
 @MainActor enum NotificationSettingsLink {
@@ -15,19 +19,31 @@ import UserNotifications
             app.queryItems = [URLQueryItem(name: "id", value: bundleIdentifier)]
             return [app.url!, pane]
         }
+        #if canImport(UIKit)
         return [URL(string: UIApplication.openNotificationSettingsURLString)!,
                 URL(string: UIApplication.openSettingsURLString)!]
+        #else
+        return destinations(isMac: true, bundleIdentifier: bundleIdentifier)
+        #endif
     }
 
     @discardableResult static func open(
-        isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
+        isMac: Bool = CalendarMeetingStore.isMacPlatform,
         bundleIdentifier: String? = Bundle.main.bundleIdentifier,
-        using opener: (URL) async -> Bool = { await UIApplication.shared.open($0) }
+        using opener: (URL) async -> Bool = { await openSystemURL($0) }
     ) async -> Bool {
         for url in destinations(isMac: isMac, bundleIdentifier: bundleIdentifier) {
             if await opener(url) { return true }
         }
         return false
+    }
+
+    private static func openSystemURL(_ url: URL) async -> Bool {
+        #if canImport(UIKit)
+        return await UIApplication.shared.open(url)
+        #else
+        return NSWorkspace.shared.open(url)
+        #endif
     }
 }
 
@@ -146,6 +162,7 @@ enum ReminderFormatting {
 }
 
 /// Installed before scenes are made; background admission requires an explicit notification action.
+#if canImport(UIKit)
 final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
     static let shared = CalendarReminderBroker()
     static let category = "MEETING_REMINDER"
@@ -247,3 +264,4 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 }
+#endif

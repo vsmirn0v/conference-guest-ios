@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "base_source_sha": "0385653a83f21acf3c916466d4088b29fe2f160b",
+  "upstream_candidate_sha": "a545de45259b47dfac5f3635863e47cb601f1bb2",
+  "prefix_patch": "Experiments/WebRTCMaintenance/patches/apple_prefix.patch",
+  "maintenance": [
+    {
+      "commit": "67c45788424e3ec9df1ebc53e0269d9d5f09295b",
+      "patch": "patches/67c45788424e3ec9df1ebc53e0269d9d5f09295b.patch"
+    },
+    {
+      "commit": "51c367e209f8f12b39bd8dd0ca70bf588f42cb48",
+      "patch": "patches/51c367e209f8f12b39bd8dd0ca70bf588f42cb48.patch"
+    },
+    {
+      "commit": "fd5c784d70d6852afaae2aa6414c1fc96c31dfd0",
+      "patch": "patches/fd5c784d70d6852afaae2aa6414c1fc96c31dfd0.patch"
+    },
+    {
+      "commit": "67366b135535a35c4fa40c1b050a67c90f0b7bec",
+      "patch": "patches/67366b135535a35c4fa40c1b050a67c90f0b7bec.patch"
+    }
+  ],
+  "patch_sha256": {
+    "Experiments/WebRTCMaintenance/patches/apple_prefix.patch": "649ca0ac6de2386261f978ddd03840855e851a14545840f975edce703e9b48ad",
+    "Experiments/WebRTCHybrid/patches/0001-vp9-native-hybrid.patch": "23b028684639f82e2b59fe07cb4beb679a0f5102e881ffac3373dda9e8b16ede",
+    "Experiments/WebRTCHybrid/patches/0002-vp9-builder-concurrency-and-mac-api-tests.patch": "62ba8dbfb373cb134c8fca7d30f2db12f1f33fa1c5e6fc13815ae8de74877619",
+    "Experiments/WebRTCHybrid/patches/0003-objc-initializer-parentheses.patch": "ac2675acdf7e591b341996e3ba816653c2034b47654b54e436dd3b53aa115050",
+    "Experiments/GuestSDKRebuild/patches/0001-legacy-objc-compatibility.patch": "f0080dc59411b9ece0a45c364d6302738cbacf2e27cead0326f9ceb293e364f7",
+    "Experiments/GuestSDKRebuild/patches/0002-conference-playout-lifetime.patch": "13cb1ecc05a53dead6921c70fafdfa447e7541972aa6feb225d7683ccab15abe",
+    "Experiments/GuestSDKRebuild/patches/0003-isolate-vendor-yuv-helper.patch": "3329c6d1d639957e57c02835e2fda18a6d48d5c47ddd9f0ae5dfc47a28265fd5",
+    "Experiments/GuestSDKRebuild/patches/0005-mac-output-only-voice-processing.patch": "4b359e46322a822fc977acd0030ab1d0a29d9229bcbfa2455f779659281a7d00",
+    "Experiments/GuestSDKRebuild/patches/0006-audio-initialization-failure.patch": "bcab163fa804676573d075c7ef27fb81bd44c91c801343cdb3a9ee44b4a2fda7",
+    "Experiments/GuestSDKRebuild/patches/0007-audio-session-ownership.patch": "9fefb6e7065909a93667de209bf4369079806f06803e9f0551f4f21a1b9c8850",
+    "Experiments/GuestSDKRebuild/patches/0008-audio-restart-status.patch": "7b5be84484ebeee6147bce99a411f0bda38cd7a9fcd66911b6917e7332cd59ad",
+    "Experiments/GuestSDKRebuild/patches/0009-accessory-mute-input-lifetime.patch": "4e08a5c9400513a3eded9b898a605e43c9d589f02e5e9351c5bd20f144c765de",
+    "Experiments/GuestSDKRebuild/patches/0010-route-change-start-recovery.patch": "851a0123f1afd711821f590a8b03e90936550ae0fe9db91ec84c5dcf211ce41e",
+    "Experiments/GuestSDKRebuild/patches/0011-reentrant-description-callback.patch": "1f622c9843e087c8a61fbb2ea8665196d08e26f092114f24539689033d8da51d",
+    "Experiments/GuestSDKRebuild/patches/0012-preserve-application-input-mute.patch": "625bd42081832e0c0b81dc48c2185f6144ead7cc6e32cea583a4b9ddaf8a4eed",
+    "Experiments/GuestSDKRebuild/patches/0013-authoritative-application-input-mute.patch": "de88042b78be924c4b3ff9f43e9fb7d9440aca93a5e08eea70af7447cc3ffd27",
+    "Experiments/GuestSDKRebuild/patches/0014-recreate-disposed-audio-unit.patch": "422ac0f41fbed558abcc181bd58d99b816d1bb0d8a60d412b1431954c4d9f08b",
+    "Experiments/GuestSDKRebuild/patches/0015-screen-detail-encoder.patch": "75cd3cb846f01e6ae30d57c497adbbbc059f00ed765239f3a175b03e40d9976a",
+    "Experiments/GuestSDKRebuild/patches/0016-atomic-screen-sender-policy.patch": "2f5e045f45efcce0f07015be5db5a216e9487b1ae445409c5c3131d50c4638e0",
+    "Experiments/GuestSDKRebuild/patches/0017-conference-audio-ownership.patch": "d02182814161c5928c2df8527b0f4343926ac0031caf5d34422106290f3ad882",
+    "Experiments/GuestSDKRebuild/patches/0018-Preserve-Mac-playout-across-microphone-mute.patch": "5a47fcbea155ce18742daeeca73ba8dde2ed478ff79333dedfea685cd9f672f4",
+    "Experiments/GuestSDKRebuild/patches/0019-Mac-application-capture-mute-gate.patch": "963bcd18dacd5b89de683535751f4d3d6d89dc6385dac8103ececd1203fa38ae",
+    "Experiments/GuestSDKRebuild/patches/0020-Observe-receivers-only-when-a-delegate-is-attached.patch": "cab823ceb18a51c8d68b5b3287b7445db5d41b370c224dab39bfe0d34ce80a73",
+    "Experiments/GuestSDKRebuild/patches/0021-Initialize-authorized-Mac-Bluetooth-input-for-headset-controls.patch": "97c0062ab1b48a4e7f76b49d5d602358e647fbcd70d61ba115a3df71fe5ee2ec",
+    "Experiments/WebRTCMaintenance/patches/67c45788424e3ec9df1ebc53e0269d9d5f09295b.patch": "9b7a756f7159589e3df51ddf4878353885969611a4164404ff63c1c139fa5f19",
+    "Experiments/WebRTCMaintenance/patches/51c367e209f8f12b39bd8dd0ca70bf588f42cb48.patch": "19b3645346481bb7a3b7d32d96969337040b4d7846401c4f39746efa4142cdba",
+    "Experiments/WebRTCMaintenance/patches/fd5c784d70d6852afaae2aa6414c1fc96c31dfd0.patch": "02e3709747acf9d070a12661024f79ee0b8881618a507fdc4d6dd35046e3c2ff",
+    "Experiments/WebRTCMaintenance/patches/67366b135535a35c4fa40c1b050a67c90f0b7bec.patch": "722a3e65aa9819a6466d21df3fc1dc48811dc5173c1e0191db09a4e26744e393",
+    "Experiments/WebRTCMaintenance/patches/upstream-test-target.patch": "49fa01603512e23ad320445ba008c86ff999ade00912ef1232eba7bae47e37aa"
+  },
+  "preparation_only_revert": {
+    "patch": "patches/observed-test-adaptation.patch",
+    "sha256": "61077d7e4d02e232e98b0542907e87bb2822bba373229473f711ca90532f1bcc",
+    "reason": "Restore original XCTest assertions in cloned sources; observed gtest assertions do not report XCTest failures."
+  },
+  "hybrid_patches": [
+    "Experiments/WebRTCHybrid/patches/0001-vp9-native-hybrid.patch",
+    "Experiments/WebRTCHybrid/patches/0002-vp9-builder-concurrency-and-mac-api-tests.patch",
+    "Experiments/WebRTCHybrid/patches/0003-objc-initializer-parentheses.patch"
+  ],
+  "guest_patches": [
+    "Experiments/GuestSDKRebuild/patches/0001-legacy-objc-compatibility.patch",
+    "Experiments/GuestSDKRebuild/patches/0002-conference-playout-lifetime.patch",
+    "Experiments/GuestSDKRebuild/patches/0003-isolate-vendor-yuv-helper.patch",
+    "Experiments/GuestSDKRebuild/patches/0005-mac-output-only-voice-processing.patch",
+    "Experiments/GuestSDKRebuild/patches/0006-audio-initialization-failure.patch",
+    "Experiments/GuestSDKRebuild/patches/0007-audio-session-ownership.patch",
+    "Experiments/GuestSDKRebuild/patches/0008-audio-restart-status.patch",
+    "Experiments/GuestSDKRebuild/patches/0009-accessory-mute-input-lifetime.patch",
+    "Experiments/GuestSDKRebuild/patches/0010-route-change-start-recovery.patch",
+    "Experiments/GuestSDKRebuild/patches/0011-reentrant-description-callback.patch",
+    "Experiments/GuestSDKRebuild/patches/0012-preserve-application-input-mute.patch",
+    "Experiments/GuestSDKRebuild/patches/0013-authoritative-application-input-mute.patch",
+    "Experiments/GuestSDKRebuild/patches/0014-recreate-disposed-audio-unit.patch",
+    "Experiments/GuestSDKRebuild/patches/0015-screen-detail-encoder.patch",
+    "Experiments/GuestSDKRebuild/patches/0016-atomic-screen-sender-policy.patch",
+    "Experiments/GuestSDKRebuild/patches/0017-conference-audio-ownership.patch",
+    "Experiments/GuestSDKRebuild/patches/0018-Preserve-Mac-playout-across-microphone-mute.patch",
+    "Experiments/GuestSDKRebuild/patches/0019-Mac-application-capture-mute-gate.patch",
+    "Experiments/GuestSDKRebuild/patches/0020-Observe-receivers-only-when-a-delegate-is-attached.patch",
+    "Experiments/GuestSDKRebuild/patches/0021-Initialize-authorized-Mac-Bluetooth-input-for-headset-controls.patch"
+  ]
+}

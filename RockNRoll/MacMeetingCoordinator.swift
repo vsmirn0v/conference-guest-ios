@@ -160,16 +160,17 @@ final class MacMeetingCoordinator {
             }
         }
         let calendar = model.desktopCalendar
+        let suggestedMeeting = calendar?.joiningMeeting ?? calendar?.suggestedMenuMeeting
         let state = MacMeetingMenuState(active: model.desktopMeetingActive, joined: model.isInConference,
             title: model.desktopMeetingActive ? model.desktopMeetingTitle : L("Rock’n’Roll"), session: model.desktopSessionToken,
             microphoneOn: controls?.microphoneOn == true,
             microphoneAvailable: controls?.microphoneAvailable == true && controls?.toggleMicrophone != nil,
             held: controls?.onHold == true, audio: audioDevices.snapshot,
             resident: calendar?.keepInMenuBar == true,
-            nextMeeting: calendar?.joiningMeeting ?? calendar?.nextScheduledMeeting,
+            nextMeeting: suggestedMeeting,
             countdown: calendar?.countdown, automaticJoining: calendar?.automaticJoinMode == .scheduled,
             automaticPaused: calendar?.automaticJoinPausedUntil.map { $0 > Date() } ?? false,
-            nextSkipped: calendar?.nextScheduledMeeting.map { calendar?.automaticJoinSuppressed($0) == true } ?? false)
+            nextSkipped: suggestedMeeting.map { calendar?.automaticJoinSuppressed($0) == true } ?? false)
         guard state != lastSnapshot else { return }
         lastSnapshot = state
         bridge.update(state)
