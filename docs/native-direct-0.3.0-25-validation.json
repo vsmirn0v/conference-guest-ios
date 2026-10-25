@@ -2,7 +2,7 @@
   "version": "0.3.0",
   "build": "25",
   "sourceCommit": "4ffbae1",
-  "state": "awaiting-unlocked-mac-validation",
+  "state": "published",
   "artifact": {
     "file": "RockNRoll-0.3.0-25-arm64.dmg",
     "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-25-arm64.dmg",
@@ -44,28 +44,47 @@
     "generatedPrivateFixture": true,
     "existingLibraryLoaded": true,
     "iPhoneRerun": "deferred by user",
-    "postActualUpdate": "pending"
+    "postActualUpdate": "installed25 verify passed; generated fixture cleaned"
   },
   "server": {
     "publicHTTPSVerified": true,
-    "stableBuild": "22",
+    "stableBuild": "25",
     "betaBuild": "25",
-    "homepageDownloadCTADeployed": false,
-    "stablePromotion": "pending actual update validation"
+    "homepageDownloadCTADeployed": true,
+    "stablePromotion": "same immutable25 bytes promoted; HTTPS readback passed",
+    "websiteHealthVerified": true,
+    "meetingServerUnchanged": true
   },
   "install": {
     "quarantinedHTTPSDownloadVerified": true,
     "mountedAndCopiedAppAcceptedByGatekeeper": true,
-    "normalFinderInstallAndFirstLaunch": "pending unlocked Mac",
-    "actualSparkleReplacement": "pending"
+    "normalFinderInstallAndFirstLaunch": "passed; canonical Applications path; normal Apple-verified Open confirmation",
+    "actualSparkleReplacement": "passed22-to25 after Leave",
+    "stableIgnoresBeta": true,
+    "betaOffDoesNotDowngrade": true,
+    "meetingDeferral": {
+      "sourcePID": 54163,
+      "targetPID": 55549,
+      "activeAndHiddenMeetingStayedConnected": true,
+      "samePeerEngineConnections": 1,
+      "installationWaitedForLeave": true
+    },
+    "installedExecutableSHA256": "534a48373fee024739ccdec6309c294a21f70f162cc7be52fa29e7889a2e6578",
+    "postUpdateJoinLeave": true
   },
-  "pendingChecks": [
-    "Finder copy and canonical Applications launch",
-    "Stable ignores beta25",
-    "Live/hidden meeting defers update until Leave",
-    "Actual22-to25 install/relaunch",
-    "Beta off does not downgrade",
-    "Post-update CloudKit and fixture cleanup",
-    "Promote exact25 bytes to stable and deploy homepage"
-  ]
+  "pendingChecks": [],
+  "review": {
+    "model": "6-astra xhigh",
+    "blockingFindings": 0
+  },
+  "livePeer": {
+    "passedPhases": 6,
+    "samples": 426,
+    "durationSeconds": 473.166,
+    "engineConnections": 1,
+    "protectedIntervalSamples": 164,
+    "protectedIntervalAudioPacketsAdvanced": 8833,
+    "protectedIntervalVideoFramesEncodedAdvanced": 2526,
+    "scope": "generated publisher and roster continuity; native incoming video confirmed visually; no acoustic quality claim"
+  }
 }

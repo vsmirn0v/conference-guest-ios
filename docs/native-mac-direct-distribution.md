@@ -67,70 +67,46 @@ polling loop.
 
 ## Qualification record
 
-Local preflight completed on 25 October 2026:
+Release 0.3.0 (25) was qualified on 25 October 2026:
 
 - Direct native parity: 75 cases, 15 opt-in live cases skipped, zero failures.
-  This includes 16 storage/process fence cases, eight admission/lifecycle cases
-  and 13 actual Sparkle delegate/callback cases, including stale-status recovery.
+  Includes storage/process fences, meeting admission and actual Sparkle callbacks.
 - App Store parity: 62 cases, the same 15 opt-in live cases skipped, zero failures.
-- Actual App Store product readback: no Sparkle framework, SU* keys or updater
-  Mach exceptions after reusing the direct-build cache.
-- Distribution tooling: 18 checks passed, including resolved specification
-  resources, artifact collisions across channels, identity/profile checks,
-  immutable publication, concurrent metadata changes and unchanged signed bytes.
-- Developer ID app/profile: matching identifiers and team, Production CloudKit
-  and APNs, sandbox, hardened runtime, no debugger entitlement, correctly signed
-  nested updater helpers.
-- Developer ID baseline 22 wrote a generated private CloudKit fixture; candidate
-  24 read its name, favorite, alias and invitation correctly. The normal direct
-  app also loaded the existing library and reached Up to date. Test fixtures do
-  not change the user's real favorites or sync preferences.
-- Stable default, automatic checks/downloads and beta toggle were inspected in
-  the real signed direct app. Beta was restored to off after the check.
-- Candidate 24's archive and submission include the exact checked-in Sparkle
-  license. Candidate 25 also clears stale update-error status on the next cycle; its final
-  parity run passed.
+  Product readback confirms no Sparkle framework, SU* keys or updater exceptions.
+- Distribution tooling: 18 checks passed; server Go tests passed.
+- Developer ID identity/profile, Production CloudKit/APNs, sandbox, hardened
+  runtime and signed nested helpers passed. Both baseline22 and candidate25
+  apps are notarized, stapled and accepted by Gatekeeper. The outer DMG itself
+  is not notarized.
+- A quarantined HTTPS baseline22 download was mounted and copied using Finder
+  to Applications. After Apple's normal verified-app Open confirmation, the
+  process ran from the canonical Applications path without translocation.
+- Stable22 ignored beta25. Enabling Beta during a disposable synthetic meeting
+  downloaded and verified25 while PID54163 remained on22. The independent peer
+  retained one healthy connection through window close/hide/restore; incoming
+  generated video resumed after restoration. No update UI interrupted the call.
+- Leave triggered the pending installation only after meeting cleanup. Sparkle
+  replaced22 with25 and relaunched PID55549 from Applications. Its executable
+  SHA-256 matches the notarized candidate. Gatekeeper accepted the installed app.
+- Name, favorites, history and iCloud settings survived. Disabling Beta did not
+  downgrade25 to stable22. A fresh meeting join/leave on installed25 passed.
+- The Developer ID baseline wrote a generated private Production CloudKit
+  fixture. Installed25 verified its name/favorite/alias/invitation after the
+  actual update; cleanup deleted only the generated fixture zone. The normal
+  library also reached Up to date. The iPhone rerun remains deferred by user.
+- Final 6-astra xhigh review found no release blocker.
+- The signed feed and enclosure verify; changed signed bytes are rejected.
+  The exact same25 DMG bytes were promoted to stable and beta, with HTTPS hash,
+  metadata, alias and cache-policy readback. No immutable artifact was replaced.
+- The public homepage now exposes the Mac download and existing iOS TestFlight
+  link. Homepage/privacy bytes match committed source; health passed. Only the
+  web process restarted, with its old binary preserved. The meeting-server
+  process and start time remained unchanged.
 
-Release gates still required before public promotion:
+These updater tests establish meeting connection continuity and generated video
+recovery, not a new acoustic-quality or battery qualification. Earlier media
+validation remains separate. No quarantine stripping or security-policy bypass
+was used. The previously installed app is preserved locally for recovery.
 
-1. Apple notarization acceptance, stapling and Gatekeeper readback.
-2. Download/quarantine → mounted DMG → installed app validation.
-3. Actual signed baseline-to-candidate Sparkle update, including a live/hidden
-   meeting that continues until Leave and installation only afterward.
-4. Stable/beta filtering, beta-to-stable no-downgrade and final stable promotion.
-5. Post-update library/CloudKit verification and generated fixture cleanup.
-6. HTTPS feed/artifact digest/signature checks and final website deployment.
-
-At this record's creation Apple still reported Processing. The first actual
-feed-signing preflight was also waiting for macOS Keychain approval for
-`sign_update`; no private key was exported or its access protection bypassed. The native download
-CTA, release artifacts and appcast had not been published. No pending
-notarization result is treated as acceptance. An iPhone cross-device rerun was
-requested but the device was unavailable; Mac Production CloudKit checks above
-were completed independently.
-
-## Current qualification state
-
-Sparkle Keychain approval and Apple notarization have completed. Both baseline
-22 and candidate25 apps are stapled and accepted by Gatekeeper. Actual signed
-feeds verify, and altered signed bytes are rejected. HTTPS artifact, alias and
-feed readback passed for stable22 and beta25. The homepage download CTA remains
-undeployed until final qualification.
-
-The Mac then became locked, with computer automation reporting that automatic
-unlock was paused after physical input. A normal Finder copy/launch and the
-real live-meeting update test are still required. The scripted quarantine-copy
-startup was translocated; it must not be counted as a qualified Applications
-installation. No quarantine stripping or security-policy bypass was used.
-The existing app was retained at `.build/native-dmg/installed-before-direct.app`.
-
-Resume with the baseline22 and candidate25 packages/feeds under
-`.build/native-dmg/`. The source marker for the generated CloudKit fixture is in
-`cloud-marker.txt`. The current synthetic peer has stopped cleanly; the rebuilt
-`.build/native-dmg/NativeGuestProbe` supports900-second controlled sessions and
-its build receipt is alongside it. Create a private0700IPC directory before
-launching the peer. After the real update, verify and delete only the generated
-CloudKit zone using `--check-distribution-cloud verify|cleanup UUID`.
-
-The bounded public validation record is
+The bounded release record is
 [native-direct-0.3.0-25-validation.json](native-direct-0.3.0-25-validation.json).
