@@ -15,14 +15,14 @@ enum GuestCompanionPeerError: Error { case invalidControl }
         var remoteParticipants: Int
         var requireSignal: Bool?
     }
-    static func run(_ invitation: GuestInvitation, directory: URL, seconds: UInt64, icePolicy: GuestICEPolicy = .automatic, monitorSender: Bool = false) async throws {
+    static func run(_ invitation: GuestInvitation, directory: URL, seconds: UInt64, icePolicy: GuestICEPolicy = .automatic, monitorSender: Bool = false, existingSource: Bool = false) async throws {
         let session = GuestSession(makeEngine: { NativeGuestEngine(label: "Companion qualification peer", icePolicy: icePolicy) })
         var sequence = 0
         do {
             try await session.connect(invitation, publish: true, codec: "h264", camera: false)
-            guard session.engine?.admittedParticipants == 1 else { throw GuestEngineError.mediaMissing }
+            guard session.engine?.admittedParticipants == (existingSource ? 2 : 1) else { throw GuestEngineError.mediaMissing }
             try write(["ready": true], to: directory.appendingPathComponent("ready.json"))
-            probeLog("companion-peer-ready", ["initiallyAlone": true])
+            probeLog("companion-peer-ready", ["initiallyAlone": !existingSource, "existingSource": existingSource])
             let deadline = ProcessInfo.processInfo.systemUptime + Double(seconds)
             var stopped = false
             var nextSenderSample = 0.0

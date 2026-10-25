@@ -65,6 +65,19 @@ private final class Response: URLProtocol {
     }
     func clear(session: RoomCloudSession) async throws { records = [:] }
 }
+@MainActor private final class ContinuationCloud: MeetingContinuationTransport {
+    var records: [ActiveJam] = []
+    func connect(account: String) async throws {}
+    func jams() async throws -> [ActiveJam] { records }
+    func publish(_ jam: ActiveJam) async throws { throw ContinuationError.unavailable }
+    func withdraw(deviceID: String, sessionID: UUID?) async throws {}
+    func claim(_ transfer: JamTransfer) async throws { throw ContinuationError.unavailable }
+    func transfer(sourceSession: UUID) async throws -> JamTransfer? { nil }
+    func transition(_ transfer: JamTransfer, to phase: JamTransfer.Phase, actor: String) async throws -> JamTransfer {
+        throw ContinuationError.unavailable
+    }
+    func clear() async throws { records = [] }
+}
 
 @main private struct NativeDesktopLibraryTests {
     @MainActor private static func calendar(preferences: UserDefaults, reader: Reader = Reader(), clock: @escaping () -> Date = Date.init) -> CalendarMeetingStore {
@@ -217,6 +230,56 @@ private final class Response: URLProtocol {
         try expect(invalidations == 3, "Finish is idempotent after invalidation")
         library.backgrounded(); store.setSchedulingAvailable(false)
     }
+    @MainActor static func handoffFreshnessWithoutCalendar() async throws {
+        let domain = "NativeHandoffFreshness-" + UUID().uuidString
+        let preferences = UserDefaults(suiteName: domain)!
+        defer { preferences.removePersistentDomain(forName: domain) }
+        let reader = Reader(), cloud = ContinuationCloud()
+        let calendar = calendar(preferences: preferences, reader: reader)
+        let startup = calendar.now
+        // Simulate ten elapsed minutes without enabling Calendar to advance its clock.
+        let now = startup.addingTimeInterval(600)
+        let fresh = ActiveJam(deviceID: "phone", invitation: URL(string: "https://meeting.example.test/calls/fresh")!,
+            title: "Phone meeting", name: "Phone guest", deviceLabel: "iPhone", updatedAt: now, engine: .guest)
+        let expired = ActiveJam(deviceID: "expired", invitation: URL(string: "https://meeting.example.test/calls/expired")!,
+            title: "Expired meeting", name: "", deviceLabel: "iPhone", updatedAt: now.addingTimeInterval(-180), engine: .guest)
+        let future = ActiveJam(deviceID: "future", invitation: URL(string: "https://meeting.example.test/calls/future")!,
+            title: "Future meeting", name: "", deviceLabel: "iPhone", updatedAt: now.addingTimeInterval(61), engine: .guest)
+        cloud.records = [fresh, expired, future]
+        let library = NativeDesktopLibrary(preferences: preferences, history: RoomHistoryStore(storage: Storage()),
+            syncStorage: Storage(), cloudTransport: Cloud(), calendar: calendar, continuationTransport: cloud)
+        defer { library.continuation.setEnabled(false) }
+        library.continuation.setEnabled(true)
+        library.continuation.setCloudAccount("fixture-account")
+        let candidates = try await library.continuation.refreshAndWait()
+        let permissionRequests = await reader.requestCount()
+        try expect(!calendar.enabled && calendar.now == startup && permissionRequests == 0,
+            "Handoff discovery must not enable Calendar or advance its disabled clock")
+        try expect(Set(candidates.map(\.sessionID)) == Set(cloud.records.map(\.sessionID)),
+            "The continuation snapshot includes records whose shorter Home lease must be checked independently")
+        try expect(HomeMeetingPolicy.candidates(meetings: [], handoffs: candidates, at: calendar.now).isEmpty,
+            "A disabled Calendar's startup clock reproduces the missing fresh Handoff candidate")
+        let discoveries = library.homeMeetings(at: now)
+        try expect(discoveries.compactMap { $0.handoff?.sessionID } == [fresh.sessionID],
+            "Home uses current time to discover the phone and reject expired or excessive future heartbeats")
+        try expect(!library.homeMeetings(at: now.addingTimeInterval(180)).contains { $0.handoff?.sessionID == fresh.sessionID },
+            "A discovered Handoff expires when its lease ends")
+        var snapshot = HomeMeetingSnapshot()
+        snapshot.update([], allowChanges: true)
+        snapshot.update(discoveries, allowChanges: false)
+        try expect(snapshot.items.isEmpty && snapshot.hasUpdates,
+            "Discovery during Home interaction offers updated meetings without inserting a row")
+        snapshot.acceptUpdates()
+        try expect(snapshot.items == discoveries && !snapshot.hasUpdates,
+            "Explicitly accepting Home updates reveals the fresh Handoff")
+        var liveHeartbeat = fresh
+        liveHeartbeat.updatedAt = Date()
+        cloud.records = [liveHeartbeat]
+        _ = try await library.continuation.refreshAndWait()
+        try expect(library.homeMeetings().contains { $0.handoff?.sessionID == liveHeartbeat.sessionID },
+            "The normal Home call uses the current clock without requiring an explicit timestamp")
+    }
+
     @MainActor static func handoffReference() throws {
         let now = Date(timeIntervalSince1970: 1_000)
         let jam = ActiveJam(deviceID: UUID().uuidString,
@@ -249,8 +312,9 @@ private final class Response: URLProtocol {
             try await replicaCompatibility()
             try await permissionsAndResolvedAgenda()
             try await scheduledAdmission()
+            try await handoffFreshnessWithoutCalendar()
             try handoffReference()
-            print("PASS: native library persistence, favorite order, aliases, rotated/calendar invitations, scheduled attendance, shared replica/account compatibility, Calendar opt-in, resolved agenda, scheduled transport admission/cancellation and private Handoff activity contract")
+            print("PASS: native library persistence, favorite order, aliases, rotated/calendar invitations, scheduled attendance, shared replica/account compatibility, Calendar opt-in, resolved agenda, scheduled transport admission/cancellation, disabled-Calendar Handoff freshness, frozen Home updates and private Handoff activity contract")
         } catch { fputs("FAIL: \(error)\n", stderr); exit(1) }
     }
 }

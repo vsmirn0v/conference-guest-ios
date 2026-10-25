@@ -15,11 +15,23 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         var failConnectedTransferReads = false
         var transferReads: [UUID: Int] = [:]
         var transitionGate: ((JamTransfer, JamTransfer.Phase) async -> Void)?
+        var snapshotReads = 0
+        var snapshotHandler: ((Int) async throws -> [ActiveJam])?
+        var clearHandler: (() async throws -> Void)?
         func connect(account: String) async throws {
             if suspendConnect { await withCheckedContinuation { connectWaiter = $0 } }
             if !available { throw ContinuationError.unavailable }
         }
         func jams() async throws -> [ActiveJam] { if !available { throw ContinuationError.unavailable }; return Array(records.values) }
+        func snapshot(sourceSession: UUID?) async throws -> (jams: [ActiveJam], command: JamTransfer?) {
+            snapshotReads += 1
+            let rooms: [ActiveJam]
+            if let snapshotHandler { rooms = try await snapshotHandler(snapshotReads) }
+            else { rooms = try await jams() }
+            let command: JamTransfer?
+            if let sourceSession { command = try await transfer(sourceSession: sourceSession) } else { command = nil }
+            return (rooms, command)
+        }
         func publish(_ jam: ActiveJam) async throws { records[jam.deviceID] = jam; publishes += 1 }
         func withdraw(deviceID: String, sessionID: UUID?) async throws {
             if records[deviceID]?.sessionID == sessionID { records[deviceID] = nil }
@@ -44,7 +56,7 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
             await transitionGate?(stored, phase)
             onChange?(); return stored
         }
-        func clear() async throws { records = [:]; requests = [:] }
+        func clear() async throws { try await clearHandler?(); records = [:]; requests = [:] }
     }
     private func make(_ cloud: Cloud, _ device: String, now: @escaping () -> Date = Date.init) -> MeetingContinuationCoordinator {
         let preferences = UserDefaults(suiteName: "ContinuationTests-" + UUID().uuidString)!
@@ -62,6 +74,183 @@ final class MeetingContinuationCoordinatorTests: XCTestCase {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition(), Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
         XCTAssertTrue(condition())
+    }
+    @MainActor private final class SnapshotGate {
+        var reads: [Int: CheckedContinuation<[ActiveJam], Error>] = [:]
+        func read(_ pass: Int) async throws -> [ActiveJam] {
+            try await withCheckedThrowingContinuation { reads[pass] = $0 }
+        }
+        func release(_ pass: Int, _ rooms: [ActiveJam]) {
+            guard let continuation = reads.removeValue(forKey: pass) else { XCTFail("Snapshot pass was not waiting"); return }
+            continuation.resume(returning: rooms)
+        }
+        func cancelAll() {
+            let pending = reads; reads = [:]
+            pending.values.forEach { $0.resume(throwing: CancellationError()) }
+        }
+    }
+    func testFreshLookupWaitsForNextPassWhenCloudReadIsAlreadyInFlight() async throws {
+        let cloud = Cloud(), gate = SnapshotGate()
+        cloud.snapshotHandler = { try await gate.read($0) }
+        let target = make(cloud, "phone")
+        defer { target.setEnabled(false); gate.cancelAll() }
+        await eventually { gate.reads[1] != nil }
+        var started = false, finished = false
+        let lookup = Task {
+            started = true; defer { finished = true }
+            return try await target.refreshAndWait(timeout: .seconds(5))
+        }
+        await eventually { started }
+        let old = jam("old-mac"), fresh = jam("new-mac")
+        gate.release(1, [old])
+        await eventually { gate.reads[2] != nil }
+        XCTAssertFalse(finished, "A pass already running before the lookup cannot certify freshness")
+        XCTAssertEqual(target.candidates, [old])
+        gate.release(2, [fresh])
+        let result = try await lookup.value
+        XCTAssertEqual(result, [fresh]); XCTAssertTrue(finished)
+    }
+    func testFreshLookupUnavailableDoesNotReadCloudOrReturnCachedSuccess() async {
+        let cloud = Cloud(), preferences = UserDefaults(suiteName: "UnavailableContinuation-" + UUID().uuidString)!
+        let target = MeetingContinuationCoordinator(deviceID: "phone", deviceLabel: "phone", preferences: preferences,
+            transport: cloud, automatic: false)
+        for enabled in [false, true] {
+            target.setEnabled(enabled)
+            do { _ = try await target.refreshAndWait(); XCTFail("Missing cloud account cannot produce a fresh snapshot") }
+            catch ContinuationError.unavailable { }
+            catch { XCTFail("Unexpected error: \(error)") }
+        }
+        target.setEnabled(false)
+        XCTAssertEqual(cloud.snapshotReads, 0)
+    }
+    func testFreshLookupAccountChangeAndDisableInvalidateWaitersBeforeCloudReturns() async {
+        for disable in [false, true] {
+            let cloud = Cloud(), gate = SnapshotGate()
+            cloud.snapshotHandler = { try await gate.read($0) }
+            let target = make(cloud, "phone")
+            defer { target.setEnabled(false); gate.cancelAll() }
+            await eventually { gate.reads[1] != nil }
+            var started = false
+            let lookup = Task {
+                started = true
+                return try await target.refreshAndWait(timeout: .seconds(5))
+            }
+            await eventually { started }
+            if disable { target.setEnabled(false) } else { target.setCloudAccount("account-B") }
+            do { _ = try await lookup.value; XCTFail("An invalidated lookup must not return a snapshot") }
+            catch is CancellationError { }
+            catch { XCTFail("Expected immediate revision invalidation, not a deadline: \(error)") }
+            XCTAssertNotNil(gate.reads[1], "The waiter's cancellation does not need a CloudKit response")
+        }
+    }
+    func testCancellingOneFreshLookupPreservesAnotherAndTheSharedRefresh() async throws {
+        let cloud = Cloud(), gate = SnapshotGate()
+        cloud.snapshotHandler = { try await gate.read($0) }
+        let target = make(cloud, "phone")
+        defer { target.setEnabled(false); gate.cancelAll() }
+        await eventually { gate.reads[1] != nil }
+        var started = 0, secondFinished = false
+        let first = Task { started += 1; return try await target.refreshAndWait(timeout: .seconds(5)) }
+        let second = Task {
+            started += 1; defer { secondFinished = true }
+            return try await target.refreshAndWait(timeout: .seconds(5))
+        }
+        await eventually { started == 2 }
+        first.cancel()
+        do { _ = try await first.value; XCTFail("Cancelled lookup returned a snapshot") }
+        catch is CancellationError { }
+        XCTAssertFalse(secondFinished); XCTAssertNotNil(gate.reads[1])
+        gate.release(1, [])
+        await eventually { gate.reads[2] != nil }
+        let fresh = jam(); gate.release(2, [fresh])
+        let result = try await second.value
+        XCTAssertEqual(result, [fresh])
+    }
+    func testFreshLookupDeadlineDoesNotCancelTheSharedCloudRead() async throws {
+        let cloud = Cloud(), gate = SnapshotGate()
+        cloud.snapshotHandler = { try await gate.read($0) }
+        let target = make(cloud, "phone")
+        defer { target.setEnabled(false); gate.cancelAll() }
+        await eventually { gate.reads[1] != nil }
+        do { _ = try await target.refreshAndWait(timeout: .milliseconds(30)); XCTFail("Blocked cloud lookup must time out") }
+        catch let error as URLError { XCTAssertEqual(error.code, .timedOut) }
+        XCTAssertNotNil(gate.reads[1])
+        var started = false
+        let retry = Task { started = true; return try await target.refreshAndWait(timeout: .seconds(5)) }
+        await eventually { started }
+        gate.release(1, [])
+        await eventually { gate.reads[2] != nil }
+        let fresh = jam(); gate.release(2, [fresh])
+        let result = try await retry.value
+        XCTAssertEqual(result, [fresh])
+    }
+    func testFailedFreshLookupNeverReturnsPreviouslyCachedCandidates() async throws {
+        let cloud = Cloud(), target = make(cloud, "phone"), previous = jam()
+        defer { target.setEnabled(false) }
+        cloud.records[previous.deviceID] = previous
+        let initial = try await target.refreshAndWait()
+        XCTAssertEqual(initial, [previous])
+        cloud.available = false
+        do { _ = try await target.refreshAndWait(); XCTFail("A failed fresh read cannot return its old cache") }
+        catch ContinuationError.unavailable { }
+        XCTAssertEqual(target.candidates, [previous], "Existing background-refresh cache behavior is unchanged")
+    }
+    func testFreshLookupRechecksAccountAfterSnapshotBeforeResumingCaller() async throws {
+        let cloud = Cloud(), source = make(cloud, "mac"), active = jam()
+        defer { source.setEnabled(false) }
+        source.updateCurrent(active); _ = try await source.refreshAndWait()
+        let request = JamTransfer(source: active, targetDevice: "phone", targetLabel: "phone", connectsBeforePausing: true)
+        try await cloud.claim(request); _ = try await source.refreshAndWait()
+        let prepared = try XCTUnwrap(cloud.requests[active.sessionID])
+        _ = try await cloud.transition(prepared, to: .connected, actor: "phone")
+        var departed = false
+        source.onLeaveSource = { _, _ in
+            departed = true
+            // Source actions run after candidates have been delivered to lookup
+            // waiters, but before this actor releases their suspended callers.
+            source.setCloudAccount(nil)
+            return false
+        }
+        do { _ = try await source.refreshAndWait(); XCTFail("A result from the previous account must be rejected") }
+        catch is CancellationError { }
+        XCTAssertTrue(departed); XCTAssertTrue(source.candidates.isEmpty)
+    }
+    func testCloudDeletionInvalidatesLookupAndFencesLateSnapshot() async throws {
+        let cloud = Cloud(), gate = SnapshotGate()
+        var returned = false
+        cloud.snapshotHandler = { pass in
+            let rooms = try await gate.read(pass); returned = true; return rooms
+        }
+        let target = make(cloud, "phone")
+        defer { target.setEnabled(false); gate.cancelAll() }
+        await eventually { gate.reads[1] != nil }
+        var started = false, activityWithdrawn = false
+        target.onActivityChanged = { activityWithdrawn = !target.isAvailable }
+        let lookup = Task { started = true; return try await target.refreshAndWait(timeout: .seconds(5)) }
+        await eventually { started }
+        try await target.deleteCloudData()
+        do { _ = try await lookup.value; XCTFail("Deleted cloud data cannot resolve a pending lookup") }
+        catch is CancellationError { }
+        gate.release(1, [jam()])
+        await eventually { returned }
+        do { _ = try await target.refreshAndWait(); XCTFail("Deletion must disable continuation") }
+        catch ContinuationError.unavailable { }
+        XCTAssertFalse(target.enabled); XCTAssertTrue(activityWithdrawn)
+        XCTAssertTrue(target.candidates.isEmpty); XCTAssertEqual(cloud.snapshotReads, 1)
+    }
+    func testOldCloudDeletionCannotDisableReplacementAccount() async throws {
+        let cloud = Cloud(), target = make(cloud, "phone")
+        defer { target.setEnabled(false) }
+        _ = try await target.refreshAndWait()
+        var clearing: CheckedContinuation<Void, Never>?
+        cloud.clearHandler = { await withCheckedContinuation { clearing = $0 } }
+        let deleting = Task { try await target.deleteCloudData() }
+        await eventually { clearing != nil }
+        target.setCloudAccount("account-B")
+        clearing?.resume(); clearing = nil
+        do { try await deleting.value; XCTFail("Old account deletion must not disable a replacement account") }
+        catch is CancellationError { }
+        XCTAssertTrue(target.enabled); XCTAssertTrue(target.isAvailable)
     }
     func testSuccessfulTransferKeepsSourceActiveAndLeavesOnlyAfterTargetConnected() async throws {
         let cloud = Cloud(), source = make(cloud, "mac"), target = make(cloud, "phone")

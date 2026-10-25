@@ -31,18 +31,21 @@ import UserNotifications
     private var meetingSubscription: AnyCancellable?
     private var keyMonitor: Any?
     private var activity: NSUserActivity?
+    private var handoffLookup: Task<Void, Never>?
     private var sessionID = UUID()
     private var shutdownBlocked = false
     private let reminderPresenter = NativeDesktopReminderPresenter()
     private var pendingScheduled: NativeDesktopScheduledJoin?
     private let detect: @MainActor (URL) async throws -> MeetingEngineDetection
     private let makeMeeting: @MainActor (JoinDestination, String, String?, Bool) -> NativeDesktopMeetingModel
+    private let makeHandoffActivity: @MainActor (ActiveJam) -> NSUserActivity
 
     init(library: NativeDesktopLibrary? = nil,
          detect: @escaping @MainActor (URL) async throws -> MeetingEngineDetection = { try await VendorEndpointResolver.makeDetector().detect($0) },
-         makeMeeting: (@MainActor (JoinDestination, String, String?, Bool) -> NativeDesktopMeetingModel)? = nil) {
+         makeMeeting: (@MainActor (JoinDestination, String, String?, Bool) -> NativeDesktopMeetingModel)? = nil,
+         makeHandoffActivity: @escaping @MainActor (ActiveJam) -> NSUserActivity = { NativeDesktopHandoff.activity(for: $0) }) {
         let library = library ?? NativeDesktopLibrary()
-        self.library = library; self.detect = detect
+        self.library = library; self.detect = detect; self.makeHandoffActivity = makeHandoffActivity
         self.makeMeeting = makeMeeting ?? { NativeDesktopMeetingModel(destination: $0, name: $1, title: $2, quiet: $3) }
         super.init()
         library.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
@@ -60,7 +63,7 @@ import UserNotifications
         library.continuation.onSnapshot = { [weak self] in self?.continuationSnapshot() }
         library.continuation.onJoinTarget = { [weak self] jam, quiet in
             guard let self, !preparing, meeting == nil else { return nil }
-            join(jam.invitation, engine: jam.engine, title: jam.title, quiet: quiet)
+            join(jam.invitation, engine: jam.engine, title: jam.title, quiet: quiet, nameOverride: jam.name)
             return sessionID
         }
         library.continuation.onPrepareSource = { [weak self] id in
@@ -123,7 +126,7 @@ import UserNotifications
         catch { self.error = error.localizedDescription }
     }
     func join(_ url: URL, engine known: MeetingEngineKind? = nil, title: String? = nil, eventID: String? = nil,
-              quiet: Bool = false, scheduled: NativeDesktopScheduledJoin? = nil) {
+              quiet: Bool = false, scheduled: NativeDesktopScheduledJoin? = nil, nameOverride: String? = nil) {
         guard !preparing, leaveTask == nil, !shutdownBlocked else { scheduled?.finish(); return }
         if scheduled != nil, meeting != nil { scheduled?.finish(); return }
         if let meeting {
@@ -158,7 +161,7 @@ import UserNotifications
                     destination = try chooseEngine(for: url)
                 }
                 try Task.checkCancellation()
-                let name = library.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+                let name = (nameOverride ?? library.displayName).trimmingCharacters(in: .whitespacesAndNewlines)
                 guard destination.engineKind.inputPolicy.accepts(name: name) else { throw NativeGuestEntryError.invalidName }
                 let model = makeMeeting(destination, name, title, quiet)
                 meeting = model; ownedModel = model
@@ -217,7 +220,7 @@ import UserNotifications
         shutdownBlocked = !clean
         if clean {
             meetingWindow?.close(); meetingWindow = nil; meeting = nil; meetingSubscription = nil; renderedMeetingState = nil
-            library.continuation.updateCurrent(nil)
+            updateContinuation()
         } else { error = NativeDesktopError.cleanupFailed.localizedDescription }
         refreshMenu(); return clean
     }
@@ -242,21 +245,37 @@ import UserNotifications
         guard state != renderedMeetingState else { return }
         renderedMeetingState = state; objectWillChange.send(); refreshMenu(); updateContinuation()
     }
-    private func updateContinuation() { library.continuation.updateCurrent(continuationSnapshot()) }
+    private func updateContinuation() {
+        let snapshot = continuationSnapshot()
+        library.continuation.updateCurrent(snapshot)
+        // Retire the local OS advertisement immediately; cloud withdrawal can fail.
+        if snapshot == nil { publishHandoff(nil) }
+    }
     private func publishHandoff(_ jam: ActiveJam?) {
         activity?.invalidate(); activity = nil
         guard library.continuation.isAvailable, let jam else { return }
-        let value = NativeDesktopHandoff.activity(for: jam)
+        let value = makeHandoffActivity(jam)
         value.becomeCurrent(); activity = value
     }
     func continueActivity(_ userActivity: NSUserActivity) -> Bool {
         guard let reference = NativeDesktopHandoff.reference(in: userActivity) else { return false }
-        show(); Task {
-            await library.continuation.refresh()
-            guard library.continuation.candidates.contains(where: { $0.deviceID == reference.deviceID && $0.sessionID == reference.sessionID }) else {
-                error = L("This meeting is no longer available on the other device."); return
+        handoffLookup?.cancel()
+        show()
+        handoffLookup = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let candidates = try await library.continuation.refreshAndWait()
+                try Task.checkCancellation()
+                guard candidates.contains(where: { $0.deviceID == reference.deviceID && $0.sessionID == reference.sessionID }) else {
+                    error = L("This meeting is no longer available on the other device."); return
+                }
+                selection = .home
+            } catch is CancellationError {
+                // A newer system activity owns the UI.
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.error = L("Active jams could not refresh. Try again when iCloud is available.")
             }
-            selection = .home
         }; return true
     }
     private func installKeyboard() {

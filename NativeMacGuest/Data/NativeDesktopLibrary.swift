@@ -45,8 +45,9 @@ import Foundation
             return $0.id < $1.id
         }
     }
-    var homeMeetings: [HomeMeeting] {
-        HomeMeetingPolicy.candidates(meetings: calendar.meetings, handoffs: continuation.candidates, at: calendar.now)
+    func homeMeetings(at now: Date = Date()) -> [HomeMeeting] {
+        // Handoff freshness must advance even when calendar access is disabled.
+        HomeMeetingPolicy.candidates(meetings: calendar.meetings, handoffs: continuation.candidates, at: now)
     }
     var calendarMeetings: [CalendarMeeting] {
         calendar.meetings.filter { $0.hasResolvedInvitation && !$0.allDay && $0.end > calendar.now }.sorted {

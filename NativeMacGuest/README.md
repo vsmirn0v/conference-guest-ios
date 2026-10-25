@@ -11,16 +11,16 @@ Architecture, capability limits and measured acceptance are recorded in
 in `../docs/native-mac-desktop-drafts.html`. Implementation and live acceptance
 are tracked separately, particularly CloudKit/Handoff and physical accessories.
 
-Current local development beta: **0.3.0 (16)**, installed in
-`/Applications/RockNRoll Native Guest.app`. A development-signed ZIP is saved as
-`~/Downloads/RockNRoll-Native-Mac-0.3.0-16.zip`; its adjacent SHA-256 file verifies
-the artifact. This is not a TestFlight publication. The previous native app is
-retained under the build directory's `archives/` folder.
+Current local development build: **0.3.0 (20)**, installed in
+`/Applications/RockNRoll Native Guest.app`. Its signed Release archive is
+`.build/native-desktop-parity-r4/RockNRollNativeGuest-0.3.0-20.xcarchive`.
+This is not a TestFlight publication. Previous native apps are retained under
+the build directory's `archives/` folder.
 
-Final qualification passed 19 native lifecycle/media tests, three external
+Initial parity qualification passed 19 native lifecycle/media tests, three external
 provider facade tests and 17 actual GPU checks. Selected shipping simulator
 regressions passed 65 tests with three documented skips. The exact installed
-Release preview was inspected and stopped cleanly. Cross-device iCloud/Handoff,
+Release preview was inspected and stopped cleanly. Actual system Handoff,
 physical headset/acoustic checks and wider OS/large-room acceptance remain open;
 see the ledger for failed historical runs and the precise evidence boundaries.
 
@@ -29,7 +29,10 @@ Follow-up source validation and the archived 0.3.0 (17) candidate are recorded i
 checks, controlled 6/12/24-participant rendering and live 6/12-publisher SFU
 checks passed. The same-account Mac → iPhone → Mac generated-record favorites/order/name roundtrip
 also passed on a physical iPhone. System Handoff remains a separate acceptance gate; earlier
-cadence/reachability failures are retained in the report. Build 16 remains installed.
+cadence/reachability failures are retained in the report. Normal-app media transfers
+subsequently passed in both directions between native Mac and iPhone, with the
+clock, source-name and activity-lifecycle fixes documented in
+`../docs/native-mac-handoff-validation-2026-10-25.md`. Build 20 is now installed.
 
 ## Try it
 
@@ -40,7 +43,7 @@ Build the isolated M156 framework described in
 python3 NativeMacGuest/build.py \
   --framework-root .build/webrtc-m156-desktop-audio/native-framework-r4 \
   --output-dir .build/native-desktop-next \
-  --configuration Release --version 0.3.0 --build-number 17 \
+  --configuration Release --version 0.3.0 --build-number 20 \
   --identity YOUR_APPLE_DEVELOPMENT_IDENTITY \
   --allow-provisioning-updates --archive --install
 ```
@@ -115,8 +118,9 @@ which keeps the input device active but gates all transmitted microphone PCM.
 
 Intel and macOS versions older than 13 are not build targets. System source
 selection requires macOS 14+. Physical accessory, acoustic quality and
-same-account Production iCloud/Handoff acceptance remain separately recorded
-gates; synthetic tests cannot establish them. The app does not silently force
+same-account Production iCloud/Handoff acceptance are recorded separately;
+normal-app CloudKit transfers passed, while system Handoff remains unverified.
+Synthetic tests cannot establish these hardware workflows. The app does not silently force
 relay/TCP or change the existing app's default network policy.
 
 ## Ownership and control contract

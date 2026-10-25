@@ -43,6 +43,28 @@ private final class DesktopMemoryStorage: RoomHistoryStorage, @unchecked Sendabl
     func write(_ data: Data) throws { value = data }
 }
 
+@MainActor private final class DesktopContinuationTransport: MeetingContinuationTransport {
+    var failWithdrawal = false
+    func connect(account: String) async throws {}
+    func jams() async throws -> [ActiveJam] { [] }
+    func publish(_ jam: ActiveJam) async throws {}
+    func withdraw(deviceID: String, sessionID: UUID?) async throws {
+        if failWithdrawal { throw ContinuationError.unavailable }
+    }
+    func claim(_ transfer: JamTransfer) async throws {}
+    func transfer(sourceSession: UUID) async throws -> JamTransfer? { nil }
+    func transition(_ transfer: JamTransfer, to phase: JamTransfer.Phase, actor: String) async throws -> JamTransfer {
+        var result = transfer; result.phase = phase; return result
+    }
+    func clear() async throws {}
+}
+private final class DesktopActivitySpy: NSUserActivity {
+    var advertisements = 0
+    var invalidations = 0
+    override func becomeCurrent() { advertisements += 1 }
+    override func invalidate() { invalidations += 1 }
+}
+
 @MainActor final class DesktopParityTests: XCTestCase {
     private let url = URL(string: "https://example.test/calls/native-parity")!
     private func model(_ engine: DesktopTestEngine) throws -> NativeDesktopMeetingModel {
@@ -106,6 +128,72 @@ private final class DesktopMemoryStorage: RoomHistoryStorage, @unchecked Sendabl
         let first = await model.leave(), second = await model.leave()
         XCTAssertFalse(first); XCTAssertFalse(second)
         XCTAssertEqual(engine.leaves, 1); XCTAssertEqual(model.snapshot.phase, .failed)
+    }
+    func testHandoffAdvertisementRetiresWithoutCloudWithdrawalOnLeaveAndFailure() async throws {
+        for failMeeting in [false, true] {
+            let domain = "native-handoff-retirement-\(UUID())"
+            let preferences = UserDefaults(suiteName: domain)!
+            defer { preferences.removePersistentDomain(forName: domain) }
+            preferences.set(true, forKey: "shareActiveJams")
+            let cloud = DesktopContinuationTransport(), engine = DesktopTestEngine()
+            let library = NativeDesktopLibrary(preferences: preferences,
+                history: RoomHistoryStore(storage: DesktopMemoryStorage()), syncStorage: DesktopMemoryStorage(),
+                continuationTransport: cloud)
+            library.displayName = "Activity test"
+            var activities: [DesktopActivitySpy] = []
+            let workspace = NativeDesktopWorkspace(library: library,
+                detect: { _ in .verified(.guest(endpoint: self.url)) },
+                makeMeeting: { destination, name, title, quiet in
+                    NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: engine)
+                }, makeHandoffActivity: { _ in
+                    let value = DesktopActivitySpy(activityType: NativeDesktopHandoff.activityType)
+                    activities.append(value); return value
+                })
+            library.continuation.setCloudAccount("fixture-account")
+            workspace.join(url)
+            try await spin { workspace.meeting?.connected == true && !workspace.preparing && activities.last?.advertisements == 1 }
+            let advertised = try XCTUnwrap(activities.last), count = activities.count
+            XCTAssertEqual(advertised.invalidations, 0)
+            cloud.failWithdrawal = true
+            if failMeeting {
+                engine.snapshot.phase = .failed; engine.onState?(engine.snapshot)
+                try await spin { advertised.invalidations > 0 }
+                XCTAssertNotNil(workspace.meeting, "Failed meeting remains available for recovery")
+            } else {
+                let clean = await workspace.leave(); XCTAssertTrue(clean)
+                XCTAssertGreaterThan(advertised.invalidations, 0, "Local retirement must not await successful cloud withdrawal")
+            }
+            try await Task.sleep(for: .milliseconds(30))
+            XCTAssertEqual(activities.count, count, "An ended/failed meeting must not advertise a replacement activity")
+            _ = await workspace.leave()
+            library.continuation.setCloudAccount(nil)
+        }
+    }
+    func testContinuationUsesSourceNameWithoutChangingSavedProfile() async throws {
+        for savedName in ["", "Different Mac name"] {
+            let domain = "native-handoff-name-\(UUID())"
+            let preferences = UserDefaults(suiteName: domain)!
+            defer { preferences.removePersistentDomain(forName: domain) }
+            let library = NativeDesktopLibrary(preferences: preferences,
+                history: RoomHistoryStore(storage: DesktopMemoryStorage()), syncStorage: DesktopMemoryStorage())
+            library.displayName = savedName
+            var joinedName: String?
+            let workspace = NativeDesktopWorkspace(library: library,
+                detect: { _ in .verified(.guest(endpoint: self.url)) },
+                makeMeeting: { destination, name, title, quiet in
+                    joinedName = name
+                    return NativeDesktopMeetingModel(destination: destination, name: name, title: title,
+                        quiet: quiet, engine: DesktopTestEngine())
+                })
+            let source = ActiveJam(deviceID: "source-phone", sessionID: UUID(), invitation: url,
+                title: "Transfer fixture", name: "Source session name", deviceLabel: "iPhone")
+            XCTAssertNotNil(workspace.library.continuation.onJoinTarget?(source, false))
+            try await spin { workspace.meeting?.connected == true && !workspace.preparing }
+            XCTAssertEqual(joinedName, source.name)
+            XCTAssertEqual(library.displayName, savedName)
+            XCTAssertEqual(preferences.string(forKey: "savedDisplayName"), savedName)
+            let clean = await workspace.leave(); XCTAssertTrue(clean)
+        }
     }
     func testCancellingDuringEngineDetectionDoesNotJoinOrCreateHistory() async throws {
         let preferences = UserDefaults(suiteName: "native-parity-\(UUID())")!

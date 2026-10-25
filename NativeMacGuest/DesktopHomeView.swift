@@ -159,7 +159,12 @@ struct NativeDesktopHomeView: View {
                                 }.frame(maxWidth: .infinity, alignment: .leading)
                                 if let handoff = item.handoff {
                                     Button(L("Join here")) { library.continuation.joinHere(handoff) }
-                                    Button(L("Move here")) { library.continuation.begin(handoff) }.buttonStyle(.borderedProminent)
+                                    let current = item.currentHandoff(in: library.continuation.candidates, at: Date())
+                                    Button(L("Move here")) {
+                                        guard let current = item.currentHandoff(in: library.continuation.candidates, at: Date()) else { return }
+                                        library.continuation.begin(current)
+                                    }.buttonStyle(.borderedProminent).disabled(current == nil)
+                                     .help(current == nil ? L("This meeting is no longer available on the other device.") : L("Move here"))
                                 } else if let calendar = item.calendar {
                                     Button(L("Join")) { library.open(calendar) }.buttonStyle(.borderedProminent)
                                 }
@@ -201,7 +206,7 @@ struct NativeDesktopHomeView: View {
         }.navigationTitle(L("Home"))
     }
     private func refreshHome() {
-        homeSnapshot.update(library.homeMeetings, calendarMeetings: library.calendarMeetings, allowChanges: acceptsHomeChanges)
+        homeSnapshot.update(library.homeMeetings(), calendarMeetings: library.calendarMeetings, allowChanges: acceptsHomeChanges)
     }
     private var firstLibraryGuidance: some View {
         HStack(alignment: .top, spacing: 14) {

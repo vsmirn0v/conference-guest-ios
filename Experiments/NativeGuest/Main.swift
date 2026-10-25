@@ -38,7 +38,7 @@ struct NativeGuestProbe {
             let seconds = option("--seconds").flatMap(UInt64.init) ?? 30
             let cycles = option("--cycles").flatMap(Int.init) ?? 1
             guard (1...5).contains(cycles), cycles == 1 || args.contains("--toggle") else { throw UsageError.invalidArguments }
-            guard (5...(args.contains("--companion-peer") ? 480 : 120)).contains(seconds) else { throw UsageError.invalidArguments }
+            guard (5...(args.contains("--companion-peer") ? 1800 : 120)).contains(seconds) else { throw UsageError.invalidArguments }
             // Independent of actor/capture/RTC queues. A hung diagnostic must release
             // its process rather than leave a physical camera or guest client running.
             Darwin.signal(SIGALRM, SIG_DFL)
@@ -60,10 +60,13 @@ struct NativeGuestProbe {
             }
             let invitation = try GuestInvitation.parse(String(contentsOfFile: path, encoding: .utf8))
             if args.contains("--companion-peer") {
-                guard let directory = option("--evidence-directory"), args.count == (option("--companion-ice") == nil ? 7 : 9),
+                let expectedArguments = 7 + (option("--companion-ice") == nil ? 0 : 2) +
+                    (option("--companion-existing-source") == nil ? 0 : 2)
+                guard let directory = option("--evidence-directory"), args.count == expectedArguments,
+                      let existingSource = Int(option("--companion-existing-source") ?? "0"), (0...1).contains(existingSource),
                       let peerPolicy = GuestICEPolicy(rawValue: option("--companion-ice") ?? "auto") else { throw UsageError.invalidArguments }
                 _ = LKRTCInitializeSSL()
-                try await GuestCompanionPeer.run(invitation, directory: URL(fileURLWithPath: directory), seconds: seconds, icePolicy: peerPolicy, monitorSender: option("--companion-ice") != nil)
+                try await GuestCompanionPeer.run(invitation, directory: URL(fileURLWithPath: directory), seconds: seconds, icePolicy: peerPolicy, monitorSender: option("--companion-ice") != nil, existingSource: existingSource == 1)
                 Darwin.alarm(0); return
             }
             let duplex = args.contains("--duplex")
