@@ -1,0 +1,54 @@
+{
+  "source": "0b087a5b7cdafe66ddc502806bada2fc7a8a2fae",
+  "version": "0.3.0",
+  "build": "26",
+  "channel": "beta",
+  "stableBuild": "25",
+  "validation": {
+    "nativeCases": 89,
+    "nativePassed": 74,
+    "nativeSkipped": 15,
+    "nativeFailures": 0,
+    "liveShareCodecs": [
+      "H264 hardware",
+      "VP9 software",
+      "H264 hardware"
+    ],
+    "decodedSize": "1920x1080",
+    "cameraRemainedH264": true,
+    "freshFramesAfterVP9SourceReplacement": true,
+    "physicalIPhoneDeferred": true
+  },
+  "package": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "26",
+    "file": "RockNRoll-0.3.0-26-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-26-arm64.dmg",
+    "sha256": "6aa48ad5ca5857e5b09ffcbbd7dafb07ae92a393a279ccd3aa9e3b5f98e99e83",
+    "length": 15426187,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/package-26/RockNRoll-0.3.0-26-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "artifact": {
+      "file": "RockNRoll-0.3.0-26-arm64.dmg",
+      "sha256": "6aa48ad5ca5857e5b09ffcbbd7dafb07ae92a393a279ccd3aa9e3b5f98e99e83",
+      "length": 15426187
+    },
+    "state": {
+      "appcastSHA256": "de2dd88031e22cbfdb3a3c8563d6992e542ca4683a1b8259fe0b8e9baa1318f1",
+      "inventorySHA256": "c504580705d19dfd88bb4af03bd1b78a4188746651ee0d3ddcf23f1b95ae3b3a",
+      "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-26-arm64.dmg"
+    },
+    "httpsVerified": true
+  },
+  "productionCloudKit": true,
+  "sandboxed": true,
+  "debuggerEntitlement": false
+}
