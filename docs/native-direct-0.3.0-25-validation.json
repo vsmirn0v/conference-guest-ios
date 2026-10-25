@@ -1,0 +1,71 @@
+{
+  "version": "0.3.0",
+  "build": "25",
+  "sourceCommit": "4ffbae1",
+  "state": "awaiting-unlocked-mac-validation",
+  "artifact": {
+    "file": "RockNRoll-0.3.0-25-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-25-arm64.dmg",
+    "sha256": "e9c7c9ddab9c7b10b81fd52da5b7fb54404b9e12cc1e5e29c6292fffe9625a21",
+    "length": 15334524,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false
+  },
+  "signing": {
+    "privateKeyInKeychain": true,
+    "actualSignedFeedVerified": true,
+    "tamperedFeedRejected": true
+  },
+  "automatedTests": {
+    "directNative": {
+      "total": 75,
+      "skipped": 15,
+      "failures": 0
+    },
+    "appStore": {
+      "total": 62,
+      "skipped": 15,
+      "failures": 0
+    },
+    "distributionTooling": {
+      "total": 18,
+      "failures": 0
+    }
+  },
+  "cloudKit": {
+    "environment": "Production",
+    "developerIDBaselineWrite": 22,
+    "developerIDCandidateReads": [
+      24,
+      25
+    ],
+    "generatedPrivateFixture": true,
+    "existingLibraryLoaded": true,
+    "iPhoneRerun": "deferred by user",
+    "postActualUpdate": "pending"
+  },
+  "server": {
+    "publicHTTPSVerified": true,
+    "stableBuild": "22",
+    "betaBuild": "25",
+    "homepageDownloadCTADeployed": false,
+    "stablePromotion": "pending actual update validation"
+  },
+  "install": {
+    "quarantinedHTTPSDownloadVerified": true,
+    "mountedAndCopiedAppAcceptedByGatekeeper": true,
+    "normalFinderInstallAndFirstLaunch": "pending unlocked Mac",
+    "actualSparkleReplacement": "pending"
+  },
+  "pendingChecks": [
+    "Finder copy and canonical Applications launch",
+    "Stable ignores beta25",
+    "Live/hidden meeting defers update until Leave",
+    "Actual22-to25 install/relaunch",
+    "Beta off does not downgrade",
+    "Post-update CloudKit and fixture cleanup",
+    "Promote exact25 bytes to stable and deploy homepage"
+  ]
+}

@@ -108,3 +108,29 @@ CTA, release artifacts and appcast had not been published. No pending
 notarization result is treated as acceptance. An iPhone cross-device rerun was
 requested but the device was unavailable; Mac Production CloudKit checks above
 were completed independently.
+
+## Current qualification state
+
+Sparkle Keychain approval and Apple notarization have completed. Both baseline
+22 and candidate25 apps are stapled and accepted by Gatekeeper. Actual signed
+feeds verify, and altered signed bytes are rejected. HTTPS artifact, alias and
+feed readback passed for stable22 and beta25. The homepage download CTA remains
+undeployed until final qualification.
+
+The Mac then became locked, with computer automation reporting that automatic
+unlock was paused after physical input. A normal Finder copy/launch and the
+real live-meeting update test are still required. The scripted quarantine-copy
+startup was translocated; it must not be counted as a qualified Applications
+installation. No quarantine stripping or security-policy bypass was used.
+The existing app was retained at `.build/native-dmg/installed-before-direct.app`.
+
+Resume with the baseline22 and candidate25 packages/feeds under
+`.build/native-dmg/`. The source marker for the generated CloudKit fixture is in
+`cloud-marker.txt`. The current synthetic peer has stopped cleanly; the rebuilt
+`.build/native-dmg/NativeGuestProbe` supports900-second controlled sessions and
+its build receipt is alongside it. Create a private0700IPC directory before
+launching the peer. After the real update, verify and delete only the generated
+CloudKit zone using `--check-distribution-cloud verify|cleanup UUID`.
+
+The bounded public validation record is
+[native-direct-0.3.0-25-validation.json](native-direct-0.3.0-25-validation.json).
