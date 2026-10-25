@@ -41,7 +41,8 @@ normal library stores or app-group access. Its signed Production container and
 profile were checked. It does not replace the user's main iPhone app.
 
 Cross-device generated-record validation and actual system Handoff delivery are
-separate gates. The phone currently requires its passcode; no phone test has run.
+separate gates. The initial run stopped at the phone's passcode gate; the later
+unlocked-device roundtrip is recorded below.
 Actual Mac↔iPhone discovery, APNs delivery and media transfer are not established
 by a same-Mac adapter test.
 
@@ -134,9 +135,37 @@ the user's iPhone app.
 
 The pending cross-device generated zone was removed with the signed native
 UUID-guarded cleanup test (`.build/native-cloud17-cross-cleanup`), which passed.
-The phone never launched a test or installed a probe during this run. Astra xhigh
+During the initial locked-device run, the phone never launched a test or installed
+a probe. Astra xhigh
 reviewed the implementation, fixture corrections and final evidence; no remaining
 source blocker was reported within this validated scope.
+
+## Unlocked iPhone follow-up
+
+The same-account Production roundtrip passed on the native Mac and physical
+iVitalii. The Mac wrote two generated starred rooms, aliases, display name and
+favorite order. The iPhone read and verified them, reversed the order and updated
+the name; the Mac then verified the iPhone changes and deleted the disposable
+zone. This exercises the real CloudKit container and encrypted schema without
+enabling or modifying the user's actual library preferences.
+
+| Phase | Evidence | Result |
+|---|---|---|
+| Native Mac write | `.build/native-cloud17-cross-resumed-write/CloudServices.xcresult` | Passed |
+| Physical iPhone read/reorder/name update | `.build/native-cloud17-ios-scenes/Reorder.xcresult` | Passed, 2.727 s |
+| Native Mac verify and generated-zone deletion | `.build/native-cloud17-cross-resumed-verify/CloudServices.xcresult` | Passed, 2.411 s |
+
+The first phone probe exited before XCTest because iOS 27 requires a UIKit
+scene lifecycle. This was a test-host packaging defect. The isolated host now
+declares a scene manifest and creates a blank window; the actual generated
+Info.plist is checked before use. The original failed `ReorderResumed.xcresult`
+is retained separately. No product application code changed for this fix.
+
+The probe uses a separate app ID with no app groups or product model startup;
+the primary Rock'n'Roll app was not replaced. The temporary probe was removed
+after validation. Actual system Handoff discovery and live meeting/media transfer,
+cross-device offline-conflict/account-switch behavior, physical acoustics/headsets
+and older macOS acceptance remain separate checks.
 
 ## Reproduction and outstanding acceptance
 

@@ -27,7 +27,8 @@ see the ledger for failed historical runs and the precise evidence boundaries.
 Follow-up source validation and the archived 0.3.0 (17) candidate are recorded in
 `../docs/native-mac-cloud-performance-2026-10-25.md`. Production CloudKit service
 checks, controlled 6/12/24-participant rendering and live 6/12-publisher SFU
-checks passed. Two-device Handoff remains a separate acceptance gate; earlier
+checks passed. The same-account Mac → iPhone → Mac generated-record favorites/order/name roundtrip
+also passed on a physical iPhone. System Handoff remains a separate acceptance gate; earlier
 cadence/reachability failures are retained in the report. Build 16 remains installed.
 
 ## Try it

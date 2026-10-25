@@ -52,6 +52,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: {evidence / 'CloudProbe.entitlements'}
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         MARKETING_VERSION: '0.1'
         CURRENT_PROJECT_VERSION: '1'
         SWIFT_VERSION: '5.0'
@@ -88,6 +89,9 @@ if result.returncode:
     raise SystemExit(f"Cloud probe build failed ({result.returncode}); inspect {evidence / 'build.log'}")
 products = evidence / "Xcode/Build/Products"
 host = products / "Debug-iphoneos/CloudProbe.app"
+info = plistlib.loads((host / "Info.plist").read_bytes())
+if not isinstance(info.get("UIApplicationSceneManifest"), dict):
+    raise SystemExit("The cloud probe must declare the scene lifecycle required by the current iOS SDK")
 signed = plistlib.loads(subprocess.check_output(["codesign", "-d", "--entitlements", ":-", str(host)], stderr=subprocess.DEVNULL))
 if (signed.get("com.apple.developer.icloud-container-environment") != "Production" or
     signed.get("com.apple.developer.icloud-container-identifiers") != entitlements["com.apple.developer.icloud-container-identifiers"] or
