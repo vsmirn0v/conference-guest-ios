@@ -29,6 +29,10 @@ import XCTest
               let token = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_NATIVE_CAPTURE_TOKEN"],
               endpoint.scheme == "http", endpoint.host == "127.0.0.1"
         else { throw XCTSkip("Requires authorized Mac capture supervisor") }
+        guard NativeGuestCompanionBridge.isSupported() else {
+            XCTFail("Rebuild the internal host with ROCK_NATIVE_GUEST_COMPANION=1")
+            return
+        }
         let suite = "NativeCapture-" + UUID().uuidString
         let preferences = UserDefaults(suiteName: suite)!
         defer { preferences.removePersistentDomain(forName: suite) }

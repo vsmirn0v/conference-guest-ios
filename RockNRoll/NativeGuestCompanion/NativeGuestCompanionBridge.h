@@ -2,7 +2,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// Public AppKit and Security APIs loaded only for an iOS app running on Mac.
+/// Internal Mac-host adapter; unavailable unless ROCK_NATIVE_GUEST_COMPANION=1.
 @interface NativeGuestCompanionBridge : NSObject
 + (BOOL)isSupported;
 + (nullable NSURL *)validatedApplicationURLWithError:(NSError **)error NS_SWIFT_NAME(validatedApplicationURL());

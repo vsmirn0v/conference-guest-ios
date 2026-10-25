@@ -1,4 +1,9 @@
 #import "NativeGuestCompanionBridge.h"
+
+// The AppKit companion adapter is an internal Mac-host experiment. App Store
+// iOS binaries must not contain selectors for APIs unavailable on iOS, even
+// behind an isiOSAppOnMac runtime check. The native Mac app is independent.
+#if defined(ROCK_NATIVE_GUEST_COMPANION) && ROCK_NATIVE_GUEST_COMPANION
 #import <dlfcn.h>
 #import <errno.h>
 #import <fcntl.h>
@@ -224,3 +229,22 @@ static NSDictionary *NativeBundleInfo(NSURL *url, NSError **error) {
     return !_application || [_application isTerminated] || [_application terminate];
 }
 @end
+#else
+@implementation NativeGuestCompanionBridge
++ (BOOL)isSupported { return NO; }
++ (NSURL *)validatedApplicationURLWithError:(NSError **)error {
+    if (error) *error = [NSError errorWithDomain:@"NativeGuestCompanion" code:1
+        userInfo:@{NSLocalizedDescriptionKey: @"The native companion adapter is unavailable in this build."}];
+    return nil;
+}
+- (void)launchSession:(NSUUID *)sessionID completion:(void (^)(int32_t, NSError *))completion {
+    NSError *error;
+    [NativeGuestCompanionBridge validatedApplicationURLWithError:&error];
+    completion(0, error);
+}
+- (int32_t)processIdentifier { return 0; }
+- (BOOL)launchedApplicationTerminated { return YES; }
+- (void)show {}
+- (BOOL)terminateLaunchedApplication { return YES; }
+@end
+#endif

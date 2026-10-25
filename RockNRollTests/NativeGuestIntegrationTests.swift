@@ -9,12 +9,34 @@ import XCTest
         let suite = "NativeGuestPreference-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
-        XCTAssertFalse(NativeGuestPreference.enabled(isMac: true, defaults: defaults))
+        XCTAssertFalse(NativeGuestPreference.enabled(isMac: true, companionSupported: true, defaults: defaults))
         defaults.set(true, forKey: NativeGuestPreference.key)
-        XCTAssertTrue(NativeGuestPreference.enabled(isMac: true, defaults: defaults))
-        XCTAssertFalse(NativeGuestPreference.enabled(isMac: false, defaults: defaults))
+        XCTAssertTrue(NativeGuestPreference.enabled(isMac: true, companionSupported: true, defaults: defaults))
+        XCTAssertFalse(NativeGuestPreference.enabled(isMac: true, companionSupported: false, defaults: defaults))
+        XCTAssertFalse(NativeGuestPreference.enabled(isMac: false, companionSupported: true, defaults: defaults))
+        XCTAssertEqual(NativeGuestPreference.enabled(isMac: true, defaults: defaults),
+                       NativeGuestCompanionBridge.isSupported())
         defaults.set(false, forKey: NativeGuestPreference.key)
-        XCTAssertFalse(NativeGuestPreference.enabled(isMac: true, defaults: defaults))
+        XCTAssertFalse(NativeGuestPreference.enabled(isMac: true, companionSupported: true, defaults: defaults))
+    }
+
+    func testUnavailableCompanionFailsClosedWithoutLaunching() throws {
+        guard !NativeGuestCompanionBridge.isSupported() else {
+            throw XCTSkip("Internal companion adapter is explicitly enabled")
+        }
+        XCTAssertThrowsError(try NativeGuestCompanionBridge.validatedApplicationURL())
+        let bridge = NativeGuestCompanionBridge()
+        var completions = 0
+        bridge.launchSession(UUID()) { pid, error in
+            completions += 1
+            XCTAssertEqual(pid, 0)
+            XCTAssertNotNil(error)
+        }
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(bridge.processIdentifier, 0)
+        XCTAssertTrue(bridge.launchedApplicationTerminated)
+        bridge.show()
+        XCTAssertTrue(bridge.terminateLaunchedApplication())
     }
 
     /// Full host -> signed companion -> real service -> decoded Metal/PCM path.
@@ -24,6 +46,10 @@ import XCTest
               ProcessInfo.processInfo.environment["ROCKNROLL_TEST_NATIVE_COMPANION_CRASH_SUPERVISOR"] == "1",
               let invitation = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_NATIVE_COMPANION_INVITE"],
               let url = URL(string: invitation) else { throw XCTSkip("Requires Mac and authorized steady remote media") }
+        guard NativeGuestCompanionBridge.isSupported() else {
+            XCTFail("Rebuild the internal host with ROCK_NATIVE_GUEST_COMPANION=1")
+            return
+        }
         let suite = "NativeGuestLive-" + UUID().uuidString
         let preferences = UserDefaults(suiteName: suite)!
         defer { preferences.removePersistentDomain(forName: suite) }

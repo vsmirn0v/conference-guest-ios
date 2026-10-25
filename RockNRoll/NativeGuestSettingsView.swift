@@ -4,8 +4,9 @@ import SwiftUI
 enum NativeGuestPreference {
     static let key = "mac.nativeGuestPreview.enabled"
     static func enabled(isMac: Bool = ProcessInfo.processInfo.isiOSAppOnMac,
+                        companionSupported: Bool = NativeGuestCompanionBridge.isSupported(),
                         defaults: UserDefaults = .standard) -> Bool {
-        isMac && defaults.bool(forKey: key)
+        isMac && companionSupported && defaults.bool(forKey: key)
     }
 }
 

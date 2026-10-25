@@ -610,7 +610,7 @@ struct JoinView: View {
                             Label(L("Phone calls"), systemImage: "phone")
                         }.accessibilityIdentifier("settings.phone")
                     }
-                    if ProcessInfo.processInfo.isiOSAppOnMac {
+                    if NativeGuestCompanionEngine.isSupported {
                         NavigationLink { NativeGuestSettingsView() } label: {
                             Label(L("Native guest preview"), systemImage: "desktopcomputer")
                         }.accessibilityIdentifier("settings.nativeGuest")
