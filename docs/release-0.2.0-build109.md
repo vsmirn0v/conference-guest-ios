@@ -12,11 +12,11 @@ Apple rejected uploaded build 108 during processing (90338): the experimental Ma
 
 Fresh final simulator regressions: 162 cases, 142 passed, 20 explicit platform/live skips, zero failures. Mac: 162 cases, 158 passed, four explicit skips, zero failures. These cover Focus/companion, renderer retirement, PiP content/recovery, meeting controls, continuation, saved preference fallback and unavailable adapter behavior. Astra xhigh reviewed both release readiness and the processing fix; no concrete source blocker remained. Earlier live native and physical continuation acceptance is recorded separately; no new physical iPhone Focus/PiP/live-provider run is claimed for this release.
 
-Signed Release archive and App Store export passed. App and three extensions are version 0.2.0 (109), team `5V64BP2H3P`, with matching app/extension dSYMs and no debugger entitlement. CloudKit is Production; the Activity extension links no media framework. All 355 recorded production manifest paths match the archived sources. Release `__objc_methname` contains no exact `terminate` selector. IPA SHA-256: `076dbe358ebea403879b57b278811937a0210f05bc02e942f3290edb9aff4a2d`. Evidence: `.build/release109/`. Six existing vendor-framework dSYM warnings remain; application/extension symbols match.
+Signed Release archive and App Store export passed. App and three extensions are version 0.2.0 (109), team `5V64BP2H3P`, with matching app/extension dSYMs and no debugger entitlement. CloudKit is Production; the Activity extension links no media framework. All 355 recorded production manifest paths match the archived sources. Release `__objc_methname` contains no exact `terminate` selector. The Release simulator build and a real Release-binary reminder-settings UI smoke also passed; the installed simulator executable hash matches the Release product. IPA SHA-256: `076dbe358ebea403879b57b278811937a0210f05bc02e942f3290edb9aff4a2d`. Evidence: `.build/release109/`. Six existing vendor-framework dSYM warnings remain; application/extension symbols match.
 
 ## Distribution
 
-Upload succeeded. Apple processing and final tester assignments are pending; update this record from independent readback before claiming publication.
+Shipping source: `c1d6662f8099b570484b0115a6b8dcbbbe410630`. Upload and Apple processing passed. Build 109 is **Testing** in Rock’n’Roll Internal (one tester) and Rock’n’Roll Public Beta (seven testers), independently read back on October 25, 2026. What to Test is saved and automatic tester notifications are enabled. [Public TestFlight](https://testflight.apple.com/join/Hd13C9U3). Local distribution evidence includes the group readback and screenshot.
 
 ## What to Test
 
