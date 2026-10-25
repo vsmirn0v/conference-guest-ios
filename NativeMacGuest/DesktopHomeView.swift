@@ -29,6 +29,13 @@ struct NativeDesktopHomeView: View {
         !library.sync.enabled && !library.sync.busy && !library.sync.needsFreshAccount &&
         library.sync.nameChoice == nil
     }
+    @ViewBuilder private var settingsView: some View {
+        #if NATIVE_DIRECT_UPDATES
+        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, updates: workspace.updates)
+        #else
+        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab)
+        #endif
+    }
     var body: some View {
         NavigationSplitView {
             List(selection: $workspace.selection) {
@@ -63,13 +70,18 @@ struct NativeDesktopHomeView: View {
         } detail: {
             Group {
                 switch workspace.selection {
-                case .settings: NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab)
+                case .settings: settingsView
                 case .favorites: roomList(library.favorites, title: L("Favorites"), reorder: true)
                 case .recent: roomList(library.recent, title: L("Recent meetings"))
                 case .calendar: agenda
                 case .home: home
                 }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            #if NATIVE_DIRECT_UPDATES
+            .safeAreaInset(edge: .top) {
+                if let updates = workspace.updates { NativeDesktopUpdateBanner(updates: updates) }
+            }
+            #endif
         }
         .tint(.orange)
         .onAppear { refreshHome(); acceptsHomeChanges = false; library.calendar.setScheduledUIBlocked(blocksScheduledJoining) }
@@ -318,6 +330,9 @@ struct NativeDesktopSettingsView: View {
     @ObservedObject var library: NativeDesktopLibrary
     var meeting: NativeDesktopMeetingModel?
     @Binding var tab: Int
+    #if NATIVE_DIRECT_UPDATES
+    var updates: NativeDesktopUpdates? = nil
+    #endif
     @FocusState private var editingName: Bool
     var body: some View {
         TabView(selection: $tab) {
@@ -364,6 +379,9 @@ struct NativeDesktopSettingsView: View {
                 startLiveAudioCheck: { try await meeting?.engine.startPrivateAudioCheck() },
                 stopLiveAudioCheck: { try await meeting?.engine.stopPrivateAudioCheck() },
                 liveAudioLevel: { meeting?.engine.privateAudioLevel }).tabItem { Label(L("Camera & sound"), systemImage: "slider.horizontal.3") }.tag(3)
+            #if NATIVE_DIRECT_UPDATES
+            if let updates { NativeDesktopUpdatesView(updates: updates).tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag(4) }
+            #endif
         }.padding(20).formStyle(.grouped).navigationTitle(L("Settings"))
             .onChange(of: editingName) { if $0 { library.sync.beginNameEditing() } else { library.sync.endNameEditing() } }
             .onDisappear { if editingName { library.sync.endNameEditing() } }

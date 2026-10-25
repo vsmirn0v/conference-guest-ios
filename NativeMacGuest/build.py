@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Provision/build the external Mac companion; never modify the iOS app bundle."""
 import argparse, hashlib, json, os, pathlib, plistlib, re, shutil, subprocess, tempfile
+from distribution.build_support import configure_distribution
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser()
 p.add_argument('--identity', required=True, help='Apple Development signing identity for the final provisioned bundle')
@@ -10,6 +11,8 @@ p.add_argument('--framework-root', type=pathlib.Path, default=ROOT/'.build/webrt
                help='Directory containing LiveKitWebRTC.xcframework and build-evidence.json')
 p.add_argument('--output-dir', type=pathlib.Path, default=ROOT/'.build/native-mac-guest')
 p.add_argument('--configuration', choices=('Debug', 'Release'), default='Debug')
+p.add_argument('--distribution', choices=('app-store', 'direct'), default='app-store',
+               help='App Store build (default) or separately configured Sparkle direct build')
 p.add_argument('--version', default='0.1')
 p.add_argument('--build-number', default='1')
 p.add_argument('--archive', action='store_true', help='Create an Xcode archive for later TestFlight distribution')
@@ -47,6 +50,7 @@ for name in ['client-sdk-swift','webrtc-xcframework']:
 spec_source = re.sub(r'(?m)^(\s*(?:- )?path: )(.+)$',
     lambda m: m[1]+str((ROOT/'NativeMacGuest'/m[2]).resolve()), spec_source)
 spec_dir = build/'Spec'; spec_dir.mkdir(parents=True, exist_ok=True)
+spec_source, sparkle_evidence, distribution_inputs = configure_distribution(ROOT, spec_dir, spec_source, a.distribution)
 with tempfile.NamedTemporaryFile(mode='w', prefix='.native-guest-build-', suffix='.yml',
                                  dir=spec_dir, delete=False) as spec_file:
     spec_file.write(spec_source)
@@ -85,16 +89,21 @@ sources += sorted((ROOT/'ConferenceCore/Sources').rglob('*.swift'))+[ROOT/'Confe
 sources = sorted(set(sources))
 sources += [ROOT/'NativeMacGuest/Info.plist',ROOT/'NativeMacGuest/NativeGuest.entitlements',ROOT/'NativeMacGuest/project.yml',ROOT/'NativeMacGuest/build.py']
 sources += [ROOT/'NativeMacGuest/prepare-livekit.py',dependency_root/'native-livekit.json']
+sources += sorted(x for x in (ROOT/'NativeMacGuest/distribution').rglob('*')
+                  if x.is_file() and x.suffix in {'.py', '.txt'} and '__pycache__' not in x.parts) + distribution_inputs
 sources += sorted(x for x in (ROOT/'NativeMacGuest/Assets.xcassets').rglob('*') if x.is_file())
 sources += sorted(x for x in (ROOT/'RockNRoll/Assets.xcassets/AdditionalRootCA.dataset').rglob('*') if x.is_file())
 artifacts = [executable, app/'Contents/MacOS/RockNRoll Native Guest.debug.dylib', app/'Contents/Info.plist']
 artifacts += [app/'Contents/Resources/Assets.car', app/'Contents/Resources/AppIcon.icns']
 artifacts += [x for x in (app/'Contents/Frameworks').rglob('LiveKitWebRTC') if x.is_file() and not x.is_symlink()]
+if sparkle_evidence:
+    artifacts += [x for x in (app/'Contents/Frameworks/Sparkle.framework').rglob('*') if x.is_file() and not x.is_symlink()]
 manifest = {'artifacts':{str(x.relative_to(app)):hashlib.sha256(x.read_bytes()).hexdigest() for x in artifacts if x.exists()}, 'bundleIdentifier' :'dev.vsmirn0v.conferenceguest.nativeguest',
-            'configuration':a.configuration, 'version':a.version, 'buildNumber':a.build_number,
+            'configuration':a.configuration, 'distribution':a.distribution, 'version':a.version, 'buildNumber':a.build_number,
             'nativeFramework':framework_evidence,
             'sources':{str(x.relative_to(ROOT)):hashlib.sha256(x.read_bytes()).hexdigest() for x in sources},
             'executableSHA256':hashlib.sha256(executable.read_bytes()).hexdigest()}
+if sparkle_evidence: manifest['sparkle'] = sparkle_evidence
 if archive is not None:
     archived_app = archive/'Products/Applications/RockNRoll Native Guest.app'
     archived_info = plistlib.loads((archived_app/'Contents/Info.plist').read_bytes())
@@ -109,6 +118,9 @@ if archive is not None:
     subprocess.run(['codesign','--verify','--deep','--strict',str(archived_app)],check=True)
     manifest['archive'] = {'path':str(archive.relative_to(ROOT)),
         'artifacts':{name:hashlib.sha256((archived_app/name).read_bytes()).hexdigest() for name in archived_files}}
+    if sparkle_evidence:
+        manifest['archive']['artifacts'].update({str(x.relative_to(archived_app)):hashlib.sha256(x.read_bytes()).hexdigest()
+            for x in (archived_app/'Contents/Frameworks/Sparkle.framework').rglob('*') if x.is_file() and not x.is_symlink()})
 (build/'build-evidence.json').write_text(json.dumps(manifest,indent=2)+'\n')
 if a.install:
     destination = pathlib.Path('/Applications/RockNRoll Native Guest.app')

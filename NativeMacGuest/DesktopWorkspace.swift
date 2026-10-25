@@ -13,12 +13,18 @@ import UserNotifications
         }
     }
     let library: NativeDesktopLibrary
+    var mayAdmitMeeting: () -> Bool = { true }
+    var onUpdateActivityChanged: () -> Void = {}
+    var busyForUpdate: Bool { preparing || meeting != nil || leaveTask != nil || shutdownBlocked }
+    #if NATIVE_DIRECT_UPDATES
+    var updates: NativeDesktopUpdates?
+    #endif
     @Published var selection: Section = .home
     @Published var invitation = ""
     @Published var settingsTab = 0
     @Published var error: String?
-    @Published private(set) var preparing = false
-    @Published private(set) var meeting: NativeDesktopMeetingModel?
+    @Published private(set) var preparing = false { didSet { onUpdateActivityChanged() } }
+    @Published private(set) var meeting: NativeDesktopMeetingModel? { didSet { onUpdateActivityChanged() } }
     private var window: NSWindow?
     private var meetingWindow: NativeDesktopMeetingWindow?
     private var statusItem: NSStatusItem?
@@ -59,10 +65,10 @@ import UserNotifications
             guard let self, pendingScheduled != nil else { return }
             joinTask?.cancel()
         }
-        library.canAutomaticallyJoin = { [weak self] in self?.meeting == nil && self?.preparing == false }
+        library.canAutomaticallyJoin = { [weak self] in self?.meeting == nil && self?.preparing == false && self?.mayAdmitMeeting() == true }
         library.continuation.onSnapshot = { [weak self] in self?.continuationSnapshot() }
         library.continuation.onJoinTarget = { [weak self] jam, quiet in
-            guard let self, !preparing, meeting == nil else { return nil }
+            guard let self, !preparing, meeting == nil, mayAdmitMeeting() else { return nil }
             join(jam.invitation, engine: jam.engine, title: jam.title, quiet: quiet, nameOverride: jam.name)
             return sessionID
         }
@@ -127,6 +133,9 @@ import UserNotifications
     }
     func join(_ url: URL, engine known: MeetingEngineKind? = nil, title: String? = nil, eventID: String? = nil,
               quiet: Bool = false, scheduled: NativeDesktopScheduledJoin? = nil, nameOverride: String? = nil) {
+        guard mayAdmitMeeting() else {
+            scheduled?.finish(); error = L("An update is being installed. Please try again after Rock’n’Roll restarts."); return
+        }
         guard !preparing, leaveTask == nil, !shutdownBlocked else { scheduled?.finish(); return }
         if scheduled != nil, meeting != nil { scheduled?.finish(); return }
         if let meeting {
