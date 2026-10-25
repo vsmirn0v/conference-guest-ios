@@ -1284,3 +1284,13 @@
 
 "Text recognition is taking too long. Return to Live and try again later." = "Распознавание текста занимает слишком много времени. Вернитесь к трансляции и попробуйте позже.";
 "Text recognition is already running. Return to Live and try again later." = "Распознавание текста уже выполняется. Вернитесь к трансляции и попробуйте позже.";
+"Rock’n’Roll for Mac is ready" = "Rock’n’Roll для Mac готов";
+"We recommend the native Mac app for meetings on this Mac." = "Для встреч на этом Mac рекомендуем приложение, разработанное специально для macOS.";
+"Get the Mac app" = "Скачать приложение для Mac";
+"Dismiss Mac app recommendation" = "Скрыть рекомендацию приложения для Mac";
+"Rock’n’Roll for Mac" = "Rock’n’Roll для Mac";
+"You can keep using this app." = "Вы можете продолжать пользоваться этим приложением.";
+"Requires Apple Silicon and macOS 13 or later." = "Требуются Apple Silicon и macOS 13 или новее.";
+"Mac windows, menu-bar controls and automatic updates." = "Окна macOS, управление из строки меню и автоматические обновления.";
+"Opens the official download page in your browser." = "Открывает официальную страницу загрузки в браузере.";
+"To sync your name and saved invitations, enable iCloud sync in both apps with the same Apple Account." = "Чтобы синхронизировать имя и сохранённые приглашения, включите синхронизацию iCloud в обоих приложениях с одним Аккаунтом Apple.";

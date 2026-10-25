@@ -9,6 +9,8 @@ struct JoinView: View {
     @ObservedObject var continuation: MeetingContinuationCoordinator
     @ObservedObject var calendar: CalendarMeetingStore
     @ObservedObject var setup: MeetingSetupCoordinator
+    @StateObject private var nativeMacRecommendation = NativeMacRecommendation.current()
+    @Environment(\.openURL) private var openURL
     @State private var setupAfterSettings: Int?
     @State private var showingSavedHistory = false
     @FocusState private var nameFocused: Bool
@@ -64,6 +66,12 @@ struct JoinView: View {
                         joinPanel(width: window.size.width - (wide ? min(320, window.size.width * 0.32) : 0))
                             .homeAnchor("join")
                             .background(HomeScrollReference(state: homeInteraction))
+                    }
+                    if showsNativeMacRecommendation {
+                        Section {
+                            NativeMacRecommendationCard(recommendation: nativeMacRecommendation, getApp: openNativeMacDownload)
+                                .homeAnchor("native-mac-recommendation")
+                        }
                     }
                     if !wide { library(wide: false) }
                     CalendarAgendaView(calendar: calendar, history: history, continuation: continuation,
@@ -125,6 +133,7 @@ struct JoinView: View {
             .sheet(isPresented: Binding(get: { mediaCheck.presented }, set: { if !$0 { mediaCheck.close() } })) {
                 StudioPanel(model: mediaCheck)
             }
+            .onChange(of: busy) { nativeMacRecommendation.observeMeetingActivity($0) }
             .onChange(of: model.isJoining) {
                 if $0 { setup.suspendForMeeting(); nameFocused = false; linkFocused = false; sync.endNameEditing(); mediaCheck.close() }
             }
@@ -182,6 +191,7 @@ struct JoinView: View {
                 if required { nameFocused = true }
             }
             .onAppear {
+                nativeMacRecommendation.observeMeetingActivity(busy)
                 calendar.setScheduledUIBlocked(blocksScheduledJoining)
                 homeInteraction.resume(); homeVisible = false; refreshHome(); homeVisible = true
                 offerSetup()
@@ -270,6 +280,7 @@ struct JoinView: View {
         nameFocused || linkFocused || showingSettings || showingAgenda || showingDevices || mediaCheck.presented ||
             editingRoom != nil || calendar.choosingMeeting != nil || confirmingStaleContinuation || showingSavedHistory
     }
+    private var showsNativeMacRecommendation: Bool { nativeMacRecommendation.showsNotice(isIdle: !busy) }
     private var busy: Bool { model.isJoining || model.isInConference || model.isLeaving || continuation.moving }
     private var homeInteracting: Bool {
         setup.isPresented || homeInteraction.active || nameFocused || linkFocused || favoriteDrag.session != nil || showingSettings || showingAgenda ||
@@ -298,6 +309,7 @@ struct JoinView: View {
                 let surviving = Set(updated.items.map { "urgent." + $0.id.homeAnchorID })
                     .union(after.map { "calendar." + $0 }).union(favorites.map { "favorite." + $0.id })
                     .union(recent.map { "recent." + $0.id }).union(["join"])
+                    .union(showsNativeMacRecommendation ? ["native-mac-recommendation"] : [])
                 homeInteraction.preserveVisibleAnchor(surviving: surviving)
             }
             homeLayoutNow = homeNow
@@ -605,6 +617,11 @@ struct JoinView: View {
                         }.navigationTitle(L("Across your devices"))
                     } label: { Label(L("Across your devices"), systemImage: "icloud") }
                         .accessibilityIdentifier("settings.devices")
+                    if nativeMacRecommendation.isSupportedHost {
+                        NavigationLink { NativeMacRecommendationDetails(getApp: openNativeMacDownload) } label: {
+                            Label(L("Rock’n’Roll for Mac"), systemImage: "desktopcomputer")
+                        }.accessibilityIdentifier("settings.nativeMacApp")
+                    }
                     if !ProcessInfo.processInfo.isiOSAppOnMac {
                         NavigationLink { Form { phoneSettings }.navigationTitle(L("Phone calls")) } label: {
                             Label(L("Phone calls"), systemImage: "phone")
@@ -626,6 +643,10 @@ struct JoinView: View {
             .navigationTitle(L("Settings"))
             .toolbar { Button(L("Done")) { showingSettings = false } }
         }
+    }
+    private func openNativeMacDownload() {
+        calendar.cancelAutomaticJoin(suppress: true)
+        nativeMacRecommendation.visitDownloadPage { openURL($0) }
     }
     private func offerSetup() {
         setup.offerIfAppropriate(homeVisible && foreground && !homeInteracting && model.invite.isEmpty &&
