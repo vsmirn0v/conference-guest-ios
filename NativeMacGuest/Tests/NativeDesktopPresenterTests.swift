@@ -102,13 +102,20 @@ private final class FakeCapture: NativeDesktopPresenterCapture, @unchecked Senda
         try expect(publications == 1 && session.isSharing && publishedProfile?.width == 1600 && publishedProfile?.height == 1000 && publishedProfile?.maximumBitrate == 18_000_000,
                    "Explicit sharing publishes the preview with confirmed native dimensions and detail profile")
         await session.chooseScreen()
-        try expect(captures.count == 1 && session.source == .canvas, "Live source cannot silently change to a newly selected private screen")
+        try expect(captures.count == 2 && session.source == .canvas && session.contentDraft?.source == .screen && session.isSharing && publications == 1,
+                   "Live source selection prepares a private draft while the original publication continues")
+        let liveScene = captures[0].scene
+        session.contentDraft?.scene.backdrop = .warm
+        try expect(captures[0].scene == liveScene, "Draft edits never leak into the live compositor")
+        await session.cancelContentChange()
+        try expect(session.contentDraft == nil && captures[1].stops == 1 && captures[0].stops == 0 && session.source == .canvas,
+                   "Cancel drains only the draft and preserves the original live source")
         try await session.stopSharing()
         try expect(retirements == 1 && !session.isSharing && session.previewTrack != nil, "Stop retires only publication and preserves private preparation")
         _ = await session.close()
         try expect(captures[0].stops == 1 && session.previewTrack == nil && !session.includeCamera, "Close drains capture once and revokes per-session camera inclusion")
         await session.open()
-        try expect(captures.count == 2 && !session.includeCamera && cameraCreations == 1, "Reopening cannot restore old capture consent")
+        try expect(captures.count == 3 && !session.includeCamera && cameraCreations == 1, "Reopening cannot restore old capture consent")
         _ = await session.close()
         await session.chooseWindow()
         try expect(captures.last?.selectionMode == .window && publications == 1,
@@ -117,6 +124,96 @@ private final class FakeCapture: NativeDesktopPresenterCapture, @unchecked Senda
         try expect(captures.last?.selectionMode == .automatic && publications == 1,
                    "General screen preparation retains both screen and window selection")
         _ = await session.close()
+
+        var replacementCaptures: [FakeCapture] = [], replacementPublications: [LKRTCVideoTrack] = []
+        var replacementStops = 0
+        let replacement = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { nil },
+            publish: { track, _ in replacementPublications.append(track) }, unpublish: { replacementStops += 1 },
+            preferences: preferences, makeCapture: { _, _ in let capture = FakeCapture(); replacementCaptures.append(capture); return capture })
+        replacement.supportsVP9 = true; replacement.encodingPreference = .textDetail
+        await replacement.open(); try await replacement.startSharing()
+        replacement.encodingPreference = .efficient
+        await replacement.chooseScreen()
+        let nextTrack = replacement.contentDraft!.previewTrack!
+        try await replacement.applyContentChange()
+        try expect(replacement.contentDraft == nil && replacement.source == .screen && replacement.isSharing && replacement.previewTrack === nextTrack,
+                   "Confirm adopts the prepared source and republishes its actual track")
+        try expect(replacementPublications.count == 2 && replacementPublications.last === nextTrack && replacementStops == 1 && replacementCaptures[0].stops == 1,
+                   "Source replacement drains the prior capture after the new publication succeeds")
+        try expect(replacement.activeEncodingPreference == .textDetail,
+                   "Source replacement preserves the explicitly started session codec despite preference edits")
+        await replacement.chooseCanvas()
+        let retiredDraft = replacementCaptures.last!
+        _ = await replacement.close()
+        try expect(retiredDraft.stops == 1 && replacement.contentDraft == nil && !replacement.isSharing,
+                   "Leave closes active publication and pending source draft")
+
+        let replacementLease = NativeDesktopCameraLease()
+        var replacementCameras: [FakeCapture] = []
+        let cameraReplacement = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { nil },
+            publish: { _, _ in }, unpublish: {}, preferences: preferences, cameraLease: replacementLease,
+            makeCapture: { _, _ in FakeCapture() },
+            makeCamera: { _ in let value = FakeCapture(); replacementCameras.append(value); return value })
+        await cameraReplacement.open(); try await cameraReplacement.startSharing(); await cameraReplacement.chooseCanvas()
+        await cameraReplacement.contentDraft!.setIncludeCamera(true)
+        try expect(replacementCameras.count == 1 && replacementCameras[0].starts == 1,
+                   "Draft can prepare a private camera while the live share has no camera")
+        try await cameraReplacement.applyContentChange()
+        try expect(replacementCameras.count == 2 && replacementCameras[0].stops == 1 && replacementCameras[1].starts == 1,
+                   "Apply retires the draft camera lease and reacquires capture under the root owner")
+        let afterReplacement = try await replacementLease.acquireLive(owner: UUID(), revoke: {})
+        try expect(replacementCameras[1].stops == 1,
+                   "A later ordinary-camera lease revokes the adopted root camera before granting hardware")
+        replacementLease.release(afterReplacement)
+        _ = await cameraReplacement.close()
+
+        let applyGate = GuestCompletion<Void>()
+        var applyPublications = 0, applyCaptures: [FakeCapture] = []
+        let closingApply = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { nil },
+            publish: { _, _ in
+                applyPublications += 1
+                if applyPublications == 2 { try await withCheckedThrowingContinuation { applyGate.install($0, timeout: 5) } }
+            }, unpublish: {}, preferences: preferences,
+            makeCapture: { _, _ in let value = FakeCapture(); applyCaptures.append(value); return value })
+        await closingApply.open(); try await closingApply.startSharing(); await closingApply.chooseCanvas()
+        let applyOperation = Task { try await closingApply.applyContentChange() }
+        try await until { applyPublications == 2 }
+        let closeDuringApply = Task { await closingApply.close() }
+        try await until { closingApply.isClosing }
+        applyGate.finish(.success(()))
+        _ = await applyOperation.result
+        let closedDuringApply = await closeDuringApply.value
+        try expect(closedDuringApply && !closingApply.isSharing && closingApply.previewTrack == nil && closingApply.contentDraft == nil && applyCaptures.allSatisfy { $0.stops == 1 },
+                   "Leave during a delayed replacement drains old and draft captures and rejects late publication")
+
+        var cleanupCaptures: [FakeCapture] = []
+        let failingRootCamera = FakeCapture()
+        let cleanupReplacement = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { nil },
+            publish: { _, _ in }, unpublish: {}, preferences: preferences, cameraLease: NativeDesktopCameraLease(),
+            makeCapture: { _, _ in let value = FakeCapture(); cleanupCaptures.append(value); return value },
+            makeCamera: { _ in failingRootCamera })
+        await cleanupReplacement.open(); await cleanupReplacement.setIncludeCamera(true)
+        try await cleanupReplacement.startSharing(); await cleanupReplacement.chooseCanvas()
+        await cleanupReplacement.contentDraft!.setIncludeCamera(false)
+        failingRootCamera.failStop = true
+        do { try await cleanupReplacement.applyContentChange(); try expect(false, "Camera stop failure must be reported") }
+        catch { try expect(cleanupCaptures[0].stops == 1, "Camera teardown failure still drains the old content capture") }
+        let cameraCleanupConfirmed = await cleanupReplacement.close()
+        try expect(!cameraCleanupConfirmed && cleanupCaptures.allSatisfy { $0.stops == 1 },
+                   "Unconfirmed camera cleanup remains visible while both content captures are retired")
+
+        var rejectedPublications = 0, rejectedCaptures: [FakeCapture] = []
+        let rejectedReplacement = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { nil },
+            publish: { _, _ in rejectedPublications += 1; if rejectedPublications == 2 { throw NativeDesktopRTCError.invalidResponse } },
+            unpublish: {}, preferences: preferences,
+            makeCapture: { _, _ in let value = FakeCapture(); rejectedCaptures.append(value); return value })
+        await rejectedReplacement.open(); try await rejectedReplacement.startSharing()
+        let preservedTrack = rejectedReplacement.previewTrack!
+        await rejectedReplacement.chooseScreen()
+        do { try await rejectedReplacement.applyContentChange(); try expect(false, "Rejected new publication must report an error") }
+        catch { try expect(rejectedPublications == 3 && rejectedReplacement.isSharing && rejectedReplacement.previewTrack === preservedTrack && rejectedCaptures[0].stops == 0,
+                           "Rejected replacement republishes the preserved source and keeps its capture alive") }
+        _ = await rejectedReplacement.close()
 
         let pendingCapture = FakeCapture(); pendingCapture.delayed = true
         let pendingSession = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { nil }, publish: { _, _ in publications += 1 }, unpublish: {},
@@ -299,6 +396,12 @@ private final class FakeCapture: NativeDesktopPresenterCapture, @unchecked Senda
         await importSession.open()
         await importSession.loadImage(png as Data, expectedRevision: imageRequest, selectCanvas: true)
         try expect(importSession.scene.image == nil, "An old image request cannot edit a newer Presenter session")
+        try await importSession.startSharing(); await importSession.chooseScreen()
+        let cancelledImageRequest = importSession.imageImportRevision
+        await importSession.cancelContentChange()
+        await importSession.chooseImage(png as Data, expectedRevision: cancelledImageRequest)
+        try expect(importSession.contentDraft == nil && importSession.scene.image == nil && importSession.isSharing,
+                   "A late image-panel completion cannot recreate a cancelled draft or change live content")
         _ = await importSession.close()
         print("PASS: \(checks) Presenter privacy, ownership, cancellation, publication, geometry, undo/redo and exported-pixel assertions; no system capture or live meeting")
     }

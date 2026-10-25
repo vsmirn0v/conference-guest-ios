@@ -4,6 +4,8 @@ struct PresenterCanvasEditor: View {
     @ObservedObject var model: PresenterModel
     @Binding var expanded: Bool
     var canShare: Bool
+    var publicationOwner: PresenterModel? = nil
+    private var owner: PresenterModel { publicationOwner ?? model }
     @State private var viewport = PresenterViewport.fit
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -17,9 +19,17 @@ struct PresenterCanvasEditor: View {
                 ZStack {
                     PresenterCanvasSurface(model: model, viewport: $viewport)
                     if model.source == .screen && !model.screenSelected {
-                        Button { model.selectScreen() } label: {
-                            Label(L("Choose screen"), systemImage: "rectangle.on.rectangle").padding()
-                        }.accessibilityIdentifier("presenter.choose-screen")
+                        if model.makeScreenSource == nil {
+                            VStack(spacing: 8) {
+                                Image(systemName: "rectangle.on.rectangle").font(.largeTitle)
+                                Text(L("Entire screen")).font(.headline)
+                                Text(L("Choose the broadcast source when you start sharing.")).font(.footnote).multilineTextAlignment(.center)
+                            }.foregroundStyle(.white).padding()
+                        } else {
+                            Button { model.selectScreen() } label: {
+                                Label(L("Choose screen"), systemImage: "rectangle.on.rectangle").padding()
+                            }.accessibilityIdentifier("presenter.choose-screen")
+                        }
                     } else if !model.hasPreview { ProgressView().tint(.white) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.black, in: RoundedRectangle(cornerRadius: 10))
@@ -32,8 +42,8 @@ struct PresenterCanvasEditor: View {
     }
 
     private var status: some View {
-        Label(model.running ? L("Live") : L("Only you"), systemImage: model.running ? "dot.radiowaves.left.and.right" : "lock.fill")
-            .font(.caption).foregroundStyle(model.running ? Color.orange : Color.secondary)
+        Label(owner.contentDraft != nil ? L("Change preview · Not yet shared") : owner.running ? L("Live · Visible to meeting") : L("Only you"), systemImage: owner.running && owner.contentDraft == nil ? "dot.radiowaves.left.and.right" : "lock.fill")
+            .font(.caption).foregroundStyle(owner.running && owner.contentDraft == nil ? Color.orange : Color.secondary)
             .accessibilityIdentifier("presenter.visibility")
     }
     private var done: some View {
@@ -54,7 +64,7 @@ struct PresenterCanvasEditor: View {
                     if viewport.zoom > 1.01 { fit }
                 }
             }.scrollIndicators(.hidden)
-            if canShare { PresenterShareControl(model: model, compact: true) }
+            if canShare { PresenterShareControl(model: owner, compact: true) }
         }
     }
     private var bottomTools: some View {
@@ -74,7 +84,7 @@ struct PresenterCanvasEditor: View {
             if expanded {
                 HStack {
                     if viewport.zoom > 1.01 { fit }
-                    if canShare { PresenterShareControl(model: model) }
+                    if canShare { PresenterShareControl(model: owner) }
                 }
             }
         }

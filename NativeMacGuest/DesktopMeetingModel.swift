@@ -38,7 +38,9 @@ import UniformTypeIdentifiers
                 guard let self, !closed, !transferHeld, connected else { throw CancellationError() }
                 guard await retireShare(waitForStartup: true) else { throw NativeDesktopRTCError.cleanupFailed }
                 if let guest = engine as? NativeDesktopGuestEngine {
-                    try await guest.startScreenShare(profile: profile) { NativeDesktopRelayCapture(track: track, source: $0) }
+                    let preference = presenterStorage?.activeEncodingPreference ?? .efficient
+                    try await guest.startScreenShare(profile: profile, codec: preference.codec) { NativeDesktopRelayCapture(track: track, source: $0) }
+                    refreshShareEncodingReport(guest: guest, track: track)
                 } else { try await engine.setScreenTrack(track) }
                 guard !closed, !transferHeld else { throw CancellationError() }
                 localShare = track
@@ -54,7 +56,25 @@ import UniformTypeIdentifiers
             catch { self.error = error.localizedDescription }
         }
         session.objectWillChange.sink { [weak self] in self?.objectWillChange.send(); Task { @MainActor in self?.refreshSystemReactions() } }.store(in: &subscriptions)
+        session.supportsVP9 = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine?.screenCodecs.contains("video/vp9") == true
+        session.vp9UnavailableReason = session.supportsVP9 ? nil : L("VP9 sharing is unavailable in this meeting.")
         presenterStorage = session; return session
+    }
+    private var shareReportTask: Task<Void, Never>?
+    private func refreshShareEncodingReport(guest: NativeDesktopGuestEngine, track: LKRTCVideoTrack) {
+        shareReportTask?.cancel()
+        shareReportTask = Task { @MainActor [weak self, weak guest] in
+            for _ in 0..<4 {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                guard let self, let guest, !closed, !Task.isCancelled,
+                      localShare === track, engine === guest else { return }
+                if let evidence = await guest.currentNativeEngine?.screenEncodingEvidence(),
+                   !Task.isCancelled, localShare === track, engine === guest {
+                    presenterStorage?.encodingReport = .measured(codec: evidence.codec, powerEfficient: evidence.powerEfficient, encoder: evidence.encoder)
+                    return
+                }
+            }
+        }
     }
     var onConnected: (() -> Void)?
     var onLeave: (() async -> Void)?
@@ -184,6 +204,10 @@ import UniformTypeIdentifiers
     private func update(_ value: NativeDesktopExternalSnapshot) {
         guard !closed else { return }
         let previous = snapshot; snapshot = value
+        if let presenterStorage {
+            presenterStorage.supportsVP9 = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine?.screenCodecs.contains("video/vp9") == true
+            presenterStorage.vp9UnavailableReason = presenterStorage.supportsVP9 ? nil : L("VP9 sharing is unavailable in this meeting.")
+        }
         if value.phase == .connected { connection?.finish(.success(())) }
         if value.phase == .failed { connection?.finish(.failure(NativeDesktopError.unavailable(value.lastError ?? L("Could not connect to meeting.")))) }
         if !value.microphoneOn { headset.confirm(muted: true) }
@@ -334,7 +358,7 @@ import UniformTypeIdentifiers
     }
     func toggleSharing() {
         if snapshot.sharing || sharingPending { Task { await stopSharing() } }
-        else { startSharing(presenter: false) }
+        else { panel = .presenter }
     }
     func startSharing(presenter: Bool, canvas: Bool = false) {
         if presenter { panel = .presenter; Task { await self.presenter.open() }; return }

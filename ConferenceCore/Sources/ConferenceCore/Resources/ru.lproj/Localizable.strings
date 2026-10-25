@@ -7,3 +7,8 @@
 "This jam redirected to another website. Use an invitation for that website instead." = "Этот джем перенаправил на другой сайт. Используйте приглашение с того сайта.";
 "This jam returned an unexpectedly large response. Try again later." = "Ответ сервера джема слишком большой. Повторите попытку позже.";
 "This message is too long to send. Shorten it and try again." = "Сообщение слишком длинное. Сократите его и попробуйте ещё раз.";
+
+/* Sharing workspace and on-device text selection */
+"Hardware" = "Аппаратное";
+"Software" = "Программное";
+"Sending %@" = "Отправка %@";

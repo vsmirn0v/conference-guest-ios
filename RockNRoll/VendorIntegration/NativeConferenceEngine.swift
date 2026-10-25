@@ -23,6 +23,8 @@ final class NativeConferenceEngine: CallEngine {
     private var codecFallbackObserver: NSObjectProtocol?
     private var codecChecks: [String: Task<Void, Never>] = [:]
     private var codecCheckTokens: [String: UUID] = [:]
+    private var screenEncodingTrackID: String?
+    private var screenEncodingReportTask: Task<Void, Never>?
     #if DEBUG
     private var decoderExperimentToken: UUID?
     #endif
@@ -775,6 +777,35 @@ final class NativeConferenceEngine: CallEngine {
                 self.monitorCodecPublication(generation: generation, attempt: attempt, trackID: trackID)
             }
         }
+        GuestPublishingCodecPolicy.shared.onScreenPublication = { [weak self] generation, trackID in
+            Task { @MainActor [weak self] in
+                guard let self, self.sessionEpoch == generation, !self.leaveRequested else { return }
+                self.screenEncodingReportTask?.cancel()
+                self.screenEncodingTrackID = trackID
+                self.studio.presenter.encodingReport = nil
+                let attempt = self.mediaAttemptEpoch
+                self.screenEncodingReportTask = Task { @MainActor [weak self] in
+                    for _ in 0..<5 {
+                        do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                        guard let self, !Task.isCancelled, self.sessionEpoch == generation,
+                              self.mediaAttemptEpoch == attempt, !self.leaveRequested,
+                              self.screenEncodingTrackID == trackID else { return }
+                        if let report = await GuestMicrophoneProbe.shareEncoding(trackID: trackID),
+                           !Task.isCancelled, self.sessionEpoch == generation, self.mediaAttemptEpoch == attempt,
+                           self.screenEncodingTrackID == trackID {
+                            self.studio.presenter.encodingReport = report; return
+                        }
+                    }
+                }
+            }
+        }
+        GuestPublishingCodecPolicy.shared.onScreenCapability = { [weak self] generation, supported in
+            Task { @MainActor [weak self] in
+                guard let self, self.sessionEpoch == generation, !self.leaveRequested else { return }
+                self.studio.presenter.supportsVP9 = supported
+                self.studio.presenter.vp9UnavailableReason = supported ? nil : L("VP9 sharing is unavailable in this meeting.")
+            }
+        }
     }
     private var canCheckVideoPublication: Bool {
         !isSystemHeld && !isAudioInterrupted && !isMediaReconnecting &&
@@ -831,6 +862,8 @@ final class NativeConferenceEngine: CallEngine {
         }
     }
     private func endCodecPolicy() {
+        screenEncodingReportTask?.cancel(); screenEncodingReportTask = nil; screenEncodingTrackID = nil
+        studio.presenter.encodingReport = nil
         #if DEBUG
         VideoDecoderFactoryExperiment.shared.end(token: decoderExperimentToken)
         decoderExperimentToken = nil
@@ -1061,6 +1094,9 @@ final class NativeConferenceEngine: CallEngine {
         if ProcessInfo.processInfo.isiOSAppOnMac {
             activeControls?.showMediaStatus(L("Screen sharing is unavailable on this Mac."))
         } else if GuestBroadcastStop.prepare() {
+            // The separate ReplayKit sender is qualified only for its efficient
+            // default until a physical-device VP9 broadcast has been validated.
+            GuestPublishingCodecPolicy.shared.beginScreenSharing(.efficient)
             let epoch = UUID()
             localPreviewEpoch = epoch
             localSharePreview.onCapturePolicyChanged = { [weak self] in self?.localPreviewReceiver.setWanted($0) }
@@ -1081,6 +1117,8 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func stopScreenSharing(retirePresenter: Bool = true) async {
+        screenEncodingReportTask?.cancel(); screenEncodingReportTask = nil; screenEncodingTrackID = nil
+        studio.presenter.encodingReport = nil
         if retirePresenter {
             studio.presenter.sharingEnded()
             await studio.presenter.releaseCamera()
@@ -1395,6 +1433,7 @@ final class NativeConferenceEngine: CallEngine {
             self.incomingVideoEnabled = nil
             self.updateIncomingVideoDemand()
             if !self.studio.active { self.studio = StudioModel(audioControl: .noiseSuppression, preferences: .standard) }
+            self.studio.presenter.supportsVP9 = GuestPublishingCodecPolicy.shared.supportsScreenVP9
             self.studio.onCameraSelectionChanged = { GuestCaptureDeviceObserver.setPreferredDevice($0) }
             self.studio.selectLiveCamera = { [weak self] device in
                 guard self?.canChangeMedia(epoch: epoch, attempt: attempt) == true else { throw CancellationError() }
@@ -1461,6 +1500,7 @@ final class NativeConferenceEngine: CallEngine {
                     self.activeControls?.showMediaStatus(message)
                 }
                 self.screenCapture = sender
+                GuestPublishingCodecPolicy.shared.beginScreenSharing(self.studio.presenter.activeEncodingPreference)
                 // A selected screen already prepared the receiving transport
                 // before its chooser. Do not reopen it when the user presses Share.
                 if replacingShare || !self.studio.presenter.screenSelected { self.prepareMacShareTransport() }

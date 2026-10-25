@@ -144,7 +144,7 @@ final class StudioModel: ObservableObject {
     func open(_ pane: Pane, shareLanding: Bool = false) {
         guard active else { return }
         refreshSystemSelection()
-        self.shareLanding = shareLanding && !presenter.running
+        self.shareLanding = false
         self.pane = pane
         presented = true
         refreshPreview()
@@ -153,7 +153,7 @@ final class StudioModel: ObservableObject {
 
     func selectPane(_ pane: Pane) {
         guard active else { return }
-        shareLanding = pane == .presenter && !presenter.running
+        shareLanding = false
         self.pane = pane
         refreshPresenter()
     }
@@ -167,7 +167,7 @@ final class StudioModel: ObservableObject {
 
     func showShareLanding() {
         guard active else { return }
-        shareLanding = true; pane = .presenter
+        shareLanding = false; pane = .presenter
         refreshPresenter()
     }
 

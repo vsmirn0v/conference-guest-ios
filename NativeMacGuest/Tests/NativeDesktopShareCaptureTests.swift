@@ -122,6 +122,30 @@ private func redSample(_ frame: LKRTCVideoFrame) -> Int {
         let absentRed: Int = try await withCheckedThrowingContinuation { removedRed.install($0, timeout: 5) }
         try expect(absentRed >= 0 && absentRed < 100, "Camera-off fences an already composed camera frame before final delivery")
         try await removing.stop()
+        var highResolutionPixels: CVPixelBuffer?
+        guard CVPixelBufferCreate(nil, 3840, 2160, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &highResolutionPixels) == kCVReturnSuccess,
+              let highResolutionPixels,
+              let highResolutionSample = PresenterCompositor.sample(highResolutionPixels, time: .zero) else { fatalError("4K fixture allocation") }
+        let originalPixels = GuestCompletion<Bool>(), composedDimensions = GuestCompletion<CGSize>(), restoredDimensions = GuestCompletion<CGSize>(), transition = Count()
+        let nativeScreen = NativeDesktopShareCapture(screenForTesting: highResolutionSample) { frame in
+            if frame.width == 3840 {
+                originalPixels.finish(.success((frame.buffer as? LKRTCCVPixelBuffer)?.pixelBuffer === highResolutionPixels))
+                if transition.current >= 2 { restoredDimensions.finish(.success(CGSize(width: Int(frame.width), height: Int(frame.height)))) }
+            } else if transition.current >= 1 { composedDimensions.finish(.success(CGSize(width: Int(frame.width), height: Int(frame.height)))) }
+        }
+        nativeScreen.setScene(scene)
+        let nativeInfo = try await nativeScreen.start()
+        let retainedOriginal: Bool = try await withCheckedThrowingContinuation { originalPixels.install($0, timeout: 5) }
+        try expect(nativeInfo.width == 3840 && nativeInfo.height == 2160 && retainedOriginal,
+                   "Plain screen keeps original 4K pixels without composition or a buffer copy")
+        transition.add(); nativeScreen.setCamera(pixels)
+        let composedGeometry: CGSize = try await withCheckedThrowingContinuation { composedDimensions.install($0, timeout: 5) }
+        try expect(composedGeometry == CGSize(width: 1920, height: 1080), "Including camera follows the existing bounded composition profile")
+        transition.add(); nativeScreen.setCamera(nil)
+        let restoredGeometry: CGSize = try await withCheckedThrowingContinuation { restoredDimensions.install($0, timeout: 5) }
+        try expect(restoredGeometry == CGSize(width: 3840, height: 2160), "Removing camera restores native screen detail and publishes the new geometry")
+        try await nativeScreen.stop()
         print("PASS: \(checks) share-capture cancellation, teardown, aspect-ratio and camera-rotation assertions; no system picker or physical capture")
     }
 }

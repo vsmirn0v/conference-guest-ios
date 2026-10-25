@@ -59,7 +59,7 @@ final class GuestSampleBufferView: UIView {
             setNeedsLayout()
             layoutIfNeeded()
         }
-        return renderTarget.enqueue(sample)
+        return renderTarget.enqueue(sample, rotation: rotation)
     }
 
     func clear() {
@@ -70,6 +70,10 @@ final class GuestSampleBufferView: UIView {
 
     func existingFrameDelivery() -> SampleBufferFrameDelivery? {
         frameDelivery.flatMap { $0.isCurrent ? $0 : nil }
+    }
+    func snapshotFrame() -> (CMSampleBuffer, Int)? {
+        if let frame = frameDelivery?.snapshotFrame() { return frame }
+        return renderTarget.snapshotFrame()
     }
     func makeFrameDelivery(onGeometry: @escaping @MainActor (CGSize, Int) -> Void) -> SampleBufferFrameDelivery {
         frameDelivery?.invalidate()

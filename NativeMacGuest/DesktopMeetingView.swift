@@ -71,6 +71,12 @@ struct NativeDesktopMeetingView: View {
     var continuation: MeetingContinuationCoordinator? = nil
     @State private var reactionsOpen = false
     @StateObject private var focusedViewport = NativeDesktopVideoViewport()
+    @StateObject private var textFrame = NativeDesktopTextFrame()
+    @StateObject private var textSelection = NativeDesktopSharedText()
+    private var textSourceID: String? { model.focusedVideo.flatMap { $0.source == .screen ? $0.id : nil } }
+    private func updateTextSource() {
+        textSelection.updateSource(id: textSourceID, name: model.focusedVideo.map { name($0.participantID) } ?? "", frame: textFrame)
+    }
     var body: some View {
         VStack(spacing: 0) {
         if let continuation { NativeDesktopContinuationStatus(coordinator: continuation) }
@@ -78,7 +84,9 @@ struct NativeDesktopMeetingView: View {
         HStack(spacing: 0) {
             ZStack {
                 Color.black
-                if model.mediaPresentation == .meeting { media.padding(.horizontal, 14)
+                if model.mediaPresentation == .meeting { media.overlay {
+                    if textSelection.isOpen { NativeDesktopSharedTextView(model: textSelection) }
+                }.padding(.horizontal, 14)
                     .padding(.top, model.controlsHidden ? 12 : 70)
                     .padding(.bottom, model.controlsHidden ? 12 : (model.showsFocus || model.viewMode == .audioOnly ? 90 : 160))
                 }
@@ -101,6 +109,9 @@ struct NativeDesktopMeetingView: View {
         }
         }
         }
+        .onChange(of: textSourceID) { _ in updateTextSource() }
+        .onChange(of: model.snapshot.phase) { phase in if phase == .left || phase == .leaving || phase == .failed { textSelection.close() } }
+        .onDisappear { textSelection.close() }
         .alert(L("Meeting"), isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button(L("OK")) { model.error = nil }
         } message: { Text(model.error ?? "") }
@@ -143,7 +154,7 @@ struct NativeDesktopMeetingView: View {
                 Divider().frame(height: 18)
                 Menu {
                     Button(L("Camera & sound")) { togglePanel(.studio) }
-                    Button(L("Presenter")) { togglePanel(.presenter) }
+                    Button(L("Share")) { togglePanel(.presenter) }
                     Button(L("Reconnect")) { model.reconnect() }
                     Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
                     Button(L("Hide controls")) { model.controlsHidden = true }
@@ -155,7 +166,7 @@ struct NativeDesktopMeetingView: View {
                     .contextMenu { Button(L("Audio settings")) { model.panel = .studio } }
                 controlButton(model.snapshot.cameraOn ? "video.fill" : "video.slash", L("Video"), selected: model.snapshot.cameraOn) { model.toggleCamera() }
                     .contextMenu { Button(L("Camera settings")) { model.panel = .studio } }
-                controlButton("rectangle.on.rectangle", L("Share"), selected: model.snapshot.sharing || model.sharingPending) { model.toggleSharing() }
+                controlButton("rectangle.on.rectangle", L("Share"), selected: model.snapshot.sharing || model.sharingPending) { togglePanel(.presenter) }
                 controlButton(model.snapshot.playoutOn ? "speaker.wave.2.fill" : "speaker.slash", L("Sound"), selected: model.snapshot.playoutOn) { model.togglePlayout() }
                 controlButton("face.smiling", L("Reactions"), selected: reactionsOpen) { reactionsOpen.toggle() }
                     .disabled(!model.canReact).popover(isPresented: $reactionsOpen, arrowEdge: .bottom) { reactionPicker }
@@ -169,7 +180,8 @@ struct NativeDesktopMeetingView: View {
             VStack(spacing: 18) { Image(systemName: "waveform").font(.system(size: 44)); Text(L("Audio only")).font(.title2); Text(model.title).foregroundStyle(.secondary) }
         } else if model.showsFocus, let focused = model.focusedVideo {
             VStack(spacing: 10) {
-                NativeDesktopZoomVideo(video: focused, name: name(focused.participantID), viewport: focusedViewport)
+                NativeDesktopZoomVideo(video: focused, name: name(focused.participantID), viewport: focusedViewport,
+                    textFrame: textFrame, selectText: { model.controlsHidden = false; updateTextSource(); textSelection.open() })
                 HStack(spacing: 8) {
                     ForEach(model.participants.prefix(6)) { person in
                         Button { model.focus(participantID: person.id, source: .camera) } label: {
@@ -240,7 +252,7 @@ struct NativeDesktopMeetingView: View {
     }
     @ViewBuilder private func inspector(_ panel: NativeDesktopMeetingModel.Panel) -> some View {
         VStack(spacing: 0) {
-            HStack { Text(L(panel.rawValue)).font(.headline); Spacer(); Button { model.panel = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).help(L("Close")) }.padding(18)
+            HStack { Text(panel == .presenter ? L("Share") : L(panel.rawValue)).font(.headline); Spacer(); Button { model.panel = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).help(L("Close")) }.padding(18)
             Divider()
             switch panel {
             case .participants:
@@ -312,13 +324,15 @@ struct NativeDesktopZoomVideo: View {
     let video: NativeDesktopExternalVideo
     let name: String
     @ObservedObject var viewport: NativeDesktopVideoViewport
+    var textFrame: NativeDesktopTextFrame? = nil
+    var selectText: (() -> Void)? = nil
     private var zoom: CGFloat { get { viewport.zoom } nonmutating set { viewport.zoom = newValue } }
     private var savedZoom: CGFloat { get { viewport.savedZoom } nonmutating set { viewport.savedZoom = newValue } }
     private var pan: CGSize { get { viewport.pan } nonmutating set { viewport.pan = newValue } }
     private var savedPan: CGSize { get { viewport.savedPan } nonmutating set { viewport.savedPan = newValue } }
     var body: some View {
         GeometryReader { geometry in
-            NativeDesktopVideoView(track: video.track, crop: video.crop, zoom: zoom, pan: pan)
+            NativeDesktopVideoView(track: video.track, crop: video.crop, zoom: zoom, pan: pan, textFrame: textFrame, textSourceID: video.id)
                 .contentShape(Rectangle())
                 .gesture(MagnificationGesture().onChanged { zoom = min(8, max(1, savedZoom * $0)) }.onEnded { _ in savedZoom = zoom; if zoom == 1 { pan = .zero; savedPan = .zero } })
                 .simultaneousGesture(DragGesture().onChanged { value in
@@ -329,11 +343,15 @@ struct NativeDesktopZoomVideo: View {
                 .overlay(alignment: .bottomLeading) { Text(name + (video.source == .screen ? " · " + L("Screen") : "")).font(.caption).lineLimit(1).frame(maxWidth: max(80, min(400, geometry.size.width - 140)), alignment: .leading).padding(8).background(.black.opacity(0.5), in: Capsule()).padding(10) }
                 .overlay(alignment: .bottomTrailing) {
                     HStack(spacing: 12) {
+                        if video.source == .screen, let selectText {
+                            Button(action: selectText) { Label(L("Select text"), systemImage: "text.viewfinder") }.accessibilityIdentifier("Select shared text")
+                        }
                         Button { zoom = 1; savedZoom = 1; pan = .zero; savedPan = .zero } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }.help(L("Fit to screen"))
                         Button { zoom = min(8, zoom + 0.5); savedZoom = zoom } label: { Image(systemName: "plus.magnifyingglass") }.help(L("Zoom in"))
                     }.buttonStyle(.plain).padding(12).nativeMeetingChrome().padding(10)
                 }
         }.clipShape(RoundedRectangle(cornerRadius: 14))
+            .contextMenu { if video.source == .screen, let selectText { Button(L("Select text"), action: selectText) } }
             .onAppear { viewport.select(participant: video.participantID, source: video.source) }
             .onChange(of: video.participantID) { _ in viewport.select(participant: video.participantID, source: video.source) }
             .onChange(of: video.source.rawValue) { _ in viewport.select(participant: video.participantID, source: video.source) }

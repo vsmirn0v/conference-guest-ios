@@ -23,6 +23,7 @@ targets:
       - path: ../Experiments/NativeGuest
         excludes: [Main.swift, GuestCompanionPeer.swift, '*.py', '*.md', '*.sh', '*.patch', __pycache__]
       - path: ../Shared/NativeGuestCompanionProtocol.swift
+      - path: ../Shared/SharedTextSnapshot.swift
       - path: ../RockNRoll/NativeVideoPixelBuffer.swift
       - path: ../Shared/GuestAudioOwnerLease.swift
       - path: ../Shared/GuestAudioProfile.swift

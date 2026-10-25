@@ -1230,3 +1230,59 @@
 "Paste an invitation above to join, or save a favorite to keep it close." = "Paste an invitation above to join, or save a favorite to keep it close.";
 "Already have favorites on another device? Open iCloud settings to connect your library." = "Already have favorites on another device? Open iCloud settings to connect your library.";
 "Open iCloud settings" = "Open iCloud settings";
+
+/* Sharing workspace and on-device text selection */
+"Advanced" = "Advanced";
+"Back to Live" = "Back to Live";
+"Camera and layout changes appear in your live share." = "Camera and layout changes appear in your live share.";
+"Camera and layout changes stay private until you confirm." = "Camera and layout changes stay private until you confirm.";
+"Camera overlays and drawings are available with images and canvases. Entire-screen sharing uses the iOS broadcast picker." = "Camera overlays and drawings are available with images and canvases. Entire-screen sharing uses the iOS broadcast picker.";
+"Cancel content change" = "Cancel content change";
+"Canvas or background" = "Canvas or background";
+"Capture current share" = "Capture current share";
+"Captured frame · %@" = "Captured frame · %@";
+"Captured frame · %@'s share ended" = "Captured frame · %@'s share ended";
+"Captured frame · A different share is now live" = "Captured frame · A different share is now live";
+"Capturing incoming frame…" = "Capturing incoming frame…";
+"Change preview · Not yet shared" = "Change preview · Not yet shared";
+"Change shared content" = "Change shared content";
+"Choose the broadcast source when you start sharing." = "Choose the broadcast source when you start sharing.";
+"Drag to select text. ⌘C to copy. Meeting audio continues." = "Drag to select text. ⌘C to copy. Meeting audio continues.";
+"Efficient encoding" = "Efficient encoding";
+"Efficient · Default" = "Efficient · Default";
+"Encoding" = "Encoding";
+"Encoding changes apply after Stop → Start sharing." = "Encoding changes apply after Stop → Start sharing.";
+"Finding text on this device…" = "Finding text on this device…";
+"Hardware" = "Hardware";
+"Image or slides" = "Image or slides";
+"Image or slides…" = "Image or slides…";
+"Keep Rock’n’Roll open while sharing this content. Your camera becomes part of the shared content only when you start sharing." = "Keep Rock’n’Roll open while sharing this content. Your camera becomes part of the shared content only when you start sharing.";
+"May make small text slightly clearer. Uses more CPU and battery." = "May make small text slightly clearer. Uses more CPU and battery.";
+"New frame" = "New frame";
+"No incoming frame available. Try again when the share is visible." = "No incoming frame available. Try again when the share is visible.";
+"No text found. Try a clearer frame or return to Live." = "No text found. Try a clearer frame or return to Live.";
+"Open Share" = "Open Share";
+"Screen share reconnecting…" = "Screen share reconnecting…";
+"Select text" = "Select text";
+"Selectable text · Live Text is unavailable on this device." = "Selectable text · Live Text is unavailable on this device.";
+"Sending %@" = "Sending %@";
+"Software" = "Software";
+"Stop sharing, then start Entire screen to use efficient encoding. Your current VP9 share continues until you stop it." = "Stop sharing, then start Entire screen to use efficient encoding. Your current VP9 share continues until you stop it.";
+"Text detail · VP9" = "Text detail · VP9";
+"Text recognition failed. Try another frame or return to Live." = "Text recognition failed. Try another frame or return to Live.";
+"Touch and hold text to select. Meeting audio continues." = "Touch and hold text to select. Meeting audio continues.";
+"Uses hardware H.264 when available to save energy." = "Uses hardware H.264 when available to save energy.";
+"VP9 encoding" = "VP9 encoding";
+"VP9 is not yet available for entire-screen broadcasts on iPhone or iPad." = "VP9 is not yet available for entire-screen broadcasts on iPhone or iPad.";
+"VP9 sharing is unavailable in this meeting." = "VP9 sharing is unavailable in this meeting.";
+"Your camera is controlled in Share while this content is shared." = "Your camera is controlled in Share while this content is shared.";
+"Your current share continues until you confirm this change." = "Your current share continues until you confirm this change.";
+
+"Share settings" = "Share settings";
+
+"Shared content" = "Shared content";
+
+"Camera in shared content" = "Camera in shared content";
+
+"Text recognition is taking too long. Return to Live and try again later." = "Text recognition is taking too long. Return to Live and try again later.";
+"Text recognition is already running. Return to Live and try again later." = "Text recognition is already running. Return to Live and try again later.";

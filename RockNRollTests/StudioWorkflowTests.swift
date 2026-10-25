@@ -99,12 +99,12 @@ final class StudioWorkflowTests: XCTestCase {
         XCTFail("Inspector transition did not settle")
     }
 
-    func testShareLandingDoesNotPreparePresenterOrPublishAndExplicitEditorRemainsAvailable() {
+    func testShareOpensOnePrivateWorkspaceWithoutSeparatePresenterNavigation() {
         let model = StudioModel(audioControl: .noiseSuppression, privateCamera: StudioCameraFixture())
         model.presenter.startSharing = { _, _ in XCTFail("Navigation published Presenter") }
         model.presenter.selectCanvas()
         model.open(.presenter, shareLanding: true)
-        XCTAssertTrue(model.shareLanding)
+        XCTAssertFalse(model.shareLanding)
         XCTAssertFalse(model.presenter.hasPreview)
         XCTAssertFalse(model.cameraOn); XCTAssertFalse(model.microphoneOn)
         model.screenSharing = true
@@ -117,7 +117,7 @@ final class StudioWorkflowTests: XCTestCase {
         model.open(.sound)
         model.selectPane(.sound)
         model.selectPane(.presenter)
-        XCTAssertTrue(model.shareLanding)
+        XCTAssertFalse(model.shareLanding)
         model.end()
     }
 

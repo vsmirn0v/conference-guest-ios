@@ -1,4 +1,5 @@
 import XCTest
+import ConferenceCore
 @testable import RockNRoll
 
 final class GuestPublishingCodecTests: XCTestCase {
@@ -80,5 +81,42 @@ final class GuestPublishingCodecTests: XCTestCase {
                 "addTrackRequest": ["type": "VIDEO", "cid": "track", "simulcastCodecs": codecs]]]
             XCTAssertNil(policy.outgoing(socket: socket, data: try data(request)))
         }
+    }
+    func testVP9IsExplicitScreenOnlyAndRequiresAdvertisedCapability() throws {
+        let policy = GuestPublishingCodecPolicy(hardwareH264: false)
+        policy.begin(generation: generation, roomID: "room-uuid"); try join(policy)
+        try capabilities(policy, mime: "video/VP9")
+        XCTAssertTrue(policy.supportsScreenVP9)
+        XCTAssertNil(policy.outgoing(socket: socket, data: try publish()))
+        policy.beginScreenSharing(.textDetail)
+        let bytes = try XCTUnwrap(policy.outgoing(socket: socket, data: publish()))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        let payload = try XCTUnwrap(json["payload"] as? [String: Any])
+        let request = try XCTUnwrap(payload["addTrackRequest"] as? [String: Any])
+        XCTAssertEqual((request["simulcastCodecs"] as? [[String: String]])?.first?["codec"], "vp9")
+        var camera = request; camera["source"] = "CAMERA"; camera["simulcastCodecs"] = [["codec": "VP8", "cid": "track"]]
+        XCTAssertNil(policy.outgoing(socket: socket, data: try data(["event": "media-in", "roomId": "room-uuid", "payload": ["addTrackRequest": camera]])))
+        policy.end(generation: generation)
+        XCTAssertFalse(policy.supportsScreenVP9)
+    }
+    func testUnavailableVP9FallsBackToQualifiedEfficientCodec() throws {
+        let policy = GuestPublishingCodecPolicy(hardwareH264: true)
+        policy.begin(generation: generation, roomID: "room-uuid"); try join(policy); try capabilities(policy)
+        policy.beginScreenSharing(.textDetail)
+        XCTAssertFalse(policy.supportsScreenVP9)
+        let bytes = try XCTUnwrap(policy.outgoing(socket: socket, data: publish()))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: bytes) as? [String: Any])
+        let request = (json["payload"] as? [String: Any])?["addTrackRequest"] as? [String: Any]
+        XCTAssertEqual((request?["simulcastCodecs"] as? [[String: String]])?.first?["codec"], "h264")
+    }
+    func testNewCallCannotInheritVP9WithoutExplicitStart() throws {
+        let policy = GuestPublishingCodecPolicy(hardwareH264: false)
+        policy.begin(generation: generation, roomID: "room-uuid"); try join(policy); try capabilities(policy, mime: "video/VP9")
+        policy.beginScreenSharing(.textDetail)
+        XCTAssertNotNil(policy.outgoing(socket: socket, data: try publish()))
+        let replacement = UUID(), nextSocket = UUID()
+        policy.begin(generation: replacement, roomID: "room-uuid")
+        try join(policy, socket: nextSocket); try capabilities(policy, socket: nextSocket, mime: "video/VP9")
+        XCTAssertNil(policy.outgoing(socket: nextSocket, data: try publish()))
     }
 }

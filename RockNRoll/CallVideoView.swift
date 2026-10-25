@@ -15,6 +15,7 @@ final class CallVideoView: UIView, TrackDelegate {
         return video.displaySize
     }
     var onDisplaySizeChanged: (() -> Void)?
+    func snapshotFrame() -> (CMSampleBuffer, Int)? { video.snapshotFrame() }
     private let roomFallback = VideoView()
     private var sink: RoomFloatingVideoSink?
     private var delivery: SampleBufferFrameDelivery?

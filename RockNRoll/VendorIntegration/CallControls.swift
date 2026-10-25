@@ -113,6 +113,30 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private var requestSDKGrid: (() -> Void)?
     private weak var reactionOverlay: UIView?
     private let stageVideo = GuestSampleBufferView()
+    private var textCapture: SharedTextOverlay?
+    private lazy var selectTextButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.configuration = .tinted(); button.configuration?.title = L("Select text")
+        button.configuration?.image = UIImage(systemName: "text.viewfinder")
+        button.accessibilityIdentifier = "Select shared text"
+        button.addAction(UIAction { [weak self] _ in self?.openSharedText() }, for: .touchUpInside)
+        return button
+    }()
+    private func openSharedText() {
+        guard textCapture == nil, stageIsShare, stageActive, let id = stageID else { return }
+        focus.show(); focus.menuVisible = true
+        var initialID: String? = id
+        let overlay = SharedTextOverlay(sourceID: id, sourceName: stageName ?? L("Participant")) { [weak self] in
+            let expected = initialID; initialID = nil
+            guard let self, self.stageIsShare, self.stageActive, let id = self.stageID else { return nil }
+            guard expected == nil || expected == id else { return nil }
+            return await SharedTextCapture.make(self.stageVideo.snapshotFrame(), sourceID: id, name: self.stageName ?? L("Participant"))
+        }
+        textCapture = overlay; surface.addSubview(overlay)
+        overlay.onClose = { [weak self] in self?.textCapture = nil; self?.focus.menuVisible = false; self?.layoutPresentation() }
+        layoutPresentation()
+    }
+
     private let stageStatus = UILabel()
     private let shareOffer = UIButton(type: .system)
     private var stageViewport: StreamViewport?
@@ -772,6 +796,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 viewport.onBrowse = { [weak self] step in self?.onBrowse?(step) }
                 viewport.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
                 viewport.onToggleControls = { [weak self] in self?.toggleControls() }
+                viewport.onSelectText = isShare ? { [weak self] in self?.openSharedText() } : nil
                 stageViewport = viewport
             }
         }
@@ -951,7 +976,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         camera.configuration?.title = L("Video")
         camera.configuration?.baseForegroundColor = on ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
         camera.accessibilityLabel = on ? L("Stop video") : L("Start video")
-        camera.accessibilityValue = usesPresenter ? L("Camera in Presenter") : nil
+        camera.accessibilityValue = usesPresenter ? L("Camera in shared content") : nil
         camera.largeContentTitle = camera.accessibilityLabel
     }
 
@@ -1048,7 +1073,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         focus.interaction()
     }
 
-    func retireMeetingPanels() { panelOwner.retire() }
+    func retireMeetingPanels() { textCapture?.finish(); panelOwner.retire() }
 
     override func layoutSubviews() { super.layoutSubviews(); layoutPresentation() }
     override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); layoutPresentation() }
@@ -1232,7 +1257,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         var target = touch.view
         while let current = target {
-            if current is UIControl { return false }
+            if current is UIControl || current is SharedTextOverlay { return false }
             target = current.superview
         }
         return true
@@ -1292,6 +1317,13 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         }
         navigation.isHidden = true
         var stage = access.stage
+        if selectTextButton.superview !== surface { surface.addSubview(selectTextButton) }
+        selectTextButton.isHidden = !stageIsShare || !stageActive || gridVisible || focus.hidden || textCapture != nil
+        selectTextButton.frame = CGRect(x: max(stage.minX, stage.maxX - 150), y: max(stage.minY, stage.maxY - 50), width: min(150, stage.width), height: 44)
+        textCapture?.frame = stage
+        textCapture?.updateSource(id: stageIsShare && stageActive ? stageID : nil, name: stageName)
+        if let textCapture { surface.bringSubviewToFront(textCapture) }
+
         let layoutAvailable = displayMode != .audioOnly && !isWaitingForOthers && galleryCount > 1
         let showsStrip = !gridVisible && layoutAvailable && !stageIsShare && stage.height >= 240
         participantStrip.isHidden = !showsStrip || focus.hidden
@@ -1430,7 +1462,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 studio.audioSection = .devices
                 StudioPresentation.show(studio, from: self.reactionsButton, pane: .sound)
             }, flip]
-            sharePresenter.append(UIAction(title: L("Presenter"), image: UIImage(systemName: "person.crop.rectangle"),
+            sharePresenter.append(UIAction(title: L("Share settings"), image: UIImage(systemName: "rectangle.on.rectangle"),
                 attributes: studio.presenter.available ? [] : [.disabled]) { [weak self] _ in
                     guard let self else { return }
                     StudioPresentation.show(studio, from: self.reactionsButton, pane: .presenter)

@@ -33,6 +33,7 @@ targets:
       - path: Shared/OutgoingShareExperiment.swift
       - path: Shared/OutgoingVideoCadence.swift
       - path: Shared/NativeGuestCompanionProtocol.swift
+      - path: Shared/SharedTextSnapshot.swift
       - path: Shared/MeetingActivityState.swift
       - path: Shared/MeetingActivityViews.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle

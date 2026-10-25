@@ -136,6 +136,7 @@ final class NativeGuestEngine {
     private var joined = false
     private var joinAttempted = false
     private var rtcJoined = false
+    private(set) var screenCodecs: Set<String> = []
     private var localIdentity = ""
     private var subscriptions = Set<String>()
     private var participantVersions: [String: Int] = [:]
@@ -295,6 +296,8 @@ final class NativeGuestEngine {
             guard let join = payload["join"] as? [String: Any], let participant = join["participant"] as? [String: Any],
                   let identity = participant["identity"] as? String else { throw GuestEngineError.malformed }
             localIdentity = identity; rtcJoined = true
+            screenCodecs = Set(((join["room"] as? [String: Any])?["enabledCodecs"] as? [[String: Any]] ?? [])
+                .compactMap { ($0["mime"] as? String)?.lowercased() })
             meetingFeatures.updateRTC([participant]); meetingFeatures.setConnected(joined)
             try await updateParticipants(join["otherParticipants"] as? [[String: Any]] ?? [])
             startPing(interval: (join["pingInterval"] as? NSNumber)?.doubleValue ?? 5,
@@ -1066,6 +1069,8 @@ extension NativeGuestEngine {
             let infoTrack = try await register(["cid": cid, "type": "VIDEO", "source": "SCREEN_SHARE", "muted": true,
                 "width": actual.width, "height": actual.height, "layers": [actual.layer],
                 "simulcastCodecs": [["codec": codec.lowercased(), "cid": cid]]], kind: "screen")
+            probeLog("screen-codec-registration", ["requested": codec.lowercased(), "source": infoTrack["source"] as? String ?? "absent",
+                "codecs": (infoTrack["codecs"] as? [[String: Any]] ?? []).compactMap { $0["mimeType"] as? String }])
             try requireScreenPermission(generation: generation)
             guard infoTrack["source"] as? String == "SCREEN_SHARE", let sid = infoTrack["sid"] as? String else {
                 throw GuestEngineError.malformed
@@ -1082,6 +1087,21 @@ extension NativeGuestEngine {
             try? await finishScreenShare()
             throw error
         }
+    }
+
+    /// Sender-bound production evidence; camera/audio statistics never label a share.
+    func screenEncodingEvidence() async -> (codec: String, powerEfficient: Bool?, encoder: String?)? {
+        guard !closing, let publisher, let track = publisher.localScreenVideoTrack,
+              let sender = publisher.connection.senders.first(where: { $0.track?.trackId == track.trackId }),
+              let mid = publisher.connection.transceivers.first(where: { $0.sender.senderId == sender.senderId })?.mid,
+              let rows = await publisher.stats(), !closing, self.publisher === publisher,
+              publisher.localScreenVideoTrack === track,
+              let outbound = rows.first(where: { $0["type"] as? String == "outbound-rtp" && $0["mid"] as? String == mid &&
+                  (($0["framesEncoded"] as? NSNumber)?.intValue ?? 0) > 0 }),
+              let codecID = outbound["codecId"] as? String,
+              let mime = rows.first(where: { $0["id"] as? String == codecID })?["mimeType"] as? String,
+              mime.lowercased().hasPrefix("video/") else { return nil }
+        return (String(mime.dropFirst(6)), outbound["powerEfficientEncoder"] as? Bool, outbound["encoderImplementation"] as? String)
     }
 
     func stopScreenShare() async throws {

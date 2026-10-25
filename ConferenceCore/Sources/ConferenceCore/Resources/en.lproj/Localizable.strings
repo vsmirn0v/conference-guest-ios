@@ -7,3 +7,8 @@
 "This jam redirected to another website. Use an invitation for that website instead." = "This jam redirected to another website. Use an invitation for that website instead.";
 "This jam returned an unexpectedly large response. Try again later." = "This jam returned an unexpectedly large response. Try again later.";
 "This message is too long to send. Shorten it and try again." = "This message is too long to send. Shorten it and try again.";
+
+/* Sharing workspace and on-device text selection */
+"Hardware" = "Hardware";
+"Software" = "Software";
+"Sending %@" = "Sending %@";

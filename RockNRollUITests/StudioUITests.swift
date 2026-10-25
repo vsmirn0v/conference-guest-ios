@@ -12,19 +12,53 @@ final class StudioUITests: XCTestCase {
         app.launch(); defer { app.terminate() }
         let share = app.buttons["Share screen"].firstMatch
         XCTAssertTrue(share.waitForExistence(timeout: 10)); share.press(forDuration: 0.7)
-        app.buttons["studio.open-presenter"].tap()
         app.buttons["presenter.source"].tap()
         app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Blank canvas", "presenter.source")).firstMatch.tap()
         let start = app.buttons["presenter.start"].firstMatch
         XCTAssertTrue(start.waitForExistence(timeout: 5))
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: start)], timeout: 5), .completed)
-        start.tap(); app.buttons["studio.back-share"].tap()
-        let stop = app.buttons["studio.share-screen"]
-        XCTAssertTrue(stop.waitForExistence(timeout: 5)); XCTAssertFalse(stop.isEnabled)
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true AND label == %@", "Stop sharing"), object: stop)], timeout: 10), .completed)
-        attach("Share landing after delayed Presenter start")
+        start.tap()
+        let stop = app.buttons["presenter.stop"].firstMatch
+        XCTAssertTrue(stop.waitForExistence(timeout: 10))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: stop)], timeout: 10), .completed)
+        attach("Unified Share after delayed publication start")
         stop.tap()
-        XCTAssertFalse(app.buttons["studio.done"].exists)
+        XCTAssertTrue(app.buttons["presenter.start"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["studio.done"].exists)
+    }
+
+    func testLiveContentDraftKeepsApplyAndCancelInExpandedPortraitAndLandscape() {
+        continueAfterFailure = false
+        let app = XCUIApplication(bundleIdentifier: "dev.vsmirn0v.conferenceguest")
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchEnvironment["CONFERENCE_TEST_UI_FIXTURE"] = "guest-call"
+        app.launchEnvironment["CONFERENCE_TEST_GUEST_SCENARIO"] = "studio"
+        app.launch()
+        defer { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+        let share = app.buttons["Share screen"].firstMatch
+        XCTAssertTrue(share.waitForExistence(timeout: 10)); share.press(forDuration: 0.7)
+        func canvas() {
+            app.buttons["presenter.source"].tap()
+            app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Blank canvas", "presenter.source")).firstMatch.tap()
+        }
+        canvas()
+        let start = app.buttons["presenter.start"].firstMatch
+        XCTAssertTrue(start.waitForExistence(timeout: 5))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: start)], timeout: 10), .completed)
+        start.tap(); XCTAssertTrue(app.buttons["presenter.stop"].waitForExistence(timeout: 10))
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            canvas()
+            XCTAssertTrue(app.buttons["share.apply-content"].waitForExistence(timeout: 5))
+            app.buttons["presenter.expand"].tap()
+            XCTAssertTrue(app.buttons["share.apply-content"].isHittable)
+            XCTAssertTrue(app.buttons["share.cancel-content"].isHittable)
+            XCTAssertFalse(app.buttons["presenter.start"].exists, "The private draft cannot expose its own publication action")
+            app.buttons["share.cancel-content"].tap()
+            XCTAssertTrue(app.buttons["presenter.stop"].waitForExistence(timeout: 5))
+            app.buttons["studio.done"].firstMatch.tap()
+        }
+        app.buttons["presenter.stop"].firstMatch.tap()
     }
 
     func testRussianLargeTextKeepsThumbStudioActionsReachable() {
@@ -148,9 +182,7 @@ final class StudioUITests: XCTestCase {
             share.press(forDuration: 0.7)
             let presenter = app.segmentedControls["studio.panes"].buttons["Share"]
             XCTAssertTrue(presenter.waitForExistence(timeout: 5)); XCTAssertTrue(presenter.isSelected)
-            XCTAssertTrue(app.buttons["studio.open-presenter"].exists)
-            app.buttons["studio.open-presenter"].tap()
-            XCTAssertTrue(app.buttons["presenter.source"].waitForExistence(timeout: 5))
+                XCTAssertTrue(app.buttons["presenter.source"].waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["Stop sharing screen"].exists, "Holding Share must not start capture")
             attach("Share hold opens private Presenter")
             app.buttons["studio.done"].tap()
@@ -187,7 +219,6 @@ final class StudioUITests: XCTestCase {
         share.press(forDuration: 0.7)
         let presenter = app.segmentedControls["studio.panes"].buttons["Share"]
         XCTAssertTrue(presenter.waitForExistence(timeout: 5)); XCTAssertTrue(presenter.isSelected)
-        app.buttons["studio.open-presenter"].tap()
         XCTAssertTrue(app.buttons["presenter.source"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Stop sharing screen"].exists)
         attach("Live Telemost Share hold opens Presenter")

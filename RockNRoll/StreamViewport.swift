@@ -40,6 +40,7 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
     var onBrowse: ((Int) -> Void)?
     var onToggleControls: (() -> Void)?
     var onSelect: (() -> Void)? { didSet { updateFocusAccessibility() } }
+    var onSelectText: (() -> Void)? { didSet { updateFocusAccessibility() } }
     var pinInHeader = false { didSet { updatePinVisibility() } }
     var controlsHidden = false { didSet {
         guard oldValue != controlsHidden else { return }
@@ -238,6 +239,9 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
                     self.scroll.setZoomScale(1, animated: false); self.toggleScale(); return true
                 }]
         }
+        if let onSelectText {
+            actions.append(UIAccessibilityCustomAction(name: L("Select text")) { _ in onSelectText(); return true })
+        }
         scroll.accessibilityCustomActions = actions.isEmpty ? nil : actions
     }
     private func adjustZoom(_ factor: CGFloat) -> Bool {
@@ -247,13 +251,16 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
 
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction,
                                 configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
-        guard let pinAction else { return nil }
+        guard pinAction != nil || onSelectText != nil else { return nil }
         let label = "\(pinnedLocally ? L("Unpin") : L("Pin")) \(pinName) \(pinIsShare ? L("screen share") : L("video"))"
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { _ in
-            UIMenu(children: [UIAction(title: label,
+            var actions: [UIAction] = []
+            if let pinAction = self.pinAction { actions.append(UIAction(title: label,
                 image: UIImage(systemName: self.pinnedLocally ? "pin.slash" : "pin")) { _ in
                     pinAction()
-                }])
+                }) }
+            if let select = self.onSelectText { actions.append(UIAction(title: L("Select text"), image: UIImage(systemName: "text.viewfinder")) { _ in select() }) }
+            return UIMenu(children: actions)
         }
     }
 

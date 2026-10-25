@@ -56,18 +56,8 @@ struct StudioPanel: View {
             VStack(spacing: 0) {
                 if !model.canvasExpanded && !bottomSelector { panes }
                 if model.pane == .presenter && !model.shareLanding {
-                    // Keep one native surface mounted when expanding the canvas.
-                    // Reparenting it between Form and a second host loses display.
-                    GeometryReader { geometry in
-                        VStack(spacing: 0) {
-                            PresenterCanvasEditor(model: model.presenter, expanded: $model.canvasExpanded, canShare: model.active && !model.held)
-                                .frame(height: model.canvasExpanded ? geometry.size.height : min(300, geometry.size.height * 0.58))
-                            if !model.canvasExpanded {
-                                Form { PresenterControls(model: model.presenter, recording: model.recording, images: images) }
-                                    .accessibilityIdentifier("studio.settings")
-                            }
-                        }
-                    }
+                    StudioShareWorkspace(presenter: model.presenter, recording: model.recording, images: images,
+                                         expanded: $model.canvasExpanded, canShare: model.active && !model.held)
                 } else {
                 Form {
                     switch model.pane {
@@ -108,12 +98,6 @@ struct StudioPanel: View {
                 Button(L("Done")) {
                     if model.canvasExpanded { model.canvasExpanded = false } else { model.close() }
                 }.accessibilityIdentifier("studio.done")
-            } }
-            .toolbar { ToolbarItem(placement: .navigationBarLeading) {
-                if model.pane == .presenter && !model.shareLanding && !model.canvasExpanded {
-                    Button { model.showShareLanding() } label: { Label(L("Share"), systemImage: "chevron.left") }
-                        .accessibilityIdentifier("studio.back-share")
-                }
             } }
             .alert(item: $model.systemSettingsHelp) { help in
                 Alert(title: Text(help.title), message: Text(help.message), dismissButton: .default(Text(L("OK"))))
@@ -157,10 +141,7 @@ struct StudioPanel: View {
                             .accessibilityIdentifier("studio.unmute")
                             .accessibilityLabel(L("Unmute microphone"))
                         } else if model.pane == .presenter {
-                            if model.shareLanding {
-                                if model.canRequestScreenSharing { screenShareButton }
-                            }
-                            else { PresenterShareControl(model: model.presenter, compact: dynamicTypeSize.isAccessibilitySize) }
+                            StudioShareFooter(model: model, presenter: model.presenter, compact: dynamicTypeSize.isAccessibilitySize, onScreenShare: onScreenShare)
                         }
                     }.padding(.horizontal).padding(.vertical, 10)
                 }
@@ -176,52 +157,16 @@ struct StudioPanel: View {
         }
     }
 
-    private var screenShareButton: some View {
-        let running = model.screenSharing || model.presenter.running
-        return Button {
-            let enabled = !running
-            if let onScreenShare { onScreenShare(enabled) }
-            else { model.requestScreenSharing(enabled) }
-        } label: {
-            primaryLabel(running ? "Stop sharing" : "Share screen", short: running ? "Stop" : "Start",
-                         symbol: running ? "stop.circle" : "rectangle.on.rectangle")
-                .frame(maxWidth: .infinity, minHeight: 44)
-        }.buttonStyle(.borderedProminent).tint(running ? .red : .orange)
-            .disabled(model.presenter.starting || model.presenter.stopping)
-            .accessibilityIdentifier("studio.share-screen")
-            .accessibilityLabel(running ? L("Stop sharing") : L("Share screen"))
-    }
-
     private var shareControls: some View {
-        Group {
-            Section(L("Screen sharing")) {
-                Label(model.screenSharing || model.presenter.running ? L("Screen sharing is active") : L("Choose what others see"),
-                      systemImage: "rectangle.on.rectangle")
-                Text(ProcessInfo.processInfo.isiOSAppOnMac ? L("Choose a screen or window using the system picker.") :
-                        L("Choose what to share using the system picker."))
-                    .font(.footnote).foregroundStyle(.secondary)
-                if !model.canRequestScreenSharing {
-                    Text(L("Screen sharing is not available in this meeting.")).font(.footnote).foregroundStyle(.secondary)
-                }
-            }
-            Section(L("Presenter")) {
-                Button { model.editPresenter() } label: {
-                    Label(L("Open Presenter"), systemImage: "person.crop.rectangle")
-                }.accessibilityIdentifier("studio.open-presenter")
-                    .disabled(!model.presenter.available || model.held || !model.active)
-                Text(model.screenSharing ? L("Your current screen stays live until you start Presenter.") :
-                        L("Arrange your camera, slides and annotations before sharing."))
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
-        }
+        PresenterControls(model: model.presenter, recording: model.recording, images: images)
     }
 
     private var cameraControls: some View {
         Group {
             if model.presenter.running {
                 Section {
-                    Text(L("Your camera is controlled by Presenter while the canvas is shared."))
-                    Button(L("Open Presenter")) { model.editPresenter() }
+                    Text(L("Your camera is controlled in Share while this content is shared."))
+                    Button(L("Open Share")) { model.editPresenter() }
                     Button(L("Camera effects")) { model.showSystemSettings(.videoEffects) }
                         .disabled(!model.systemSettingsAvailable || model.presenter.cameraDevice == nil)
                     ForEach(model.cameraEffects.filter { $0.state != .unavailable }) { effect in
@@ -334,6 +279,53 @@ struct StudioPanel: View {
             }
         }
         }
+    }
+}
+
+/// Observe the publication owner independently of StudioModel's non-frame controls.
+/// A private source draft can replace the editor without replacing the live sender.
+private struct StudioShareWorkspace: View {
+    @ObservedObject var presenter: PresenterModel
+    @ObservedObject var recording: MeetingRecording
+    @ObservedObject var images: PresenterImageImport
+    @Binding var expanded: Bool
+    var canShare: Bool
+    var body: some View {
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                PresenterCanvasEditor(model: presenter.workspace, expanded: $expanded, canShare: canShare, publicationOwner: presenter)
+                    .frame(height: expanded ? geometry.size.height : min(300, geometry.size.height * 0.58))
+                if !expanded {
+                    Form { PresenterControls(model: presenter, recording: recording, images: images) }
+                        .accessibilityIdentifier("studio.settings")
+                }
+            }
+        }
+    }
+}
+
+private struct StudioShareFooter: View {
+    @ObservedObject var model: StudioModel
+    @ObservedObject var presenter: PresenterModel
+    var compact: Bool
+    var onScreenShare: ((Bool) -> Void)?
+    var body: some View {
+        if presenter.contentDraft != nil {
+            PresenterShareControl(model: presenter, compact: compact)
+        } else if presenter.source == .screen && presenter.makeScreenSource == nil {
+            if model.canRequestScreenSharing {
+                Button {
+                    let enabled = !(model.screenSharing || presenter.running)
+                    if let onScreenShare { onScreenShare(enabled) } else { model.requestScreenSharing(enabled) }
+                } label: {
+                    Label(model.screenSharing || presenter.running ? L("Stop sharing") : L("Start sharing"),
+                          systemImage: model.screenSharing || presenter.running ? "stop.circle" : "rectangle.on.rectangle")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }.buttonStyle(.borderedProminent).tint(model.screenSharing || presenter.running ? .red : .orange)
+                    .disabled(presenter.starting || presenter.stopping)
+                    .accessibilityIdentifier("studio.share-screen")
+            }
+        } else { PresenterShareControl(model: presenter, compact: compact) }
     }
 }
 

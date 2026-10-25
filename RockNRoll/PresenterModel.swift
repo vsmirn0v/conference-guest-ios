@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import ConferenceCore
 import ImageIO
 import UIKit
 
@@ -22,12 +23,37 @@ final class PresenterShareRequest {
 
 enum PresenterScreenSelection { case selected, cancelled }
 
+@MainActor private final class PresenterBorrowedCamera: PresenterCameraSource {
+    let detach: () -> Void
+    init(_ detach: @escaping () -> Void) { self.detach = detach }
+    func stop() async { detach() }
+}
+
 /// One compositor job and one latest camera frame. Setup is private until Share.
 @MainActor
 final class PresenterModel: ObservableObject {
     enum Source { case screen, canvas }
     enum Tool: String { case move, crop, draw }
     @Published private(set) var source: Source = .screen
+    @Published var encodingPreference = ShareEncodingPreference.saved() { didSet { encodingPreference.save(in: preferences) } }
+    @Published var encodingReport: ShareEncodingReport?
+    @Published var supportsVP9 = false
+    @Published var vp9UnavailableReason: String? = L("VP9 sharing is unavailable in this meeting.")
+    private(set) var activeEncodingPreference: ShareEncodingPreference = .efficient
+    @Published private(set) var contentDraft: PresenterModel?
+    var workspace: PresenterModel { contentDraft ?? self }
+    var canApplyContentChange: Bool {
+        guard let draft = contentDraft else { return false }
+        if draft.source == .screen && draft.makeScreenSource == nil && activeEncodingPreference == .textDetail { return false }
+        return !draft.screenPicking && !draft.screenPreparing &&
+            ((draft.source == .screen && draft.makeScreenSource == nil) || draft.hasPreview)
+    }
+    private var draftObservation: AnyCancellable?
+    private var contentSelectionRevision = UUID()
+    var imageImportRevision: UUID { contentSelectionRevision }
+    private var adoptedScreenOwner: PresenterModel?
+    private weak var screenDeliveryTarget: PresenterModel?
+    private var draftCameraSink: ((CVPixelBuffer, Int) -> Void)?
     @Published var tool: Tool = .move
     @Published private var undoStack: [PresenterCanvasEdit] = []
     @Published private var redoStack: [PresenterCanvasEdit] = []
@@ -169,6 +195,7 @@ final class PresenterModel: ObservableObject {
         self.screenPreparationTimeout = screenPreparationTimeout
         self.backgroundCompositionSupported = backgroundCompositionSupported
         self.preferences = preferences; self.energyBudget = energyBudget
+        encodingPreference = ShareEncodingPreference.saved(in: preferences)
         cameraInventory = CameraDeviceInventory(discover: cameraDevices)
         cameraInventoryObservation = cameraInventory.$available.sink { [weak self] devices in
             if self?.availableCameraCount != devices.count { self?.availableCameraCount = devices.count }
@@ -204,10 +231,9 @@ final class PresenterModel: ObservableObject {
 
     func open() {
         if !presented { refreshCameraAvailability() }
-        if !presented && !running && cameraOn && canCompose { includeCamera = true }
         presented = true; onPreviewVisibilityChanged?(true); error = nil; refresh()
     }
-    func close() { presented = false; onPreviewVisibilityChanged?(false); refresh() }
+    func close() { contentSelectionRevision = UUID(); cancelContentChange(); presented = false; onPreviewVisibilityChanged?(false); refresh() }
     func restorePreview() {
         guard presented, active, foreground, !held else { return }
         if let latest { preview.restore(latest, rotation: 0) }
@@ -290,6 +316,7 @@ final class PresenterModel: ObservableObject {
         timer?.invalidate(); timer = nil
     }
     private func acceptCamera(_ buffer: CVPixelBuffer, rotation: Int) {
+        draftCameraSink?(buffer, rotation)
         cameraFrame = buffer; self.rotation = rotation; cameraRevision &+= 1
         cameraTime = ProcessInfo.processInfo.systemUptime
         if !hasCameraFrames { hasCameraFrames = true }
@@ -424,7 +451,8 @@ final class PresenterModel: ObservableObject {
 
     func start() async {
         guard canStartSharing, let latest, let startSharing else { return }
-        error = nil; starting = true
+        error = nil; starting = true; encodingReport = nil
+        activeEncodingPreference = encodingPreference == .textDetail && !supportsVP9 ? .efficient : encodingPreference
         let attempt = shareEpoch
         shareRequest?.cancel()
         let request = PresenterShareRequest(); shareRequest = request
@@ -445,6 +473,7 @@ final class PresenterModel: ObservableObject {
         starting = false; refresh()
     }
     func stop() {
+        encodingReport = nil; cancelContentChange()
         let wasSharing = running || starting
         shareEpoch = UUID(); shareRequest?.cancel(); shareRequest = nil
         running = false; starting = false
@@ -456,7 +485,7 @@ final class PresenterModel: ObservableObject {
         refresh()
     }
     /// Called when an engine stops/retires its share sender; does not recurse.
-    func sharingEnded() { shareEpoch = UUID(); shareRequest?.cancel(); shareRequest = nil; running = false; starting = false; releaseScreen(); invalidateRender(); refresh() }
+    func sharingEnded() { encodingReport = nil; cancelContentChange(); shareEpoch = UUID(); shareRequest?.cancel(); shareRequest = nil; running = false; starting = false; releaseScreen(); invalidateRender(); refresh() }
     func end() {
         active = false; presented = false
         onPreviewVisibilityChanged?(false); onPreviewVisibilityChanged = nil
@@ -465,6 +494,71 @@ final class PresenterModel: ObservableObject {
         undoStack = []; redoStack = []; pendingEdit = nil
         startSharing = nil; sendSample = nil; stopSharing = nil; makeCameraSource = nil; preparePrivateCamera = nil
         makeScreenSource = nil; prepareScreenSource = nil; shareOtherApps = nil
+    }
+    /// Source selection always edits a private draft while a share is live.
+    func chooseScreenContent() {
+        contentSelectionRevision = UUID()
+        let target = running ? makeContentDraft() : self
+        if target.makeScreenSource != nil { target.selectScreen() }
+        else { target.releaseScreen(); target.source = .screen; target.invalidateRender(); target.refresh() }
+    }
+    func chooseCanvasContent(clearImage: Bool = false) {
+        contentSelectionRevision = UUID()
+        (running ? makeContentDraft() : self).selectCanvas(clearImage: clearImage)
+    }
+    private func makeContentDraft() -> PresenterModel {
+        if let contentDraft { return contentDraft }
+        let draft = PresenterModel(observeLifecycle: false, preferences: preferences,
+            backgroundCompositionSupported: backgroundCompositionSupported, energyBudget: energyBudget)
+        draft.scene = scene; draft.mirrorCamera = mirrorCamera; draft.source = source
+        draft.available = available; draft.cameraOn = cameraOn; draft.makeCameraSource = makeCameraSource
+        draft.makePrivateCamera = makePrivateCamera; draft.preparePrivateCamera = preparePrivateCamera
+        draft.makeScreenSource = makeScreenSource; draft.prepareScreenSource = prepareScreenSource
+        draft.shareOtherApps = shareOtherApps
+        draft.selectedCameraDevice = selectedCameraDevice; draft.cameraPosition = cameraPosition
+        // Borrow an already-running private camera rather than opening it twice.
+        if includeCamera {
+            draft.cameraOn = true
+            draft.makeCameraSource = { [weak self] sink in
+                self?.draftCameraSink = sink
+                if let self, let frame = self.cameraFrame { sink(frame, self.rotation) }
+                return PresenterBorrowedCamera { [weak self] in self?.draftCameraSink = nil }
+            }
+        }
+        draft.includeCamera = includeCamera; draft.open()
+        contentDraft = draft
+        draftObservation = draft.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        return draft
+    }
+    func cancelContentChange() {
+        contentSelectionRevision = UUID()
+        guard let draft = contentDraft else { return }
+        contentDraft = nil; draftObservation = nil; draftCameraSink = nil; draft.end()
+    }
+    func applyContentChange() async {
+        guard running, !starting, !stopping, canApplyContentChange, let draft = contentDraft else { return }
+        if draft.source == .screen && draft.makeScreenSource == nil {
+            // ReplayKit owns its consent preview; replacing a composed share is explicit.
+            cancelContentChange(); stop(); shareOtherApps?(); return
+        }
+        draft.presented = false
+        draft.invalidateCamera(); await draft.cameraStop?.value
+        guard running, contentDraft === draft else { return }
+        let nextCamera = draft.includeCamera, nextScene = draft.scene
+        let nextSource = draft.source, nextSample = draft.screenSample
+        let nextScreen = draft.screenSource, nextSize = draft.canvasSize
+        draft.screenSource = nil; draft.screenSample = nil; draft.screenSelected = false
+        releaseScreen()
+        source = nextSource; scene = nextScene; mirrorCamera = draft.mirrorCamera
+        includeCamera = nextCamera
+        if nextSource == .screen {
+            screenSource = nextScreen; screenSample = nextSample; screenSelected = nextSample != nil
+            canvasSize = nextSize; aspectRatio = draft.aspectRatio; nativeOverlay = draft.nativeOverlay
+            screenSelectionPhase = screenSelected ? .ready : .idle
+            adoptedScreenOwner = draft; draft.screenDeliveryTarget = self
+        }
+        contentDraft = nil; draftCameraSink = nil
+        draft.invalidateRender(); invalidateRender(); refresh()
     }
     func selectScreen() {
         guard active, !held, foreground, !screenPicking else { return }
@@ -492,7 +586,13 @@ final class PresenterModel: ObservableObject {
             self?.acceptScreen(sample, epoch: attempt)
         }, { [weak self] enabled in
             guard let self, self.screenEpoch == attempt else { return }
+            if let target = self.screenDeliveryTarget {
+                target.nativeOverlay = enabled; target.cameraFrame = nil; target.hasCameraFrames = false
+                if enabled { target.invalidateCamera() }
+                target.invalidateRender(); target.refresh(); return
+            }
             self.nativeOverlay = enabled; self.cameraFrame = nil; self.hasCameraFrames = false
+            if enabled { self.invalidateCamera() }
             self.invalidateRender(); self.refresh()
         }, { [weak self] selection in
             guard let self, self.screenEpoch == attempt else { return }
@@ -511,6 +611,7 @@ final class PresenterModel: ObservableObject {
             self.refresh()
         }, { [weak self] message in
             guard let self, self.screenEpoch == attempt else { return }
+            if let target = self.screenDeliveryTarget { target.error = message; target.stop(); return }
             self.error = message
             let fallback = self.screenPickerFallback
             if self.screenSelected || (fallback == .screen && (self.running || self.starting)) { self.stop() }
@@ -538,6 +639,7 @@ final class PresenterModel: ObservableObject {
         }
     }
     func acceptScreen(_ sample: CMSampleBuffer, epoch attempt: UUID? = nil) {
+        if let target = screenDeliveryTarget { target.acceptScreen(sample); return }
         guard active, !held, attempt == nil || screenEpoch == attempt,
               let pixels = CMSampleBufferGetImageBuffer(sample) else { return }
         screenSample = sample
@@ -582,6 +684,7 @@ final class PresenterModel: ObservableObject {
         nativeOverlay = false; cameraHiddenInBackground = false; aspectRatio = 16 / 9
         canvasSize = CGSize(width: 1280, height: 720)
         let retired = screenSource; screenSource = nil
+        adoptedScreenOwner?.screenDeliveryTarget = nil; adoptedScreenOwner = nil
         let previous = screenStop
         if let retired { screenStop = Task { await previous?.value; await retired.stop() } }
     }
@@ -600,10 +703,13 @@ final class PresenterModel: ObservableObject {
             kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: true
         ] as CFDictionary)
     }
-    func loadImage(_ data: Data, framing: PresenterScene.ImageFraming = .fit) async {
+    func loadImage(_ data: Data, framing: PresenterScene.ImageFraming = .fit, expectedRevision: UUID? = nil) async {
+        guard expectedRevision == nil || expectedRevision == contentSelectionRevision else { return }
+        let revision = contentSelectionRevision
         let result = await Task.detached(priority: .userInitiated) { DecodedImage(value: Self.decode(data)) }.value
-        guard active, !Task.isCancelled else { return }
-        applyImage(result.value, framing: framing)
+        guard active, revision == contentSelectionRevision, !Task.isCancelled else { return }
+        if running { makeContentDraft().applyImage(result.value, framing: framing) }
+        else { applyImage(result.value, framing: framing) }
     }
     private func applyImage(_ image: CGImage?, framing: PresenterScene.ImageFraming = .fit) {
         guard let image else { error = L("Choose an image smaller than 25 MB."); return }

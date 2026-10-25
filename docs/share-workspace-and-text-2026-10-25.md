@@ -1,0 +1,25 @@
+# Share workspace and text selection — October 25, 2026
+
+## Behavior
+
+Share and Presenter use one content-first workspace on iOS and native Mac. Choose a screen/window, document or background, optionally add a camera, then explicitly start publication. Camera begins off; cutout is the default when enabled. Preparing a replacement source is private: the existing source keeps sending until Apply. Cancel, picker dismissal and stale asynchronous imports cannot replace live content. The source change preserves the codec captured when that publication began.
+
+Advanced encoding defaults to Efficient. Text detail (VP9) is opt-in, with a software-encoding CPU/battery warning; improvement depends on content/network and is not promised. The active codec/implementation label uses sender-bound outbound statistics rather than the selected preference. VP9 is offered only for qualified guest composed sharing and the native Mac guest engine when advertised by the room. Other engines and iOS ReplayKit whole-screen capture retain their qualified codec path and explain why the option is unavailable. Camera/audio codec policy is unchanged.
+
+The native guest publisher advertises H.264 first plus VP9 capabilities on the initial camera media section, while registering and actually sending the camera as H.264. Screen sections remain restricted to their selected codec. An H.264-only initial section let the service accept VP9 registration yet answer its screen section as H.264; the final independent-receiver test exercises H.264 → VP9 → H.264, verifies real decoded frames at each step and separately verifies H.264 camera RTP.
+
+Select text is available on incoming shared content. It captures one full-resolution, orientation-correct immutable frame on demand, with source/time identity. Native Live Text provides touch/drag selection and Copy. The frozen selection supports zoom/pan, New frame and Back to Live; meeting audio and controls continue. The snapshot remains labeled as captured if a source ends/replaces it. No image/text is persisted, uploaded or copied to the clipboard automatically. Unsupported Live Text hardware receives an on-device selectable transcript.
+
+Native plain screen sharing without a camera/annotations passes through the original 4K buffer without compositor copying; enabling composition uses its existing composition resolution. Removing the camera restores the original plain-screen path.
+
+## Validation
+
+Evidence is under `.build/share-features110/` (local, retained). Core: 141 tests passed. Simulator broad regressions: 197 cases, 26 explicit skips, no failures. The final UI/affected-unit run: five UI tests plus 16 unit tests passed, including portrait/landscape Apply/Cancel, delayed publication, Russian large text and private entry without capture. Native standalone presenter: 59 assertions; native capture: 17 assertions. Live native independent receiver: hardware H.264 → software VP9 → hardware H.264, 1920×1080 decoded frames, camera H.264 and fresh frames after VP9 source replacement.
+
+A mixed Cyrillic/Latin Live Text check exceeded its deadline under concurrent simulator UI load, but passed in 0.543 seconds in an isolated signed host. The same XPC warning appeared in the passing run; neither a sandbox nor resource-pressure root cause is established. A subsequent full suite exposed a test-only AppKit window lifetime error during teardown; it is tracked in the retained failed result rather than counted as a pass. The native fixture now disables automatic NSWindow release on close. The OCR workflow now bounds UI waiting to 12 seconds, retains its captured image, rejects late results and keeps the process-wide permit until the system operation actually returns. Reopening cannot create overlapping jobs or keep the previous UI alive. No automatic retry occurs.
+
+Final native suite: 89 cases, 74 passed, 15 explicit skips, zero failures, including the disposable live codec sequence, real bilingual recognition, deadline/lifecycle checks, updater safety and CloudKit/continuation unit contracts. Native compact/wide editor layout and Live Text were visually inspected; bitmap-cache captures omit native control layers, so the live-window screenshot was used to verify real control rendering. Distribution tooling: 18 tests passed. Final simulator OCR/lifecycle suite: 10 passed, no failures. The weak-owner test allows a UIKit layout/autorelease turn and proves deallocation before suspended OCR resumes; production ownership did not require another change. The separately completed affected PresenterCanvas tests also passed. Astra xhigh reviewed the final source and timeout/lifecycle tests with no remaining concrete blocker.
+
+## Deferred physical iPhone acceptance
+
+Per user instruction: no new physical-device run for this release. Verify composed VP9 outgoing camera/share independence, source replacement, thermals/battery relative to Efficient, real touch Live Text selection/Copy/zoom/rotation and source changes, plus call/background recovery while the selection is open. iOS whole-screen ReplayKit VP9 remains unavailable until independently qualified; no battery improvement is claimed.

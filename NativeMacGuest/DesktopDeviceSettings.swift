@@ -252,6 +252,8 @@ struct NativeDesktopVideoView: NSViewRepresentable {
     var crop: CGRect?
     var zoom: CGFloat = 1
     var pan: CGSize = .zero
+    var textFrame: NativeDesktopTextFrame? = nil
+    var textSourceID: String? = nil
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeNSView(context: Context) -> NSView {
         let host = NativeDesktopVideoHost(); host.wantsLayer = true; host.layer?.backgroundColor = NSColor.black.cgColor
@@ -259,10 +261,19 @@ struct NativeDesktopVideoView: NSViewRepresentable {
             guard let host else { return }; coordinator?.refreshVisibility(host: host)
         }
         context.coordinator.bind(track: track, mirrored: mirrored, crop: crop, zoom: zoom, pan: pan, host: host)
+        bindTextCapture(context.coordinator)
         return host
     }
     func updateNSView(_ view: NSView, context: Context) {
         context.coordinator.bind(track: track, mirrored: mirrored, crop: crop, zoom: zoom, pan: pan, host: view)
+        bindTextCapture(context.coordinator)
+    }
+    private func bindTextCapture(_ coordinator: Coordinator) {
+        guard let textFrame, let textSourceID else { return }
+        textFrame.provider = .init(sourceID: textSourceID, capture: { [weak coordinator, weak expectedTrack = track, expectedCrop = crop, expectedMirrored = mirrored] in
+            guard let coordinator, let expectedTrack else { return nil }
+            return await coordinator.snapshotImage(expectedTrack: expectedTrack, expectedCrop: expectedCrop, expectedMirrored: expectedMirrored)
+        })
     }
     static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
         (view as? NativeDesktopVideoHost)?.stopObserving(); coordinator.detach()
@@ -274,6 +285,10 @@ struct NativeDesktopVideoView: NSViewRepresentable {
         private var crop: CGRect?
         private var zoom: CGFloat = 1
         private var pan = CGSize.zero
+        func snapshotImage(expectedTrack: LKRTCVideoTrack, expectedCrop: CGRect?, expectedMirrored: Bool) async -> CGImage? {
+            guard track === expectedTrack, crop == expectedCrop, mirrored == expectedMirrored else { return nil }
+            return await sink?.snapshotImage(expectedCrop: expectedCrop)
+        }
         func bind(track: LKRTCVideoTrack, mirrored: Bool, crop: CGRect?, zoom: CGFloat, pan: CGSize, host: NSView) {
             if self.track !== track || self.mirrored != mirrored {
                 retireRenderer(); self.track = track; self.mirrored = mirrored

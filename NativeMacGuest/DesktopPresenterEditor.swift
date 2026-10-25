@@ -1,4 +1,5 @@
 import AppKit
+import ConferenceCore
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -15,12 +16,12 @@ private struct NativeDesktopPresenterInspector: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                NativeDesktopPresenterCanvas(session: session).aspectRatio(session.aspectRatio, contentMode: .fit)
+                NativeDesktopPresenterCanvas(session: session.workspace).aspectRatio(session.aspectRatio, contentMode: .fit)
                     .frame(minHeight: 140).clipShape(RoundedRectangle(cornerRadius: 10))
                 NativeDesktopPresenterStatus(session: session)
                 Button { expanded = true } label: { Label(L("Open canvas editor"), systemImage: "arrow.up.left.and.arrow.down.right") }
                     .frame(maxWidth: .infinity).accessibilityIdentifier("presenter.expand")
-                NativeDesktopPresenterControls(session: session)
+                NativeDesktopPresenterControls(session: session.workspace, owner: session)
                 NativeDesktopPresenterPublication(session: session)
                 if let error = session.error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
             }.padding(18)
@@ -37,7 +38,7 @@ struct NativeDesktopPresenterEditor: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(L("Presenter")).font(.title2.bold())
+                Text(L("Share")).font(.title2.bold())
                 NativeDesktopPresenterStatus(session: session)
                 Spacer()
                 Button(L("Done")) { dismiss() }.keyboardShortcut(.escape, modifiers: [])
@@ -45,34 +46,34 @@ struct NativeDesktopPresenterEditor: View {
             Divider()
             HStack(spacing: 0) {
                 VStack(spacing: 12) {
-                    NativeDesktopPresenterCanvas(session: session).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    NativeDesktopPresenterCanvas(session: session.workspace).frame(maxWidth: .infinity, maxHeight: .infinity)
                     HStack {
-                        Picker(L("Canvas tool"), selection: $session.tool) {
+                        Picker(L("Canvas tool"), selection: Binding(get: { session.workspace.tool }, set: { session.workspace.tool = $0 })) {
                             Label(L("Move camera"), systemImage: "move.3d").tag(NativeDesktopPresenterSession.Tool.move)
                             Label(L("Draw"), systemImage: "pencil.tip").tag(NativeDesktopPresenterSession.Tool.draw)
                             Label(L("Crop"), systemImage: "crop").tag(NativeDesktopPresenterSession.Tool.crop)
                         }.pickerStyle(.segmented).frame(maxWidth: 340)
                         Spacer()
-                        Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                            .help(L("Undo")).disabled(!session.canUndo).keyboardShortcut("z", modifiers: .command)
-                        Button { session.redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                            .help(L("Redo")).disabled(!session.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
-                        Button { session.clearDrawings() } label: { Image(systemName: "trash") }
-                            .help(L("Clear drawings")).disabled(session.scene.strokes.isEmpty)
+                        Button { session.workspace.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                            .help(L("Undo")).disabled(!session.workspace.canUndo).keyboardShortcut("z", modifiers: .command)
+                        Button { session.workspace.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                            .help(L("Redo")).disabled(!session.workspace.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
+                        Button { session.workspace.clearDrawings() } label: { Image(systemName: "trash") }
+                            .help(L("Clear drawings")).disabled(session.workspace.scene.strokes.isEmpty)
                     }
                     Text(hint).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                     if let error = session.error { Text(error).foregroundStyle(.red).font(.caption).textSelection(.enabled) }
                 }.padding(18).frame(maxWidth: .infinity)
                 Divider()
-                ScrollView { NativeDesktopPresenterControls(session: session).padding(18) }.frame(width: 270)
+                ScrollView { NativeDesktopPresenterControls(session: session.workspace, owner: session).padding(18) }.frame(width: 270)
             }
             Divider()
             HStack { NativeDesktopPresenterPublication(session: session) }.padding(18)
         }.frame(minWidth: 860, idealWidth: 1100, minHeight: 600, idealHeight: 760)
-            .onDisappear { session.cancelEdit() }
+            .onDisappear { session.workspace.cancelEdit() }
     }
     private var hint: String {
-        switch session.tool {
+        switch session.workspace.tool {
         case .move: return L("Drag the camera frame to move it. Drag its corner to resize.")
         case .draw: return L("Draw directly on the canvas. Undo removes the last stroke.")
         case .crop: return L("Choose Instrument, then drag inside the camera frame to adjust its crop.")
@@ -83,8 +84,8 @@ struct NativeDesktopPresenterEditor: View {
 private struct NativeDesktopPresenterStatus: View {
     @ObservedObject var session: NativeDesktopPresenterSession
     var body: some View {
-        Label(session.isSharing ? L("Live · Visible to meeting") : L("Only you · Private preparation"),
-              systemImage: session.isSharing ? "dot.radiowaves.left.and.right" : "lock.fill")
+        Label(session.contentDraft != nil ? L("Change preview · Not yet shared") : session.isSharing ? L("Live · Visible to meeting") : L("Only you · Private preparation"),
+              systemImage: session.isSharing && session.contentDraft == nil ? "dot.radiowaves.left.and.right" : "lock.fill")
             .font(.caption).foregroundStyle(session.isSharing ? Color.orange : Color.secondary)
             .accessibilityIdentifier("presenter.visibility")
     }
@@ -95,7 +96,14 @@ private struct NativeDesktopPresenterPublication: View {
     var body: some View {
         HStack {
             if session.isPreparing || session.isPublishing || session.isClosing { ProgressView().controlSize(.small) }
-            if session.isSharing {
+            if session.contentDraft != nil {
+                Button(L("Change shared content")) { Task { do { try await session.applyContentChange() } catch { session.reportError(error) } } }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(session.contentDraft?.canStartSharing != true || session.contentDraft?.cameraPreparing == true || session.applyingContent || session.isClosing)
+                    .accessibilityIdentifier("share.apply-content")
+                Button(L("Cancel content change")) { Task { await session.cancelContentChange() } }
+                    .disabled(session.applyingContent).accessibilityIdentifier("share.cancel-content")
+            } else if session.isSharing {
                 Button(L("Stop sharing"), role: .destructive) { Task { do { try await session.stopSharing() } catch { session.reportError(error) } } }
                     .disabled(session.isPublishing || session.isClosing)
             } else {
@@ -112,22 +120,31 @@ private struct NativeDesktopPresenterPublication: View {
 
 private struct NativeDesktopPresenterControls: View {
     @ObservedObject var session: NativeDesktopPresenterSession
+    @ObservedObject var owner: NativeDesktopPresenterSession
+    @State private var advanced = false
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(L("Content")).font(.headline)
-            HStack {
-                Button(L("Canvas")) { Task { await session.chooseCanvas() } }
-                Button(L("Screen or window…")) { Task { await session.chooseScreen() } }
-            }.disabled(session.isSharing || session.isPublishing || session.isPreparing || session.isClosing)
-            if session.isSharing { Text(L("Stop sharing before choosing different screen content.")).font(.caption).foregroundStyle(.secondary) }
+            Menu {
+                Button(L("Screen or window…")) { Task { await owner.chooseScreen() } }
+                Button(L("Image or slides…")) { Task { await chooseImage() } }
+                Button(L("Canvas or background")) { Task { await owner.chooseCanvas() } }
+            } label: { Label(session.source == .canvas ? (session.scene.image == nil ? L("Canvas or background") : L("Image or slides")) : L("Screen or window"), systemImage: session.source == .canvas ? "photo" : "rectangle.on.rectangle") }
+                .disabled(owner.isPublishing || session.isPreparing || owner.isClosing || owner.applyingContent)
+                .accessibilityIdentifier("share.content")
+            if owner.contentDraft != nil { Text(L("Your current share continues until you confirm this change.")).font(.caption).foregroundStyle(.secondary) }
             Text(session.source == .canvas ? L("Canvas") : L("Selected screen or window")).font(.caption).foregroundStyle(.secondary)
             Divider()
             Toggle(L("Include camera"), isOn: Binding(get: { session.includeCamera }, set: { enabled in Task { await session.setIncludeCamera(enabled) } }))
-                .disabled(session.isClosing || (!session.includeCamera && (session.cameraPreparing || session.isPreparing || session.previewTrack == nil)))
+                .disabled(session.nativeOverlay || session.isClosing || (!session.includeCamera && (session.cameraPreparing || session.isPreparing || session.previewTrack == nil)))
                 .accessibilityIdentifier("presenter.include-camera")
+            if session.nativeOverlay {
+                Label(L("macOS Presenter Overlay is active"), systemImage: "person.crop.rectangle")
+                Text(L("Move or resize the camera using macOS controls. The app does not add a second camera layer.")).font(.caption).foregroundStyle(.secondary)
+            }
             if session.cameraPreparing { ProgressView(L("Preparing private camera…")).controlSize(.small) }
-            Text(L("Camera stays private until you start sharing. An already live meeting camera is reused.")).font(.caption).foregroundStyle(.secondary)
-            if session.includeCamera {
+            Text(owner.contentDraft != nil ? L("Camera and layout changes stay private until you confirm.") : owner.isSharing ? L("Camera and layout changes appear in your live share.") : L("Camera stays private until you start sharing. An already live meeting camera is reused.")).font(.caption).foregroundStyle(.secondary)
+            if session.includeCamera && !session.nativeOverlay {
                 Picker(L("Camera layout"), selection: Binding(get: { session.scene.layout }, set: { value in session.edit { $0.layout = value } })) {
                     Text(L("Person cutout")).tag(PresenterScene.Layout.cutout)
                     Text(L("Camera card")).tag(PresenterScene.Layout.card)
@@ -171,6 +188,20 @@ private struct NativeDesktopPresenterControls: View {
                 }.pickerStyle(.segmented)
                 Button(L("Remove image")) { session.scene.image = nil }
             }
+            DisclosureGroup(isExpanded: $advanced) {
+                Picker(L("Encoding"), selection: $owner.encodingPreference) {
+                    Text(L("Efficient · Default")).tag(ShareEncodingPreference.efficient)
+                    Text(L("Text detail · VP9")).tag(ShareEncodingPreference.textDetail)
+                        .disabled(!owner.supportsVP9)
+                }
+                Text(owner.encodingPreference == .textDetail ? L("May make small text slightly clearer. Uses more CPU and battery.") : L("Uses hardware H.264 when available to save energy."))
+                    .font(.caption).foregroundStyle(.secondary)
+                if !owner.supportsVP9, let reason = owner.vp9UnavailableReason { Text(reason).font(.caption).foregroundStyle(.secondary) }
+                if owner.isSharing { Text(L("Encoding changes apply after Stop → Start sharing.")).font(.caption).foregroundStyle(.secondary) }
+                if let report = owner.encodingReport { Text(report.summary).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("share.encoding-report") }
+            } label: {
+                HStack { Text(L("Advanced")); Spacer(); Text(owner.encodingPreference == .efficient ? L("Efficient encoding") : L("VP9 encoding")).foregroundStyle(.secondary).font(.caption) }
+            }.accessibilityIdentifier("share.advanced")
             Text(L("Layout, placement and camera mirroring are remembered. Screen access and camera inclusion are requested for each session.")).font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -178,7 +209,7 @@ private struct NativeDesktopPresenterControls: View {
         session.edit { $0.placement.x = right ? 0.97 - $0.placement.width : 0.03; $0.placement.y = bottom ? 0.96 - $0.placement.height : 0.04 }
     }
     @MainActor private func chooseImage() async {
-        let revision = session.imageImportRevision
+        let revision = owner.imageImportRevision
         let panel = NSOpenPanel(); panel.allowedContentTypes = [.image]; panel.allowsMultipleSelection = false; panel.canChooseDirectories = false
         guard await panel.begin() == .OK, let url = panel.url else { return }
         do {
@@ -189,7 +220,7 @@ private struct NativeDesktopPresenterControls: View {
                 guard let size = values.fileSize, size <= 25_000_000 else { throw NativeDesktopPresenterError.invalidImage }
                 return try Data(contentsOf: url, options: .mappedIfSafe)
             }.value
-            await session.loadImage(data, expectedRevision: revision, selectCanvas: true)
+            await owner.chooseImage(data, expectedRevision: revision)
         } catch { session.reportError(error) }
     }
 }
@@ -210,7 +241,7 @@ private struct NativeDesktopPresenterCanvas: View {
                 if let track = session.previewTrack { NativeDesktopVideoView(track: track) }
                 else { Text(session.isPreparing ? L("Preparing private preview…") : L("Choose content to prepare")).foregroundStyle(.white.opacity(0.7)) }
                 Color.clear.contentShape(Rectangle()).gesture(canvasGesture(size))
-                if session.includeCamera && session.scene.layout != .beside && session.tool != .draw {
+                if session.includeCamera && !session.nativeOverlay && session.scene.layout != .beside && session.tool != .draw {
                     let placement = session.scene.placement
                     Rectangle().strokeBorder(.orange.opacity(0.85), style: StrokeStyle(lineWidth: 1, dash: [5, 3]))
                         .frame(width: placement.width * size.width, height: placement.height * size.height)

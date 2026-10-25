@@ -10,6 +10,67 @@ final class PresenterCanvasTests: XCTestCase {
         addTeardownBlock { preferences.removePersistentDomain(forName: suite) }
         return PresenterModel(observeLifecycle: false, preferences: preferences)
     }
+    func testOpeningShareKeepsCameraOffEvenWithLiveMeetingCamera() {
+        let model = makeModel(); defer { model.end() }
+        model.update(cameraOn: true, held: false); model.selectCanvas(); model.open()
+        XCTAssertFalse(model.includeCamera)
+        XCTAssertTrue(model.cameraOn)
+    }
+    func testLiveContentDraftDoesNotChangePublicationUntilExplicitApply() async throws {
+        let model = makeModel(); defer { model.end() }
+        model.setForeground(true)
+        var starts = 0, stops = 0
+        model.startSharing = { _, _ in starts += 1 }; model.stopSharing = { stops += 1 }
+        model.supportsVP9 = true; model.encodingPreference = .textDetail
+        model.selectCanvas(); model.open()
+        for _ in 0..<200 where !model.canStartSharing { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(model.canStartSharing); await model.start()
+        XCTAssertTrue(model.running); XCTAssertEqual(starts, 1)
+        model.encodingPreference = .efficient
+        let original = model.scene
+        model.chooseCanvasContent(clearImage: true)
+        let draft = try XCTUnwrap(model.contentDraft)
+        draft.scene.backdrop = .warm
+        draft.scene.placement.x = 0.1
+        XCTAssertEqual(model.scene, original)
+        XCTAssertTrue(model.running); XCTAssertEqual(starts, 1); XCTAssertEqual(stops, 0)
+        model.cancelContentChange()
+        XCTAssertNil(model.contentDraft); XCTAssertEqual(model.scene, original)
+        model.chooseCanvasContent(clearImage: true)
+        model.contentDraft?.scene.backdrop = .warm
+        for _ in 0..<200 where !model.canApplyContentChange { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(model.canApplyContentChange); await model.applyContentChange()
+        XCTAssertEqual(model.scene.backdrop, .warm); XCTAssertNil(model.contentDraft)
+        XCTAssertTrue(model.running); XCTAssertEqual(starts, 1); XCTAssertEqual(stops, 0)
+        XCTAssertEqual(model.activeEncodingPreference, .textDetail)
+    }
+    func testExternalImageReadCannotApplyAfterSourceChangeOrCancel() async throws {
+        for cancel in [false, true] {
+            let model = makeModel(); defer { model.end() }
+            model.setForeground(true); model.startSharing = { _, _ in }; model.stopSharing = {}
+            model.selectCanvas(); model.open()
+            for _ in 0..<200 where !model.canStartSharing { try await Task.sleep(for: .milliseconds(10)) }
+            await model.start(); XCTAssertTrue(model.running)
+            let importer = PresenterImageImport(model: model)
+            let image = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).image { context in
+                UIColor.systemRed.setFill(); context.cgContext.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+            }
+            let data = try XCTUnwrap(image.pngData())
+            var reader: CheckedContinuation<Data?, Never>?
+            importer.loadData { await withCheckedContinuation { reader = $0 } }
+            for _ in 0..<100 where reader == nil { await Task.yield() }
+            XCTAssertNotNil(reader)
+            if cancel { model.cancelContentChange() } else { model.chooseCanvasContent(clearImage: true) }
+            let expectedDraft = model.contentDraft
+            reader?.resume(returning: data)
+            await importer.waitForImportForTesting()
+            XCTAssertTrue(model.running)
+            XCTAssertTrue(model.contentDraft === expectedDraft)
+            XCTAssertNil(model.scene.image)
+            XCTAssertNil(model.contentDraft?.scene.image)
+            importer.cancel()
+        }
+    }
     func testUndoTreatsWholeCameraGestureAsOneEditAndPreservesPrivacy() {
         let model = makeModel()
         defer { model.end() }
@@ -36,7 +97,7 @@ final class PresenterCanvasTests: XCTestCase {
         model.clearDrawings()
         model.undoCanvasEdit(); XCTAssertEqual(model.scene.strokes, [line])
         model.undoCanvasEdit(); XCTAssertEqual(model.scene.placement, original)
-        XCTAssertEqual(model.scene.layout, .card); XCTAssertEqual(model.scene.zoom, 1)
+        XCTAssertEqual(model.scene.layout, .cutout); XCTAssertEqual(model.scene.zoom, 1)
         model.undoCanvasEdit(); XCTAssertTrue(model.scene.strokes.isEmpty)
         model.redoCanvasEdit(); model.redoCanvasEdit(); model.redoCanvasEdit()
         XCTAssertEqual(model.scene.placement.x, 0.1); XCTAssertTrue(model.scene.strokes.isEmpty)

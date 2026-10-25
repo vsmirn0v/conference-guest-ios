@@ -220,7 +220,7 @@ struct MeetingViewContent: View {
         NavigationStack {
             List {
                 if !companionActions.isEmpty {
-                    Section(L("Presenter")) { MeetingActionRows(elements: companionActions, perform: performAction) }
+                    Section(L("Shared content")) { MeetingActionRows(elements: companionActions, perform: performAction) }
                 }
                 Section {
                     ForEach(MeetingLayoutMode.allCases, id: \.self) { mode in

@@ -193,6 +193,25 @@ final class CompanionVideoSink: NSObject, LKRTCVideoRenderer, MTKViewDelegate, @
             if valid { self.view.draw() }
         }
     }
+
+    /// Materialize the existing full-resolution prepared frame only on request.
+    /// Zoom/pan are local presentation and never reduce OCR resolution.
+    func snapshotImage(expectedCrop: CGRect?) async -> CGImage? {
+        lock.lock()
+        let current = active && crop == expectedCrop ? prepared?.image : nil, crop = crop
+        lock.unlock()
+        guard var image = current else { return nil }
+        if let crop, crop.minX.isFinite, crop.minY.isFinite, crop.width.isFinite, crop.height.isFinite,
+           crop.width > 0, crop.height > 0 {
+            let region = CGRect(x: image.extent.minX + crop.minX * image.extent.width,
+                y: image.extent.minY + (1 - crop.maxY) * image.extent.height,
+                width: crop.width * image.extent.width, height: crop.height * image.extent.height).intersection(image.extent)
+            guard !region.isEmpty else { return nil }
+            image = image.cropped(to: region)
+        }
+        let capturedImage = image
+        return await Task.detached(priority: .userInitiated) { SharedTextImage.materialize(capturedImage) }.value
+    }
     var frames: Int { lock.lock(); defer { lock.unlock() }; return count }
     func presentationWindow(from start: Double, to end: Double) -> GuestFrameWindow {
         lock.lock(); defer { lock.unlock() }

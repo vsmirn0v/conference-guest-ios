@@ -21,10 +21,20 @@ enum GuestSDPSummary {
         for line in sdp.components(separatedBy: .newlines) where !line.isEmpty {
             if line.hasPrefix("m=") {
                 finish(); current = line.hasPrefix("m=video ") ? [:] : nil
+                if current != nil {
+                    let fields = line.split(separator: " ")
+                    if fields.count > 1, let port = Int(fields[1]), (0...65535).contains(port) {
+                        current?["rejected"] = port == 0
+                    }
+                }
                 codecs = [:]; feedback = [:]; repair = [:]; parameters = [:]
             }
             guard current != nil else { continue }
-            if line.hasPrefix("a=rtpmap:") {
+            if line.hasPrefix("a=mid:"), let mid = Int(line.dropFirst(6)), (0...65535).contains(mid) {
+                current?["mid"] = mid
+            } else if ["a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive"].contains(line) {
+                current?["direction"] = String(line.dropFirst(2))
+            } else if line.hasPrefix("a=rtpmap:") {
                 let fields = line.dropFirst(9).split(separator: " ")
                 guard fields.count == 2, let payload = Int(fields[0]), (0...127).contains(payload),
                       let codec = fields[1].split(separator: "/").first?.lowercased(),

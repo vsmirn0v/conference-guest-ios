@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import ConferenceCore
 import UniformTypeIdentifiers
 import ImagePlayground
 
@@ -7,22 +8,38 @@ struct PresenterControls: View {
     @ObservedObject var model: PresenterModel
     @ObservedObject var recording: MeetingRecording
     @ObservedObject var images: PresenterImageImport
+    var body: some View { PresenterWorkspaceControls(model: model.workspace, owner: model, recording: recording, images: images) }
+}
+
+private struct PresenterWorkspaceControls: View {
+    @ObservedObject var model: PresenterModel
+    @ObservedObject var owner: PresenterModel
+    @ObservedObject var recording: MeetingRecording
+    @ObservedObject var images: PresenterImageImport
     @State private var showSource = false
+    @State private var advanced = false
     var body: some View {
-        Section(L("Share source")) {
+        Section(L("Content")) {
             Button { showSource = true } label: {
                 Label(model.source == .screen ? L("Screen or window") : model.scene.image != nil ? L("Image") : L("Blank canvas"),
                       systemImage: model.source == .screen ? "rectangle.on.rectangle" : model.scene.image != nil ? "photo" : "rectangle")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }.buttonStyle(.borderless).accessibilityIdentifier("presenter.source")
-                .confirmationDialog(L("Share source"), isPresented: $showSource, titleVisibility: .visible) {
-                    Button(ProcessInfo.processInfo.isiOSAppOnMac ? L("Screen or window") : L("Screen / other apps")) { model.selectScreen() }
+                .confirmationDialog(L("Content"), isPresented: $showSource, titleVisibility: .visible) {
+                    Button(ProcessInfo.processInfo.isiOSAppOnMac ? L("Screen or window") : L("Screen / other apps")) { owner.chooseScreenContent() }
                         .disabled(model.screenPicking)
                     Button(L("Choose slide or background")) { images.chooseImage() }
-                    Button(L("Blank canvas")) { model.selectCanvas(clearImage: true) }
+                    Button(L("Blank canvas")) { owner.chooseCanvasContent(clearImage: true) }
                 }
+            if owner.contentDraft != nil {
+                Text(L("Your current share continues until you confirm this change.")).font(.footnote).foregroundStyle(.secondary)
+                if model.source == .screen && model.makeScreenSource == nil && owner.activeEncodingPreference == .textDetail {
+                    Text(L("Stop sharing, then start Entire screen to use efficient encoding. Your current VP9 share continues until you stop it."))
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
             if model.source == .screen && !ProcessInfo.processInfo.isiOSAppOnMac {
-                Text(L("Camera overlay and drawings aren’t available while sharing other apps. Choose an image or canvas to use Presenter."))
+                Text(L("Camera overlays and drawings are available with images and canvases. Entire-screen sharing uses the iOS broadcast picker."))
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
@@ -59,7 +76,7 @@ struct PresenterControls: View {
                 Text(L("The screen continues in the background. The app camera layer and drawings return when you reopen the app; macOS manages its own overlay."))
                     .font(.footnote).foregroundStyle(.secondary)
             } else if model.source == .canvas {
-                Text(L("Only this composed canvas is shared. Sharing it stops in the background. Your camera becomes part of the canvas when sharing starts."))
+                Text(L("Keep Rock’n’Roll open while sharing this content. Your camera becomes part of the shared content only when you start sharing."))
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
@@ -85,6 +102,24 @@ struct PresenterControls: View {
             }
             if let error = model.error { Text(error).foregroundStyle(.red).accessibilityIdentifier("presenter.error") }
         }
+        Section {
+            DisclosureGroup(isExpanded: $advanced) {
+                Picker(L("Encoding"), selection: $owner.encodingPreference) {
+                    Text(L("Efficient · Default")).tag(ShareEncodingPreference.efficient)
+                    Text(L("Text detail · VP9")).tag(ShareEncodingPreference.textDetail)
+                        .disabled(!owner.supportsVP9 || (model.source == .screen && !ProcessInfo.processInfo.isiOSAppOnMac))
+                }
+                Text(owner.encodingPreference == .textDetail ? L("May make small text slightly clearer. Uses more CPU and battery.") : L("Uses hardware H.264 when available to save energy."))
+                    .font(.footnote).foregroundStyle(.secondary)
+                if model.source == .screen && !ProcessInfo.processInfo.isiOSAppOnMac {
+                    Text(L("VP9 is not yet available for entire-screen broadcasts on iPhone or iPad.")).font(.footnote).foregroundStyle(.secondary)
+                } else if !owner.supportsVP9, let reason = owner.vp9UnavailableReason { Text(reason).font(.footnote).foregroundStyle(.secondary) }
+                if owner.running { Text(L("Encoding changes apply after Stop → Start sharing.")).font(.footnote).foregroundStyle(.secondary) }
+                if let report = owner.encodingReport { Text(report.summary).font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("share.encoding-report") }
+            } label: {
+                HStack { Text(L("Advanced")); Spacer(); Text(owner.encodingPreference == .efficient ? L("Efficient encoding") : L("VP9 encoding")).font(.footnote).foregroundStyle(.secondary) }
+            }.accessibilityIdentifier("share.advanced")
+        }
         RecordingControls(model: recording)
         .onDisappear { model.scene.draftStroke = [] }
     }
@@ -104,31 +139,38 @@ final class PresenterImageImport: ObservableObject {
         if ProcessInfo.processInfo.isiOSAppOnMac { showFile = true } else { showPhoto = true }
     }
     func loadPhoto(_ item: PhotosPickerItem?) {
-        operation?.cancel()
-        guard let item else { return }
-        operation = Task { [model] in
-            do {
-                if let data = try await item.loadTransferable(type: Data.self), !Task.isCancelled { await model.loadImage(data) }
-            } catch { if !Task.isCancelled { model.reportImportError(error.localizedDescription) } }
-        }
+        guard let item else { cancel(); return }
+        loadData { try await item.loadTransferable(type: Data.self) }
     }
     func loadFile(_ result: Result<URL, Error>) {
-        operation?.cancel()
-        operation = Task { [model] in
-            do {
-                let url = try result.get()
-                let data = try await Task.detached(priority: .userInitiated) {
-                    let allowed = url.startAccessingSecurityScopedResource()
-                    defer { if allowed { url.stopAccessingSecurityScopedResource() } }
-                    return try Data(contentsOf: url, options: .mappedIfSafe)
-                }.value
-                guard !Task.isCancelled else { return }
-                await model.loadImage(data)
-            } catch is CancellationError {
-            } catch let error as CocoaError where error.code == .userCancelled {
-            } catch { if !Task.isCancelled { model.reportImportError(error.localizedDescription) } }
+        loadData {
+            let url = try result.get()
+            return try await Task.detached(priority: .userInitiated) {
+                let allowed = url.startAccessingSecurityScopedResource()
+                defer { if allowed { url.stopAccessingSecurityScopedResource() } }
+                return try Data(contentsOf: url, options: .mappedIfSafe)
+            }.value
         }
     }
+    /// Fence the external photo/file read, not only the later image decode.
+    /// Cancelling or choosing another source cannot revive a retired draft.
+    func loadData(_ read: @escaping () async throws -> Data?) {
+        operation?.cancel()
+        let revision = model.imageImportRevision
+        operation = Task { [model] in
+            do {
+                guard let data = try await read(), !Task.isCancelled else { return }
+                await model.loadImage(data, expectedRevision: revision)
+            } catch is CancellationError {
+            } catch let error as CocoaError where error.code == .userCancelled {
+            } catch {
+                if !Task.isCancelled, model.imageImportRevision == revision { model.reportImportError(error.localizedDescription) }
+            }
+        }
+    }
+    #if DEBUG
+    func waitForImportForTesting() async { await operation?.value }
+    #endif
     func cancel() { operation?.cancel(); operation = nil }
 }
 
@@ -219,6 +261,18 @@ struct PresenterShareControl: View {
         model.running ? L("Stop sharing") : model.screenPreparing ? L("Preparing preview…") : model.screenPicking ? L("Choose a source…") : model.source == .screen && !model.screenSelected ? L("Choose screen") : L("Start sharing")
     }
     var body: some View {
+        VStack(spacing: 8) {
+        if model.contentDraft != nil {
+            Button(L("Change shared content")) { Task { await model.applyContentChange() } }
+                .buttonStyle(.borderedProminent).disabled(!model.canApplyContentChange)
+                .accessibilityIdentifier("share.apply-content")
+            Button(L("Cancel content change")) { model.cancelContentChange() }
+                .accessibilityIdentifier("share.cancel-content")
+            if model.contentDraft?.source == .screen && model.contentDraft?.makeScreenSource == nil && model.activeEncodingPreference == .textDetail {
+                Button(L("Stop sharing"), role: .destructive) { model.stop(); model.chooseScreenContent() }
+                    .accessibilityIdentifier("presenter.stop")
+            }
+        } else {
         Button {
             if model.running { model.stop() } else if model.source == .screen && !model.screenSelected { model.selectScreen() } else { Task { await model.start() } }
         } label: {
@@ -233,5 +287,7 @@ struct PresenterShareControl: View {
                 !(model.canStartSharing || (model.source == .screen && !model.screenSelected && model.screenSelectionPhase == .idle))))
             .accessibilityLabel(title)
             .accessibilityIdentifier(model.running ? "presenter.stop" : "presenter.start")
+        }
+        }
     }
 }

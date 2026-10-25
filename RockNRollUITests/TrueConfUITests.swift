@@ -29,7 +29,7 @@ final class TrueConfUITests: XCTestCase {
         let before = XCTAttachment(screenshot: app.screenshot()); before.name = "TrueConf incoming presentation"; before.lifetime = .keepAlways; add(before)
         app.buttons["Share screen"].press(forDuration: 1)
         XCTAssertTrue(app.segmentedControls["studio.panes"].buttons["Share"].waitForExistence(timeout: 5))
-        app.buttons["studio.open-presenter"].tap()
+        XCTAssertTrue(app.buttons["presenter.source"].waitForExistence(timeout: 5))
         let studio = XCTAttachment(screenshot: app.screenshot()); studio.name = "TrueConf Presenter settings"; studio.lifetime = .keepAlways; add(studio)
         app.buttons["studio.done"].tap()
         app.buttons["Leave"].tap()

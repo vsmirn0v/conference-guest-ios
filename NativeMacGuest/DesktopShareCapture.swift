@@ -26,6 +26,8 @@ final class NativeDesktopShareCapture: GuestCameraCapture, @unchecked Sendable {
     private var stopping: Task<Void, Error>?
     private var endHandler: (@Sendable (Error?) -> Void)?
     private var dimensionHandler: (@Sendable (CGSize) -> Void)?
+    private var overlayHandler: (@Sendable (Bool) -> Void)?
+    private var systemOverlay = false
     @MainActor private var bridge: MacScreenCaptureBridge?
     // Media-queue confinement starts here.
     private var timer: DispatchSourceTimer?
@@ -37,12 +39,16 @@ final class NativeDesktopShareCapture: GuestCameraCapture, @unchecked Sendable {
     var beforePickerForTesting: (@Sendable () async -> Void)?
     var beforeDeliveryForTesting: (@Sendable () -> Void)?
     private var testConsumer: (@Sendable (LKRTCVideoFrame) -> Void)?
+    private var syntheticScreenSample: CMSampleBuffer?
     private var stopPasses = 0
     var stopPassesForTesting: Int { locked { stopPasses } }
     #endif
 
     var onDimensions: (@Sendable (CGSize) -> Void)? {
         get { locked { dimensionHandler } } set { locked { dimensionHandler = newValue } }
+    }
+    var onOverlay: (@Sendable (Bool) -> Void)? {
+        get { locked { overlayHandler } } set { locked { overlayHandler = newValue } }
     }
     var onEnd: (@Sendable (Error?) -> Void)? {
         get { locked { endHandler } } set { locked { endHandler = newValue } }
@@ -53,6 +59,9 @@ final class NativeDesktopShareCapture: GuestCameraCapture, @unchecked Sendable {
     #if DEBUG
     init(canvasForTesting: Bool, consumer: @escaping @Sendable (LKRTCVideoFrame) -> Void) {
         source = nil; capturer = nil; canvasOnly = canvasForTesting; testConsumer = consumer
+    }
+    init(screenForTesting sample: CMSampleBuffer, consumer: @escaping @Sendable (LKRTCVideoFrame) -> Void) {
+        source = nil; capturer = nil; canvasOnly = false; testConsumer = consumer; syntheticScreenSample = sample
     }
     #endif
     private func locked<T>(_ action: () throws -> T) rethrows -> T { lock.lock(); defer { lock.unlock() }; return try action() }
@@ -86,19 +95,11 @@ final class NativeDesktopShareCapture: GuestCameraCapture, @unchecked Sendable {
                 }
                 if !canvasOnly {
                     #if DEBUG
-                    await beforePickerForTesting?()
+                    if let sample = syntheticScreenSample { accept(sample, token: token) }
+                    else { await beforePickerForTesting?(); try await presentPicker(token) }
+                    #else
+                    try await presentPicker(token)
                     #endif
-                    try await MainActor.run {
-                        guard self.isActive(token), !Task.isCancelled else { throw CancellationError() }
-                        guard MacScreenCaptureBridge.isSupported() else {
-                            throw NativeDesktopError.unavailable("Screen and window selection requires macOS 14 or newer.")
-                        }
-                        let bridge = MacScreenCaptureBridge(); bridge.preserveDetail = true
-                        bridge.selectionMode = self.locked { self.selectionMode }; self.bridge = bridge
-                        bridge.onFrame = { [weak self] sample in self?.accept(sample, token: token) }
-                        bridge.onEnd = { [weak self] error in self?.ended(error, token: token) }
-                        try bridge.present()
-                    }
                 }
                 return try await withCheckedThrowingContinuation { continuation in completion.install(continuation, timeout: 120) }
             } catch {
@@ -109,6 +110,28 @@ final class NativeDesktopShareCapture: GuestCameraCapture, @unchecked Sendable {
                 throw error
             }
         }, onCancel: { [weak self] in self?.cancel() })
+    }
+    private func presentPicker(_ token: UInt64) async throws {
+                    try await MainActor.run {
+                        guard self.isActive(token), !Task.isCancelled else { throw CancellationError() }
+                        guard MacScreenCaptureBridge.isSupported() else {
+                            throw NativeDesktopError.unavailable("Screen and window selection requires macOS 14 or newer.")
+                        }
+                        let bridge = MacScreenCaptureBridge(); bridge.preserveDetail = true
+                        bridge.selectionMode = self.locked { self.selectionMode }; self.bridge = bridge
+                        bridge.onFrame = { [weak self] sample in self?.accept(sample, token: token) }
+                        bridge.onEnd = { [weak self] error in self?.ended(error, token: token) }
+                        bridge.onEffect = { [weak self] enabled in
+                            guard let self else { return }
+                            let handler = self.locked { () -> (@Sendable (Bool) -> Void)? in
+                                guard self.generation == token, self.phase != .stopped else { return nil }
+                                self.systemOverlay = enabled; self.cameraPrivacyEpoch &+= 1
+                                return self.overlayHandler
+                            }
+                            handler?(enabled); self.schedule()
+                        }
+                        try bridge.present()
+                    }
     }
     private func accept(_ sample: CMSampleBuffer, token: UInt64) {
         guard sample.isValid else { return }
@@ -129,15 +152,18 @@ final class NativeDesktopShareCapture: GuestCameraCapture, @unchecked Sendable {
         let input: (CMSampleBuffer?, PresenterScene?, CVPixelBuffer?, UInt64, UInt64)? = locked {
             queued = false
             guard generation == token, phase == .starting || phase == .running else { return nil }
-            return (latest, latestScene, latestCamera, cameraRevision, cameraPrivacyEpoch)
+            return (latest, latestScene, systemOverlay ? nil : latestCamera, cameraRevision, cameraPrivacyEpoch)
         }
         guard let (sample, scene, camera, cameraRevision, cameraPrivacyEpoch) = input,
               let screen = sample.flatMap(CMSampleBufferGetImageBuffer) ?? (canvasOnly ? blankCanvas() : nil) else { return }
         let size = CGSize(width: CVPixelBufferGetWidth(screen), height: CVPixelBufferGetHeight(screen))
-        let outputSize = scene == nil ? size : Self.compositionSize(size)
+        // A screen without app overlays already contains final, native pixels.
+        // Preserve Retina text and avoid Core Image/copies in the common path.
+        let compose = canvasOnly || camera != nil || !(scene?.strokes.isEmpty ?? true) || !(scene?.draftStroke.isEmpty ?? true)
+        let outputSize = scene != nil && compose ? Self.compositionSize(size) : size
         let now = ProcessInfo.processInfo.systemUptime
         let output: CVPixelBuffer
-        if let scene {
+        if let scene, compose {
             compositor.resize(to: outputSize)
             guard let composed = compositor.render(scene: scene, camera: camera, cameraRevision: cameraRevision,
                 screen: canvasOnly ? nil : screen, time: CMTime(seconds: now, preferredTimescale: 1_000_000_000)),

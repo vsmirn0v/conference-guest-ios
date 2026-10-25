@@ -1,6 +1,7 @@
 import Foundation
 import VideoToolbox
 import WebRTC
+import ConferenceCore
 
 /// Thread-safe, per-call/per-socket negotiation. Unknown protocols, rooms and
 /// capabilities pass through unchanged. Incoming codecs are never rewritten.
@@ -18,6 +19,24 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
     // cannot inherit the capabilities or lifecycle of the replacement call.
     private var seen: [UUID] = []
     private var disabled = false
+    private var screenPreference: ShareEncodingPreference = .efficient
+    private var screenCodecHandler: ((UUID, String) -> Void)?
+    private var capabilityHandler: ((UUID, Bool) -> Void)?
+    var onScreenPublication: ((UUID, String) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return screenCodecHandler }
+        set { lock.lock(); screenCodecHandler = newValue; lock.unlock() }
+    }
+    var onScreenCapability: ((UUID, Bool) -> Void)? {
+        get { lock.lock(); defer { lock.unlock() }; return capabilityHandler }
+        set { lock.lock(); capabilityHandler = newValue; lock.unlock() }
+    }
+    func beginScreenSharing(_ preference: ShareEncodingPreference) {
+        lock.lock(); screenPreference = preference; lock.unlock()
+    }
+    var supportsScreenVP9: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return !disabled && sockets.values.contains { $0.generation == generation && $0.codecs.contains("video/vp9") }
+    }
     private var selectionHandler: ((UUID, String) -> Void)?
     var onSelection: ((UUID, String) -> Void)? {
         get { lock.lock(); defer { lock.unlock() }; return selectionHandler }
@@ -51,6 +70,7 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
     }
     func begin(generation: UUID, roomID: String) {
         lock.lock(); defer { lock.unlock() }
+        if self.generation != generation { screenPreference = .efficient }
         self.generation = generation; self.roomID = roomID; disabled = false
         screenPolicy?.begin(generation)
     }
@@ -58,6 +78,7 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard self.generation == generation else { return }
         self.generation = nil; roomID = nil; selectionHandler = nil
+        screenCodecHandler = nil; capabilityHandler = nil; screenPreference = .efficient
         screenPolicy?.end(generation)
     }
     func disable(generation: UUID) {
@@ -70,18 +91,21 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
         NotificationCenter.default.post(name: Self.fallbackNotification, object: self, userInfo: ["generation": generation])
     }
     func incoming(socket: UUID, data: Data) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         guard let generation, !disabled, var socketState = sockets[socket], socketState.generation == generation,
               data.count <= 1_048_576,
               let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               json["event"] as? String == "media-out",
               let payload = json["payload"] as? [String: Any],
               let join = payload["join"] as? [String: Any],
-              let room = join["room"] as? [String: Any] else { return }
+              let room = join["room"] as? [String: Any] else { lock.unlock(); return }
         guard json["roomId"] as? String == socketState.room,
-              let codecs = room["enabledCodecs"] as? [[String: Any]] else { return }
+              let codecs = room["enabledCodecs"] as? [[String: Any]] else { lock.unlock(); return }
         socketState.codecs = Set(codecs.compactMap { ($0["mime"] as? String)?.lowercased() })
         sockets[socket] = socketState
+        let callback = capabilityHandler
+        let vp9 = socketState.codecs.contains("video/vp9") && !disabled
+        lock.unlock(); callback?(generation, vp9)
     }
     func outgoing(socket: UUID, data: Data) -> Data? {
         lock.lock()
@@ -93,11 +117,15 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
             seen.append(socket); sockets[socket] = Socket(generation: generation, room: room)
             if seen.count > 128 { sockets.removeValue(forKey: seen.removeFirst()) }
         }
+        var screenPublication: String?
+        var notifyScreen: ((UUID, String) -> Void)?
+        defer { if let screenPublication { notifyScreen?(generation, screenPublication) } }
         if let state = sockets[socket], state.generation == generation,
            json["roomId"] as? String == state.room, json["event"] as? String == "media-in",
            let request = payload["addTrackRequest"] as? [String: Any], request["type"] as? String == "VIDEO",
            request["source"] as? String == "SCREEN_SHARE", let cid = request["cid"] as? String {
             screenPolicy?.register(cid, generation: generation)
+            screenPublication = cid; notifyScreen = screenCodecHandler
         }
         #if DEBUG
         if let request = payload["addTrackRequest"] as? [String: Any], request["type"] as? String == "VIDEO" {
@@ -109,20 +137,23 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
             print("GUEST_CODEC_REQUEST hardware=\(hardwareH264) socket=\(qualified) h264=\(h264) formats=\(formats) matchingCID=\(matchingCID) source=\(request["source"] ?? "unknown") cid=\(request["cid"] ?? "unknown")")
         }
         #endif
-        guard !disabled, hardwareH264, let state = sockets[socket], state.generation == generation,
-              state.codecs.contains("video/h264"), json["roomId"] as? String == state.room,
+        guard !disabled, let state = sockets[socket], state.generation == generation,
+              json["roomId"] as? String == state.room,
               json["event"] as? String == "media-in",
               var request = payload["addTrackRequest"] as? [String: Any],
               request["type"] as? String == "VIDEO", let cid = request["cid"] as? String,
               !cid.isEmpty, let offered = request["simulcastCodecs"] as? [[String: Any]],
               offered.count == 1, (offered[0]["codec"] as? String)?.lowercased() == "vp8",
               offered[0]["cid"] as? String == cid else { lock.unlock(); return nil }
-        var selectedCodec = "h264"
+        let isScreen = request["source"] as? String == "SCREEN_SHARE"
+        var prefersVP9 = isScreen && screenPreference == .textDetail
         #if DEBUG
-        if request["source"] as? String == "SCREEN_SHARE",
-           ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SCREEN_CODEC"] == "vp9",
-           state.codecs.contains("video/vp9") { selectedCodec = "vp9" }
+        if isScreen && ProcessInfo.processInfo.environment["ROCKNROLL_TEST_SCREEN_CODEC"] == "vp9" { prefersVP9 = true }
         #endif
+        let selectedCodec: String
+        if prefersVP9 && state.codecs.contains("video/vp9") { selectedCodec = "vp9" }
+        else if hardwareH264 && state.codecs.contains("video/h264") { selectedCodec = "h264" }
+        else { lock.unlock(); return nil }
         request["simulcastCodecs"] = [["codec": selectedCodec, "cid": cid]]
         payload["addTrackRequest"] = request; json["payload"] = payload
         let result = try? JSONSerialization.data(withJSONObject: json)

@@ -107,6 +107,32 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private let reactionsButton = AlignedCallButton(frame: .zero)
     private var actionsMenu: UIMenu?
     private let shareOffer = UIButton(type: .system)
+    private var textCapture: SharedTextOverlay?
+    private lazy var selectTextButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.configuration = .tinted(); button.configuration?.title = L("Select text")
+        button.configuration?.image = UIImage(systemName: "text.viewfinder")
+        button.accessibilityIdentifier = "Select shared text"
+        button.addAction(UIAction { [weak self] _ in self?.openSharedText() }, for: .touchUpInside)
+        return button
+    }()
+    private func openSharedText(key requested: String? = nil) {
+        guard textCapture == nil, let key = requested ?? currentPrimaryKey,
+              streamPinTargets[key]?.isScreenShare == true, let entry = videoTiles[key] else { return }
+        focus.show(); focus.menuVisible = true
+        let name = entry.tile.accessibilityLabel ?? L("Screen share")
+        var firstKey: String? = key
+        let overlay = SharedTextOverlay(sourceID: key, sourceName: name) { [weak self] in
+            guard let self, let key = firstKey ?? self.currentPrimaryKey, self.streamPinTargets[key]?.isScreenShare == true,
+                  let entry = self.videoTiles[key] else { return nil }
+            firstKey = nil
+            return await SharedTextCapture.make(entry.video.snapshotFrame(), sourceID: key, name: entry.tile.accessibilityLabel ?? L("Screen share"))
+        }
+        textCapture = overlay; view.addSubview(overlay)
+        overlay.onClose = { [weak self] in self?.textCapture = nil; self?.focus.menuVisible = false; self?.view.setNeedsLayout() }
+        view.setNeedsLayout()
+    }
+
     let localSharePreview = LocalSharePreview()
     private lazy var localShareCard = LocalSharePreviewCard(model: localSharePreview)
     private lazy var localShareRenderer = LocalShareTrackPreview(preview: localSharePreview)
@@ -399,6 +425,14 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         accessControls.update(MeetingViewState(layout: layoutMode, display: displayMode,
             manualFocus: pinnedStream != nil || browsedStream != nil, effectiveLayout: effectiveLayoutMode))
         var stage = access.stage
+        if selectTextButton.superview !== view { view.addSubview(selectTextButton) }
+        let sharedKey = currentPrimaryKey.flatMap { streamPinTargets[$0]?.isScreenShare == true ? $0 : nil }
+        selectTextButton.isHidden = sharedKey == nil || effectiveLayoutMode != .speaker || focus.hidden || textCapture != nil
+        selectTextButton.frame = CGRect(x: max(stage.minX, stage.maxX - 150), y: max(stage.minY, stage.maxY - 50), width: min(150, stage.width), height: 44)
+        textCapture?.frame = stage
+        textCapture?.updateSource(id: sharedKey, name: sharedKey.flatMap { videoTiles[$0]?.tile.accessibilityLabel })
+        if let textCapture { view.bringSubviewToFront(textCapture) }
+
         var canvas = view.bounds
         if dockedConversation != nil {
             let width = view.bounds.width >= 700 ? min(400, max(320, view.bounds.width * 0.36)) : stage.width
@@ -605,7 +639,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         var target = touch.view
         while let current = target {
-            if current is UIControl { return false }
+            if current is UIControl || current is SharedTextOverlay { return false }
             target = current.superview
         }
         return true
@@ -1109,11 +1143,13 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         let name = interaction.view?.accessibilityLabel ?? L("Musician")
         let selected = pinnedStream == target
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            UIMenu(children: [UIAction(
+            var actions: [UIAction] = [UIAction(
                 title: selected ? L("Unpin %@", name) : L("Pin %@", name),
                 image: UIImage(systemName: selected ? "pin.slash" : "pin")) { _ in
                     self?.setPin(selected ? nil : target)
-                }])
+                }]
+            if target.isScreenShare { actions.append(UIAction(title: L("Select text"), image: UIImage(systemName: "text.viewfinder")) { _ in self?.openSharedText(key: key) }) }
+            return UIMenu(children: actions)
         }
     }
 
@@ -1595,7 +1631,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 cameraSound.append(UIAction(title: L("Flip camera"), image: UIImage(systemName: "camera.rotate"),
                     attributes: studio.canFlipCamera ? [] : [.disabled]) { [weak self] _ in self?.studio?.flipCamera() })
             }
-            sharePresenter.append(UIAction(title: L("Presenter"), image: UIImage(systemName: "person.crop.rectangle"),
+            sharePresenter.append(UIAction(title: L("Share settings"), image: UIImage(systemName: "rectangle.on.rectangle"),
                 attributes: studio.presenter.available ? [] : [.disabled]) { [weak self] _ in
                     guard let self else { return }
                     StudioPresentation.show(studio, from: self.reactionsButton, pane: .presenter)
@@ -1767,7 +1803,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     func restoreFromFloatingVideo() { floatingVideo?.foregrounded() }
 
     func endFloatingVideo() {
-        panelOwner.retire(); activeSpeaker.end(); floatingVideo?.end(); localShareRenderer.setTrack(nil); localSharePreview.end()
+        textCapture?.finish(); panelOwner.retire(); activeSpeaker.end(); floatingVideo?.end(); localShareRenderer.setTrack(nil); localSharePreview.end()
         presenterSource = nil; presenterCompanion.configure(name: "", preview: nil); presenterPreview.video.track = nil
     }
 

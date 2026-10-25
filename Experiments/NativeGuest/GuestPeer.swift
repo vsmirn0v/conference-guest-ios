@@ -276,7 +276,12 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             // Native codec negotiation creates the RTX apt association. Filtering
             // only the primary codec silently disables repair payloads.
             let repair = capabilities.filter { $0.name.lowercased() == "rtx" }
-            try transceiver.setCodecPreferences(matches + repair, error: ())
+            // The guest SFU learns its publisher codec table from the first
+            // video m-section. Advertise later content capability there without
+            // starting its encoder or changing the H264 camera registration.
+            let contentCapability = codec.lowercased() == "h264"
+                ? capabilities.filter { $0.name.lowercased() == "vp9" } : []
+            try transceiver.setCodecPreferences(matches + contentCapability + repair, error: ())
             videoTrack = track as? LKRTCVideoTrack
             videoSender = transceiver.sender
         } else { audioTrack = track as? LKRTCAudioTrack }

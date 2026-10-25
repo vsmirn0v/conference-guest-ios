@@ -1228,3 +1228,59 @@
 "Paste an invitation above to join, or save a favorite to keep it close." = "Вставьте приглашение выше, чтобы подключиться, или сохраните встречу в избранное.";
 "Already have favorites on another device? Open iCloud settings to connect your library." = "Уже есть избранные встречи на другом устройстве? Откройте настройки iCloud, чтобы подключить свою библиотеку.";
 "Open iCloud settings" = "Открыть настройки iCloud";
+
+/* Sharing workspace and on-device text selection */
+"Advanced" = "Дополнительно";
+"Back to Live" = "К трансляции";
+"Camera and layout changes appear in your live share." = "Изменения камеры и макета видны участникам.";
+"Camera and layout changes stay private until you confirm." = "Изменения камеры и макета видны только вам до подтверждения.";
+"Camera overlays and drawings are available with images and canvases. Entire-screen sharing uses the iOS broadcast picker." = "Камера и рисунки доступны для изображений и холста. Для трансляции всего экрана используется системный выбор iOS.";
+"Cancel content change" = "Отменить замену";
+"Canvas or background" = "Холст или фон";
+"Capture current share" = "Снимок текущей трансляции";
+"Captured frame · %@" = "Снимок · %@";
+"Captured frame · %@'s share ended" = "Снимок · Трансляция %@ завершена";
+"Captured frame · A different share is now live" = "Снимок · Сейчас идёт другая трансляция";
+"Capturing incoming frame…" = "Получаем снимок трансляции…";
+"Change preview · Not yet shared" = "Предпросмотр изменений · Только вы";
+"Change shared content" = "Заменить содержимое";
+"Choose the broadcast source when you start sharing." = "Выберите источник при запуске трансляции.";
+"Drag to select text. ⌘C to copy. Meeting audio continues." = "Выделите текст мышью. ⌘C — скопировать. Звук встречи продолжается.";
+"Efficient encoding" = "Экономичное кодирование";
+"Efficient · Default" = "Экономичное · По умолчанию";
+"Encoding" = "Кодирование";
+"Encoding changes apply after Stop → Start sharing." = "Кодирование изменится после остановки и повторного запуска трансляции.";
+"Finding text on this device…" = "Распознаём текст на устройстве…";
+"Hardware" = "Аппаратное";
+"Image or slides" = "Изображение или слайды";
+"Image or slides…" = "Изображение или слайды…";
+"Keep Rock’n’Roll open while sharing this content. Your camera becomes part of the shared content only when you start sharing." = "Оставьте Rock’n’Roll открытым во время трансляции этого содержимого. Камера будет видна участникам только после запуска трансляции.";
+"May make small text slightly clearer. Uses more CPU and battery." = "Мелкий текст может стать немного чётче. Увеличивает нагрузку на процессор и расход батареи.";
+"New frame" = "Новый снимок";
+"No incoming frame available. Try again when the share is visible." = "Кадр недоступен. Повторите, когда появится трансляция.";
+"No text found. Try a clearer frame or return to Live." = "Текст не найден. Попробуйте более чёткий кадр или вернитесь к трансляции.";
+"Open Share" = "Открыть трансляцию";
+"Screen share reconnecting…" = "Восстанавливаем трансляцию…";
+"Select text" = "Выделить текст";
+"Selectable text · Live Text is unavailable on this device." = "Текст для выделения · Live Text недоступен на этом устройстве.";
+"Sending %@" = "Отправка %@";
+"Software" = "Программное";
+"Stop sharing, then start Entire screen to use efficient encoding. Your current VP9 share continues until you stop it." = "Остановите трансляцию и запустите весь экран с экономичным кодированием. Текущая трансляция VP9 продолжается до остановки.";
+"Text detail · VP9" = "Чёткий текст · VP9";
+"Text recognition failed. Try another frame or return to Live." = "Не удалось распознать текст. Попробуйте другой кадр или вернитесь к трансляции.";
+"Touch and hold text to select. Meeting audio continues." = "Нажмите и удерживайте текст для выделения. Звук встречи продолжается.";
+"Uses hardware H.264 when available to save energy." = "По возможности использует аппаратный H.264 для экономии энергии.";
+"VP9 encoding" = "Кодирование VP9";
+"VP9 is not yet available for entire-screen broadcasts on iPhone or iPad." = "VP9 пока недоступен для трансляции всего экрана iPhone и iPad.";
+"VP9 sharing is unavailable in this meeting." = "Трансляция VP9 недоступна в этой встрече.";
+"Your camera is controlled in Share while this content is shared." = "Во время трансляции этого содержимого камера управляется в разделе «Экран».";
+"Your current share continues until you confirm this change." = "Текущая трансляция продолжается до подтверждения замены.";
+
+"Share settings" = "Настройки трансляции";
+
+"Shared content" = "Содержимое трансляции";
+
+"Camera in shared content" = "Камера в трансляции";
+
+"Text recognition is taking too long. Return to Live and try again later." = "Распознавание текста занимает слишком много времени. Вернитесь к трансляции и попробуйте позже.";
+"Text recognition is already running. Return to Live and try again later." = "Распознавание текста уже выполняется. Вернитесь к трансляции и попробуйте позже.";

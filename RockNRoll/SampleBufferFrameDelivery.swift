@@ -101,7 +101,7 @@ final class SampleBufferRenderTarget: @unchecked Sendable {
     private let lock = NSLock()
     private var backing: Backing
     private var generation = UUID()
-    private var latest: (CMSampleBuffer, UUID)?
+    private var latest: (CMSampleBuffer, UUID, Int)?
     private var pendingRepair: UUID?
     private var pendingRepairDeadline: TimeInterval = 0
     private var repairAttempts = 0
@@ -203,11 +203,16 @@ final class SampleBufferRenderTarget: @unchecked Sendable {
     func isCurrent(_ source: UUID) -> Bool {
         lock.lock(); defer { lock.unlock() }; return generation == source
     }
-    @discardableResult func enqueue(_ sample: CMSampleBuffer, source: UUID? = nil) -> Bool {
+    func snapshotFrame(source: UUID? = nil) -> (CMSampleBuffer, Int)? {
+        lock.lock(); defer { lock.unlock() }
+        guard source == nil || source == generation, let latest, latest.1 == generation else { return nil }
+        return (latest.0, latest.2)
+    }
+    @discardableResult func enqueue(_ sample: CMSampleBuffer, source: UUID? = nil, rotation: Int = 0) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard source == nil || source == generation else { return false }
         reapExpiredRepairLocked()
-        latest = (sample, generation)
+        latest = (sample, generation, rotation)
         if flushing != nil {
             replayNeeded = true
             if ProcessInfo.processInfo.systemUptime >= flushDeadline { scheduleRepairLocked() }
@@ -550,6 +555,11 @@ final class SampleBufferFrameDelivery: @unchecked Sendable {
         self.onGeometry = onGeometry
     }
     var isCurrent: Bool { lock.lock(); defer { lock.unlock() }; return !retired && target.isCurrent(source) }
+    func snapshotFrame() -> (CMSampleBuffer, Int)? {
+        lock.lock(); defer { lock.unlock() }
+        guard !retired else { return nil }
+        return target.snapshotFrame(source: source)
+    }
     func setActive(_ value: Bool) { lock.lock(); active = value; lock.unlock() }
     func setEnabled(_ value: Bool) {
         lock.lock(); defer { lock.unlock() }
@@ -580,7 +590,7 @@ final class SampleBufferFrameDelivery: @unchecked Sendable {
         }
     }
     private func enqueue(_ sample: CMSampleBuffer) -> Bool {
-        let accepted = target.enqueue(sample, source: source)
+        let accepted = target.enqueue(sample, source: source, rotation: submittedGeometry?.rotation ?? 0)
         #if DEBUG
         enqueueObserver?(sample, accepted)
         #endif
