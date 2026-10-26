@@ -56,6 +56,16 @@ final class MeetingPanelOwner {
 final class MeetingAccessControls: UIView {
     let viewButton = UIButton(type: .system)
     let moreButton = UIButton(type: .system)
+    var textButton: UIButton? {
+        didSet {
+            guard oldValue !== textButton else { return }
+            oldValue?.removeFromSuperview()
+            if let textButton { surface.contentView.addSubview(textButton) }
+            setNeedsLayout()
+        }
+    }
+    var capturedTextMode = false
+    private var textWidth: CGFloat { textButton?.isHidden == false ? 44 : 0 }
     private let viewSizingButton = UIButton(type: .system)
     private var measuredViewWidth: CGFloat?
     private let reminderIndicator = UIView()
@@ -72,7 +82,7 @@ final class MeetingAccessControls: UIView {
         reminderIndicator.isHidden = count == 0
         moreButton.accessibilityValue = count > 0 ? L("%d meeting reminders", count) : nil
     }
-    private let surface = MeetingChromeSurface(cornerRadius: 24)
+    private let surface = MeetingChromeContainer()
     private let divider = UIView()
     private var renderedState: MeetingViewState?
     private var font: UIFont {
@@ -93,18 +103,18 @@ final class MeetingAccessControls: UIView {
         return width
     }
     func fittingSize(availableWidth: CGFloat) -> CGSize {
-        CGSize(width: min(max(88, availableWidth), viewWidth + 44), height: 48)
+        if capturedTextMode { return CGSize(width: 264, height: 48) }
+        return CGSize(width: min(max(88 + textWidth, availableWidth), viewWidth + 44 + textWidth), height: 48)
     }
     override init(frame: CGRect) {
         super.init(frame: frame)
-        overrideUserInterfaceStyle = .dark
         accessibilityIdentifier = "Meeting access controls"
         addSubview(surface)
-        divider.backgroundColor = UIColor.white.withAlphaComponent(0.15)
-        addSubview(divider)
+        divider.backgroundColor = .separator
+        surface.contentView.addSubview(divider)
         for button in [viewButton, moreButton, viewSizingButton] {
             button.configuration = .plain()
-            button.configuration?.baseForegroundColor = .white
+            button.configuration?.baseForegroundColor = .label
             button.configuration?.imagePadding = 6
             button.configuration?.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
             button.configuration?.titleLineBreakMode = .byTruncatingTail
@@ -115,7 +125,7 @@ final class MeetingAccessControls: UIView {
                 attributes.font = self?.font
                 return attributes
             }
-            addSubview(button)
+            surface.contentView.addSubview(button)
         }
         viewSizingButton.isHidden = true
         viewSizingButton.isUserInteractionEnabled = false
@@ -149,8 +159,9 @@ final class MeetingAccessControls: UIView {
     }
     override func layoutSubviews() {
         super.layoutSubviews()
-        surface.frame = bounds
-        viewButton.frame = CGRect(x: 0, y: 0, width: max(44, bounds.width - 44), height: bounds.height)
+        surface.frame = bounds; surface.layoutIfNeeded()
+        textButton?.frame = CGRect(x: 0, y: 0, width: textWidth, height: bounds.height)
+        viewButton.frame = CGRect(x: textWidth, y: 0, width: max(44, bounds.width - 44 - textWidth), height: bounds.height)
         moreButton.frame = CGRect(x: viewButton.frame.maxX, y: 0, width: 44, height: bounds.height)
         let title = viewButton.bounds.width >= viewWidth ? L("View") + " ▾" : nil
         if viewButton.configuration?.title != title { viewButton.configuration?.title = title }

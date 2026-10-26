@@ -93,3 +93,48 @@ final class MeetingChromeSurface: UIView {
         picker.layer.mask = mask
     }
 }
+
+/// Interactive regular glass: semantic controls live inside the effect's content
+/// hierarchy so UIKit can adapt their foreground to the material underneath.
+final class MeetingChromeContainer: UIView {
+    let contentView = UIView()
+    private let effectView = UIVisualEffectView()
+    private var observers: [NSObjectProtocol] = []
+    private var glassEnabled: Bool?
+    init(radius: CGFloat = 24) {
+        super.init(frame: .zero)
+        layer.cornerRadius = radius; layer.cornerCurve = .continuous; clipsToBounds = true
+        addSubview(effectView); effectView.contentView.addSubview(contentView)
+        contentView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        for name in [UIAccessibility.reduceTransparencyStatusDidChangeNotification,
+                     UIAccessibility.darkerSystemColorsStatusDidChangeNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.updateAppearance()
+            })
+        }
+        updateAppearance()
+    }
+    required init?(coder: NSCoder) { nil }
+    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
+    override func layoutSubviews() {
+        super.layoutSubviews(); effectView.frame = bounds; effectView.layoutIfNeeded()
+        contentView.frame = effectView.contentView.bounds
+    }
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection); updateAppearance()
+    }
+    private func updateAppearance() {
+        var enabled = false
+        if #available(iOS 26, *) {
+            enabled = !UIAccessibility.isReduceTransparencyEnabled && !UIAccessibility.isDarkerSystemColorsEnabled && traitCollection.accessibilityContrast != .high
+        }
+        guard glassEnabled != enabled else { return }
+        glassEnabled = enabled
+        if #available(iOS 26, *), enabled {
+            let glass = UIGlassEffect(style: .regular); glass.isInteractive = false
+            effectView.effect = glass; backgroundColor = .clear
+        } else {
+            effectView.effect = nil; backgroundColor = .secondarySystemBackground
+        }
+    }
+}

@@ -49,6 +49,8 @@ final class StreamViewport: UIView, UIScrollViewDelegate, UIContextMenuInteracti
         updateFocusAccessibility()
     } }
     var zoomScale: CGFloat { scroll.zoomScale }
+    var readingViewportSize: CGSize { appliedFitRect.size }
+    var readingPosition: (scale: CGFloat, center: CGPoint) { (state.scale, state.center) }
     var fillScale: CGFloat? {
         let size = correctedVideo?.displaySize ?? (video as? GuestSampleBufferView)?.displaySize ?? (video as? CallVideoView)?.displaySize ?? .zero
         return SharedScreenScale.fill(content: size, viewport: appliedFitRect.size)

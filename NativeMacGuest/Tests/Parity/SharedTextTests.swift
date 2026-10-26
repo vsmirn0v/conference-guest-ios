@@ -23,6 +23,47 @@ import XCTest
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.title = "Synthetic shared-text validation"; window.contentView = host; window.orderFront(nil)
         try await Task.sleep(for: .milliseconds(150))
+        host.layoutSubtreeIfNeeded()
+        func findScroll(_ view: NSView) -> NativeDesktopTextScroll? {
+            if let scroll = view as? NativeDesktopTextScroll { return scroll }
+            return view.subviews.lazy.compactMap { findScroll($0) }.first
+        }
+        if ImageAnalyzer.isSupported {
+        let scroll = try XCTUnwrap(findScroll(host))
+        let retainedAnalysis = scroll.imageDocument.overlay.analysis
+        scroll.setRelativeZoom(2)
+        if #available(macOS 14.0, *), ImageAnalyzer.isSupported {
+            let overlay = scroll.imageDocument.overlay
+            try await wait { !overlay.text.isEmpty }
+            let text = overlay.text, end = text.index(text.startIndex, offsetBy: min(7, text.count))
+            overlay.selectedRanges = [text.startIndex..<end]
+            let selected = overlay.selectedText
+            XCTAssertFalse(selected.isEmpty)
+            for size in [NSSize(width: 740, height: 900), NSSize(width: 1200, height: 520), NSSize(width: 1000, height: 650)] {
+                window.setContentSize(size); host.layoutSubtreeIfNeeded()
+                XCTAssertEqual(scroll.magnification, 2, accuracy: 0.001)
+                XCTAssertTrue(scroll.imageDocument.overlay.analysis === retainedAnalysis)
+                XCTAssertEqual(overlay.selectedText, selected, "Resizing must preserve the native Live Text selection")
+                XCTAssertEqual(scroll.imageDocument.snapshotID, snapshot.id)
+                XCTAssertTrue(scroll.documentVisibleRect.intersects(scroll.imageDocument.imageRect))
+            }
+            let visible = scroll.documentVisibleRect
+            let emptyPoint = NSPoint(x: visible.midX, y: visible.minY + visible.height * 0.2)
+            let location = scroll.imageDocument.convert(emptyPoint, to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0))
+                window.sendEvent(event)
+            }
+            try await Task.sleep(for: .milliseconds(30))
+            XCTAssertFalse(overlay.hasActiveTextSelection, "Clicking empty image content clears selection without leaving the snapshot")
+            XCTAssertTrue(selection.isOpen)
+        }
+        }
+        if let scroll = findScroll(host) { scroll.setRelativeZoom(1) }
+        if let seconds = Double(ProcessInfo.processInfo.environment["NATIVE_TEXT_RENDER_HOLD_SECONDS"] ?? ""), seconds.isFinite {
+            try await Task.sleep(for: .seconds(min(60, max(0, seconds))))
+        }
         if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
             host.cacheDisplay(in: host.bounds, to: bitmap)
             let rendered = NSImage(size: host.bounds.size); rendered.addRepresentation(bitmap)
@@ -39,6 +80,54 @@ import XCTest
         XCTAssertEqual(selection.snapshot?.sourceID, "two"); XCTAssertEqual(selection.snapshot?.sourceName, "Sam")
         XCTAssertNotEqual(selection.snapshot?.id, snapshot.id)
         selection.close(); XCTAssertNil(selection.snapshot); XCTAssertNil(selection.analysis); XCTAssertFalse(selection.isOpen)
+    }
+    func testNativeCopyActionFromRealTextSelectionInActiveWindow() async throws {
+        guard NSApp.isActive else { throw XCTSkip("The unattended Mac test host cannot become the active application. Global keyboard/selection acceptance needs an active native window.") }
+        guard #available(macOS 14.0, *), ImageAnalyzer.isSupported else { throw XCTSkip("Native selected-text inspection requires macOS 14 and Live Text support") }
+        let image = try textImage(), frame = NativeDesktopTextFrame()
+        frame.provider = .init(sourceID: "copy", capture: { image })
+        let selection = NativeDesktopSharedText(); defer { selection.close() }
+        selection.updateSource(id: "copy", name: "Synthetic copy source", frame: frame); selection.open()
+        try await wait { !selection.busy }
+        let host = NSHostingView(rootView: NativeDesktopSharedTextView(model: selection))
+        host.frame = NSRect(x: 0, y: 0, width: 1000, height: 650)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; defer { window.close() }
+        window.makeKeyAndOrderFront(nil)
+        try await wait { window.isKeyWindow }
+        host.layoutSubtreeIfNeeded()
+        func findScroll(_ view: NSView) -> NativeDesktopTextScroll? {
+            if let scroll = view as? NativeDesktopTextScroll { return scroll }
+            return view.subviews.lazy.compactMap { findScroll($0) }.first
+        }
+        let scroll = try XCTUnwrap(findScroll(host)), overlay = scroll.imageDocument.overlay
+        try await wait { !overlay.text.isEmpty }
+        var point: NSPoint?
+        for y in stride(from: overlay.bounds.maxY - 12, through: overlay.bounds.minY + 12, by: -12) {
+            for x in stride(from: overlay.bounds.minX + 12, through: overlay.bounds.maxX - 12, by: 12) {
+                let candidate = NSPoint(x: x, y: y)
+                if overlay.analysisHasText(at: candidate) { point = candidate; break }
+            }
+            if point != nil { break }
+        }
+        let location = overlay.convert(try XCTUnwrap(point), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            window.sendEvent(try XCTUnwrap(NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 2, pressure: type == .leftMouseDown ? 1 : 0)))
+        }
+        try await wait { overlay.hasActiveTextSelection }
+        let selected = overlay.selectedText; XCTAssertFalse(selected.isEmpty)
+        let pasteboard = NSPasteboard.general
+        let saved = pasteboard.pasteboardItems?.map { item in item.types.compactMap { type in item.data(forType: type).map { (type, $0) } } } ?? []
+        defer {
+            pasteboard.clearContents()
+            let restored = saved.map { representations -> NSPasteboardItem in
+                let item = NSPasteboardItem(); for (type, data) in representations { item.setData(data, forType: type) }; return item
+            }
+            if !restored.isEmpty { pasteboard.writeObjects(restored) }
+        }
+        XCTAssertTrue(NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil))
+        XCTAssertEqual(pasteboard.string(forType: .string), selected)
     }
     func testCloseRejectsLateCaptureFromPreviousMeeting() async throws {
         let image = try textImage(), frame = NativeDesktopTextFrame()
@@ -96,6 +185,118 @@ import XCTest
         XCTAssertTrue(scroll.imageDocument.overlay.trackingImageView === scroll.imageDocument.image)
         XCTAssertEqual(image.width, 1600); XCTAssertEqual(image.height, 900)
     }
+    func testZoomedResizeKeepsRetainedFrameAndReadingPositionVisible() throws {
+        let image = try textImage()
+        let snapshot = SharedTextSnapshot(image: image, sourceID: "share", sourceName: "Synthetic window")
+        let scroll = NativeDesktopTextScroll(frame: NSRect(x: 0, y: 0, width: 1000, height: 600))
+        scroll.install(snapshot); scroll.layoutSubtreeIfNeeded()
+        scroll.setRelativeZoom(3)
+        let rect = scroll.imageDocument.imageRect, visible = scroll.documentVisibleRect.size
+        scroll.contentView.scroll(to: NSPoint(x: rect.minX + rect.width * 0.46 - visible.width / 2,
+                                             y: rect.minY + rect.height * 0.55 - visible.height / 2))
+        let center = scroll.normalizedImageCenter
+        for size in [NSSize(width: 600, height: 1000), NSSize(width: 1200, height: 500), NSSize(width: 800, height: 650)] {
+            scroll.setFrameSize(size); scroll.layoutSubtreeIfNeeded()
+            XCTAssertEqual(scroll.magnification, 3, accuracy: 0.001)
+            let imageRect = scroll.imageDocument.imageRect, visibleSize = scroll.documentVisibleRect.size
+            let minX = min(0.5, visibleSize.width / (2 * imageRect.width)), minY = min(0.5, visibleSize.height / (2 * imageRect.height))
+            XCTAssertEqual(scroll.normalizedImageCenter.x, min(1 - minX, max(minX, center.x)), accuracy: 0.01)
+            XCTAssertEqual(scroll.normalizedImageCenter.y, min(1 - minY, max(minY, center.y)), accuracy: 0.01)
+            XCTAssertTrue(scroll.documentVisibleRect.intersects(scroll.imageDocument.imageRect), "Resizing must never scroll the frozen image out of the viewport")
+            XCTAssertEqual(scroll.imageDocument.snapshotID, snapshot.id)
+            XCTAssertEqual(scroll.imageDocument.image.image?.size, NSSize(width: 1600, height: 900))
+        }
+        scroll.setRelativeZoom(1)
+        XCTAssertEqual(scroll.magnification, 1)
+        XCTAssertEqual(scroll.normalizedImageCenter.x, 0.5, accuracy: 0.001)
+        XCTAssertEqual(scroll.normalizedImageCenter.y, 0.5, accuracy: 0.001)
+    }
+    func testExtremeMagnifiedPanCannotEnterLetterboxAndEdgePositionReturnsAfterResize() throws {
+        let image = try textImage()
+        let snapshot = SharedTextSnapshot(image: image, sourceID: "share", sourceName: "Alex")
+        let scroll = NativeDesktopTextScroll(frame: NSRect(x: 0, y: 0, width: 1200, height: 500))
+        scroll.install(snapshot); scroll.layoutSubtreeIfNeeded(); scroll.setRelativeZoom(3)
+        let rect = scroll.imageDocument.imageRect, visible = scroll.documentVisibleRect
+        let proposed = CGRect(x: rect.midX - visible.width / 2, y: rect.maxY - visible.height, width: visible.width, height: visible.height)
+        scroll.contentView.scroll(to: scroll.contentView.constrainBoundsRect(proposed).origin)
+        let edge = scroll.normalizedImageCenter
+        XCTAssertGreaterThan(edge.y, 0.8)
+        scroll.setFrameSize(NSSize(width: 600, height: 1000)); scroll.layoutSubtreeIfNeeded()
+        XCTAssertLessThan(scroll.normalizedImageCenter.y, edge.y)
+        scroll.setFrameSize(.zero); scroll.layoutSubtreeIfNeeded()
+        scroll.setFrameSize(NSSize(width: 1200, height: 500)); scroll.layoutSubtreeIfNeeded()
+        XCTAssertEqual(scroll.normalizedImageCenter.y, edge.y, accuracy: 0.01)
+        XCTAssertEqual(scroll.imageDocument.snapshotID, snapshot.id)
+        for size in [NSSize(width: 600, height: 1000), NSSize(width: 1200, height: 500)] {
+            scroll.setFrameSize(size); scroll.layoutSubtreeIfNeeded(); scroll.setRelativeZoom(8)
+            let visibleSize = scroll.documentVisibleRect.size
+            for point in [NSPoint(x: -10000, y: -10000), NSPoint(x: 10000, y: 10000)] {
+                let requested = CGRect(origin: point, size: visibleSize)
+                let allowed = scroll.contentView.constrainBoundsRect(requested)
+                scroll.contentView.scroll(to: allowed.origin)
+                let intersection = scroll.documentVisibleRect.intersection(scroll.imageDocument.imageRect)
+                XCTAssertEqual(intersection.width, visibleSize.width, accuracy: 0.01)
+                XCTAssertEqual(intersection.height, visibleSize.height, accuracy: 0.01)
+            }
+        }
+    }
+    func testNewFrameKeepsSameSourceViewportButReplacementStartsAtFit() throws {
+        let image = try textImage()
+        let scroll = NativeDesktopTextScroll(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        let first = SharedTextSnapshot(image: image, sourceID: "one", sourceName: "Alex")
+        scroll.install(first); scroll.layoutSubtreeIfNeeded(); scroll.setRelativeZoom(2)
+        let center = scroll.normalizedImageCenter
+        let refreshed = SharedTextSnapshot(image: image, sourceID: "one", sourceName: "Alex")
+        scroll.install(refreshed); scroll.layoutSubtreeIfNeeded()
+        XCTAssertEqual(scroll.magnification, 2)
+        XCTAssertEqual(scroll.normalizedImageCenter.x, center.x, accuracy: 0.001)
+        XCTAssertEqual(scroll.normalizedImageCenter.y, center.y, accuracy: 0.001)
+        XCTAssertEqual(scroll.imageDocument.snapshotID, refreshed.id)
+        let replacement = SharedTextSnapshot(image: image, sourceID: "two", sourceName: "Sam")
+        scroll.install(replacement); scroll.layoutSubtreeIfNeeded()
+        XCTAssertEqual(scroll.magnification, 1)
+        XCTAssertEqual(scroll.normalizedImageCenter.x, 0.5, accuracy: 0.001)
+        XCTAssertEqual(scroll.normalizedImageCenter.y, 0.5, accuracy: 0.001)
+    }
+    func testCapturedImageInheritsLiveZoomAndPanWithoutLosingPixels() throws {
+        let image = try textImage()
+        let scroll = NativeDesktopTextScroll(frame: NSRect(x: 0, y: 0, width: 1200, height: 750))
+        let snapshot = SharedTextSnapshot(image: image, sourceID: "one", sourceName: "Alex")
+        let oldSize = CGSize(width: 900, height: 600), pan = CGSize(width: 0.3, height: -0.2)
+        let expected = NativeDesktopTextScroll.initialCenter(imageSize: CGSize(width: 1600, height: 900), viewportSize: oldSize, zoom: 2, pan: pan)
+        scroll.install(snapshot, initialZoom: 2, initialPan: pan, initialViewportSize: oldSize)
+        scroll.layoutSubtreeIfNeeded()
+        XCTAssertEqual(scroll.magnification, 2)
+        XCTAssertEqual(scroll.normalizedImageCenter.x, expected.x, accuracy: 0.01)
+        XCTAssertEqual(scroll.normalizedImageCenter.y, expected.y, accuracy: 0.01)
+        XCTAssertEqual(scroll.imageDocument.image.image?.size, NSSize(width: 1600, height: 900))
+    }
+    func testHostedCapturedFrameSurvivesRepeatedWindowResizeWithoutRecapture() async throws {
+        let image = try textImage(), frame = NativeDesktopTextFrame()
+        var captures = 0
+        frame.provider = .init(sourceID: "one", capture: { captures += 1; return image })
+        let selection = NativeDesktopSharedText(recognition: { _ in .transcript("") }); defer { selection.close() }
+        selection.updateSource(id: "one", name: "Alex", frame: frame); selection.open()
+        try await wait { !selection.busy }
+        let snapshot = try XCTUnwrap(selection.snapshot)
+        let host = NSHostingView(rootView: NativeDesktopSharedTextView(model: selection))
+        host.frame = NSRect(x: 0, y: 0, width: 1000, height: 650)
+        host.layoutSubtreeIfNeeded()
+        func findScroll(_ view: NSView) -> NativeDesktopTextScroll? {
+            if let scroll = view as? NativeDesktopTextScroll { return scroll }
+            return view.subviews.lazy.compactMap { findScroll($0) }.first
+        }
+        let scroll = try XCTUnwrap(findScroll(host))
+        scroll.setRelativeZoom(2)
+        for size in [NSSize(width: 740, height: 900), NSSize(width: 1240, height: 520), NSSize(width: 1000, height: 650)] {
+            host.setFrameSize(size); host.layoutSubtreeIfNeeded()
+            XCTAssertEqual(scroll.magnification, 2, accuracy: 0.001)
+            XCTAssertTrue(scroll.documentVisibleRect.intersects(scroll.imageDocument.imageRect))
+            XCTAssertEqual(scroll.imageDocument.snapshotID, snapshot.id)
+        }
+        XCTAssertEqual(captures, 1)
+        XCTAssertEqual(selection.snapshot?.id, snapshot.id)
+    }
     func testClosedCapturePreventsOverlappingReopenUntilFinished() async throws {
         let image = try textImage(), frame = NativeDesktopTextFrame()
         var pending: [CheckedContinuation<CGImage?, Never>] = []
@@ -128,7 +329,7 @@ import XCTest
         selection.updateSource(id: "B", name: "Sam", frame: frame)
         try await wait { !selection.busy }
         XCTAssertEqual(firstCalls, 1); XCTAssertEqual(replacementCalls, 0)
-        XCTAssertNil(selection.snapshot)
+        XCTAssertNil(selection.snapshot); XCTAssertTrue(selection.statusNeedsAttention)
         selection.close()
     }
     func testMosaicCropChangeRejectsPreviousCaptureProvider() async throws {
@@ -171,6 +372,7 @@ import XCTest
         try await wait { !selection.busy }
         XCTAssertEqual(selection.snapshot?.id, capturedID)
         XCTAssertEqual(selection.status, L("Text recognition is taking too long. Return to Live and try again later."))
+        XCTAssertTrue(selection.statusNeedsAttention)
         XCTAssertTrue(SharedTextWorkAdmission.shared.isOccupied); XCTAssertFalse(selection.canRefresh)
         selection.updateSource(id: "two", name: "Sam", frame: frame)
         XCTAssertEqual(selection.snapshot?.id, capturedID)

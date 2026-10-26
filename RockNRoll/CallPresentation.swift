@@ -172,8 +172,8 @@ final class AlignedCallButton: MeetingMenuButton {
 }
 
 final class CallToolbar: UIView {
-    private let surface = MeetingChromeSurface(cornerRadius: 28)
-    private let endSurface = MeetingChromeSurface(cornerRadius: 28)
+    private let surface = MeetingChromeContainer(radius: 28)
+    private let endSurface = MeetingChromeContainer(radius: 28)
     private let leaveDivider = UIView()
     var separatesLast = false { didSet { if oldValue != separatesLast { setNeedsLayout() } } }
     var inlineAccessWidth: CGFloat = 0 { didSet { if oldValue != inlineAccessWidth { setNeedsLayout() } } }
@@ -196,8 +196,8 @@ final class CallToolbar: UIView {
         leaveDivider.backgroundColor = UIColor.white.withAlphaComponent(0.16)
         leaveDivider.isUserInteractionEnabled = false
         leaveDivider.isAccessibilityElement = false
-        addSubview(leaveDivider)
-        items.forEach { $0.translatesAutoresizingMaskIntoConstraints = true; addSubview($0) }
+        surface.contentView.addSubview(leaveDivider)
+        items.forEach { $0.translatesAutoresizingMaskIntoConstraints = true; surface.contentView.addSubview($0) }
         accessibilityElements = items
         layer.cornerRadius = 28
         accessibilityIdentifier = "Meeting toolbar"
@@ -218,16 +218,19 @@ final class CallToolbar: UIView {
             let end = CGRect(x: bounds.maxX - 54, y: 0, width: 54, height: bounds.height)
             surface.frame = CGRect(x: 0, y: 0, width: end.minX - 8 - inlineAccessWidth, height: bounds.height)
             endSurface.frame = end
+            surface.layoutIfNeeded(); endSurface.layoutIfNeeded()
             let area = surface.frame.insetBy(dx: 4, dy: 5)
             let width = area.width / CGFloat(items.count - 1)
             for (index, item) in items.enumerated() {
                 setCaptions(in: item, visible: true)
-                item.frame = index == items.count - 1 ? end.insetBy(dx: 4, dy: 5) :
+                let isLast = index == items.count - 1
+                let rect = isLast ? end.insetBy(dx: 4, dy: 5) :
                     CGRect(x: area.minX + CGFloat(index) * width, y: area.minY, width: width, height: area.height)
+                place(item, in: isLast ? endSurface : surface, frame: rect)
             }
             return
         }
-        surface.frame = bounds
+        surface.frame = bounds; surface.layoutIfNeeded()
         let columns = rail ? (largeText ? 2 : 1) : largeText ? 2 : items.count
         let rows = (items.count + columns - 1) / columns
         let area = bounds.insetBy(dx: 4, dy: 5)
@@ -238,15 +241,27 @@ final class CallToolbar: UIView {
         for (index, item) in items.enumerated() {
             setCaptions(in: item, visible: !rail || largeText)
             let last = index == items.count - 1
-            item.frame = CGRect(x: area.minX + CGFloat(index % columns) * width + (last && !rail ? gap : 0),
+            let rect = CGRect(x: area.minX + CGFloat(index % columns) * width + (last && !rail ? gap : 0),
                                 y: area.minY + CGFloat(index / columns) * height + (last && rail ? gap : 0),
                                 width: width, height: height).insetBy(dx: 1, dy: 0)
+            place(item, in: surface, frame: rect)
         }
         if let last = items.last, !leaveDivider.isHidden {
-            leaveDivider.frame = rail ? CGRect(x: area.minX + 8, y: last.frame.minY - gap / 2,
-                width: max(0, area.width - 16), height: 1) : CGRect(x: last.frame.minX - gap / 2 - 1,
+            let lastFrame = convert(last.bounds, from: last)
+            leaveDivider.frame = rail ? CGRect(x: area.minX + 8, y: lastFrame.minY - gap / 2,
+                width: max(0, area.width - 16), height: 1) : CGRect(x: lastFrame.minX - gap / 2 - 1,
                 y: area.midY - 14, width: 1, height: 28)
         }
+    }
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        // The wide layout reserves an empty slot for contextual tools. The
+        // toolbar's bounding rectangle must not block controls in that slot.
+        return hit === self ? nil : hit
+    }
+    private func place(_ item: UIView, in host: MeetingChromeContainer, frame: CGRect) {
+        if item.superview !== host.contentView { host.contentView.addSubview(item) }
+        item.frame = host.contentView.convert(frame, from: self)
     }
     private func setCaptions(in view: UIView, visible: Bool) {
         if let button = view as? AlignedCallButton { button.showsCaption = visible }
@@ -278,8 +293,8 @@ final class CompactCallHeader: UIView {
     private let sourceLabel = UILabel()
     private let privacyIcon = UIImageView()
     private let speakerIndicator = ActiveSpeakerIndicator(font: .systemFont(ofSize: 15, weight: .medium))
-    private let identitySurface = MeetingChromeSurface(cornerRadius: 22)
-    private let actionsSurface = MeetingChromeSurface(cornerRadius: 22)
+    private let identitySurface = MeetingChromeContainer(radius: 22)
+    private let actionsSurface = MeetingChromeContainer(radius: 22)
     private var sourceName = ""
     private var callStatus: String?
     private var privacySymbol: String?
@@ -326,9 +341,9 @@ final class CompactCallHeader: UIView {
         }
         MeetingControlMetrics.boundSymbol(in: details)
         details.accessibilityIdentifier = "Meeting details"
-        addSubview(details)
+        identitySurface.contentView.addSubview(details)
         sourceLabel.font = .systemFont(ofSize: 11)
-        sourceLabel.textColor = .lightGray
+        sourceLabel.textColor = .secondaryLabel
         sourceLabel.lineBreakMode = .byTruncatingTail
         sourceLabel.isUserInteractionEnabled = false
         sourceLabel.isAccessibilityElement = false
@@ -351,20 +366,22 @@ final class CompactCallHeader: UIView {
             (focus, "arrow.up.left.and.arrow.down.right", L("Hide controls"))
         ] {
             button.configuration = .plain()
+            button.configuration?.baseForegroundColor = .label
             button.configuration?.image = UIImage(systemName: symbol)
             MeetingControlMetrics.boundSymbol(in: button)
             button.accessibilityLabel = label
-            addSubview(button)
+            actionsSurface.contentView.addSubview(button)
         }
         availableActions = Set(actions.filter { $0 !== layoutButton }.map(ObjectIdentifier.init))
         overflow.configuration = .plain()
+        overflow.configuration?.baseForegroundColor = .label
         overflow.configuration?.image = UIImage(systemName: "ellipsis")
         MeetingControlMetrics.boundSymbol(in: overflow)
         overflow.showsMenuAsPrimaryAction = true
         overflow.accessibilityLabel = L("More meeting controls")
         overflow.accessibilityIdentifier = "More meeting controls"
         overflow.isHidden = true
-        addSubview(overflow)
+        actionsSurface.contentView.addSubview(overflow)
         for (button, badge) in [(conversation, chatBadge), (missed, missedBadge)] {
             badge.font = .systemFont(ofSize: 10, weight: .semibold)
             badge.textAlignment = .center
@@ -423,12 +440,12 @@ final class CompactCallHeader: UIView {
         automatic.isEnabled = browsing || pinned
         pin.isHidden = pinLabel == nil
         pin.configuration?.image = UIImage(systemName: pinned ? "pin.fill" : "pin")
-        pin.configuration?.baseForegroundColor = pinned ? .systemOrange : .white
+        pin.configuration?.baseForegroundColor = pinned ? .systemOrange : .label
         pin.accessibilityLabel = pinLabel
         pin.accessibilityHint = L("Changes only your view")
         participants.accessibilityLabel = participantsLabel
         conversation.configuration?.image = UIImage(systemName: chatValue == nil ? "bubble.left" : "bubble.left.fill")
-        conversation.configuration?.baseForegroundColor = chatValue == nil ? .white : .systemOrange
+        conversation.configuration?.baseForegroundColor = chatValue == nil ? .label : .systemOrange
         conversation.accessibilityValue = chatValue
         conversation.isHidden = !chatAvailable
         chatBadge.text = chatCount > 99 ? "99+" : String(chatCount)
@@ -449,7 +466,7 @@ final class CompactCallHeader: UIView {
         guard renderedIdentity != identity else { return }
         renderedIdentity = identity
         sourceLabel.text = sourceName
-        sourceLabel.textColor = callStatus != nil ? .systemOrange : visible == nil ? .white : .lightGray
+        sourceLabel.textColor = callStatus != nil ? .systemOrange : visible == nil ? .label : .secondaryLabel
         sourceLabel.isHidden = false
         speakerIndicator.setSpeaker(visible)
         details.configuration?.title = nil
@@ -457,7 +474,7 @@ final class CompactCallHeader: UIView {
         privacyIcon.image = UIImage(systemName: privacySymbol ?? "info.circle")
         privacyIcon.tintColor = privacySymbol == "record.circle" ? .systemRed : privacySymbol == nil ? .lightGray : .systemOrange
         privacyIcon.isHidden = false
-        details.configuration?.baseForegroundColor = callStatus == nil ? .white : .systemOrange
+        details.configuration?.baseForegroundColor = callStatus == nil ? .label : .systemOrange
         details.accessibilityValue = [callStatus, privacyDescription, visible?.accessibilityLabel].compactMap { $0 }.joined(separator: ", ")
         setNeedsLayout()
     }
@@ -483,10 +500,11 @@ final class CompactCallHeader: UIView {
         let start = bounds.maxX - CGFloat(visible.count) * 44 - 4
         details.isHidden = !showsIdentity
         identitySurface.isHidden = !showsIdentity
-        details.frame = CGRect(x: 4, y: 0, width: min(220, max(0, start - 12)), height: 44)
-        identitySurface.frame = details.frame
+        identitySurface.frame = CGRect(x: 4, y: 0, width: min(220, max(0, start - 12)), height: 44)
+        identitySurface.layoutIfNeeded(); details.frame = identitySurface.contentView.bounds
         actionsSurface.isHidden = visible.isEmpty
         actionsSurface.frame = CGRect(x: start - 2, y: 0, width: CGFloat(visible.count) * 44 + 6, height: 44)
+        actionsSurface.layoutIfNeeded()
         let textX: CGFloat = 40
         let textWidth = max(0, details.bounds.width - textX - 14)
         let speaking = !speakerIndicator.isHidden
@@ -495,7 +513,7 @@ final class CompactCallHeader: UIView {
         privacyIcon.frame = CGRect(x: 14, y: 12, width: 18, height: 20)
         speakerIndicator.frame = CGRect(x: textX, y: 20, width: textWidth, height: 20)
         for (index, button) in visible.enumerated() {
-            button.frame = CGRect(x: start + CGFloat(index) * 44, y: 0, width: 44, height: 44)
+            button.frame = actionsSurface.contentView.convert(CGRect(x: start + CGFloat(index) * 44, y: 0, width: 44, height: 44), from: self)
         }
         for badge in [chatBadge, missedBadge] {
             let width = min(22, max(14, ceil(badge.intrinsicContentSize.width) + 6))

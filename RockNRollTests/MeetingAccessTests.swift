@@ -261,6 +261,19 @@ final class MeetingAccessTests: XCTestCase {
         XCTAssertFalse(owner.validity(from: anchor)())
     }
 
+    func testInteractiveGlassContentHasUsableBoundsOnFirstLayoutAndResize() {
+        let container = MeetingChromeContainer()
+        let button = UIButton(type: .system)
+        container.contentView.addSubview(button)
+        for size in [CGSize(width: 200, height: 48), CGSize(width: 48, height: 320), CGSize(width: 264, height: 48)] {
+            container.frame.size = size; container.setNeedsLayout(); container.layoutIfNeeded()
+            XCTAssertEqual(container.contentView.bounds.size, size)
+            button.frame = CGRect(x: 2, y: 2, width: 44, height: 44)
+            let hit = container.hitTest(container.convert(CGPoint(x: 22, y: 22), from: button), with: nil)
+            XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true)
+        }
+    }
+
     private func descendants(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(descendants) }
 
     private func waitUntil(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {

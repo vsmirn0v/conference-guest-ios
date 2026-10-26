@@ -39,8 +39,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     @objc private func keyOpenView() { focus.show(); accessControls.viewButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenMore() { focus.show(); accessControls.moreButton.sendActions(for: .touchUpInside) }
     @objc private func keyFocus() { focus.toggle() }
-    @objc private func keyRestoreControls() { if reminderHost.collapseReminder?() == true { return }; focus.show(); focus.interaction() }
-    @objc private func keyFitScreen() { fitZoomedContent() }
+    @objc private func keyRestoreControls() { if let textCapture { textCapture.finish(); return }; if reminderHost.collapseReminder?() == true { return }; focus.show(); focus.interaction() }
+    @objc private func keyFitScreen() { if let textCapture { textCapture.toggleFit(); return }; fitZoomedContent() }
     private let surface = CallChromeSurface()
     private let focus = CallFocusController()
     private let layoutOwner = UUID()
@@ -116,7 +116,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     private var textCapture: SharedTextOverlay?
     private lazy var selectTextButton: UIButton = {
         let button = UIButton(type: .system)
-        button.configuration = .tinted(); button.configuration?.title = L("Select text")
+        button.configuration = .plain(); button.configuration?.baseForegroundColor = .label
+        button.accessibilityLabel = L("Select text")
         button.configuration?.image = UIImage(systemName: "text.viewfinder")
         button.accessibilityIdentifier = "Select shared text"
         button.addAction(UIAction { [weak self] _ in self?.openSharedText() }, for: .touchUpInside)
@@ -126,13 +127,17 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         guard textCapture == nil, stageIsShare, stageActive, let id = stageID else { return }
         focus.show(); focus.menuVisible = true
         var initialID: String? = id
-        let overlay = SharedTextOverlay(sourceID: id, sourceName: stageName ?? L("Participant")) { [weak self] in
+        let overlay = SharedTextOverlay(sourceID: id, sourceName: stageName ?? L("Participant"),
+            initialScale: stageViewport?.readingPosition.scale ?? 1,
+            initialCenter: stageViewport?.readingPosition.center ?? CGPoint(x: 0.5, y: 0.5),
+            initialViewportSize: stageViewport?.readingViewportSize ?? .zero) { [weak self] in
             let expected = initialID; initialID = nil
             guard let self, self.stageIsShare, self.stageActive, let id = self.stageID else { return nil }
             guard expected == nil || expected == id else { return nil }
             return await SharedTextCapture.make(self.stageVideo.snapshotFrame(), sourceID: id, name: self.stageName ?? L("Participant"))
         }
         textCapture = overlay; surface.addSubview(overlay)
+        overlay.onMore = { [weak self] in self?.keyOpenMore() }
         overlay.onClose = { [weak self] in self?.textCapture = nil; self?.focus.menuVisible = false; self?.layoutPresentation() }
         layoutPresentation()
     }
@@ -378,10 +383,10 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.focus.interaction()
             self.refreshMoreMenu?()
             MeetingActionsController.show(model: self.reactions, menu: self.accessControls.menuWithReminders(self.actionsMenu),
-                from: more ? self.accessControls.moreButton : self.reactionsButton,
+                from: more ? (self.textCapture?.moreAnchor ?? self.accessControls.moreButton) : self.reactionsButton,
                 startsWithMore: more, openChat: { [weak self] in
                     self?.openConversation(catchUp: catchUp, chat: chat, selected: .chat)
-                }, owner: self.panelOwner, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
+                }, owner: self.panelOwner, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 || self?.textCapture != nil })
         }
         reactionsButton.addAction(UIAction { _ in showActions(false) }, for: .touchUpInside)
         accessControls.moreButton.addAction(UIAction { _ in showActions(true) }, for: .touchUpInside)
@@ -402,7 +407,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 followSpeaker: { [weak self] in
                     self?.layoutMode = .speaker; self?.explicitLayout = true
                     self?.onAutomaticView?(); self?.layoutPresentation()
-                }, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
+                }, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 || self?.textCapture != nil })
         }, for: .touchUpInside)
         MeetingActionsShortcut.install(on: reactionsButton) { showActions(true) }
         participantsButton.configuration = Self.iconConfiguration("person.2.fill")
@@ -657,7 +662,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.microphone.configuration?.image = UIImage(systemName: media == .on ? "mic.fill" : "mic.slash.fill")
             self.microphone.configuration?.title = L("Mic")
             self.microphone.configuration?.baseForegroundColor = media == .on ?
-                UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
+                UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .label
             self.microphone.isEnabled = media != .disabled
             self.workspace.microphoneAvailable = media != .disabled
             self.microphone.accessibilityLabel = media == .on ? L("Mute microphone") : L("Unmute microphone")
@@ -684,7 +689,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.share.configuration?.image = UIImage(systemName: isSharing ? "rectangle.slash" : "rectangle.on.rectangle")
             self.share.configuration?.title = L("Share")
             self.share.configuration?.baseForegroundColor = isSharing ?
-                UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
+                UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .label
             // The SDK's ReplayKit button is unavailable on Mac. Our native
             // sharing editor remains available; the sender enforces room policy.
             self.share.isEnabled = media != .disabled || self.studio?.presenter.available == true
@@ -974,7 +979,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         camera.isEnabled = !isHeld && (sdkCameraAvailable || usesPresenter)
         camera.configuration?.image = UIImage(systemName: on ? "video.fill" : "video.slash.fill")
         camera.configuration?.title = L("Video")
-        camera.configuration?.baseForegroundColor = on ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .white
+        camera.configuration?.baseForegroundColor = on ? UIColor(red: 1, green: 0.60, blue: 0.33, alpha: 1) : .label
         camera.accessibilityLabel = on ? L("Stop video") : L("Start video")
         camera.accessibilityValue = usesPresenter ? L("Camera in shared content") : nil
         camera.largeContentTitle = camera.accessibilityLabel
@@ -1277,6 +1282,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         toolbar.arrange(rail: geometry.rail, largeText: large)
         automaticView.configuration?.title = large ? nil : L("Auto")
         automaticView.configuration?.image = large ? UIImage(systemName: "arrow.triangle.2.circlepath") : nil
+        selectTextButton.isHidden = !stageIsShare || !stageActive || gridVisible || focus.hidden || textCapture != nil
+        accessControls.textButton = selectTextButton
+        accessControls.capturedTextMode = textCapture != nil
         let accessWidth = MeetingAccessGeometry.availableAccessWidth(base: geometry, gallery: gridVisible)
         let access = MeetingAccessGeometry(base: geometry, bounds: surface.bounds, insets: window.safeAreaInsets,
             accessSize: accessControls.fittingSize(availableWidth: accessWidth), largeText: large, gallery: gridVisible)
@@ -1317,12 +1325,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         }
         navigation.isHidden = true
         var stage = access.stage
-        if selectTextButton.superview !== surface { surface.addSubview(selectTextButton) }
-        selectTextButton.isHidden = !stageIsShare || !stageActive || gridVisible || focus.hidden || textCapture != nil
-        selectTextButton.frame = CGRect(x: max(stage.minX, stage.maxX - 150), y: max(stage.minY, stage.maxY - 50), width: min(150, stage.width), height: 44)
-        textCapture?.frame = stage
+        textCapture?.frame = surface.bounds
+        textCapture?.layoutChrome(status: geometry.header, tools: access.access)
         textCapture?.updateSource(id: stageIsShare && stageActive ? stageID : nil, name: stageName)
-        if let textCapture { surface.bringSubviewToFront(textCapture) }
 
         let layoutAvailable = displayMode != .audioOnly && !isWaitingForOthers && galleryCount > 1
         let showsStrip = !gridVisible && layoutAvailable && !stageIsShare && stage.height >= 240
@@ -1401,6 +1406,12 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         stageViewport?.pinInHeader = geometry.compactHeader
         CallStageLayout.update(window: window, owner: layoutOwner, rect: surface.convert(stage, to: window), hidden: focus.hidden,
             toggle: { [weak self] in self?.toggleControls() })
+        if let textCapture {
+            surface.bringSubviewToFront(textCapture)
+            surface.bringSubviewToFront(toolbar)
+            header.isHidden = true; compactHeader.isHidden = true; accessControls.isHidden = true
+        }
+
     }
 
     private func configureMoreMenu(coordinator: JazzActiveConferenceCoordinator?,
@@ -1673,7 +1684,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             attributes.font = .systemFont(ofSize: 12, weight: .medium)
             return attributes
         }
-        configuration.baseForegroundColor = .white
+        configuration.baseForegroundColor = .label
         configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 19)
         return configuration
     }

@@ -84,15 +84,14 @@ struct NativeDesktopMeetingView: View {
         HStack(spacing: 0) {
             ZStack {
                 Color.black
-                if model.mediaPresentation == .meeting { media.overlay {
-                    if textSelection.isOpen { NativeDesktopSharedTextView(model: textSelection) }
-                }.padding(.horizontal, 14)
+                if model.mediaPresentation == .meeting { media.padding(.horizontal, 14)
                     .padding(.top, model.controlsHidden ? 12 : 70)
                     .padding(.bottom, model.controlsHidden ? 12 : (model.showsFocus || model.viewMode == .audioOnly ? 90 : 160))
                 }
+                if textSelection.isOpen { NativeDesktopSharedTextView(model: textSelection, meetingTools: AnyView(viewAndMoreMenus)) }
                 VStack(spacing: 0) {
-                    if !model.controlsHidden { header.padding(.horizontal, 18).padding(.top, 10) }
-                    HStack { reactionOverlay; Spacer() }.padding(.leading, 22).padding(.top, 12)
+                    if !model.controlsHidden && !textSelection.isOpen { header.padding(.horizontal, 18).padding(.top, 10) }
+                    if !textSelection.isOpen { HStack { reactionOverlay; Spacer() }.padding(.leading, 22).padding(.top, 12) }
                     Spacer(minLength: 0)
                     if !model.controlsHidden { controls.padding(.bottom, 18) }
                 }
@@ -135,31 +134,20 @@ struct NativeDesktopMeetingView: View {
     }
     private var controls: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 8) {
+            if !textSelection.isOpen { HStack(spacing: 8) {
+                if textSourceID != nil {
+                    iconButton("text.viewfinder", L("Select text")) { model.controlsHidden = false; updateTextSource(); textSelection.open(zoom: focusedViewport.zoom, pan: focusedViewport.pan, viewportSize: focusedViewport.size) }
+                        .accessibilityIdentifier("Select shared text")
+                    Divider().frame(height: 18)
+                }
                 if model.galleryPages > 1 && !model.showsFocus {
                     Button { model.galleryPage = max(0, model.galleryPage - 1) } label: { Image(systemName: "chevron.left") }.disabled(model.galleryPage == 0)
                     Text("\(model.galleryPage + 1) / \(model.galleryPages)").font(.caption).monospacedDigit()
                     Button { model.galleryPage = min(model.galleryPages - 1, model.galleryPage + 1) } label: { Image(systemName: "chevron.right") }.disabled(model.galleryPage == model.galleryPages - 1)
                     Divider().frame(height: 18)
                 }
-                Menu {
-                    Picker(L("View"), selection: $model.viewMode) {
-                        ForEach(NativeDesktopMeetingModel.ViewMode.allCases, id: \.self) { Text(L($0.rawValue)).tag($0) }
-                    }
-                    ForEach(model.participants.filter { $0.sharing == true }) { person in
-                        Button(L("Screen · %@", person.name)) { model.focus(participantID: person.id, source: .screen) }
-                    }
-                    if model.pinnedID != nil { Button(L("Unpin")) { model.unpin() } }
-                } label: { Label(L(model.viewMode.rawValue), systemImage: model.showsFocus ? "rectangle.inset.filled" : "square.grid.2x2") }
-                Divider().frame(height: 18)
-                Menu {
-                    Button(L("Camera & sound")) { togglePanel(.studio) }
-                    Button(L("Share")) { togglePanel(.presenter) }
-                    Button(L("Reconnect")) { model.reconnect() }
-                    Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
-                    Button(L("Hide controls")) { model.controlsHidden = true }
-                } label: { Label(L("More"), systemImage: "ellipsis") }
-            }.buttonStyle(.plain).padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome()
+                viewAndMoreMenus
+            }.buttonStyle(.plain).padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome() }
             HStack(spacing: 4) {
                 controlButton(model.snapshot.microphoneOn ? "mic.fill" : "mic.slash", L("Mic"), selected: model.snapshot.microphoneOn) { model.toggleMicrophone() }
                     .help(L("Mute or unmute (Space or ⇧⌘M)"))
@@ -175,13 +163,37 @@ struct NativeDesktopMeetingView: View {
             }.padding(8).nativeMeetingChrome()
         }
     }
+    private var viewAndMoreMenus: some View {
+        Group {
+                Menu {
+                    Picker(L("View"), selection: $model.viewMode) {
+                        ForEach(NativeDesktopMeetingModel.ViewMode.allCases, id: \.self) { Text(L($0.rawValue)).tag($0) }
+                    }
+                    ForEach(model.participants.filter { $0.sharing == true }) { person in
+                        Button(L("Screen · %@", person.name)) { model.focus(participantID: person.id, source: .screen) }
+                    }
+                    if model.pinnedID != nil { Button(L("Unpin")) { model.unpin() } }
+                } label: { Label(L(model.viewMode.rawValue), systemImage: model.showsFocus ? "rectangle.inset.filled" : "square.grid.2x2") }
+                Divider().frame(height: 18)
+                Menu {
+                    Button(L("Participants")) { togglePanel(.participants) }
+                    Button(L("Conversation")) { togglePanel(.conversation) }
+                    Button(L("Mini meeting"), action: onMini)
+                    Button(L("Camera & sound")) { togglePanel(.studio) }
+                    Button(L("Share")) { togglePanel(.presenter) }
+                    Button(L("Reconnect")) { model.reconnect() }
+                    Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
+                    Button(L("Hide controls")) { model.controlsHidden = true }
+                } label: { Label(L("More"), systemImage: "ellipsis") }
+        }
+    }
     @ViewBuilder private var media: some View {
         if model.viewMode == .audioOnly {
             VStack(spacing: 18) { Image(systemName: "waveform").font(.system(size: 44)); Text(L("Audio only")).font(.title2); Text(model.title).foregroundStyle(.secondary) }
         } else if model.showsFocus, let focused = model.focusedVideo {
             VStack(spacing: 10) {
                 NativeDesktopZoomVideo(video: focused, name: name(focused.participantID), viewport: focusedViewport,
-                    textFrame: textFrame, selectText: { model.controlsHidden = false; updateTextSource(); textSelection.open() })
+                    textFrame: textFrame, selectText: { model.controlsHidden = false; updateTextSource(); textSelection.open(zoom: focusedViewport.zoom, pan: focusedViewport.pan, viewportSize: focusedViewport.size) })
                 HStack(spacing: 8) {
                     ForEach(model.participants.prefix(6)) { person in
                         Button { model.focus(participantID: person.id, source: .camera) } label: {
@@ -276,7 +288,7 @@ struct NativeDesktopMeetingView: View {
     private func controlButton(_ symbol: String, _ title: String, selected: Bool, destructive: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 5) { Image(systemName: symbol).font(.title3); Text(title).font(.caption) }
-                .foregroundStyle(destructive ? Color.red : selected ? .orange : .white).frame(width: 66, height: 48).contentShape(Rectangle())
+                .foregroundStyle(destructive ? Color.red : selected ? .orange : .primary).frame(width: 66, height: 48).contentShape(Rectangle())
         }.buttonStyle(.plain).disabled(!model.connected && title != L("Leave"))
     }
 }
@@ -311,6 +323,7 @@ final class NativeDesktopVideoViewport: ObservableObject {
     var savedZoom: CGFloat = 1
     @Published var pan = CGSize.zero
     var savedPan = CGSize.zero
+    var size = CGSize.zero
     private var sourceID: String?
     private var participantID: String?
     func select(participant: String, source: NativeDesktopVideoSource) {
@@ -334,6 +347,8 @@ struct NativeDesktopZoomVideo: View {
         GeometryReader { geometry in
             NativeDesktopVideoView(track: video.track, crop: video.crop, zoom: zoom, pan: pan, textFrame: textFrame, textSourceID: video.id)
                 .contentShape(Rectangle())
+                .onAppear { viewport.size = geometry.size }
+                .onChange(of: geometry.size) { viewport.size = $0 }
                 .gesture(MagnificationGesture().onChanged { zoom = min(8, max(1, savedZoom * $0)) }.onEnded { _ in savedZoom = zoom; if zoom == 1 { pan = .zero; savedPan = .zero } })
                 .simultaneousGesture(DragGesture().onChanged { value in
                     guard zoom > 1 else { return }
@@ -343,9 +358,6 @@ struct NativeDesktopZoomVideo: View {
                 .overlay(alignment: .bottomLeading) { Text(name + (video.source == .screen ? " · " + L("Screen") : "")).font(.caption).lineLimit(1).frame(maxWidth: max(80, min(400, geometry.size.width - 140)), alignment: .leading).padding(8).background(.black.opacity(0.5), in: Capsule()).padding(10) }
                 .overlay(alignment: .bottomTrailing) {
                     HStack(spacing: 12) {
-                        if video.source == .screen, let selectText {
-                            Button(action: selectText) { Label(L("Select text"), systemImage: "text.viewfinder") }.accessibilityIdentifier("Select shared text")
-                        }
                         Button { zoom = 1; savedZoom = 1; pan = .zero; savedPan = .zero } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }.help(L("Fit to screen"))
                         Button { zoom = min(8, zoom + 0.5); savedZoom = zoom } label: { Image(systemName: "plus.magnifyingglass") }.help(L("Zoom in"))
                     }.buttonStyle(.plain).padding(12).nativeMeetingChrome().padding(10)

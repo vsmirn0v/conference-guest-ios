@@ -70,7 +70,7 @@ final class ActiveSpeakerIndicator: UIView {
         icon.tintColor = .systemGreen
         icon.contentMode = .scaleAspectFit
         name.font = font
-        name.textColor = .white
+        name.textColor = .label
         name.lineBreakMode = .byTruncatingTail
         addSubview(icon); addSubview(name)
         isHidden = true

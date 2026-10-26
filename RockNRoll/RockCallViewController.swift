@@ -110,7 +110,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     private var textCapture: SharedTextOverlay?
     private lazy var selectTextButton: UIButton = {
         let button = UIButton(type: .system)
-        button.configuration = .tinted(); button.configuration?.title = L("Select text")
+        button.configuration = .plain(); button.configuration?.baseForegroundColor = .label
+        button.accessibilityLabel = L("Select text")
         button.configuration?.image = UIImage(systemName: "text.viewfinder")
         button.accessibilityIdentifier = "Select shared text"
         button.addAction(UIAction { [weak self] _ in self?.openSharedText() }, for: .touchUpInside)
@@ -122,13 +123,15 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         focus.show(); focus.menuVisible = true
         let name = entry.tile.accessibilityLabel ?? L("Screen share")
         var firstKey: String? = key
-        let overlay = SharedTextOverlay(sourceID: key, sourceName: name) { [weak self] in
+        let overlay = SharedTextOverlay(sourceID: key, sourceName: name, initialScale: zoomStates[key]?.0 ?? 1,
+            initialCenter: zoomStates[key]?.1 ?? CGPoint(x: 0.5, y: 0.5), initialViewportSize: entry.video.bounds.size) { [weak self] in
             guard let self, let key = firstKey ?? self.currentPrimaryKey, self.streamPinTargets[key]?.isScreenShare == true,
                   let entry = self.videoTiles[key] else { return nil }
             firstKey = nil
             return await SharedTextCapture.make(entry.video.snapshotFrame(), sourceID: key, name: entry.tile.accessibilityLabel ?? L("Screen share"))
         }
         textCapture = overlay; view.addSubview(overlay)
+        overlay.onMore = { [weak self] in self?.keyOpenMore() }
         overlay.onClose = { [weak self] in self?.textCapture = nil; self?.focus.menuVisible = false; self?.view.setNeedsLayout() }
         view.setNeedsLayout()
     }
@@ -247,8 +250,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     @objc private func keyOpenMore() { focus.show(); accessControls.moreButton.sendActions(for: .touchUpInside) }
     @objc private func keyOpenParticipants() { participantsButton.sendActions(for: .touchUpInside) }
     @objc private func keyFocus() { focus.toggle() }
-    @objc private func keyRestoreControls() { if reminderHost.collapseReminder?() == true { return }; focus.show(); focus.interaction() }
-    @objc private func keyFitScreen() { primaryZoom?.setZoomScale(1, animated: true) }
+    @objc private func keyRestoreControls() { if let textCapture { textCapture.finish(); return }; if reminderHost.collapseReminder?() == true { return }; focus.show(); focus.interaction() }
+    @objc private func keyFitScreen() { if let textCapture { textCapture.toggleFit(); return }; primaryZoom?.setZoomScale(1, animated: true) }
 
     init(title: String, catchUp: CatchUpStore, chat: ChatStore,
          invitationURL: URL? = nil, roomIdentifier: String? = nil) {
@@ -410,6 +413,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         header.frame = geometry.header.insetBy(dx: 4, dy: 0)
         header.frame.size.height = max(0, geometry.header.height - statusHeight - 8)
         let gallery = effectiveLayoutMode == .grid && displayMode != .audioOnly
+        let sharedKey = currentPrimaryKey.flatMap { streamPinTargets[$0]?.isScreenShare == true ? $0 : nil }
+        selectTextButton.isHidden = sharedKey == nil || effectiveLayoutMode != .speaker || focus.hidden || textCapture != nil
+        accessControls.textButton = selectTextButton
+        accessControls.capturedTextMode = textCapture != nil
         let accessWidth = MeetingAccessGeometry.availableAccessWidth(base: geometry, gallery: gallery)
         let access = MeetingAccessGeometry(base: geometry, bounds: view.bounds, insets: view.safeAreaInsets,
             accessSize: accessControls.fittingSize(availableWidth: accessWidth), largeText: large, gallery: gallery)
@@ -425,13 +432,6 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         accessControls.update(MeetingViewState(layout: layoutMode, display: displayMode,
             manualFocus: pinnedStream != nil || browsedStream != nil, effectiveLayout: effectiveLayoutMode))
         var stage = access.stage
-        if selectTextButton.superview !== view { view.addSubview(selectTextButton) }
-        let sharedKey = currentPrimaryKey.flatMap { streamPinTargets[$0]?.isScreenShare == true ? $0 : nil }
-        selectTextButton.isHidden = sharedKey == nil || effectiveLayoutMode != .speaker || focus.hidden || textCapture != nil
-        selectTextButton.frame = CGRect(x: max(stage.minX, stage.maxX - 150), y: max(stage.minY, stage.maxY - 50), width: min(150, stage.width), height: 44)
-        textCapture?.frame = stage
-        textCapture?.updateSource(id: sharedKey, name: sharedKey.flatMap { videoTiles[$0]?.tile.accessibilityLabel })
-        if let textCapture { view.bringSubviewToFront(textCapture) }
 
         var canvas = view.bounds
         if dockedConversation != nil {
@@ -440,6 +440,10 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             stage.size.width = max(0, stage.width - width - 8)
             canvas.size.width = max(0, conversationHost.frame.minX - canvas.minX - 8)
         }
+        textCapture?.frame = canvas
+        textCapture?.layoutChrome(status: geometry.header.offsetBy(dx: -canvas.minX, dy: -canvas.minY),
+            tools: access.access.offsetBy(dx: -canvas.minX, dy: -canvas.minY))
+        textCapture?.updateSource(id: sharedKey, name: sharedKey.flatMap { videoTiles[$0]?.tile.accessibilityLabel })
         for entry in videoTiles.values where entry.zoom.window != nil { rememberZoom(entry.zoom) }
         restoringZoom = true
         let layoutAvailable = displayedSnapshot?.remoteParticipants.isEmpty == false && displayMode != .audioOnly
@@ -598,6 +602,12 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         flipCamera.alpha = focus.hidden ? 0 : 1
         flipCamera.isHidden = studio?.canFlipCamera != true
         flipCamera.isEnabled = studio?.canFlipCamera == true
+        if let textCapture {
+            view.bringSubviewToFront(textCapture)
+            view.bringSubviewToFront(toolbar)
+            if dockedConversation != nil { view.bringSubviewToFront(conversationHost) }
+            header.isHidden = true; compactHeader.isHidden = true; accessControls.isHidden = true
+        }
     }
 
     @objc private func tappedStage(_ gesture: UITapGestureRecognizer) {
@@ -612,6 +622,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
     @objc private func swipedStage(_ gesture: UISwipeGestureRecognizer) {
         if effectiveLayoutMode == .grid { moveGalleryPage(gesture.direction == .left ? 1 : -1) }
         else { browse(gesture.direction == .left ? 1 : -1) }
+
     }
     private func browse(_ step: Int) {
         guard let snapshot = displayedSnapshot, orderedStreams.count > 1 else { return }
@@ -710,8 +721,8 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         shareTitle.text = L("Share")
         shareTitle.font = .preferredFont(forTextStyle: .caption2)
         shareTitle.textColor = accent
-        microphone.configuration?.baseForegroundColor = .white
-        camera.configuration?.baseForegroundColor = .white
+        microphone.configuration?.baseForegroundColor = .label
+        camera.configuration?.baseForegroundColor = .label
         configure(flipCamera, symbol: "arrow.triangle.2.circlepath.camera", label: L("Flip camera"))
         flipCamera.isEnabled = false
         configure(speaker, symbol: "speaker.wave.2.fill", label: L("Use iPhone speaker"))
@@ -729,9 +740,9 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             self.focus.interaction()
             self.configureMoreMenu()
             MeetingActionsController.show(model: nil, menu: self.accessControls.menuWithReminders(self.actionsMenu),
-                from: more ? self.accessControls.moreButton : self.reactionsButton,
+                from: more ? (self.textCapture?.moreAnchor ?? self.accessControls.moreButton) : self.reactionsButton,
                 startsWithMore: more, openChat: self.supportsChat ? { [weak self] in self?.openConversation(.chat) } : nil,
-                owner: self.panelOwner, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
+                owner: self.panelOwner, onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 || self?.textCapture != nil })
         }
         reactionsButton.addAction(UIAction { _ in showActions(false) }, for: .touchUpInside)
         accessControls.moreButton.addAction(UIAction { _ in showActions(true) }, for: .touchUpInside)
@@ -746,7 +757,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
                 chooseLayout: { [weak self] in self?.chooseLayout($0) },
                 chooseDisplay: { [weak self] in self?.setDisplayMode($0) },
                 followSpeaker: { [weak self] in self?.layoutMode = .speaker; self?.explicitLayout = true; self?.browsedStream = nil; self?.setPin(nil) },
-                onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 })
+                onVisibilityChanged: { [weak self] in self?.focus.menuVisible = $0 || self?.textCapture != nil })
         }, for: .touchUpInside)
         MeetingActionsShortcut.install(on: reactionsButton) { showActions(true) }
         configureMoreMenu()
@@ -1713,7 +1724,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         shareTitle.isHidden = true
         share.configuration?.image = UIImage(systemName: enabled ? "rectangle.slash" : "rectangle.on.rectangle")
         updateControlTitles()
-        share.configuration?.baseForegroundColor = enabled ? accent : .white
+        share.configuration?.baseForegroundColor = enabled ? accent : .label
         share.accessibilityLabel = enabled ? L("Stop sharing screen") : L("Share screen")
     }
 
@@ -1725,7 +1736,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         view.setNeedsLayout()
         microphone.configuration?.image = UIImage(systemName: enabled ? "mic.fill" : "mic.slash.fill")
         updateControlTitles()
-        microphone.configuration?.baseForegroundColor = enabled ? accent : .white
+        microphone.configuration?.baseForegroundColor = enabled ? accent : .label
         microphone.accessibilityLabel = enabled ? L("Mute microphone") : L("Unmute microphone")
         microphone.largeContentTitle = microphone.accessibilityLabel
         updateStatus()
@@ -1745,7 +1756,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
         configureMoreMenu()
         camera.configuration?.image = UIImage(systemName: enabled ? "video.fill" : "video.slash.fill")
         updateControlTitles()
-        camera.configuration?.baseForegroundColor = enabled ? accent : .white
+        camera.configuration?.baseForegroundColor = enabled ? accent : .label
         camera.accessibilityLabel = enabled ? L("Stop video") : L("Start video")
         camera.largeContentTitle = camera.accessibilityLabel
         updateStatus()
@@ -1848,7 +1859,7 @@ final class RockCallViewController: UIViewController, UIScrollViewDelegate, UICo
             attributes.font = .systemFont(ofSize: 12, weight: .medium)
             return attributes
         }
-        style.baseForegroundColor = .white
+        style.baseForegroundColor = .label
         button.configuration = style
         button.titleLabel?.numberOfLines = 1
         button.titleLabel?.lineBreakMode = .byTruncatingTail
