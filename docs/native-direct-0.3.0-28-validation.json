@@ -1,0 +1,139 @@
+{
+  "source": "0f301dd6d33bc36d07d48e8a97212dd9384d5851",
+  "version": "0.3.0",
+  "build": "28",
+  "channel": "beta",
+  "stableBuild": "25",
+  "publishedAtUTC": "2026-10-26T12:07:39.731755+00:00",
+  "change": "Explicit public ScreenCaptureKit picker-mode mask31 prevents automatic source chooser configuration rejection.",
+  "validation": {
+    "nativePickerLifecyclePassed": true,
+    "nativeOldSourceAssertionFailedAsExpected": true,
+    "exact31ControlCenterAccepted": true,
+    "liveChooserToFirstFrameVerified": false,
+    "nativeFullSuiteRerun": false,
+    "nativeFullSuiteRerunReason": "Narrow ObjC picker mask change; preserve active same-bundle user meeting. Native27 broader95-case suite remains prior evidence only.",
+    "releaseToolingTests": 18,
+    "releaseToolingFailures": 0,
+    "sourceHashesVerified": 170,
+    "sourceMismatches": [],
+    "iOSSharingRegression": {
+      "total": 34,
+      "passed": 30,
+      "skipped": 4,
+      "failed": 0
+    },
+    "iOSPresenterRegression": {
+      "total": 53,
+      "passed": 51,
+      "skipped": 2,
+      "failed": 0
+    },
+    "review": "6-astra xhigh accepted source and exact31 system evidence; no source beta blocker."
+  },
+  "validationEvidence": {
+    "pickerLifecycle": ".build/share-timeout/picker-tests.log",
+    "pickerFollowup": ".build/share-timeout/picker-tests-ios-followup.log",
+    "oldSourceFailure": ".build/share-timeout/picker-before.log",
+    "exact31System": ".build/share-timeout/exact31-system.log",
+    "releaseTooling": ".build/native-dmg/preparation28-tooling-tests.log",
+    "sourceQualification": ".build/native-dmg/preparation28-source-check.json",
+    "shippingArtifactQualification": ".build/native-dmg/qualification28.json"
+  },
+  "package": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "28",
+    "file": "RockNRoll-0.3.0-28-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-28-arm64.dmg",
+    "sha256": "fdf052509fdd1751ac069002f4bd33f551cd79fc8cc426c25fe1f9cecbcd5ea8",
+    "length": 15438448,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/package-28/RockNRoll-0.3.0-28-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-28-arm64.dmg",
+      "sha256": "fdf052509fdd1751ac069002f4bd33f551cd79fc8cc426c25fe1f9cecbcd5ea8",
+      "length": 15438448
+    },
+    "state": {
+      "appcastSHA256": "cf2a7227392afeac82ab4aee5f441960e75621dfce20c955f0aba14da7544360",
+      "inventorySHA256": "0518f84abd568ecae36beab3397fd0504b70ba20fef4337c589be5c10366fb2a",
+      "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-28-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/b166314fbea1466eb4766d613b544215/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "appcast.xml": {
+      "url": "https://rock.glowsoft.ru/mac/appcast.xml",
+      "resolvedURL": "https://rock.glowsoft.ru/mac/appcast.xml",
+      "sha256": "cf2a7227392afeac82ab4aee5f441960e75621dfce20c955f0aba14da7544360",
+      "length": 4478,
+      "cacheControl": "no-store"
+    },
+    "latest.json": {
+      "url": "https://rock.glowsoft.ru/mac/latest.json",
+      "resolvedURL": "https://rock.glowsoft.ru/mac/latest.json",
+      "sha256": "0518f84abd568ecae36beab3397fd0504b70ba20fef4337c589be5c10366fb2a",
+      "length": 487,
+      "cacheControl": "no-store"
+    },
+    "immutable28": {
+      "url": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-28-arm64.dmg",
+      "resolvedURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-28-arm64.dmg",
+      "sha256": "fdf052509fdd1751ac069002f4bd33f551cd79fc8cc426c25fe1f9cecbcd5ea8",
+      "length": 15438448,
+      "cacheControl": "public, max-age=31536000, immutable"
+    },
+    "betaAlias": {
+      "url": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+      "resolvedURL": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+      "sha256": "fdf052509fdd1751ac069002f4bd33f551cd79fc8cc426c25fe1f9cecbcd5ea8",
+      "length": 15438448,
+      "cacheControl": "no-store"
+    },
+    "stableAlias": {
+      "url": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+      "resolvedURL": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+      "sha256": "e9c7c9ddab9c7b10b81fd52da5b7fb54404b9e12cc1e5e29c6292fffe9625a21",
+      "length": 15334524,
+      "cacheControl": "no-store"
+    },
+    "checkedAtUTC": "2026-10-26T12:07:39.731755+00:00",
+    "stableBuild": "25",
+    "betaBuild": "28",
+    "stableUnchanged": true,
+    "remoteSignedFeedVerified": true
+  },
+  "productionCloudKit": true,
+  "productionCloudKitFixture": {
+    "marker": "c14ac90b-5645-4a43-a804-a7fc7d2c2768",
+    "phases": {
+      "write": true,
+      "verify": true,
+      "cleanup": true
+    }
+  },
+  "sandboxed": true,
+  "debuggerEntitlement": false,
+  "appGroupContainerPassed": true,
+  "archiveCodeUUID": "UUID: 78362809-728A-38A3-AEE1-B7047E158734",
+  "exportCodeUUID": "UUID: 78362809-728A-38A3-AEE1-B7047E158734",
+  "archiveExportDSYMUUIDsMatch": true,
+  "bridgeSHA256": "3592fbaa5487fd98dab59c1966420c57c1ee0ed59226648729cef5d94b862593",
+  "enclosedAppNotarized": true,
+  "outerDMGNotarized": false,
+  "installedDuringPublication": false,
+  "limitations": [
+    "End-to-end visible system chooser selection, filter receipt and first captured frame remain unverified for this fix."
+  ]
+}

@@ -6,8 +6,8 @@ An isolated AppKit/ScreenCaptureKit probe reproduced the same rejection with `al
 
 Although the SDK documents zero as unrestricted, the bridge now explicitly enumerates all five public selection modes (31). Explicit window/display requests retain their restrictions (1/16). Picker ownership, stream capacity, cancellation and restoration stay unchanged. The new regression assertion fails against build 27 source and passes against the corrected bridge. Evidence: `.build/share-timeout/diagnosis.json`, `picker-before.log` and `picker-tests.log`.
 
-This correction has not been published or installed; the user's active meeting was left untouched.
+Published in iOS build 113 and native Mac beta 28. Publication did not install an app or interrupt the user's active meeting.
 
 ## iOS app running on Mac
 
-Both Mac routes use the corrected coordinator: `NativeGuestScreenCapture.start()` uses `macPicker.present()` when `isMac` is true; older compatibility capture uses `MacScreenCaptureBridge.present()`. The Objective-C bridge is included in the iOS application target, so the fix covers both the native Mac app and the iOS app running on Mac. The iOS-target bridge compilation and the Mac picker lifecycle regression passed. No new app binary has been installed or published.
+Both Mac routes use the corrected coordinator: `NativeGuestScreenCapture.start()` uses `macPicker.present()` when `isMac` is true; older compatibility capture uses `MacScreenCaptureBridge.present()`. The Objective-C bridge is included in the iOS application target, so the fix covers both the native Mac app and the iOS app running on Mac. The iOS-target bridge compilation and the Mac picker lifecycle regression passed. The correction is included in iOS build 113 and native Mac beta 28; publication did not install either app.
