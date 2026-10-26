@@ -16,4 +16,4 @@ The signed Release export has all four bundles at 0.2.0 (112), production CloudK
 
 Native Mac beta 27 is published at https://rock.glowsoft.ru/mac/beta/latest.dmg; independent HTTPS artifact, update-feed and inventory readbacks passed. Stable Mac build 25 remains unchanged. The enclosed app is notarized/stapled and accepted by Gatekeeper; the outer DMG is unsigned. See [native qualification](native-direct-0.3.0-27-validation.json).
 
-Apple accepted the iOS upload. TestFlight processing/group assignment and final readback are pending Safari authentication.
+Apple accepted the iOS upload and processing completed. Build 112 is **Testing** in Rock’n’Roll Internal (one tester) and Rock’n’Roll Public Beta (seven testers), independently read back on October 26, 2026. What to Test is saved and automatic tester notifications were enabled at submission. Build details, both group readbacks and screenshots are preserved in `.build/release112/`. [Public TestFlight](https://testflight.apple.com/join/Hd13C9U3).
