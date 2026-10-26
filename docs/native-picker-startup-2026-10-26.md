@@ -2,7 +2,7 @@
 
 Installed native build 27 requested the system chooser at 14:10:53 and 14:14:58 on October 26. Control Center immediately rejected both with `SharedContentPickingControllerError (1)`, while the app received neither selection nor failure and eventually reached its 120-second first-frame deadline. This precedes capture, encoding and network publication.
 
-An isolated AppKit/ScreenCaptureKit probe reproduced the same rejection with `allowedPickerModes = 0`. An explicit mask containing window, application and display modes (21) did not produce the configuration error. No screen content was captured. Actual chooser visibility awaits the user's response; the diagnostic remains available for that check.
+An isolated AppKit/ScreenCaptureKit probe reproduced the same rejection with `allowedPickerModes = 0`. Explicit masks containing window, application and display modes (21), followed by the exact shipping mask containing all five public modes (31), did not produce the configuration error. Control Center recorded mask 31 and the picker request at 14:57:26; this verifies request acceptance, not visible UI or first-frame delivery. No screen content was captured. Actual chooser visibility awaits the user's response; the isolated diagnostic was stopped after evidence collection.
 
 Although the SDK documents zero as unrestricted, the bridge now explicitly enumerates all five public selection modes (31). Explicit window/display requests retain their restrictions (1/16). Picker ownership, stream capacity, cancellation and restoration stay unchanged. The new regression assertion fails against build 27 source and passes against the corrected bridge. Evidence: `.build/share-timeout/diagnosis.json`, `picker-before.log` and `picker-tests.log`.
 
