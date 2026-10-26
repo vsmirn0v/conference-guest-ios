@@ -1,0 +1,80 @@
+{
+  "sourceCommit": "460ff030f488861524f47a813693017fcaea4546",
+  "archiveBaseCommit": "86e4bf1a22a2c62c55c71a7cb5d7d7cc323ebbf4",
+  "shippingSourceHashesUnchangedSinceArchive": true,
+  "version": "0.2.0",
+  "build": "114",
+  "buildID": "dc3827b1-8215-4e9b-b913-848bd5a82e54",
+  "status": "Testing",
+  "internalGroup": {
+    "id": "08bd4885-fb6d-475d-a699-44829380dcd3",
+    "name": "Rock\u2019n\u2019Roll Internal",
+    "testers": 1,
+    "status": "Testing"
+  },
+  "publicGroup": {
+    "id": "d89117ad-e667-4553-a58c-2a2356b11390",
+    "name": "Rock\u2019n\u2019Roll Public Beta",
+    "testers": 7,
+    "status": "Testing",
+    "url": "https://testflight.apple.com/join/Hd13C9U3"
+  },
+  "automaticallyNotifyTesters": true,
+  "whatToTestSaved": true,
+  "verifiedAtUTC": "2026-10-26T16:23:37.270546+00:00",
+  "artifact": {
+    "source": "86e4bf1a22a2c62c55c71a7cb5d7d7cc323ebbf4",
+    "archive": "/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-10-26/RockNRoll-0.2.0-b114.xcarchive",
+    "bundles": [
+      {
+        "bundle": "RockNRoll.app",
+        "version": "0.2.0",
+        "build": "114",
+        "minimumOS": "16.0",
+        "team": "5V64BP2H3P",
+        "debugger": false,
+        "iCloudEnvironment": "Production",
+        "dSYMsMatch": true
+      },
+      {
+        "bundle": "GuestBroadcast.appex",
+        "version": "0.2.0",
+        "build": "114",
+        "minimumOS": "16.0",
+        "team": "5V64BP2H3P",
+        "debugger": false,
+        "iCloudEnvironment": null,
+        "dSYMsMatch": true
+      },
+      {
+        "bundle": "MeetingActivity.appex",
+        "version": "0.2.0",
+        "build": "114",
+        "minimumOS": "16.2",
+        "team": "5V64BP2H3P",
+        "debugger": false,
+        "iCloudEnvironment": null,
+        "dSYMsMatch": true
+      },
+      {
+        "bundle": "RockBroadcast.appex",
+        "version": "0.2.0",
+        "build": "114",
+        "minimumOS": "16.0",
+        "team": "5V64BP2H3P",
+        "debugger": false,
+        "iCloudEnvironment": null,
+        "dSYMsMatch": true
+      }
+    ],
+    "shippingSourceUnchangedSinceArchive": true,
+    "backgroundAudioJoinPresent": true,
+    "firstBackgroundPiPRemoved": true,
+    "debugFixturesAbsent": true,
+    "nativeMacRecommendationLocalized": true,
+    "officialMacDownloadURLPresent": true,
+    "activityHasNoMediaFramework": true,
+    "sha256": "c3e4ae4c9f5e9efaba4befe051e72054e27954ff92571f1a48a41639e59a2e40"
+  },
+  "readback": "Safari App Store Connect build detail Groups (2), then both group Builds tables: 0.2.0 (114), Testing, expires in 90 days."
+}

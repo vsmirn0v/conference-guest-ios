@@ -1,0 +1,112 @@
+{
+  "sourceCommit": "460ff030f488861524f47a813693017fcaea4546",
+  "review": "gpt-6-astra xhigh: no remaining source blockers after final review",
+  "nativeMac": {
+    "version": "0.3.0",
+    "build": "29",
+    "displayName": "Rock'N'Roll for Mac",
+    "defaultEngineUnchanged": true,
+    "cameraReadiness": {
+      "firstValidForwardedFrameDeadlineSeconds": 15,
+      "sfuAckDeadlineSeconds": 5,
+      "primingStopBudgetSeconds": 15,
+      "establishedStopBudgetSeconds": 3
+    },
+    "physicalCameraAnd4KSharing": {
+      "cycles": 3,
+      "cameraDecodedFrames": [
+        340,
+        341,
+        334
+      ],
+      "shareResolution": "3840x2160",
+      "workload": "dense text grid and moving highlight",
+      "presenterHandovers": 3,
+      "connectedAfterEveryHandover": true
+    },
+    "regression": {
+      "total": 97,
+      "passed": 80,
+      "skipped": 17,
+      "failed": 0,
+      "skipReason": "opt-in live/hardware/soak checks; physical camera/share acceptance run separately"
+    },
+    "presenterAssertions": 74,
+    "captureAssertions": 24,
+    "distributionToolTests": 27
+  },
+  "legacyMacAndIOS": {
+    "subscriptionPolicyScenarios": 23,
+    "boundedSocketRegistry": {
+      "capacity": 16,
+      "trafficOperations": 1024,
+      "passed": true
+    },
+    "simulatorTests": {
+      "passed": 70,
+      "failed": 0
+    },
+    "macRegressionTests": {
+      "passed": 54,
+      "failed": 0
+    },
+    "alreadySharingLiveJoin": {
+      "passed": true,
+      "advancingCameraFramesPer2Seconds": [
+        28,
+        29,
+        27
+      ],
+      "reexpandedCameraFrames": 9,
+      "postShareCameraFrames": 9
+    },
+    "midMeetingSharingLive": {
+      "passed": true,
+      "advancingCameraFramesPer2Seconds": [
+        29,
+        29,
+        29
+      ],
+      "reexpandedCameraFrames": 9,
+      "postShareCameraFrames": 9
+    }
+  },
+  "ocrRegressionInvestigation": {
+    "inactiveWindowlessColdRunsFailedAndRetained": true,
+    "englishAndMixedIsolatedRunsAlsoPassedUnchanged": true,
+    "realUserVisibleWindowFixture": true,
+    "nativeCopyAndRecognitionAssertionsPreserved": true,
+    "noProductionTimeoutOrAdmissionRelaxation": true,
+    "defaultRecognitionBehaviorUnchanged": true
+  },
+  "limitations": [
+    "No new physical iPhone tests in this task.",
+    "All-muted continuous-checking ICE timeout branch validated deterministically; live idle-room probe connected and recovered late media.",
+    "Dense 4K text acceptance does not assert lossless high-entropy random-noise transport.",
+    "Mac automatic update preserves the legacy .app folder path; visible product/menu name is new."
+  ],
+  "evidence": {
+    ".build/camera-share114/native-demand-fixed-physical2-summary.json": {
+      "sha256": "491680de211500738514842e256b9a7376a459b94b8bee08631a08f7b8c0ede0"
+    },
+    ".build/camera-share114/native-visible-ocr-regression-summary.json": {
+      "sha256": "49963bd6c8ae08633fe243e65df7a4615113d2a296492493fadf5ca4aa1dde4c"
+    },
+    ".build/camera-share114/legacy-direct-production16-summary.json": {
+      "sha256": "21db03f1e92a5e26a37ad4a875298e5226501d05c2d8cfa6b6d59bb492084d75"
+    },
+    ".build/camera-share114/legacy-final17-summary.json": {
+      "sha256": "ad79038975a646153b24f00dc5e568372e1bb68312ca94dc81dd9b8c93736254"
+    },
+    ".build/camera-share114/legacy-regression-final18-summary.json": {
+      "sha256": "ea6b9b86a45481bf4c629222a167c08ba9fe1144c0b101a07e49432122e53d2e"
+    },
+    ".build/camera-share114/simulator-rendering-final-summary.json": {
+      "sha256": "d034c3d40c2f1e16e085d353a0102091de335e8afa178dca5bb08662d20f1a62"
+    },
+    ".build/camera-share114/native29-update-verification.json": {
+      "sha256": "9f7f8146f9ac2eb28772657834ef9fdd91a1c126ad0722337af2262bc48a3297"
+    }
+  },
+  "disposableTestMarkerFilesRemoved": 50
+}

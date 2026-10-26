@@ -1,0 +1,81 @@
+{
+  "sourceCommit": "460ff030f488861524f47a813693017fcaea4546",
+  "verifiedAtUTC": "2026-10-26T16:23:37.270546+00:00",
+  "release": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "29",
+    "file": "RockNRoll-0.3.0-29-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-29-arm64.dmg",
+    "sha256": "79bfe5f551dff13e232be460f0fa2f54305ac4b2d20a4dcd73aa6748b4fc7402",
+    "length": 15446962,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/package-29/RockNRoll-0.3.0-29-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "export": {
+    "archive": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/build/RockNRollNativeGuest-0.3.0-29.xcarchive",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/export-29/App/Rock'N'Roll for Mac.app",
+    "version": "0.3.0",
+    "build": "29",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "notarization": "xcode-cloud-account",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-29-arm64.dmg",
+      "sha256": "79bfe5f551dff13e232be460f0fa2f54305ac4b2d20a4dcd73aa6748b4fc7402",
+      "length": 15446962
+    },
+    "state": {
+      "appcastSHA256": "8aa4896a85e8cea5d0388edc9bfbae70a74639baa2f3406be7162f3411e27e00",
+      "inventorySHA256": "9d095e888f075fcff999931a541013fc02b4d5ac61f4905c95edab93ad1a3e74",
+      "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-29-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/70081c87a8324db8b9087bef0cfb4c2a/backup",
+    "httpsVerified": true
+  },
+  "automaticUpdate": {
+    "fromBuild": "28",
+    "toBuild": "29",
+    "automaticSparkleUpdate": true,
+    "retainedLegacyPathExpected": true,
+    "displayName": "Rock'N'Roll for Mac",
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "menuNameVerified": true,
+    "openQuitActionsRenamed": true,
+    "betaChannelRetained": true,
+    "automaticallyCheckAndDownloadRetained": true,
+    "realLibraryCloudStatus": "Up to date",
+    "privateCloudFixtureSurvivedUpdate": true,
+    "privateCloudFixtureCleaned": true,
+    "binarySHA256": "a6c6b07faa982af1f6ceec5c8d88cb2db331188eba0b2277932666e5455c7c01",
+    "automaticUpdateInstalledPath": "/Applications/RockNRoll Native Guest.app",
+    "finalInstalledPath": "/Applications/Rock'N'Roll for Mac.app",
+    "offlineFolderRenameAfterConfirmedQuit": true,
+    "collisionProtectedRenameAndLaunchServicesRegistrationPassed": true,
+    "finalRenamedPathGUILaunchPassed": true
+  },
+  "freshInstallation": {
+    "dmgCopiedToNewNamedApp": true,
+    "signatureValid": true,
+    "gatekeeperAccepted": true,
+    "appGroupOneUseTicketPassed": true,
+    "binarySHA256": "a6c6b07faa982af1f6ceec5c8d88cb2db331188eba0b2277932666e5455c7c01"
+  },
+  "website": {
+    "betaName": "Rock'N'Roll for Mac beta",
+    "betaLink": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+    "readbackSHA256": "be8b0765548029b82efb016f550ef0b19abd40e565cb8fbd5d35e6631337f998",
+    "rockRoomContainerIDUnchanged": true
+  },
+  "stableBuildPreserved": "25"
+}
