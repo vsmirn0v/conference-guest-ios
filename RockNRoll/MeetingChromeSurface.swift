@@ -101,13 +101,18 @@ final class MeetingChromeContainer: UIView {
     private let effectView = UIVisualEffectView()
     private var observers: [NSObjectProtocol] = []
     private var glassEnabled: Bool?
+    #if DEBUG
+    private static let forceSolidForProfiling = ProcessInfo.processInfo.environment["MEETING_CHROME_SOLID"] == "1"
+    #endif
     init(radius: CGFloat = 24) {
         super.init(frame: .zero)
         layer.cornerRadius = radius; layer.cornerCurve = .continuous; clipsToBounds = true
         addSubview(effectView); effectView.contentView.addSubview(contentView)
+        effectView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         contentView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         for name in [UIAccessibility.reduceTransparencyStatusDidChangeNotification,
-                     UIAccessibility.darkerSystemColorsStatusDidChangeNotification] {
+                     UIAccessibility.darkerSystemColorsStatusDidChangeNotification,
+                     UIAccessibility.reduceMotionStatusDidChangeNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 self?.updateAppearance()
             })
@@ -126,8 +131,11 @@ final class MeetingChromeContainer: UIView {
     private func updateAppearance() {
         var enabled = false
         if #available(iOS 26, *) {
-            enabled = !UIAccessibility.isReduceTransparencyEnabled && !UIAccessibility.isDarkerSystemColorsEnabled && traitCollection.accessibilityContrast != .high
+            enabled = !UIAccessibility.isReduceTransparencyEnabled && !UIAccessibility.isDarkerSystemColorsEnabled && !UIAccessibility.isReduceMotionEnabled && traitCollection.accessibilityContrast != .high
         }
+        #if DEBUG
+        if Self.forceSolidForProfiling { enabled = false }
+        #endif
         guard glassEnabled != enabled else { return }
         glassEnabled = enabled
         if #available(iOS 26, *), enabled {

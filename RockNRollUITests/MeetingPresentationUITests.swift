@@ -223,19 +223,30 @@ final class MeetingPresentationUITests: XCTestCase {
         }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 5), .completed, file: file, line: line)
     }
+    /// During rotation UIKit can briefly expose the old AX button with a zero
+    /// or nonfinite frame. Asking XCTest for its activation point then throws
+    /// before a predicate can wait for the final usable header layout.
+    private func hasHittableFrame(_ element: XCUIElement) -> Bool {
+        guard element.exists else { return false }
+        let frame = element.frame
+        guard !frame.isEmpty, !frame.isNull, !frame.isInfinite,
+              frame.minX.isFinite, frame.minY.isFinite,
+              frame.width.isFinite, frame.height.isFinite else { return false }
+        return element.isHittable
+    }
     private func headerAction(_ app: XCUIApplication, _ label: String,
                               file: StaticString = #filePath, line: UInt = #line) -> (button: XCUIElement, openedMenu: Bool) {
         let action = app.buttons[label]
         var openedMenu = false
-        if !action.exists || !action.isHittable {
+        if !hasHittableFrame(action) {
             let overflow = app.buttons["More meeting controls"]
             let ready = NSPredicate { _, _ in
-                (action.exists && action.isHittable) || (overflow.exists && overflow.isHittable)
+                self.hasHittableFrame(action) || self.hasHittableFrame(overflow)
             }
             let result = XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: ready, object: nil)], timeout: 5)
             XCTAssertEqual(result, .completed, "The header action or its overflow must become hittable", file: file, line: line)
             guard result == .completed else { return (action, false) }
-            if !action.exists || !action.isHittable {
+            if !hasHittableFrame(action) {
                 overflow.tap()
                 openedMenu = true
             }
@@ -246,7 +257,7 @@ final class MeetingPresentationUITests: XCTestCase {
     @discardableResult
     private func waitForHittable(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) -> Bool {
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            element.exists && element.isHittable
+            self.hasHittableFrame(element)
         }, object: nil)
         let result = XCTWaiter.wait(for: [ready], timeout: 5)
         XCTAssertEqual(result, .completed, "The requested control must become hittable", file: file, line: line)
@@ -255,7 +266,7 @@ final class MeetingPresentationUITests: XCTestCase {
     private func tapHeaderAction(_ app: XCUIApplication, _ label: String,
                                  file: StaticString = #filePath, line: UInt = #line) {
         let action = headerAction(app, label, file: file, line: line).button
-        guard action.exists && action.isHittable else { return }
+        guard hasHittableFrame(action) else { return }
         XCTAssertTrue(action.isEnabled, label, file: file, line: line)
         action.tap()
     }
@@ -266,11 +277,11 @@ final class MeetingPresentationUITests: XCTestCase {
         defer {
             if resolved.openedMenu {
                 app.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
-                let dismissed = NSPredicate { _, _ in !action.exists || !action.isHittable }
+                let dismissed = NSPredicate { _, _ in !self.hasHittableFrame(action) }
                 XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: dismissed, object: nil)], timeout: 3), .completed, file: file, line: line)
             }
         }
-        guard action.exists && action.isHittable else {
+        guard hasHittableFrame(action) else {
             print("Unresolved header action: \(label)\n\(app.debugDescription)")
             let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             shot.name = "Unresolved header action"; shot.lifetime = .keepAlways; add(shot)
@@ -436,7 +447,7 @@ final class MeetingPresentationUITests: XCTestCase {
 
     func testCompactSDKLayoutAllowsButtonsAndSwipeNavigation() {
         let app = launch(scenario: "compact")
-        defer { XCUIDevice.shared.orientation = .portrait }
+        defer { XCUIDevice.shared.orientation = .portrait; app.terminate() }
         XCTAssertTrue(app.buttons["Meeting details"].waitForExistence(timeout: 10))
         tapHeaderAction(app, "Next stream")
         assertHeaderAction(app, "Pin Aram video")
@@ -446,11 +457,30 @@ final class MeetingPresentationUITests: XCTestCase {
         viewport.swipeLeft()
         assertHeaderAction(app, "Pin Aram video")
         XCUIDevice.shared.orientation = .landscapeLeft
+        waitForCompactNavigationOrientation(app, landscape: true)
         assertHeaderAction(app, "Next stream")
         tapHeaderAction(app, "Automatic view")
         XCTAssertTrue(viewport.waitForExistence(timeout: 5))
         XCUIDevice.shared.orientation = .portrait
+        waitForCompactNavigationOrientation(app, landscape: false)
         assertHeaderAction(app, "Next stream")
+    }
+
+    private func waitForCompactNavigationOrientation(_ app: XCUIApplication, landscape: Bool,
+                                                      file: StaticString = #filePath, line: UInt = #line) {
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let window = app.windows.firstMatch.frame
+            guard !window.isEmpty, window.width.isFinite, window.height.isFinite,
+                  (window.width > window.height) == landscape else { return false }
+            let toolbar = app.otherElements["Meeting toolbar"]
+            guard toolbar.exists else { return false }
+            let frame = toolbar.frame
+            return !frame.isEmpty && frame.width.isFinite && frame.height.isFinite &&
+                window.contains(CGPoint(x: frame.midX, y: frame.midY)) &&
+                (frame.height > frame.width) == landscape
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed,
+            "Meeting controls must finish adapting to the new orientation", file: file, line: line)
     }
 
     func testSoloMeetingKeepsInviteShortcutAboveSelfTile() {

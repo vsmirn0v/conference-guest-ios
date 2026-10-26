@@ -259,10 +259,10 @@ final class ParticipantMediaBadgeTests: XCTestCase {
         XCTAssertEqual(badge.accessibilityValue, L("Speaking"))
     }
 
-    func testZoomControlsStayAboveCaptionAtLargeTextSizes() throws {
+    func testZoomActionsRemainAccessibleAndControlsStayAboveCaptionAtLargeTextSizes() async throws {
         let viewport = StreamViewport(video: UIView(), state: StreamViewportState(), zoomable: true,
             name: "Николай Александрович — акустическая гитара", showInfo: true,
-            microphoneOn: false, pinned: false, watermark: nil)
+            microphoneOn: false, pinned: false, watermark: nil, onPin: {})
         let badge = try XCTUnwrap(viewport.subviews.compactMap { $0 as? ParticipantMediaBadge }.first)
         if #available(iOS 17.0, *) {
             badge.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
@@ -270,8 +270,25 @@ final class ParticipantMediaBadgeTests: XCTestCase {
         }
         viewport.frame = CGRect(x: 0, y: 0, width: 180, height: 220)
         viewport.layoutIfNeeded()
-        let zoom = try XCTUnwrap(viewport.subviews.compactMap { $0 as? UIStackView }.first)
-        XCTAssertLessThanOrEqual(zoom.frame.maxY + 8, badge.frame.minY)
+        // The old three-button zoom row was removed when Fit/Fill moved to
+        // the compact header. Native pinch and accessible zoom actions remain;
+        // the remaining per-tile controls must still leave the caption clear.
+        let scroll = try XCTUnwrap(viewport.subviews.compactMap { $0 as? UIScrollView }.first)
+        let zoomIn = try XCTUnwrap(scroll.accessibilityCustomActions?.first { $0.name == L("Zoom in") })
+        XCTAssertNotNil(scroll.accessibilityCustomActions?.first { $0.name == L("Zoom out") })
+        XCTAssertNotNil(scroll.accessibilityCustomActions?.first { $0.name == L("Fit whole share") })
+        XCTAssertTrue(zoomIn.actionHandler?(zoomIn) == true)
+        let deadline = Date().addingTimeInterval(2)
+        while viewport.zoomScale <= 1.01, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertGreaterThan(viewport.zoomScale, 1.01, "The accessible zoom action must actually zoom the share")
+        viewport.layoutIfNeeded()
+        let controls = viewport.subviews.compactMap { $0 as? UIButton }.filter { !$0.isHidden }
+        XCTAssertFalse(controls.isEmpty)
+        for control in controls {
+            let rect = control.convert(control.bounds, to: viewport)
+            XCTAssertLessThanOrEqual(rect.maxY + 8, badge.frame.minY)
+            XCTAssertGreaterThanOrEqual(rect.width, 44); XCTAssertGreaterThanOrEqual(rect.height, 44)
+        }
         XCTAssertTrue(viewport.bounds.contains(badge.frame))
     }
 }

@@ -230,8 +230,13 @@ final class GuestGalleryTests: XCTestCase {
         XCTAssertNil(selected, "A share startup must not use the previous camera's prepared frame")
         streams.setPin(.init(participant: "camera", isShare: false))
         _ = await snapshot(streams)
-        XCTAssertEqual(signaled, .init(participant: "camera", isShare: false))
-        XCTAssertTrue(selected === camera, "An explicit pin retains precedence over automatic screen sharing")
+        // Foreground camera focus is explicit, but stable Focus sharing keeps
+        // PiP on the remembered share (focus-share-companion-2026-10-23).
+        XCTAssertEqual(streams.selectedTarget, .init(participant: "camera", isShare: false))
+        XCTAssertEqual(streams.pinnedTarget, .init(participant: "camera", isShare: false))
+        XCTAssertEqual(signaled, .init(participant: "presenter", isShare: true))
+        XCTAssertNil(selected, "The missing shared renderer must never borrow the foreground camera's pixels")
+        withExtendedLifetime(camera) {}
         streams.displayMode = .audioOnly
         _ = await snapshot(streams)
         XCTAssertNil(signaled); XCTAssertNil(selected)
@@ -257,8 +262,11 @@ final class GuestGalleryTests: XCTestCase {
         streams.onFloatingTargetChanged = { signaled = $0 }
         streams.onFloatingVideo = { viewport, _, _, _ in selected = viewport }
         _ = await snapshot(streams)
-        XCTAssertEqual(signaled, .init(participant: "a", isShare: true))
-        XCTAssertTrue(selected === tiles[0])
+        // Preserve the first active share across arrival of additional shares;
+        // alphabetical renderer arrival must not replace established affinity.
+        XCTAssertEqual(streams.selectedTarget, .init(participant: "b", isShare: true))
+        XCTAssertEqual(signaled, .init(participant: "b", isShare: true))
+        XCTAssertTrue(selected === tiles[1])
         withExtendedLifetime(tiles) {}
     }
 

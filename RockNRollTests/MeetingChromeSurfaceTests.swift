@@ -103,15 +103,20 @@ final class MeetingChromeSurfaceTests: XCTestCase {
             let columns = geometry.rail ? (large ? 2 : 1) : large ? 2 : buttons.count
             for (index, button) in buttons.enumerated() {
                 for other in buttons.dropFirst(index + 1) {
-                    let overlap = button.frame.intersection(other.frame)
+                    let overlap = button.convert(button.bounds, to: toolbar).intersection(other.convert(other.bounds, to: toolbar))
                     XCTAssertFalse(overlap.width > 0.1 && overlap.height > 0.1, "Primary targets must not overlap")
                 }
                 if index >= columns {
-                    XCTAssertGreaterThan(button.frame.minY, buttons[index - columns].frame.minY)
+                    XCTAssertGreaterThan(button.convert(button.bounds, to: toolbar).minY,
+                        buttons[index - columns].convert(buttons[index - columns].bounds, to: toolbar).minY)
                 }
                 XCTAssertGreaterThanOrEqual(button.bounds.width, 44)
                 XCTAssertGreaterThanOrEqual(button.bounds.height, 44)
-                XCTAssertTrue(toolbar.bounds.contains(button.frame))
+                let frame = button.convert(button.bounds, to: toolbar)
+                XCTAssertTrue(toolbar.bounds.contains(frame))
+                let hit = toolbar.hitTest(CGPoint(x: frame.midX, y: frame.midY), with: nil)
+                XCTAssertTrue(hit === button || hit?.isDescendant(of: button) == true,
+                    "Every primary target must remain reachable through the glass content hierarchy")
                 XCTAssertEqual(button.showsCaption, !geometry.rail || large)
                 button.layoutIfNeeded()
                 let symbol = button.subviews.compactMap { $0 as? UIImageView }.first { $0.bounds.size == CGSize(width: 26, height: 26) }
@@ -119,8 +124,13 @@ final class MeetingChromeSurfaceTests: XCTestCase {
                 XCTAssertEqual(button.configuration?.title, ["Mic", "Video", "Share", "Audio", "Reactions", "Leave"][index])
                 XCTAssertEqual(button.configuration?.baseForegroundColor, .white)
             }
-            XCTAssertEqual(toolbar.subviews.compactMap { $0 as? MeetingChromeSurface }.filter { !$0.isHidden }.count, 1)
-            XCTAssertEqual(toolbar.subviews.compactMap { $0 as? AlignedCallButton }, buttons)
+            let surfaces = descendants(toolbar).compactMap { $0 as? MeetingChromeContainer }.filter { !$0.isHidden }
+            XCTAssertEqual(surfaces.count, 1)
+            XCTAssertEqual(descendants(toolbar).compactMap { $0 as? AlignedCallButton }, buttons)
+            for button in buttons {
+                XCTAssertTrue(surfaces.first.map { button.isDescendant(of: $0.contentView) } == true,
+                    "Semantic controls must be inside the material's content, not white siblings above it")
+            }
             XCTAssertFalse(geometry.stage.intersects(geometry.toolbar), "Video stays outside the dock")
         }
     }
