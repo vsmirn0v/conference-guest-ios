@@ -1,0 +1,177 @@
+{
+  "sourceCommit": "e1aac06c2fd1ef1195f9af1e7ee7dad7e39ecb64",
+  "verifiedAtUTC": "2026-10-26T20:09:57.077014+00:00",
+  "release": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "31",
+    "file": "RockNRoll-0.3.0-31-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-31-arm64.dmg",
+    "sha256": "468371e022293ca654b0e809161bee65151e9cee33d3c9e4fd919ddbb952401c",
+    "length": 15469680,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/package-31/RockNRoll-0.3.0-31-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "qualification": {
+    "version": "0.3.0",
+    "build": "31",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/export-31/App/Rock'N'Roll for Mac.app",
+    "archiveExportDSYMUUIDMatch": true,
+    "appUUIDs": {
+      "archive": "UUID: 60974A5B-6F33-37BE-AEAB-FE91C1D6F82A",
+      "export": "UUID: 60974A5B-6F33-37BE-AEAB-FE91C1D6F82A",
+      "dSYM": "UUID: 60974A5B-6F33-37BE-AEAB-FE91C1D6F82A"
+    },
+    "frameworkUUIDs": {
+      "candidate": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D",
+      "archive": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D",
+      "export": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D"
+    },
+    "r5FrameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+    "exportExecutableSHA256": "26c2b5263a7aee4d8acf099db5151d30b213e1d2e95f20dbf151f3e9f27160a1",
+    "architecture": "arm64",
+    "sandbox": true,
+    "cloudEnvironment": "Production",
+    "team": "5V64BP2H3P",
+    "debuggerEntitlement": false,
+    "signatureValid": true,
+    "stapleValid": true,
+    "gatekeeperAccepted": true,
+    "appGroupContainerPassed": true,
+    "cloudFixture": {
+      "marker": "4bceddc1-ee1c-4e3d-bf64-157ccda8b969",
+      "phases": {
+        "write": true,
+        "verify": true,
+        "cleanup": true
+      }
+    },
+    "sourceHashValidation": true,
+    "sourceCount": 173
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-31-arm64.dmg",
+      "sha256": "468371e022293ca654b0e809161bee65151e9cee33d3c9e4fd919ddbb952401c",
+      "length": 15469680
+    },
+    "state": {
+      "appcastSHA256": "c47f6bf4c2da2bf1d0a5a8232aab960a100e62f03939aae463092e9e8b4b47af",
+      "inventorySHA256": "e7dbe6f9dc0e275ec3f381fd14cf087ef8c4e2725cda25878c5210a2325e4d9a",
+      "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-31-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/0cd56a29cc034f2b803a87d20a66da9a/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "verifiedAtUTC": "2026-10-26T20:07:11.452065+00:00",
+    "latest.jsonSHA256": "e7dbe6f9dc0e275ec3f381fd14cf087ef8c4e2725cda25878c5210a2325e4d9a",
+    "appcast.xmlSHA256": "c47f6bf4c2da2bf1d0a5a8232aab960a100e62f03939aae463092e9e8b4b47af",
+    "beta": {
+      "build": "31",
+      "sha256": "468371e022293ca654b0e809161bee65151e9cee33d3c9e4fd919ddbb952401c",
+      "length": 15469680,
+      "url": "https://rock.glowsoft.ru/mac/beta/latest.dmg"
+    },
+    "stable": {
+      "build": "25",
+      "sha256": "e9c7c9ddab9c7b10b81fd52da5b7fb54404b9e12cc1e5e29c6292fffe9625a21",
+      "length": 15334524,
+      "url": "https://rock.glowsoft.ru/mac/stable/latest.dmg"
+    }
+  },
+  "automaticUpdate": {
+    "fromBuild": "30",
+    "toBuild": "31",
+    "viaSparkle": true,
+    "noActiveMeeting": true,
+    "installedPath": "/Applications/Rock'N'Roll for Mac.app",
+    "binarySHA256": "26c2b5263a7aee4d8acf099db5151d30b213e1d2e95f20dbf151f3e9f27160a1",
+    "signature": true,
+    "staple": true,
+    "gatekeeper": true,
+    "container": true,
+    "cloudFixture": {
+      "marker": "95e1e6fb-8e90-4655-ba27-e8c9a8a42c4b",
+      "phases": {
+        "write": true,
+        "verify": true,
+        "cleanup": true
+      }
+    },
+    "realLibraryCloudStatus": "Up to date",
+    "betaChannelRetained": true,
+    "displayNameAndFavoritesAndHistoryRetained": true,
+    "postUpdateLiveRejoin": true,
+    "postUpdateIncomingShareRendered": true,
+    "postUpdateMicrophoneUnmuteAndMute": true,
+    "postUpdateMeetingLeft": true
+  },
+  "validation": {
+    "fullMacRegression": {
+      "result": ".build/native-cold-start31/final-regression.xcresult",
+      "tests": 104,
+      "optionalSkipped": 19,
+      "failures": 0,
+      "physicalGuestMediaIncluded": true
+    },
+    "distributionTestsPassed": 27,
+    "cameraLifecycleStandalonePassed": true,
+    "releaseOCR": {
+      "appBuild": "31",
+      "firstCaptureOnly": true,
+      "retryOrRecaptureUsed": false,
+      "preparationMessageObserved": true,
+      "firstResultObservedBetweenSeconds": [
+        51.956,
+        63.495
+      ],
+      "completedBeforeApplicationTimeout": true,
+      "englishNativeCopy": true,
+      "cyrillicNativeCopyAfterResizeAndSourceEnd": true,
+      "fixtureLabelBuild30IsSyntheticText": true,
+      "verifiedAtUTC": "2026-10-26T19:59:01.549583+00:00",
+      "cameraStartingIndicatorObserved": true,
+      "cameraPendingRequestCanceledFromSameControl": true,
+      "microphoneStartingIndicatorObserved": true,
+      "microphoneReleasePermissionDecisionPending": false,
+      "microphoneReleaseUnmuteConfirmedAfterUserAllow": true,
+      "microphoneReleaseMuteConfirmed": true,
+      "releaseCameraEnableSucceeded": true,
+      "releaseSystemBackgroundUpright": true,
+      "releaseMeetingLeftBeforeUpdate": true
+    },
+    "physicalMediaEvidence": ".build/native-cold-start31/final-physical-evidence.json",
+    "review": "6-astra xhigh: no remaining blocking findings; evidence wording corrected",
+    "limitations": [
+      "Cold camera startup with macOS system Background active remains about 11-14 seconds before first valid frame; this release provides responsive cancellation/progress and correct lifecycle handling, not a demonstrated OS warmup speedup.",
+      "Physical input was 48 kHz and output 44.1 kHz; incoming audio advanced during media toggles.",
+      "19 optional tests were skipped, including separate external-engine/large-room live gates; this run validates the changed native startup paths and actual guest hardware.",
+      "Physical iPhone acceptance is outside this native Mac change; iOS build 114 unchanged."
+    ],
+    "fixtureHarnessIssue": "First post-update synthetic sender invocation lacked its isolated output directory and exited before joining; creating that test-only directory allowed the unchanged publisher to run successfully."
+  },
+  "stableBuildPreserved": "25",
+  "evidenceSHA256": {
+    ".build/native-cold-start31/final-regression.log": "a447258da6d7e9de625996700ffa86c0d988232bc0c63f6d1812ee387934316a",
+    ".build/native-cold-start31/final-physical-evidence.json": "95ad121fb9f84a5a829e819119148f4968a61133d3bbc8af8fa7fa2aa9151b2c",
+    ".build/native-cold-start31/qualification31.json": "4e35f80aad1894c0c20553128dbe6060d0968738b0cd2d4c8965ecc18360768b",
+    ".build/native-cold-start31/release31-ocr-acceptance.json": "9beab8c957d3af7b7c13064cb414c6d49525fa8c6fedf5980fba747a68857ea1",
+    ".build/native-cold-start31/release31-ocr-first.png": "1c946c9400aacfc14a28432e67a8c44c907f48f7f7dc2ecd2e496265d936b630",
+    ".build/native-cold-start31/release31-ocr-resized-source-ended.png": "26219647c3403a5b92a447a64aff17e230964823b19780d020cb38532595153d",
+    ".build/native-cold-start31/release31-camera-enabled.png": "739c7b8955de0d919e8b817517e3593e4e3fbc6c2d7cd317391062b8b745fc96",
+    ".build/native-cold-start31/post-update-joined31.png": "bcca701b50c7adabefb73483e24da8bd7beab17dfd872b4a8c9aa8fc281dc10c",
+    ".build/native-cold-start31/installed-update31.json": "8b03e4af412174c57696f1e0d08086325f99f1f4300199281108f00ed0f4fcb9",
+    ".build/native-cold-start31/distribution-tests.log": "b0cd0a784595e32c138b88a23e129df979d991e84001207387fa30786343c6d1",
+    ".build/native-cold-start31/final-camera-readiness.log": "24bd925b767411cb450dbe08b2a400bf7c639ab3db7799fbd76cb4ba03fd1c41",
+    ".build/native-cold-start31/final-camera-metadata.log": "93e440609d6d89b16801cd912c0eafd7fd90b22a51f4065c35a09378b79c5c97",
+    ".build/native-cold-start31/final-camera-duration.log": "20ff5bfff9dccfe895b4cfd8a28ca756eba8546c81c1a4993838d83cdb330f70"
+  }
+}

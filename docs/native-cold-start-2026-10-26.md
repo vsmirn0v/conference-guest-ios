@@ -81,9 +81,15 @@ allowed microphone and camera, and the subsequent actual-device runs passed.
   seconds; this observation interval is not a precise recognition duration. Native
   English Copy and Russian Copy after window resizing and source termination passed.
 - The exact Release camera control showed startup progress and canceled on a second
-  click. The microphone control likewise showed progress, but its fresh signed-app
-  permission decision requires activating/approving the Release app before actual
-  unmute can be accepted. Development-app physical media checks already passed.
+  click. After the user approved the fresh signed-app permission, the microphone
+  control completed actual unmute and mute. Camera enable also completed with the system Background upright.
+  Development-app physical media checks passed independently.
 - Signed feed and immutable DMG were prepared and remote publication preflight
-  passed. Publication/readback and actual 30-to-31 update remain gated on the signed
-  Release microphone check; build 31 has not been published at this checkpoint.
+  passed. Build 31 is published on the beta channel; independent HTTPS artifact
+  and feed hashes match. Stable build 25 is preserved. The actual Sparkle 30-to-31 update installed
+  while no meeting was active, matches the notarized executable byte-for-byte, and
+  passes signature/staple/Gatekeeper, app-group and Production CloudKit fixture
+  write/verify/cleanup checks. Preferences/history were retained; the updated app
+  rejoined a disposable meeting, rendered its incoming share and unmuted/muted
+  without another permission request. It was left on Home with iCloud Up to date.
+  Complete artifact identities are in `native-direct-0.3.0-31-validation.json`.
