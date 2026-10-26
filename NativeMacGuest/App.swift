@@ -5,6 +5,7 @@ import AVFoundation
 @main
 struct NativeGuestApplication {
     @MainActor static func main() {
+        NativeScreenEncoderQuality.prepare()
         if CommandLine.arguments.contains("--check-container") {
             do {
                 let store = try NativeGuestSessionStore.appGroupStore()

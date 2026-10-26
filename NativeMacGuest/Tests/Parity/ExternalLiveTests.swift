@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import ConferenceCore
+import CoreImage
 import LiveKitWebRTC
 import XCTest
 @testable import RockNativeDesktop
@@ -20,7 +21,10 @@ private enum ExternalLiveFailure: Error { case deadline, mediaAction(String) }
     func testTrueConfLiveParity() async throws { try await exercise(.trueconf) }
     func testRockLiveParity() async throws { try await exercise(.rock) }
 
-    private func exercise(_ provider: Provider) async throws {
+    func testTelemostLiveSharingParity() async throws { try await exercise(.telemost, microphoneCheck: false) }
+    func testTrueConfLiveSharingParity() async throws { try await exercise(.trueconf, microphoneCheck: false) }
+
+    private func exercise(_ provider: Provider, microphoneCheck: Bool = true) async throws {
         let key = "NATIVE_DESKTOP_LIVE_" + provider.rawValue.uppercased() + "_INVITE"
         guard let invitation = environment[key], !invitation.isEmpty else {
             throw XCTSkip("Set \(key) to opt in to this live provider test.")
@@ -28,9 +32,14 @@ private enum ExternalLiveFailure: Error { case deadline, mediaAction(String) }
         guard let url = URL(string: invitation), url.scheme == "https" else {
             XCTFail("\(key) must contain a complete HTTPS invitation"); return
         }
-        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-              AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
-            throw XCTSkip("Grant this native app microphone and camera access before running live media checks.")
+        let requiredMedia: [AVMediaType] = microphoneCheck ? [.audio, .video] : [.video]
+        for media in requiredMedia where AVCaptureDevice.authorizationStatus(for: media) == .notDetermined {
+            let _: Bool = try await guestAwait(timeout: 30) { done in
+                AVCaptureDevice.requestAccess(for: media) { done(.success($0)) }
+            }
+        }
+        guard requiredMedia.allSatisfy({ AVCaptureDevice.authorizationStatus(for: $0) == .authorized }) else {
+            throw XCTSkip("Grant this native app the required capture access before running live media checks (microphone=\(AVCaptureDevice.authorizationStatus(for: .audio).rawValue), camera=\(AVCaptureDevice.authorizationStatus(for: .video).rawValue)).")
         }
         let cameraKey = "nativeDesktop.cameraID", previousCamera = UserDefaults.standard.object(forKey: cameraKey)
         let selectedID = environment["NATIVE_DESKTOP_LIVE_CAMERA_ID"] ??
@@ -70,15 +79,17 @@ private enum ExternalLiveFailure: Error { case deadline, mediaAction(String) }
             XCTAssertTrue(model.snapshot.playoutOn)
             evidence["initialConnectedMuted"] = !model.snapshot.microphoneOn && !model.snapshot.cameraOn
             let playout = model.snapshot.playoutOn
-            model.toggleMicrophone(); try await drain(model, seconds: 12)
-            try await wait(8) { model.snapshot.microphoneOn }
-            XCTAssertEqual(model.snapshot.playoutOn, playout)
-            let playoutWithMicrophone = model.snapshot.playoutOn
-            try await Task.sleep(for: .milliseconds(750))
-            model.toggleMicrophone(); try await drain(model, seconds: 10)
-            try await wait(5) { !model.snapshot.microphoneOn }
-            XCTAssertEqual(model.snapshot.playoutOn, playout)
-            evidence["microphoneTogglePreservedPlayoutIntent"] = playoutWithMicrophone == playout && model.snapshot.playoutOn == playout
+            if microphoneCheck {
+                model.toggleMicrophone(); try await drain(model, seconds: 12)
+                try await wait(8) { model.snapshot.microphoneOn }
+                XCTAssertEqual(model.snapshot.playoutOn, playout)
+                let playoutWithMicrophone = model.snapshot.playoutOn
+                try await Task.sleep(for: .milliseconds(750))
+                model.toggleMicrophone(); try await drain(model, seconds: 10)
+                try await wait(5) { !model.snapshot.microphoneOn }
+                XCTAssertEqual(model.snapshot.playoutOn, playout)
+                evidence["microphoneTogglePreservedPlayoutIntent"] = playoutWithMicrophone == playout && model.snapshot.playoutOn == playout
+            } else { evidence["microphoneCheck"] = "Not requested; sharing-only acceptance keeps microphone off." }
 
             model.toggleCamera(); try await drain(model, seconds: 20)
             try await wait(10) { model.snapshot.cameraOn && model.localCamera != nil }
@@ -97,7 +108,12 @@ private enum ExternalLiveFailure: Error { case deadline, mediaAction(String) }
             }
             try await wait(6) { cameraFrames.frames > 0 }
             evidence["cameraFrames"] = cameraFrames.frames
+            let cameraBeforeHold = cameraFrames.frames
             try await visualHold(provider, stage: "camera")
+            evidence["cameraFramesAfterHold"] = cameraFrames.frames
+            if environment["NATIVE_DESKTOP_LIVE_VISUAL_HOLD_SECONDS"] != nil {
+                XCTAssertGreaterThan(cameraFrames.frames, cameraBeforeHold, "Physical camera frames must continue during the receiver observation.")
+            }
             if let (track, frames) = cameraProbe {
                 try await bounded(5) { await Task.detached { track.remove(frames) }.value }; cameraProbe = nil
             }
@@ -130,6 +146,8 @@ private enum ExternalLiveFailure: Error { case deadline, mediaAction(String) }
             XCTAssertEqual(model.snapshot.playoutOn, playout)
             await model.presenter.open()
             XCTAssertTrue(model.presenter.canStartSharing)
+            let document = try ShareEncodingLiveTests.readableShareFixture()
+            model.presenter.scene.image = try XCTUnwrap(CIContext().createCGImage(document, from: document.extent))
             model.presenter.scene.backdrop = .warm
             model.presenter.scene.strokes = [[CGPoint(x: 0.1, y: 0.15), CGPoint(x: 0.85, y: 0.15), CGPoint(x: 0.85, y: 0.8)]]
             try await model.presenter.startSharing()
@@ -212,8 +230,11 @@ private enum ExternalLiveFailure: Error { case deadline, mediaAction(String) }
         return report?.statistics.values.compactMap { row -> [String: Any]? in
             guard row.type == "outbound-rtp", (row.values["kind"] ?? row.values["mediaType"]) as? String == "video" else { return nil }
             var value: [String: Any] = ["id": row.id]
-            for field in ["bytesSent", "packetsSent", "framesEncoded", "framesSent", "frameWidth", "frameHeight", "framesPerSecond", "mid", "mediaSourceId"] {
+            for field in ["bytesSent", "packetsSent", "framesEncoded", "framesSent", "frameWidth", "frameHeight", "framesPerSecond", "mid", "mediaSourceId", "codecId", "qpSum", "targetBitrate", "qualityLimitationReason"] {
                 if let fieldValue = row.values[field] { value[field] = fieldValue }
+            }
+            if let id = row.values["codecId"] as? String, let codec = report?.statistics[id] {
+                value["codec"] = codec.values["mimeType"]
             }
             return value
         } ?? []

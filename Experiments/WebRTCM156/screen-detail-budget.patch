@@ -1,0 +1,18 @@
+--- a/sdk/objc/components/video_codec/RTCVideoEncoderH264.mm
++++ b/sdk/objc/components/video_codec/RTCVideoEncoderH264.mm
+@@ -836,13 +836,13 @@
+ }
+ 
+ // Calibration uses bits per source pixel per second, not display size or
+-// device names. Below 0.0625 the strict floor can starve full-resolution text
++// device names. Below 0.5 the strict floor can starve full-resolution text
+ // updates. Keep resolution and quality preference, but allow upstream QP 39.
+ // A 25% recovery margin prevents oscillation around the budget boundary.
+ - (int)conferenceScreenQPForBitrate:(uint32_t)bitrate {
+   if (!_conferenceScreenMaxQP.has_value()) return kHighH264QpThreshold;
+   const int requested = *_conferenceScreenMaxQP;
+-  uint64_t threshold = static_cast<uint64_t>(_width) * _height / 16;
++  uint64_t threshold = static_cast<uint64_t>(_width) * _height / 2;
+   if (_conferenceAppliedScreenQP > requested) threshold += threshold / 4;
+   return bitrate < threshold ? std::max(requested, kHighH264QpThreshold) : requested;
+ }

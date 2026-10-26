@@ -289,7 +289,7 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
             guard !cleanupFailed else { throw NativeDesktopRTCError.cleanupFailed }
             guard let factory = factory ?? factoryProvider() else { throw NativeDesktopPresenterError.notReady }
             self.factory = factory
-            let videoSource = factory.videoSource(), track = factory.videoTrack(with: videoSource, trackId: "private-presenter-\(token)")
+            let videoSource = factory.videoSource(forScreenCast: true), track = factory.videoTrack(with: videoSource, trackId: "private-presenter-\(token)")
             let value = makeCapture(videoSource, next == .canvas), owner = PresenterCaptureOwner(value)
             value.setSelectionMode(selectionMode)
             capture = value; captureOwner = owner; value.setScene(scene)

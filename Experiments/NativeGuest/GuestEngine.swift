@@ -162,6 +162,7 @@ final class NativeGuestEngine {
         self.label = label; self.systemAudio = systemAudio; self.icePolicy = icePolicy
         self.verifyReceivedPixels = verifyReceivedPixels
         _ = LKRTCInitializeSSL()
+        NativeScreenEncoderQuality.prepare()
         if let systemAudio { audio = nil; factory = systemAudio.factory }
         else {
             let synthetic = GuestSyntheticAudio(); audio = synthetic

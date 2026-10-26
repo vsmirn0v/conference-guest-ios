@@ -226,6 +226,11 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         config.sendEncodings = [screenProfile.encoding()]
         guard let transceiver = connection.addTransceiver(with: track, init: config) else { throw GuestPeerError.malformed }
         try transceiver.setCodecPreferences(matches + capabilities.filter { $0.name.lowercased() == "rtx" }, error: ())
+        if codec.lowercased() == "h264" {
+            let parameters = transceiver.sender.parameters
+            parameters.degradationPreference = NSNumber(value: LKRTCDegradationPreference.maintainResolution.rawValue)
+            transceiver.sender.parameters = parameters
+        }
         screenTrack = track; screenSender = transceiver.sender
     }
 

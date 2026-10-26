@@ -8,7 +8,7 @@ p = argparse.ArgumentParser()
 p.add_argument('--identity', required=True, help='Apple Development signing identity for the final provisioned bundle')
 p.add_argument('--install', action='store_true', help='Install the verified build in /Applications (required by the host sandbox)')
 p.add_argument('--allow-provisioning-updates', action='store_true', help='Allow Xcode to register/update the Mac app-group profile')
-p.add_argument('--framework-root', type=pathlib.Path, default=ROOT/'.build/webrtc-m156-desktop-audio/native-framework-r4',
+p.add_argument('--framework-root', type=pathlib.Path, default=ROOT/'.build/webrtc-m156-desktop-audio/native-framework-screen-r5',
                help='Directory containing LiveKitWebRTC.xcframework and build-evidence.json')
 p.add_argument('--output-dir', type=pathlib.Path, default=ROOT/'.build/native-mac-guest')
 p.add_argument('--configuration', choices=('Debug', 'Release'), default='Debug')

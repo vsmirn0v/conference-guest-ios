@@ -212,6 +212,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     static func create(microphoneEnabled: Bool, playoutEnabled: Bool,
                        voiceProcessingEnabled: Bool = true, profile: GuestAudioProfile = .speech,
                        privateCheckOnly: Bool = false, timeout: TimeInterval = 3) async throws -> GuestSystemAudio {
+        NativeScreenEncoderQuality.prepare()
         if microphoneEnabled && AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
             throw GuestSystemAudioError.microphonePermissionRequired
         }

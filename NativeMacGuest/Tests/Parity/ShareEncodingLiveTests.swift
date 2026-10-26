@@ -220,7 +220,7 @@ import XCTest
             throw error
         }
     }
-    private static func readableShareFixture() throws -> CIImage {
+    static func readableShareFixture() throws -> CIImage {
         let canvas = try XCTUnwrap(CGContext(data: nil, width: 3840, height: 2160, bitsPerComponent: 8,
             bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
         canvas.setFillColor(CGColor(gray: 0.96, alpha: 1)); canvas.fill(CGRect(x: 0, y: 0, width: 3840, height: 2160))
