@@ -1,0 +1,121 @@
+{
+  "source": "9d9611196b146b6f48f4f0d9b04268f4e9641f21",
+  "version": "0.3.0",
+  "build": "27",
+  "channel": "beta",
+  "stableBuild": "25",
+  "publishedAtUTC": "2026-10-26T10:47:42.852435+00:00",
+  "validation": {
+    "nativeCases": 95,
+    "nativePassed": 79,
+    "nativeSkipped": 16,
+    "nativeFailures": 0,
+    "nativeActiveWindowCopyPassed": true,
+    "nativeRealTextSelectionResizePassed": true,
+    "nativeExtremePanAndZeroSizeResizePassed": true,
+    "nativeSourceReplacementAndSnapshotLifecyclePassed": true,
+    "releaseToolingTests": 18,
+    "releaseToolingFailures": 0,
+    "sourceHashesVerified": 170,
+    "sourceMismatches": []
+  },
+  "package": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "27",
+    "file": "RockNRoll-0.3.0-27-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-27-arm64.dmg",
+    "sha256": "bc3e0ae8c5f22ebc23114973c069ef8a763c0aa528872f0e9efc05ffdb1b0596",
+    "length": 15438342,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/package-27/RockNRoll-0.3.0-27-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-27-arm64.dmg",
+      "sha256": "bc3e0ae8c5f22ebc23114973c069ef8a763c0aa528872f0e9efc05ffdb1b0596",
+      "length": 15438342
+    },
+    "state": {
+      "appcastSHA256": "099b6000257f9408e74eb60ae0ea9ea86f0b9e4ae8867815bdb829977f5cb46f",
+      "inventorySHA256": "c1030114b699b51bbf0c56730bea93df0ac7facd471e9cd67df47e86cc722c88",
+      "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-27-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/5f122991baa14bf6bb30764c54c12b9e/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "appcast.xml": {
+      "url": "https://rock.glowsoft.ru/mac/appcast.xml",
+      "resolvedURL": "https://rock.glowsoft.ru/mac/appcast.xml",
+      "sha256": "099b6000257f9408e74eb60ae0ea9ea86f0b9e4ae8867815bdb829977f5cb46f",
+      "length": 3839,
+      "cacheControl": "no-store"
+    },
+    "latest.json": {
+      "url": "https://rock.glowsoft.ru/mac/latest.json",
+      "resolvedURL": "https://rock.glowsoft.ru/mac/latest.json",
+      "sha256": "c1030114b699b51bbf0c56730bea93df0ac7facd471e9cd67df47e86cc722c88",
+      "length": 487,
+      "cacheControl": "no-store"
+    },
+    "immutable27": {
+      "url": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-27-arm64.dmg",
+      "resolvedURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-27-arm64.dmg",
+      "sha256": "bc3e0ae8c5f22ebc23114973c069ef8a763c0aa528872f0e9efc05ffdb1b0596",
+      "length": 15438342,
+      "cacheControl": "public, max-age=31536000, immutable"
+    },
+    "betaAlias": {
+      "url": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+      "resolvedURL": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+      "sha256": "bc3e0ae8c5f22ebc23114973c069ef8a763c0aa528872f0e9efc05ffdb1b0596",
+      "length": 15438342,
+      "cacheControl": "no-store"
+    },
+    "stableAlias": {
+      "url": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+      "resolvedURL": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+      "sha256": "e9c7c9ddab9c7b10b81fd52da5b7fb54404b9e12cc1e5e29c6292fffe9625a21",
+      "length": 15334524,
+      "cacheControl": "no-store"
+    },
+    "checkedAtUTC": "2026-10-26T10:47:42.852435+00:00",
+    "stableBuild": "25",
+    "betaBuild": "27",
+    "stableUnchanged": true,
+    "remoteSignedFeedVerified": true
+  },
+  "productionCloudKit": true,
+  "productionCloudKitFixture": {
+    "marker": "65f64753-3c36-40cc-b610-851afa015411",
+    "phases": {
+      "write": true,
+      "verify": true,
+      "cleanup": true
+    }
+  },
+  "sandboxed": true,
+  "debuggerEntitlement": false,
+  "appGroupContainerPassed": true,
+  "archiveCodeUUID": "UUID: 6CAADA0D-D5D6-3E63-91F4-F7055B55726A",
+  "exportCodeUUID": "UUID: 6CAADA0D-D5D6-3E63-91F4-F7055B55726A",
+  "archiveExportDSYMUUIdsMatch": true,
+  "nativeOCRSourceSHA256": "fefa6b496a52b4f663117e81577e2d49db9bf427dacfdcafded8ae892c416610",
+  "signingRecovery": {
+    "originalArchivePreserved": true,
+    "archiveTeam": "5V64BP2H3P",
+    "correctDevelopmentIdentity": "Apple Development: Vitalii Smirnov (4Z8BRSUNL4)",
+    "qualificationEvidence": ".build/native-dmg/build-27-signing-recovery.json"
+  },
+  "enclosedAppNotarized": true,
+  "outerDMGNotarized": false,
+  "installedDuringPublication": false
+}
