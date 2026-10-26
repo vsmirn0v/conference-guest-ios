@@ -35,6 +35,7 @@ struct GuestCameraSnapshot: Sendable {
     let systemBackgroundSelected: Bool?
     let systemBackgroundActive: Bool?
     let observedReaction: Bool
+    var startupMilliseconds: [String: Double] = [:]
 }
 
 /// AVFoundation's duration bounds are rational numbers. Converting an exact
@@ -94,6 +95,8 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
     private var requested = false
     private var hasStarted = false
     private var cancelled = false
+    private var permissionTask: Task<Bool, Error>?
+    private var startupMilliseconds: [String: Double] = [:]
     private let firstFrame: Completion<Void>
     private let sink: Sink
     private let preferredDeviceID: String?
@@ -124,7 +127,21 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         sink = Sink(source: source, firstFrame: firstFrame); preferredDeviceID = deviceID
     }
 
-    func snapshot() -> GuestCameraSnapshot { sink.snapshot() }
+    func snapshot() -> GuestCameraSnapshot {
+        var value = sink.snapshot()
+        stateLock.lock(); value.startupMilliseconds.merge(startupMilliseconds) { _, new in new }; stateLock.unlock()
+        return value
+    }
+    private func recordStartup(_ phase: String, since began: TimeInterval) {
+        stateLock.lock(); startupMilliseconds[phase] = (ProcessInfo.processInfo.systemUptime - began) * 1000; stateLock.unlock()
+    }
+    private func installPermissionTask(_ task: Task<Bool, Error>) {
+        stateLock.lock(); permissionTask = task; let cancelled = self.cancelled; stateLock.unlock()
+        if cancelled { task.cancel() }
+    }
+    private func clearPermissionTask() {
+        stateLock.lock(); permissionTask = nil; stateLock.unlock()
+    }
 
     /// Reads the configured owner on its session queue. Discovery/default-device
     /// guesses cannot identify the camera actually delivering these frames.
@@ -159,20 +176,14 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
     func start() async throws -> GuestCameraInfo {
         try Task.checkCancellation()
         guard !isCancelled() else { throw CancellationError() }
-        if AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined {
-            let completion = Completion<Bool>()
-            let allowed = try await withTaskCancellationHandler(operation: {
-                try await withCheckedThrowingContinuation { continuation in
-                    completion.install(continuation)
-                    deadline.asyncAfter(deadline: .now() + 30) {
-                        completion.finish(.failure(GuestCameraError.timedOut))
-                    }
-                    AVCaptureDevice.requestAccess(for: .video) { completion.finish(.success($0)) }
-                }
-            }, onCancel: { completion.finish(.failure(CancellationError())) })
-            guard allowed else { throw GuestCameraError.permissionDenied }
-        }
-        guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else {
+        let began = ProcessInfo.processInfo.systemUptime
+        let permission = Task { try await GuestCaptureAuthorization.request(.video) }
+        installPermissionTask(permission)
+        defer { clearPermissionTask() }
+        let allowed = try await withTaskCancellationHandler(operation: { try await permission.value },
+                                                           onCancel: { permission.cancel() })
+        recordStartup("permission", since: began)
+        guard allowed else {
             throw GuestCameraError.permissionDenied
         }
         try Task.checkCancellation()
@@ -180,10 +191,14 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         do {
             let info = try await queued(timeout: 8) {
                 guard self.isRequested() else { throw CancellationError() }
+                let began = ProcessInfo.processInfo.systemUptime
                 let profile = try self.configure()
+                self.recordStartup("configure", since: began)
                 guard self.isRequested() else { try self.cleanup(); throw CancellationError() }
                 self.sink.activate()
+                let running = ProcessInfo.processInfo.systemUptime
                 self.session?.startRunning()
+                self.recordStartup("startRunning", since: running)
                 guard self.isRequested(), self.session?.isRunning == true else {
                     try self.cleanup(); throw GuestCameraError.configurationFailed
                 }
@@ -193,7 +208,10 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
             // isRunning can precede macOS camera-effect warmup by seconds.
             // Keep that bounded wait separate from the SFU acknowledgement
             // budget; neither capture queue is blocked while frames initialize.
-            try await waitForFirstFrame(timeout: 15)
+            let waiting = ProcessInfo.processInfo.systemUptime
+            try await waitForFirstFrame(timeout: 30)
+            recordStartup("firstFrameAfterStartRunning", since: waiting)
+            recordStartup("total", since: began)
             return info
         } catch {
             requestStop()
@@ -268,16 +286,22 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         stateLock.lock(); defer { stateLock.unlock() }; return cancelled
     }
     private func requestStop() {
-        stateLock.lock(); requested = false; cancelled = true; stateLock.unlock()
+        stateLock.lock(); requested = false; cancelled = true; let permission = permissionTask; stateLock.unlock()
+        permission?.cancel()
         sink.retire()
     }
 
     private func configure() throws -> (pixelFormat: OSType, duration: CMTime) {
         if session != nil { try cleanup() }
-        let cameras = AVCaptureDevice.devices(for: .video)
+        let discoveryBegan = ProcessInfo.processInfo.systemUptime
         let discovered: AVCaptureDevice?
-        if let preferredDeviceID { discovered = cameras.first { $0.uniqueID == preferredDeviceID } }
-        else { discovered = cameras.first { $0.deviceType == .builtInWideAngleCamera } ?? cameras.first }
+        if let preferredDeviceID { discovered = AVCaptureDevice.devices(for: .video).first { $0.uniqueID == preferredDeviceID } }
+        else {
+            // Avoid enumerating external/Continuity devices for the normal built-in path.
+            discovered = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified)
+                ?? AVCaptureDevice.default(for: .video)
+        }
+        recordStartup("discovery", since: discoveryBegan)
         guard let discovered else { throw GuestCameraError.unavailable }
         let choices = discovered.formats.compactMap { format -> (AVCaptureDevice.Format, CMTime)? in
             let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
@@ -510,19 +534,23 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         private var backgroundSelected: Bool?, backgroundActive: Bool?
         private var observedReaction = false
         private var forwardedFrame = false
+        private var activatedAt: TimeInterval?
+        private var firstSampleMilliseconds: Double?
+        private var firstForwardMilliseconds: Double?
         private let firstFrame: Completion<Void>
         init(source: LKRTCVideoSource, firstFrame: Completion<Void>) {
             self.source = source; self.firstFrame = firstFrame; capturer = LKRTCVideoCapturer(delegate: source)
         }
-        func activate() { lock.lock(); active = true; lock.unlock() }
+        func activate() { lock.lock(); active = true; activatedAt = ProcessInfo.processInfo.systemUptime; lock.unlock() }
         var hasForwardedFrame: Bool { lock.lock(); defer { lock.unlock() }; return forwardedFrame }
         func retire() {
             lock.lock(); active = false; lock.unlock()
             firstFrame.finish(.failure(CancellationError()))
         }
-        func forward(_ deliver: () -> Void) {
+        func forward(_ deliver: () -> Void, startedAt: TimeInterval? = nil) {
             deliver()
             lock.lock(); defer { lock.unlock() }
+            if let startedAt, firstForwardMilliseconds == nil { firstForwardMilliseconds = (ProcessInfo.processInfo.systemUptime - startedAt) * 1000 }
             forwardedFrame = true
             if active { firstFrame.finish(.success(())) }
         }
@@ -533,9 +561,12 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         }
         func snapshot() -> GuestCameraSnapshot {
             lock.lock(); defer { lock.unlock() }
-            return GuestCameraSnapshot(frames: count, advancingPTS: advancing, dropped: dropped, width: width, height: height,
+            var value = GuestCameraSnapshot(frames: count, advancingPTS: advancing, dropped: dropped, width: width, height: height,
                 pixelFormat: pixelFormat, systemBackgroundSelected: backgroundSelected,
                 systemBackgroundActive: backgroundActive, observedReaction: observedReaction)
+            value.startupMilliseconds["firstValidSampleAfterActivation"] = firstSampleMilliseconds
+            value.startupMilliseconds["firstWebRTCForward"] = firstForwardMilliseconds
+            return value
         }
         func captureOutput(_ output: AVCaptureOutput, didDrop sample: CMSampleBuffer, from connection: AVCaptureConnection) {
             lock.lock(); dropped += 1; lock.unlock()
@@ -547,14 +578,18 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
             let timestamp = Int64(seconds * 1e9)
             lock.lock()
             guard active, timestamp > lastPTS else { lock.unlock(); return }
+            if firstSampleMilliseconds == nil, let activatedAt {
+                firstSampleMilliseconds = (ProcessInfo.processInfo.systemUptime - activatedAt) * 1000
+            }
             count += 1; advancing += 1; lastPTS = timestamp
+            let first = count == 1
             width = CVPixelBufferGetWidth(pixels); height = CVPixelBufferGetHeight(pixels)
             pixelFormat = CVPixelBufferGetPixelFormatType(pixels)
             lock.unlock()
             // A native WebRTC call must never hold the state lock used by stop,
             // snapshots, and deadline handlers. Cleanup drains this frame queue.
             let frame = LKRTCVideoFrame(buffer: LKRTCCVPixelBuffer(pixelBuffer: pixels), rotation: ._0, timeStampNs: timestamp)
-            forward { source.capturer(capturer, didCapture: frame) }
+            forward({ source.capturer(capturer, didCapture: frame) }, startedAt: first ? ProcessInfo.processInfo.systemUptime : nil)
         }
     }
 }

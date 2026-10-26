@@ -22,7 +22,7 @@ import XCTest
         let selection = NativeDesktopSharedText()
         drainRealOCRAtTeardown(selection)
         selection.updateSource(id: "one", name: "Alex", frame: frame); selection.open()
-        try await wait { !selection.busy }
+        try await wait(timeout: 65) { !selection.busy }
         let snapshot = try XCTUnwrap(selection.snapshot)
         XCTAssertEqual(snapshot.image.width, 1600); XCTAssertEqual(snapshot.image.height, 900)
         if ImageAnalyzer.isSupported { XCTAssertTrue(selection.analysis?.hasResults(for: .text) == true) }
@@ -96,7 +96,7 @@ import XCTest
         let selection = NativeDesktopSharedText(); defer { selection.close() }
         drainRealOCRAtTeardown(selection)
         selection.updateSource(id: "copy", name: "Synthetic copy source", frame: frame); selection.open()
-        try await wait { !selection.busy }
+        try await wait(timeout: 65) { !selection.busy }
         let host = NSHostingView(rootView: NativeDesktopSharedTextView(model: selection))
         host.frame = NSRect(x: 0, y: 0, width: 1000, height: 650)
         window.contentView = host
@@ -168,11 +168,41 @@ import XCTest
         let frame = NativeDesktopTextFrame(); frame.provider = .init(sourceID: "mixed", capture: { captures += 1; return image })
         let selection = NativeDesktopSharedText(); defer { selection.close() }
         drainRealOCRAtTeardown(selection)
-        selection.updateSource(id: "mixed", name: "Synthetic bilingual share", frame: frame); selection.open()
-        try await finishRecognitionWithOneColdRetry(selection, captures: { captures })
+        selection.updateSource(id: "mixed", name: "Synthetic bilingual share", frame: frame)
+        let began = ProcessInfo.processInfo.systemUptime; selection.open()
+        try await wait(timeout: 65) { !selection.busy }
+        XCTAssertEqual(captures, 1, "The first capture must finish without a retry")
+        print("NATIVE_OCR_FIRST_RESULT seconds=\(ProcessInfo.processInfo.systemUptime - began) captures=\(captures)")
         let transcript = selection.analysis?.transcript ?? selection.transcript
         XCTAssertTrue(transcript.contains("Release"), "Latin text missing: \(transcript)")
         XCTAssertTrue(transcript.contains("Проверка"), "Cyrillic text missing: \(transcript)")
+    }
+    func testFirstCaptureAcceptsSlowInitializationWithoutRetry() async throws {
+        executionTimeAllowance = 25
+        let image = try textImage(), frame = NativeDesktopTextFrame()
+        var captures = 0, recognitions = 0
+        frame.provider = .init(sourceID: "cold-first", capture: { captures += 1; return image })
+        let selection = NativeDesktopSharedText(recognition: { _ in
+            recognitions += 1
+            try await Task.sleep(for: .seconds(13))
+            return .transcript("Cold first capture")
+        })
+        defer { selection.close() }
+        selection.updateSource(id: "cold-first", name: "First capture", frame: frame); selection.open()
+        try await wait { selection.snapshot != nil }
+        let id = selection.snapshot?.id
+        selection.updateSource(id: nil, name: "", frame: frame)
+        try await Task.sleep(for: .seconds(12.2))
+        XCTAssertTrue(selection.busy, "The old 12-second deadline must not discard initialization")
+        XCTAssertFalse(selection.statusNeedsAttention)
+        XCTAssertFalse(selection.canRefresh)
+        XCTAssertTrue(selection.status.contains(L("Preparing text recognition… Keep this capture open. Meeting audio continues.")))
+        try await wait { !selection.busy }
+        XCTAssertEqual(selection.transcript, "Cold first capture")
+        XCTAssertEqual(selection.snapshot?.id, id)
+        XCTAssertEqual(selection.liveState, .ended)
+        XCTAssertEqual(captures, 1); XCTAssertEqual(recognitions, 1)
+        XCTAssertFalse(SharedTextWorkAdmission.shared.isOccupied)
     }
     func testColdRecognitionRetryWaitsForActualCompletionWithoutOverlappingCapture() async throws {
         let image = try textImage(), frame = NativeDesktopTextFrame()
@@ -532,9 +562,9 @@ import XCTest
         }
     }
     private enum WaitFailure: Error { case deadline }
-    private func wait(message: String = "Condition did not become true within 20 seconds",
+    private func wait(timeout: TimeInterval = 20, message: String = "Condition did not become true within the allotted time",
                       file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async throws {
-        let end = Date().addingTimeInterval(20)
+        let end = Date().addingTimeInterval(timeout)
         while !condition(), Date() < end { try await Task.sleep(for: .milliseconds(20)) }
         guard condition() else { XCTFail(message, file: file, line: line); throw WaitFailure.deadline }
     }

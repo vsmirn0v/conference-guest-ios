@@ -151,13 +151,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
             microphoneIntent = false; publisher?.setMicrophone(false); audio?.suppressMicrophone()
             snapshot.microphoneOn = false; publish(); scheduleMedia(); return
         }
-        let authorized: Bool
-        switch AVCaptureDevice.authorizationStatus(for: .audio) {
-        case .authorized: authorized = true
-        case .notDetermined:
-            authorized = try await guestAwait(timeout: 30) { done in AVCaptureDevice.requestAccess(for: .audio) { done(.success($0)) } }
-        default: authorized = false
-        }
+        let authorized = try await GuestCaptureAuthorization.request(.audio)
         try check(attempt); guard microphoneRevision == revision else { throw CancellationError() }
         guard authorized else { throw NativeDesktopRTCError.permissionDenied }
         guard let audio, await audio.activateMicrophone() else { throw NativeDesktopRTCError.invalidResponse }
@@ -187,19 +181,35 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         }
     }
     func setCamera(_ enabled: Bool) async throws {
+        if enabled { try Task.checkCancellation() }
         guard [.connecting, .connected, .reconnecting].contains(snapshot.phase) else { throw NativeDesktopRTCError.closed }
         cameraRevision &+= 1; cameraIntent = enabled
+        let command = cameraRevision, attempt = epoch
         if !enabled {
             snapshot.cameraOn = false; publish()
             try await publisher?.setCamera(false)
         }
-        scheduleMedia(); await mediaTask?.value
+        scheduleMedia()
+        await withTaskCancellationHandler(operation: { await mediaTask?.value }, onCancel: { [weak self] in
+            guard enabled else { return }
+            Task { @MainActor in
+                guard let self, self.epoch == attempt, self.cameraRevision == command else { return }
+                self.cameraIntent = false; self.snapshot.cameraOn = false; self.publish()
+                // The independent media task may be waiting inside capture.start.
+                // Cancel that capture rather than waiting for its permission reply.
+                try? await self.publisher?.setCamera(false)
+                self.scheduleMedia()
+            }
+        })
+        if enabled { try Task.checkCancellation() }
     }
     func startPrivateAudioCheck() async throws {
         guard snapshot.phase == .connected, let owner = audio else { throw NativeDesktopRTCError.closed }
-        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw NativeDesktopRTCError.permissionDenied }
         let attempt = epoch, checkID = UUID(); privateAudioCheck = checkID
         do {
+            guard try await GuestCaptureAuthorization.request(.audio) else { throw NativeDesktopRTCError.permissionDenied }
+            try check(attempt)
+            guard privateAudioCheck == checkID else { throw CancellationError() }
             guard await owner.beginPrivateInputCheck() else { throw NativeDesktopRTCError.invalidResponse }
             try check(attempt)
             guard privateAudioCheck == checkID else { throw CancellationError() }

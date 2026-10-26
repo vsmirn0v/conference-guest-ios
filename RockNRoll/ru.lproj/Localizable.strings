@@ -1302,3 +1302,11 @@
 "An update is being installed. Please try again after Rock'N'Roll for Mac restarts." = "Устанавливается обновление. Повторите попытку после перезапуска Rock'N'Roll for Mac.";
 
 "Choose which calendars Rock'N'Roll for Mac may read. Only meetings with supported invitation links appear." = "Выберите календари, доступные Rock'N'Roll for Mac. Показываются только встречи с поддерживаемыми ссылками.";
+
+"Preparing text recognition… Keep this capture open. Meeting audio continues." = "Подготавливаем распознавание текста… Оставьте снимок открытым. Звук встречи продолжается.";
+
+"Starting microphone. Click to cancel." = "Микрофон запускается. Нажмите для отмены.";
+
+"Starting camera. Click to cancel." = "Камера запускается. Нажмите для отмены.";
+
+"Starting…" = "Запуск…";

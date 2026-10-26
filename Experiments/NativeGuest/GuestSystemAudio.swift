@@ -55,6 +55,12 @@ enum GuestSystemAudioError: LocalizedError {
         case .physicalOwnerBusy: "The active meeting already owns the microphone. Open its Camera & sound panel to check it."
         }
     }
+    static func microphoneActivationFailure(authorization: AVAuthorizationStatus) -> Self {
+        switch authorization {
+        case .denied, .restricted: .microphonePermissionRequired
+        default: .setupFailedOrTimedOut
+        }
+    }
 }
 
 /// Cached timing only: inspecting a stalled operation never calls the ADM worker.
@@ -245,7 +251,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
 
     /// Only a prejoin exclusive owner calls this. There is no peer, sender or audio track.
     /// A raw-input tap measures aggregate energy before the muted input mixer.
-    func startStandalonePrivateInputCheck(timeout: TimeInterval = 2) async -> Bool {
+    func startStandalonePrivateInputCheck(timeout: TimeInterval = 8) async -> Bool {
         setPrivateInputMeterEnabled(true)
         let success = await perform("private-input-check", timeout: timeout) {
             guard !self.closed, self.ownerLease?.privateCheck == true, let module = self.currentModule,
@@ -262,8 +268,8 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     }
 
     /// Borrows this owner's input; never changes its sender or mute intent.
-    func beginPrivateInputCheck(timeout: TimeInterval = 2) async -> Bool {
-        let success = await perform("private-input-borrow", timeout: timeout) {
+    func beginPrivateInputCheck(timeout: TimeInterval? = nil) async -> Bool {
+        let success = await perform("private-input-borrow", timeout: timeout ?? inputStartupBudget) {
             guard !self.closed, let module = self.currentModule,
                   AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
             self.inputActivation.beginCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable
@@ -290,8 +296,13 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
 
     /// The UI calls this only after an explicit, authorized microphone action.
     /// Availability changes while InputMixer remains muted; activation alone sends no input.
-    func activateMicrophone(timeout: TimeInterval = 2) async -> Bool {
-        await perform("microphone-activate", timeout: timeout) {
+    private var inputStartupBudget: TimeInterval {
+        // First input activation also initializes the system voice-processing unit.
+        // That asynchronous work is separate from an already-running mute change.
+        snapshot["inputAvailable"] as? Bool == true ? 2 : 8
+    }
+    func activateMicrophone(timeout: TimeInterval? = nil) async -> Bool {
+        await perform("microphone-activate", timeout: timeout ?? inputStartupBudget) {
             guard !self.closed, let module = self.currentModule,
                   AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
                 self.update(["lastRejectedOperation": "microphone-not-authorized"]); return false

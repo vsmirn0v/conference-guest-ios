@@ -8,6 +8,6 @@ trap 'rm -rf -- "$build_dir"' EXIT
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 xcrun --sdk macosx swiftc -swift-version 5 -parse-as-library -target arm64-apple-macos13.0 \
     -F "$framework_dir" -framework LiveKitWebRTC -Xlinker -rpath -Xlinker "$framework_dir" \
-    "$repo_dir/Experiments/NativeGuest/GuestCamera.swift" "$tests_dir/CameraDurationTests.swift" \
+    "$repo_dir/Experiments/NativeGuest/GuestCaptureAuthorization.swift" "$repo_dir/Experiments/NativeGuest/GuestCamera.swift" "$tests_dir/CameraDurationTests.swift" \
     -o "$build_dir/camera-duration-tests"
 "$build_dir/camera-duration-tests"

@@ -1304,3 +1304,11 @@
 "An update is being installed. Please try again after Rock'N'Roll for Mac restarts." = "An update is being installed. Please try again after Rock'N'Roll for Mac restarts.";
 
 "Choose which calendars Rock'N'Roll for Mac may read. Only meetings with supported invitation links appear." = "Choose which calendars Rock'N'Roll for Mac may read. Only meetings with supported invitation links appear.";
+
+"Preparing text recognition… Keep this capture open. Meeting audio continues." = "Preparing text recognition… Keep this capture open. Meeting audio continues.";
+
+"Starting microphone. Click to cancel." = "Starting microphone. Click to cancel.";
+
+"Starting camera. Click to cancel." = "Starting camera. Click to cancel.";
+
+"Starting…" = "Starting…";

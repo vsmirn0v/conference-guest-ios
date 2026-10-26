@@ -30,10 +30,15 @@ import SwiftUI
     private var audioGeneration = UUID()
     private var stopBorrowedAudio: (() async throws -> Void)?
     private var audioStopping: Task<Bool, Never>?
+    private var discovery: Task<Void, Never>?
     static func stopPrivatePreview() async -> Bool { await activePreview?.stop() ?? true }
-    init() {
+    init(discoverCameras: @escaping @Sendable () -> [AVCaptureDevice] = { AVCaptureDevice.devices(for: .video) }) {
         cameraID = UserDefaults.standard.string(forKey: "nativeDesktop.cameraID") ?? ""
-        cameras = AVCaptureDevice.devices(for: .video)
+        discovery = Task { [weak self] in
+            let devices = await Task.detached(priority: .userInitiated, operation: discoverCameras).value
+            guard !Task.isCancelled else { return }
+            self?.cameras = devices
+        }
         audio.$snapshot.sink { [weak self] in self?.audioSnapshot = $0 }.store(in: &subscriptions)
         NativeDesktopCameraLease.shared.$liveTrack.sink { [weak self] in self?.borrowedLiveTrack = $0 }.store(in: &subscriptions)
     }
@@ -54,12 +59,7 @@ import SwiftUI
                 if let other = Self.activePreview, other !== self, !(await other.stop()) { throw NativeDesktopRTCError.cleanupFailed }
                 guard audioGeneration == token, !Task.isCancelled else { return }
                 Self.activePreview = self
-                let granted: Bool
-                switch AVCaptureDevice.authorizationStatus(for: .audio) {
-                case .authorized: granted = true
-                case .notDetermined: granted = await AVCaptureDevice.requestAccess(for: .audio)
-                default: granted = false
-                }
+                let granted = try await GuestCaptureAuthorization.request(.audio)
                 guard granted else { throw GuestSystemAudioError.microphonePermissionRequired }
                 guard audioGeneration == token, !Task.isCancelled else { return }
                 if live {
@@ -179,6 +179,7 @@ import SwiftUI
         if !clean { error = L("Camera preview could not stop. Quit and reopen the app before starting camera video.") }
         return clean && audioClean && !cleanupFailed
     }
+    deinit { discovery?.cancel() }
 }
 
 struct NativeDesktopDeviceSettings: View {

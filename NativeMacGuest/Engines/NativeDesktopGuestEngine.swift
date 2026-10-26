@@ -30,6 +30,7 @@ private enum NativeDesktopGuestError: LocalizedError {
     private(set) var incomingVideo: [NativeDesktopExternalVideo] = []
     private(set) var guestSnapshot = GuestMeetingSnapshot()
     private(set) var currentNativeEngine: NativeGuestEngine?
+    private(set) var microphoneStartupMilliseconds: [String: Double] = [:]
     var factory: LKRTCPeerConnectionFactory? {
         guard currentNativeEngine != nil, [.connecting, .connected, .reconnecting].contains(snapshot.phase) else { return nil }
         return systemAudio?.factory
@@ -44,7 +45,8 @@ private enum NativeDesktopGuestError: LocalizedError {
     func startPrivateAudioCheck() async throws {
         guard let session, let owner = systemAudio, snapshot.phase == .connected else { throw NativeDesktopGuestError.notConnected }
         let token = revision
-        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw NativeDesktopGuestError.permissionDenied }
+        guard try await GuestCaptureAuthorization.request(.audio) else { throw NativeDesktopGuestError.permissionDenied }
+        try check(token, session: session)
         guard await owner.beginPrivateInputCheck() else { throw NativeDesktopGuestError.cleanupFailed }
         try check(token, session: session)
     }
@@ -141,22 +143,22 @@ private enum NativeDesktopGuestError: LocalizedError {
             snapshot.microphoneOn = false; snapshot.microphoneLevel = nil; emit()
             try await session.mute(true)
         } else {
-            let authorized: Bool
-            switch AVCaptureDevice.authorizationStatus(for: .audio) {
-            case .authorized: authorized = true
-            case .notDetermined:
-                authorized = try await guestAwait(timeout: 30) { done in
-                    AVCaptureDevice.requestAccess(for: .audio) { done(.success($0)) }
-                }
-            default: authorized = false
-            }
+            let began = ProcessInfo.processInfo.systemUptime
+            let authorized = try await GuestCaptureAuthorization.request(.audio)
+            let permissionFinished = ProcessInfo.processInfo.systemUptime
             try check(token, session: session)
             guard microphoneRevision == command else { throw CancellationError() }
             guard authorized else { throw NativeDesktopGuestError.permissionDenied }
             try await session.activateMicrophone()
+            let deviceFinished = ProcessInfo.processInfo.systemUptime
             try check(token, session: session)
             guard microphoneRevision == command else { throw CancellationError() }
             try await session.mute(false)
+            if microphoneRevision == command {
+                microphoneStartupMilliseconds = ["permission": (permissionFinished - began) * 1000,
+                    "activation": (deviceFinished - permissionFinished) * 1000,
+                    "unmuteConfirmation": (ProcessInfo.processInfo.systemUptime - deviceFinished) * 1000]
+            }
         }
         try check(token, session: session)
         guard microphoneRevision == command else { throw CancellationError() }
@@ -164,11 +166,23 @@ private enum NativeDesktopGuestError: LocalizedError {
     }
 
     func setCamera(_ enabled: Bool) async throws {
+        if enabled { try Task.checkCancellation() }
         let session = try activeSession(), token = revision
         cameraRevision &+= 1; let command = cameraRevision
         session.setLocalMuteIntent(!enabled, video: true)
         if !enabled { snapshot.cameraOn = false; onLocalCamera?(nil); emit() }
-        try await session.mute(!enabled, video: true)
+        try await withTaskCancellationHandler(operation: {
+            try await session.mute(!enabled, video: true)
+        }, onCancel: { [weak self, weak session] in
+            guard enabled else { return }
+            Task { @MainActor in
+                guard let self, let session, self.session === session,
+                      self.revision == token, self.cameraRevision == command else { return }
+                // Session control is an independent task. Withdraw its intent
+                // directly so a suspended camera permission request is canceled.
+                session.setLocalMuteIntent(true, video: true)
+            }
+        })
         try check(token, session: session)
         guard cameraRevision == command else { throw CancellationError() }
         refresh(session.snapshot)

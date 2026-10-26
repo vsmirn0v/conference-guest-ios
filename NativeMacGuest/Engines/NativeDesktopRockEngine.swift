@@ -128,6 +128,11 @@ struct NativeRockLiveMediaEvidence {
     }
     func setMicrophone(_ enabled: Bool) async throws {
         let room = try connectedRoom(), token = revision
+        if enabled {
+            guard try await GuestCaptureAuthorization.request(.audio) else { throw GuestSystemAudioError.microphonePermissionRequired }
+            guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
+            try Task.checkCancellation()
+        }
         _ = try await room.localParticipant.setMicrophone(enabled: enabled, captureOptions: NativeRockAudioPolicy.captureOptions(audioProfile))
         guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
         refresh(room)
@@ -136,23 +141,33 @@ struct NativeRockLiveMediaEvidence {
         let room = try connectedRoom(), token = revision
         var options: CameraCaptureOptions?
         if enabled {
+            guard try await GuestCaptureAuthorization.request(.video) else { throw GuestCameraError.permissionDenied }
+            guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
+            try Task.checkCancellation()
             let selectedID = UserDefaults.standard.string(forKey: "nativeDesktop.cameraID") ?? ""
             let devices = try await CameraCapturer.captureDevices()
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
-            let device = selectedID.isEmpty ? AVCaptureDevice.default(for: .video) : devices.first { $0.uniqueID == selectedID }
-            guard let device else { throw NativeDesktopRockError.cameraUnavailable }
-            let native = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
-            guard let dimensions = NativeRockCameraPolicy.dimensions(CGSize(width: Int(native.width), height: Int(native.height))) else {
-                throw NativeDesktopRockError.cameraUnavailable
-            }
-            options = CameraCaptureOptions(device: device, preferredFormat: device.activeFormat,
-                dimensions: Dimensions(width: Int32(dimensions.width), height: Int32(dimensions.height)), fps: 30)
+            try Task.checkCancellation()
+            options = try await Task.detached(priority: .userInitiated) {
+                let device = selectedID.isEmpty ? AVCaptureDevice.default(for: .video) : devices.first { $0.uniqueID == selectedID }
+                guard let device else { throw NativeDesktopRockError.cameraUnavailable }
+                let format = device.activeFormat
+                let native = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                guard let dimensions = NativeRockCameraPolicy.dimensions(CGSize(width: Int(native.width), height: Int(native.height))) else {
+                    throw NativeDesktopRockError.cameraUnavailable
+                }
+                return CameraCaptureOptions(device: device, preferredFormat: format,
+                    dimensions: Dimensions(width: Int32(dimensions.width), height: Int32(dimensions.height)), fps: 30)
+            }.value
+            guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
+            try Task.checkCancellation()
             if let options,
                let track = room.localParticipant.videoTracks.first(where: { $0.source == .camera })?.track as? LocalVideoTrack,
                let capturer = track.capturer as? CameraCapturer, !capturer.options.isEqual(options) {
                 try await capturer.set(options: options)
             }
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
+            try Task.checkCancellation()
         }
         _ = try await room.localParticipant.setCamera(enabled: enabled,
             captureOptions: options,

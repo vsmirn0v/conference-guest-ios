@@ -27,6 +27,7 @@ import VisionKit
     private var identity: SharedTextAnalysisIdentity?
     private var requestID: UUID?
     private var job: SharedTextJob?
+    private var preparationNotice: Task<Void, Never>?
     private var admissionObserver: NSObjectProtocol?
     private(set) var sourceID: String?
     private var sourceName = ""
@@ -36,7 +37,9 @@ import VisionKit
     private(set) var initialViewportSize = CGSize.zero
     var canRefresh: Bool { sourceID != nil && !busy && admissionAvailable && !SharedTextWorkAdmission.shared.isOccupied }
 
-    init(timeout: Duration = .seconds(12), recognition: SharedTextJob.Recognition? = nil) {
+    // macOS may spend over 40 seconds preparing its first Live Text model.
+    // Keep the original capture alive through that work; never start a second job.
+    init(timeout: Duration = .seconds(60), recognition: SharedTextJob.Recognition? = nil) {
         self.timeout = timeout
         // Injected work must not create and discard a real system analyzer.
         if let recognition { recognize = recognition }
@@ -73,9 +76,16 @@ import VisionKit
             self.liveState = .resolve(capturedSource: snapshot.sourceID, currentSource: self.sourceID)
             self.identity = .init(meeting: self.meeting, snapshot: snapshot.id)
             self.status = L("Finding text on this device…")
+            self.preparationNotice?.cancel()
+            self.preparationNotice = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(4)) } catch { return }
+                guard let self, self.requestID == request, self.busy else { return }
+                self.status = L("Preparing text recognition… Keep this capture open. Meeting audio continues.")
+            }
         }, onResult: { [weak self] result in
             guard let self, self.requestID == request, let snapshot = self.snapshot,
                   self.identity == .init(meeting: self.meeting, snapshot: snapshot.id) else { return }
+            self.preparationNotice?.cancel(); self.preparationNotice = nil
             switch result {
             case .native(let analysis):
                 self.analysis = analysis; self.statusNeedsAttention = !analysis.hasResults(for: .text)
@@ -86,14 +96,17 @@ import VisionKit
             }
         }, onFailure: { [weak self] failure in
             guard let self, self.requestID == request else { return }
+            self.preparationNotice?.cancel(); self.preparationNotice = nil
             self.statusNeedsAttention = true
             self.status = failure == .captureUnavailable ? L("No incoming frame available. Try again when the share is visible.") : L("Text recognition failed. Try another frame or return to Live.")
         }, onTimeout: { [weak self] in
             guard let self, self.requestID == request else { return }
+            self.preparationNotice?.cancel(); self.preparationNotice = nil
             self.identity = nil; self.busy = false; self.statusNeedsAttention = true
             self.status = L("Text recognition is taking too long. Return to Live and try again later.")
         }, onFinished: { [weak self] in
             guard let self, self.requestID == request else { return }
+            self.preparationNotice?.cancel(); self.preparationNotice = nil
             self.busy = false; self.job = nil
         })
         if job == nil {
@@ -101,10 +114,11 @@ import VisionKit
         }
     }
     func close() {
+        preparationNotice?.cancel(); preparationNotice = nil
         requestID = nil; job?.cancelUI(); job = nil; identity = nil; snapshot = nil; analysis = nil; transcript = ""
         busy = false; statusNeedsAttention = false; isOpen = false
     }
-    deinit { if let admissionObserver { NotificationCenter.default.removeObserver(admissionObserver) } }
+    deinit { preparationNotice?.cancel(); if let admissionObserver { NotificationCenter.default.removeObserver(admissionObserver) } }
 }
 
 /// The captured frame is a mode of the meeting canvas. Controls float above the

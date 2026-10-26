@@ -149,10 +149,11 @@ struct NativeDesktopMeetingView: View {
                 viewAndMoreMenus
             }.buttonStyle(.plain).padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome() }
             HStack(spacing: 4) {
-                controlButton(model.snapshot.microphoneOn ? "mic.fill" : "mic.slash", L("Mic"), selected: model.snapshot.microphoneOn) { model.toggleMicrophone() }
-                    .help(L("Mute or unmute (Space or ⇧⌘M)"))
+                controlButton(model.snapshot.microphoneOn ? "mic.fill" : "mic.slash", L("Mic"), selected: model.snapshot.microphoneOn, pending: model.microphoneStarting) { model.toggleMicrophone() }
+                    .help(model.microphoneStarting ? L("Starting microphone. Click to cancel.") : L("Mute or unmute (Space or ⇧⌘M)"))
                     .contextMenu { Button(L("Audio settings")) { model.panel = .studio } }
-                controlButton(model.snapshot.cameraOn ? "video.fill" : "video.slash", L("Video"), selected: model.snapshot.cameraOn) { model.toggleCamera() }
+                controlButton(model.snapshot.cameraOn ? "video.fill" : "video.slash", L("Video"), selected: model.snapshot.cameraOn, pending: model.cameraStarting) { model.toggleCamera() }
+                    .help(model.cameraStarting ? L("Starting camera. Click to cancel.") : L("Video"))
                     .contextMenu { Button(L("Camera settings")) { model.panel = .studio } }
                 controlButton("rectangle.on.rectangle", L("Share"), selected: model.snapshot.sharing || model.sharingPending) { togglePanel(.presenter) }
                 controlButton(model.snapshot.playoutOn ? "speaker.wave.2.fill" : "speaker.slash", L("Sound"), selected: model.snapshot.playoutOn) { model.togglePlayout() }
@@ -285,11 +286,16 @@ struct NativeDesktopMeetingView: View {
     private func iconButton(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) { Image(systemName: symbol).frame(width: 32, height: 30) }.buttonStyle(.plain).help(title).accessibilityLabel(title)
     }
-    private func controlButton(_ symbol: String, _ title: String, selected: Bool, destructive: Bool = false, action: @escaping () -> Void) -> some View {
+    private func controlButton(_ symbol: String, _ title: String, selected: Bool, destructive: Bool = false, pending: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 5) { Image(systemName: symbol).font(.title3); Text(title).font(.caption) }
+            VStack(spacing: 5) {
+                Image(systemName: symbol).font(.title3).opacity(pending ? 0 : 1)
+                    .overlay { if pending { ProgressView().controlSize(.small) } }
+                Text(pending ? L("Starting…") : title).font(.caption)
+            }
                 .foregroundStyle(destructive ? Color.red : selected ? .orange : .primary).frame(width: 66, height: 48).contentShape(Rectangle())
-        }.buttonStyle(.plain).disabled(!model.connected && title != L("Leave"))
+        }.buttonStyle(.plain).accessibilityLabel(title).accessibilityValue(pending ? L("Starting…") : "")
+            .disabled(!model.connected && title != L("Leave"))
     }
 }
 

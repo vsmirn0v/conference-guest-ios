@@ -20,6 +20,9 @@ import XCTest
     var clean = true
     var demands: [(ids: Set<String>?, focused: String?)] = []
     var onConnect: (() async throws -> Void)?
+    var onMicrophoneEnable: (() async throws -> Void)?
+    var onMicrophoneDisable: (() async throws -> Void)?
+    var onCameraEnable: (() async throws -> Void)?
     func connect(invitation: URL, name: String, quiet: Bool) async throws {
         snapshot.phase = .connecting; onState?(snapshot)
         try await onConnect?()
@@ -28,10 +31,18 @@ import XCTest
     }
     func reconnect() async throws {}
     func setMicrophone(_ enabled: Bool) async throws {
-        microphoneCommands.append(enabled); try await Task.sleep(for: .milliseconds(25))
+        microphoneCommands.append(enabled)
+        if enabled { try await onMicrophoneEnable?() }
+        else { try await onMicrophoneDisable?() }
+        try await Task.sleep(for: .milliseconds(25))
         snapshot.microphoneOn = enabled; completedMicrophoneCommands += 1; onState?(snapshot)
     }
-    func setCamera(_ enabled: Bool) async throws { cameraCommands.append(enabled); snapshot.cameraOn = enabled; onState?(snapshot) }
+    func setCamera(_ enabled: Bool) async throws {
+        cameraCommands.append(enabled)
+        if enabled { try await onCameraEnable?() }
+        try Task.checkCancellation()
+        snapshot.cameraOn = enabled; onState?(snapshot)
+    }
     func setPlayout(_ enabled: Bool) async throws { snapshot.playoutOn = enabled; onState?(snapshot) }
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws { snapshot.sharing = track != nil; onState?(snapshot) }
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws { demands.append((ids, focusedParticipantID)) }
@@ -74,12 +85,91 @@ private final class DesktopActivitySpy: NSUserActivity {
         for _ in 0..<100 { if predicate() { return }; try await Task.sleep(for: .milliseconds(10)) }
         XCTFail("The asynchronous operation did not complete")
     }
-    func testRapidTogglePreservesBothIntentsWithoutMutingPlayout() async throws {
+    func testRapidOffSupersedesAnEnableThatHasNotStartedWithoutMutingPlayout() async throws {
         let engine = DesktopTestEngine(), model = try model(engine)
         try await model.connect(); model.toggleMicrophone(); model.toggleMicrophone()
-        try await spin { engine.completedMicrophoneCommands == 2 && !model.snapshot.microphoneOn }
-        XCTAssertEqual(engine.microphoneCommands, [true, false]); XCTAssertTrue(model.snapshot.playoutOn)
+        try await spin { engine.completedMicrophoneCommands == 1 && !model.snapshot.microphoneOn }
+        XCTAssertEqual(engine.microphoneCommands, [false]); XCTAssertTrue(model.snapshot.playoutOn)
         let left = await model.leave(); XCTAssertTrue(left); XCTAssertEqual(engine.leaves, 1)
+    }
+    func testOffCancelsEachPendingPermissionAndLateAllowCannotEnableMedia() async throws {
+        for video in [false, true] {
+            let engine = DesktopTestEngine(), model = try model(engine)
+            var reply: ((Bool) -> Void)?
+            let permission: () async throws -> Void = {
+                _ = try await GuestCaptureAuthorization.request(status: { .notDetermined }, prompt: { reply = $0 })
+            }
+            if video { engine.onCameraEnable = permission } else { engine.onMicrophoneEnable = permission }
+            try await model.connect()
+            if video { model.toggleCamera() } else { model.toggleMicrophone() }
+            try await spin { reply != nil }
+            XCTAssertTrue(video ? model.cameraStarting : model.microphoneStarting)
+            if video { model.toggleCamera() } else { model.toggleMicrophone() }
+            try await spin { video ? engine.cameraCommands.last == false : engine.completedMicrophoneCommands > 0 }
+            reply?(true); await model.waitForMediaActionsForTesting()
+            XCTAssertFalse(model.snapshot.microphoneOn); XCTAssertFalse(model.snapshot.cameraOn)
+            XCTAssertFalse(model.microphoneStarting); XCTAssertFalse(model.cameraStarting)
+            XCTAssertTrue(model.snapshot.playoutOn)
+            XCTAssertNil(model.error)
+            let left = await model.leave(); XCTAssertTrue(left)
+        }
+    }
+    func testTransferCancelsPendingPermissionWithoutWaitingForTheUser() async throws {
+        let engine = DesktopTestEngine(), model = try model(engine)
+        var reply: ((Bool) -> Void)?, held = false
+        engine.onMicrophoneEnable = {
+            _ = try await GuestCaptureAuthorization.request(status: { .notDetermined }, prompt: { reply = $0 })
+        }
+        try await model.connect(); model.toggleMicrophone()
+        try await spin { reply != nil }
+        let hold = Task { try await model.setTransferHeld(true); held = true }
+        try await spin { held }
+        reply?(true); try await hold.value
+        XCTAssertFalse(model.snapshot.microphoneOn); XCTAssertFalse(model.snapshot.playoutOn)
+        try await model.setTransferHeld(false)
+        XCTAssertFalse(model.snapshot.microphoneOn, "Pending permission was never accepted sending intent")
+        let left = await model.leave(); XCTAssertTrue(left)
+    }
+    func testPrivacyOffBypassesTheOtherDevicesPermissionPrompt() async throws {
+        for pendingVideo in [false, true] {
+            let engine = DesktopTestEngine(), model = try model(engine)
+            var reply: ((Bool) -> Void)?
+            let permission: () async throws -> Void = {
+                _ = try await GuestCaptureAuthorization.request(status: { .notDetermined }, prompt: { reply = $0 })
+            }
+            try await model.connect()
+            if pendingVideo {
+                try await engine.setMicrophone(true); engine.onCameraEnable = permission; model.toggleCamera()
+            } else {
+                try await engine.setCamera(true); engine.onMicrophoneEnable = permission; model.toggleMicrophone()
+            }
+            try await spin { reply != nil }
+            if pendingVideo { model.toggleMicrophone() } else { model.toggleCamera() }
+            try await spin { !model.snapshot.microphoneOn && !model.snapshot.cameraOn }
+            reply?(true); await model.waitForMediaActionsForTesting()
+            XCTAssertFalse(model.snapshot.microphoneOn); XCTAssertFalse(model.snapshot.cameraOn)
+            XCTAssertTrue(model.snapshot.playoutOn)
+            let left = await model.leave(); XCTAssertTrue(left)
+        }
+    }
+    func testOldCanceledEnableCannotEraseNewerIntentDuringCleanup() async throws {
+        let engine = DesktopTestEngine(), model = try model(engine)
+        var reply: ((Bool) -> Void)?, cleanupStarted = false
+        engine.onMicrophoneEnable = {
+            _ = try await GuestCaptureAuthorization.request(status: { .notDetermined }, prompt: { reply = $0 })
+        }
+        engine.onMicrophoneDisable = {
+            cleanupStarted = true
+            try await Task.sleep(for: .milliseconds(150))
+        }
+        try await model.connect(); model.toggleMicrophone()
+        try await spin { reply != nil }
+        model.toggleMicrophone(); model.toggleMicrophone()
+        try await spin { cleanupStarted }
+        model.toggleMicrophone() // The newest requested On must still toggle to Off.
+        reply?(true); await model.waitForMediaActionsForTesting()
+        XCTAssertFalse(model.snapshot.microphoneOn)
+        let left = await model.leave(); XCTAssertTrue(left)
     }
     func testCleanLeaveClearsAllConfirmedMediaState() async throws {
         let engine = DesktopTestEngine(), model = try model(engine)
@@ -105,11 +195,14 @@ private final class DesktopActivitySpy: NSUserActivity {
         try await Task.sleep(for: .milliseconds(5))
         model.toggleMicrophone(); model.toggleCamera(); model.startSharing(presenter: false)
         try await hold.value
-        XCTAssertEqual(engine.microphoneCommands, [true, false]); XCTAssertEqual(engine.cameraCommands, [false])
+        XCTAssertEqual(engine.microphoneCommands.first, true)
+        XCTAssertTrue(engine.microphoneCommands.dropFirst().allSatisfy { !$0 })
+        XCTAssertEqual(engine.microphoneCommands.last, false); XCTAssertEqual(engine.cameraCommands, [false])
+        let microphoneCommandsWhileHeld = engine.microphoneCommands.count
         XCTAssertFalse(model.snapshot.microphoneOn); XCTAssertFalse(model.snapshot.cameraOn)
         model.toggleMicrophone(); model.toggleCamera()
         try await Task.sleep(for: .milliseconds(30))
-        XCTAssertEqual(engine.microphoneCommands.count, 2); XCTAssertEqual(engine.cameraCommands.count, 1)
+        XCTAssertEqual(engine.microphoneCommands.count, microphoneCommandsWhileHeld); XCTAssertEqual(engine.cameraCommands.count, 1)
         try await model.setTransferHeld(false, restoreSending: false)
         _ = await model.leave()
     }

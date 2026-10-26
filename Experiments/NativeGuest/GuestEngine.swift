@@ -571,7 +571,7 @@ final class NativeGuestEngine {
     func activateMicrophone() async throws {
         try checkActive()
         if let systemAudio, !(await systemAudio.activateMicrophone()) {
-            throw GuestSystemAudioError.microphonePermissionRequired
+            throw GuestSystemAudioError.microphoneActivationFailure(authorization: AVCaptureDevice.authorizationStatus(for: .audio))
         }
         try checkActive()
     }
@@ -710,7 +710,7 @@ final class NativeGuestEngine {
             forceMute(video: video); return
         }
         if !video && !muted, let systemAudio, !systemAudio.canUnmuteMicrophone {
-            throw GuestSystemAudioError.microphonePermissionRequired
+            throw GuestSystemAudioError.microphoneActivationFailure(authorization: AVCaptureDevice.authorizationStatus(for: .audio))
         }
         if video && !muted {
             if cameraPublication { try await startCameraIfNeeded() }
@@ -831,7 +831,7 @@ final class NativeGuestEngine {
                 "width": snapshot.width, "height": snapshot.height, "dropped": snapshot.dropped,
                 "systemBackgroundSelected": snapshot.systemBackgroundSelected as Any? ?? NSNull(),
                 "systemBackgroundActive": snapshot.systemBackgroundActive as Any? ?? NSNull(),
-                "reactionObserved": snapshot.observedReaction])
+                "reactionObserved": snapshot.observedReaction, "startupMilliseconds": snapshot.startupMilliseconds])
         }
         return ["statisticsStartedUptime": statisticsStartedUptime,
             "statisticsCompletedUptime": ProcessInfo.processInfo.systemUptime,

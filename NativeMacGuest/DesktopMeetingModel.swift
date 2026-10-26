@@ -102,6 +102,10 @@ import UniformTypeIdentifiers
     private var authorizedMicrophoneRequest: NativeDesktopHeadsetMute.Request?
     private var controlTasks: [UUID: Task<Void, Never>] = [:]
     private var controlTail: Task<Void, Never>?
+    private var microphoneControl: Task<Void, Never>?
+    private var cameraControl: Task<Void, Never>?
+    private var microphoneCommand = UUID()
+    private var cameraCommand = UUID()
     private var transferHeld = false
     private var holdConfirmed = false
     private var holdTask: Task<Void, Error>?
@@ -112,8 +116,10 @@ import UniformTypeIdentifiers
     private var demandKey: String?
     private var demandTask: Task<Void, Never>?
     private var heldState: (microphone: Bool, camera: Bool, playout: Bool)?
-    private var requestedMicrophone: Bool?
-    private var requestedCamera: Bool?
+    @Published private var requestedMicrophone: Bool?
+    @Published private var requestedCamera: Bool?
+    var microphoneStarting: Bool { !closed && !transferHeld && requestedMicrophone == true && !snapshot.microphoneOn }
+    var cameraStarting: Bool { !closed && !transferHeld && requestedCamera == true && !snapshot.cameraOn }
     private var requestedPlayout: Bool?
     private let quiet: Bool
 
@@ -244,20 +250,27 @@ import UniformTypeIdentifiers
     private func setMicrophoneEnabled(_ enabled: Bool) {
         guard !transferHeld, !closed else { _ = headset.requestIntent(muted: true); return }
         requestedMicrophone = enabled
+        let command = UUID(); microphoneCommand = command
+        microphoneControl?.cancel()
+        if !enabled, requestedCamera == true, !snapshot.cameraOn {
+            cameraControl?.cancel(); cameraCommand = UUID(); requestedCamera = nil
+        }
         if !enabled { authorizedMicrophoneRequest = nil }
         let request = headset.requestIntent(muted: !enabled), token = generation
-        perform { engine in
+        microphoneControl = perform(priorityOff: !enabled) { engine in
             do {
                 try await engine.setMicrophone(enabled)
-                guard token == self.generation, !self.closed, !self.transferHeld else { return }
+                guard token == self.generation, command == self.microphoneCommand, !self.closed, !self.transferHeld else { return }
                 self.authorizedMicrophoneRequest = enabled && engine.snapshot.microphoneOn ? request : nil
                 self.headset.confirm(muted: !engine.snapshot.microphoneOn, request: request)
             } catch {
-                if self.requestedMicrophone == enabled { self.requestedMicrophone = nil }
+                if command == self.microphoneCommand { self.requestedMicrophone = nil }
                 if token == self.generation, !self.closed {
-                    let closedRequest = self.headset.requestIntent(muted: true)
-                    try? await engine.setMicrophone(false)
-                    self.headset.confirm(muted: true, request: closedRequest)
+                    try? await Task { @MainActor in try await engine.setMicrophone(false) }.value
+                    if command == self.microphoneCommand {
+                        let closedRequest = self.headset.requestIntent(muted: true)
+                        self.headset.confirm(muted: true, request: closedRequest)
+                    }
                 }
                 throw error
             }
@@ -266,7 +279,13 @@ import UniformTypeIdentifiers
     func toggleCamera() {
         guard !transferHeld, !closed else { return }
         let enabled = !(requestedCamera ?? snapshot.cameraOn); requestedCamera = enabled
-        perform { engine in
+        let command = UUID(); cameraCommand = command
+        cameraControl?.cancel()
+        if !enabled, requestedMicrophone == true, !snapshot.microphoneOn {
+            microphoneControl?.cancel(); microphoneCommand = UUID(); requestedMicrophone = nil
+            authorizedMicrophoneRequest = nil; _ = headset.requestIntent(muted: true)
+        }
+        cameraControl = perform(priorityOff: !enabled) { engine in
             // Reserve the transition before lease revocation can emit a nil
             // track; Presenter must wait until the live owner is settled.
             self.presenterStorage?.beginLiveCameraHandover()
@@ -278,17 +297,21 @@ import UniformTypeIdentifiers
                     try await self.presenterStorage?.releasePrivateCameraBeforeLiveCapture()
                 }
                 if enabled, !(await NativeDesktopDeviceModel.stopPrivatePreview()) { throw NativeDesktopRTCError.cleanupFailed }
+                if enabled {
+                    try Task.checkCancellation()
+                    guard command == self.cameraCommand, !self.closed, !self.transferHeld else { throw CancellationError() }
+                }
                 try await engine.setCamera(enabled)
                 if !enabled, let lease = self.cameraLease { NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
                 await self.presenterStorage?.finishLiveCameraHandover()
             } catch {
                 var stopped = true
                 if let lease = self.cameraLease {
-                    do { try await engine.setCamera(false); NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
+                    do { try await Task { @MainActor in try await engine.setCamera(false) }.value; NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
                     catch { stopped = false; NativeDesktopCameraLease.shared.reportFailedStop(lease) }
                 }
                 if stopped { await self.presenterStorage?.finishLiveCameraHandover() }
-                if self.requestedCamera == enabled { self.requestedCamera = nil }; throw error
+                if command == self.cameraCommand { self.requestedCamera = nil }; throw error
             }
         }
     }
@@ -310,18 +333,24 @@ import UniformTypeIdentifiers
             try await engine.reconnect()
         }
     }
-    private func perform(_ action: @escaping (any NativeDesktopMeetingEngine) async throws -> Void) {
-        guard !closed, !transferHeld else { return }
+    @discardableResult private func perform(priorityOff: Bool = false, _ action: @escaping (any NativeDesktopMeetingEngine) async throws -> Void) -> Task<Void, Never>? {
+        guard !closed, !transferHeld else { return nil }
         let token = generation, id = UUID(), previous = controlTail
         let task = Task { @MainActor [weak self] in
-            await previous?.value
+            if !priorityOff { await previous?.value }
             guard let self else { return }
             defer { self.controlTasks[id] = nil }
             guard token == generation, !closed, !Task.isCancelled else { return }
             do { try await action(engine) }
             catch { if token == generation, !closed, !(error is CancellationError) { self.error = error.localizedDescription } }
         }
-        controlTasks[id] = task; controlTail = task
+        controlTasks[id] = task
+        if priorityOff {
+            // Privacy actions may suppress an independent sender immediately.
+            // A subsequent enable still waits for every older cleanup to drain.
+            controlTail = Task { await previous?.value; await task.value }
+        } else { controlTail = task }
+        return task
     }
     #if DEBUG
     func waitForMediaActionsForTesting() async { await controlTail?.value }
@@ -332,7 +361,9 @@ import UniformTypeIdentifiers
         if held {
             if transferHeld && holdConfirmed { return }
             transferHeld = true; holdConfirmed = false; authorizedMicrophoneRequest = nil; _ = headset.requestIntent(muted: true)
+            requestedMicrophone = nil; requestedCamera = nil
             let tasks = Array(controlTasks.values)
+            tasks.forEach { $0.cancel() }
             let operation = Task { @MainActor in
                 for task in tasks { await task.value }
                 try Task.checkCancellation()
@@ -557,6 +588,7 @@ import UniformTypeIdentifiers
     func leave() async -> Bool {
         if let leaveTask { return await leaveTask.value }
         closed = true; generation = UUID(); snapshot.phase = .leaving; headset.end()
+        requestedMicrophone = nil; requestedCamera = nil
         connection?.finish(.failure(CancellationError())); connection = nil
         let cleanup = Task { @MainActor in
             let controls = Array(self.controlTasks.values)
