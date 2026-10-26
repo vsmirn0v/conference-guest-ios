@@ -1,0 +1,157 @@
+{
+  "sourceCommit": "624249bb8161529f5af66ec9d28378a44747fd50",
+  "verifiedAtUTC": "2026-10-26T19:01:28.011766+00:00",
+  "release": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "30",
+    "file": "RockNRoll-0.3.0-30-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-30-arm64.dmg",
+    "sha256": "7d4750d8aad346c53da8fd71fcebee1e190de82a49c050da492344cb5c60c85e",
+    "length": 15450287,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false,
+    "outerDMGAssessment": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/package-30/RockNRoll-0.3.0-30-arm64.dmg: rejected\nsource=no usable signature"
+  },
+  "qualification": {
+    "version": "0.3.0",
+    "build": "30",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios/.build/native-dmg/export-30/App/Rock'N'Roll for Mac.app",
+    "archiveExportDSYMUUIDMatch": true,
+    "appUUIDs": {
+      "archive": "UUID: 9534965F-33EA-31D6-A841-955EE0EF5F7A",
+      "export": "UUID: 9534965F-33EA-31D6-A841-955EE0EF5F7A",
+      "dSYM": "UUID: 9534965F-33EA-31D6-A841-955EE0EF5F7A"
+    },
+    "frameworkUUIDs": {
+      "candidate": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D",
+      "archive": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D",
+      "export": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D"
+    },
+    "r5FrameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+    "exportExecutableSHA256": "03f1f56fb03aaa3800cdbc9417d2adee778331c75155420befb1b5cc28a16bc5",
+    "architecture": "arm64",
+    "sandbox": true,
+    "cloudEnvironment": "Production",
+    "team": "5V64BP2H3P",
+    "debuggerEntitlement": false,
+    "signatureValid": true,
+    "stapleValid": true,
+    "gatekeeperAccepted": true,
+    "appGroupContainerPassed": true,
+    "cloudFixture": {
+      "marker": "1a198416-35dd-4ff6-9796-34c77df432f1",
+      "phases": {
+        "write": true,
+        "verify": true,
+        "cleanup": true
+      }
+    },
+    "sourceHashValidation": true,
+    "sourceCount": 172
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-30-arm64.dmg",
+      "sha256": "7d4750d8aad346c53da8fd71fcebee1e190de82a49c050da492344cb5c60c85e",
+      "length": 15450287
+    },
+    "state": {
+      "appcastSHA256": "a8cc963fe6aee327a10253ed51a98e9feed78bb6fbae734bd793c92da2a9a744",
+      "inventorySHA256": "33e26829a001349910a5c54cfc2757a39cc0e9fca063c36df27d72378fc982ba",
+      "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-30-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/b69433f05c25402980a66168769de714/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "verifiedAtUTC": "2026-10-26T19:00:26.312139+00:00",
+    "latest.jsonSHA256": "33e26829a001349910a5c54cfc2757a39cc0e9fca063c36df27d72378fc982ba",
+    "appcast.xmlSHA256": "a8cc963fe6aee327a10253ed51a98e9feed78bb6fbae734bd793c92da2a9a744",
+    "beta": {
+      "build": "30",
+      "sha256": "7d4750d8aad346c53da8fd71fcebee1e190de82a49c050da492344cb5c60c85e",
+      "length": 15450287,
+      "url": "https://rock.glowsoft.ru/mac/beta/latest.dmg"
+    },
+    "stable": {
+      "build": "25",
+      "sha256": "e9c7c9ddab9c7b10b81fd52da5b7fb54404b9e12cc1e5e29c6292fffe9625a21",
+      "length": 15334524,
+      "url": "https://rock.glowsoft.ru/mac/stable/latest.dmg"
+    }
+  },
+  "automaticUpdate": {
+    "signature": true,
+    "staple": true,
+    "gatekeeper": true,
+    "container": true,
+    "fromBuild": "29",
+    "toBuild": "30",
+    "viaSparkle": true,
+    "noActiveMeeting": true,
+    "installedPath": "/Applications/Rock'N'Roll for Mac.app",
+    "binarySHA256": "03f1f56fb03aaa3800cdbc9417d2adee778331c75155420befb1b5cc28a16bc5",
+    "cloudFixture": {
+      "marker": "f68f32b1-e384-47f4-a1b7-9281e5dfec38",
+      "phases": {
+        "write": true,
+        "verify": true,
+        "cleanup": true
+      }
+    },
+    "realLibraryCloudStatus": "Up to date",
+    "betaChannelRetained": true
+  },
+  "validation": {
+    "fullMacRegression": {
+      "result": ".build/native-screen-quality/warmed-full-regression30.xcresult",
+      "tests": 104,
+      "optionalSkipped": 19,
+      "failures": 0,
+      "realOCRTestsPassed": 3
+    },
+    "focusedScreenEncoderTestsPassed": 5,
+    "physical4KCameraAndPresenterPassed": true,
+    "liveTelemostPassed": true,
+    "liveTrueConfPassed": true,
+    "liveProviderCodec": "VP8",
+    "liveShareAndPresenterSize": "1920x1080",
+    "guestH264AndVP9Passed": true,
+    "releaseOCR": {
+      "englishNativeCopy": true,
+      "cyrillicNativeCopyAfterResizeAndSourceEnd": true,
+      "appBuild": "30",
+      "executableSHA256": "03f1f56fb03aaa3800cdbc9417d2adee778331c75155420befb1b5cc28a16bc5",
+      "coldSystemProbeSeconds": 30.773815791588277,
+      "coldSystemProbeHasText": true,
+      "initialReleaseAttemptsTimedOut": true,
+      "warmedReleaseRetryPassed": true,
+      "productionChanged": false,
+      "os": "macOS 27.0.1 26A434"
+    },
+    "review": "6-astra xhigh: no blocking findings",
+    "limitations": [
+      "Initial macOS OCR model preparation exceeded the unchanged 12-second deadline; explicit retry worked after preparation. This release does not change the cold OCR deadline.",
+      "Telemost and TrueConf selected VP8, so their live tests do not exercise the H264 quality hook.",
+      "Rock server live acceptance and physical iPhone checks were outside this native Mac sharing run."
+    ]
+  },
+  "stableBuildPreserved": "25",
+  "evidenceSHA256": {
+    ".build/native-screen-quality/warmed-full-regression30.log": "72f2a083ca2808cc7bacd7cf599effaedc87c87e56d3bbb3f959e1c15888554b",
+    ".build/native-screen-quality/telemost-live30f.log": "5af573fea406a47029f1b6968a076a6dbcf7ac42991098c508dd3fab6920554e",
+    ".build/native-screen-quality/trueconf-live30f.log": "30544abd0278497463141eab8e6bc81c8330b7f819dd9d0f1ae14cbd6abf8f15",
+    ".build/native-screen-quality/live-provider-summary30.json": "5e0d507ebe39cc06539b332b45d78bee0aa2bb523492c945b2973b66a4f94426",
+    ".build/native-screen-quality/release30-ocr-acceptance.json": "74a0c95c29749d62e9696b50d742ad5cc6dfdb5f3f869fe3eb250bbec6ae74be",
+    ".build/native-screen-quality/ocr-system-probe30.log": "a23178c86061e8b7b98ce9b0de257a0ebdf15cc6983592a633401db5caa90039",
+    ".build/native-screen-quality/ocr-system-warmed-probe30.log": "90d79232994d459b36b6f9bb9667e4609a34f72518263f7e131bead41a7d19ef",
+    ".build/native-screen-quality/release30-ocr-resized-source-ended.png": "56f3bcc363ef936418b9e074ea84779e42512349a8b1b670409125e07fccb1d7"
+  }
+}
