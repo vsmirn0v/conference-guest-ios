@@ -7,17 +7,41 @@ import Darwin
 /// Observe the pinned SDK's bundled public WebRTC factory/stats surface.
 /// Forward every creation unchanged; never replace its audio device or touch mute.
 enum GuestPeerRegistry {
+    struct Scope: Equatable, Sendable { let generation: UUID; let attempt: UUID }
+    private final class ScopeBox {
+        let value: Scope
+        init(_ value: Scope) { self.value = value }
+    }
     private static let lock = NSLock()
     private static let peers = NSHashTable<RTCPeerConnection>.weakObjects()
+    private static let scopes = NSMapTable<RTCPeerConnection, ScopeBox>(keyOptions: .weakMemory, valueOptions: .strongMemory)
+    private static var currentScope: Scope?
     static func prepare() { _ = installed }
+    static func beginScope(_ scope: Scope) {
+        prepare()
+        lock.lock(); currentScope = scope; lock.unlock()
+    }
+    static func endScope(_ scope: Scope) {
+        lock.lock(); defer { lock.unlock() }
+        if currentScope == scope { currentScope = nil }
+    }
+    private static func scopeAtCreation() -> Scope? {
+        lock.lock(); defer { lock.unlock() }; return currentScope
+    }
+    private static func record(_ peer: RTCPeerConnection, scope: Scope?) {
+        lock.lock(); defer { lock.unlock() }
+        peers.add(peer)
+        if let scope { scopes.setObject(ScopeBox(scope), forKey: peer) }
+    }
     private static let installed: Bool = {
         let selector = #selector(RTCPeerConnectionFactory.peerConnection(with:constraints:delegate:))
         guard let method = class_getInstanceMethod(RTCPeerConnectionFactory.self, selector) else { return false }
         typealias Create = @convention(c) (AnyObject, Selector, RTCConfiguration, RTCMediaConstraints, AnyObject?) -> RTCPeerConnection?
         let original = unsafeBitCast(method_getImplementation(method), to: Create.self)
         let forward: @convention(block) (AnyObject, RTCConfiguration, RTCMediaConstraints, AnyObject?) -> RTCPeerConnection? = { factory, configuration, constraints, delegate in
+            let scope = scopeAtCreation()
             let peer = original(factory, selector, configuration, constraints, delegate)
-            if let peer { lock.lock(); peers.add(peer); lock.unlock() }
+            if let peer { record(peer, scope: scope) }
             return peer
         }
         method_setImplementation(method, imp_implementationWithBlock(forward))
@@ -26,8 +50,9 @@ enum GuestPeerRegistry {
             typealias VerifiedCreate = @convention(c) (AnyObject, Selector, RTCConfiguration, RTCMediaConstraints, AnyObject, AnyObject?) -> RTCPeerConnection?
             let verifiedOriginal = unsafeBitCast(method_getImplementation(verifiedMethod), to: VerifiedCreate.self)
             let verifiedForward: @convention(block) (AnyObject, RTCConfiguration, RTCMediaConstraints, AnyObject, AnyObject?) -> RTCPeerConnection? = { factory, configuration, constraints, verifier, delegate in
+                let scope = scopeAtCreation()
                 let peer = verifiedOriginal(factory, verifiedSelector, configuration, constraints, verifier, delegate)
-                if let peer { lock.lock(); peers.add(peer); lock.unlock() }
+                if let peer { record(peer, scope: scope) }
                 return peer
             }
             method_setImplementation(verifiedMethod, imp_implementationWithBlock(verifiedForward))
@@ -36,6 +61,20 @@ enum GuestPeerRegistry {
     }()
     static func snapshot() -> [RTCPeerConnection] {
         lock.lock(); defer { lock.unlock() }; return peers.allObjects
+    }
+    @MainActor static func receiverCandidates() -> [GuestPresenterCameraReceiver.Candidate] {
+        lock.lock()
+        let scoped = peers.allObjects.map { ($0, scopes.object(forKey: $0)?.value) }
+        lock.unlock()
+        return scoped.flatMap { peer, scope -> [GuestPresenterCameraReceiver.Candidate] in
+            peer.transceivers.compactMap { transceiver -> GuestPresenterCameraReceiver.Candidate? in
+                guard let track = transceiver.receiver.track as? RTCVideoTrack else { return nil }
+                var direction: RTCRtpTransceiverDirection = .inactive
+                let hasDirection = transceiver.currentDirection(&direction)
+                return GuestPresenterCameraReceiver.Candidate(scope: scope, closed: peer.connectionState == .closed,
+                    stopped: transceiver.isStopped, direction: hasDirection ? direction : nil, track: track)
+            }
+        }
     }
 }
 

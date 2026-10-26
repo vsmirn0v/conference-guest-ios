@@ -19,6 +19,13 @@ still apply. Reuse one output directory for build caching; existing archives
 are never replaced. App Store builds use `--distribution app-store`, without
 the framework, compile flag, Sparkle Info keys or mach-lookup exceptions.
 
+The product is `Rock'N'Roll for Mac.app`; its internal executable remains
+`RockNRoll Native Guest` and its bundle/signing/cloud identities are unchanged.
+Existing installations may retain `RockNRoll Native Guest.app` after a Sparkle
+update. The development installer also preserves that existing path, rejects
+duplicate old/new installations, and refuses to replace either running app.
+Fresh installations use the new filename. Do not rename a running application.
+
 The direct dependency is the locally staged official Sparkle 2.10.0 distribution
 at `.build/native-dmg/Sparkle/Sparkle.framework`. The builder verifies its version,
 build, binary SHA-256 and the downloaded `Sparkle-2.10.0.tar.xz` SHA-256. The
@@ -62,7 +69,7 @@ Package that verified app:
 
 ```sh
 python3 NativeMacGuest/distribution/release.py package \
-  --app '.build/native-dmg/export-BUILD_NUMBER/App/RockNRoll Native Guest.app' \
+  --app ".build/native-dmg/export-BUILD_NUMBER/App/Rock'N'Roll for Mac.app" \
   --output .build/native-dmg/package-BUILD_NUMBER
 ```
 

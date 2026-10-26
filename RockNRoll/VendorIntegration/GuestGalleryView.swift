@@ -1,6 +1,7 @@
 import ConferenceCore
 import Combine
 import UIKit
+import WebRTC
 
 /// One color-managed sink per visible gallery tile. The provider retains its
 /// original view; this surface never reparents or changes the SDK's layout.
@@ -11,6 +12,8 @@ final class GuestGalleryTile: UIView {
     private var energy: AnyCancellable?
     private var tap: GuestVideoFrameTap?
     private weak var renderer: UIView?
+    private var receiverSource: GuestPresenterCameraReceiverSource?
+    private var observers: [NSObjectProtocol] = []
     private var localCamera = false
     private var mediaActive = false
     private var visible = false
@@ -21,6 +24,7 @@ final class GuestGalleryTile: UIView {
 #if DEBUG
     var evidenceForTesting: [String: Any] {
         ["visible": visible, "mediaActive": mediaActive, "hasFrame": hasFrame,
+         "directSource": receiverSource != nil,
          "tapFrames": tap?.receivedFramesForTesting ?? 0, "preparedFrames": processor.preparedFrameCount,
          "sink": video.evidenceForTesting]
     }
@@ -45,12 +49,20 @@ final class GuestGalleryTile: UIView {
         }
         updateFrameRate()
         processor.setMainDeliveryEnabled(false)
+        for name in [UIApplication.didEnterBackgroundNotification, UIApplication.didBecomeActiveNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshDemand() }
+            })
+        }
         update(item, pin: pin)
     }
     required init?(coder: NSCoder) { nil }
     func update(_ item: GuestStreamViews.GalleryItem, pin: @escaping () -> Void) {
-        if renderer !== item.renderer || mediaActive != item.active {
-            stop(); renderer = item.renderer
+        let sameSource: Bool
+        if let receiverSource, let next = item.receiverSource { sameSource = receiverSource.matches(next) }
+        else { sameSource = receiverSource == nil && item.receiverSource == nil && renderer === item.renderer }
+        if !sameSource || mediaActive != item.active {
+            stop(); renderer = item.renderer; receiverSource = item.receiverSource
         }
         mediaActive = item.active
         localCamera = item.isLocalCamera
@@ -74,14 +86,17 @@ final class GuestGalleryTile: UIView {
     private func updateFrameRate() { processor.setFrameRate(thumbnail ? min(15, MediaEnergyBudget.shared.inlineFPS) : MediaEnergyBudget.shared.inlineFPS) }
     func setVisible(_ value: Bool) { visible = value; refreshDemand() }
     private func refreshDemand() {
-        guard visible, window != nil, mediaActive, let renderer else { stop(); return }
+        guard visible, let window, !window.isHidden, !isHidden, mediaActive,
+              UIApplication.shared.applicationState != .background,
+              receiverSource != nil || renderer != nil else { stop(); return }
         if localCamera, let source = GuestCaptureDeviceObserver.cameraPreview() {
             processor.setEnabled(false); tap?.invalidate(); tap = nil
             video.setCameraPreview(source, enabled: visible)
             hasFrame = true; status.isHidden = true
             return
         }
-        let reattaching = tap?.matches(renderer) != true
+        let reattaching = receiverSource.map { tap?.matches($0) != true } ??
+            renderer.map { tap?.matches($0) != true } ?? true
         if reattaching {
             stop()
             let delivery = video.makeFrameDelivery { [weak self] _, _ in
@@ -91,13 +106,16 @@ final class GuestGalleryTile: UIView {
             delivery.setActive(true)
             processor.setFrameDeliveries([delivery])
             let source = processor.replaceSource(), processor = processor
-            tap = GuestVideoFrameTap(view: renderer) { [weak processor] frame in processor?.submit(frame, source: source) }
+            let onFrame: (RTCVideoFrame) -> Void = { [weak processor] frame in processor?.submit(frame, source: source) }
+            if let receiverSource { tap = GuestVideoFrameTap(source: receiverSource, onFrame: onFrame) }
+            else if let renderer { tap = GuestVideoFrameTap(view: renderer, onFrame: onFrame) }
         }
         processor.setEnabled(tap != nil)
         if reattaching { tap?.replayLatestFrame() }
     }
     private func stop() {
         processor.setEnabled(false); processor.setFrameDeliveries([])
+        _ = processor.replaceSource()
         video.clear(); tap?.invalidate(); tap = nil
         hasFrame = false; status.isHidden = thumbnail || !mediaActive
     }
@@ -106,7 +124,10 @@ final class GuestGalleryTile: UIView {
         super.layoutSubviews(); viewport.frame = bounds
         status.frame = bounds.insetBy(dx: 16, dy: 48)
     }
-    deinit { tap?.invalidate(); processor.setEnabled(false) }
+    deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        tap?.invalidate(); processor.setEnabled(false)
+    }
 }
 
 @MainActor
@@ -121,6 +142,8 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
     private(set) var pagination: MeetingTileLayout.GalleryPage?
     private var arranging = false
     var onPageChanged: (() -> Void)?
+    private(set) var visibleTargets: [GuestStreamViews.PinTarget] = []
+    var onVisibleTargetsChanged: (() -> Void)?
 #if DEBUG
     var evidenceForTesting: [[String: Any]] { tiles.values.map(\.evidenceForTesting) }
 #endif
@@ -199,11 +222,14 @@ final class GuestGalleryView: UIScrollView, UIScrollViewDelegate {
         guard let pagination else { return }
         page = max(0, min(pagination.pageCount - 1, page + step))
         setContentOffset(CGPoint(x: CGFloat(page) * bounds.width, y: 0), animated: false)
+        refreshDemand()
         onPageChanged?()
     }
     private func refreshDemand() {
         let enabled = active && window != nil && UIApplication.shared.applicationState != .background
         for tile in tiles.values { tile.setVisible(enabled && bounds.intersects(tile.frame)) }
+        let visible = enabled ? order.filter { tiles[$0].map { bounds.intersects($0.frame) } == true } : []
+        if visibleTargets != visible { visibleTargets = visible; onVisibleTargetsChanged?() }
     }
     override func didMoveToWindow() { super.didMoveToWindow(); refreshDemand() }
     func scrollViewDidScroll(_ scrollView: UIScrollView) {

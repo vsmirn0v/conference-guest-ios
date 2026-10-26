@@ -8,10 +8,19 @@ import XCTest
 @testable import RockNativeDesktop
 
 @MainActor final class DesktopSharedTextTests: XCTestCase {
+    override func setUp() async throws {
+        try await super.setUp()
+        try await wait(message: "Previous OCR framework work did not release admission within 20 seconds") {
+            !SharedTextWorkAdmission.shared.isOccupied
+        }
+    }
     func testRecognitionAndCaptureRemainOwnedAfterSourceEnds() async throws {
+        print("NATIVE_OCR_HOST case=english active=\(NSApp.isActive) keyWindow=\(NSApp.keyWindow != nil) windows=\(NSApp.windows.count) visibleWindows=\(NSApp.windows.filter { $0.isVisible }.count) activationPolicy=\(NSApp.activationPolicy().rawValue)")
         let image = try textImage()
+        let window = try await makeOCRWindow(image, kind: "english")
         let frame = NativeDesktopTextFrame(); frame.provider = .init(sourceID: "one", capture: { image })
         let selection = NativeDesktopSharedText()
+        drainRealOCRAtTeardown(selection)
         selection.updateSource(id: "one", name: "Alex", frame: frame); selection.open()
         try await wait { !selection.busy }
         let snapshot = try XCTUnwrap(selection.snapshot)
@@ -20,8 +29,7 @@ import XCTest
         else { XCTAssertFalse(selection.transcript.isEmpty) }
         let host = NSHostingView(rootView: NativeDesktopSharedTextView(model: selection))
         host.frame = NSRect(x: 0, y: 0, width: 1000, height: 650)
-        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.title = "Synthetic shared-text validation"; window.contentView = host; window.orderFront(nil)
+        window.contentView = host
         try await Task.sleep(for: .milliseconds(150))
         host.layoutSubtreeIfNeeded()
         func findScroll(_ view: NSView) -> NativeDesktopTextScroll? {
@@ -69,7 +77,6 @@ import XCTest
             let rendered = NSImage(size: host.bounds.size); rendered.addRepresentation(bitmap)
             let attachment = XCTAttachment(image: rendered); attachment.name = "Native captured share with real Live Text overlay"; attachment.lifetime = .keepAlways; add(attachment)
         }
-        window.close()
         selection.updateSource(id: nil, name: "", frame: frame)
         XCTAssertEqual(selection.liveState, .ended); XCTAssertFalse(selection.canRefresh)
         XCTAssertEqual(selection.snapshot?.id, snapshot.id)
@@ -82,18 +89,17 @@ import XCTest
         selection.close(); XCTAssertNil(selection.snapshot); XCTAssertNil(selection.analysis); XCTAssertFalse(selection.isOpen)
     }
     func testNativeCopyActionFromRealTextSelectionInActiveWindow() async throws {
-        guard NSApp.isActive else { throw XCTSkip("The unattended Mac test host cannot become the active application. Global keyboard/selection acceptance needs an active native window.") }
         guard #available(macOS 14.0, *), ImageAnalyzer.isSupported else { throw XCTSkip("Native selected-text inspection requires macOS 14 and Live Text support") }
         let image = try textImage(), frame = NativeDesktopTextFrame()
+        let window = try await makeOCRWindow(image, kind: "copy")
         frame.provider = .init(sourceID: "copy", capture: { image })
         let selection = NativeDesktopSharedText(); defer { selection.close() }
+        drainRealOCRAtTeardown(selection)
         selection.updateSource(id: "copy", name: "Synthetic copy source", frame: frame); selection.open()
         try await wait { !selection.busy }
         let host = NSHostingView(rootView: NativeDesktopSharedTextView(model: selection))
         host.frame = NSRect(x: 0, y: 0, width: 1000, height: 650)
-        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false; window.contentView = host; defer { window.close() }
-        window.makeKeyAndOrderFront(nil)
+        window.contentView = host
         try await wait { window.isKeyWindow }
         host.layoutSubtreeIfNeeded()
         func findScroll(_ view: NSView) -> NativeDesktopTextScroll? {
@@ -142,6 +148,10 @@ import XCTest
         XCTAssertFalse(selection.isOpen); XCTAssertNil(selection.snapshot); XCTAssertNil(selection.analysis)
     }
     func testMixedCyrillicAndLatinRecognitionOnSupportedSystem() async throws {
+        print("NATIVE_OCR_HOST case=mixed active=\(NSApp.isActive) keyWindow=\(NSApp.keyWindow != nil) windows=\(NSApp.windows.count) visibleWindows=\(NSApp.windows.filter { $0.isVisible }.count) activationPolicy=\(NSApp.activationPolicy().rawValue)")
+        executionTimeAllowance = 75
+        let image = try textImage("Release review\nПроверка текста")
+        _ = try await makeOCRWindow(image, kind: "mixed")
         let supported: [String]
         if ImageAnalyzer.isSupported { supported = ImageAnalyzer.supportedTextRecognitionLanguages }
         else {
@@ -154,14 +164,42 @@ import XCTest
         guard supported.contains(where: { Locale(identifier: $0).languageCode == "ru" }) else {
             throw XCTSkip("This OS OCR engine does not advertise Russian recognition. " + evidence)
         }
-        let image = try textImage("Release review\nПроверка текста")
-        let frame = NativeDesktopTextFrame(); frame.provider = .init(sourceID: "mixed", capture: { image })
+        var captures = 0
+        let frame = NativeDesktopTextFrame(); frame.provider = .init(sourceID: "mixed", capture: { captures += 1; return image })
         let selection = NativeDesktopSharedText(); defer { selection.close() }
+        drainRealOCRAtTeardown(selection)
         selection.updateSource(id: "mixed", name: "Synthetic bilingual share", frame: frame); selection.open()
-        try await wait { !selection.busy }
+        try await finishRecognitionWithOneColdRetry(selection, captures: { captures })
         let transcript = selection.analysis?.transcript ?? selection.transcript
         XCTAssertTrue(transcript.contains("Release"), "Latin text missing: \(transcript)")
         XCTAssertTrue(transcript.contains("Проверка"), "Cyrillic text missing: \(transcript)")
+    }
+    func testColdRecognitionRetryWaitsForActualCompletionWithoutOverlappingCapture() async throws {
+        let image = try textImage(), frame = NativeDesktopTextFrame()
+        var captures = 0, recognitions = 0
+        var pending: CheckedContinuation<SharedTextRecognitionResult, Never>?
+        frame.provider = .init(sourceID: "cold", capture: { captures += 1; return image })
+        let selection = NativeDesktopSharedText(timeout: .milliseconds(40), recognition: { _ in
+            recognitions += 1
+            if recognitions == 1 { return await withCheckedContinuation { pending = $0 } }
+            return .transcript("Release Проверка")
+        })
+        defer { selection.close(); pending?.resume(returning: .transcript("cancelled fixture")) }
+        selection.updateSource(id: "cold", name: "Synthetic cold recognition", frame: frame); selection.open()
+        let completion = Task { @MainActor in
+            try await wait { !selection.busy && pending != nil }
+            XCTAssertTrue(SharedTextWorkAdmission.shared.isOccupied)
+            XCTAssertFalse(selection.canRefresh)
+            try await Task.sleep(for: .milliseconds(60))
+            XCTAssertEqual(captures, 1, "The retry must wait for the actual recognition operation")
+            pending?.resume(returning: .transcript("late stale result")); pending = nil
+        }
+        defer { completion.cancel() }
+        try await finishRecognitionWithOneColdRetry(selection, captures: { captures })
+        try await completion.value
+        XCTAssertEqual(captures, 2); XCTAssertEqual(recognitions, 2)
+        XCTAssertEqual(selection.transcript, "Release Проверка")
+        XCTAssertFalse(SharedTextWorkAdmission.shared.isOccupied)
     }
     func testUnsupportedRotationRejectedAndRightRotationKeepsResolution() throws {
         var pixel: CVPixelBuffer?
@@ -437,9 +475,67 @@ import XCTest
         NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 68), .foregroundColor: NSColor.black]).draw(at: NSPoint(x: 100, y: 450))
         return try XCTUnwrap(context.makeImage())
     }
-    private func wait(_ condition: () -> Bool) async throws {
+    private func makeOCRWindow(_ image: CGImage, kind: String) async throws -> NSWindow {
+        let rect = NSRect(x: 0, y: 0, width: 1000, height: 650)
+        let window = NSWindow(contentRect: rect, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.title = "Synthetic OCR validation (\(kind))"
+        let preview = NSImageView(frame: rect)
+        preview.image = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        preview.imageScaling = .scaleProportionallyUpOrDown
+        window.contentView = preview
+        // XCTest runs teardown blocks last-in-first-out. The later OCR drain
+        // finishes before this window closes, including when the test throws.
+        addTeardownBlock { @MainActor in window.orderOut(nil); window.close(); window.contentView = nil }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        try await wait(message: "OCR fixture did not obtain an active key window within 20 seconds") {
+            NSApp.isActive && window.isKeyWindow && window.isVisible
+        }
+        print("NATIVE_OCR_FIXTURE case=\(kind) active=\(NSApp.isActive) keyWindow=\(window.isKeyWindow) visible=\(window.isVisible)")
+        return window
+    }
+    private func drainRealOCRAtTeardown(_ selection: NativeDesktopSharedText) {
+        addTeardownBlock { @MainActor in
+            selection.close()
+            try await self.wait(message: "OCR framework work remained active after bounded teardown") {
+                !SharedTextWorkAdmission.shared.isOccupied
+            }
+        }
+    }
+    private func finishRecognitionWithOneColdRetry(_ selection: NativeDesktopSharedText,
+                                                  captures: () -> Int) async throws {
+        try await wait { !selection.busy }
+        guard selection.status == L("Text recognition is taking too long. Return to Live and try again later.") else { return }
+        let snapshot = try XCTUnwrap(selection.snapshot)
+        let initialCaptures = captures()
+        XCTAssertTrue(selection.isOpen); XCTAssertTrue(selection.statusNeedsAttention)
+        XCTAssertEqual(snapshot.image.width, 1600); XCTAssertEqual(snapshot.image.height, 900)
+        if SharedTextWorkAdmission.shared.isOccupied { XCTAssertFalse(selection.canRefresh) }
+        try await wait(message: "Timed-out system recognition did not actually finish within 20 seconds") {
+            !SharedTextWorkAdmission.shared.isOccupied
+        }
+        XCTAssertEqual(selection.snapshot?.id, snapshot.id)
+        XCTAssertNil(selection.analysis); XCTAssertEqual(selection.transcript, "")
+        XCTAssertEqual(captures(), initialCaptures, "Admission release must not trigger an implicit recapture")
+        try await wait { selection.canRefresh }
+        let attachment = XCTAttachment(string: "Cold OCR reached its UI deadline; retained snapshot and admission were preserved. Actual framework work completed before one explicit New frame retry.")
+        attachment.name = "Bounded cold OCR retry"; attachment.lifetime = .keepAlways; add(attachment)
+        selection.refresh()
+        XCTAssertTrue(SharedTextWorkAdmission.shared.isOccupied)
+        try await wait { !selection.busy }
+        XCTAssertEqual(captures(), initialCaptures + 1)
+        XCTAssertNotEqual(selection.snapshot?.id, snapshot.id)
+        guard selection.status != L("Text recognition is taking too long. Return to Live and try again later.") else {
+            XCTFail("A second timeout fails acceptance; the test must not loop or reset admission")
+            throw WaitFailure.deadline
+        }
+    }
+    private enum WaitFailure: Error { case deadline }
+    private func wait(message: String = "Condition did not become true within 20 seconds",
+                      file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async throws {
         let end = Date().addingTimeInterval(20)
         while !condition(), Date() < end { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertTrue(condition())
+        guard condition() else { XCTFail(message, file: file, line: line); throw WaitFailure.deadline }
     }
 }

@@ -170,6 +170,15 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     var onStageVisibilityChanged: ((Bool) -> Void)? {
         didSet { onStageVisibilityChanged?(wantsStageFrames) }
     }
+    private(set) var presenterCameraCandidates: [String] = []
+    private var presenterCameraRefreshScheduled = false
+    #if DEBUG
+    private var presenterDemandTrace: String?
+    private var presenterDemandTraceCount = 0
+    #endif
+    var onPresenterCameraCandidatesChanged: (([String]) -> Void)? {
+        didSet { onPresenterCameraCandidatesChanged?(presenterCameraCandidates) }
+    }
     var onViewShare: (() -> Void)?
     private let meetingStatus: MeetingHeaderStatus
     private var headerStatus = MeetingHeaderStatus.Snapshot()
@@ -963,6 +972,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     func setHeld(_ held: Bool) {
         studio?.held = held
         isHeld = held
+        refreshPresenterCameraDemand()
         updateSpeakerPresentation()
         renderCameraControl()
         if held { focus.show() }
@@ -1056,6 +1066,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         if window == nil {
+            publishPresenterCameraCandidates([])
             panelOwner.invalidate()
             participantsPanel?.dismiss(animated: false)
             participantsPanel = nil
@@ -1113,12 +1124,14 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             guard let self else { return }
             self.focusState.cameraCollapsed = self.presenterCompanion.isCollapsed
             self.focusState.cameraCorner = self.presenterCompanion.corner
+            self.refreshPresenterCameraDemand()
             self.focus.interaction()
         }
         presenterCompanion.onMenuVisibilityChanged = { [weak self] in self?.focus.menuVisible = $0 }
         presenterCompanion.onVisibilityChanged = { [weak self] visible in
             guard let self else { return }
             self.companionPreview?.setVisible(visible && self.companionForeground && !self.isHeld)
+            self.refreshPresenterCameraDemand()
         }
         presenterCompanion.onFocusCamera = { [weak self] in
             guard let self, let target = self.lastPresentation?.target, target.isShare else { return }
@@ -1136,7 +1149,8 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
                 self.layoutPresentation()
             }.store(in: &subscriptions)
         }
-        for notification in [UIWindow.didBecomeHiddenNotification, UIWindow.didBecomeVisibleNotification] {
+        for notification in [UIWindow.didBecomeHiddenNotification, UIWindow.didBecomeVisibleNotification,
+                             UIScene.didEnterBackgroundNotification, UIScene.didActivateNotification] {
             NotificationCenter.default.publisher(for: notification).receive(on: DispatchQueue.main).sink { [weak self] _ in
                 self?.layoutPresentation()
             }.store(in: &subscriptions)
@@ -1186,6 +1200,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
             self.selectParticipant(item.id)
         }
         galleryView.onPageChanged = { [weak self] in self?.refreshLayoutControls() }
+        galleryView.onVisibleTargetsChanged = { [weak self] in self?.refreshPresenterCameraDemand() }
         surface.onLayout = { [weak self] in self?.layoutPresentation() }
         focus.onChange = { [weak self] _ in self?.layoutPresentation() }
         focus.canHide = { [weak self] in
@@ -1529,7 +1544,7 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         let cameraFocused = primary?.isShare == false && returnToShareTarget?.participant == primary?.participant &&
             returnToShareTarget.map { activeShares.contains($0) } == true
         let share = primary?.isShare == true ? primary : cameraFocused ? returnToShareTarget : nil
-        let item = share.flatMap { target in galleryItems.first { $0.id.participant == target.participant && !$0.id.isShare && $0.active && $0.renderer != nil } }
+        let item = share.flatMap { target in galleryItems.first { $0.id.participant == target.participant && !$0.id.isShare && $0.active && $0.hasVideoSource } }
         if companionTarget != item?.id {
             companionPreview?.setVisible(false); companionPreview?.removeFromSuperview()
             companionPreview = item.map { GuestGalleryTile(item: $0, thumbnail: true, pin: {}) }
@@ -1543,7 +1558,9 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
 
         // PiP deliberately stays on the presentation during an explicit camera
         // focus, so the foreground camera needs a separate, bounded frame sink.
-        let focusedItem = primary?.isShare == false && !activeShares.isEmpty ? galleryItems.first { $0.id == primary } : nil
+        let focusedItem = primary?.isShare == false ? galleryItems.first {
+            $0.id == primary && $0.active && $0.hasVideoSource && (!activeShares.isEmpty || $0.receiverSource != nil)
+        } : nil
         if focusedCameraTarget != focusedItem?.id {
             focusedCameraPreview?.setVisible(false); focusedCameraPreview?.removeFromSuperview()
             focusedCameraPreview = focusedItem.map { GuestGalleryTile(item: $0, thumbnail: false, pin: {}) }
@@ -1554,6 +1571,64 @@ final class CallControls: UIView, UIGestureRecognizerDelegate {
         focusedCameraPreview?.isHidden = !visible
         focusedCameraPreview?.setVisible(visible)
         if focusedCameraPreview != nil { stageStatus.isHidden = true }
+        refreshPresenterCameraDemand()
+    }
+    private func refreshPresenterCameraDemand(deferLayoutEmpty: Bool = true) {
+        let primary = lastPresentation?.target
+        let cameras = Set(galleryItems.filter { !$0.id.isShare && !$0.isLocalCamera && $0.active }.map(\.id))
+        let visibleCameras = galleryView.visibleTargets.filter { cameras.contains($0) }.map(\.participant)
+        let primaryCamera = primary.flatMap { target -> String? in
+            cameras.contains(.init(participant: target.participant, isShare: false)) ? target.participant : nil
+        }
+        let scene = mountedWindow?.windowScene?.activationState
+        let foreground = companionForeground && (scene == .foregroundActive ||
+            ProcessInfo.processInfo.isiOSAppOnMac && scene == .foregroundInactive)
+        // The SDK reparents its stage/gallery surface during source changes.
+        // Its temporary window/hidden state must not retire a still-visible camera.
+        let mounted = window != nil && window === mountedWindow && mountedWindow?.isHidden == false && !isHidden
+        let allowed = GuestPresenterCameraDemand.allowsVideo(allVideo: displayMode == .all,
+            mounted: mounted, foreground: foreground, held: isHeld)
+        let collapsedCompanion = !gridVisible && primary?.isShare == true && presenterCompanion.isCollapsed
+        var next: [String] = []
+        if allowed && !collapsedCompanion {
+            if gridVisible {
+                next = visibleCameras
+                if let primaryCamera, next.contains(primaryCamera) {
+                    next.removeAll { $0 == primaryCamera }; next.insert(primaryCamera, at: 0)
+                }
+            } else if let primaryCamera { next = [primaryCamera] }
+        }
+        next = Array(next.prefix(64))
+        #if DEBUG
+        if GuestMediaSubscriptionTrace.enabled, presenterDemandTraceCount < 64 {
+            let fields: [String: Any] = ["candidates": next.prefix(8).map(GuestMediaSubscriptionTrace.identifier),
+                "primary": (primary?.participant).map(GuestMediaSubscriptionTrace.identifier) ?? "none",
+                "allVideo": displayMode == .all, "mounted": mounted, "foreground": foreground, "held": isHeld,
+                "collapsed": collapsedCompanion, "gallery": gridVisible, "scene": scene?.rawValue ?? -1]
+            if let data = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]),
+               let text = String(data: data, encoding: .utf8), presenterDemandTrace != text {
+                presenterDemandTrace = text; presenterDemandTraceCount += 1
+                print("LEGACY_UI_DEMAND \(text)")
+            }
+        }
+        #endif
+        // Privacy/lifecycle cuts are immediate. Only an empty layout observation
+        // is coalesced to the end of this UI turn, after stage/gallery handoff.
+        if allowed && !collapsedCompanion && next.isEmpty && !presenterCameraCandidates.isEmpty && deferLayoutEmpty {
+            if !presenterCameraRefreshScheduled {
+                presenterCameraRefreshScheduled = true
+                DispatchQueue.main.async { [weak self] in
+                    self?.presenterCameraRefreshScheduled = false
+                    self?.refreshPresenterCameraDemand(deferLayoutEmpty: false)
+                }
+            }
+            return
+        }
+        publishPresenterCameraCandidates(next)
+    }
+    private func publishPresenterCameraCandidates(_ identities: [String]) {
+        guard presenterCameraCandidates != identities else { return }
+        presenterCameraCandidates = identities; onPresenterCameraCandidatesChanged?(identities)
     }
     private func chooseLayout(_ mode: MeetingLayoutMode) {
         layoutMode = mode; explicitLayout = true

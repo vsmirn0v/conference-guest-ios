@@ -71,7 +71,7 @@ import LiveKitWebRTC
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init()
-        window.title = roomTitle ?? "Rock’n’Roll Native Guest · Beta"
+        window.title = roomTitle ?? "Rock'N'Roll for Mac"
         // Two gallery rows still need room for their 160-point tiles and controls.
         window.minSize = NSSize(width: 800, height: 540); window.center(); window.delegate = self
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading

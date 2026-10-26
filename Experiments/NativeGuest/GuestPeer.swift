@@ -33,6 +33,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     private var incomingAudio: [LKRTCAudioTrack] = []
     private var iceTimeout: Task<Void, Never>?
     private var lastICEState: LKRTCIceConnectionState = .new
+    private var activeIncomingMediaDemand = false
     var sendCandidate: (([String: Any]) async throws -> Void)?
     var onFailure: ((Error) -> Void)?
     private var remoteICE: [LKRTCIceCandidate] = []
@@ -416,6 +417,15 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         }
     }
 
+    /// An idle subscriber may remain checking until the SFU has media to send.
+    /// Muted subscriptions retained for warm resumption are not active demand.
+    func setActiveIncomingMediaDemand(_ active: Bool) {
+        guard target == .subscriber, !closed, activeIncomingMediaDemand != active else { return }
+        activeIncomingMediaDemand = active
+        if lastICEState == .checking { refreshICETimeout() }
+        probeLog("ice-incoming-demand", ["target": target.rawValue, "active": active])
+    }
+
     func close() {
         guard !closed else { return }; closed = true
         patternTask?.cancel(); patternTask = nil
@@ -666,6 +676,36 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didAdd stream: LKRTCMediaStream) {}
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didRemove stream: LKRTCMediaStream) {}
     nonisolated func peerConnectionShouldNegotiate(_ pc: LKRTCPeerConnection) {}
+    private func refreshICETimeout() {
+        iceTimeout?.cancel(); iceTimeout = nil
+        let state = lastICEState
+        guard !closed, !iceConnected, state == .checking || state == .disconnected else { return }
+        guard state != .checking || target != .subscriber || activeIncomingMediaDemand else { return }
+        let delay: UInt64 = state == .checking ? 10_000_000_000 : 5_000_000_000
+#if DEBUG
+        let testWait = iceWaitForTesting
+#endif
+        iceTimeout = Task { [weak self] in
+#if DEBUG
+            defer { self?.iceTimerFinishedForTesting?() }
+#endif
+            do {
+#if DEBUG
+                if let testWait { try await testWait(delay) }
+                else { try await Task.sleep(nanoseconds: delay) }
+#else
+                try await Task.sleep(nanoseconds: delay)
+#endif
+            } catch { return }
+            guard !Task.isCancelled, let self, !closed, !iceConnected, lastICEState == state,
+                  state != .checking || target != .subscriber || activeIncomingMediaDemand else { return }
+            probeLog("ice-timeout", ["target": target.rawValue, "state": state.rawValue])
+#if DEBUG
+            logICEFailureDiagnostics(reason: "deadline", state: state)
+#endif
+            onFailure?(GuestPeerError.iceFailed)
+        }
+    }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didChange newState: LKRTCIceConnectionState) {
         Task { @MainActor [weak self] in
             guard let self, !closed else { return }
@@ -675,32 +715,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             guard newState != lastICEState else { return }
             lastICEState = newState
             iceConnected = newState == .connected || newState == .completed
-            iceTimeout?.cancel(); iceTimeout = nil
-            if newState == .checking || newState == .disconnected {
-                let delay: UInt64 = newState == .checking ? 10_000_000_000 : 5_000_000_000
-#if DEBUG
-                let testWait = iceWaitForTesting
-#endif
-                iceTimeout = Task { [weak self] in
-#if DEBUG
-                    defer { self?.iceTimerFinishedForTesting?() }
-#endif
-                    do {
-#if DEBUG
-                        if let testWait { try await testWait(delay) }
-                        else { try await Task.sleep(nanoseconds: delay) }
-#else
-                        try await Task.sleep(nanoseconds: delay)
-#endif
-                    } catch { return }
-                    guard !Task.isCancelled, let self, !closed, !iceConnected, lastICEState == newState else { return }
-                    probeLog("ice-timeout", ["target": target.rawValue, "state": newState.rawValue])
-#if DEBUG
-                    logICEFailureDiagnostics(reason: "deadline", state: newState)
-#endif
-                    onFailure?(GuestPeerError.iceFailed)
-                }
-            }
+            refreshICETimeout()
             probeLog("ice-state", ["target": target.rawValue, "state": newState.rawValue])
 #if DEBUG
             if newState == .failed {

@@ -16,7 +16,7 @@ import time
 import uuid
 import xml.etree.ElementTree as ET
 
-from build_support import BUNDLE_ID, DIRECT_INFO, FEED_URL, KEYCHAIN_ACCOUNT, PUBLIC_KEY, TEAM_ID, pinned_sparkle, sha256
+from build_support import APP_NAME, BUNDLE_ID, DIRECT_INFO, FEED_URL, KEYCHAIN_ACCOUNT, PUBLIC_KEY, TEAM_ID, find_application, pinned_sparkle, sha256
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 ORIGIN = 'https://rock.glowsoft.ru'
@@ -102,7 +102,7 @@ def assess_app(app):
 
 def export_app(args):
     archive = args.archive.resolve()
-    archived_app = archive / 'Products/Applications/RockNRoll Native Guest.app'
+    archived_app = find_application(archive / 'Products/Applications')
     archived_info = plistlib.loads((archived_app / 'Contents/Info.plist').read_bytes())
     if archived_info.get('CFBundleIdentifier') != BUNDLE_ID or archived_info.get('SUFeedURL') != FEED_URL:
         raise ValueError('Use an archive built with --distribution direct --configuration Release')
@@ -125,7 +125,7 @@ def finalize_export(args):
     archive, output = args.archive.resolve(), args.output.resolve()
     if not output.is_dir():
         raise ValueError('Finalize requires the existing export output directory')
-    archived_app = archive / 'Products/Applications/RockNRoll Native Guest.app'
+    archived_app = find_application(archive / 'Products/Applications')
     archived_info = plistlib.loads((archived_app / 'Contents/Info.plist').read_bytes())
     if archived_info.get('CFBundleIdentifier') != BUNDLE_ID or archived_info.get('SUFeedURL') != FEED_URL:
         raise ValueError('Finalize requires a direct Release archive')
@@ -153,7 +153,7 @@ def finalize_export(args):
         if attempt == 1:
             print(f'Archive is processing; retrying every 30 seconds for up to {args.wait_seconds} seconds.', flush=True)
         time.sleep(min(30, remaining))
-    app = output / 'App/RockNRoll Native Guest.app'
+    app = find_application(output / 'App')
     run(['xcrun', 'stapler', 'staple', app])
     info = assess_app(app)
     if (info['CFBundleVersion'] != archived_info['CFBundleVersion'] or
@@ -181,7 +181,7 @@ def package_app(args):
         (staging / 'Applications').symlink_to('/Applications', target_is_directory=True)
         notices = pathlib.Path(__file__).with_name('Sparkle-LICENSE.txt').read_bytes()
         (staging / 'Third-Party-Notices.txt').write_bytes(notices)
-        run(['hdiutil', 'create', '-volname', 'Rock’n’Roll', '-srcfolder', staging,
+        run(['hdiutil', 'create', '-volname', APP_NAME, '-srcfolder', staging,
              '-format', 'UDZO', '-ov', dmg])
         if args.dmg_identity:
             run(['codesign', '--sign', args.dmg_identity, '--timestamp', dmg])
@@ -271,10 +271,14 @@ def prepare_feed(args):
     else:
         rss = ET.Element('rss', {'version': '2.0'})
         channel = ET.SubElement(rss, 'channel')
-        ET.SubElement(channel, 'title').text = 'Rock’n’Roll for Mac'
+        ET.SubElement(channel, 'title').text = APP_NAME
         ET.SubElement(channel, 'link').text = ORIGIN
         ET.SubElement(channel, 'description').text = 'Signed Apple Silicon Mac app updates.'
         ET.SubElement(channel, 'language').text = 'en'
+    title = channel.find('title')
+    if title is None:
+        title = ET.SubElement(channel, 'title')
+    title.text = APP_NAME
     for old in list(channel.findall('item')):
         enclosure = old.find('enclosure')
         if enclosure is None or item_channel(old) not in {'stable', 'beta'}:
@@ -288,7 +292,7 @@ def prepare_feed(args):
         if item_channel(old) == args.channel and enclosure.get(f'{{{NS}}}version') == build:
             channel.remove(old)
     item = ET.SubElement(channel, 'item')
-    ET.SubElement(item, 'title').text = f'Rock’n’Roll {version} ({build})'
+    ET.SubElement(item, 'title').text = f'{APP_NAME} {version} ({build})'
     ET.SubElement(item, 'pubDate').text = email.utils.format_datetime(datetime.datetime.now(datetime.timezone.utc))
     ET.SubElement(item, f'{{{NS}}}minimumSystemVersion').text = '13.0'
     ET.SubElement(item, f'{{{NS}}}hardwareRequirements').text = 'arm64'

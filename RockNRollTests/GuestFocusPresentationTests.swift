@@ -2,10 +2,46 @@ import AVFoundation
 import JazzSDK
 import UIKit
 import XCTest
+import WebRTC
 @testable import RockNRoll
 
 @MainActor
 final class GuestFocusPresentationTests: XCTestCase {
+    func testDirectCameraWithoutSDKViewProvidesCompanionAndFocusedCameraThroughShareEnd() async throws {
+        let fixture = try makeFixture()
+        defer { withExtendedLifetime(fixture) { fixture.window.isHidden = true; fixture.streams.reset() } }
+        // Reassign the provider's camera wrapper so the presenter has no SDK
+        // video source, then bind the one qualified receiver independently.
+        let cameraRenderer = try XCTUnwrap(fixture.retainedViews.dropFirst(3).first)
+        let reassigned = fixture.streams.makeView(model: model("observer", share: false), video: cameraRenderer)
+        let factory = RTCPeerConnectionFactory()
+        let track = factory.videoTrack(with: factory.videoSource(), trackId: "presenter-camera")
+        fixture.streams.setPresenterCameraSource(.init(leaseToken: UUID(), participant: "presenter", track: track))
+        await settle(fixture.window)
+        let companion = try companion(in: fixture.window)
+        let camera = try XCTUnwrap(descendants(companion).compactMap { $0 as? GuestGalleryTile }.first)
+        XCTAssertEqual(camera.evidenceForTesting["directSource"] as? Bool, true)
+        XCTAssertTrue(companion.isPreviewVisible)
+        fixture.streams.setPin(.init(participant: "presenter", isShare: false))
+        await settle(fixture.window)
+        XCTAssertTrue(descendants(fixture.window).compactMap { $0 as? GuestGalleryTile }.contains {
+            $0.accessibilityIdentifier == "gallery.presenter.camera" && $0.evidenceForTesting["directSource"] as? Bool == true
+        })
+        fixture.streams.updateParticipants(roster(sharing: false))
+        await settle(fixture.window)
+        XCTAssertEqual(fixture.streams.selectedTarget, .init(participant: "presenter", isShare: false))
+        XCTAssertTrue(descendants(fixture.window).compactMap { $0 as? GuestGalleryTile }.contains {
+            $0.accessibilityIdentifier == "gallery.presenter.camera" && !$0.isHidden &&
+                $0.evidenceForTesting["directSource"] as? Bool == true
+        })
+        fixture.streams.setPresenterCameraSource(nil)
+        await settle(fixture.window)
+        XCTAssertFalse(descendants(fixture.window).compactMap { $0 as? GuestGalleryTile }.contains {
+            $0.evidenceForTesting["directSource"] as? Bool == true
+        })
+        withExtendedLifetime(reassigned) {}
+    }
+
     func testFirstShareFrameMovesCompanionIntoPortraitSpareAreaWithoutAnotherLayoutEvent() async throws {
         let fixture = try makeFixture()
         defer { withExtendedLifetime(fixture) { fixture.window.isHidden = true; fixture.streams.reset() } }

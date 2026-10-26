@@ -5,7 +5,7 @@ import subprocess
 root = Path(__file__).resolve().parents[2]
 out = root / '.build/native-desktop-share-tests'
 out.mkdir(parents=True, exist_ok=True)
-framework = root / '.build/webrtc-m156-port/native-framework/LiveKitWebRTC.xcframework/macos-arm64'
+framework = root / '.build/webrtc-m156-desktop-audio/native-framework-r4/LiveKitWebRTC.xcframework/macos-arm64'
 products = root / '.build/native-desktop-engine-core/out/Products/Debug'
 subprocess.run(['swift', 'build', '--package-path', str(root/'ConferenceCore'), '--scratch-path', str(root/'.build/native-desktop-engine-core'), '-c', 'debug'], check=True)
 obj = out / 'MacScreenCaptureBridge.o'

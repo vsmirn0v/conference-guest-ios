@@ -82,7 +82,12 @@ extension GuestSessionEngine {
     func setPlayoutEnabled(_ enabled: Bool) async throws {}
 }
 
-enum GuestSessionError: Error { case cleanupFailed }
+enum GuestSessionError: LocalizedError {
+    case cleanupFailed
+    var errorDescription: String? {
+        "The previous meeting media could not stop safely. Leave the meeting and reopen the app before reconnecting."
+    }
+}
 
 /// One serial control job owns startup, mute reconciliation and recovery. Leave
 /// invalidates its generation before cancellation, then joins its cleanup.
@@ -339,6 +344,8 @@ final class GuestSession {
                 }
                 let cause = pendingFailure ?? error
                 pendingFailure = nil
+                probeLog("session-control-failure", ["causeType": String(describing: type(of: cause)),
+                    "causeCode": (cause as NSError).code])
                 let delay = policy.nextDelay(after: cause)
                 let stopped = await retireCurrent(sendLeave: delay == nil)
                 guard generation == expected, !Task.isCancelled else { return }

@@ -68,6 +68,7 @@ final class NativeConferenceEngine: CallEngine {
     private let tokenProvider = AnonymousTokenProvider()
     private var subscriptions = Set<AnyCancellable>()
     private let microphoneProbe = GuestMicrophoneProbe()
+    private let presenterCameraReceiver = GuestPresenterCameraReceiver()
     private var microphoneSubscription: AnyCancellable?
     private var microphoneObservationID = UUID()
     private var reportedMicrophoneStatus: PiPMicrophoneStatus = .unavailable
@@ -78,6 +79,10 @@ final class NativeConferenceEngine: CallEngine {
     private weak var activeControls: CallControls? {
         didSet { callWorkspace = activeControls?.workspace }
     }
+    #if DEBUG
+    private var presenterDemandTrace: String?
+    private var presenterDemandTraceCount = 0
+    #endif
     private let reactions = MeetingReactionsModel(preferences: .standard)
     private var reactionsAdapter: GuestReactionsAdapter?
     private var receivedReactions: GuestReceivedReactions?
@@ -176,6 +181,7 @@ final class NativeConferenceEngine: CallEngine {
     init(systemCall: SystemCallCoordinator, catchUp: CatchUpStore) {
         self.systemCall = systemCall
         self.catchUp = catchUp
+        presenterCameraReceiver.onChange = { [weak self] source in self?.streamViews.setPresenterCameraSource(source) }
     }
     deinit {
         #if DEBUG
@@ -185,6 +191,7 @@ final class NativeConferenceEngine: CallEngine {
         codecChecks.values.forEach { $0.cancel() }
         if let codecFallbackObserver { NotificationCenter.default.removeObserver(codecFallbackObserver) }
         GuestPublishingCodecPolicy.shared.end(generation: sessionEpoch)
+        GuestPeerRegistry.endScope(.init(generation: sessionEpoch, attempt: mediaAttemptEpoch))
     }
 
     func showMediaStatus(_ message: String?) { activeControls?.showMediaStatus(message) }
@@ -217,6 +224,7 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func updateIncomingVideoDemand() {
+        updatePresenterCameraDemand()
         guard let coordinator = activeCoordinator else { return }
         let enabled = displayMode != .audioOnly && videoDemand.wantsVideo
         guard incomingVideoEnabled != enabled else { return }
@@ -225,6 +233,7 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func updateFloatingSuspension() {
+        updatePresenterCameraDemand()
         floatingVideo?.setSuspended(!hasBecomeActive || leaveRequested || isSystemHeld || isAudioInterrupted)
     }
 
@@ -236,6 +245,7 @@ final class NativeConferenceEngine: CallEngine {
     }
 
     private func updatePiPMicrophoneStatus() {
+        updatePresenterCameraDemand()
         updateConferencePlayout()
         reactionsAdapter?.refresh()
         let available = isSDKActive && isNetworkAvailable && !leaveRequested &&
@@ -248,6 +258,42 @@ final class NativeConferenceEngine: CallEngine {
         let wasAvailable = activeSpeaker.available
         activeSpeaker.setAvailable(available)
         if available && !wasAvailable { refreshSpeakerInput?() }
+    }
+
+    private func updatePresenterCameraDemand() {
+        let ready = hasBecomeActive && isSDKActive && mediaConnectionConfirmed && !isMediaReconnecting &&
+            !leaveRequested && finishing == nil && !isSystemHeld && !isAudioInterrupted && displayMode == .all
+        #if DEBUG
+        if GuestMediaSubscriptionTrace.enabled, presenterDemandTraceCount < 64 {
+            let text = "ready=\(ready) active=\(hasBecomeActive) sdk=\(isSDKActive) media=\(mediaConnectionConfirmed) reconnect=\(isMediaReconnecting) held=\(isSystemHeld) interrupted=\(isAudioInterrupted) demand=\((activeControls?.presenterCameraCandidates ?? []).prefix(8).map(GuestMediaSubscriptionTrace.identifier).joined(separator: ","))"
+            if presenterDemandTrace != text { presenterDemandTrace = text; presenterDemandTraceCount += 1; print("LEGACY_ENGINE_DEMAND \(text)") }
+        }
+        #endif
+        GuestPublishingCodecPolicy.shared.setVisiblePresenterCameraCandidates(ready ? activeControls?.presenterCameraCandidates ?? [] : [],
+            generation: sessionEpoch)
+        presenterCameraReceiver.setLease(ready ? GuestPublishingCodecPolicy.shared.currentPresenterCameraLease : nil)
+    }
+
+    private func beginPresenterCameraReceiver() {
+        let scope = GuestPeerRegistry.Scope(generation: sessionEpoch, attempt: mediaAttemptEpoch)
+        GuestPeerRegistry.beginScope(scope)
+        presenterCameraReceiver.begin(scope)
+        GuestPublishingCodecPolicy.shared.onPresenterCameraLeaseChange = { [weak self] lease in
+            Task { @MainActor [weak self] in
+                guard let self, self.sessionEpoch == scope.generation, self.mediaAttemptEpoch == scope.attempt,
+                      !self.leaveRequested, self.finishing == nil,
+                      GuestPublishingCodecPolicy.shared.currentPresenterCameraLease == lease else { return }
+                self.presenterCameraReceiver.setLease(lease)
+            }
+        }
+        GuestPublishingCodecPolicy.shared.onPresenterCameraSubscriberAnswer = { [weak self] lease in
+            Task { @MainActor [weak self] in
+                guard let self, self.sessionEpoch == scope.generation, self.mediaAttemptEpoch == scope.attempt,
+                      !self.leaveRequested, self.finishing == nil,
+                      GuestPublishingCodecPolicy.shared.currentPresenterCameraLease == lease else { return }
+                self.presenterCameraReceiver.refresh(lease: lease)
+            }
+        }
     }
 
     private func updateSpeaker(local: JazzConferenceParticipant, remote: [String: JazzConferenceParticipant],
@@ -862,6 +908,8 @@ final class NativeConferenceEngine: CallEngine {
         }
     }
     private func endCodecPolicy() {
+        presenterCameraReceiver.end()
+        GuestPeerRegistry.endScope(.init(generation: sessionEpoch, attempt: mediaAttemptEpoch))
         screenEncodingReportTask?.cancel(); screenEncodingReportTask = nil; screenEncodingTrackID = nil
         studio.presenter.encodingReport = nil
         #if DEBUG
@@ -1006,6 +1054,7 @@ final class NativeConferenceEngine: CallEngine {
         hasMediaJoinStarted = true
         updateConferencePlayout()
         mediaAttemptEpoch = UUID()
+        beginPresenterCameraReceiver()
         terminalEventTask?.cancel(); terminalEventTask = nil
         connectionSubscription?.cancel(); connectionSubscription = nil
         connectionTerminationReason = nil
@@ -1657,6 +1706,11 @@ final class NativeConferenceEngine: CallEngine {
                                         reactions: self.reactions, meetingStatus: self.meetingStatus,
                                         surfaceContainer: self.screenPresenter?.sourceView)
             self.activeControls = controls
+            controls.onPresenterCameraCandidatesChanged = { [weak self, weak controls] _ in
+                guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
+                      self.activeControls === controls else { return }
+                self.updatePresenterCameraDemand()
+            }
             controls.onStageVisibilityChanged = { [weak self] wanted in
                 guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt else { return }
                 self.floatingVideo?.wantsInlineFrames = wanted
@@ -1938,6 +1992,7 @@ final class NativeConferenceEngine: CallEngine {
             guard let self, self.sessionEpoch == epoch, self.mediaAttemptEpoch == attempt,
                   self.hasMediaJoinStarted, !self.leaveRequested, self.finishing == nil else { return }
             self.mediaConnectionConfirmed = true
+            self.updatePresenterCameraDemand()
             self.updateConferencePlayout(refresh: true)
             self.reactionsAdapter?.refresh()
             self.traceMediaRecovery("media-connected")

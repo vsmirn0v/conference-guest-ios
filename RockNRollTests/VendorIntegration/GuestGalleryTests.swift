@@ -7,6 +7,55 @@ import XCTest
 
 @MainActor
 final class GuestGalleryTests: XCTestCase {
+    func testQualifiedCameraHasVideoSourceWithoutSDKViewAndOnlyVisibleTileAttaches() async throws {
+        let factory = RTCPeerConnectionFactory(), source = factory.videoSource()
+        let track = factory.videoTrack(with: source, trackId: "direct-camera")
+        let binding = GuestPresenterCameraReceiverSource(leaseToken: UUID(), participant: "presenter", track: track)
+        let streams = GuestStreamViews()
+        streams.updateParticipants([
+            .init(id: "presenter", name: "Presenter", isLocal: false, microphoneOn: false, cameraOn: true, sharing: true),
+            .init(id: "other", name: "Other", isLocal: false, microphoneOn: false, cameraOn: true, sharing: false)])
+        streams.setPresenterCameraSource(binding)
+        let items = await snapshot(streams)
+        var item = try XCTUnwrap(items.first { $0.id.participant == "presenter" && !$0.id.isShare })
+        XCTAssertNil(item.renderer); XCTAssertTrue(item.hasVideoSource)
+        XCTAssertTrue(item.receiverSource?.track === track)
+        XCTAssertTrue(items.filter { $0.id.isShare || $0.id.participant != "presenter" }.allSatisfy { $0.receiverSource == nil })
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        let root = UIViewController(); window.rootViewController = root; window.makeKeyAndVisible()
+        defer { window.isHidden = true; streams.reset() }
+        let tile = GuestGalleryTile(item: item, pin: {})
+        tile.frame = window.bounds; root.view.addSubview(tile)
+        let capturer = RTCVideoCapturer(delegate: source)
+        func produce() { source.capturer(capturer, didCapture: frame(luma: 96)) }
+        produce(); try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(tile.evidenceForTesting["tapFrames"] as? Int, 0, "Invisible tiles must not attach a renderer")
+        tile.setVisible(true)
+        let delivery = try XCTUnwrap(sampleView(in: tile)?.existingFrameDelivery())
+        let first = expectation(description: "Direct camera reaches displayed tile")
+        first.assertForOverFulfill = false
+        delivery.onEnqueuedForTesting = { _, accepted in if accepted { first.fulfill() } }
+        produce(); await fulfillment(of: [first], timeout: 3)
+        XCTAssertGreaterThan(tile.evidenceForTesting["tapFrames"] as? Int ?? 0, 0)
+        item.receiverSource = .init(leaseToken: UUID(), participant: "presenter", track: track)
+        tile.update(item, pin: {})
+        XCTAssertFalse(delivery.isCurrent, "A new lease must retire prepared pixels even when the RTC track is reused")
+        let replacement = try XCTUnwrap(sampleView(in: tile)?.existingFrameDelivery())
+        tile.setVisible(false)
+        XCTAssertFalse(replacement.isCurrent)
+        let prepared = tile.evidenceForTesting["preparedFrames"] as? Int
+        produce(); try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(tile.evidenceForTesting["preparedFrames"] as? Int, prepared)
+        tile.setVisible(true)
+        let resumed = try XCTUnwrap(sampleView(in: tile)?.existingFrameDelivery())
+        item.receiverSource = nil; tile.update(item, pin: {})
+        XCTAssertFalse(item.hasVideoSource); XCTAssertFalse(resumed.isCurrent)
+        XCTAssertEqual(tile.evidenceForTesting["hasFrame"] as? Bool, false)
+        produce(); try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(tile.evidenceForTesting["tapFrames"] as? Int, 0)
+        XCTAssertTrue(track.isEnabled)
+    }
+
     func testReassignedRendererWithdrawsOldParticipantBeforeNewFramesArrive() async {
         let streams = GuestStreamViews()
         defer { streams.reset() }
@@ -88,17 +137,24 @@ final class GuestGalleryTests: XCTestCase {
         let secondTile = try XCTUnwrap(tiles[.init(participant: "second", isShare: false)])
         let firstDelivery = try XCTUnwrap(sampleView(in: firstTile)?.existingFrameDelivery())
         let firstFrame = expectation(description: "First participant pixels")
+        firstFrame.assertForOverFulfill = false
         firstDelivery.onEnqueuedForTesting = { sample, accepted in
             guard accepted else { return }
             Self.assertLuma(sample, 48); firstFrame.fulfill()
         }
-        renderer.renderFrame(frame(luma: 48))
+        // Initial mounting also clears the sink asynchronously. A camera keeps
+        // producing while that flush finishes, just as during reassignment.
+        for _ in 0..<3 {
+            renderer.renderFrame(frame(luma: 48))
+            try await Task.sleep(for: .milliseconds(80))
+        }
         await fulfillment(of: [firstFrame], timeout: 2)
         // Geometry notifications run on main after background frame delivery.
         for _ in 0..<100 where firstTile.evidenceForTesting["hasFrame"] as? Bool != true {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTAssertEqual(firstTile.evidenceForTesting["hasFrame"] as? Bool, true)
+        let firstPrepared = firstTile.evidenceForTesting["preparedFrames"] as? Int
         streams.onGalleryPresentation = { items in
             for item in items { tiles[item.id]?.update(item, pin: {}) }
         }
@@ -122,7 +178,8 @@ final class GuestGalleryTests: XCTestCase {
         }
         await fulfillment(of: [nextFrame], timeout: 2)
         XCTAssertEqual(firstTile.evidenceForTesting["hasFrame"] as? Bool, false)
-        XCTAssertEqual(firstTile.evidenceForTesting["preparedFrames"] as? Int, 1)
+        XCTAssertEqual(firstTile.evidenceForTesting["preparedFrames"] as? Int, firstPrepared,
+            "The previous owner must not prepare any replacement-owner frames")
         withExtendedLifetime([first, second]) {}
     }
 
@@ -379,5 +436,33 @@ final class GuestGalleryTests: XCTestCase {
             }
             streams.refreshSelection()
         }
+    }
+
+    func testVisibleTargetsFollowActualPageAndWithdrawWhenInactiveOrDetached() throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 570))
+        let host = UIViewController(); window.rootViewController = host; window.isHidden = false
+        let gallery = GuestGalleryView(frame: window.bounds)
+        host.view.addSubview(gallery)
+        defer { window.isHidden = true }
+        let items: [GuestStreamViews.GalleryItem] = (0..<12).map {
+            .init(id: .init(participant: "p\($0)", isShare: false), name: "Person",
+                microphoneOn: false, active: true, speaking: false, watermark: nil, renderer: nil)
+        }
+        var changes = 0
+        gallery.onVisibleTargetsChanged = { changes += 1 }
+        gallery.update(items); gallery.setActive(true); gallery.layoutIfNeeded()
+        let first = Set(gallery.visibleTargets)
+        XCTAssertFalse(first.isEmpty)
+        XCTAssertLessThan(first.count, items.count)
+        gallery.movePage(1)
+        XCTAssertFalse(gallery.visibleTargets.isEmpty)
+        XCTAssertTrue(first.isDisjoint(with: gallery.visibleTargets))
+        XCTAssertGreaterThan(changes, 1)
+        gallery.setActive(false)
+        XCTAssertTrue(gallery.visibleTargets.isEmpty)
+        gallery.setActive(true)
+        XCTAssertFalse(gallery.visibleTargets.isEmpty)
+        gallery.removeFromSuperview()
+        XCTAssertTrue(gallery.visibleTargets.isEmpty)
     }
 }

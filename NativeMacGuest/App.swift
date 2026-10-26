@@ -83,8 +83,10 @@ struct NativeGuestApplication {
     }
     init(mode: NativeGuestLaunchMode) { self.mode = mode }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let menu = NSMenu(), appMenu = NSMenu(), item = NSMenuItem()
-        appMenu.addItem(withTitle: L("Quit Rock’n’Roll"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Rock'N'Roll for Mac"
+        let menu = NSMenu(), appMenu = NSMenu(title: appName)
+        let item = NSMenuItem(title: appName, action: nil, keyEquivalent: "")
+        appMenu.addItem(withTitle: L("Quit Rock'N'Roll for Mac"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.submenu = appMenu; menu.addItem(item)
         let editMenu = NSMenu(title: L("Edit")), editItem = NSMenuItem()
         editMenu.addItem(withTitle: L("Undo"), action: Selector(("undo:")), keyEquivalent: "z")
@@ -102,7 +104,7 @@ struct NativeGuestApplication {
         let check = NSMenuItem(title: L("Check for Updates…"), action: #selector(checkForUpdates), keyEquivalent: "")
         check.target = self; appMenu.insertItem(check, at: 1)
         #endif
-        let show = NSMenuItem(title: L("Open Rock’n’Roll"), action: #selector(openHome), keyEquivalent: "n")
+        let show = NSMenuItem(title: L("Open Rock'N'Roll for Mac"), action: #selector(openHome), keyEquivalent: "n")
         show.target = self; appMenu.insertItem(show, at: 0)
         #if DEBUG
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }

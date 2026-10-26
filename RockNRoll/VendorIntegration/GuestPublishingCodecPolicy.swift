@@ -2,6 +2,9 @@ import Foundation
 import VideoToolbox
 import WebRTC
 import ConferenceCore
+#if DEBUG
+import CryptoKit
+#endif
 
 /// Thread-safe, per-call/per-socket negotiation. Unknown protocols, rooms and
 /// capabilities pass through unchanged. Incoming codecs are never rewritten.
@@ -19,7 +22,30 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
     // cannot inherit the capabilities or lifecycle of the replacement call.
     private var seen: [UUID] = []
     private var disabled = false
+    private let presenterSubscriptions = GuestPresenterCameraSubscriptions(
+        bind: { GuestSignalCodecBridge.bindObservedSocket($0) },
+        unbind: { GuestSignalCodecBridge.unbindAfterPendingSends($0) }) { socket, data, current in
+        GuestSignalCodecBridge.send(data, socket: socket) {
+            guard current() else { return false }
+            #if DEBUG
+            GuestMediaSubscriptionTrace.record(data, incoming: false)
+            #endif
+            return true
+        }
+    }
     private var screenPreference: ShareEncodingPreference = .efficient
+    var currentPresenterCameraLease: GuestPresenterCameraLease? { presenterSubscriptions.currentLease }
+    var onPresenterCameraLeaseChange: ((GuestPresenterCameraLease?) -> Void)? {
+        get { presenterSubscriptions.onLeaseChange }
+        set { presenterSubscriptions.onLeaseChange = newValue }
+    }
+    var onPresenterCameraSubscriberAnswer: ((GuestPresenterCameraLease) -> Void)? {
+        get { presenterSubscriptions.onSubscriberAnswer }
+        set { presenterSubscriptions.onSubscriberAnswer = newValue }
+    }
+    #if DEBUG
+    var retainedCameraSIDForTesting: String? { presenterSubscriptions.retainedCameraSIDForTesting }
+    #endif
     private var screenCodecHandler: ((UUID, String) -> Void)?
     private var capabilityHandler: ((UUID, Bool) -> Void)?
     var onScreenPublication: ((UUID, String) -> Void)? {
@@ -65,16 +91,26 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
         #if DEBUG
         print("GUEST_CODEC_CAPABILITY hardwareH264=\(hardwareH264Available) mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
         #endif
-        _ = GuestSignalCodecBridge.install(outgoing: { socket, data in shared.outgoing(socket: socket as UUID, data: data) },
-            incoming: { socket, data in shared.incoming(socket: socket as UUID, data: data) })
+        _ = GuestSignalCodecBridge.install(outgoing: { socket, data in
+            let retained = shared.presenterSubscriptions.outgoing(socket: socket as UUID, data: data)
+            return shared.outgoing(socket: socket as UUID, data: retained ?? data) ?? retained
+        }, incoming: { socket, data in
+            shared.presenterSubscriptions.incoming(socket: socket as UUID, data: data)
+            shared.incoming(socket: socket as UUID, data: data)
+        })
+    }
+    func setVisiblePresenterCameraCandidates(_ identities: [String], generation: UUID) {
+        presenterSubscriptions.setVisibleCandidates(identities, generation: generation)
     }
     func begin(generation: UUID, roomID: String) {
+        presenterSubscriptions.begin(generation: generation, room: roomID)
         lock.lock(); defer { lock.unlock() }
         if self.generation != generation { screenPreference = .efficient }
         self.generation = generation; self.roomID = roomID; disabled = false
         screenPolicy?.begin(generation)
     }
     func end(generation: UUID) {
+        presenterSubscriptions.end(generation: generation)
         lock.lock(); defer { lock.unlock() }
         guard self.generation == generation else { return }
         self.generation = nil; roomID = nil; selectionHandler = nil
@@ -91,6 +127,9 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
         NotificationCenter.default.post(name: Self.fallbackNotification, object: self, userInfo: ["generation": generation])
     }
     func incoming(socket: UUID, data: Data) {
+        #if DEBUG
+        GuestMediaSubscriptionTrace.record(data, incoming: true)
+        #endif
         lock.lock()
         guard let generation, !disabled, var socketState = sockets[socket], socketState.generation == generation,
               data.count <= 1_048_576,
@@ -108,6 +147,9 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
         lock.unlock(); callback?(generation, vp9)
     }
     func outgoing(socket: UUID, data: Data) -> Data? {
+        #if DEBUG
+        GuestMediaSubscriptionTrace.record(data, incoming: false)
+        #endif
         lock.lock()
         guard let generation, data.count <= 1_048_576,
               var json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -168,3 +210,94 @@ final class GuestPublishingCodecPolicy: @unchecked Sendable {
         return result
     }
 }
+
+#if DEBUG
+/// Opt-in diagnostic only: bounded structured fields, with no signaling secrets.
+enum GuestMediaSubscriptionTrace {
+    static let enabled = ProcessInfo.processInfo.environment["ROCKNROLL_TEST_NATIVE_SHARE_TRACE"] == "1"
+    private static let lock = NSLock()
+    private static var emitted = 0
+    static func identifier(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+    static func record(_ data: Data, incoming: Bool) {
+        guard enabled, data.count <= 1_048_576,
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              ["media-in", "media-out"].contains(json["event"] as? String ?? ""),
+              let payload = json["payload"] as? [String: Any] else { return }
+        var row: [String: Any] = ["incoming": incoming, "uptime": ProcessInfo.processInfo.systemUptime]
+        for key in ["subscription", "trackSetting", "trackSettings"] {
+            guard let value = payload[key] as? [String: Any] else { continue }
+            var fields: [String: Any] = [:]
+            for name in ["trackSids", "participantSids"] {
+                if let ids = value[name] as? [String] { fields[name] = ids.prefix(64).map(identifier) }
+            }
+            for name in ["subscribe", "disabled", "width", "height", "fps", "quality"] {
+                if let number = value[name] as? NSNumber { fields[name] = number }
+                else if let quality = value[name] as? String, ["LOW", "MEDIUM", "HIGH", "OFF"].contains(quality) { fields[name] = quality }
+            }
+            row[key] = fields
+        }
+        for key in ["description", "offer", "answer"] {
+            if let description = payload[key] as? [String: Any], let sdp = description["sdp"] as? String {
+                row[key] = videoSections(sdp)
+            }
+        }
+        let join = payload["join"] as? [String: Any] ?? [:]
+        let update = payload["update"] as? [String: Any] ?? [:]
+        var participants = (join["otherParticipants"] as? [[String: Any]] ?? []) + (update["participants"] as? [[String: Any]] ?? [])
+        if let local = join["participant"] as? [String: Any] { participants.append(local) }
+        if !participants.isEmpty {
+            row["participants"] = participants.prefix(32).map { participant -> [String: Any] in
+                var result: [String: Any] = [:]
+                if let sid = participant["sid"] as? String { result["id"] = identifier(sid) }
+                result["versionPresent"] = participant["version"] != nil
+                result["versionNumeric"] = participant["version"] is NSNumber
+                if let version = participant["version"] as? Int { result["version"] = version }
+                if let identity = participant["identity"] as? String { result["identity"] = identifier(identity) }
+                result["tracks"] = (participant["tracks"] as? [[String: Any]] ?? []).prefix(32).map(track)
+                return result
+            }
+        }
+        if let published = payload["trackPublishedResponse"] as? [String: Any], let value = published["track"] as? [String: Any] { row["published"] = track(value) }
+        guard row.count > 2 else { return }
+        row["roomPresent"] = json["roomId"] != nil
+        row["groupPresent"] = json["groupId"] != nil
+        lock.lock()
+        guard emitted < 256 else { lock.unlock(); return }
+        emitted += 1; row["sequence"] = emitted
+        lock.unlock()
+        if let data = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]), let text = String(data: data, encoding: .utf8) { print("LEGACY_MEDIA_TRACE \(text)") }
+    }
+    private static func track(_ value: [String: Any]) -> [String: Any] {
+        var result: [String: Any] = [:]
+        if let sid = value["sid"] as? String { result["id"] = identifier(sid) }
+        if let muted = value["muted"] as? Bool { result["muted"] = muted }
+        for key in ["type", "source"] {
+            if let number = value[key] as? NSNumber { result[key] = number }
+            else if let text = value[key] as? String, ["AUDIO", "VIDEO", "CAMERA", "MICROPHONE", "SCREEN_SHARE", "SCREEN_SHARE_AUDIO", "UNKNOWN"].contains(text) { result[key] = text }
+        }
+        return result
+    }
+    static func videoSections(_ sdp: String) -> [[String: Any]] {
+        guard sdp.utf8.count <= 1_048_576 else { return [] }
+        var sections: [[String: Any]] = [], current: [String: Any]?
+        for line in sdp.components(separatedBy: .newlines) {
+            if line.hasPrefix("m=") {
+                if let current, sections.count < 64 { sections.append(current) }
+                current = line.hasPrefix("m=video ") ? ["ssrcPresent": false] : nil
+            }
+            guard current != nil else { continue }
+            if line.hasPrefix("a=mid:"), let mid = Int(line.dropFirst(6)), (0...65535).contains(mid) { current?["mid"] = mid }
+            else if ["a=sendrecv", "a=sendonly", "a=recvonly", "a=inactive"].contains(line) { current?["direction"] = String(line.dropFirst(2)) }
+            else if line.hasPrefix("a=ssrc:") { current?["ssrcPresent"] = true }
+            else if line.hasPrefix("a=msid:") {
+                let fields = line.dropFirst(7).split(separator: " ")
+                if fields.count == 2 { current?["track"] = identifier(String(fields[1])) }
+            }
+        }
+        if let current, sections.count < 64 { sections.append(current) }
+        return sections
+    }
+}
+#endif

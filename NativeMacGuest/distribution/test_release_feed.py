@@ -77,6 +77,21 @@ class FeedIdentityTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'different inventory artifacts across channels'):
                     release.prepare_feed(args)
 
+    def test_beta_name_change_preserves_stable_inventory_and_artifact_urls(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args, root, _, previous = self.fixture(temporary)
+            args.channel = 'beta'
+            ET.SubElement(root.find('channel'), 'title').text = 'Legacy Mac product'
+            ET.ElementTree(root).write(args.previous_feed)
+            with mock.patch.object(release, 'pinned_sparkle'), mock.patch.object(release, 'run', side_effect=self.run_command):
+                release.prepare_feed(args)
+            feed = ET.parse(args.output / 'appcast.xml')
+            self.assertEqual(feed.findtext('./channel/title'), "Rock'N'Roll for Mac")
+            self.assertEqual(feed.findtext('./channel/item/title'), "Rock'N'Roll for Mac 0.3.0 (21)")
+            inventory = json.loads((args.output / 'latest.json').read_text())
+            self.assertEqual(inventory['stable'], previous['stable'])
+            self.assertEqual(inventory['beta'], previous['beta'])
+
     def test_publisher_preserves_signed_feed_bytes_including_signature_comment(self):
         with tempfile.TemporaryDirectory() as temporary:
             args, root, _, inventory = self.fixture(temporary)

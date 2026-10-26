@@ -26,7 +26,7 @@ struct NativeGuestSettingsView: View {
                 Text(L("Sending screen shares, Presenter, chat, reactions and transcription are not available yet. Use the standard engine when you need these features."))
             }
             Section(L("Companion app")) {
-                Text(L("Install the separately signed Rock’n’Roll Native Guest companion on this Mac before enabling the preview."))
+                Text(L("Install the separately signed Rock'N'Roll for Mac companion on this Mac before enabling the preview."))
                 Text(companionStatus).foregroundStyle(.secondary)
                     .accessibilityIdentifier("settings.nativeGuest.companionStatus")
             }

@@ -10,7 +10,7 @@ import release
 
 class ExportedIdentityTests(unittest.TestCase):
     def fixture(self, temporary):
-        app = pathlib.Path(temporary) / 'RockNRoll Native Guest.app'
+        app = pathlib.Path(temporary) / "Rock'N'Roll for Mac.app"
         (app / 'Contents/Frameworks/Sparkle.framework').mkdir(parents=True)
         info = dict(release.DIRECT_INFO, CFBundleIdentifier=release.BUNDLE_ID,
                     CFBundleShortVersionString='0.3.0', CFBundleVersion='21')

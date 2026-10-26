@@ -267,6 +267,9 @@ import UniformTypeIdentifiers
         guard !transferHeld, !closed else { return }
         let enabled = !(requestedCamera ?? snapshot.cameraOn); requestedCamera = enabled
         perform { engine in
+            // Reserve the transition before lease revocation can emit a nil
+            // track; Presenter must wait until the live owner is settled.
+            self.presenterStorage?.beginLiveCameraHandover()
             do {
                 if enabled {
                     self.cameraLease = try await NativeDesktopCameraLease.shared.acquireLive(owner: self.sessionID) { [weak self] in
@@ -277,13 +280,14 @@ import UniformTypeIdentifiers
                 if enabled, !(await NativeDesktopDeviceModel.stopPrivatePreview()) { throw NativeDesktopRTCError.cleanupFailed }
                 try await engine.setCamera(enabled)
                 if !enabled, let lease = self.cameraLease { NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
-                if enabled { await self.presenterStorage?.finishLiveCameraHandover() }
+                await self.presenterStorage?.finishLiveCameraHandover()
             } catch {
-                if enabled { await self.presenterStorage?.finishLiveCameraHandover() }
+                var stopped = true
                 if let lease = self.cameraLease {
                     do { try await engine.setCamera(false); NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
-                    catch { NativeDesktopCameraLease.shared.reportFailedStop(lease) }
+                    catch { stopped = false; NativeDesktopCameraLease.shared.reportFailedStop(lease) }
                 }
+                if stopped { await self.presenterStorage?.finishLiveCameraHandover() }
                 if self.requestedCamera == enabled { self.requestedCamera = nil }; throw error
             }
         }

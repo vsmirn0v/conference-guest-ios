@@ -336,6 +336,128 @@ private final class FakeCapture: NativeDesktopPresenterCapture, @unchecked Senda
         _ = await delayedSession.close()
         try expect(cameraHandover.isCurrent(acquiredLive), "Closing a revoked private Presenter does not release the live engine lease")
         cameraHandover.release(acquiredLive)
+
+        let cancelledCamera = FakeCapture(), cancellationLease = NativeDesktopCameraLease()
+        cancelledCamera.delayed = true
+        let cancelledInclusion = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { nil }, publish: { _, _ in }, unpublish: {},
+            preferences: preferences, cameraLease: cancellationLease, makeCapture: { _, _ in FakeCapture() }, makeCamera: { _ in cancelledCamera })
+        await cancelledInclusion.open()
+        let cancelledEnable = Task { await cancelledInclusion.setIncludeCamera(true) }
+        try await until { cancelledCamera.starts == 1 }
+        cancelledEnable.cancel()
+        try await until { !cancelledInclusion.includeCamera && cancelledCamera.stops == 1 }
+        await cancelledEnable.value
+        try expect(cancelledInclusion.includedCameraTrackForTesting == nil && !cancelledInclusion.cameraPreparing && cancelledInclusion.error == nil,
+                   "Canceling an explicit inclusion request retires delayed private startup without leaving a track or error")
+        let afterCancellation = try await cancellationLease.acquirePrivate(owner: UUID(), revoke: {})
+        if case .owned(let token) = afterCancellation { cancellationLease.release(token); checks += 1 }
+        else { fatalError("Canceled Presenter inclusion retained the hardware lease") }
+        _ = await cancelledInclusion.close()
+
+        let supersededCamera = FakeCapture(); supersededCamera.delayed = true
+        let supersededInclusion = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { nil }, publish: { _, _ in }, unpublish: {},
+            preferences: preferences, cameraLease: NativeDesktopCameraLease(), makeCapture: { _, _ in FakeCapture() }, makeCamera: { _ in supersededCamera })
+        await supersededInclusion.open()
+        let olderEnable = Task { await supersededInclusion.setIncludeCamera(true) }
+        try await until { supersededCamera.starts == 1 }
+        var newerEnableEntered = false
+        let newerEnable = Task { newerEnableEntered = true; await supersededInclusion.setIncludeCamera(true) }
+        try await until { newerEnableEntered }
+        olderEnable.cancel()
+        try await Task.sleep(for: .milliseconds(50))
+        try expect(supersededInclusion.includeCamera && supersededCamera.cancels == 0 && supersededCamera.stops == 0,
+                   "Canceling an older request must not revoke a newer explicit camera inclusion")
+        supersededCamera.gate.finish(.success(supersededCamera.info))
+        await olderEnable.value; await newerEnable.value
+        try expect(supersededInclusion.includeCamera && supersededInclusion.includedCameraTrackForTesting != nil && supersededCamera.starts == 1,
+                   "The current inclusion keeps the shared startup and exact hardware owner after a stale cancellation")
+        _ = await supersededInclusion.close()
+
+        let retirementGate = GuestCompletion<Void>()
+        var retirementCameras: [FakeCapture] = []
+        let retiringCameraSession = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { nil }, publish: { _, _ in }, unpublish: {},
+            preferences: preferences, cameraLease: NativeDesktopCameraLease(), makeCapture: { _, _ in FakeCapture() }, makeCamera: { _ in
+                let camera = FakeCapture(); retirementCameras.append(camera); return camera
+            })
+        await retiringCameraSession.open(); await retiringCameraSession.setIncludeCamera(true)
+        retirementCameras[0].delayedStop = retirementGate
+        let disablingCamera = Task { await retiringCameraSession.setIncludeCamera(false) }
+        try await until { retirementCameras[0].stops == 1 }
+        var reenablingFinished = false
+        let reenablingCamera = Task { await retiringCameraSession.setIncludeCamera(true); reenablingFinished = true }
+        try await Task.sleep(for: .milliseconds(50))
+        try expect(retirementCameras.count == 1 && !reenablingFinished,
+                   "Re-enabling Presenter must wait for the previous hardware capture's confirmed stop")
+        retirementGate.finish(.success(()))
+        await disablingCamera.value; await reenablingCamera.value
+        try expect(retirementCameras.count == 2 && retirementCameras[1].starts == 1 && retiringCameraSession.includedCameraTrackForTesting != nil,
+                   "A completed retirement must not release a replacement camera's lease")
+        _ = await retiringCameraSession.close()
+
+        let borrowedStopGate = GuestCompletion<Void>(), borrowedPrivate = FakeCapture()
+        var changingLiveTrack: LKRTCVideoTrack?
+        let latestBorrow = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { changingLiveTrack }, publish: { _, _ in }, unpublish: {},
+            preferences: preferences, cameraLease: NativeDesktopCameraLease(), makeCapture: { _, _ in FakeCapture() }, makeCamera: { _ in borrowedPrivate })
+        await latestBorrow.open(); await latestBorrow.setIncludeCamera(true)
+        borrowedPrivate.delayedStop = borrowedStopGate
+        let oldLiveTrack = factory.videoTrack(with: factory.videoSource(), trackId: "superseded-live-camera")
+        let newLiveTrack = factory.videoTrack(with: factory.videoSource(), trackId: "current-live-camera")
+        changingLiveTrack = oldLiveTrack
+        let firstRefresh = Task { await latestBorrow.refreshBorrowedCamera() }
+        try await until { borrowedPrivate.stops == 1 }
+        changingLiveTrack = newLiveTrack
+        let secondRefresh = Task { await latestBorrow.refreshBorrowedCamera() }
+        try await Task.sleep(for: .milliseconds(50))
+        borrowedStopGate.finish(.success(()))
+        await firstRefresh.value; await secondRefresh.value
+        try expect(latestBorrow.includedCameraTrackForTesting === newLiveTrack && borrowedPrivate.stops == 1,
+                   "Concurrent reconciliation must attach the latest live track after retirement, never the stale pre-await track")
+        _ = await latestBorrow.close()
+
+        let draftLease = NativeDesktopCameraLease(), draftCloseGate = GuestCompletion<Void>()
+        var draftLiveTrack: LKRTCVideoTrack?, draftCameras: [FakeCapture] = []
+        let draftRoot = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { draftLiveTrack }, publish: { _, _ in }, unpublish: {},
+            preferences: preferences, cameraLease: draftLease, makeCapture: { _, _ in FakeCapture() }, makeCamera: { _ in
+                let camera = FakeCapture(); camera.delayed = draftCameras.count == 1
+                draftCameras.append(camera); return camera
+            })
+        await draftRoot.open(); await draftRoot.setIncludeCamera(true); try await draftRoot.startSharing()
+        await draftRoot.chooseCanvas()
+        guard let cameraDraft = draftRoot.contentDraft else { fatalError("missing camera draft") }
+        try expect(draftCameras.count == 1 && cameraDraft.includedCameraTrackForTesting === draftRoot.includedCameraTrackForTesting,
+                   "An open content draft borrows the exact root private track without creating another camera")
+        draftRoot.beginLiveCameraHandover()
+        try expect(cameraDraft.includedCameraTrackForTesting == nil && cameraDraft.includeCamera,
+                   "Beginning a live handover immediately detaches draft pixels while preserving its inclusion consent")
+        let draftLiveLease = try await draftLease.acquireLive(owner: UUID(), revoke: {})
+        try await draftRoot.releasePrivateCameraBeforeLiveCapture()
+        draftLiveTrack = factory.videoTrack(with: factory.videoSource(), trackId: "draft-live-handover")
+        await draftRoot.refreshBorrowedCamera()
+        try expect(cameraDraft.includedCameraTrackForTesting == nil && draftCameras.count == 1 && draftCameras[0].stops == 1,
+                   "A draft waits through the root handover instead of borrowing an unsettled track or starting hardware")
+        await draftRoot.finishLiveCameraHandover()
+        try expect(cameraDraft.includedCameraTrackForTesting === draftLiveTrack && draftRoot.includedCameraTrackForTesting === draftLiveTrack && draftCameras.count == 1,
+                   "Completing private-to-live handover updates both root and open draft to the current live track")
+        draftRoot.beginLiveCameraHandover(); draftLiveTrack = nil; draftLease.release(draftLiveLease)
+        let returningPrivate = Task { await draftRoot.finishLiveCameraHandover() }
+        try await until { draftCameras.count == 2 && draftCameras[1].starts == 1 }
+        await cameraDraft.refreshBorrowedCamera()
+        try expect(cameraDraft.includedCameraTrackForTesting == nil && cameraDraft.includeCamera && draftCameras.count == 2 && draftCameras[1].cancels == 0,
+                   "While the root private camera starts, a draft cannot revoke it or create competing hardware")
+        draftCameras[1].gate.finish(.success(draftCameras[1].info)); await returningPrivate.value
+        try expect(cameraDraft.includedCameraTrackForTesting != nil && cameraDraft.includedCameraTrackForTesting === draftRoot.includedCameraTrackForTesting && draftCameras.count == 2,
+                   "Muting the ordinary camera returns root and draft to one newly owned private capture")
+        draftCameras[1].delayedStop = draftCloseGate
+        let closingDraftRoot = Task { await draftRoot.close() }
+        try await until { draftCameras[1].stops == 1 }
+        await cameraDraft.refreshBorrowedCamera()
+        try expect(cameraDraft.includedCameraTrackForTesting == nil && !cameraDraft.includeCamera && draftCameras.count == 2,
+                   "Root close retires the draft before awaiting hardware stop and a late refresh cannot restart it")
+        draftCloseGate.finish(.success(()))
+        let draftRootClean = await closingDraftRoot.value
+        try expect(draftRootClean && draftCameras.allSatisfy { $0.stops == 1 } && draftRoot.contentDraft == nil,
+                   "Closing with an open camera draft stops each hardware owner once and confirms cleanup")
+
         var failedSourceCaptures: [FakeCapture] = []
         let privateBeforeFailure = FakeCapture()
         let failedSource = NativeDesktopPresenterSession(factory: { factory }, liveCamera: { nil }, publish: { _, _ in }, unpublish: {},

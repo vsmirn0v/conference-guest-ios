@@ -400,7 +400,7 @@ struct NativeDesktopSetupView: View {
             switch library.setup.step {
             case .calendar:
                 Label(L("Your meetings, ready to join"), systemImage: "calendar").font(.title3)
-                Text(L("Choose which calendars Rock’n’Roll may read. Only meetings with supported invitation links appear."))
+                Text(L("Choose which calendars Rock'N'Roll for Mac may read. Only meetings with supported invitation links appear."))
                 Toggle(L("Find meetings in Calendar"), isOn: Binding(get: { library.calendar.enabled }, set: { library.calendar.setEnabled($0) }))
                 ScrollView {
                     VStack(alignment: .leading) {

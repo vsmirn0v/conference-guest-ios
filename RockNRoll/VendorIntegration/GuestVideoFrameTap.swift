@@ -3,6 +3,70 @@ import ObjectiveC
 import UIKit
 import WebRTC
 
+/// One qualified camera receiver. The token changes whenever policy ownership
+/// is revoked or replaced, even when WebRTC reuses the same track object.
+struct GuestPresenterCameraReceiverSource {
+    let leaseToken: UUID
+    let participant: String
+    let track: RTCVideoTrack
+    func matches(_ other: Self) -> Bool {
+        leaseToken == other.leaseToken && participant == other.participant && track === other.track
+    }
+}
+
+/// Resolve only the exact policy camera SID in peers created for this media
+/// attempt. Re-evaluation is driven by leases and qualified subscriber answers.
+@MainActor
+final class GuestPresenterCameraReceiver {
+    struct Candidate {
+        let scope: GuestPeerRegistry.Scope?
+        let closed: Bool
+        let stopped: Bool
+        let direction: RTCRtpTransceiverDirection?
+        let track: RTCVideoTrack
+    }
+    private var scope: GuestPeerRegistry.Scope?
+    private var lease: GuestPresenterCameraLease?
+    private(set) var source: GuestPresenterCameraReceiverSource?
+    var onChange: ((GuestPresenterCameraReceiverSource?) -> Void)?
+    func begin(_ scope: GuestPeerRegistry.Scope) {
+        clear(); lease = nil; self.scope = scope
+    }
+    func end() { clear(); lease = nil; scope = nil }
+    func setLease(_ lease: GuestPresenterCameraLease?, candidates: [Candidate]? = nil) {
+        guard let scope, lease == nil || lease?.generation == scope.generation else { return }
+        guard self.lease != lease else { return }
+        self.lease = lease
+        resolveCurrent(candidates: candidates)
+    }
+    func refresh(lease: GuestPresenterCameraLease, candidates: [Candidate]? = nil) {
+        guard self.lease == lease else { return }
+        resolveCurrent(candidates: candidates)
+    }
+    private func resolveCurrent(candidates: [Candidate]?) {
+        guard let scope, let lease,
+              let track = Self.resolve(cameraSID: lease.cameraSID, scope: scope,
+                  candidates: candidates ?? GuestPeerRegistry.receiverCandidates()) else { clear(); return }
+        let next = GuestPresenterCameraReceiverSource(leaseToken: lease.token, participant: lease.participantID, track: track)
+        if let source, source.matches(next) { return }
+        // Withdraw first so every old display delivery is retired before the
+        // replacement track can attach, including reuse of the same RTC track.
+        clear(); source = next; onChange?(next)
+    }
+    static func resolve(cameraSID: String, scope: GuestPeerRegistry.Scope, candidates: [Candidate]) -> RTCVideoTrack? {
+        let matches = candidates.filter {
+            $0.scope == scope && !$0.closed && !$0.stopped &&
+                ($0.direction == .recvOnly || $0.direction == .sendRecv) && $0.track.readyState == .live &&
+                $0.track.kind == "video" && $0.track.trackId == cameraSID
+        }
+        return matches.count == 1 ? matches.first?.track : nil
+    }
+    private func clear() {
+        guard source != nil else { return }
+        source = nil; onChange?(nil)
+    }
+}
+
 /// Compatibility boundary for the pinned provider SDK: it exposes a video view,
 /// but not a frame subscription. Observe the bundled WebRTC renderer's public
 /// renderFrame(_:) callback, always forwarding to its original implementation.
@@ -24,6 +88,9 @@ final class GuestVideoFrameTap: @unchecked Sendable {
     private static let observers = NSMapTable<UIView, NSHashTable<GuestVideoFrameTap>>(
         keyOptions: .weakMemory, valueOptions: .strongMemory)
     private weak var renderer: UIView?
+    private var track: RTCVideoTrack?
+    private var directRenderer: DirectRenderer?
+    private var leaseToken: UUID?
     private let onFrame: (RTCVideoFrame) -> Void
     private let snapshot: Snapshot?
     private var active = true
@@ -32,9 +99,21 @@ final class GuestVideoFrameTap: @unchecked Sendable {
 #if DEBUG
     private var receivedFrames = 0
     var receivedFramesForTesting: Int { Self.lock.lock(); defer { Self.lock.unlock() }; return receivedFrames }
+    func receiveDirectFrameForTesting(_ frame: RTCVideoFrame) { receiveDirect(frame) }
 #endif
 
     static func prepare() { _ = installed }
+
+    /// Public WebRTC renderer attachment, with no extra rendering view or
+    /// mutation of the SDK's track, subscription, audio, or layout state.
+    private final class DirectRenderer: NSObject, RTCVideoRenderer {
+        weak var owner: GuestVideoFrameTap?
+        func setSize(_ size: CGSize) {}
+        func renderFrame(_ frame: RTCVideoFrame?) {
+            guard let frame else { return }
+            owner?.receiveDirect(frame)
+        }
+    }
 
     private static let installed: Bool = {
         let selector = #selector(RTCEAGLVideoView.renderFrame(_:))
@@ -83,6 +162,29 @@ final class GuestVideoFrameTap: @unchecked Sendable {
         return Self.findRenderer(view) === renderer
     }
 
+    func matches(_ source: GuestPresenterCameraReceiverSource) -> Bool {
+        leaseToken == source.leaseToken && track === source.track
+    }
+
+    init(source: GuestPresenterCameraReceiverSource, onFrame: @escaping (RTCVideoFrame) -> Void) {
+        self.onFrame = onFrame; snapshot = nil
+        track = source.track; leaseToken = source.leaseToken
+        let renderer = DirectRenderer(); renderer.owner = self
+        directRenderer = renderer
+        source.track.add(renderer)
+    }
+
+    private func receiveDirect(_ frame: RTCVideoFrame) {
+        Self.lock.lock()
+        Self.revision &+= 1
+        let revision = Self.revision
+        #if DEBUG
+        receivedFrames += 1
+        #endif
+        Self.lock.unlock()
+        deliver(frame, revision: revision)
+    }
+
     init?(view: UIView, snapshot: Snapshot? = nil, onFrame: @escaping (RTCVideoFrame) -> Void) {
         guard let renderer = Self.findRenderer(view), Self.installed else { return nil }
         self.renderer = renderer
@@ -115,6 +217,7 @@ final class GuestVideoFrameTap: @unchecked Sendable {
     }
 
     func invalidate() {
+        deliveryLock.lock()
         Self.lock.lock()
         active = false
         if let renderer, let subscriptions = Self.observers.object(forKey: renderer) {
@@ -122,6 +225,9 @@ final class GuestVideoFrameTap: @unchecked Sendable {
             if subscriptions.allObjects.isEmpty { Self.observers.removeObject(forKey: renderer) }
         }
         Self.lock.unlock()
+        deliveryLock.unlock()
+        if let track, let directRenderer { track.remove(directRenderer) }
+        track = nil; directRenderer = nil; leaseToken = nil
     }
 
     deinit { invalidate() }

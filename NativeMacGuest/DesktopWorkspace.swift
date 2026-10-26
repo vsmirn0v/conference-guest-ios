@@ -107,7 +107,7 @@ import UserNotifications
         if window == nil {
             let value = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
-            value.delegate = self; value.title = "Rock’n’Roll"; value.minSize = NSSize(width: 760, height: 540)
+            value.delegate = self; value.title = "Rock'N'Roll for Mac"; value.minSize = NSSize(width: 760, height: 540)
             value.isReleasedWhenClosed = false; value.titlebarAppearsTransparent = true
             value.contentView = NSHostingView(rootView: NativeDesktopHomeView(workspace: self, library: library))
             value.setFrameAutosaveName("nativeDesktop.library"); value.center(); window = value
@@ -134,7 +134,7 @@ import UserNotifications
     func join(_ url: URL, engine known: MeetingEngineKind? = nil, title: String? = nil, eventID: String? = nil,
               quiet: Bool = false, scheduled: NativeDesktopScheduledJoin? = nil, nameOverride: String? = nil) {
         guard mayAdmitMeeting() else {
-            scheduled?.finish(); error = L("An update is being installed. Please try again after Rock’n’Roll restarts."); return
+            scheduled?.finish(); error = L("An update is being installed. Please try again after Rock'N'Roll for Mac restarts."); return
         }
         guard !preparing, leaveTask == nil, !shutdownBlocked else { scheduled?.finish(); return }
         if scheduled != nil, meeting != nil { scheduled?.finish(); return }
@@ -315,7 +315,7 @@ import UserNotifications
         }
         if statusItem == nil {
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-            statusItem?.button?.image = NSImage(systemSymbolName: "video", accessibilityDescription: "Rock’n’Roll")
+            statusItem?.button?.image = NSImage(systemSymbolName: "video", accessibilityDescription: "Rock'N'Roll for Mac")
         }
         let menu = NSMenu()
         func item(_ title: String, _ action: Selector) {
@@ -334,9 +334,9 @@ import UserNotifications
                 item(L("Resume automatic joining"), #selector(resumeSchedule))
             } else { item(L("Pause automatic joining today"), #selector(pauseSchedule)) }
         }
-        menu.addItem(.separator()); item(L("Open Rock’n’Roll"), #selector(openHome))
+        menu.addItem(.separator()); item(L("Open Rock'N'Roll for Mac"), #selector(openHome))
         item(L("Settings…"), #selector(openSettings)); menu.addItem(.separator())
-        let quit = NSMenuItem(title: L("Quit Rock’n’Roll"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: L("Quit Rock'N'Roll for Mac"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit); statusItem?.menu = menu
     }
     @objc private func openHome() { show() }
@@ -354,7 +354,7 @@ enum NativeDesktopError: LocalizedError {
     case cleanupFailed, ambiguousEngine, unavailable(String)
     var errorDescription: String? {
         switch self {
-        case .cleanupFailed: "Media could not stop cleanly. Quit and reopen Rock’n’Roll before joining another meeting."
+        case .cleanupFailed: "Media could not stop cleanly. Quit and reopen Rock'N'Roll for Mac before joining another meeting."
         case .ambiguousEngine: "The meeting engine could not be identified. Choose its engine before joining."
         case .unavailable(let message): message
         }

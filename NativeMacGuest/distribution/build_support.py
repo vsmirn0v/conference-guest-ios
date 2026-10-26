@@ -5,6 +5,11 @@ import plistlib
 import re
 
 BUNDLE_ID = 'dev.vsmirn0v.conferenceguest.nativeguest'
+APP_NAME = "Rock'N'Roll for Mac"
+APP_BUNDLE_NAME = APP_NAME + '.app'
+# The executable and code identity remain stable across the product rename.
+EXECUTABLE_NAME = 'RockNRoll Native Guest'
+LEGACY_APP_BUNDLE_NAME = EXECUTABLE_NAME + '.app'
 TEAM_ID = '5V64BP2H3P'
 FEED_URL = 'https://rock.glowsoft.ru/mac/appcast.xml'
 PUBLIC_KEY = 'qDR0lWh9zJDV/twmkh1YKSngxxiQbHHDm7ARBuVFhkY='
@@ -23,6 +28,68 @@ DIRECT_INFO = {
     'SUAutomaticallyUpdate': True,
     'SUSendProfileInfo': False,
 }
+
+
+def find_application(directory):
+    """Resolve an exported/archived app by identity, including historical names."""
+    matches = []
+    for app in pathlib.Path(directory).glob('*.app'):
+        if app.is_symlink() or not app.is_dir():
+            continue
+        info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+        if info.get('CFBundleIdentifier') == BUNDLE_ID:
+            matches.append(app)
+    if len(matches) != 1:
+        raise ValueError('Expected exactly one native app with the configured bundle identity')
+    return matches[0]
+
+
+def application_executable(app):
+    info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+    if info.get('CFBundleIdentifier') != BUNDLE_ID or info.get('CFBundleExecutable') != EXECUTABLE_NAME:
+        raise ValueError('Unexpected native app identity or executable')
+    return app / 'Contents/MacOS' / EXECUTABLE_NAME
+
+
+def installation_destination(directory, process_commands):
+    """Preserve an existing name; never duplicate, overwrite strangers or a running app."""
+    directory = pathlib.Path(directory)
+    candidates = [directory / name for name in (APP_BUNDLE_NAME, LEGACY_APP_BUNDLE_NAME)]
+    installed = []
+    for app in candidates:
+        if any(str(app / 'Contents/MacOS') + '/' in command for command in process_commands.splitlines()):
+            raise ValueError('Close the installed native app before updating it')
+        if app.is_symlink():
+            raise ValueError('Refusing to replace a symbolic-link installation')
+        if not app.exists():
+            continue
+        info = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
+        if info.get('CFBundleIdentifier') != BUNDLE_ID:
+            raise ValueError('Refusing to replace an unrelated installed bundle')
+        installed.append(app)
+    if len(installed) > 1:
+        raise ValueError('Both native app names are installed; resolve the duplicate before updating')
+    return installed[0] if installed else candidates[0]
+
+
+def installed_application(directory):
+    app = installation_destination(directory, '')
+    if not app.is_dir():
+        raise ValueError('The native app is not installed')
+    return app
+
+
+def resolve_source_paths(root, spec):
+    """Anchor formal source and file-setting paths to the checked-in spec."""
+    source = pathlib.Path(root).resolve() / 'NativeMacGuest'
+    spec = re.sub(r'(?m)^(\s*(?:- )?path: )(.+)$',
+                  lambda match: match[1] + str((source / match[2]).resolve()), spec)
+    for key in ('INFOPLIST_FILE', 'CODE_SIGN_ENTITLEMENTS', 'SWIFT_OBJC_BRIDGING_HEADER'):
+        spec, count = re.subn(r'(?m)^(        ' + key + r': )(.+)$',
+                             lambda match: match[1] + str((source / match[2]).resolve()), spec)
+        if count != 1:
+            raise ValueError(f'Expected one application {key} setting')
+    return spec
 
 
 def sha256(path):

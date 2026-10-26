@@ -38,8 +38,12 @@ import VisionKit
 
     init(timeout: Duration = .seconds(12), recognition: SharedTextJob.Recognition? = nil) {
         self.timeout = timeout
-        let recognizer = SharedTextRecognizer()
-        recognize = recognition ?? { try await recognizer.recognize($0) }
+        // Injected work must not create and discard a real system analyzer.
+        if let recognition { recognize = recognition }
+        else {
+            let recognizer = SharedTextRecognizer()
+            recognize = { try await recognizer.recognize($0) }
+        }
         admissionObserver = NotificationCenter.default.addObserver(forName: SharedTextWorkAdmission.didChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.admissionAvailable = !SharedTextWorkAdmission.shared.isOccupied }
         }

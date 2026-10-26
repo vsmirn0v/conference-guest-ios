@@ -1,6 +1,8 @@
 import pathlib
 import plistlib
-import re
+import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -46,8 +48,7 @@ class DistributionConfigurationTests(unittest.TestCase):
 
     def test_direct_license_is_added_after_builder_resolves_source_paths(self):
         source = (ROOT / 'NativeMacGuest/project.yml').read_text()
-        resolved = re.sub(r'(?m)^(\s*(?:- )?path: )(.+)$',
-                          lambda match: match[1] + str((ROOT / 'NativeMacGuest' / match[2]).resolve()), source)
+        resolved = support.resolve_source_paths(ROOT, source)
         anchor = f'      - path: {ROOT / "Experiments/NativeGuest"}\n'
         license_resource = (f'      - path: {ROOT / "NativeMacGuest/distribution/Sparkle-LICENSE.txt"}\n'
                             '        buildPhase: resources\n')
@@ -66,12 +67,44 @@ class DistributionConfigurationTests(unittest.TestCase):
                 support.configure_distribution(ROOT, pathlib.Path(temp),
                                                source + '\n        INFOPLIST_FILE: another.plist\n', 'direct')
 
+    @unittest.skipUnless(shutil.which('xcodegen') and shutil.which('plutil'), 'Requires XcodeGen and plutil; no build is run')
+    def test_nested_generated_projects_resolve_source_and_file_settings(self):
+        source = support.resolve_source_paths(ROOT, (ROOT / 'NativeMacGuest/project.yml').read_text())
+        for distribution in ('app-store', 'direct'):
+            with self.subTest(distribution=distribution), tempfile.TemporaryDirectory(dir=ROOT / '.build') as temp:
+                output = pathlib.Path(temp).resolve() / '.build/native-dmg/build'
+                spec_dir, project_dir = output / 'Spec', output / 'Project'
+                spec_dir.mkdir(parents=True)
+                project_dir.mkdir()
+                spec, _, _ = support.configure_distribution(ROOT, spec_dir, source, distribution)
+                spec_path = spec_dir / 'project.yml'
+                spec_path.write_text(spec)
+                subprocess.run(['xcodegen', 'generate', '--spec', str(spec_path), '--project', str(project_dir)],
+                               check=True, capture_output=True, text=True)
+                project = project_dir / 'RockNativeGuest.xcodeproj/project.pbxproj'
+                objects = json.loads(subprocess.check_output(['plutil', '-convert', 'json', '-o', '-', str(project)]))['objects']
+                target = next(value for value in objects.values()
+                              if value.get('isa') == 'PBXNativeTarget' and value.get('name') == 'RockNRollNativeGuest')
+                expected = {'SWIFT_OBJC_BRIDGING_HEADER': ROOT / 'NativeMacGuest/NativeGuest-Bridging-Header.h',
+                            'INFOPLIST_FILE': spec_dir / 'Info-Direct.plist' if distribution == 'direct' else ROOT / 'NativeMacGuest/Info.plist',
+                            'CODE_SIGN_ENTITLEMENTS': spec_dir / 'NativeGuest-Direct.entitlements' if distribution == 'direct' else ROOT / 'NativeMacGuest/NativeGuest.entitlements'}
+                for configuration in objects[target['buildConfigurationList']]['buildConfigurations']:
+                    settings = objects[configuration]['buildSettings']
+                    for key, path in expected.items():
+                        self.assertEqual(settings[key], str(path))
+                        self.assertTrue(path.is_file())
+                group_paths = {(project_dir / value['path']).resolve() for value in objects.values()
+                               if value.get('isa') == 'PBXGroup' and value.get('path')}
+                self.assertIn(ROOT / 'NativeMacGuest', group_paths)
+                self.assertIn(ROOT / 'Experiments/NativeGuest', group_paths)
+                self.assertNotIn('$(SRCROOT)/../../../', project.read_text())
+
 
 class NotarizationResumeTests(unittest.TestCase):
-    def fixture(self, temp):
+    def fixture(self, temp, name=support.APP_BUNDLE_NAME):
         path = pathlib.Path(temp)
         archive, output = path / 'Example.xcarchive', path / 'Export'
-        info_path = archive / 'Products/Applications/RockNRoll Native Guest.app/Contents/Info.plist'
+        info_path = archive / 'Products/Applications' / name / 'Contents/Info.plist'
         info_path.parent.mkdir(parents=True)
         info_path.write_bytes(plistlib.dumps({'CFBundleIdentifier': support.BUNDLE_ID, 'SUFeedURL': support.FEED_URL}))
         output.mkdir()
@@ -98,6 +131,14 @@ class NotarizationResumeTests(unittest.TestCase):
                     release.finalize_export(args)
                 self.assertEqual(command.call_count, 1)
                 sleep.assert_not_called()
+
+    def test_historical_archive_can_still_resume(self):
+        with tempfile.TemporaryDirectory() as temp:
+            args = self.fixture(temp, support.LEGACY_APP_BUNDLE_NAME)
+            result = SimpleNamespace(returncode=65, stdout='', stderr='error: Archive "Example.xcarchive" is processing and not ready for distribution.\n')
+            with mock.patch.object(release, 'run', return_value=result):
+                with self.assertRaises(TimeoutError):
+                    release.finalize_export(args)
 
 
 if __name__ == '__main__':

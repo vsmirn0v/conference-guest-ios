@@ -1072,7 +1072,7 @@
 "Incoming video and screen shares" = "Входящее видео и демонстрации экрана";
 "Sending screen shares, Presenter, chat, reactions and transcription are not available yet. Use the standard engine when you need these features." = "Отправка демонстрации экрана, режим ведущего, чат, реакции и расшифровка пока недоступны. Для этих функций используйте стандартный движок.";
 "Companion app" = "Дополнительное приложение";
-"Install the separately signed Rock’n’Roll Native Guest companion on this Mac before enabling the preview." = "Установите отдельно подписанное приложение Rock’n’Roll Native Guest на этот Mac перед включением предварительной версии.";
+"Install the separately signed Rock'N'Roll for Mac companion on this Mac before enabling the preview." = "Установите отдельно подписанное приложение Rock'N'Roll for Mac на этот Mac перед включением предварительной версии.";
 "Companion is ready" = "Дополнительное приложение готово";
 "Companion is not installed or could not be verified" = "Дополнительное приложение не установлено или не прошло проверку";
 "Native guest preview" = "Нативные гостевые встречи";
@@ -1284,13 +1284,21 @@
 
 "Text recognition is taking too long. Return to Live and try again later." = "Распознавание текста занимает слишком много времени. Вернитесь к трансляции и попробуйте позже.";
 "Text recognition is already running. Return to Live and try again later." = "Распознавание текста уже выполняется. Вернитесь к трансляции и попробуйте позже.";
-"Rock’n’Roll for Mac is ready" = "Rock’n’Roll для Mac готов";
+"Rock'N'Roll for Mac is ready" = "Rock'N'Roll for Mac готов";
 "We recommend the native Mac app for meetings on this Mac." = "Для встреч на этом Mac рекомендуем приложение, разработанное специально для macOS.";
 "Get the Mac app" = "Скачать приложение для Mac";
 "Dismiss Mac app recommendation" = "Скрыть рекомендацию приложения для Mac";
-"Rock’n’Roll for Mac" = "Rock’n’Roll для Mac";
+"Rock'N'Roll for Mac" = "Rock'N'Roll for Mac";
 "You can keep using this app." = "Вы можете продолжать пользоваться этим приложением.";
 "Requires Apple Silicon and macOS 13 or later." = "Требуются Apple Silicon и macOS 13 или новее.";
 "Mac windows, menu-bar controls and automatic updates." = "Окна macOS, управление из строки меню и автоматические обновления.";
 "Opens the official download page in your browser." = "Открывает официальную страницу загрузки в браузере.";
 "To sync your name and saved invitations, enable iCloud sync in both apps with the same Apple Account." = "Чтобы синхронизировать имя и сохранённые приглашения, включите синхронизацию iCloud в обоих приложениях с одним Аккаунтом Apple.";
+
+"Open Rock'N'Roll for Mac" = "Открыть Rock'N'Roll for Mac";
+
+"Quit Rock'N'Roll for Mac" = "Выйти из Rock'N'Roll for Mac";
+
+"An update is being installed. Please try again after Rock'N'Roll for Mac restarts." = "Устанавливается обновление. Повторите попытку после перезапуска Rock'N'Roll for Mac.";
+
+"Choose which calendars Rock'N'Roll for Mac may read. Only meetings with supported invitation links appear." = "Выберите календари, доступные Rock'N'Roll for Mac. Показываются только встречи с поддерживаемыми ссылками.";

@@ -56,7 +56,7 @@ enum NativeGuestMeetingCompletion: Equatable {
         switch self {
         case .left: return "You left the meeting. Join again whenever you’re ready."
         case .failed: return "Could not connect. Check the invitation and network, then try again."
-        case .cleanupFailed: return "Media could not stop cleanly. Quit and reopen Native Guest before joining again."
+        case .cleanupFailed: return "Media could not stop cleanly. Quit and reopen Rock'N'Roll for Mac before joining again."
         }
     }
 }

@@ -619,7 +619,7 @@ struct JoinView: View {
                         .accessibilityIdentifier("settings.devices")
                     if nativeMacRecommendation.isSupportedHost {
                         NavigationLink { NativeMacRecommendationDetails(getApp: openNativeMacDownload) } label: {
-                            Label(L("Rock’n’Roll for Mac"), systemImage: "desktopcomputer")
+                            Label(L("Rock'N'Roll for Mac"), systemImage: "desktopcomputer")
                         }.accessibilityIdentifier("settings.nativeMacApp")
                     }
                     if !ProcessInfo.processInfo.isiOSAppOnMac {

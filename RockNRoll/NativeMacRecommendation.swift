@@ -43,7 +43,7 @@ struct NativeMacRecommendationCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 12) {
-                Label(L("Rock’n’Roll for Mac is ready"), systemImage: "desktopcomputer").font(.headline)
+                Label(L("Rock'N'Roll for Mac is ready"), systemImage: "desktopcomputer").font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
                 Button { recommendation.dismiss() } label: { Image(systemName: "xmark").frame(minWidth: 32, minHeight: 32) }
@@ -66,7 +66,7 @@ struct NativeMacRecommendationDetails: View {
     var body: some View {
         Form {
             Section {
-                Label(L("Rock’n’Roll for Mac is ready"), systemImage: "desktopcomputer").font(.headline)
+                Label(L("Rock'N'Roll for Mac is ready"), systemImage: "desktopcomputer").font(.headline)
                 Text(L("We recommend the native Mac app for meetings on this Mac."))
                 Text(L("Mac windows, menu-bar controls and automatic updates."))
                     .foregroundStyle(.secondary)
@@ -81,6 +81,6 @@ struct NativeMacRecommendationDetails: View {
                 Text(L("To sync your name and saved invitations, enable iCloud sync in both apps with the same Apple Account."))
                     .foregroundStyle(.secondary)
             }
-        }.navigationTitle(L("Rock’n’Roll for Mac"))
+        }.navigationTitle(L("Rock'N'Roll for Mac"))
     }
 }

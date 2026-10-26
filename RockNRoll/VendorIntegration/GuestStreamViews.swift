@@ -33,8 +33,10 @@ final class GuestStreamViews {
         let speaking: Bool
         let watermark: String?
         let renderer: UIView?
+        var receiverSource: GuestPresenterCameraReceiverSource?
         var mirrored = false
         var isLocalCamera = false
+        var hasVideoSource: Bool { receiverSource != nil || renderer != nil }
     }
     var onGalleryPresentation: (([GalleryItem]) -> Void)?
     var localCameraMirrored: () -> Bool = { true }
@@ -82,6 +84,7 @@ final class GuestStreamViews {
     private var participantOrder: [String] = []
     private var selectionUpdateScheduled = false
     private var preserveBackgroundSelection = false
+    private var presenterCameraSource: GuestPresenterCameraReceiverSource?
     private var activeShares: Set<String>?
     private var activeCameras: Set<String>?
     private var activeParticipants = Set<String>()
@@ -108,6 +111,7 @@ final class GuestStreamViews {
     /// A rebuilt SDK session must not reuse renderers from the old transport.
     /// Keep view selection when reconnecting to the same room.
     func reset(preservingSelection: Bool = false) {
+        presenterCameraSource = nil
         retainShareSnapshots(for: [])
         participantSubscription = nil
         participants = nil
@@ -150,6 +154,15 @@ final class GuestStreamViews {
         guard preserveBackgroundSelection != backgrounded else { return }
         preserveBackgroundSelection = backgrounded
         updatePreferredVideo()
+    }
+
+    /// Binding withdrawal is synchronous so mounted sinks retire before any
+    /// callbacks from a replaced lease can deliver another frame.
+    func setPresenterCameraSource(_ source: GuestPresenterCameraReceiverSource?) {
+        if let current = presenterCameraSource, let source, current.matches(source) { return }
+        if presenterCameraSource == nil && source == nil { return }
+        presenterCameraSource = source
+        publishGallery()
     }
 
     func observe(_ state: JazzActiveConferenceState) {
@@ -532,7 +545,10 @@ final class GuestStreamViews {
                 result.append(GalleryItem(id: id, name: participant.name, microphoneOn: participant.microphoneOn,
                     active: isShare ? participant.sharing : participant.cameraOn,
                     speaking: tile?.model.isDominantSpeaker == true, watermark: watermark,
-                    renderer: tile?.frameRenderer, mirrored: participant.isLocal && !isShare && localCameraMirrored(),
+                    renderer: tile?.frameRenderer,
+                    receiverSource: !isShare && !participant.isLocal && participant.cameraOn &&
+                        presenterCameraSource?.participant == participant.id ? presenterCameraSource : nil,
+                    mirrored: participant.isLocal && !isShare && localCameraMirrored(),
                     isLocalCamera: participant.isLocal && !isShare))
             }
             return result

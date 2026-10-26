@@ -461,6 +461,8 @@ final class NativeGuestEngine {
                 let rightActive = subscriptions.contains(rhs)
                 return leftActive == rightActive ? lhs < rhs : leftActive
             }
+        let activeAudio = remoteTracks.values.contains { $0.type == "AUDIO" && !$0.muted }
+        subscriber?.setActiveIncomingMediaDemand(activeAudio || !activeVideoIDs.isEmpty)
         var videoIDs = Array(activeVideoIDs.prefix(6))
         // A camera can resume RTP before the SFU's unmute snapshot arrives.
         // Keep already-subscribed muted tracks warm while gallery capacity is
@@ -896,7 +898,8 @@ final class NativeGuestEngine {
         else { audioStopped = audio?.terminateDevice() ?? true }
         cleanupSucceeded = audioStopped && cameraStopped && screenStopped
         joined = false; rtcJoined = false
-        probeLog("engine-stopped", ["client": label, "physicalAudioUsed": systemAudio != nil, "cameraStopped": cameraStopped, "audioWorkerStopped": audioStopped])
+        probeLog("engine-stopped", ["client": label, "physicalAudioUsed": systemAudio != nil,
+            "cameraStopped": cameraStopped, "screenStopped": screenStopped, "audioWorkerStopped": audioStopped])
         return cleanupSucceeded
     }
 }

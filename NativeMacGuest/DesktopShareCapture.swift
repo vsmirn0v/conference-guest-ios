@@ -36,6 +36,14 @@ final class NativeDesktopShareCapture: GuestCameraCapture, @unchecked Sendable {
     private let canvasOnly: Bool
     private var selectionMode: MacScreenCaptureSelectionMode = .automatic
     #if DEBUG
+    convenience init(source: LKRTCVideoSource, screenForTesting sample: CMSampleBuffer) {
+        self.init(source: source)
+        syntheticScreenSample = sample
+    }
+    func updateSyntheticScreenForTesting(_ sample: CMSampleBuffer) {
+        let token = locked { generation }
+        accept(sample, token: token)
+    }
     var beforePickerForTesting: (@Sendable () async -> Void)?
     var beforeDeliveryForTesting: (@Sendable () -> Void)?
     private var testConsumer: (@Sendable (LKRTCVideoFrame) -> Void)?
@@ -286,6 +294,9 @@ final class NativeDesktopCameraTap: NSObject, LKRTCVideoRenderer, @unchecked Sen
     }
     func setSize(_ size: CGSize) {}
     func renderFrame(_ frame: LKRTCVideoFrame?) {
+        // Missing/dropped frames do not revoke camera inclusion. The owner
+        // explicitly clears the compositor when consent or ownership changes.
+        guard let frame else { return }
         lock.lock()
         guard active else { lock.unlock(); return }
         latest = frame; let enqueue = !pending; pending = true; lock.unlock()
@@ -293,7 +304,7 @@ final class NativeDesktopCameraTap: NSObject, LKRTCVideoRenderer, @unchecked Sen
     }
     private func drain() {
         lock.lock(); let frame = active ? latest : nil; latest = nil; pending = false; lock.unlock()
-        let pixels = frame.flatMap { normalized($0) }
+        guard let frame, let pixels = normalized(frame) else { return }
         lock.lock(); defer { lock.unlock() }
         guard active else { return }; handler?(pixels)
     }

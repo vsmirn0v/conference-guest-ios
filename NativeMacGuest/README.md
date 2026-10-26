@@ -55,7 +55,7 @@ distribution signing; the installed development build is not distributable.
 Use a fresh output directory when reproducing an archive: the builder refuses
 to overwrite an existing one.
 
-Install to `/Applications/RockNRoll Native Guest.app`; the host sandbox cannot
+Install to `/Applications/Rock'N'Roll for Mac.app`; the host sandbox cannot
 read or verify development copies under Documents or `~/Applications`.
 
 The companion needs an explicit Mac provisioning profile for
@@ -73,7 +73,9 @@ separately; it is not embedded in the iOS app or a TestFlight release.
 
 ## Join directly on Mac
 
-Open **RockNRoll Native Guest** directly. Its Home window provides invitation
+Open **Rock'N'Roll for Mac** directly. Existing Sparkle installations may keep
+the legacy `RockNRoll Native Guest.app` filename; the app identity and data are
+unchanged. Its Home window provides invitation
 joining, favorites, history, selected calendars, reminders and optional iCloud
 sync. The native app uses the existing CloudKit container and record format;
 enable sync on both devices with the same account and environment. Its local
@@ -88,7 +90,7 @@ teardown blocks replacement until the app is reopened.
 For an explicit standalone launch that skips pending-ticket discovery:
 
 ```sh
-open -a '/Applications/RockNRoll Native Guest.app' --args --standalone
+open -a "/Applications/Rock'N'Roll for Mac.app" --args --standalone
 ```
 
 A standalone meeting never reads host commands, writes host status or starts a

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Provision/build the external Mac companion; never modify the iOS app bundle."""
 import argparse, hashlib, json, os, pathlib, plistlib, re, shutil, subprocess, tempfile
-from distribution.build_support import configure_distribution
+from distribution.build_support import (APP_NAME, APP_BUNDLE_NAME, EXECUTABLE_NAME,
+    application_executable, configure_distribution, find_application, installation_destination, resolve_source_paths)
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser()
 p.add_argument('--identity', required=True, help='Apple Development signing identity for the final provisioned bundle')
@@ -45,10 +46,8 @@ subprocess.run(['python3',str(ROOT/'NativeMacGuest/prepare-livekit.py'),
                 '--destination',str(dependency_root)],check=True,env=env)
 for name in ['client-sdk-swift','webrtc-xcframework']:
     spec_source = spec_source.replace('../.build/native-desktop-dependencies/'+name,str(dependency_root/name))
-# Resolve formal XcodeGen source/package paths from the checked-in specification,
-# rather than relying on the generated project's directory depth.
-spec_source = re.sub(r'(?m)^(\s*(?:- )?path: )(.+)$',
-    lambda m: m[1]+str((ROOT/'NativeMacGuest'/m[2]).resolve()), spec_source)
+# Resolve source/package and file-setting paths independently of output depth.
+spec_source = resolve_source_paths(ROOT, spec_source)
 spec_dir = build/'Spec'; spec_dir.mkdir(parents=True, exist_ok=True)
 spec_source, sparkle_evidence, distribution_inputs = configure_distribution(ROOT, spec_dir, spec_source, a.distribution)
 with tempfile.NamedTemporaryFile(mode='w', prefix='.native-guest-build-', suffix='.yml',
@@ -69,14 +68,17 @@ try:
         subprocess.run(cmd+['-archivePath',str(archive),'archive'],env=env,check=True)
 finally:
     generated_spec.unlink(missing_ok=True)
-app = build/'Xcode/Build/Products'/a.configuration/'RockNRoll Native Guest.app'
+app = build/'Xcode/Build/Products'/a.configuration/APP_BUNDLE_NAME
+info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
+if any(info.get(key) != APP_NAME for key in ('CFBundleName', 'CFBundleDisplayName')):
+    raise SystemExit('Built app name differs from the requested product')
 subprocess.run(['codesign','--force','--sign',a.identity,'--preserve-metadata=identifier,entitlements,flags,runtime',str(app)],check=True)
 subprocess.run(['codesign','--verify','--deep','--strict',str(app)],check=True)
 signature = subprocess.run(['codesign','-dv','--verbose=4',str(app)],capture_output=True,text=True,check=True)
 if 'TeamIdentifier=5V64BP2H3P' not in signature.stderr:
     raise SystemExit('The selected signing certificate does not belong to the app-group provisioning team')
 # This gate catches signatures that look valid but lack a provisioned app group.
-executable = app/'Contents/MacOS/RockNRoll Native Guest'
+executable = application_executable(app)
 subprocess.run([str(executable),'--check-container'],check=True)
 sources = sorted(x for x in (ROOT/'Experiments/NativeGuest').glob('*.swift') if x.name not in {'Main.swift', 'GuestCompanionPeer.swift'})
 sources += sorted(x for x in (ROOT/'NativeMacGuest').rglob('*.swift') if 'Tests' not in x.parts)
@@ -93,7 +95,7 @@ sources += sorted(x for x in (ROOT/'NativeMacGuest/distribution').rglob('*')
                   if x.is_file() and x.suffix in {'.py', '.txt'} and '__pycache__' not in x.parts) + distribution_inputs
 sources += sorted(x for x in (ROOT/'NativeMacGuest/Assets.xcassets').rglob('*') if x.is_file())
 sources += sorted(x for x in (ROOT/'RockNRoll/Assets.xcassets/AdditionalRootCA.dataset').rglob('*') if x.is_file())
-artifacts = [executable, app/'Contents/MacOS/RockNRoll Native Guest.debug.dylib', app/'Contents/Info.plist']
+artifacts = [executable, app/'Contents/MacOS'/(EXECUTABLE_NAME+'.debug.dylib'), app/'Contents/Info.plist']
 artifacts += [app/'Contents/Resources/Assets.car', app/'Contents/Resources/AppIcon.icns']
 artifacts += [x for x in (app/'Contents/Frameworks').rglob('LiveKitWebRTC') if x.is_file() and not x.is_symlink()]
 if sparkle_evidence:
@@ -105,14 +107,15 @@ manifest = {'artifacts':{str(x.relative_to(app)):hashlib.sha256(x.read_bytes()).
             'executableSHA256':hashlib.sha256(executable.read_bytes()).hexdigest()}
 if sparkle_evidence: manifest['sparkle'] = sparkle_evidence
 if archive is not None:
-    archived_app = archive/'Products/Applications/RockNRoll Native Guest.app'
+    archived_app = find_application(archive/'Products/Applications')
     archived_info = plistlib.loads((archived_app/'Contents/Info.plist').read_bytes())
     if (archived_info.get('CFBundleIdentifier') != manifest['bundleIdentifier'] or
         archived_info.get('CFBundleShortVersionString') != a.version or
         archived_info.get('CFBundleVersion') != a.build_number or
-        archived_info.get('LSApplicationCategoryType') != 'public.app-category.video'):
+        archived_info.get('LSApplicationCategoryType') != 'public.app-category.video' or
+        any(archived_info.get(key) != APP_NAME for key in ('CFBundleName', 'CFBundleDisplayName'))):
         raise SystemExit('Archived app identity or Mac category differs from the requested build')
-    archived_files = ['Contents/MacOS/RockNRoll Native Guest', 'Contents/Info.plist',
+    archived_files = [str(application_executable(archived_app).relative_to(archived_app)), 'Contents/Info.plist',
         'Contents/Resources/AppIcon.icns', 'Contents/Resources/Assets.car',
         'Contents/Frameworks/LiveKitWebRTC.framework/LiveKitWebRTC']
     subprocess.run(['codesign','--verify','--deep','--strict',str(archived_app)],check=True)
@@ -123,15 +126,13 @@ if archive is not None:
             for x in (archived_app/'Contents/Frameworks/Sparkle.framework').rglob('*') if x.is_file() and not x.is_symlink()})
 (build/'build-evidence.json').write_text(json.dumps(manifest,indent=2)+'\n')
 if a.install:
-    destination = pathlib.Path('/Applications/RockNRoll Native Guest.app')
+    try:
+        destination = installation_destination('/Applications', subprocess.check_output(['ps','-axo','comm='],text=True))
+    except (ValueError, OSError) as error:
+        raise SystemExit(str(error)) from error
     destination.parent.mkdir(exist_ok=True)
     if destination.exists():
-        old = plistlib.loads((destination/'Contents/Info.plist').read_bytes())
-        if old.get('CFBundleIdentifier') != manifest['bundleIdentifier']:
-            raise SystemExit('Refusing to replace an unrelated installed bundle')
         # Keep any prior development companion recoverable; never replace a running instance.
-        ps = subprocess.check_output(['ps','-axo','command'],text=True)
-        if str(destination/'Contents/MacOS') in ps: raise SystemExit('Close the installed companion before updating it')
         archives = build/'archives'; archives.mkdir(exist_ok=True)
         import uuid
         previous = archives/(str(uuid.uuid4())+'.app')

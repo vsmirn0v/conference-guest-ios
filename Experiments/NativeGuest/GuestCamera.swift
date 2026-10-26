@@ -79,6 +79,10 @@ protocol GuestCameraCapture: AnyObject {
 }
 extension GuestCameraCapture { func captureDevice() async -> AVCaptureDevice? { nil } }
 
+enum GuestCameraStopBudget {
+    static func timeout(hasForwardedFrame: Bool) -> TimeInterval { hasForwardedFrame ? 3 : 15 }
+}
+
 /// Opt-in native Mac camera input, isolated from the shipping meeting engine.
 /// Capture/session/device operations never run on the main queue. Call stop()
 /// before releasing the peer source. No microphone or custom effects are used.
@@ -90,6 +94,7 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
     private var requested = false
     private var hasStarted = false
     private var cancelled = false
+    private let firstFrame: Completion<Void>
     private let sink: Sink
     private let preferredDeviceID: String?
     // Remaining mutable state belongs exclusively to queue.
@@ -114,7 +119,9 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
     }
 
     init(source: LKRTCVideoSource, deviceID: String? = nil) {
-        sink = Sink(source: source); preferredDeviceID = deviceID
+        let firstFrame = Completion<Void>()
+        self.firstFrame = firstFrame
+        sink = Sink(source: source, firstFrame: firstFrame); preferredDeviceID = deviceID
     }
 
     func snapshot() -> GuestCameraSnapshot { sink.snapshot() }
@@ -143,6 +150,10 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
     func drainCaptureQueueForTesting() async {
         await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
     }
+    func prepareFrameReadinessForTesting() throws { try beginRequest(); sink.activate() }
+    func waitForFirstFrameForTesting(timeout: TimeInterval = 15) async throws { try await waitForFirstFrame(timeout: timeout) }
+    func forwardFrameForTesting(_ deliver: () -> Void) { sink.forward(deliver) }
+    var stopTimeoutForTesting: TimeInterval { GuestCameraStopBudget.timeout(hasForwardedFrame: sink.hasForwardedFrame) }
     #endif
 
     func start() async throws -> GuestCameraInfo {
@@ -167,7 +178,7 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         try Task.checkCancellation()
         try beginRequest()
         do {
-            return try await queued(timeout: 8) {
+            let info = try await queued(timeout: 8) {
                 guard self.isRequested() else { throw CancellationError() }
                 let profile = try self.configure()
                 guard self.isRequested() else { try self.cleanup(); throw CancellationError() }
@@ -179,11 +190,32 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
                 self.observeSystemEffect()
                 return try self.runningInfo(pixelFormat: profile.pixelFormat, requestedDuration: profile.duration)
             }
+            // isRunning can precede macOS camera-effect warmup by seconds.
+            // Keep that bounded wait separate from the SFU acknowledgement
+            // budget; neither capture queue is blocked while frames initialize.
+            try await waitForFirstFrame(timeout: 15)
+            return info
         } catch {
             requestStop()
             queue.async { [self] in try? cleanup() }
             throw error
         }
+    }
+
+    private func waitForFirstFrame(timeout: TimeInterval) async throws {
+        let deadlineWork = DispatchWorkItem { [firstFrame] in firstFrame.finish(.failure(GuestCameraError.timedOut)) }
+        defer { deadlineWork.cancel() }
+        do {
+            try await withTaskCancellationHandler(operation: {
+                try Task.checkCancellation()
+                try await withCheckedThrowingContinuation { continuation in
+                    firstFrame.install(continuation)
+                    deadline.asyncAfter(deadline: .now() + timeout, execute: deadlineWork)
+                }
+                try Task.checkCancellation()
+                guard isRequested(), !isCancelled() else { throw CancellationError() }
+            }, onCancel: { [weak self] in self?.requestStop() })
+        } catch { requestStop(); throw error }
     }
 
     /// Synchronous frame barrier, including cancellation during a permission prompt.
@@ -195,12 +227,15 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
 
     /// Prevents new frame delivery and drains an already accepted frame during
     /// cleanup. Session stop and original device-format restoration have a
-    /// three-second completion deadline. If AVFoundation or WebRTC
+    /// three-second completion deadline after the first forwarded frame. Cold
+    /// camera-effect initialization may hold stopRunning; allow fifteen seconds
+    /// while no frame delivery has completed. If AVFoundation or WebRTC
     /// stalls, timedOut is reported and queued cleanup continues; a timeout does
     /// not claim that the physical device has already been released.
     func stop() async throws {
         requestStop()
-        try await queued(timeout: 3, cancellable: false) { try self.cleanup() }
+        let timeout = GuestCameraStopBudget.timeout(hasForwardedFrame: sink.hasForwardedFrame)
+        try await queued(timeout: timeout, cancellable: false) { try self.cleanup() }
     }
 
     /// Explicit opt-in; true means the native request was issued. Rendering is
@@ -474,9 +509,23 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         private var pixelFormat: OSType?
         private var backgroundSelected: Bool?, backgroundActive: Bool?
         private var observedReaction = false
-        init(source: LKRTCVideoSource) { self.source = source; capturer = LKRTCVideoCapturer(delegate: source) }
+        private var forwardedFrame = false
+        private let firstFrame: Completion<Void>
+        init(source: LKRTCVideoSource, firstFrame: Completion<Void>) {
+            self.source = source; self.firstFrame = firstFrame; capturer = LKRTCVideoCapturer(delegate: source)
+        }
         func activate() { lock.lock(); active = true; lock.unlock() }
-        func retire() { lock.lock(); active = false; lock.unlock() }
+        var hasForwardedFrame: Bool { lock.lock(); defer { lock.unlock() }; return forwardedFrame }
+        func retire() {
+            lock.lock(); active = false; lock.unlock()
+            firstFrame.finish(.failure(CancellationError()))
+        }
+        func forward(_ deliver: () -> Void) {
+            deliver()
+            lock.lock(); defer { lock.unlock() }
+            forwardedFrame = true
+            if active { firstFrame.finish(.success(())) }
+        }
         func resetReaction() { lock.lock(); observedReaction = false; lock.unlock() }
         func markReactionObserved() { lock.lock(); observedReaction = true; lock.unlock() }
         func setBackground(selected: Bool, active: Bool) {
@@ -505,7 +554,7 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
             // A native WebRTC call must never hold the state lock used by stop,
             // snapshots, and deadline handlers. Cleanup drains this frame queue.
             let frame = LKRTCVideoFrame(buffer: LKRTCCVPixelBuffer(pixelBuffer: pixels), rotation: ._0, timeStampNs: timestamp)
-            source.capturer(capturer, didCapture: frame)
+            forward { source.capturer(capturer, didCapture: frame) }
         }
     }
 }

@@ -1074,7 +1074,7 @@
 "Incoming video and screen shares" = "Incoming video and screen shares";
 "Sending screen shares, Presenter, chat, reactions and transcription are not available yet. Use the standard engine when you need these features." = "Sending screen shares, Presenter, chat, reactions and transcription are not available yet. Use the standard engine when you need these features.";
 "Companion app" = "Companion app";
-"Install the separately signed Rock’n’Roll Native Guest companion on this Mac before enabling the preview." = "Install the separately signed Rock’n’Roll Native Guest companion on this Mac before enabling the preview.";
+"Install the separately signed Rock'N'Roll for Mac companion on this Mac before enabling the preview." = "Install the separately signed Rock'N'Roll for Mac companion on this Mac before enabling the preview.";
 "Companion is ready" = "Companion is ready";
 "Companion is not installed or could not be verified" = "Companion is not installed or could not be verified";
 "Native guest preview" = "Native guest preview";
@@ -1286,13 +1286,21 @@
 
 "Text recognition is taking too long. Return to Live and try again later." = "Text recognition is taking too long. Return to Live and try again later.";
 "Text recognition is already running. Return to Live and try again later." = "Text recognition is already running. Return to Live and try again later.";
-"Rock’n’Roll for Mac is ready" = "Rock’n’Roll for Mac is ready";
+"Rock'N'Roll for Mac is ready" = "Rock'N'Roll for Mac is ready";
 "We recommend the native Mac app for meetings on this Mac." = "We recommend the native Mac app for meetings on this Mac.";
 "Get the Mac app" = "Get the Mac app";
 "Dismiss Mac app recommendation" = "Dismiss Mac app recommendation";
-"Rock’n’Roll for Mac" = "Rock’n’Roll for Mac";
+"Rock'N'Roll for Mac" = "Rock'N'Roll for Mac";
 "You can keep using this app." = "You can keep using this app.";
 "Requires Apple Silicon and macOS 13 or later." = "Requires Apple Silicon and macOS 13 or later.";
 "Mac windows, menu-bar controls and automatic updates." = "Mac windows, menu-bar controls and automatic updates.";
 "Opens the official download page in your browser." = "Opens the official download page in your browser.";
 "To sync your name and saved invitations, enable iCloud sync in both apps with the same Apple Account." = "To sync your name and saved invitations, enable iCloud sync in both apps with the same Apple Account.";
+
+"Open Rock'N'Roll for Mac" = "Open Rock'N'Roll for Mac";
+
+"Quit Rock'N'Roll for Mac" = "Quit Rock'N'Roll for Mac";
+
+"An update is being installed. Please try again after Rock'N'Roll for Mac restarts." = "An update is being installed. Please try again after Rock'N'Roll for Mac restarts.";
+
+"Choose which calendars Rock'N'Roll for Mac may read. Only meetings with supported invitation links appear." = "Choose which calendars Rock'N'Roll for Mac may read. Only meetings with supported invitation links appear.";

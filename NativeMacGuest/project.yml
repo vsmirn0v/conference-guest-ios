@@ -88,18 +88,19 @@ targets:
           APS_ENVIRONMENT: production
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.vsmirn0v.conferenceguest.nativeguest
-        PRODUCT_NAME: RockNRoll Native Guest
+        PRODUCT_NAME: Rock'N'Roll for Mac
+        EXECUTABLE_NAME: RockNRoll Native Guest
         PRODUCT_MODULE_NAME: RockNativeDesktop
         DEVELOPMENT_TEAM: 5V64BP2H3P
         CODE_SIGN_STYLE: Automatic
         REGISTER_APP_GROUPS: YES
-        CODE_SIGN_ENTITLEMENTS: $(SRCROOT)/../../../NativeMacGuest/NativeGuest.entitlements
+        CODE_SIGN_ENTITLEMENTS: NativeGuest.entitlements
         SWIFT_VERSION: '5.0'
-        SWIFT_OBJC_BRIDGING_HEADER: $(SRCROOT)/../../../NativeMacGuest/NativeGuest-Bridging-Header.h
+        SWIFT_OBJC_BRIDGING_HEADER: NativeGuest-Bridging-Header.h
         MARKETING_VERSION: '0.1'
         CURRENT_PROJECT_VERSION: '1'
         GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: $(SRCROOT)/../../../NativeMacGuest/Info.plist
+        INFOPLIST_FILE: Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_NativeGuestProtocolVersion: '1'
         INFOPLIST_KEY_NSHighResolutionCapable: YES
@@ -122,6 +123,6 @@ targets:
         DEVELOPMENT_TEAM: 5V64BP2H3P
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
-        TEST_HOST: $(BUILT_PRODUCTS_DIR)/RockNRoll Native Guest.app/Contents/MacOS/RockNRoll Native Guest
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Rock'N'Roll for Mac.app/Contents/MacOS/RockNRoll Native Guest
         BUNDLE_LOADER: $(TEST_HOST)
         SWIFT_VERSION: '5.0'

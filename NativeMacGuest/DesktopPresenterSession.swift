@@ -88,6 +88,7 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
     private let publish: (LKRTCVideoTrack, GuestVideoProfile) async throws -> Void
     private let unpublish: () async throws -> Void
     private let preparePrivateCamera: () async throws -> Void
+    private let mayAcquirePrivateCamera: () -> Bool
     private let makeCapture: (LKRTCVideoSource, Bool) -> any NativeDesktopPresenterCapture
     private let makeCamera: (LKRTCVideoSource) -> any GuestCameraCapture
     private let preferences: UserDefaults
@@ -99,20 +100,30 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
     private var captureOwner: PresenterCaptureOwner?
     private var retiredContentOwners: [PresenterCaptureOwner] = []
     private var cameraOwner: PresenterCaptureOwner?
-    private var cameraTrack: LKRTCVideoTrack?
+    private var cameraTrack: LKRTCVideoTrack? {
+        didSet { if cameraTrack !== oldValue { contentDraft?.invalidateBorrowedCamera() } }
+    }
     private var cameraTap: NativeDesktopCameraTap?
     private var generation = UUID(), cameraGeneration = UUID(), publicationGeneration = UUID()
     private var preparation: Task<Void, Error>?, cameraOperation: Task<Void, Error>?, publication: Task<Void, Error>?
+    private var cameraRetirement: Task<Void, Error>?
+    private var cameraReconciliation: Task<Void, Never>?
+    private var cameraRefreshRequested = false
+    private var cameraInclusionRequest = UUID()
     private var stoppingShare: Task<Void, Error>?, closing: Task<Bool, Never>?
     private var publicationMayExist = false, cleanupFailed = false, opened = false
     private var liveCameraHandover = false
+    #if DEBUG
+    var includedCameraTrackForTesting: LKRTCVideoTrack? { cameraTrack }
+    #endif
     private var profile = GuestVideoProfile(width: 1920, height: 1080, fps: 30, maximumBitrate: 18_000_000)
     private var pendingEdit: PresenterCanvasEdit?
 
     init(factory: @escaping () -> LKRTCPeerConnectionFactory?, liveCamera: @escaping () -> LKRTCVideoTrack?,
          publish: @escaping (LKRTCVideoTrack, GuestVideoProfile) async throws -> Void,
          unpublish: @escaping () async throws -> Void,
-         preparePrivateCamera: @escaping () async throws -> Void = {}, preferences: UserDefaults = .standard,
+         preparePrivateCamera: @escaping () async throws -> Void = {},
+         mayAcquirePrivateCamera: @escaping () -> Bool = { true }, preferences: UserDefaults = .standard,
          cameraLease: NativeDesktopCameraLease? = nil,
          makeCapture: @escaping (LKRTCVideoSource, Bool) -> any NativeDesktopPresenterCapture = { NativeDesktopShareCapture(source: $0, canvasOnly: $1) },
          makeCamera: @escaping (LKRTCVideoSource) -> any GuestCameraCapture = {
@@ -121,6 +132,7 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
          }) {
         factoryProvider = factory; self.liveCamera = liveCamera; self.publish = publish; self.unpublish = unpublish
         self.preparePrivateCamera = preparePrivateCamera; self.preferences = preferences
+        self.mayAcquirePrivateCamera = mayAcquirePrivateCamera
         encodingPreference = ShareEncodingPreference.saved(in: preferences)
         self.cameraLease = cameraLease ?? .shared
         self.makeCapture = makeCapture; self.makeCamera = makeCamera
@@ -150,9 +162,18 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
     private func makeContentDraft() -> NativeDesktopPresenterSession {
         if let contentDraft { return contentDraft }
         let draft = NativeDesktopPresenterSession(factory: factoryProvider,
-            liveCamera: { [weak self] in self?.cameraTrack ?? self?.liveCamera() },
+            liveCamera: { [weak self] in
+                guard let self, !liveCameraHandover else { return nil }
+                return cameraTrack ?? liveCamera()
+            },
             publish: { _, _ in throw NativeDesktopPresenterError.notReady }, unpublish: {},
-            preparePrivateCamera: preparePrivateCamera, preferences: preferences, cameraLease: cameraLease,
+            preparePrivateCamera: preparePrivateCamera, mayAcquirePrivateCamera: { [weak self] in
+                guard let self else { return false }
+                // A missing root track during startup/retirement is not free
+                // hardware. A draft waits for its supplying owner to settle.
+                return opened && !isClosing && !includeCamera && !liveCameraHandover &&
+                    cameraOwner == nil && cameraOperation == nil && cameraRetirement == nil
+            }, preferences: preferences, cameraLease: cameraLease,
             makeCapture: makeCapture, makeCamera: makeCamera)
         draft.scene = scene; draft.includeCamera = includeCamera
         draft.supportsVP9 = supportsVP9; draft.vp9UnavailableReason = vp9UnavailableReason
@@ -320,35 +341,80 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
 
     private func updateNativeOverlay(_ enabled: Bool) async {
         nativeOverlay = enabled
-        if enabled { do { try await releaseCamera() } catch { failCleanup(error) } }
+        if enabled {
+            do { try await releaseCamera() } catch { failCleanup(error) }
+            await contentDraft?.refreshBorrowedCamera()
+        }
         else if includeCamera { await refreshBorrowedCamera() }
     }
     func setIncludeCamera(_ enabled: Bool) async {
-        guard !isClosing, !cleanupFailed else { return }
+        guard !isClosing, !cleanupFailed, !enabled || !Task.isCancelled else { return }
+        let request = UUID(); cameraInclusionRequest = request
         includeCamera = enabled
-        if enabled { await refreshBorrowedCamera() }
-        else { do { try await releaseCamera() } catch { failCleanup(error) } }
+        if enabled {
+            await withTaskCancellationHandler(operation: {
+                await refreshBorrowedCamera()
+                if Task.isCancelled { await cancelCameraInclusion(request) }
+            }, onCancel: { [weak self] in
+                Task { @MainActor in await self?.cancelCameraInclusion(request) }
+            })
+        }
+        else {
+            do { try await releaseCamera() } catch { failCleanup(error) }
+            await contentDraft?.refreshBorrowedCamera()
+        }
+    }
+    private func cancelCameraInclusion(_ request: UUID) async {
+        // Only an explicit inclusion request owns consent. Canceling an older
+        // caller must not revoke a newer request or shared refresh work.
+        guard cameraInclusionRequest == request else { return }
+        cameraInclusionRequest = UUID(); includeCamera = false
+        do { try await releaseCamera() } catch { failCleanup(error) }
+        await contentDraft?.refreshBorrowedCamera()
     }
     /// Reconcile after ordinary camera changes; borrowing never changes its intent.
     func refreshBorrowedCamera() async {
+        cameraRefreshRequested = true
+        if let cameraReconciliation { await cameraReconciliation.value }
+        else {
+            let task = Task { [self] in
+                defer { cameraReconciliation = nil }
+                while cameraRefreshRequested {
+                    cameraRefreshRequested = false
+                    await reconcileCamera()
+                }
+            }
+            cameraReconciliation = task
+            await task.value
+        }
+        await contentDraft?.refreshBorrowedCamera()
+    }
+    private func reconcileCamera() async {
         guard opened, includeCamera, !nativeOverlay, !isClosing, !cleanupFailed else { return }
         let available = liveCamera()
-        guard !liveCameraHandover || available != nil else { return }
+        guard !liveCameraHandover else { return }
         if cameraTrack === available && available != nil { return }
         if cameraOwner != nil && available == nil { return }
         do { try await releaseCamera() } catch { failCleanup(error); return }
-        guard includeCamera, opened, !isClosing, !liveCameraHandover || available != nil else { return }
-        if let available { cameraTrack = available; attachCameraTap(); return }
+        guard includeCamera, opened, !nativeOverlay, !isClosing, !cleanupFailed, !liveCameraHandover else { return }
+        // The live engine may have replaced its track while a private capture
+        // stopped. Never attach the pre-suspension track after that transition.
+        if let available = liveCamera() { cameraTrack = available; attachCameraTap(); return }
+        guard mayAcquirePrivateCamera() else { return }
         let token = UUID(); cameraGeneration = token; cameraPreparing = true
         let task = Task { [self] in
             try await preparePrivateCamera()
             try Task.checkCancellation()
             guard cameraGeneration == token, includeCamera, opened, !liveCameraHandover else { throw CancellationError() }
+            guard mayAcquirePrivateCamera() else { return }
             let acquisition = try await cameraLease.acquirePrivate(owner: cameraLeaseOwner, revoke: { [weak self] in try await self?.releaseCamera() })
-            try Task.checkCancellation()
-            guard cameraGeneration == token, includeCamera, opened, !liveCameraHandover else {
+            guard !Task.isCancelled, cameraGeneration == token, includeCamera, opened, !liveCameraHandover else {
                 if case .owned(let lease) = acquisition { cameraLease.release(lease) }
                 throw CancellationError()
+            }
+            guard mayAcquirePrivateCamera() else {
+                if case .owned(let lease) = acquisition { cameraLease.release(lease) }
+                return
             }
             switch acquisition {
             case .borrowed(let track): cameraTrack = track; attachCameraTap(); return
@@ -377,7 +443,11 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
         }
         if cameraGeneration == token { cameraPreparing = false; cameraOperation = nil }
     }
-    func releasePrivateCameraBeforeLiveCapture() async throws { liveCameraHandover = true; try await releaseCamera() }
+    func beginLiveCameraHandover() {
+        liveCameraHandover = true
+        contentDraft?.invalidateBorrowedCamera()
+    }
+    func releasePrivateCameraBeforeLiveCapture() async throws { beginLiveCameraHandover(); try await releaseCamera() }
     /// Call after the ordinary camera start succeeds or fails, including failure
     /// before a local-track callback. The barrier spans the whole device handover.
     func finishLiveCameraHandover() async { liveCameraHandover = false; await refreshBorrowedCamera() }
@@ -389,14 +459,22 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
         return cameraGeneration == token && cameraOwner === owner && includeCamera && !isClosing ? device : nil
     }
     private func releaseCamera() async throws {
+        if let cameraRetirement { try await cameraRetirement.value; return }
         cameraGeneration = UUID(); cameraPreparing = false
         let operation = cameraOperation, owner = cameraOwner, lease = cameraLeaseToken
         cameraOperation = nil; cameraOwner = nil
         cameraLeaseToken = nil
         operation?.cancel(); owner?.capture.cancel(); detachCameraTap(); cameraTrack = nil; capture?.setCamera(nil)
-        _ = await operation?.result
-        do { try await owner?.stop(); if let lease { cameraLease.release(lease) } }
-        catch { cameraOwner = owner; cameraLeaseToken = lease; if let lease { cameraLease.reportFailedStop(lease) }; failCleanup(error); throw error }
+        // All callers must await the same stop. Clearing the properties alone
+        // cannot allow a new capture to reuse a lease whose device is retiring.
+        let task = Task { [self] in
+            defer { cameraRetirement = nil }
+            _ = await operation?.result
+            do { try await owner?.stop(); if let lease { cameraLease.release(lease) } }
+            catch { cameraOwner = owner; cameraLeaseToken = lease; if let lease { cameraLease.reportFailedStop(lease) }; failCleanup(error); throw error }
+        }
+        cameraRetirement = task
+        try await task.value
     }
     private func attachCameraTap() {
         detachCameraTap()
@@ -404,6 +482,10 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
         let tap = NativeDesktopCameraTap(); cameraTap = tap
         tap.onFrame = { [weak capture] pixels in capture?.setCamera(pixels) }
         cameraTrack.add(tap)
+    }
+    private func invalidateBorrowedCamera() {
+        guard cameraOwner == nil else { return }
+        detachCameraTap(); cameraTrack = nil; capture?.setCamera(nil)
     }
     private func detachCameraTap() {
         if let cameraTap { cameraTap.stop(); cameraTrack?.remove(cameraTap) }
@@ -447,7 +529,9 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
     @discardableResult func close() async -> Bool {
         if let closing { return await closing.value }
         imageImportGeneration = UUID()
+        cameraInclusionRequest = UUID()
         let staged = contentDraft; contentDraft = nil; draftObservation = nil
+        staged?.invalidateBorrowedCamera()
         opened = false; isClosing = true; generation = UUID(); cameraGeneration = UUID()
         let pending = preparation, owner = captureOwner
         pending?.cancel(); owner?.capture.cancel(); previewTrack?.isEnabled = false

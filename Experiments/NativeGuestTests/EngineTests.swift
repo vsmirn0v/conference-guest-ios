@@ -28,6 +28,7 @@ import CoreMedia
         try await statsReadValidity()
         try await codecRepairNegotiation()
         try await iceCheckingRecovery()
+        try await iceActiveIncomingDemand()
         try await iceGatheringDiagnostics()
         failedChecklistPrivacy()
         try await relayPolicy()
@@ -35,7 +36,7 @@ import CoreMedia
         frozenFrameCadence()
         duplexHardwareEvidence()
         try liveProbeAcceptance()
-        print("PASS: engine versions, permissions, admin ordering, startup mute, leave; empty viewport retires camera/screen video while retaining audio; actual unmute gate control/mute/revoke/leave; receiver identity lifecycle and authoritative publication reassociation; bounded numeric ICE diagnostics")
+        print("PASS: engine versions, permissions, admin ordering, startup mute, leave; empty viewport retires camera/screen video while retaining audio; actual unmute gate control/mute/revoke/leave; receiver identity lifecycle and authoritative publication reassociation; active-demand-qualified subscriber ICE watchdog and bounded numeric ICE diagnostics")
     }
 
     private static func iceCheckingRecovery() async throws {
@@ -43,6 +44,7 @@ import CoreMedia
             let audio = GuestSyntheticAudio(); defer { precondition(audio.terminateDevice()) }
             let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
             let peer = try GuestPeer(target: .subscriber, factory: factory); defer { peer.close() }
+            peer.setActiveIncomingMediaDemand(true)
             var delays: [UInt64] = [], releases: [() -> Void] = [], failures = 0, finished = 0
             var diagnostics: [[String: Any]] = []
             peer.iceDiagnosticForTesting = { event, fields in
@@ -55,7 +57,7 @@ import CoreMedia
             }
             peer.onFailure = { _ in failures += 1 }
             peer.iceTimerFinishedForTesting = { finished += 1 }
-            func signal(_ state: LKRTCIceConnectionState) async throws {
+            @MainActor func signal(_ state: LKRTCIceConnectionState) async throws {
                 try await guestAwait { done in
                     peer.iceEventFinishedForTesting = { done(.success(())) }
                     peer.peerConnection(peer.connection, didChange: state)
@@ -86,6 +88,94 @@ import CoreMedia
                 precondition(diagnostic["target"] as? String == "SUBSCRIBER" && diagnostic["peerID"] as? String == peer.diagnosticID)
                 precondition(diagnostic["generatedCandidates"] as? Int == 0 && diagnostic["pendingRemoteCandidates"] as? Int == 0)
             }
+        }
+    }
+
+    private static func iceActiveIncomingDemand() async throws {
+        try await exercise("subscriber-active-demand") { engine in
+            _ = try engine.prepareJoinForTesting()
+            let peer = try engine.prepareSubscriberForTesting()
+            var subscribed = Set<String>(), delays: [UInt64] = [], releases: [() -> Void] = []
+            var failures = 0, finished = 0
+            engine.mediaNotifyForTesting = { command in
+                guard let change = command["subscription"] as? [String: Any],
+                      let ids = change["trackSids"] as? [String], let enabled = change["subscribe"] as? Bool else { return }
+                if enabled { subscribed.formUnion(ids) } else { subscribed.subtract(ids) }
+            }
+            peer.iceWaitForTesting = { delay in
+                try await guestAwait { done in delays.append(delay); releases.append { done(.success(())) } }
+            }
+            peer.onFailure = { _ in failures += 1 }
+            peer.iceTimerFinishedForTesting = { finished += 1 }
+            @MainActor func signal(_ state: LKRTCIceConnectionState) async throws {
+                try await guestAwait { done in
+                    peer.iceEventFinishedForTesting = { done(.success(())) }
+                    peer.peerConnection(peer.connection, didChange: state)
+                }
+            }
+            func drain(until condition: () -> Bool) async {
+                for _ in 0..<1000 { if condition() { return }; await Task.yield() }
+                preconditionFailure("Demand-qualified ICE timer did not progress")
+            }
+            @MainActor func update(version: Int, audioMuted: Bool, videoMuted: Bool) async throws {
+                let participant: [String: Any] = [
+                    "sid": "owner", "identity": "remote", "version": version, "state": "ACTIVE", "tracks": [
+                        ["sid": "audio", "type": "AUDIO", "source": "MICROPHONE", "muted": audioMuted],
+                        ["sid": "camera", "type": "VIDEO", "source": "CAMERA", "muted": videoMuted]]]
+                try await engine.processEventForTesting(media("rtc:participants:update", ["update": ["participants": [participant]]]))
+            }
+            try await signal(.checking)
+            precondition(delays.isEmpty && failures == 0, "An empty subscriber must not arm a checking deadline")
+            try await update(version: 1, audioMuted: true, videoMuted: true)
+            precondition(subscribed == ["audio"] && delays.isEmpty,
+                         "A muted audio subscription is warm state, not active incoming-media demand")
+            try await update(version: 2, audioMuted: true, videoMuted: false)
+            await drain { releases.count == 1 }
+            try await engine.setVisibleParticipantIDs(nil)
+            precondition(delays == [10_000_000_000], "Unchanged active demand cannot extend the deadline")
+            try await update(version: 3, audioMuted: true, videoMuted: true)
+            precondition(subscribed == ["audio", "camera"], "Muted camera stays subscribed for warm resumption")
+            releases[0](); await drain { finished == 1 }
+            precondition(failures == 0, "Withdrawing active demand cancels the timer despite warm subscriptions")
+            try await update(version: 4, audioMuted: false, videoMuted: true)
+            await drain { releases.count == 2 }
+            try await engine.setVisibleParticipantIDs([])
+            precondition(delays.count == 2, "Active audio still needs ICE when video is hidden")
+            try await update(version: 5, audioMuted: true, videoMuted: true)
+            releases[1](); await drain { finished == 2 }
+            try await update(version: 6, audioMuted: true, videoMuted: false)
+            precondition(delays.count == 2, "An offscreen video cannot arm an idle subscriber")
+            try await engine.setVisibleParticipantIDs(["remote"])
+            await drain { releases.count == 3 }
+            try await signal(.connected)
+            releases[2](); await drain { finished == 3 }
+            precondition(failures == 0, "Connected state fences a resumed-demand timer")
+            try await signal(.checking); await drain { releases.count == 4 }
+            peer.close(); releases[3](); await drain { finished == 4 }
+            peer.setActiveIncomingMediaDemand(false); peer.setActiveIncomingMediaDemand(true)
+            precondition(failures == 0 && delays == Array(repeating: 10_000_000_000, count: 4),
+                         "Close fences pending timers and later demand cannot revive the peer")
+        }
+
+        for (target, state, expectedDelay) in [(GuestPeerTarget.publisher, LKRTCIceConnectionState.checking, UInt64(10_000_000_000)),
+                                               (.subscriber, .disconnected, 5_000_000_000), (.subscriber, .failed, 0)] {
+            let audio = GuestSyntheticAudio(); defer { precondition(audio.terminateDevice()) }
+            let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
+            let peer = try GuestPeer(target: target, factory: factory); defer { peer.close() }
+            var delays: [UInt64] = [], failures = 0
+            let failed = Signal()
+            peer.iceWaitForTesting = { delays.append($0) }
+            peer.onFailure = { _ in failures += 1; failed.fire() }
+            if state == .disconnected {
+                try await guestAwait { done in
+                    peer.iceEventFinishedForTesting = { done(.success(())) }
+                    peer.peerConnection(peer.connection, didChange: LKRTCIceConnectionState.connected)
+                }
+            }
+            peer.peerConnection(peer.connection, didChange: state)
+            await failed.wait()
+            precondition(failures == 1 && delays == (expectedDelay == 0 ? [] : [expectedDelay]),
+                         "Publisher checking, established disconnection and real ICE failure retain their existing recovery policy")
         }
     }
 
@@ -286,12 +376,12 @@ import CoreMedia
         precondition(GuestVideoProfile.pattern.layer["bitrate"] as? Int == encodings[0].maxBitrateBps?.intValue)
         let description = try await valid.makeOffer()
         let lines = (description["sdp"] as! String).components(separatedBy: .newlines)
-        var video = false, offered = Set<String>(), codecs = [String: String](), apt = [String: String]()
+        var video = false, offered = Set<String>(), firstPayload: String?, codecs = [String: String](), apt = [String: String]()
         for line in lines {
             if line.hasPrefix("m=") {
                 let fields = line.split(separator: " ").map(String.init)
                 video = fields.first == "m=video"
-                if video { offered.formUnion(fields.dropFirst(3)) }
+                if video { offered.formUnion(fields.dropFirst(3)); firstPayload = fields.dropFirst(3).first }
             } else if video && line.hasPrefix("a=rtpmap:") {
                 let fields = line.dropFirst(9).split(separator: " ")
                 if fields.count == 2 { codecs[String(fields[0])] = fields[1].split(separator: "/")[0].lowercased() }
@@ -305,11 +395,14 @@ import CoreMedia
                 }
             }
         }
-        let primary = offered.filter { codecs[$0] == "h264" }, repair = offered.filter { codecs[$0] == "rtx" }
-        precondition(!primary.isEmpty && !repair.isEmpty)
+        let camera = offered.filter { codecs[$0] == "h264" }, content = offered.filter { codecs[$0] == "vp9" }
+        let primary = camera.union(content), repair = offered.filter { codecs[$0] == "rtx" }
+        precondition(!camera.isEmpty && !content.isEmpty && !repair.isEmpty)
+        precondition(firstPayload.map { camera.contains($0) } == true, "H264 remains the preferred camera codec")
         precondition(offered.allSatisfy { primary.contains($0) || repair.contains($0) })
         precondition(repair.allSatisfy { apt[$0].map { primary.contains($0) } == true })
-        print("PASS: native H264 offer retains RTX with matching apt; unsupported primary rejected")
+        precondition(primary.allSatisfy { primaryID in repair.contains { apt[$0] == primaryID } })
+        print("PASS: native H264 camera offer advertises VP9 content capability and matching RTX; unsupported primary rejected")
     }
 
     private static func statsReadValidity() async throws {

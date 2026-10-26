@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Authorized synthetic Mac host/helper acceptance with an exact-process crash supervisor."""
-import argparse, datetime, json, os, pathlib, re, signal, subprocess, time
+import argparse, datetime, json, os, pathlib, re, signal, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT/'NativeMacGuest/distribution'))
+from build_support import application_executable, installed_application
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--invite-file', required=True, type=pathlib.Path)
 p.add_argument('--derived-data', type=pathlib.Path, default=ROOT/'.build/udp-sdk-comparison/DerivedData')
@@ -10,7 +12,7 @@ a = p.parse_args()
 run = ROOT/'.build/native-guest'/('integration-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
 run.mkdir(mode=0o700, parents=True)
 probe = ROOT/'.build/native-guest/NativeGuestProbe'
-app_executable = '/Applications/RockNRoll Native Guest.app/Contents/MacOS/RockNRoll Native Guest'
+app_executable = str(application_executable(installed_application('/Applications')))
 env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 env['TEST_RUNNER_ROCKNROLL_TEST_NATIVE_COMPANION_INVITE'] = a.invite_file.read_text().strip()
 env['TEST_RUNNER_ROCKNROLL_TEST_NATIVE_COMPANION_CRASH_SUPERVISOR'] = '1'

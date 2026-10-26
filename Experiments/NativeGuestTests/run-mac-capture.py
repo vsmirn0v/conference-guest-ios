@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Installed native companion physical capture qualification; synthetic two-party room."""
-import argparse, datetime, hashlib, http.server, json, os, pathlib, re, secrets, signal, subprocess, threading, time
+import argparse, datetime, hashlib, http.server, json, os, pathlib, re, secrets, signal, subprocess, sys, threading, time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT/'NativeMacGuest/distribution'))
+from build_support import application_executable, installed_application
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--derived-data', type=pathlib.Path, default=ROOT/'.build/udp-sdk-comparison/DerivedData')
 p.add_argument('--destination', default='platform=macOS,arch=arm64')
@@ -14,10 +16,12 @@ run = ROOT/'.build/native-guest'/('capture-'+datetime.datetime.now().strftime('%
 run.mkdir(mode=0o700, parents=True)
 ipc = run/'peer-control'; ipc.mkdir(mode=0o700)
 probe = ROOT/'.build/native-guest/NativeGuestProbe'
-helper = '/Applications/RockNRoll Native Guest.app/Contents/MacOS/RockNRoll Native Guest'
+app = installed_application('/Applications')
+helper = str(application_executable(app))
 manifest = json.loads(a.manifest.read_text())
 def verify_artifact():
-    app = pathlib.Path('/Applications/RockNRoll Native Guest.app')
+    if installed_application('/Applications') != app:
+        raise RuntimeError('Installed companion location changed; reject measurement')
     for relative, expected in manifest['artifacts'].items():
         if hashlib.sha256((app/relative).read_bytes()).hexdigest() != expected:
             raise RuntimeError('Installed companion changed; reject measurement')

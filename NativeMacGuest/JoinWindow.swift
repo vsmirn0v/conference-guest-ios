@@ -13,7 +13,7 @@ import AppKit
                           styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         super.init()
         window.isReleasedWhenClosed = false
-        window.title = "Rock’n’Roll Native Guest · Beta"
+        window.title = "Rock'N'Roll for Mac"
         window.delegate = self
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading
         stack.spacing = 12; stack.translatesAutoresizingMaskIntoConstraints = false
