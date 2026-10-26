@@ -48,6 +48,8 @@ int main(void) {
         ScreenCapturePickerSession *general = [[ScreenCapturePickerSession alloc] initWithCoordinator:coordinator];
         NSCAssert([general presentWithError:&error], @"General request"); Pump();
         NSCAssert(picker.style == 0 && picker.presentations == 2, @"General UI must not be forced to window mode");
+        NSCAssert([[picker.defaultConfiguration valueForKey:@"allowedPickerModes"] unsignedIntegerValue] == 31,
+                  @"General selection must explicitly allow all five public modes; zero can silently reject the chooser");
         __block BOOL rejected = NO;
         picker.onRemove = ^{
             ScreenCapturePickerSession *replacement = [[ScreenCapturePickerSession alloc] initWithCoordinator:coordinator];

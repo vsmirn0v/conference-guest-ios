@@ -187,8 +187,12 @@ static NSString *ContentRectKey, *ScaleFactorKey, *ContentScaleKey, *FrameStatus
     NSObject *configuration = [NSClassFromString(@"SCContentSharingPickerConfiguration") new];
     if (configuration && [_picker respondsToSelector:@selector(setDefaultConfiguration:)] &&
         [configuration respondsToSelector:@selector(setAllowedPickerModes:)]) {
+        // Enumerate Apple's five public modes explicitly. Although zero is
+        // documented as unrestricted, Control Center can reject it as an
+        // invalid configuration without delivering a picker failure callback.
+        NSUInteger allModes = (1UL << 0) | (1UL << 1) | (1UL << 2) | (1UL << 3) | (1UL << 4);
         NSUInteger modes = session.selectionMode == MacScreenCaptureSelectionModeWindow ? (1UL << 0) :
-                           session.selectionMode == MacScreenCaptureSelectionModeDisplay ? (1UL << 4) : 0;
+                           session.selectionMode == MacScreenCaptureSelectionModeDisplay ? (1UL << 4) : allModes;
         [configuration setAllowedPickerModes:modes];
         [_picker setDefaultConfiguration:configuration];
     }
