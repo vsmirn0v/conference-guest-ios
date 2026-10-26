@@ -58,7 +58,7 @@ separately after validation.
   startup with enough margin for the observed cold path.
 - Physical first microphone enable: 1.81 seconds, of which 1.806 seconds awaited
   unmute confirmation and about 1 ms activated the device. Subsequent enables took
-  69/70 ms. Input/output were 48 kHz, normal voice processing remained active, incoming
+  69/70 ms. Input/output were 48 kHz / 44.1 kHz, normal voice processing remained active, incoming
   audio samples advanced throughout, and all camera streams decoded at the receiver.
 - Maximum sampled MainActor interval during live setup/toggles: 221 ms; no operation
   timed out. Microphone permission now distinguishes denial from device failure.
@@ -68,3 +68,22 @@ separately after validation.
 The earlier physical test timeouts were waits for human permission approval, before
 joining or opening capture hardware. Those failed runs are retained. The user then
 allowed microphone and camera, and the subsequent actual-device runs passed.
+
+## Exact Release 31 qualification
+
+- Source `e1aac06`; all 173 production-source hashes match the archive.
+- Developer ID app notarization, staple, Gatekeeper, sandbox/app-group checks and
+  Production CloudKit fixture write/verify/cleanup passed. Archive/export/dSYM and
+  r5 framework UUIDs match. The outer DMG itself is not notarized; its mounted app
+  retains the accepted notarized signature and staple.
+- The first production OCR capture succeeded without retry or timeout. Preparation
+  was still visible at 51.956 seconds and selectable text was observed at 63.495
+  seconds; this observation interval is not a precise recognition duration. Native
+  English Copy and Russian Copy after window resizing and source termination passed.
+- The exact Release camera control showed startup progress and canceled on a second
+  click. The microphone control likewise showed progress, but its fresh signed-app
+  permission decision requires activating/approving the Release app before actual
+  unmute can be accepted. Development-app physical media checks already passed.
+- Signed feed and immutable DMG were prepared and remote publication preflight
+  passed. Publication/readback and actual 30-to-31 update remain gated on the signed
+  Release microphone check; build 31 has not been published at this checkpoint.
