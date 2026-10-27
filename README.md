@@ -40,7 +40,12 @@ swift test --package-path ConferenceCore
 open RockNRoll.xcodeproj
 ```
 
-The app is signed with developer team `5V64BP2H3P`. `project.yml` generates the checked-in Xcode project. The guest integration uses unchanged pinned upstream wrappers and a checksum-pinned rebuilt open-source WebRTC artifact. A build script copies provider resources and verifies the rebuilt component is embedded. SDK binaries are not committed. See [dependency preparation](Dependencies/guest-sdk/README.md).
+The app is signed with developer team `5V64BP2H3P`. `project.yml` generates the checked-in Xcode project. The iOS guest integration uses unchanged pinned upstream wrappers and a checksum-pinned rebuilt open-source WebRTC artifact. A build script copies provider resources and verifies the rebuilt component is embedded. Its binaries are fetched rather than committed. See [iOS dependency preparation](Dependencies/guest-sdk/README.md).
+
+The separate **native Mac app** has a committed, checksum-pinned M156 build SDK
+with development headers. Start with `python3 NativeMacGuest/bootstrap.py`, then
+`python3 NativeMacGuest/build.py --compile-only` for an unsigned compile check.
+See [native Mac prerequisites, signing and dependency preparation](Dependencies/native-macos/README.md).
 
 `RockNRollUITests.testCommunityJamConnectsMuted` exercises the public test room on an attached iPhone. The test file also covers layout in both orientations, a saved display name, chat, and native link handoff. Live media and CallKit behavior need a device; the simulator is useful for the home screen and core logic. App Store screenshots are in [AppStore/Screenshots](AppStore/Screenshots/). See the [current validation](docs/validation-2026-09-24.md), [earlier device coverage](docs/validation-2026-09-23.md), and [App Store preparation](docs/app-store-preparation-plan.md).
 

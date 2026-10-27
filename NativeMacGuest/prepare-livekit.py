@@ -8,8 +8,9 @@ import plistlib
 import shutil
 import subprocess
 
+from native_dependencies import (SDK_REVISION, ensure_framework, ensure_livekit_source)
 
-SDK_REVISION = "57a84d71c33e97349963c1cbd442fb4b01428b7c"
+
 REPOSITORY = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST_DEPENDENCY = '.package(url: "https://github.com/livekit/webrtc-xcframework.git", exact: "150.7871.02")'
 
@@ -92,8 +93,10 @@ let package = Package(name: "LiveKitWebRTC", platforms: [.macOS(.v13)],
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=pathlib.Path, default=REPOSITORY / ".build/native-mac-guest-m156/HostDerivedData/SourcePackages/checkouts/client-sdk-swift")
-    parser.add_argument("--framework", type=pathlib.Path, default=REPOSITORY / ".build/webrtc-m156-port/native-framework/LiveKitWebRTC.xcframework")
+    parser.add_argument("--source", type=pathlib.Path, help="Clean pinned LiveKit checkout; fetched automatically when omitted")
+    parser.add_argument("--framework", type=pathlib.Path, help="Custom XCFramework; the committed native SDK is used when omitted")
     parser.add_argument("--destination", type=pathlib.Path, default=REPOSITORY / ".build/native-desktop-dependencies")
     options = parser.parse_args()
-    prepare(options.source, options.framework, options.destination)
+    source = options.source if options.source is not None else ensure_livekit_source()
+    framework = options.framework if options.framework is not None else ensure_framework() / "LiveKitWebRTC.xcframework"
+    prepare(source, framework, options.destination)

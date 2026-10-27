@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Provision/build the external Mac companion; never modify the iOS app bundle."""
 import argparse, hashlib, json, os, pathlib, plistlib, re, shutil, subprocess, tempfile
+from native_dependencies import ensure_framework
 from distribution.build_support import (APP_NAME, APP_BUNDLE_NAME, EXECUTABLE_NAME,
     application_executable, configure_distribution, find_application, installation_destination, resolve_source_paths)
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser()
-p.add_argument('--identity', required=True, help='Apple Development signing identity for the final provisioned bundle')
+p.add_argument('--identity', help='Apple Development signing identity for the final provisioned bundle')
+p.add_argument('--compile-only', action='store_true', help='Compile without signing or running the app; no Apple team membership required')
 p.add_argument('--install', action='store_true', help='Install the verified build in /Applications (required by the host sandbox)')
 p.add_argument('--allow-provisioning-updates', action='store_true', help='Allow Xcode to register/update the Mac app-group profile')
 p.add_argument('--framework-root', type=pathlib.Path, default=ROOT/'.build/webrtc-m156-desktop-audio/native-framework-screen-r5',
@@ -18,6 +20,10 @@ p.add_argument('--version', default='0.1')
 p.add_argument('--build-number', default='1')
 p.add_argument('--archive', action='store_true', help='Create an Xcode archive for later TestFlight distribution')
 a = p.parse_args()
+if a.compile_only and (a.install or a.archive):
+    p.error('--compile-only cannot install or archive an unsigned build')
+if not a.compile_only and not a.identity:
+    p.error('--identity is required for a signed build; use --compile-only for a compile check')
 if not a.version or not a.build_number.isdecimal() or int(a.build_number) < 1:
     raise SystemExit('A nonempty version and positive numeric build number are required')
 build = a.output_dir.resolve()
@@ -26,7 +32,7 @@ project = build/'Project'; project.mkdir(parents=True, exist_ok=True)
 env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 # The helper explicitly controls InputMixer mute. The shipping framework clears
 # it on StartRecording; this isolated native artifact preserves that intent.
-framework_root = a.framework_root.resolve()
+framework_root = ensure_framework(a.framework_root)
 framework_evidence = json.loads((framework_root/'build-evidence.json').read_text())
 framework_binary = framework_root/'LiveKitWebRTC.xcframework/macos-arm64/LiveKitWebRTC.framework/LiveKitWebRTC'
 if hashlib.sha256(framework_binary.read_bytes()).hexdigest() != framework_evidence['frameworkBinarySHA256']:
@@ -60,6 +66,8 @@ try:
            '-configuration',a.configuration,'-destination','platform=macOS,arch=arm64','-derivedDataPath',str(build/'Xcode'),
            '-jobs','4',
            'MARKETING_VERSION='+a.version,'CURRENT_PROJECT_VERSION='+a.build_number]
+    if a.compile_only:
+        cmd.append('CODE_SIGNING_ALLOWED=NO')
     if a.allow_provisioning_updates: cmd.append('-allowProvisioningUpdates')
     subprocess.run(cmd+['build'],env=env,check=True)
     if a.archive:
@@ -69,6 +77,9 @@ try:
 finally:
     generated_spec.unlink(missing_ok=True)
 app = build/'Xcode/Build/Products'/a.configuration/APP_BUNDLE_NAME
+if a.compile_only:
+    print('Unsigned compile check passed: ' + str(app))
+    raise SystemExit(0)
 info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
 if any(info.get(key) != APP_NAME for key in ('CFBundleName', 'CFBundleDisplayName')):
     raise SystemExit('Built app name differs from the requested product')
@@ -91,6 +102,7 @@ sources += sorted((ROOT/'ConferenceCore/Sources').rglob('*.swift'))+[ROOT/'Confe
 sources = sorted(set(sources))
 sources += [ROOT/'NativeMacGuest/Info.plist',ROOT/'NativeMacGuest/NativeGuest.entitlements',ROOT/'NativeMacGuest/project.yml',ROOT/'NativeMacGuest/build.py']
 sources += [ROOT/'NativeMacGuest/prepare-livekit.py',dependency_root/'native-livekit.json']
+sources += [ROOT/'NativeMacGuest/native_dependencies.py', ROOT/'Dependencies/native-macos/sdk.lock.json']
 sources += sorted(x for x in (ROOT/'NativeMacGuest/distribution').rglob('*')
                   if x.is_file() and x.suffix in {'.py', '.txt'} and '__pycache__' not in x.parts) + distribution_inputs
 sources += sorted(x for x in (ROOT/'NativeMacGuest/Assets.xcassets').rglob('*') if x.is_file())

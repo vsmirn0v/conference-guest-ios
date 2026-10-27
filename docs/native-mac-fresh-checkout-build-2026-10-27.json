@@ -1,0 +1,36 @@
+{
+  "date": "2026-10-27",
+  "baseCommit": "8a3f8732a50aee903b403d52db2aaf06e27f6100",
+  "method": "git archive of staged dependency-fix tree into an empty directory; no author .build tree or uncommitted microphone Swift sources copied",
+  "inputTree": "089e1467ef1426d9e1e4ffca399debf03385e02d",
+  "commands": [
+    "python3 NativeMacGuest/bootstrap.py",
+    "python3 NativeMacGuest/build.py --compile-only --output-dir .build/native-clean-build",
+    "python3 -m unittest discover -s NativeMacGuest/Tests -p test_native_dependencies.py -v"
+  ],
+  "result": "BUILD SUCCEEDED",
+  "dependencyTests": {
+    "passed": 8,
+    "failed": 0
+  },
+  "platform": "macOS arm64",
+  "xcode": "27.0",
+  "nativeSDK": {
+    "archive": "LiveKitWebRTC-m156-screen-r5.tar.gz",
+    "archiveSHA256": "9a8bd477b61fcce5c9e482b0ddaa31f3a91f3daee4352a418b2bc0368f65b52c",
+    "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+    "headersAndModuleMapsVerified": true,
+    "webrtcRevision": "19576e37870bfe5a0a910a32f98ff411f722f43a"
+  },
+  "livekitSwiftRevision": "57a84d71c33e97349963c1cbd442fb4b01428b7c",
+  "appExecutableSHA256": "6078dddf8bb1d60dbf732fde1d3aefe57d6a839c672e361c00e1316d86dd92f5",
+  "signingEnabled": false,
+  "installedOrLaunched": false,
+  "cloudKitOrHandoffRuntimeValidation": false,
+  "iOSBuildOrPublication": false,
+  "logs": [
+    "/tmp/rock-native-sdk-fresh-bootstrap-20261027.log",
+    "/tmp/rock-native-sdk-fresh-build-20261027.log",
+    "/tmp/rock-native-sdk-snapshot-tests-20261027.log"
+  ]
+}
