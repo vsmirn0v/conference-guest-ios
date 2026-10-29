@@ -1,0 +1,318 @@
+{
+  "sourceCommit": "0dab7e427f388c3f760dc33119c84a09d26f43f0",
+  "verifiedAtUTC": "2026-10-29T13:53:49.480840+00:00",
+  "release": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "32",
+    "file": "RockNRoll-0.3.0-32-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-32-arm64.dmg",
+    "sha256": "ea324d2e8568ff9e1509690e0b36c24cfcdc457f63dcbe60d5a4efc830a54690",
+    "length": 15536909,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false
+  },
+  "qualification": {
+    "version": "0.3.0",
+    "build": "32",
+    "archiveExportDSYMUUIDMatch": true,
+    "appUUIDs": {
+      "archive": "UUID: 5AA6DDCD-0A3F-3FA4-9DF0-25CC22F6BE56",
+      "export": "UUID: 5AA6DDCD-0A3F-3FA4-9DF0-25CC22F6BE56",
+      "dSYM": "UUID: 5AA6DDCD-0A3F-3FA4-9DF0-25CC22F6BE56"
+    },
+    "frameworkUUIDs": {
+      "candidate": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D",
+      "archive": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D",
+      "export": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D"
+    },
+    "r5FrameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+    "exportExecutableSHA256": "4faeb24c2078e0fac7d2f2a46613aa141b66fae1c00d8793d36505dd1e03656a",
+    "architecture": "arm64",
+    "sandbox": true,
+    "cloudEnvironment": "Production",
+    "team": "5V64BP2H3P",
+    "debuggerEntitlement": false,
+    "signatureValid": true,
+    "stapleValid": true,
+    "gatekeeperAccepted": true,
+    "appGroupContainerPassed": true,
+    "cloudFixture": {
+      "phases": {
+        "write": true,
+        "verify": true,
+        "cleanup": true
+      }
+    },
+    "sourceHashValidation": true,
+    "sourceCount": 177
+  },
+  "publication": {
+    "artifact": {
+      "file": "RockNRoll-0.3.0-32-arm64.dmg",
+      "sha256": "ea324d2e8568ff9e1509690e0b36c24cfcdc457f63dcbe60d5a4efc830a54690",
+      "length": 15536909
+    },
+    "state": {
+      "appcastSHA256": "61d572da32abb5b6d2dff7c12cf187e1ea0282877660a8b388787a74bb7e8403",
+      "inventorySHA256": "4dac54e440f5ede4951de5153f42a4a59db5807839071b345e81bf1328a1de96",
+      "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-32-arm64.dmg"
+    },
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "appcast.xml": {
+      "url": "https://rock.glowsoft.ru/mac/appcast.xml",
+      "sha256": "61d572da32abb5b6d2dff7c12cf187e1ea0282877660a8b388787a74bb7e8403",
+      "length": 5768
+    },
+    "latest.json": {
+      "url": "https://rock.glowsoft.ru/mac/latest.json",
+      "sha256": "4dac54e440f5ede4951de5153f42a4a59db5807839071b345e81bf1328a1de96",
+      "length": 487
+    },
+    "immutable": {
+      "url": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-32-arm64.dmg",
+      "sha256": "ea324d2e8568ff9e1509690e0b36c24cfcdc457f63dcbe60d5a4efc830a54690",
+      "length": 15536909
+    },
+    "beta": {
+      "url": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+      "sha256": "ea324d2e8568ff9e1509690e0b36c24cfcdc457f63dcbe60d5a4efc830a54690",
+      "length": 15536909
+    },
+    "stable": {
+      "url": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+      "sha256": "e9c7c9ddab9c7b10b81fd52da5b7fb54404b9e12cc1e5e29c6292fffe9625a21",
+      "length": 15334524
+    },
+    "verifiedAtUTC": "2026-10-29T13:51:58.332930+00:00",
+    "betaBuild": "32",
+    "stableBuild": "25"
+  },
+  "changes": [
+    "Configurable microphone readiness on meeting join to avoid first-unmute device startup; preparation defaults to external power and can be disabled or explicitly enabled on battery.",
+    "Brief private camera priming after joining; camera metadata discovery completes before media playback to avoid a measured main-thread device-discovery stall.",
+    "Low Power Mode suppresses automatic preparation; existing active media is not torn down by power-policy changes.",
+    "AirPods startup gate accepts measured callback cadence while requiring stable full format and genuine callback advancement; mute/unmute retains the media graph.",
+    "Bound the complete asynchronous join sequence with the existing 45-second deadline; timeout/cancel retires late callbacks and prevents unsafe retry until cleanup completes."
+  ],
+  "unchanged": [
+    "Native VPIO backend and normal echo cancellation",
+    "Locked WebRTC framework shared with build31",
+    "iOS app",
+    "Stable channel build25"
+  ],
+  "validation": {
+    "fullMacXCTest": {
+      "executed": 133,
+      "passed": 129,
+      "skipped": 4,
+      "failed": 0,
+      "excluded": "Separate physical/live/CloudKit suites; exact exported app validated separately below.",
+      "skips": "Offline layout fixture and three optional large-room live performance cases."
+    },
+    "distributionTestsPassed": 27,
+    "focusedStandaloneSuitesPassed": [
+      "session",
+      "camera-readiness",
+      "camera-metadata",
+      "system-audio",
+      "power-policy",
+      "dependency-bootstrap",
+      "engine",
+      "async",
+      "frame-timeline",
+      "frame-counter",
+      "companion-policy",
+      "meeting-features"
+    ],
+    "review": "6-astra xhigh final source and publication gate: GO, no actionable blockers",
+    "strictPrearchiveMatrix": [
+      {
+        "scenario": "normal",
+        "routeSamples": 189,
+        "routeVariants": 1,
+        "continuityGate350msPassed": true,
+        "continuity": {
+          "decodedNonzeroProgressGap": 42.569666635245085,
+          "decodedVideoProgressGap": 317.61791673488915,
+          "maxActorInterval": 32.59808337315917,
+          "physicalPlayoutNonzeroProgressGap": 217.60345832444727,
+          "pollInterval": 20,
+          "scope": "Connected boundary through controls and steady receive; raw initialization retained separately"
+        },
+        "microphoneControlsMS": [
+          109.11379160825163,
+          111.36762495152652,
+          111.47841671481729
+        ],
+        "allControlCyclesStable": true,
+        "startupGateClosedEnergy": 0,
+        "idleRoutesRestoredExactly": true,
+        "peerClean": true,
+        "releaseConfirmed": true,
+        "wholeDeviceEnergyMeasured": false
+      },
+      {
+        "scenario": "empty",
+        "routeSamples": 197,
+        "routeVariants": 1,
+        "continuityGate350msPassed": true,
+        "continuity": {
+          "decodedNonzeroProgressGap": 33.751041744835675,
+          "decodedVideoProgressGap": 114.95637497864664,
+          "maxActorInterval": 33.81933330092579,
+          "physicalPlayoutNonzeroProgressGap": 115.67883333191276,
+          "pollInterval": 20,
+          "scope": "Connected boundary through controls and steady receive; raw initialization retained separately"
+        },
+        "microphoneControlsMS": [
+          128.43495840206742,
+          111.91674997098744,
+          155.08187492378056
+        ],
+        "allControlCyclesStable": true,
+        "startupGateClosedEnergy": 0,
+        "idleRoutesRestoredExactly": true,
+        "peerClean": true,
+        "releaseConfirmed": true,
+        "wholeDeviceEnergyMeasured": false
+      },
+      {
+        "scenario": "silent",
+        "routeSamples": 194,
+        "routeVariants": 1,
+        "continuityGate350msPassed": true,
+        "continuity": {
+          "decodedNonzeroProgressGap": 35.710208234377205,
+          "decodedVideoProgressGap": 256.76083331927657,
+          "maxActorInterval": 35.710208234377205,
+          "physicalPlayoutNonzeroProgressGap": 219.53154169023037,
+          "pollInterval": 20,
+          "scope": "Connected boundary through controls and steady receive; raw initialization retained separately"
+        },
+        "microphoneControlsMS": [
+          152.75350003503263,
+          112.54804162308574,
+          157.17708342708647
+        ],
+        "allControlCyclesStable": true,
+        "startupGateClosedEnergy": 0,
+        "idleRoutesRestoredExactly": true,
+        "peerClean": true,
+        "releaseConfirmed": true,
+        "wholeDeviceEnergyMeasured": false
+      }
+    ],
+    "exactReleaseSmoke": {
+      "version": "0.3.0",
+      "build": "32",
+      "exportExecutableSHA256": "4faeb24c2078e0fac7d2f2a46613aa141b66fae1c00d8793d36505dd1e03656a",
+      "method": "Normal notarized Release app launched with --standalone; CUA user controls; archived bt8 independent synthetic sender/receiver; real system media devices. No DEBUG hooks in Release. Volatile readiness arguments enabled policy on battery for test only.",
+      "cases": [
+        {
+          "route": "AirPods Pro",
+          "normalReleaseUI": true,
+          "connected": true,
+          "peerFailure": false,
+          "receivedAudioPackets": 517,
+          "receivedAudioSamples": 2208000,
+          "receivedAudioEnergy": 4.253180934116244,
+          "receivedCameraFrames": 687,
+          "longestCameraFrameGapSeconds": 0.2175138333113864,
+          "muteAndCameraOffVerified": true,
+          "leaveReturnedHome": true,
+          "deviceIdleAfterLeave": true,
+          "defaultRouteStableAcrossJoinLeave": true,
+          "peerCleanExit": true
+        },
+        {
+          "route": "Built-in microphone and speakers",
+          "normalReleaseUI": true,
+          "connected": true,
+          "peerFailure": false,
+          "receivedAudioPackets": 1059,
+          "receivedAudioSamples": 1403040,
+          "receivedAudioEnergy": 4341.100064200349,
+          "receivedCameraFrames": 504,
+          "longestCameraFrameGapSeconds": 0.7979398333700374,
+          "muteAndCameraOffVerified": true,
+          "leaveReturnedHome": true,
+          "deviceIdleAfterLeave": true,
+          "defaultRouteStableAcrossJoinLeave": true,
+          "peerCleanExit": true
+        }
+      ],
+      "incomingSyntheticVideoVisuallyVerified": true,
+      "connectedBeyondJoinDeadline": true,
+      "cloudHomeState": "Up to date",
+      "allThreeJoinsAcknowledgedLeaveAndStoppedEngine": true,
+      "originalAirPodsRouteRestored": true,
+      "allAudioDevicesIdleAtCompletion": true,
+      "installedBuild31Unchanged": true,
+      "humanVoiceEvidence": "Earlier bt7 exact same audio implementation and locked SDK: both speech recordings clear and complete, no echo/gaps; live participant playback clear and steady. This Release UI run is automated, not a new human voice-quality test.",
+      "limitations": [
+        "Not a new long-duration soak or whole-device energy measurement",
+        "Prior bt4/bt5 diagnostic startup hangs have unknown root cause; reviewed outer join deadline and late-callback/cleanup tests bound suspended async startup, not synchronous MainActor/native deadlocks"
+      ]
+    },
+    "humanAirPodsAcceptance": {
+      "candidate": "bt7, same audio source/locked SDK as bt8; bt8 moved camera metadata earlier",
+      "duplex": "Clear and complete; no echo or gaps",
+      "nearend": "Clear and complete; no gaps",
+      "liveRemoteSpeech": "Yes, clear and steady",
+      "newReleaseHumanVoiceRetest": false
+    },
+    "updateSafety": {
+      "activeMeetingDeferralRegressionTestsPassed": true,
+      "automaticInstall32Executed": false,
+      "note": "Existing updater unchanged. Publication and signature verification passed. Installed build31 was preserved; this run launches the exact exported build32 directly."
+    },
+    "harnessCorrections": [
+      "Generated-project fixture package paths corrected to match production output-local dependency layout; 27 distribution tests then passed.",
+      "First Release synthetic peer expired before control testing; restarted fixture and both final Release cases passed."
+    ],
+    "strictPrearchiveMatrixProvenance": {
+      "artifact": "bt8 DEBUG diagnostic",
+      "executableSHA256": "6b59b067a3a853acb7fa7a072486cc047cb1a667552d41b78e55db31403c3636",
+      "debugDylibSHA256": "31244525629dbe9ea3d5c2a820fbd0fb29b3aa4069040a5c22320953d80c812e",
+      "sourceBoundary": "Measured before the final asynchronous join-deadline containment patch. The published Release32 artifact received the separately recorded exactReleaseSmoke; the strict timing matrix was not rerun on that final artifact."
+    }
+  },
+  "cleanup": {
+    "testProcessesExited": true,
+    "allAudioDevicesIdle": true,
+    "originalAirPodsInputOutputRestored": true,
+    "installedBuild31Unchanged": true,
+    "originalAppLaunchRegistrationRestored": true
+  },
+  "stableBuildPreserved": "25",
+  "evidenceSHA256": {
+    ".build/native-beta-release-20261029/qualification32.json": "1c33e261932d2c9ccbea8d36b885cc689458dde92069eaa13d1256cf8a87cd5e",
+    ".build/native-beta-release-20261029/release32-runtime-validation.json": "f6aa7d7b5c4b6a7ffc326b8f31ec276027c3f3e970d86c2d178c48ea141c3ad4",
+    ".build/native-beta-release-20261029/tests-debug-full.log": "35028b2b09c15ccea1b4f3f5649750cbe354f976c6d3c8eecaa4cafda1ca44d6",
+    ".build/native-beta-release-20261029/distribution-final-27.log": "e0424596494c88d64c3ef4f86d4ca332f35e509b57772173c56081414a24f201",
+    ".build/native-beta-release-20261029/system-audio.log": "58c0f9c4b603c8e79f2f0774283ed125ad033972cf8e3aa254e3f499cbeb9a28",
+    ".build/native-beta-release-20261029/power.log": "51bee001ffa2d0c9a46039d30b1eb50fcdce3c6883c006c80611fae429a03115",
+    ".build/native-beta-release-20261029/session.log": "30ea4203a40ad2a298b5521c8f6ad479befa15d31eab44fe1403938f5fe387a7",
+    ".build/native-beta-release-20261029/camera-metadata.log": "4c7f6c969f36260ecfd9da1d78f730af23e894b044bf1303a03eb4920697f9c8",
+    ".build/native-beta-release-20261029/dependency.log": "48e249d657cce337a3416a7a3561de15f90bc38e3b9c0dd59b337dae3675fdf2",
+    ".build/native-beta-release-20261029/build/build-evidence.json": "59545714b1b0c42120b15a04144c66cba45eb517afe376a1cf36b4fac1e66b35",
+    ".build/native-beta-release-20261029/export/export-evidence.json": "08389a399c1177b34ddd36f6d85008ce56fb38339218df305b01b5a54ab6731c",
+    ".build/native-beta-release-20261029/publication32.json": "c5a897269e6a1f0efee71d9c21b12b8ae06141b151380af61623e69928f3860f",
+    ".build/native-beta-release-20261029/https-readback.json": "a4cbf3fdec8f3eda415240d0510ba6b818d1fbd7e5ffb990414ef8665f1d776f",
+    ".build/native-beta-release-20261029/routes-final.json": "d42dd32b9a278035d22699c08df9efc6ed176b5704dfb072116139c690fd3891",
+    ".build/media-startup-airpods-20261029/diagnostic-build-evidence-bt8.json": "ab576842ef9beddb05ccba0b00c0df1a1afff894849a66fc3d8f2268726c76da",
+    ".build/media-startup-airpods-20261029/clean-build-evidence-bt8.json": "14ba27ec47b70b099f392a0fc49fca329a09064de806f61fbcc6a3fe7e7b59f3",
+    ".build/media-startup-airpods-20261029/voice-bt7/human-duplex.json": "c7e5f2f7ff54b78e71b342401d31226bcc5f008cdc385e23ce74a6051655e6f2",
+    ".build/media-startup-airpods-20261029/voice-bt7/human-nearend-and-live.json": "7c9f2e191eca6c66a8b325d49c07066884d37c251b5a9458dc051a329fcbc154",
+    ".build/media-startup-airpods-20261029/analysis-bt8-normal.json": "f18aae0ef215d722e5ff45215d76b6cef498a841a3693dbf7e7dc841b43deca4",
+    ".build/media-startup-airpods-20261029/analysis-bt8-empty.json": "820f0681fa39f4b79b92ae2817e37d98d919d0185a433219e12ab69f20ebfde9",
+    ".build/media-startup-airpods-20261029/analysis-bt8-silent.json": "61ecae62833009b8069d9bf58f3f819ebe045ccb2d074005afdf029f8e4909ee"
+  }
+}
