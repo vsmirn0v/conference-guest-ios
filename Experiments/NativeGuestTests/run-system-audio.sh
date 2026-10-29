@@ -10,6 +10,7 @@ xcrun --sdk macosx swiftc -swift-version 5 -parse-as-library -target arm64-apple
     -F "$framework_dir" -framework LiveKitWebRTC -Xlinker -rpath -Xlinker "$framework_dir" \
     "$repo_dir/Shared/GuestAudioProfile.swift" "$repo_dir/Shared/GuestAudioOwnerLease.swift" "$repo_dir/Experiments/NativeGuest/GuestSyntheticAudio.swift" \
     "$repo_dir/Experiments/NativeGuest/GuestSystemAudio.swift" "$repo_dir/Experiments/NativeGuest/NativeScreenEncoderQuality.swift" \
+    "$repo_dir/Experiments/NativeGuest/GuestStartupAudio.swift" \
     "$repo_dir/Experiments/NativeGuest/ProbeLog.swift" \
     "$tests_dir/GuestSystemAudioTests.swift" \
     -o "$build_dir/system-audio-tests"

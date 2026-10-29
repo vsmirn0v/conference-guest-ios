@@ -24,10 +24,16 @@ private final class FakeEngine: GuestSessionEngine {
     var onPermissionsChange: ((GuestMediaPermissions) -> Void)?
     var mediaPermissions = GuestMediaPermissions(canShareMicrophone: true, canShareCamera: true)
     var microphoneActivations = 0
+    var startupEvents: [String] = []
     var playoutChanges: [Bool] = []
     var microphoneActivationGate: Gate?
     var playoutGate: Gate?
-    func activateMicrophone() async throws { microphoneActivations += 1; await microphoneActivationGate?.wait() }
+    var startupGate: Gate?
+    var startupWaits = 0, startupReleases = 0
+    var onStartupReady: (() -> Void)?
+    func waitForStartupAudio() async throws { startupWaits += 1; await startupGate?.wait(); onStartupReady?() }
+    func releaseStartupAudio() -> Bool { startupReleases += 1; return true }
+    func activateMicrophone() async throws { startupEvents.append("microphone"); microphoneActivations += 1; await microphoneActivationGate?.wait() }
     func setPlayoutEnabled(_ enabled: Bool) async throws { playoutChanges.append(enabled); await playoutGate?.wait() }
     var assignedSessionID = "server-session"
     var joinError: Error?
@@ -48,6 +54,7 @@ private final class FakeEngine: GuestSessionEngine {
     var resumedPublication: (Bool, Bool, Bool)?
     var leaves: [Bool] = []
     func join(_ invitation: GuestInvitation, sessionID: String?) async throws {
+        startupEvents.append("join")
         joins.append(sessionID)
         self.sessionID = assignedSessionID
         await joinGate?.wait() // Deliberately ignores cancellation, testing stale completion.
@@ -55,6 +62,7 @@ private final class FakeEngine: GuestSessionEngine {
         if let joinError { throw joinError }
     }
     func publishPattern(codec: String, camera: Bool, audioMuted: Bool, videoMuted: Bool) async throws {
+        startupEvents.append("publish")
         publications.append(.init(publish: true, codec: codec, camera: camera, audioMuted: audioMuted, videoMuted: videoMuted))
         await publishGate?.wait()
         resumedPublication = (self.audioMuted, self.videoMuted, suppressed)
@@ -535,6 +543,164 @@ struct SessionTests {
                    snapshots.last?.microphoneActivated == false, "Leave clears retired engine UI state")
     }
 
+    @MainActor static func initialPreparationPrecedesTransportAndPublication() async throws {
+        for prepared in [false, true] {
+            let engine = FakeEngine(), session = GuestSession(makeAttempt: { engine })
+            try await session.connect(GuestInvitation.parse("https://example.test/calls/test"), publish: true,
+                codec: "h264", camera: true, initialAudioMuted: true, initialVideoMuted: true,
+                initialMicrophonePreparation: prepared)
+            try expect(engine.startupEvents == (prepared ? ["microphone", "join", "publish"] : ["join", "publish"]),
+                "Initial muted preparation finishes before transport and publication start")
+            try expect(engine.audioMuted && engine.videoMuted && session.snapshot.microphoneActivated == prepared,
+                "Prejoin preparation never unmutes either publication")
+            _ = await session.leave()
+        }
+    }
+
+    @MainActor static func powerWithdrawalDuringInitialOwnerCreationSkipsPreparation() async throws {
+        let engine = FakeEngine(), gate = Gate()
+        var making = false, allowed = true
+        var session: GuestSession!
+        session = GuestSession(makeAttempt: {
+            making = true; await gate.wait()
+            session.setMicrophonePreparationRequested(allowed)
+            return engine
+        })
+        let connecting = Task {
+            try await session.connect(GuestInvitation.parse("https://example.test/calls/test"), publish: true,
+                codec: "h264", camera: true, initialAudioMuted: true, initialVideoMuted: true,
+                initialMicrophonePreparation: true)
+        }
+        try await spin { making }
+        allowed = false; session.setMicrophonePreparationRequested(false); gate.release()
+        try await connecting.value
+        try expect(engine.startupEvents == ["join", "publish"] && !session.snapshot.microphoneActivated,
+            "Actual policy after owner creation overrides stale initial eligibility before activation")
+        _ = await session.leave()
+    }
+
+    @MainActor static func preparationOptInDuringJoinWaitsForNextAttempt() async throws {
+        let first = FakeEngine(), replacement = FakeEngine(), gate = Gate()
+        first.joinGate = gate
+        let harness = Harness([first, replacement]), session = harness.session
+        let connecting = Task {
+            try await session.connect(GuestInvitation.parse("https://example.test/calls/test"), publish: true,
+                codec: "h264", camera: true, initialAudioMuted: true, initialVideoMuted: true)
+        }
+        try await spin { first.joins.count == 1 }
+        session.setMicrophonePreparationRequested(true)
+        gate.release(); try await connecting.value
+        try expect(first.microphoneActivations == 0 && !session.snapshot.microphoneActivated,
+            "Power becoming eligible during join cannot activate input after the prejoin decision")
+        try await session.reconnectForTesting()
+        try expect(replacement.startupEvents == ["microphone", "join", "publish"],
+            "A policy opt-in applies before transport on the next attempt")
+        _ = await session.leave()
+    }
+
+    @MainActor static func leaveDrainsInitialPreparationBeforeAnyTransportJoin() async throws {
+        let engine = FakeEngine(), gate = Gate(), session = GuestSession(makeAttempt: { engine })
+        engine.microphoneActivationGate = gate
+        let connecting = Task {
+            try await session.connect(GuestInvitation.parse("https://example.test/calls/test"), publish: true,
+                codec: "h264", camera: true, initialAudioMuted: true, initialVideoMuted: true,
+                initialMicrophonePreparation: true)
+        }
+        try await spin { engine.microphoneActivations == 1 }
+        session.setMicrophonePreparationRequested(false)
+        try expect(engine.leaves.isEmpty && engine.joins.isEmpty,
+            "Power withdrawal does not tear down an in-flight activation")
+        let leaving = Task { await session.leave() }
+        try await spin { session.state == .left }
+        try expect(engine.leaves.isEmpty, "Leave waits for independent activation to return")
+        gate.release()
+        let stopped = await leaving.value
+        try expect(stopped && engine.joins.isEmpty && engine.publications.isEmpty && engine.leaves.count == 1,
+            "Canceled prejoin activation drains without opening transport or publishing")
+        do { try await connecting.value; throw SessionTestError.assertion("Canceled prejoin startup succeeded") }
+        catch is CancellationError {}
+    }
+
+    @MainActor static func connectingWaitsForStartupAndLatestSoundIntent() async throws {
+        let engine = FakeEngine(), gate = Gate(), session = GuestSession(makeAttempt: { engine })
+        engine.startupGate = gate
+        var connectedAfterRelease = false
+        session.onStateChange = { if $0.state == .connected { connectedAfterRelease = engine.startupReleases == 1 } }
+        let connecting = Task { try await connect(session, audioMuted: true, videoMuted: true) }
+        try await spin { engine.startupWaits == 1 }
+        try expect(session.state == .connecting && engine.publications.count == 1 && engine.startupReleases == 0,
+            "Normal media demand starts while Connecting and gain stays gated")
+        let sound = Task { try await session.setPlayoutEnabled(false) }
+        try await spin { session.snapshot.desiredPlayoutEnabled == false }
+        gate.release(); try await connecting.value; try await sound.value
+        try expect(engine.playoutChanges == [false] && connectedAfterRelease,
+            "Latest Sound intent reconciles before synchronous gain-release/Connected notification")
+        _ = await session.leave()
+    }
+
+    @MainActor static func staleStartupReadinessCannotReleaseGain() async throws {
+        let engine = FakeEngine(), gate = Gate(), session = GuestSession(makeAttempt: { engine })
+        engine.startupGate = gate
+        let connecting = Task { try await connect(session, audioMuted: true, videoMuted: true) }
+        try await spin { engine.startupWaits == 1 }
+        engine.onStartupReady = { engine.onFailure?(SessionTestError.evicted) }
+        gate.release()
+        do { try await connecting.value; throw SessionTestError.assertion("Failed startup became connected") }
+        catch SessionTestError.evicted {}
+        try expect(engine.startupReleases == 0 && engine.leaves.count == 1,
+            "A failure between graph readiness and release retires without opening gain")
+        _ = await session.leave()
+    }
+
+    @MainActor static func preparedMediaButtonsKeepAudioAndPublication() async throws {
+        let engine = FakeEngine(), session = GuestSession(makeAttempt: { engine })
+        try await connect(session, audioMuted: true, videoMuted: true)
+        try await session.prepareMicrophone()
+        for _ in 0..<3 {
+            try await session.activateMicrophone()
+            try await session.mute(false)
+            try await session.mute(true)
+            try await session.mute(false, video: true)
+            try await session.mute(true, video: true)
+        }
+        try expect(engine.microphoneActivations == 1 && session.snapshot.microphoneActivated,
+            "Ordinary mic and camera buttons retain ready capture without repeated availability changes")
+        try expect(engine.publications.count == 1 && engine.publications.first?.codec == "h264" &&
+            engine.playoutChanges.isEmpty && engine.leaves.isEmpty && session.connectionCount == 1,
+            "Media buttons do not republish codecs, change output, or replace the audio/transport owner")
+        try expect(engine.mutes.count == 12 && engine.audioMuted && engine.videoMuted,
+            "Each button reconciles only its publication mute intent")
+        _ = await session.leave()
+    }
+
+    @MainActor static func preparationRecoveryPreservesExplicitActivation() async throws {
+        for prepared in [false, true] {
+            for explicitlyActivated in [false, true] {
+                for recoveryAllowed in [false, true] {
+                    let first = FakeEngine(), replacement = FakeEngine(), harness = Harness([first, replacement])
+                    let session = harness.session
+                    try await connect(session, audioMuted: true, videoMuted: true)
+                    if prepared { try await session.prepareMicrophone() }
+                    if explicitlyActivated { try await session.activateMicrophone() }
+                    let previousActivations = first.microphoneActivations
+                    session.setMicrophonePreparationRequested(false)
+                    try expect(first.microphoneActivations == previousActivations &&
+                        session.snapshot.microphoneActivated == (prepared || explicitlyActivated),
+                        "Withdrawing readiness never tears down or rebuilds the current microphone")
+                    session.onStateChange = { [weak session] state in
+                        if state.state == .recovering { session?.setMicrophonePreparationRequested(recoveryAllowed) }
+                    }
+                    try await session.reconnectForTesting()
+                    try expect(replacement.microphoneActivations == (recoveryAllowed || explicitlyActivated ? 1 : 0),
+                        "Replacement obeys the current preparation policy and preserves actual user activation")
+                    try expect(replacement.audioMuted && session.desiredIntent?.audioMuted == true,
+                        "Preparation policy never unmutes on recovery")
+                    _ = await session.leave()
+                }
+            }
+        }
+    }
+
     @MainActor static func mediaIntentDuringDeviceReconciliation() async throws {
         for video in [false, true] {
             let engine = FakeEngine(), gate = Gate(), session = GuestSession(makeAttempt: { engine })
@@ -582,8 +748,16 @@ struct SessionTests {
             try await bootstrapNetworkFailures()
             try await synchronousUnmuteIntentDuringPublication()
             try await deviceIntentAndSnapshots()
+            try await initialPreparationPrecedesTransportAndPublication()
+            try await powerWithdrawalDuringInitialOwnerCreationSkipsPreparation()
+            try await preparationOptInDuringJoinWaitsForNextAttempt()
+            try await connectingWaitsForStartupAndLatestSoundIntent()
+            try await staleStartupReadinessCannotReleaseGain()
+            try await leaveDrainsInitialPreparationBeforeAnyTransportJoin()
+            try await preparedMediaButtonsKeepAudioAndPublication()
+            try await preparationRecoveryPreservesExplicitActivation()
             try await mediaIntentDuringDeviceReconciliation()
-            print("GuestSession: 21 deterministic policy/lifecycle scenarios passed")
+            print("GuestSession: 29 deterministic policy/lifecycle scenarios passed (including startup gating and 8 preparation recovery combinations)")
         } catch {
             print("GuestSession failed: \(error)")
             exit(1)

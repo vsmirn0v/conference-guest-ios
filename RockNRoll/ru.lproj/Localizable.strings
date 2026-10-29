@@ -1310,3 +1310,17 @@
 "Starting camera. Click to cancel." = "Камера запускается. Нажмите для отмены.";
 
 "Starting…" = "Запуск…";
+
+"When plugged in" = "При подключении к питанию";
+
+"Also on battery" = "В том числе от аккумулятора";
+
+"Microphone readiness" = "Готовность микрофона";
+
+"Camera readiness" = "Готовность камеры";
+
+"Keeps the microphone ready while muted for faster unmuting and headset controls. Muted audio is never sent. Uses extra energy. Bluetooth headsets may switch to call audio quality. Applies at the next join or reconnect. Power changes do not interrupt meeting audio." = "Поддерживает готовность выключенного микрофона для быстрого включения и управления с гарнитуры. Звук при выключенном микрофоне не передаётся. Расходует дополнительную энергию. Bluetooth-гарнитура может переключиться на качество звука для звонков. Применяется при следующем входе или переподключении. Изменения питания не прерывают звук встречи.";
+
+"Low Power Mode prevents automatic microphone and camera preparation. Preparation uses existing permission. Defaults apply to native Guest meetings; explicit microphone choices also apply to supported headset controls in other meetings." = "Режим энергосбережения запрещает автоматическую подготовку микрофона и камеры. Используются только уже выданные разрешения. Настройки по умолчанию действуют во встречах Native Guest; выбранная настройка микрофона также применяется к управлению с гарнитуры в других поддерживаемых встречах.";
+
+"Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view." = "После входа ненадолго подготавливает камеру приватно, затем выключает её. Кадры не передаются. Расходует дополнительную энергию; индикатор камеры может ненадолго загореться. Пропускается в режиме «Только звук».";

@@ -10,26 +10,51 @@ import XCTest
     var onVideo: (([NativeDesktopExternalVideo]) -> Void)?
     var onLocalCamera: ((LKRTCVideoTrack?) -> Void)?
     var onTitle: ((String) -> Void)?
-    var factory: LKRTCPeerConnectionFactory? { nil }
+    var testFactory: LKRTCPeerConnectionFactory?
+    var factory: LKRTCPeerConnectionFactory? { testFactory }
     var incomingVideo: [NativeDesktopExternalVideo] { [] }
     var snapshot = NativeDesktopExternalSnapshot()
+    var microphoneReadinessPolicy: (() -> Bool)?
+    var initialMicrophoneReadiness = false
+    private var preparing: Task<Void, Error>?
+    var preparationBeforeConnection = false
     var microphoneCommands: [Bool] = []
     var completedMicrophoneCommands = 0
     var cameraCommands: [Bool] = []
     var leaves = 0
+    var leaveRequests = 0
+    private var retired = false
+    var mutedPreparationCalls = 0
+    var recoveryReadiness: [Bool] = []
+    var onMutedPreparation: (() async throws -> Void)?
     var clean = true
     var demands: [(ids: Set<String>?, focused: String?)] = []
     var onConnect: (() async throws -> Void)?
     var onMicrophoneEnable: (() async throws -> Void)?
     var onMicrophoneDisable: (() async throws -> Void)?
     var onCameraEnable: (() async throws -> Void)?
+    var onLeaveCleanup: (() async -> Void)?
     func connect(invitation: URL, name: String, quiet: Bool) async throws {
+        retired = false
         snapshot.phase = .connecting; onState?(snapshot)
         try await onConnect?()
         try Task.checkCancellation()
+        if !quiet, microphoneReadinessPolicy?() == true {
+            let task = Task { @MainActor in try await self.prepareMutedCaptureForAccessories() }
+            preparing = task; try await task.value
+            preparationBeforeConnection = true
+        }
+        guard snapshot.phase == .connecting else { throw CancellationError() }
         snapshot = .init(phase: .connected, playoutOn: !quiet); onState?(snapshot)
     }
     func reconnect() async throws {}
+    func prepareMutedCaptureForAccessories() async throws {
+        mutedPreparationCalls += 1; try await onMutedPreparation?()
+    }
+    func setMicrophoneReadinessForRecovery(_ enabled: Bool) {
+        if snapshot.phase == .idle || snapshot.phase == .connecting { initialMicrophoneReadiness = enabled }
+        else { recoveryReadiness.append(enabled) }
+    }
     func setMicrophone(_ enabled: Bool) async throws {
         microphoneCommands.append(enabled)
         if enabled { try await onMicrophoneEnable?() }
@@ -46,7 +71,15 @@ import XCTest
     func setPlayout(_ enabled: Bool) async throws { snapshot.playoutOn = enabled; onState?(snapshot) }
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws { snapshot.sharing = track != nil; onState?(snapshot) }
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws { demands.append((ids, focusedParticipantID)) }
-    func leave() async -> Bool { leaves += 1; snapshot.phase = clean ? .left : .failed; onState?(snapshot); return clean }
+    func leave() async -> Bool {
+        leaveRequests += 1
+        if retired { return clean }
+        snapshot.phase = .leaving
+        _ = try? await preparing?.value
+        leaves += 1; await onLeaveCleanup?()
+        retired = true
+        snapshot.phase = clean ? .left : .failed; onState?(snapshot); return clean
+    }
 }
 private final class DesktopMemoryStorage: RoomHistoryStorage, @unchecked Sendable {
     var value: Data?
@@ -79,11 +112,486 @@ private final class DesktopActivitySpy: NSUserActivity {
 @MainActor final class DesktopParityTests: XCTestCase {
     private let url = URL(string: "https://example.test/calls/native-parity")!
     private func model(_ engine: DesktopTestEngine) throws -> NativeDesktopMeetingModel {
-        NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Parity Test", title: "Fixture", engine: engine)
+        NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Parity Test", title: "Fixture",
+            engine: engine, joinReadiness: .init(microphone: .off, camera: .off), power: joinTestPower())
     }
     private func spin(_ predicate: () -> Bool) async throws {
         for _ in 0..<100 { if predicate() { return }; try await Task.sleep(for: .milliseconds(10)) }
         XCTFail("The asynchronous operation did not complete")
+    }
+    func testJoinMicReadinessUsesMutedAccessoryPathOnlyWhenAllowed() async throws {
+        for enabled in [false, true] {
+            let engine = DesktopTestEngine()
+            let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Fixture", title: nil,
+                engine: engine, joinReadiness: .init(microphone: enabled ? .alsoOnBattery : .off, camera: .off), power: joinTestPower())
+            try await model.connect(); await model.waitForJoinReadinessForTesting()
+            XCTAssertEqual(engine.mutedPreparationCalls, enabled ? 1 : 0)
+            XCTAssertEqual(engine.preparationBeforeConnection, enabled, "Readiness must finish before transport/playout begins")
+            XCTAssertTrue(engine.microphoneCommands.isEmpty); XCTAssertFalse(model.snapshot.microphoneOn)
+            XCTAssertTrue(engine.cameraCommands.isEmpty); XCTAssertFalse(model.snapshot.cameraOn)
+            model.reconnect(); await model.waitForMediaActionsForTesting()
+            XCTAssertEqual(engine.mutedPreparationCalls, enabled ? 1 : 0, "Reconnect must not prime again")
+            let left = await model.leave(); XCTAssertTrue(left)
+        }
+    }
+    func testOtherProvidersKeepExplicitHeadsetPreparationWithoutAdoptingGuestDefaults() async throws {
+        let invitations: [(MeetingEngineKind, URL)] = [
+            (.telemost, URL(string: "https://telemost.yandex.ru/j/readiness-fixture")!),
+            (.trueconf, URL(string: "https://example.test/c/readiness-fixture")!),
+            (.community, URL(string: "https://rock.glowsoft.ru/jams/test")!)]
+        for (kind, url) in invitations {
+            for explicit in [false, true] {
+                for mode in NativeDesktopMediaReadinessMode.allCases {
+                    let engine = DesktopTestEngine()
+                    let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: kind), name: "Provider fixture", title: nil,
+                        engine: engine, joinReadiness: .init(microphone: mode, camera: .alsoOnBattery, microphoneExplicit: explicit),
+                        power: joinTestPower())
+                    try await model.connect(); await model.waitForJoinReadinessForTesting()
+                    XCTAssertEqual(engine.mutedPreparationCalls, explicit && mode != .off ? 1 : 0)
+                    XCTAssertTrue(engine.cameraCommands.isEmpty)
+                    let left = await model.leave(); XCTAssertTrue(left)
+                }
+            }
+        }
+    }
+    func testJoinDeadlineCoversSuspendedEngineAfterConnectedCallbackAndRejectsLateMedia() async throws {
+        let engine = DesktopTestEngine()
+        var startupReply: CheckedContinuation<Void, Never>?, cleanupReply: CheckedContinuation<Void, Never>?
+        engine.onConnect = {
+            engine.snapshot.phase = .connected; engine.onState?(engine.snapshot)
+            await withCheckedContinuation { startupReply = $0 }
+        }
+        engine.onLeaveCleanup = { await withCheckedContinuation { cleanupReply = $0 } }
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Deadline fixture", title: "Original title",
+            engine: engine, joinReadiness: .init(microphone: .off, camera: .off), joinTimeout: 0.05, power: joinTestPower())
+        let state = engine.onState, video = engine.onVideo, camera = engine.onLocalCamera, title = engine.onTitle
+        var returned = false, failure: Error?
+        let joining = Task {
+            do { try await model.connect() } catch { failure = error }
+            returned = true
+        }
+        try await spin { startupReply != nil && returned && cleanupReply != nil }
+        guard returned else {
+            startupReply?.resume(); startupReply = nil; cleanupReply?.resume(); cleanupReply = nil; joining.cancel(); return
+        }
+        if case .timedOut? = failure as? GuestTransportError {} else { XCTFail("Expected the outer join deadline") }
+        XCTAssertFalse(model.connected)
+        let factory = LKRTCPeerConnectionFactory(), track = factory.videoTrack(with: factory.videoSource(), trackId: "late-callback")
+        state?(.init(phase: .connected, microphoneOn: true, cameraOn: true, playoutOn: true))
+        video?([.init(id: "late", participantID: "late", source: .camera, track: track)])
+        camera?(track); title?("Late title")
+        XCTAssertFalse(model.connected); XCTAssertFalse(model.snapshot.microphoneOn); XCTAssertFalse(model.snapshot.cameraOn)
+        XCTAssertNil(model.localCamera); XCTAssertTrue(model.videos.isEmpty); XCTAssertEqual(model.title, "Original title")
+        model.toggleMicrophone(); model.toggleCamera()
+        XCTAssertTrue(engine.microphoneCommands.isEmpty && engine.cameraCommands.isEmpty)
+        var retired = false
+        let leaving = Task { let clean = await model.leave(); retired = true; return clean }
+        await Task.yield(); await Task.yield(); XCTAssertFalse(retired)
+        startupReply?.resume(); startupReply = nil
+        await Task.yield(); XCTAssertFalse(retired, "Startup completion alone is not affirmative retirement")
+        engine.onLeaveCleanup = nil; cleanupReply?.resume(); cleanupReply = nil
+        let clean = await leaving.value; XCTAssertTrue(clean); XCTAssertEqual(engine.leaves, 1); XCTAssertEqual(engine.leaveRequests, 2)
+        await joining.value
+    }
+    func testCancelingJoinStartsEngineRetirementBeforeDrainingStartup() async throws {
+        let engine = DesktopTestEngine(); var startupReply: CheckedContinuation<Void, Never>?
+        engine.onConnect = { await withCheckedContinuation { startupReply = $0 } }
+        engine.onLeaveCleanup = { startupReply?.resume(); startupReply = nil }
+        let model = try model(engine)
+        let joining = Task { try await model.connect() }
+        try await spin { startupReply != nil }
+        joining.cancel()
+        do { try await joining.value; XCTFail("Canceled join succeeded") } catch { XCTAssertTrue(error is CancellationError) }
+        let clean = await model.leave()
+        XCTAssertTrue(clean); XCTAssertEqual(engine.leaves, 1); XCTAssertEqual(engine.leaveRequests, 2)
+        XCTAssertFalse(model.connected); XCTAssertFalse(model.snapshot.microphoneOn)
+    }
+    func testTimedOutJoinBlocksWorkspaceReplacementUntilCleanupAndKeepsFailedCleanupBlocked() async throws {
+        for cleanupSucceeds in [false, true] {
+            let preferences = UserDefaults(suiteName: "native-join-deadline-\(UUID())")!
+            let library = NativeDesktopLibrary(preferences: preferences, history: RoomHistoryStore(storage: DesktopMemoryStorage()),
+                                               syncStorage: DesktopMemoryStorage())
+            library.displayName = "Deadline workspace"
+            let engine = DesktopTestEngine(); engine.clean = cleanupSucceeds
+            var startupReply: CheckedContinuation<Void, Never>?, cleanupReply: CheckedContinuation<Void, Never>?, created = 0
+            engine.onConnect = { await withCheckedContinuation { startupReply = $0 } }
+            engine.onLeaveCleanup = { await withCheckedContinuation { cleanupReply = $0 } }
+            let workspace = NativeDesktopWorkspace(library: library, detect: { _ in .verified(.guest(endpoint: self.url)) },
+                makeMeeting: { destination, name, title, quiet in
+                    created += 1
+                    return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet,
+                        engine: created == 1 ? engine : DesktopTestEngine(), joinReadiness: .init(microphone: .off, camera: .off),
+                        joinTimeout: created == 1 ? 0.05 : 45, power: joinTestPower())
+                })
+            workspace.join(url, engine: .guest)
+            try await spin { startupReply != nil && cleanupReply != nil }
+            XCTAssertTrue(workspace.preparing); XCTAssertNotNil(workspace.error)
+            workspace.join(URL(string: "https://example.test/calls/replacement")!, engine: .guest)
+            XCTAssertEqual(created, 1)
+            startupReply?.resume(); startupReply = nil
+            await Task.yield(); XCTAssertTrue(workspace.preparing)
+            engine.onLeaveCleanup = nil; cleanupReply?.resume(); cleanupReply = nil
+            try await spin { !workspace.preparing }
+            XCTAssertEqual(workspace.meeting == nil, cleanupSucceeds)
+            workspace.join(URL(string: "https://example.test/calls/replacement")!, engine: .guest)
+            if cleanupSucceeds {
+                try await spin { created == 2 && workspace.meeting?.connected == true && !workspace.preparing }
+                let clean = await workspace.leave(); XCTAssertTrue(clean)
+            } else {
+                await Task.yield(); XCTAssertEqual(created, 1)
+                let clean = await workspace.leave(); XCTAssertFalse(clean)
+            }
+        }
+    }
+    func testCameraMetadataCompletesBeforeEngineConnectionWithoutStartingCapture() async throws {
+        let engine = DesktopTestEngine()
+        var release: CheckedContinuation<Void, Never>?, reads = 0, completed = false, connects = 0
+        let metadata = NativeDesktopCameraMetadataPreparation(authorized: { true }, read: { _ in
+            reads += 1; await withCheckedContinuation { release = $0 }; completed = true
+        })
+        engine.onConnect = { XCTAssertTrue(completed); connects += 1 }
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Metadata fixture", title: nil,
+            engine: engine, joinReadiness: .init(microphone: .off, camera: .whenPluggedIn),
+            joinCameraPrime: .init(authorized: { false }), cameraMetadata: metadata, power: joinTestPower())
+        let connecting = Task { try await model.connect() }
+        try await spin { release != nil }
+        XCTAssertEqual(reads, 1); XCTAssertEqual(connects, 0)
+        XCTAssertTrue(engine.microphoneCommands.isEmpty && engine.cameraCommands.isEmpty)
+        release?.resume(); release = nil
+        try await connecting.value
+        XCTAssertEqual(connects, 1)
+        XCTAssertEqual((model.joinReadinessReport["cameraMetadata"] as? [String: Any])?["state"] as? String, "prepared")
+        let left = await model.leave(); XCTAssertTrue(left)
+    }
+    func testCameraMetadataEligibilitySkipsDeviceReads() async throws {
+        for scenario in 0..<8 {
+            let engine = DesktopTestEngine(); var reads = 0
+            let metadata = NativeDesktopCameraMetadataPreparation(authorized: { scenario != 4 }, read: { _ in reads += 1 })
+            let mode: NativeDesktopMediaReadinessMode = scenario == 1 ? .off : .whenPluggedIn
+            let invitation = scenario == 7 ? URL(string: "https://telemost.yandex.ru/j/12345678901234")! : url
+            let destination = try JoinDestination.verified(invitation, engine: scenario == 7 ? .telemost : .guest)
+            let model = NativeDesktopMeetingModel(destination: destination, name: "Metadata skip fixture", title: nil,
+                quiet: scenario == 5, engine: engine, joinReadiness: .init(microphone: .off, camera: mode),
+                joinCameraPrime: .init(authorized: { false }), cameraMetadata: metadata,
+                power: joinTestPower(pluggedIn: scenario != 2, lowPowerMode: scenario == 3))
+            if scenario == 6 { model.viewMode = .audioOnly }
+            try await model.connect(); await model.waitForJoinReadinessForTesting()
+            XCTAssertEqual(reads, scenario == 0 ? 1 : 0, "Only eligible authorized Guest video joins may read metadata")
+            XCTAssertTrue(engine.microphoneCommands.isEmpty && engine.cameraCommands.isEmpty)
+            let left = await model.leave(); XCTAssertTrue(left)
+        }
+    }
+    func testCameraMetadataRequiresFrozenAndLatestPolicyAndSkipsUnstartedPowerLoss() async throws {
+        for frozenEnabled in [false, true] {
+            let engine = DesktopTestEngine(); var reads = 0, policyReads = 0
+            let metadata = NativeDesktopCameraMetadataPreparation(authorized: { true }, read: { _ in reads += 1 })
+            let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Metadata policy fixture", title: nil,
+                engine: engine, joinCameraPrime: .init(authorized: { false }), cameraMetadata: metadata,
+                power: joinTestPower(), readinessPolicy: {
+                    policyReads += 1
+                    let enabled = policyReads == 1 ? frozenEnabled : !frozenEnabled
+                    return .init(microphone: .off, camera: enabled ? .whenPluggedIn : .off)
+                })
+            try await model.connect(); XCTAssertEqual(reads, 0)
+            let left = await model.leave(); XCTAssertTrue(left)
+        }
+        let engine = DesktopTestEngine(); var reads = 0
+        var state = NativeDesktopPowerSnapshot(pluggedIn: true, lowPowerMode: false)
+        var changedPower: (@MainActor () -> Void)?
+        let metadata = NativeDesktopCameraMetadataPreparation(authorized: { state.lowPowerMode = true; changedPower?(); return true }, read: { _ in reads += 1 })
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Unstarted metadata fixture", title: nil,
+            engine: engine, joinReadiness: .init(), joinCameraPrime: .init(authorized: { false }), cameraMetadata: metadata,
+            power: .init(read: { state }, observe: { changedPower = $0; return {} }))
+        try await model.connect(); XCTAssertEqual(reads, 0)
+        let left = await model.leave(); XCTAssertTrue(left)
+    }
+    func testPowerLossDrainsEnteredMetadataThenJoinsWithoutSensorPrime() async throws {
+        let engine = DesktopTestEngine(), capture = JoinPrimeCapture()
+        var release: CheckedContinuation<Void, Never>?, connects = 0
+        var state = NativeDesktopPowerSnapshot(pluggedIn: true, lowPowerMode: false)
+        var notify: (@MainActor () -> Void)?
+        let power = NativeDesktopPowerMonitor(read: { state }, observe: { notify = $0; return {} })
+        let metadata = NativeDesktopCameraMetadataPreparation(authorized: { true }, read: { _ in await withCheckedContinuation { release = $0 } })
+        engine.onConnect = { connects += 1 }
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Entered metadata fixture", title: nil,
+            engine: engine, joinReadiness: .init(), joinCameraPrime: .init(authorized: { true }, makeCapture: { _ in capture }),
+            cameraMetadata: metadata, power: power)
+        let connecting = Task { try await model.connect() }; try await spin { release != nil }
+        state.lowPowerMode = true; notify?(); await Task.yield()
+        XCTAssertEqual(connects, 0, "An entered AVFoundation read remains a barrier after policy withdrawal")
+        release?.resume(); release = nil
+        try await connecting.value; await model.waitForJoinReadinessForTesting()
+        XCTAssertEqual(connects, 1); XCTAssertEqual(capture.starts, 0)
+        let left = await model.leave(); XCTAssertTrue(left)
+    }
+    func testCanceledJoinRetainsMetadataBarrierForLaterCameraOffJoin() async throws {
+        let firstEngine = DesktopTestEngine(), secondEngine = DesktopTestEngine()
+        var release: CheckedContinuation<Void, Never>?, firstConnects = 0, secondConnects = 0, reads = 0
+        let metadata = NativeDesktopCameraMetadataPreparation(authorized: { true }, read: { _ in
+            reads += 1; await withCheckedContinuation { release = $0 }
+        })
+        firstEngine.onConnect = { firstConnects += 1 }; secondEngine.onConnect = { secondConnects += 1 }
+        let first = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Canceled metadata fixture", title: nil,
+            engine: firstEngine, joinReadiness: .init(), cameraMetadata: metadata, power: joinTestPower())
+        let connecting = Task { try await first.connect() }; try await spin { release != nil }
+        let left = await first.leave(); XCTAssertTrue(left)
+        do { try await connecting.value; XCTFail("Canceled join connected") } catch {}
+        let second = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Off metadata fixture", title: nil,
+            engine: secondEngine, joinReadiness: .init(microphone: .off, camera: .off), cameraMetadata: metadata, power: joinTestPower())
+        let later = Task { try await second.connect() }; await Task.yield(); await Task.yield()
+        XCTAssertEqual(firstConnects, 0); XCTAssertEqual(secondConnects, 0)
+        release?.resume(); release = nil
+        try await later.value
+        XCTAssertEqual(reads, 1); XCTAssertEqual(secondConnects, 1)
+        let secondLeft = await second.leave(); XCTAssertTrue(secondLeft)
+    }
+    func testJoinReadinessPowerMatrixWithoutRealDevicesOrPowerChanges() async throws {
+        for mode in NativeDesktopMediaReadinessMode.allCases {
+            for pluggedIn in [false, true] {
+                for lowPowerMode in [false, true] {
+                    let engine = DesktopTestEngine(), capture = JoinPrimeCapture()
+                    engine.testFactory = LKRTCPeerConnectionFactory()
+                    let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
+                    let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Power fixture", title: nil,
+                        engine: engine, joinReadiness: .init(microphone: mode, camera: mode), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(),
+                        power: joinTestPower(pluggedIn: pluggedIn, lowPowerMode: lowPowerMode))
+                    try await model.connect(); await model.waitForJoinReadinessForTesting()
+                    let expected = mode.allows(.init(pluggedIn: pluggedIn, lowPowerMode: lowPowerMode)) ? 1 : 0
+                    XCTAssertEqual(engine.mutedPreparationCalls, expected)
+                    XCTAssertEqual(capture.starts, expected); XCTAssertEqual(capture.stops, expected)
+                    XCTAssertTrue(engine.microphoneCommands.isEmpty); XCTAssertTrue(engine.cameraCommands.isEmpty)
+                    let left = await model.leave(); XCTAssertTrue(left)
+                }
+            }
+        }
+    }
+    func testPowerLossDuringInitialOwnerCreationPreventsPendingPreparation() async throws {
+        for mode in [NativeDesktopMediaReadinessMode.whenPluggedIn, .alsoOnBattery] {
+            let engine = DesktopTestEngine()
+            var state = NativeDesktopPowerSnapshot(pluggedIn: true, lowPowerMode: false)
+            var notify: (@MainActor () -> Void)?, ownerReady: CheckedContinuation<Void, Never>?
+            let power = NativeDesktopPowerMonitor(read: { state }, observe: { notify = $0; return { notify = nil } })
+            engine.onConnect = { await withCheckedContinuation { ownerReady = $0 } }
+            let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Initial power fixture", title: nil,
+                engine: engine, joinReadiness: .init(microphone: mode, camera: .off), power: power)
+            let connecting = Task { try await model.connect() }
+            try await spin { ownerReady != nil }
+            XCTAssertTrue(engine.initialMicrophoneReadiness)
+            if mode == .whenPluggedIn { state.pluggedIn = false } else { state.lowPowerMode = true }
+            notify?()
+            XCTAssertFalse(engine.initialMicrophoneReadiness, "A connecting power event withdraws future preparation")
+            ownerReady?.resume(); ownerReady = nil
+            try await connecting.value; await model.waitForJoinReadinessForTesting()
+            XCTAssertEqual(engine.mutedPreparationCalls, 0); XCTAssertFalse(engine.preparationBeforeConnection)
+            XCTAssertTrue(engine.microphoneCommands.isEmpty); XCTAssertTrue(model.snapshot.playoutOn)
+            let left = await model.leave(); XCTAssertTrue(left)
+        }
+    }
+    func testPowerLossCancelsPrivateCameraButKeepsLiveAudioUntilRecoveryPolicyIsRead() async throws {
+        let engine = DesktopTestEngine(), capture = JoinPrimeCapture()
+        engine.testFactory = LKRTCPeerConnectionFactory()
+        var state = NativeDesktopPowerSnapshot(pluggedIn: true, lowPowerMode: false)
+        var notify: (@MainActor () -> Void)?
+        let power = NativeDesktopPowerMonitor(read: { state }, observe: { notify = $0; return { notify = nil } })
+        capture.starting = {
+            while capture.cancellations == 0 { try await Task.sleep(for: .milliseconds(10)) }
+            throw CancellationError()
+        }
+        let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Power fixture", title: nil,
+            engine: engine, joinReadiness: .init(), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(), power: power)
+        try await model.connect(); try await spin { capture.starts == 1 && engine.mutedPreparationCalls == 1 }
+        model.toggleMicrophone(); await model.waitForMediaActionsForTesting()
+        state.pluggedIn = false; notify?()
+        XCTAssertGreaterThan(capture.cancellations, 0, "Power notification cancels pending private capture immediately")
+        await model.waitForJoinReadinessForTesting()
+        XCTAssertTrue(model.snapshot.microphoneOn); XCTAssertEqual(engine.microphoneCommands, [true])
+        XCTAssertTrue(engine.recoveryReadiness.isEmpty, "Power loss must not change the live microphone graph")
+        engine.snapshot.phase = .reconnecting; engine.onState?(engine.snapshot)
+        XCTAssertEqual(engine.recoveryReadiness, [false], "Recovery reads current power before restoring readiness-only input")
+        XCTAssertEqual(engine.microphoneCommands, [true], "Updating recovery intent must not mute user media")
+        let left = await model.leave(); XCTAssertTrue(left); XCTAssertNil(notify)
+    }
+    func testPowerChangesDuringReconnectRefreshOnlyPreparationIntent() async throws {
+        let engine = DesktopTestEngine()
+        var state = NativeDesktopPowerSnapshot(pluggedIn: true, lowPowerMode: false)
+        var notify: (@MainActor () -> Void)?
+        let power = NativeDesktopPowerMonitor(read: { state }, observe: { notify = $0; return { notify = nil } })
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Recovery power fixture", title: nil,
+            engine: engine, joinReadiness: .init(microphone: .whenPluggedIn, camera: .off), power: power)
+        try await model.connect(); await model.waitForJoinReadinessForTesting()
+        model.toggleMicrophone(); await model.waitForMediaActionsForTesting()
+        engine.snapshot.phase = .reconnecting; engine.onState?(engine.snapshot)
+        XCTAssertEqual(engine.recoveryReadiness, [true])
+
+        state.pluggedIn = false; notify?()
+        XCTAssertEqual(engine.recoveryReadiness, [true, false], "Unplugging during backoff withdraws readiness-only restoration")
+        state.pluggedIn = true; notify?()
+        state.lowPowerMode = true; notify?()
+        XCTAssertEqual(engine.recoveryReadiness, [true, false, true, false], "Low Power also blocks replacement preparation")
+        state.lowPowerMode = false; notify?()
+        XCTAssertEqual(engine.recoveryReadiness, [true, false, true, false, true])
+        XCTAssertEqual(engine.mutedPreparationCalls, 1, "Power events never perform new activation on the current graph")
+        XCTAssertEqual(engine.microphoneCommands, [true], "Power events preserve explicit microphone intent")
+        XCTAssertTrue(engine.cameraCommands.isEmpty); XCTAssertTrue(model.snapshot.playoutOn)
+        XCTAssertEqual(engine.leaves, 0, "Policy observation never rebuilds or retires the current owner")
+
+        engine.snapshot.phase = .connected; engine.onState?(engine.snapshot)
+        state.lowPowerMode = true; notify?()
+        XCTAssertEqual(engine.recoveryReadiness.count, 5, "Connected audio is unaffected by later power changes")
+        XCTAssertTrue(model.snapshot.microphoneOn); XCTAssertTrue(model.snapshot.playoutOn)
+        let left = await model.leave(); XCTAssertTrue(left); XCTAssertNil(notify)
+    }
+    func testLowPowerCancelsPrivateCameraEvenWithBatteryOptIn() async throws {
+        let engine = DesktopTestEngine(), capture = JoinPrimeCapture()
+        engine.testFactory = LKRTCPeerConnectionFactory()
+        var state = NativeDesktopPowerSnapshot(pluggedIn: true, lowPowerMode: false)
+        var notify: (@MainActor () -> Void)?
+        let power = NativeDesktopPowerMonitor(read: { state }, observe: { notify = $0; return { notify = nil } })
+        capture.starting = {
+            while capture.cancellations == 0 { try await Task.sleep(for: .milliseconds(10)) }
+            throw CancellationError()
+        }
+        let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Power fixture", title: nil,
+            engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(), power: power)
+        try await model.connect(); try await spin { capture.starts == 1 }
+        state.lowPowerMode = true; notify?()
+        XCTAssertGreaterThan(capture.cancellations, 0)
+        await model.waitForJoinReadinessForTesting()
+        XCTAssertEqual(capture.stops, 1); XCTAssertTrue(engine.microphoneCommands.isEmpty)
+        state.lowPowerMode = false; notify?(); await Task.yield()
+        XCTAssertEqual(capture.starts, 1, "Eligibility returning does not repeat preparation")
+        let left = await model.leave(); XCTAssertTrue(left)
+    }
+    func testMicrophonePolicyChangesApplyAtRecoveryAndTogglesDoNotReprepare() async throws {
+        let engine = DesktopTestEngine()
+        var policy = NativeDesktopJoinReadinessPolicy(microphone: .alsoOnBattery, camera: .off)
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Policy fixture", title: nil,
+            engine: engine, power: joinTestPower(pluggedIn: false), readinessPolicy: { policy })
+        try await model.connect(); await model.waitForJoinReadinessForTesting()
+        for _ in 0..<3 { model.toggleMicrophone(); await model.waitForMediaActionsForTesting() }
+        XCTAssertEqual(engine.mutedPreparationCalls, 1)
+        XCTAssertEqual(engine.microphoneCommands, [true, false, true])
+        XCTAssertEqual(engine.leaves, 0, "Quick toggles retain the same meeting/audio owner")
+        policy.microphone = .off
+        XCTAssertTrue(model.snapshot.microphoneOn); XCTAssertTrue(engine.recoveryReadiness.isEmpty)
+        engine.snapshot.phase = .reconnecting; engine.onState?(engine.snapshot)
+        XCTAssertEqual(engine.recoveryReadiness, [false])
+        XCTAssertEqual(engine.microphoneCommands, [true, false, true])
+        let left = await model.leave(); XCTAssertTrue(left)
+    }
+    func testAudioOnlyQuietJoinSkipsBothReadinessExperiments() async throws {
+        let engine = DesktopTestEngine()
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Fixture", title: nil,
+            quiet: true, engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), power: joinTestPower())
+        try await model.connect(); await model.waitForJoinReadinessForTesting()
+        XCTAssertEqual(engine.mutedPreparationCalls, 0)
+        XCTAssertEqual(model.joinReadinessReport["reason"] as? String, "meetingPolicy")
+        let left = await model.leave(); XCTAssertTrue(left)
+    }
+    func testAudioOnlyViewSkipsCameraPrimeAndPreservesMicrophoneReadiness() async throws {
+        let engine = DesktopTestEngine(), capture = JoinPrimeCapture()
+        engine.testFactory = LKRTCPeerConnectionFactory()
+        let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Fixture", title: nil,
+            engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(), power: joinTestPower())
+        model.viewMode = .audioOnly
+        try await model.connect(); await model.waitForJoinReadinessForTesting()
+        XCTAssertEqual(capture.starts, 0); XCTAssertEqual(capture.stops, 0)
+        XCTAssertEqual(engine.mutedPreparationCalls, 1)
+        XCTAssertEqual((model.joinReadinessReport["camera"] as? [String: Any])?["reason"] as? String, "audioOnly")
+        XCTAssertTrue(engine.microphoneCommands.isEmpty); XCTAssertTrue(engine.cameraCommands.isEmpty)
+        XCTAssertFalse(model.snapshot.microphoneOn); XCTAssertNil(model.localCamera)
+        let left = await model.leave(); XCTAssertTrue(left)
+    }
+    func testSwitchingToAudioOnlyCancelsPendingCameraPrimeWithoutCancellingMicrophoneReadiness() async throws {
+        let engine = DesktopTestEngine(), capture = JoinPrimeCapture()
+        engine.testFactory = LKRTCPeerConnectionFactory()
+        capture.starting = {
+            while capture.cancellations == 0 { try await Task.sleep(for: .milliseconds(10)) }
+            throw CancellationError()
+        }
+        let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Fixture", title: nil,
+            engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(), power: joinTestPower())
+        try await model.connect(); try await spin { capture.starts == 1 }
+        model.viewMode = .audioOnly
+        await model.waitForJoinReadinessForTesting()
+        XCTAssertEqual(capture.starts, 1); XCTAssertEqual(capture.stops, 1)
+        XCTAssertFalse(capture.frameReady)
+        XCTAssertEqual(engine.mutedPreparationCalls, 1)
+        let cameraReport = model.joinReadinessReport["camera"] as? [String: Any]
+        XCTAssertEqual(cameraReport?["state"] as? String, "cancelled")
+        XCTAssertEqual(cameraReport?["stopped"] as? Bool, true)
+        XCTAssertTrue(engine.microphoneCommands.isEmpty); XCTAssertTrue(engine.cameraCommands.isEmpty)
+        XCTAssertFalse(model.snapshot.microphoneOn); XCTAssertNil(model.localCamera)
+        model.viewMode = .automatic; await Task.yield()
+        XCTAssertEqual(capture.starts, 1, "Returning to video view must not restart the one-shot prime")
+        let left = await model.leave(); XCTAssertTrue(left)
+    }
+    func testLeaveDrainsPendingMutedPreparationAndEngineCleanupBeforeReturning() async throws {
+        let engine = DesktopTestEngine()
+        var preparationReply: CheckedContinuation<Void, Never>?
+        var cleanupReply: CheckedContinuation<Void, Never>?
+        var preparationCompletions = 0, leaveCompleted = false
+        engine.onMutedPreparation = {
+            // Model the independent native activation call: cancelling its
+            // caller does not abort this await or manufacture a stop witness.
+            await withCheckedContinuation { preparationReply = $0 }
+            preparationCompletions += 1
+        }
+        engine.onLeaveCleanup = { await withCheckedContinuation { cleanupReply = $0 } }
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Fixture", title: nil,
+            engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .off), power: joinTestPower())
+        let connecting = Task { try await model.connect() }
+        try await spin { preparationReply != nil }
+        let leaving = Task { let result = await model.leave(); leaveCompleted = true; return result }
+        try await spin { model.snapshot.phase == .leaving }
+        await Task.yield()
+        XCTAssertFalse(leaveCompleted)
+        XCTAssertEqual(preparationCompletions, 0)
+        XCTAssertEqual(engine.leaves, 0, "Engine teardown must wait for in-flight muted preparation to drain")
+        XCTAssertTrue(engine.microphoneCommands.isEmpty, "Preparation and Leave must never authorize unmute")
+
+        preparationReply?.resume(); preparationReply = nil
+        try await spin { cleanupReply != nil }
+        XCTAssertEqual(preparationCompletions, 1)
+        XCTAssertEqual(engine.leaves, 1)
+        XCTAssertFalse(leaveCompleted, "Drained preparation is not confirmed engine cleanup")
+        XCTAssertFalse(model.snapshot.microphoneOn)
+        XCTAssertTrue(engine.microphoneCommands.isEmpty)
+
+        cleanupReply?.resume(); cleanupReply = nil
+        let left = await leaving.value; XCTAssertTrue(left)
+        do { try await connecting.value; XCTFail("Leaving during preparation must prevent transport join") }
+        catch is CancellationError {}
+        await model.waitForJoinReadinessForTesting()
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertTrue(leaveCompleted); XCTAssertEqual(model.snapshot.phase, .left)
+        XCTAssertEqual(preparationCompletions, 1, "No readiness completion may arrive after Leave returns")
+        XCTAssertEqual(engine.mutedPreparationCalls, 1); XCTAssertEqual(engine.leaves, 1)
+        XCTAssertTrue(engine.microphoneCommands.isEmpty); XCTAssertFalse(model.snapshot.microphoneOn)
+    }
+    func testJoinCameraFirstFrameWaitDoesNotDelayMicrophoneAndLeaveStopsPrime() async throws {
+        let engine = DesktopTestEngine(), capture = JoinPrimeCapture()
+        engine.testFactory = LKRTCPeerConnectionFactory()
+        capture.starting = {
+            while capture.cancellations == 0 { try await Task.sleep(for: .milliseconds(10)) }
+            throw CancellationError()
+        }
+        let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Fixture", title: nil,
+            engine: engine, joinReadiness: .init(microphone: .off, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(), power: joinTestPower())
+        try await model.connect()
+        try await spin { capture.starts == 1 }
+        model.toggleMicrophone(); await model.waitForMediaActionsForTesting()
+        XCTAssertTrue(model.snapshot.microphoneOn)
+        XCTAssertEqual(capture.stops, 0, "Mic enable must not wait for the camera prime")
+        XCTAssertTrue(engine.cameraCommands.isEmpty); XCTAssertNil(model.localCamera)
+        let left = await model.leave(); XCTAssertTrue(left)
+        XCTAssertEqual(capture.stops, 1); XCTAssertFalse(capture.frameReady)
+        XCTAssertFalse(model.snapshot.microphoneOn); XCTAssertFalse(model.snapshot.cameraOn)
     }
     func testRapidOffSupersedesAnEnableThatHasNotStartedWithoutMutingPlayout() async throws {
         let engine = DesktopTestEngine(), model = try model(engine)

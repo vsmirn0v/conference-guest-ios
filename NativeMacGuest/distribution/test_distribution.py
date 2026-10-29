@@ -69,13 +69,19 @@ class DistributionConfigurationTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('xcodegen') and shutil.which('plutil'), 'Requires XcodeGen and plutil; no build is run')
     def test_nested_generated_projects_resolve_source_and_file_settings(self):
-        source = support.resolve_source_paths(ROOT, (ROOT / 'NativeMacGuest/project.yml').read_text())
         for distribution in ('app-store', 'direct'):
             with self.subTest(distribution=distribution), tempfile.TemporaryDirectory(dir=ROOT / '.build') as temp:
                 output = pathlib.Path(temp).resolve() / '.build/native-dmg/build'
                 spec_dir, project_dir = output / 'Spec', output / 'Project'
                 spec_dir.mkdir(parents=True)
                 project_dir.mkdir()
+                source = (ROOT / 'NativeMacGuest/project.yml').read_text()
+                # Model build.py's prepared package paths without fetching or building SDKs.
+                packages = {output / 'Dependencies' / name for name in ('client-sdk-swift', 'webrtc-xcframework')}
+                for package in packages:
+                    package.mkdir(parents=True)
+                    source = source.replace('../.build/native-desktop-dependencies/' + package.name, str(package))
+                source = support.resolve_source_paths(ROOT, source)
                 spec, _, _ = support.configure_distribution(ROOT, spec_dir, source, distribution)
                 spec_path = spec_dir / 'project.yml'
                 spec_path.write_text(spec)
@@ -97,6 +103,9 @@ class DistributionConfigurationTests(unittest.TestCase):
                                if value.get('isa') == 'PBXGroup' and value.get('path')}
                 self.assertIn(ROOT / 'NativeMacGuest', group_paths)
                 self.assertIn(ROOT / 'Experiments/NativeGuest', group_paths)
+                package_paths = {(project_dir / value['relativePath']).resolve() for value in objects.values()
+                                 if value.get('isa') == 'XCLocalSwiftPackageReference'}
+                self.assertEqual(package_paths, packages | {ROOT / 'ConferenceCore'})
                 self.assertNotIn('$(SRCROOT)/../../../', project.read_text())
 
 

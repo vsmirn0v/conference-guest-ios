@@ -31,11 +31,13 @@ private enum NativeDesktopGuestError: LocalizedError {
     private(set) var guestSnapshot = GuestMeetingSnapshot()
     private(set) var currentNativeEngine: NativeGuestEngine?
     private(set) var microphoneStartupMilliseconds: [String: Double] = [:]
+    var microphoneReadinessPolicy: (() -> Bool)?
     var factory: LKRTCPeerConnectionFactory? {
         guard currentNativeEngine != nil, [.connecting, .connected, .reconnecting].contains(snapshot.phase) else { return nil }
         return systemAudio?.factory
     }
     var privateAudioLevel: Float? { systemAudio?.privateInputLevel }
+    var microphoneReadinessApplied: Bool { session?.snapshot.microphoneActivated == true }
     func cameraCaptureDevice() async -> AVCaptureDevice? {
         let token = revision, native = currentNativeEngine
         let device = await native?.cameraCaptureDevice()
@@ -61,6 +63,8 @@ private enum NativeDesktopGuestError: LocalizedError {
     private var microphoneRevision: UInt64 = 0
     private var cameraRevision: UInt64 = 0
     private var outputIntent = true
+    private var quietJoin = false
+    private var microphoneReadinessAllowed = false
     private var leaving = false
     private var cleanupSucceeded = true
     private var chatHistoryRequested = false
@@ -74,7 +78,7 @@ private enum NativeDesktopGuestError: LocalizedError {
         }
         let target = try GuestInvitation.parse(invitation)
         revision = UUID(); let token = revision
-        leaving = false; outputIntent = !quiet; featureError = nil
+        leaving = false; quietJoin = quiet; outputIntent = !quiet; featureError = nil
         snapshot = .init(phase: .connecting, playoutOn: !quiet)
         guestSnapshot = .init(); onFeatures?(guestSnapshot); emit()
         let profile = GuestAudioProfile.saved
@@ -84,6 +88,10 @@ private enum NativeDesktopGuestError: LocalizedError {
             guard revision == token, !leaving, !Task.isCancelled else { _ = await owner.shutdown(); throw CancellationError() }
             systemAudio = owner
             let engine = NativeGuestEngine(label: name, systemAudio: owner, verifyReceivedPixels: false)
+            engine.configureStartupPlayback(sound: outputIntent)
+            // Re-read actual policy/power after owner creation. Session control
+            // activates muted input before transport join, never during playout.
+            self.session?.setMicrophonePreparationRequested(microphonePreparationEligible)
             engine.cameraCaptureFactory = { source in
                 let id = UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")
                 return GuestCamera(source: source, deviceID: id?.isEmpty == false ? id : nil)
@@ -101,11 +109,12 @@ private enum NativeDesktopGuestError: LocalizedError {
         }
         do {
             try await session.connect(target, publish: true, codec: "h264", camera: true,
-                                      initialAudioMuted: true, initialVideoMuted: true)
+                                      initialAudioMuted: true, initialVideoMuted: true,
+                                      initialMicrophonePreparation: microphonePreparationEligible)
             try check(token, session: session)
             // Make the output choice an explicit session intent so automatic
             // replacement restores the same quiet/listening state.
-            try await session.setPlayoutEnabled(!quiet)
+            try await session.setPlayoutEnabled(outputIntent)
             try check(token, session: session)
             refresh(session.snapshot)
         } catch {
@@ -191,6 +200,7 @@ private enum NativeDesktopGuestError: LocalizedError {
     func setPlayout(_ enabled: Bool) async throws {
         let session = try activeSession(), token = revision
         outputIntent = enabled
+        currentNativeEngine?.setStartupPlaybackIntent(enabled)
         try await session.setPlayoutEnabled(enabled)
         try check(token, session: session); refresh(session.snapshot)
     }
@@ -199,7 +209,7 @@ private enum NativeDesktopGuestError: LocalizedError {
         try await currentNativeEngine?.setVisibleParticipantIDs(ids, preferredScreenParticipantID: focusedParticipantID)
     }
 
-    /// The shell invokes this only for its explicit headset-ready option.
+    /// The shell invokes this only when its join power policy permits preparation.
     /// Authorization already exists; priming never changes the muted intent.
     func prepareMutedCaptureForAccessories() async throws {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
@@ -208,10 +218,21 @@ private enum NativeDesktopGuestError: LocalizedError {
               !session.snapshot.microphoneActivated else { return }
         let token = revision, command = microphoneRevision
         systemAudio?.suppressMicrophone()
-        try await session.activateMicrophone()
+        try await session.prepareMicrophone()
         try check(token, session: session)
         guard microphoneRevision == command, session.snapshot.desiredIntent?.audioMuted == true else { return }
         systemAudio?.suppressMicrophone(); refresh(session.snapshot)
+    }
+
+    func setMicrophoneReadinessForRecovery(_ enabled: Bool) {
+        microphoneReadinessAllowed = enabled
+        session?.setMicrophonePreparationRequested(enabled && !quietJoin &&
+            AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
+    }
+
+    private var microphonePreparationEligible: Bool {
+        !quietJoin && (microphoneReadinessPolicy?() ?? microphoneReadinessAllowed) &&
+            AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws {
@@ -233,6 +254,15 @@ private enum NativeDesktopGuestError: LocalizedError {
         snapshot.sharing = false; emit()
         try await engine.stopScreenShare()
         if let session { refresh(session.snapshot) }
+    }
+
+    /// A timed-out model owns only this adapter/session. Close publication gates
+    /// synchronously before its asynchronous retirement begins.
+    func cancelPendingConnection() {
+        session?.setLocalMuteIntent(true, video: false)
+        session?.setLocalMuteIntent(true, video: true)
+        session?.engine?.suppressOutgoingMedia()
+        systemAudio?.suppressMicrophone()
     }
 
     func leave() async -> Bool {

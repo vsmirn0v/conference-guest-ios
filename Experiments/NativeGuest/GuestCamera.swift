@@ -100,6 +100,7 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
     private let firstFrame: Completion<Void>
     private let sink: Sink
     private let preferredDeviceID: String?
+    private let existingAuthorizationOnly: Bool
     // Remaining mutable state belongs exclusively to queue.
     private var session: AVCaptureSession?
     private var output: AVCaptureVideoDataOutput?
@@ -121,10 +122,11 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         let active: Bool
     }
 
-    init(source: LKRTCVideoSource, deviceID: String? = nil) {
+    init(source: LKRTCVideoSource, deviceID: String? = nil, existingAuthorizationOnly: Bool = false) {
         let firstFrame = Completion<Void>()
         self.firstFrame = firstFrame
         sink = Sink(source: source, firstFrame: firstFrame); preferredDeviceID = deviceID
+        self.existingAuthorizationOnly = existingAuthorizationOnly
     }
 
     func snapshot() -> GuestCameraSnapshot {
@@ -177,7 +179,10 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         try Task.checkCancellation()
         guard !isCancelled() else { throw CancellationError() }
         let began = ProcessInfo.processInfo.systemUptime
-        let permission = Task { try await GuestCaptureAuthorization.request(.video) }
+        let permission = Task { @MainActor in
+            if existingAuthorizationOnly { return AVCaptureDevice.authorizationStatus(for: .video) == .authorized }
+            return try await GuestCaptureAuthorization.request(.video)
+        }
         installPermissionTask(permission)
         defer { clearPermissionTask() }
         let allowed = try await withTaskCancellationHandler(operation: { try await permission.value },

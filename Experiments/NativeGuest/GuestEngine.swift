@@ -103,6 +103,15 @@ final class NativeGuestEngine {
     private var muteWaiters: [String: (Bool, GuestCompletion<Void>, Int)] = [:]
     private var localMuteIntent: [Bool: Bool] = [:]
     private var outputSuppressed = false
+    private var startupPlaybackGain: GuestStartupPlaybackGain?
+    private var startupAudioTask: Task<Void, Error>?
+    private var startupAudioGeneration = UUID()
+    private var startupAudioDeadline: TimeInterval?
+    private var startupReadyTopology: GuestStartupAudioObservation.Topology?
+    private var startupDecision: GuestStartupAudioReport.Decision?
+    private var startupConnected = false
+    private var startupReport: GuestStartupAudioReport?
+    var startupAudioReport: [String: Any] { startupReport?.dictionary ?? [:] }
     private var localParticipantVersion = -1
     private var serverMute: [String: Bool] = [:]
     private var lastMediaEvent = ProcessInfo.processInfo.systemUptime
@@ -207,7 +216,8 @@ final class NativeGuestEngine {
     }
 
     private func makePeer(_ target: GuestPeerTarget) throws -> GuestPeer {
-        let peer = try GuestPeer(target: target, factory: factory, physicalAudio: systemAudio != nil, icePolicy: icePolicy, verifyReceivedPixels: verifyReceivedPixels)
+        let peer = try GuestPeer(target: target, factory: factory, physicalAudio: systemAudio != nil, icePolicy: icePolicy, verifyReceivedPixels: verifyReceivedPixels,
+            startupPlaybackGain: startupPlaybackGain)
         if GuestPeer.diagnosticEventLogDirectory != nil { probeLog("rtc-event-log", ["client": label, "target": target.rawValue, "id": peer.diagnosticID]) }
         peer.sendCandidate = { [weak self] value in
             guard let self, !closing else { throw GuestPeerError.closed }
@@ -215,6 +225,7 @@ final class NativeGuestEngine {
         }
         peer.onFailure = { [weak self] in self?.recordFailure($0) }
         if target == .subscriber {
+            peer.onIncomingAudioChange = { [weak self] in self?.continueArmedStartupAudio() }
             peer.onIncomingVideoChange = { [weak self, weak peer] _ in
                 guard let self, let peer, self.subscriber === peer, !self.closing, !self.outputSuppressed else { return }
                 self.onIncomingVideoChange?(self.incomingVideo)
@@ -578,8 +589,115 @@ final class NativeGuestEngine {
 
     func setPlayoutEnabled(_ enabled: Bool) async throws {
         try checkActive()
+        setStartupPlaybackIntent(enabled)
         if let systemAudio, !(await systemAudio.setPlayoutEnabled(enabled)) { throw GuestEngineError.disconnected }
         try checkActive()
+    }
+
+    func configureStartupPlayback(sound: Bool) {
+        startupPlaybackGain = GuestStartupPlaybackGain(sound: sound)
+        startupReport = .init(configuredUptime: ProcessInfo.processInfo.systemUptime,
+            initialSoundIntent: sound, latestSoundIntent: sound)
+    }
+
+    /// Intent is recorded immediately, even when session control is awaiting readiness.
+    func setStartupPlaybackIntent(_ enabled: Bool) {
+        startupPlaybackGain?.setSound(enabled); startupReport?.latestSoundIntent = enabled
+        continueArmedStartupAudio()
+    }
+
+    private var startupRequiresInput: Bool {
+        published["audio"] != nil && systemAudio?.snapshot["inputAvailable"] as? Bool == true
+    }
+
+    func waitForStartupAudio() async throws {
+        guard let gain = startupPlaybackGain, !gain.isOpen, let owner = systemAudio else { return }
+        if let task = startupAudioTask { try await task.value; return }
+        let generation = startupAudioGeneration
+        if startupAudioDeadline == nil { startupAudioDeadline = ProcessInfo.processInfo.systemUptime + 8 }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { throw CancellationError() }
+            defer { self.startupAudioTask = nil }
+            var stability = GuestStartupAudioStability()
+#if DEBUG
+            @MainActor func record(_ event: String) {
+                let now = ProcessInfo.processInfo.systemUptime
+                let value = owner.startupAudioObservation
+                startupReport?.record(["event": event, "uptime": now,
+                    "deadline": startupAudioDeadline ?? 0, "inputRequired": startupRequiresInput,
+                    "supports": value.supports(input: startupRequiresInput), "observation": value.evidence,
+                    "stability": stability.evidence(at: now), "tap": owner.startupCallbackEvidence])
+            }
+#endif
+            do {
+            while ProcessInfo.processInfo.systemUptime < (startupAudioDeadline ?? 0) {
+                try checkActive()
+                guard generation == startupAudioGeneration else { throw CancellationError() }
+                if !gain.soundEnabled { startupDecision = .soundDisabled; return }
+                if !startupRequiresInput && !gain.hasSources { startupDecision = .noDemand; return }
+                guard await GuestStartupAudioBudget.refresh(deadline: startupAudioDeadline ?? 0,
+                    clock: { ProcessInfo.processInfo.systemUptime },
+                    read: { await owner.refreshSnapshot(timeout: $0) }) else { throw GuestStartupAudioError.timedOut }
+                try checkActive()
+                guard generation == startupAudioGeneration else { throw CancellationError() }
+                let value = owner.startupAudioObservation
+                let ready = stability.observe(value, input: startupRequiresInput, at: ProcessInfo.processInfo.systemUptime)
+#if DEBUG
+                record("observed")
+#endif
+                if ready {
+                    startupReadyTopology = value.topology; startupDecision = .active
+                    startupReport?.graphReadyUptime = ProcessInfo.processInfo.systemUptime
+                    return
+                }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            throw GuestStartupAudioError.timedOut
+            } catch {
+#if DEBUG
+                record("failed")
+                let value: [String: Any] = ["event": "startup-audio-failure",
+                    "error": String(describing: error), "generation": generation.uuidString,
+                    "report": startupReport?.dictionary ?? [:], "owner": owner.snapshot]
+                if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+                   let json = String(data: data, encoding: .utf8) { NSLog("%@", json) }
+#endif
+                throw error
+            }
+        }
+        startupAudioTask = task
+        try await withTaskCancellationHandler(operation: { try await task.value }, onCancel: { task.cancel() })
+    }
+
+    /// No await separates gain release from GuestSession's Connected notification.
+    func releaseStartupAudio() -> Bool {
+        guard !closing, failure == nil, !outputSuppressed else { return false }
+        guard let gain = startupPlaybackGain, !gain.isOpen else { return true }
+        switch startupDecision {
+        case .soundDisabled: guard !gain.soundEnabled else { return false }
+        case .noDemand: guard !startupRequiresInput, !gain.hasSources else { return false }
+        case .active:
+            guard ProcessInfo.processInfo.systemUptime < (startupAudioDeadline ?? 0),
+                  gain.soundEnabled, startupReadyTopology == systemAudio?.startupAudioObservation.topology,
+                  gain.open() else { return false }
+            startupReport?.openUptime = ProcessInfo.processInfo.systemUptime
+        default: return false
+        }
+        startupReport?.decision = startupDecision
+        startupConnected = true
+        return true
+    }
+
+    private func continueArmedStartupAudio() {
+        guard startupConnected, let gain = startupPlaybackGain, !gain.isOpen, gain.soundEnabled,
+              !closing, failure == nil, startupAudioTask == nil else { return }
+        startupAudioDeadline = nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                repeat { try await waitForStartupAudio() } while !releaseStartupAudio()
+            } catch { if !closing, !(error is CancellationError) { recordFailure(error) } }
+        }
     }
 
     private func suppressCamera() {
@@ -671,6 +789,8 @@ final class NativeGuestEngine {
     }
 
     func suppressOutgoingMedia() {
+        startupPlaybackGain?.close(); startupAudioTask?.cancel(); startupAudioGeneration = UUID()
+        startupReport?.retiredUptime = ProcessInfo.processInfo.systemUptime
         outputSuppressed = true
         setScreenShareIntent(false)
         meetingFeatures.setConnected(false); emitMeetingChange()

@@ -46,6 +46,7 @@ protocol NativeDesktopMeetingEngine: AnyObject {
     var snapshot: NativeDesktopExternalSnapshot { get }
     var incomingVideo: [NativeDesktopExternalVideo] { get }
     var privateAudioLevel: Float? { get }
+    var microphoneReadinessPolicy: (() -> Bool)? { get set }
     func connect(invitation: URL, name: String, quiet: Bool) async throws
     func reconnect() async throws
     func setMicrophone(_ enabled: Bool) async throws
@@ -54,6 +55,7 @@ protocol NativeDesktopMeetingEngine: AnyObject {
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws
     func prepareMutedCaptureForAccessories() async throws
+    func setMicrophoneReadinessForRecovery(_ enabled: Bool)
     func cameraCaptureDevice() async -> AVCaptureDevice?
     func startPrivateAudioCheck() async throws
     func stopPrivateAudioCheck() async throws
@@ -62,8 +64,10 @@ protocol NativeDesktopMeetingEngine: AnyObject {
 extension NativeDesktopMeetingEngine {
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws {}
     func prepareMutedCaptureForAccessories() async throws {}
+    func setMicrophoneReadinessForRecovery(_ enabled: Bool) {}
     func cameraCaptureDevice() async -> AVCaptureDevice? { nil }
     var privateAudioLevel: Float? { nil }
+    var microphoneReadinessPolicy: (() -> Bool)? { get { nil } set {} }
     func startPrivateAudioCheck() async throws { throw NativeDesktopPrivateAudioError.unavailable }
     func stopPrivateAudioCheck() async throws {}
 }

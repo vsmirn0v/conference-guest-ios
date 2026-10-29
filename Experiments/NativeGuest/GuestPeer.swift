@@ -31,6 +31,8 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     private let physicalAudio: Bool
     private let icePolicy: GuestICEPolicy
     private var incomingAudio: [LKRTCAudioTrack] = []
+    nonisolated private let startupPlaybackGain: GuestStartupPlaybackGain?
+    var onIncomingAudioChange: (() -> Void)?
     private var iceTimeout: Task<Void, Never>?
     private var lastICEState: LKRTCIceConnectionState = .new
     private var activeIncomingMediaDemand = false
@@ -83,8 +85,10 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     var retainedReceiverTracksForTesting: Int { incomingVideo.count + incomingAudio.count }
 #endif
 
-    init(target: GuestPeerTarget, factory: LKRTCPeerConnectionFactory, physicalAudio: Bool = false, icePolicy: GuestICEPolicy = .automatic, verifyReceivedPixels: Bool = true) throws {
+    init(target: GuestPeerTarget, factory: LKRTCPeerConnectionFactory, physicalAudio: Bool = false, icePolicy: GuestICEPolicy = .automatic, verifyReceivedPixels: Bool = true,
+         startupPlaybackGain: GuestStartupPlaybackGain? = nil) throws {
         self.target = target; self.factory = factory; self.physicalAudio = physicalAudio; self.icePolicy = icePolicy
+        self.startupPlaybackGain = startupPlaybackGain
         renderer = GuestFrameCounter(verifyPixels: verifyReceivedPixels)
         super.init()
         let config = LKRTCConfiguration()
@@ -439,6 +443,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         incomingVideo.forEach { $0.sink.stop(); $0.video.track.remove($0.sink) }; incomingVideo.removeAll()
         onIncomingVideoChange?([]); onIncomingVideoChange = nil
         incomingAudio.forEach { $0.remove(pcmMeter) }; incomingAudio.removeAll()
+        onIncomingAudioChange = nil
         localICE.removeAll(); remoteICE.removeAll(); sendCandidate = nil
         connection.stopRtcEventLog()
         connection.close(); connection.delegate = nil
@@ -620,8 +625,10 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 #endif
 
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didAdd receiver: LKRTCRtpReceiver, streams: [LKRTCMediaStream]) {
+        if let track = receiver.track as? LKRTCAudioTrack { startupPlaybackGain?.register(track) }
         Task { @MainActor [weak self] in
             guard let self, !closed else { return }
+            self.startupPlaybackGain?.reconcile()
 #if DEBUG
             defer { self.receiverEventFinishedForTesting?() }
 #endif
@@ -647,6 +654,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             }
             if let track = receiver.track as? LKRTCAudioTrack, !incomingAudio.contains(where: { $0.isEqual(track) }) {
                 incomingAudio.append(track); track.add(pcmMeter)
+                onIncomingAudioChange?()
 #if DEBUG
                 receiverAttachmentsForTesting += 1
 #endif
@@ -655,6 +663,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         }
     }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didRemove receiver: LKRTCRtpReceiver) {
+        if let track = receiver.track as? LKRTCAudioTrack { startupPlaybackGain?.remove(track) }
         Task { @MainActor [weak self] in
             guard let self, !closed else { return }
 #if DEBUG
@@ -671,6 +680,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             }
             if let index = incomingAudio.firstIndex(where: { $0.isEqual(track) }) {
                 incomingAudio.remove(at: index).remove(pcmMeter)
+                onIncomingAudioChange?()
 #if DEBUG
                 receiverDetachmentsForTesting += 1
 #endif

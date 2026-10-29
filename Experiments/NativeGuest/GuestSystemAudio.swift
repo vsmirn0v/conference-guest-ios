@@ -9,16 +9,23 @@ final class GuestPCMMeter: NSObject, LKRTCAudioRenderer, @unchecked Sendable {
     private var bufferCount = 0
     private var lastLevel: Float?
     private var lastSampleTime: TimeInterval = 0
+    private var callback = GuestStartupAudioCallback()
+    var callbackSnapshot: GuestStartupAudioCallback { locked { callback } }
+#if DEBUG
+    var callbackEvidence: [String: Any] { callbackSnapshot.evidence }
+#endif
     var snapshot: GuestAudioSnapshot { locked { measured } }
     var buffers: Int { locked { bufferCount } }
     var level: Float? { locked { ProcessInfo.processInfo.systemUptime - lastSampleTime < 0.5 ? lastLevel : nil } }
 
     private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
-    func reset() { locked { measured = GuestAudioSnapshot(); bufferCount = 0; lastLevel = nil; lastSampleTime = 0 } }
+    func reset() { locked { measured = GuestAudioSnapshot(); bufferCount = 0; lastLevel = nil; lastSampleTime = 0; callback = .init() } }
 
     func render(pcmBuffer: AVAudioPCMBuffer) {
+        let receivedUptime = ProcessInfo.processInfo.systemUptime
         var samples = 0, energy = 0.0
         let format = pcmBuffer.format
+        let deliveredFormat = withExtendedLifetime(format) { GuestStartupAudioCallback.Format(format.streamDescription.pointee) }
         for buffer in UnsafeMutableAudioBufferListPointer(pcmBuffer.mutableAudioBufferList) {
             guard let data = buffer.mData else { continue }
             let expected = Int(pcmBuffer.frameLength) * Int(buffer.mNumberChannels)
@@ -39,6 +46,8 @@ final class GuestPCMMeter: NSObject, LKRTCAudioRenderer, @unchecked Sendable {
             }
         }
         locked {
+            callback = .init(count: UInt64(bufferCount + 1), frames: Int(pcmBuffer.frameLength),
+                format: deliveredFormat, uptime: receivedUptime)
             measured.samples += samples; measured.energy += energy; bufferCount += 1
             lastLevel = samples > 0 ? Float(sqrt(energy / Double(samples))) : nil
             lastSampleTime = ProcessInfo.processInfo.systemUptime
@@ -159,6 +168,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private var ownerLease: GuestAudioOwnerLease?
     private let inputMeter = GuestPCMMeter()
     private let playoutMeter = GuestPCMMeter()
+    private var inputCallback = GuestStartupAudioCallback()
     private var inputMeterEnabled = false
     private var ownedFactory: LKRTCPeerConnectionFactory?
     private var cached: [String: Any]
@@ -184,6 +194,17 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     var privateInputLevel: Float? { locked { inputMeterEnabled } ? inputMeter.level : nil }
     var privateInputMeterEvidence: [String: Any] { meterEvidence(inputMeter).merging(["enabled": locked { inputMeterEnabled }]) { _, new in new } }
     var playoutMeterEvidence: [String: Any] { meterEvidence(playoutMeter) }
+#if DEBUG
+    var startupCallbackEvidence: [String: Any] {
+        ["input": locked { inputCallback }.evidence, "output": playoutMeter.callbackEvidence]
+    }
+#endif
+    var startupAudioObservation: GuestStartupAudioObservation {
+        let value = snapshot
+        let input = locked { inputCallback }, output = playoutMeter.callbackSnapshot
+        return .init(snapshot: value, inputCallbacks: input.count, outputCallbacks: output.count,
+            inputCallback: input, outputCallback: output)
+    }
     private func meterEvidence(_ meter: GuestPCMMeter) -> [String: Any] {
         let value = meter.snapshot
         return ["buffers": meter.buffers, "samples": value.samples, "energy": value.energy, "rms": value.rms,
@@ -512,12 +533,20 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, engine: AVAudioEngine,
                            configureInputFromSource source: AVAudioNode?, toDestination destination: AVAudioNode,
                            format: AVAudioFormat, context: [AnyHashable: Any]) -> Int {
-        update(["inputSampleRate": format.sampleRate, "inputChannels": Int(format.channelCount)])
+        update(["inputSampleRate": format.sampleRate, "inputChannels": Int(format.channelCount), "inputASBD": Self.signature(format)])
         if let source, source !== tappedInput, format.sampleRate > 0, format.channelCount > 0 {
             tappedInput?.removeTap(onBus: 0)
             tappedInput = source; tappedEngine = engine
             source.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-                guard let self, self.locked({ self.inputMeterEnabled }) else { return }
+                guard let self else { return }
+                let receivedUptime = ProcessInfo.processInfo.systemUptime, deliveredFormat = buffer.format
+                let signature = withExtendedLifetime(deliveredFormat) { GuestStartupAudioCallback.Format(deliveredFormat.streamDescription.pointee) }
+                self.locked {
+                    self.inputCallback = .init(count: self.inputCallback.count + 1, frames: Int(buffer.frameLength),
+                        format: signature, uptime: receivedUptime)
+                    self.cached["inputCallbacks"] = self.inputCallback.count
+                }
+                guard self.locked({ self.inputMeterEnabled }) else { return }
                 self.inputMeter.render(pcmBuffer: buffer)
             }
         }
@@ -526,7 +555,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, engine: AVAudioEngine,
                            configureOutputFromSource source: AVAudioNode, toDestination destination: AVAudioNode?,
                            format: AVAudioFormat, context: [AnyHashable: Any]) -> Int {
-        update(["outputSampleRate": format.sampleRate, "outputChannels": Int(format.channelCount)])
+        update(["outputSampleRate": format.sampleRate, "outputChannels": Int(format.channelCount), "outputASBD": Self.signature(format)])
         // Hardware's existing output pull drives this aggregate meter. No
         // recorder, second engine, audio-file storage or monitoring route exists.
         if destination != nil, source !== tappedPlayout, format.sampleRate > 0, format.channelCount > 0 {
@@ -540,5 +569,10 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     }
     func audioDeviceModuleDidUpdateDevices(_ audioDeviceModule: LKRTCAudioDeviceModule) {
         locked { cached["deviceUpdates"] = (cached["deviceUpdates"] as? Int ?? 0) + 1 }
+    }
+    private static func signature(_ format: AVAudioFormat) -> [Double] {
+        let s = format.streamDescription.pointee
+        return [s.mSampleRate, Double(s.mFormatID), Double(s.mFormatFlags), Double(s.mBytesPerPacket),
+            Double(s.mFramesPerPacket), Double(s.mBytesPerFrame), Double(s.mChannelsPerFrame), Double(s.mBitsPerChannel), Double(s.mReserved)]
     }
 }

@@ -190,7 +190,8 @@ struct NativeDesktopDeviceSettings: View {
     var liveAudioLevel: (() -> Float?)?
     @StateObject private var model = NativeDesktopDeviceModel()
     @AppStorage("nativeDesktop.shareCameraReactions") private var shareCameraReactions = true
-    @AppStorage("nativeDesktop.headsetMuteControls") private var headsetReady = false
+    @AppStorage(NativeDesktopJoinReadinessPolicy.microphoneKey) private var microphoneReadiness = ""
+    @AppStorage(NativeDesktopJoinReadinessPolicy.cameraKey) private var cameraReadiness = ""
     @AppStorage(GuestAudioProfile.preferenceKey) private var profile = GuestAudioProfile.speech.rawValue
     var body: some View {
         Form {
@@ -208,8 +209,11 @@ struct NativeDesktopDeviceSettings: View {
                     if model.audioSnapshot.outputID == 0 { Text(L("System default")).tag(UInt32(0)) }
                     ForEach(model.audioSnapshot.devices(for: .output), id: \.id) { Text($0.name).tag($0.id) }
                 }
-                Toggle(L("Headset mute controls from the first gesture"), isOn: $headsetReady)
-                Text(L("Keeps the microphone ready while muted so AirPods can unmute. Muted audio is never sent. Applies to the next meeting.")).font(.caption).foregroundStyle(.secondary)
+                readinessPicker(L("Microphone readiness"), selection: Binding(
+                    get: { NativeDesktopJoinReadinessPolicy.current().microphone },
+                    set: { microphoneReadiness = $0.rawValue }))
+                Text(L("Keeps the microphone ready while muted for faster unmuting and headset controls. Muted audio is never sent. Uses extra energy. Bluetooth headsets may switch to call audio quality. Applies at the next join or reconnect. Power changes do not interrupt meeting audio.")).font(.caption).foregroundStyle(.secondary)
+                Text(L("Low Power Mode prevents automatic microphone and camera preparation. Preparation uses existing permission. Defaults apply to native Guest meetings; explicit microphone choices also apply to supported headset controls in other meetings.")).font(.caption).foregroundStyle(.secondary)
                 Text(L("Device choices follow the Mac’s system audio routes.")).font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Button(model.checkingAudio ? L("Stop microphone check") : L("Check microphone privately")) {
@@ -224,6 +228,10 @@ struct NativeDesktopDeviceSettings: View {
                 }
             }
             Section(L("Camera")) {
+                readinessPicker(L("Camera readiness"), selection: Binding(
+                    get: { NativeDesktopJoinReadinessPolicy.current().camera },
+                    set: { cameraReadiness = $0.rawValue }))
+                Text(L("Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view.")).font(.caption).foregroundStyle(.secondary)
                 Toggle(L("Share camera reactions"), isOn: $shareCameraReactions)
                 Text(L("System heart, thumbs and celebration effects also send matching meeting reactions when your camera is shared.")).font(.caption).foregroundStyle(.secondary)
                 Picker(L("Camera"), selection: Binding(get: { model.cameraID }, set: { model.selectCamera($0) })) {
@@ -244,6 +252,11 @@ struct NativeDesktopDeviceSettings: View {
             if let error = model.error { Text(error).foregroundStyle(.red) }
         }.onDisappear { Task { await model.stop() } }
             .onChange(of: liveTrack != nil) { if $0 { Task { await model.stop() } } }
+    }
+    private func readinessPicker(_ title: String, selection: Binding<NativeDesktopMediaReadinessMode>) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(NativeDesktopMediaReadinessMode.allCases, id: \.rawValue) { Text($0.title).tag($0) }
+        }
     }
 }
 

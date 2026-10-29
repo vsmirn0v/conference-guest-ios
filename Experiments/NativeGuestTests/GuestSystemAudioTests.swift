@@ -1,8 +1,18 @@
 import AVFoundation
 import Foundation
 
+private final class StartupGainFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Double
+    private var writes: [Double] = []
+    init(_ value: Double) { stored = value }
+    var value: Double { lock.lock(); defer { lock.unlock() }; return stored }
+    var history: [Double] { lock.lock(); defer { lock.unlock() }; return writes }
+    func set(_ value: Double) { lock.lock(); stored = value; writes.append(value); lock.unlock() }
+}
+
 @main struct GuestSystemAudioTests {
-    static func main() {
+    @MainActor static func main() async {
         // All fixtures are memory-only. These tests never create a factory or access audio devices.
         for format: AVAudioCommonFormat in [.pcmFormatInt16, .pcmFormatInt32, .pcmFormatFloat32, .pcmFormatFloat64] {
             for interleaved in [true, false] {
@@ -12,6 +22,10 @@ import Foundation
                 precondition(meter.snapshot.samples == 960)
                 precondition(abs(meter.snapshot.rms - 0.5) < 1e-12)
                 precondition(meter.buffers == 1)
+#if DEBUG
+                precondition(meter.callbackEvidence["frames"] as? Int == 480)
+                precondition(meter.callbackEvidence["sampleRate"] as? Double == 48000)
+#endif
                 precondition(abs((meter.level ?? 0) - 0.5) < 0.00001)
                 let before = meter.snapshot
                 meter.render(pcmBuffer: pcm)
@@ -43,7 +57,177 @@ import Foundation
         videoWindowEvidence()
         ownerLeaseAndProfiles()
         operationTraceEvidence()
+        startupGainRegistry()
+        startupGainSDKReentry()
+        startupGraphStability()
+        startupDeliveredCallbackCadence()
+        await startupSnapshotBudget()
         print("PASS: memory-only PCM meters, exclusive private/meeting owner leases, speech/music constraints, video windows and audio operation timing")
+    }
+
+    @MainActor private static func startupGainRegistry() {
+        let gain = GuestStartupPlaybackGain(sound: true), identity = NSObject()
+        var volume = 0.7
+        func register() { gain.register(identity: identity, gain: { volume }, setGain: { volume = $0 }) }
+        register(); precondition(volume == 0 && gain.hasSources && !gain.isOpen)
+        register(); gain.remove(identity); precondition(!gain.hasSources)
+        register(); precondition(volume == 0 && gain.hasSources)
+        precondition(gain.open() && volume == 0.7, "Duplicates and reattachment preserve original gain")
+        gain.setSound(false); precondition(volume == 0)
+        gain.setSound(true); precondition(volume == 0.7)
+        gain.close(); precondition(volume == 0 && !gain.open())
+        register(); precondition(volume == 0 && !gain.hasSources, "A stale callback cannot open or retain an old owner")
+        let armed = GuestStartupPlaybackGain(sound: false), late = NSObject()
+        var lateVolume = 1.0
+        precondition(!armed.open(), "Sound-off does not open an empty gate")
+        armed.setSound(true)
+        armed.register(identity: late, gain: { lateVolume }, setGain: { lateVolume = $0 })
+        precondition(lateVolume == 0 && !armed.isOpen, "Later receivers stay silent until their own witness")
+        precondition(armed.open() && lateVolume == 1)
+        armed.close()
+    }
+
+    @MainActor private static func startupGainSDKReentry() {
+        let gate = GuestStartupPlaybackGain(sound: true)
+        let first = NSObject(), signaling = NSObject(), reentrant = NSObject()
+        let firstGain = StartupGainFixture(0.6), signalingGain = StartupGainFixture(0.8), reentrantGain = StartupGainFixture(0.4)
+        var simulated = false
+        gate.register(identity: first, gain: { firstGain.value }, setGain: { value in
+            firstGain.set(value)
+            guard value > 0, !simulated else { return }
+            simulated = true
+            // Model an SDK BlockingCall that needs the signaling callback to return.
+            let returned = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async {
+                gate.register(identity: signaling, gain: { signalingGain.value }, setGain: { signalingGain.set($0) })
+                returned.signal()
+            }
+            precondition(returned.wait(timeout: .now() + 1) == .success,
+                "SDK I/O may not hold a lock needed by the signaling callback")
+            // SDK reentry may also register on the same thread.
+            gate.register(identity: reentrant, gain: { reentrantGain.value }, setGain: { reentrantGain.set($0) })
+        })
+        precondition(gate.open() && simulated)
+        precondition(signalingGain.value == 0 && reentrantGain.value == 0,
+            "A callback only mutes; positive restoration waits for MainActor reconciliation")
+        gate.reconcile()
+        precondition(firstGain.value == 0.6 && signalingGain.value == 0.8 && reentrantGain.value == 0.4)
+        gate.close()
+        let oldWrites = signalingGain.history.count
+        let returned = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            gate.register(identity: signaling, gain: { signalingGain.value }, setGain: { signalingGain.set($0) })
+            returned.signal()
+        }
+        precondition(returned.wait(timeout: .now() + 1) == .success)
+        gate.reconcile()
+        precondition(signalingGain.history.dropFirst(oldWrites).allSatisfy { $0 == 0 } && !gate.open(),
+            "A stale callback never writes positive gain after close returns")
+    }
+
+    private static func startupGraphStability() {
+        let format: [Double] = [48000, 1819304813, 41, 4, 1, 4, 1, 32, 0]
+        var snapshot: [String: Any] = ["engineRunning": true, "inputAvailable": true, "inputEnabled": false,
+            "inputRunning": false, "outputAvailable": true, "outputEnabled": true,
+            "inputASBD": format, "outputASBD": format, "engineStarts": 1]
+        func observation(_ tick: Int) -> GuestStartupAudioObservation {
+            .init(snapshot: snapshot, inputCallbacks: UInt64(tick), outputCallbacks: UInt64(tick))
+        }
+        var stability = GuestStartupAudioStability()
+        for tick in 0..<6 { precondition(!stability.observe(observation(tick), input: true, at: Double(tick) / 10), "The early output-only graph is not ready") }
+        snapshot["inputEnabled"] = true; snapshot["inputRunning"] = true
+        snapshot["outputEnabled"] = false // An empty room can render coupled output from local input demand.
+        for tick in 6..<10 { precondition(!stability.observe(observation(tick), input: true, at: Double(tick) / 10)) }
+        precondition(stability.observe(observation(10), input: true, at: 1), "Empty-room coupled output qualifies through silent callbacks without raw output demand or energy")
+        snapshot["engineStarts"] = 2
+        precondition(!stability.observe(observation(11), input: true, at: 1.1), "A graph restart resets the entire window")
+        for tick in 12..<15 { precondition(!stability.observe(observation(tick), input: true, at: Double(tick) / 10)) }
+        precondition(stability.observe(observation(15), input: true, at: 1.5))
+        precondition(!stability.observe(observation(15), input: true, at: 1.7), "Stalled silent callbacks do not prove readiness")
+#if DEBUG
+        precondition(stability.lastDecision == "callbackStale")
+        precondition(observation(15).evidence["outputCallbacks"] as? UInt64 == 15)
+        var report = GuestStartupAudioReport(configuredUptime: 0, initialSoundIntent: true, latestSoundIntent: true)
+        for index in 0..<30 { report.record(["index": index]) }
+        precondition(report.observations.count == 20 && report.observations.first?["index"] as? Int == 10,
+            "Failure evidence stays bounded and preserves the final observations")
+#endif
+        var changed = format; changed[2] = 9; snapshot["outputASBD"] = changed
+        precondition(!stability.observe(observation(18), input: true, at: 1.8), "Full ASBD changes reset readiness")
+    }
+
+    private static func startupDeliveredCallbackCadence() {
+        let nativeFormat = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1)!
+        let native = withExtendedLifetime(nativeFormat) { nativeFormat.streamDescription.pointee }
+        let actual = GuestStartupAudioCallback.Format(native)
+        let configured: [Double] = [48000, 1819304813, 41, 4, 1, 4, 1, 32, 0]
+        let snapshot: [String: Any] = ["engineRunning": true, "inputAvailable": true, "inputEnabled": true,
+            "inputRunning": true, "outputAvailable": true, "outputEnabled": false,
+            "inputASBD": configured, "outputASBD": configured, "engineStarts": 1]
+        func observation(_ tick: Int, frames: Int = 4800, format: GuestStartupAudioCallback.Format? = nil,
+                         outputTick: Int? = nil) -> GuestStartupAudioObservation {
+            let outputTick = outputTick ?? (tick / 4) * 4
+            let input = GuestStartupAudioCallback(count: UInt64(tick / 2 + 1), frames: 2400,
+                format: actual, uptime: 10 + Double((tick / 2) * 2) * 0.05)
+            let output = GuestStartupAudioCallback(count: UInt64(outputTick / 4 + 1), frames: frames,
+                format: format ?? actual, uptime: 10 + Double(outputTick) * 0.05)
+            return .init(snapshot: snapshot, inputCallbacks: input.count, outputCallbacks: output.count,
+                inputCallback: input, outputCallback: output)
+        }
+        var stability = GuestStartupAudioStability()
+        for tick in 0..<7 { precondition(!stability.observe(observation(tick), input: true, at: 10 + Double(tick) * 0.05)) }
+        let ready = stability.observe(observation(8), input: true, at: 10.4)
+        precondition(ready,
+            "Silent 200ms delivered output buffers qualify despite stale configured48k ASBD")
+        precondition(abs(observation(8).outputCallback.freshness - 0.3) < 0.000001)
+        var stalled = GuestStartupAudioStability()
+        for tick in 0..<20 {
+            precondition(!stalled.observe(observation(0), input: true, at: 10 + Double(tick) * 0.05),
+                "A constant callback count never proves progress")
+        }
+        for gap in [0.35, 0.36] {
+            precondition(!stability.observe(observation(14, outputTick: 8), input: true, at: 10.4 + gap),
+                "A callback gap at or above350ms cannot qualify continuity")
+        }
+        var capped = GuestStartupAudioStability()
+        _ = capped.observe(observation(0, frames: 7200), input: true, at: 10)
+        precondition(capped.observe(observation(8, frames: 7200), input: true, at: 10.4))
+        precondition(!capped.observe(observation(14, frames: 7200, outputTick: 8), input: true, at: 10.4 + 0.35),
+            "Receipt age exactly350ms fails even when the scheduling allowance reaches its cap")
+        for frames in [8400, 9600] {
+            precondition(!observation(8, frames: frames).supports(input: true),
+                "Nominal delivered cadence at or above350ms is explicitly unsupported")
+        }
+        var changed = native; changed.mFormatFlags ^= 1
+        var transition = GuestStartupAudioStability()
+        _ = transition.observe(observation(0), input: true, at: 10)
+        precondition(transition.observe(observation(8), input: true, at: 10.4))
+        precondition(!transition.observe(observation(9, format: .init(changed)), input: true, at: 10.45),
+            "Actual full ASBD changes reset stability while the configured ASBD stays unchanged")
+        precondition(!transition.observe(observation(10, frames: 2400), input: true, at: 10.5),
+            "Delivered buffer/cadence changes reset stability")
+    }
+
+    @MainActor private static func startupSnapshotBudget() async {
+        var now = 3.0, supplied = 0.0, reads = 0
+        let within = await GuestStartupAudioBudget.refresh(deadline: 8, clock: { now }, read: {
+            supplied = $0; reads += 1; now += 2.4; return true
+        })
+        precondition(within && supplied == 5 && reads == 1,
+            "A 2.4-second native snapshot uses the actual remaining budget and may finish before the unchanged deadline")
+        for completion in [8.0, 8.1] {
+            now = 3
+            let accepted = await GuestStartupAudioBudget.refresh(deadline: 8, clock: { now }, read: {
+                precondition($0 == 5); now = completion; return true
+            })
+            precondition(!accepted, "Success exactly at or after the deadline cannot qualify readiness")
+        }
+        now = 8; reads = 0
+        let expired = await GuestStartupAudioBudget.refresh(deadline: 8, clock: { now }, read: { _ in reads += 1; return true })
+        precondition(!expired && reads == 0, "Expired budget must not start another native read")
+        now = 3
+        let failed = await GuestStartupAudioBudget.refresh(deadline: 8, clock: { now }, read: { _ in false })
+        precondition(!failed, "An unsuccessful read remains a failure even with time left")
     }
 
     private static func operationTraceEvidence() {

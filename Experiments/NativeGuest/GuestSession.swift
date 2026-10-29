@@ -66,6 +66,8 @@ protocol GuestSessionEngine: AnyObject {
     var onPermissionsChange: ((GuestMediaPermissions) -> Void)? { get set }
     func activateMicrophone() async throws
     func setPlayoutEnabled(_ enabled: Bool) async throws
+    func waitForStartupAudio() async throws
+    func releaseStartupAudio() -> Bool
     func join(_ invitation: GuestInvitation, sessionID: String?) async throws
     func publishPattern(codec: String, camera: Bool, audioMuted: Bool, videoMuted: Bool) async throws
     func mute(_ muted: Bool, video: Bool) async throws
@@ -80,6 +82,8 @@ extension GuestSessionEngine {
     var onPermissionsChange: ((GuestMediaPermissions) -> Void)? { get { nil } set {} }
     func activateMicrophone() async throws {}
     func setPlayoutEnabled(_ enabled: Bool) async throws {}
+    func waitForStartupAudio() async throws {}
+    func releaseStartupAudio() -> Bool { true }
 }
 
 enum GuestSessionError: LocalizedError {
@@ -111,6 +115,8 @@ final class GuestSession {
     private var invitation: GuestInvitation?
     private(set) var appliedIntent: GuestMediaIntent? { didSet { notifyStateChange() } }
     private var microphoneActivationRequested = false
+    private var microphonePreparationRequested = false
+    private var attemptMicrophonePreparation = false
     private var appliedMicrophoneActivation = false
     private var desiredPlayoutEnabled: Bool? { didSet { notifyStateChange() } }
     private var appliedPlayoutEnabled: Bool? { didSet { notifyStateChange() } }
@@ -147,7 +153,8 @@ final class GuestSession {
     }
 
     func connect(_ invitation: GuestInvitation, publish: Bool, codec: String, camera: Bool,
-                 initialAudioMuted: Bool = false, initialVideoMuted: Bool = false) async throws {
+                 initialAudioMuted: Bool = false, initialVideoMuted: Bool = false,
+                 initialMicrophonePreparation: Bool = false) async throws {
         guard state == .idle || state == .left || state == .failed else { throw GuestTransportError.alreadyConnecting }
         let priorShutdown = shutdown
         generation &+= 1
@@ -159,7 +166,8 @@ final class GuestSession {
         guard drained else { state = .failed; failure = GuestSessionError.cleanupFailed; throw GuestSessionError.cleanupFailed }
         shutdown = nil; failure = nil; pendingFailure = nil; sessionID = nil
         cleanupSucceeded = true; policy = GuestRecoveryPolicy(); recoveryAttempts = 0
-        microphoneActivationRequested = false; appliedMicrophoneActivation = false
+        microphoneActivationRequested = false; microphonePreparationRequested = initialMicrophonePreparation
+        attemptMicrophonePreparation = false; appliedMicrophoneActivation = false
         desiredPlayoutEnabled = nil; appliedPlayoutEnabled = nil
         self.invitation = invitation
         desiredIntent = GuestMediaIntent(publish: publish, codec: codec, camera: camera,
@@ -206,6 +214,21 @@ final class GuestSession {
             throw failure ?? GuestTransportError.notConnected
         }
         microphoneActivationRequested = true
+        try await reconcileControl()
+    }
+
+    /// Preparation is separate from explicit user activation. Withdrawing it
+    /// changes only replacement intent; the current audio graph stays intact.
+    func setMicrophonePreparationRequested(_ requested: Bool) {
+        microphonePreparationRequested = requested
+    }
+
+    func prepareMicrophone() async throws {
+        guard desiredIntent != nil, state != .left, state != .failed else {
+            throw failure ?? GuestTransportError.notConnected
+        }
+        microphonePreparationRequested = true
+        attemptMicrophonePreparation = true
         try await reconcileControl()
     }
 
@@ -301,6 +324,9 @@ final class GuestSession {
                         guard let self, self.generation == expected, self.attemptID == attempt else { return }
                         self.notifyStateChange()
                     }
+                    // Speculative activation has one prejoin decision per attempt.
+                    // A later policy opt-in cannot activate input after playout starts.
+                    attemptMicrophonePreparation = microphonePreparationRequested
                     try await reconcileDeviceIntent(next, generation: expected, attempt: attempt)
                     try await next.join(invitation, sessionID: sessionID)
                     try check(expected, attempt: attempt)
@@ -333,7 +359,14 @@ final class GuestSession {
                 // A device operation may suspend after the media loop. Revisit
                 // any newer intent before completing the shared control job.
                 if desiredIntent?.publish == true, desiredIntent != appliedIntent { continue }
-                if connectedAttemptID != attempt { connectionCount &+= 1; connectedAttemptID = attempt }
+                if connectedAttemptID != attempt {
+                    try await current.waitForStartupAudio()
+                    try check(expected, attempt: attempt)
+                    if desiredIntent?.publish == true, desiredIntent != appliedIntent { continue }
+                    if let desiredPlayoutEnabled, desiredPlayoutEnabled != appliedPlayoutEnabled { continue }
+                    guard current.releaseStartupAudio() else { continue }
+                    connectionCount &+= 1; connectedAttemptID = attempt
+                }
                 state = .connected
                 control = nil
                 return
@@ -364,7 +397,7 @@ final class GuestSession {
     }
 
     private func reconcileDeviceIntent(_ engine: any GuestSessionEngine, generation expected: UInt64, attempt: UUID) async throws {
-        if microphoneActivationRequested && !appliedMicrophoneActivation {
+        if (microphoneActivationRequested || attemptMicrophonePreparation) && !appliedMicrophoneActivation {
             try await engine.activateMicrophone()
             try check(expected, attempt: attempt)
             appliedMicrophoneActivation = true; notifyStateChange()
@@ -395,7 +428,7 @@ final class GuestSession {
         retired.suppressOutgoingMedia()
         sessionID = retired.sessionID ?? sessionID
         current = nil; attemptID = nil; connectedAttemptID = nil; appliedIntent = nil
-        appliedMicrophoneActivation = false; appliedPlayoutEnabled = nil
+        attemptMicrophonePreparation = false; appliedMicrophoneActivation = false; appliedPlayoutEnabled = nil
         retired.onFailure = nil; retired.onForcedMute = nil; retired.onPermissionsChange = nil
         let stopped = await retired.leave(sendLeave: sendLeave)
         cleanupSucceeded = stopped && cleanupSucceeded
