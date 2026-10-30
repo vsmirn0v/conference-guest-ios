@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "41",
+  "channel": "beta",
+  "sourceCommit": "fe06ec7",
+  "changes": [
+    "Multiple simultaneous meetings (up to 4): one talk meeting holds mic and camera, others listen; per-meeting Sound and volume; tabbed windows, Meetings popover, Listening banner, status menu per meeting, shortcuts, Allow multiple meetings setting (fe06ec7)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-41-arm64.dmg",
+    "sha256": "2f05b16dee4e5a8bcd71131b04f938103339e1a456c8c08e9fa1333fc69a91a7",
+    "length": 15746114
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-41-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 41",
+    "live Guest+Guest, Guest+Rock and Rock+Rock meetings with repeated mic moves",
+    "echo between meetings on speakers"
+  ]
+}
