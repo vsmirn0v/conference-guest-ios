@@ -74,6 +74,10 @@ import XCTest
     func setPlayout(_ enabled: Bool) async throws { snapshot.playoutOn = enabled; onState?(snapshot) }
     var volumes: [Double] = []
     func setPlayoutVolume(_ volume: Double) async { volumes.append(volume) }
+    var participantVolumeSupported = true
+    var supportsParticipantVolume: Bool { participantVolumeSupported }
+    var participantVolumeCommands: [(id: String, volume: Double)] = []
+    func setParticipantVolume(_ volume: Double, participantID: String) async { participantVolumeCommands.append((participantID, volume)) }
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws { snapshot.sharing = track != nil; onState?(snapshot) }
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws { demands.append((ids, focusedParticipantID)) }
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?, cameras: Bool) async throws {
@@ -1023,6 +1027,28 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertEqual(NativeDesktopMeetingView.elapsed(since: Date(timeIntervalSince1970: 0), now: Date(timeIntervalSince1970: 75)), "1:15")
         XCTAssertEqual(NativeDesktopMeetingView.elapsed(since: Date(timeIntervalSince1970: 0), now: Date(timeIntervalSince1970: 3_725)), "1:02:05")
         _ = await next.leave()
+    }
+    func testParticipantVolumeIsListenerOnlyAndLimitedToRemoteSpeakers() async throws {
+        let engine = DesktopTestEngine(), model = try model(engine)
+        try await model.connect()
+        engine.snapshot.participants = [.init(id: "me", name: "Me", isLocal: true), .init(id: "a", name: "A"), .init(id: "b", name: "B")]
+        engine.onState?(engine.snapshot)
+        model.setParticipantVolume(0.5, participantID: "me")
+        model.setParticipantVolume(0.5, participantID: "ghost")
+        model.setParticipantVolume(5, participantID: "a")
+        model.setParticipantVolume(0, participantID: "b")
+        try await spin { engine.participantVolumeCommands.count == 2 }
+        XCTAssertEqual(engine.participantVolumeCommands.map(\.id), ["a", "b"], "Local and unknown participants are never adjusted")
+        XCTAssertEqual(engine.participantVolumeCommands.map(\.volume), [2, 0], "Levels are clamped to 0...200%")
+        XCTAssertEqual(model.participantVolume("a"), 2); XCTAssertEqual(model.participantVolume("b"), 0)
+        model.setParticipantVolume(1, participantID: "a")
+        try await spin { engine.participantVolumeCommands.last?.volume == 1 }
+        XCTAssertNil(model.participantVolumes["a"], "100% removes the override")
+        XCTAssertTrue(model.snapshot.playoutOn); XCTAssertEqual(model.meetingVolume, 1, "Speaker levels never change meeting sound or volume")
+        engine.participantVolumeSupported = false
+        model.setParticipantVolume(0.5, participantID: "b")
+        XCTAssertEqual(model.participantVolume("b"), 0, "Engines without separate speakers ignore the control")
+        _ = await model.leave()
     }
     func testMinimizingSuspendsMediaAndPreservesEditorShellWithoutLeaving() async throws {
         let engine = DesktopTestEngine(), model = try model(engine)

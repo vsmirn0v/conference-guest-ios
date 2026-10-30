@@ -107,6 +107,7 @@ final class NativeGuestEngine {
     private var localMuteIntent: [Bool: Bool] = [:]
     private var outputSuppressed = false
     private var startupPlaybackGain: GuestStartupPlaybackGain?
+    private var participantVolumes: [String: Double] = [:]
     private var startupAudioTask: Task<Void, Error>?
     private var startupAudioGeneration = UUID()
     private var startupPlayoutEpoch: UUID?
@@ -468,6 +469,8 @@ final class NativeGuestEngine {
             }
             onIncomingVideoChange?(incomingVideo)
         }
+        // A receiver can attach before its publication metadata names the speaker.
+        if !participantVolumes.isEmpty { startupPlaybackGain?.reconcile() }
         try await reconcileSubscriptions()
     }
 
@@ -653,8 +656,20 @@ final class NativeGuestEngine {
         }
         _ = systemAudio?.setSharedSoundIntent(sound, expected: startupPlayoutEpoch)
         startupPlaybackGain = GuestStartupPlaybackGain(sound: sound)
+        startupPlaybackGain?.level = { [weak self] source in self?.participantLevel(source) ?? 1 }
         startupReport = .init(configuredUptime: ProcessInfo.processInfo.systemUptime,
             initialSoundIntent: sound, latestSoundIntent: sound)
+    }
+
+    /// Listener-only levels keyed by participant identity; nothing is signaled.
+    func setParticipantVolumes(_ volumes: [String: Double]) {
+        participantVolumes = volumes
+        startupPlaybackGain?.reconcile()
+    }
+    private func participantLevel(_ source: GuestStartupPlaybackGain.Source) -> Double {
+        guard !participantVolumes.isEmpty, let publication = knownPublication(source, type: "AUDIO"),
+              let identity = remoteParticipantIdentities[publication.participant] else { return 1 }
+        return participantVolumes[identity] ?? 1
     }
 
     /// Intent is recorded immediately, even when session control is awaiting readiness.

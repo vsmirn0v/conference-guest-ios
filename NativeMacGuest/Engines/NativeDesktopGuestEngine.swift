@@ -63,6 +63,7 @@ private enum NativeDesktopGuestError: LocalizedError {
     private var session: GuestSession?
     private var systemAudio: GuestSystemAudio?
     private var meetingVolume = 1.0
+    private var participantVolumes: [String: Double] = [:]
     private let media: NativeDesktopSharedMedia<GuestSystemAudio>
     private let microphoneAuthorized: () -> Bool
     private var room: NativeDesktopSharedMedia<GuestSystemAudio>.Room?
@@ -118,6 +119,7 @@ private enum NativeDesktopGuestError: LocalizedError {
 #endif
             engine.releaseSystemAudio = { [media] clean in await media.detach(room, attempt: attempt, clean: clean) }
             engine.configureStartupPlayback(sound: outputIntent)
+            engine.setParticipantVolumes(participantVolumes)
             // Re-read actual policy/power after owner creation. Session control
             // activates muted input before transport join, never during playout.
             self.session?.setMicrophonePreparationRequested(microphonePreparationEligible)
@@ -235,6 +237,11 @@ private enum NativeDesktopGuestError: LocalizedError {
         try check(token, session: session); refresh(session.snapshot)
     }
 
+    var supportsParticipantVolume: Bool { true }
+    func setParticipantVolume(_ volume: Double, participantID: String) async {
+        participantVolumes[participantID] = volume == 1 ? nil : volume
+        currentNativeEngine?.setParticipantVolumes(participantVolumes)
+    }
     func setPlayoutVolume(_ volume: Double) async {
         meetingVolume = volume
         _ = systemAudio?.setMeetingVolume(volume)

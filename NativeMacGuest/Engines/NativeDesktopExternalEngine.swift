@@ -54,6 +54,10 @@ protocol NativeDesktopMeetingEngine: AnyObject {
     func setPlayout(_ enabled: Bool) async throws
     /// App-only meeting level (0...1); never changes the macOS output volume.
     func setPlayoutVolume(_ volume: Double) async
+    /// Engines that receive each speaker separately report true; others never show the control.
+    var supportsParticipantVolume: Bool { get }
+    /// Listener-only level (0...2) for one remote participant; 1 removes the override.
+    func setParticipantVolume(_ volume: Double, participantID: String) async
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws
     /// Engines that can subscribe screens without cameras report true; the shell
@@ -74,6 +78,8 @@ extension NativeDesktopMeetingEngine {
         try await setVisibleParticipantIDs(ids, focusedParticipantID: focusedParticipantID)
     }
     func setPlayoutVolume(_ volume: Double) async {}
+    var supportsParticipantVolume: Bool { false }
+    func setParticipantVolume(_ volume: Double, participantID: String) async {}
     func prepareMutedCaptureForAccessories() async throws {}
     func setMicrophoneReadinessForRecovery(_ enabled: Bool) {}
     func cameraCaptureDevice() async -> AVCaptureDevice? { nil }

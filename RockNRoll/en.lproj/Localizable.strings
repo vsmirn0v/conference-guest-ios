@@ -1351,3 +1351,10 @@
 "Drag the camera frame to move it, or its corner to resize. Use − and + to zoom; ⌥-drag inside the frame to reframe." = "Drag the camera frame to move it, or its corner to resize. Use − and + to zoom; ⌥-drag inside the frame to reframe.";
 "Close-up" = "Close-up";
 "Reset" = "Reset";
+"Mute for me" = "Mute for me";
+"Unmute for me" = "Unmute for me";
+"Volume for me" = "Volume for me";
+"Muted for you" = "Muted for you";
+"Volume for you: %d%%" = "Volume for you: %d%%";
+"Volume for %@" = "Volume for %@";
+"Only you hear this change." = "Only you hear this change.";

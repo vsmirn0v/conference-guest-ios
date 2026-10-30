@@ -523,6 +523,18 @@ import UniformTypeIdentifiers
         }
     }
     static func clampedVolume(_ value: Double) -> Double { value.isFinite ? min(1, max(0, value)) : 1 }
+    /// Listener-only speaker levels for this meeting (0...2). Others hear no change.
+    @Published private(set) var participantVolumes: [String: Double] = [:]
+    var supportsParticipantVolume: Bool { engine.supportsParticipantVolume }
+    func participantVolume(_ participantID: String) -> Double { participantVolumes[participantID] ?? 1 }
+    func setParticipantVolume(_ value: Double, participantID: String) {
+        guard !closed, supportsParticipantVolume,
+              participants.contains(where: { $0.id == participantID && !$0.isLocal }) else { return }
+        let volume = value.isFinite ? min(2, max(0, value)) : 1
+        guard volume != participantVolume(participantID) else { return }
+        participantVolumes[participantID] = volume == 1 ? nil : volume
+        Task { [engine] in await engine.setParticipantVolume(volume, participantID: participantID) }
+    }
     /// Slider drags pass persist: false and save once on release.
     func setMeetingVolume(_ value: Double, persist: Bool = true) {
         guard !closed else { return }

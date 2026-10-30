@@ -1349,3 +1349,10 @@
 "Drag the camera frame to move it, or its corner to resize. Use − and + to zoom; ⌥-drag inside the frame to reframe." = "Перетащите рамку камеры, чтобы переместить её, или её угол, чтобы изменить размер. Кнопки − и + меняют масштаб; перетаскивание с ⌥ внутри рамки сдвигает кадр.";
 "Close-up" = "Крупный план";
 "Reset" = "Сбросить";
+"Mute for me" = "Выключить для меня";
+"Unmute for me" = "Включить для меня";
+"Volume for me" = "Громкость для меня";
+"Muted for you" = "Выключен для вас";
+"Volume for you: %d%%" = "Громкость для вас: %d%%";
+"Volume for %@" = "Громкость: %@";
+"Only you hear this change." = "Это изменение слышите только вы.";

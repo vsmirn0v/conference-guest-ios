@@ -64,6 +64,24 @@ private final class OutputGainFixture: NSObject {
         XCTAssertTrue(gate.setVolume(.nan)); XCTAssertEqual(output.gain, 1)
     }
 
+    func testSpeakerLevelsScaleOnlyRestoredSourceGain() {
+        let gain = GuestStartupPlaybackGain(sound: true)
+        var loud = 0.0, quiet = 0.0, unknown = 0.0
+        gain.register(identity: NSObject(), source: .init(trackID: "loud"), gain: { 1 }, setGain: { loud = $0 })
+        gain.register(identity: NSObject(), source: .init(trackID: "quiet"), gain: { 1 }, setGain: { quiet = $0 })
+        gain.register(identity: NSObject(), source: .init(trackID: nil), gain: { 1 }, setGain: { unknown = $0 })
+        var levels = ["loud": 3.0, "quiet": 0.25]
+        gain.level = { levels[$0.trackID ?? ""] ?? 1 }
+        gain.reconcile()
+        XCTAssertEqual([loud, quiet, unknown], [0, 0, 0], "A level never bypasses startup readiness")
+        XCTAssertTrue(gain.open())
+        XCTAssertEqual([loud, quiet, unknown], [2, 0.25, 1], "Levels clamp to 200% and unknown speakers stay at 100%")
+        levels["quiet"] = 0; gain.reconcile(); XCTAssertEqual(quiet, 0)
+        gain.setSound(false); XCTAssertEqual([loud, quiet, unknown], [0, 0, 0], "Sound off stays an exact zero")
+        gain.setSound(true); XCTAssertEqual(loud, 2)
+        gain.close(); XCTAssertEqual(loud, 0)
+    }
+
     func testRequiredOpenFailureRollsBackSourcesAndCanRecoverWithoutDiscardingThem() {
         let gate = GuestSharedPlayoutGate(enabled: true)
         XCTAssertTrue(gate.reset(sound: true))

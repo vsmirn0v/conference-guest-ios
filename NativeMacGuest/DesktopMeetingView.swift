@@ -346,6 +346,7 @@ struct NativeDesktopMeetingView: View {
             }
             HStack(spacing: 7) {
                 Text(person.name).lineLimit(1); Spacer(minLength: 4)
+                if !person.isLocal, model.participantVolume(person.id) != 1 { NativeDesktopParticipantVolumeBadge(level: model.participantVolume(person.id)) }
                 if person.microphoneOn == false { Image(systemName: "mic.slash").accessibilityLabel(L("Microphone off")) }
                 else if person.speaking == true { NativeDesktopLevelMeter(level: person.isLocal ? model.snapshot.microphoneLevel ?? 0 : 0.7) }
             }.font(.caption).padding(10).background(.black.opacity(0.45))
@@ -354,6 +355,20 @@ struct NativeDesktopMeetingView: View {
         .contextMenu {
             Button(L("Focus camera")) { model.focus(participantID: person.id, source: .camera) }
             if person.sharing == true { Button(L("Focus screen")) { model.focus(participantID: person.id, source: .screen) } }
+            if !person.isLocal && model.supportsParticipantVolume { participantVolumeMenu(person) }
+        }
+    }
+    @ViewBuilder private func participantVolumeMenu(_ person: NativeDesktopParticipant) -> some View {
+        let level = model.participantVolume(person.id)
+        Divider()
+        Button(level == 0 ? L("Unmute for me") : L("Mute for me")) { model.setParticipantVolume(level == 0 ? 1 : 0, participantID: person.id) }
+        Menu(L("Volume for me")) {
+            ForEach([0.25, 0.5, 1, 1.5, 2], id: \.self) { preset in
+                Button { model.setParticipantVolume(preset, participantID: person.id) } label: {
+                    let title = "\(Int(preset * 100))%"
+                    if level == preset { Label(title, systemImage: "checkmark") } else { Text(title) }
+                }
+            }
         }
     }
     private func name(_ id: String) -> String { model.participants.first { $0.id == id }?.name ?? L("Participant") }
@@ -380,7 +395,12 @@ struct NativeDesktopMeetingView: View {
             switch panel {
             case .participants:
                 List(model.participants) { person in
-                    HStack { Text(person.name).lineLimit(2); Spacer(); if person.microphoneOn == false { Image(systemName: "mic.slash") }; if person.sharing == true { Image(systemName: "rectangle.on.rectangle") } }
+                    HStack {
+                        Text(person.name).lineLimit(2); Spacer()
+                        if person.microphoneOn == false { Image(systemName: "mic.slash") }
+                        if person.sharing == true { Image(systemName: "rectangle.on.rectangle") }
+                        if !person.isLocal && model.supportsParticipantVolume { NativeDesktopParticipantVolumeButton(model: model, person: person) }
+                    }
                 }.listStyle(.plain)
             case .conversation: NativeDesktopConversationView(model: model, chat: model.chat)
             case .studio: NativeDesktopDeviceSettings(liveTrack: model.localCamera,
@@ -634,5 +654,50 @@ private struct NativeDesktopSharePopover: View {
                 Spacer(minLength: 0)
             }.padding(8).contentShape(Rectangle())
         }.buttonStyle(.plain).disabled(!model.connected || model.quickSharePending)
+    }
+}
+
+/// Shown on a tile when the listener changed that speaker's level.
+struct NativeDesktopParticipantVolumeBadge: View {
+    let level: Double
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: level == 0 ? "speaker.slash.fill" : level < 1 ? "speaker.wave.1.fill" : "speaker.wave.3.fill")
+            if level > 0 { Text("\(Int((level * 100).rounded()))%").monospacedDigit() }
+        }.foregroundStyle(level == 0 ? Color.orange : Color.secondary)
+            .help(level == 0 ? L("Muted for you") : L("Volume for you: %d%%", Int((level * 100).rounded())))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(level == 0 ? L("Muted for you") : L("Volume for you: %d%%", Int((level * 100).rounded())))
+    }
+}
+
+/// Per-speaker level for this listener only; nothing is sent to the meeting.
+struct NativeDesktopParticipantVolumeButton: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    let person: NativeDesktopParticipant
+    @State private var open = false
+    private var level: Double { model.participantVolume(person.id) }
+    var body: some View {
+        Button { open.toggle() } label: {
+            Image(systemName: level == 0 ? "speaker.slash.fill" : level == 1 ? "speaker.wave.2" : "speaker.wave.2.fill")
+                .foregroundStyle(level == 0 ? Color.orange : level == 1 ? Color.secondary : Color.accentColor)
+        }.buttonStyle(.plain).help(L("Volume for me")).accessibilityLabel(L("Volume for %@", person.name))
+            .accessibilityIdentifier("participant.volume.\(person.id)")
+            .popover(isPresented: $open, arrowEdge: .leading) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(person.name).font(.headline).lineLimit(1)
+                    HStack(spacing: 8) {
+                        Slider(value: Binding(get: { level }, set: { model.setParticipantVolume(($0 * 20).rounded() / 20, participantID: person.id) }), in: 0...2)
+                            .accessibilityLabel(L("Volume for %@", person.name))
+                        Text("\(Int((level * 100).rounded()))%").font(.caption).monospacedDigit().frame(width: 42, alignment: .trailing)
+                    }
+                    HStack {
+                        Button(level == 0 ? L("Unmute for me") : L("Mute for me")) { model.setParticipantVolume(level == 0 ? 1 : 0, participantID: person.id) }
+                        Spacer()
+                        Button(L("Reset")) { model.setParticipantVolume(1, participantID: person.id) }.disabled(level == 1)
+                    }
+                    Text(L("Only you hear this change.")).font(.caption).foregroundStyle(.secondary)
+                }.padding(16).frame(width: 260)
+            }
     }
 }

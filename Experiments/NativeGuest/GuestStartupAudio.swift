@@ -68,6 +68,9 @@ final class GuestStartupPlaybackGain: @unchecked Sendable {
     private var closed = false
     private var ready = false
     private var sound: Bool
+    /// Per-speaker level for a source (0...2). It scales only restored gain:
+    /// closed, unready or sound-off entries stay at an exact zero.
+    @MainActor var level: ((Source) -> Double)?
     init(sound: Bool) { self.sound = sound }
     var hasSources: Bool { locked { entries.contains(where: \.active) } }
     var sourceSnapshot: SourceSnapshot { locked { .init(revision: revision, sources: entries.filter(\.active).map(\.source)) } }
@@ -112,16 +115,19 @@ final class GuestStartupPlaybackGain: @unchecked Sendable {
             if !retry { return }
         }
     }
-    private func desired(_ entry: Entry) -> Double {
-        locked { !closed && ready && sound && entry.active ? entry.gain : 0 }
+    private func desired(_ entry: Entry, level: Double) -> Double {
+        locked { !closed && ready && sound && entry.active ? entry.gain * level : 0 }
     }
     @MainActor func reconcile() {
         let current = locked { entries }
         for entry in current {
-            var value = desired(entry)
+            let source = locked { entry.source }
+            let factor = level.map { $0(source) } ?? 1
+            let scale = factor.isFinite ? min(2, max(0, factor)) : 1
+            var value = desired(entry, level: scale)
             while true {
                 entry.setGain(value) // Never hold the lock across SDK BlockingCall.
-                let latest = desired(entry)
+                let latest = desired(entry, level: scale)
                 if latest == value { break }
                 value = latest
             }
