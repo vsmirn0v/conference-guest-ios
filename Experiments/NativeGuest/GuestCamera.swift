@@ -62,6 +62,10 @@ enum GuestCameraTiming {
             return CMTimeCompare(selected, range.longest) <= 0 ? selected : nil
         }.min { CMTimeCompare($0, $1) < 0 }
     }
+    /// A reduced cadence never disqualifies a format: fall back to the standard cap.
+    static func duration(in ranges: [GuestCameraDurationRange], preferredFPS: Int32) -> CMTime? {
+        duration(in: ranges, maximumFPS: preferredFPS) ?? duration(in: ranges, maximumFPS: GuestCameraCadence.standardFPS)
+    }
     static func validProfile(minimum: CMTime, maximum: CMTime, ranges: [GuestCameraDurationRange]) -> Bool {
         guard positive(minimum), positive(maximum), CMTimeCompare(minimum, maximum) <= 0 else { return false }
         return ranges.contains { range in
@@ -79,6 +83,15 @@ protocol GuestCameraCapture: AnyObject {
     func captureDevice() async -> AVCaptureDevice?
 }
 extension GuestCameraCapture { func captureDevice() async -> AVCaptureDevice? { nil } }
+
+/// macOS Background replacement segments every frame inside the capturing
+/// process. Measured on M4 with Background active (process + cameracaptured CPU):
+/// 1080p30 ≈ 81%, true 720p30 ≈ 75%, 720p24 ≈ 65%. Without that effect capture
+/// is cheap and keeps the full 30 fps contract.
+enum GuestCameraCadence {
+    static let standardFPS: Int32 = 30
+    static let backgroundReplacementFPS: Int32 = 24
+}
 
 enum GuestCameraStopBudget {
     static func timeout(hasForwardedFrame: Bool) -> TimeInterval { hasForwardedFrame ? 3 : 15 }
@@ -101,10 +114,12 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
     private let sink: Sink
     private let preferredDeviceID: String?
     private let existingAuthorizationOnly: Bool
+    private let backgroundReplacementFPS: Int32
     // Remaining mutable state belongs exclusively to queue.
     private var session: AVCaptureSession?
     private var output: AVCaptureVideoDataOutput?
     private var device: AVCaptureDevice?
+    private var lockedForStart: AVCaptureDevice?
     private var original: (AVCaptureDevice.Format, CMTime, CMTime)?
     private var cleanupFailure: Error?
     private var effectTimer: DispatchSourceTimer?
@@ -122,11 +137,13 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         let active: Bool
     }
 
-    init(source: LKRTCVideoSource, deviceID: String? = nil, existingAuthorizationOnly: Bool = false) {
+    init(source: LKRTCVideoSource, deviceID: String? = nil, existingAuthorizationOnly: Bool = false,
+         backgroundReplacementFPS: Int32 = GuestCameraCadence.backgroundReplacementFPS) {
         let firstFrame = Completion<Void>()
         self.firstFrame = firstFrame
         sink = Sink(source: source, firstFrame: firstFrame); preferredDeviceID = deviceID
         self.existingAuthorizationOnly = existingAuthorizationOnly
+        self.backgroundReplacementFPS = backgroundReplacementFPS
     }
 
     func snapshot() -> GuestCameraSnapshot {
@@ -203,6 +220,7 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
                 self.sink.activate()
                 let running = ProcessInfo.processInfo.systemUptime
                 self.session?.startRunning()
+                self.releaseStartLock()
                 self.recordStartup("startRunning", since: running)
                 guard self.isRequested(), self.session?.isRunning == true else {
                     try self.cleanup(); throw GuestCameraError.configurationFailed
@@ -308,12 +326,22 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         }
         recordStartup("discovery", since: discoveryBegan)
         guard let discovered else { throw GuestCameraError.unavailable }
-        let choices = discovered.formats.compactMap { format -> (AVCaptureDevice.Format, CMTime)? in
+        var background = false
+        if #available(macOS 15.0, *) { background = AVCaptureDevice.isBackgroundReplacementEnabled }
+        let maximumFPS = background ? backgroundReplacementFPS : GuestCameraCadence.standardFPS
+        let all = discovered.formats.compactMap { format -> (AVCaptureDevice.Format, CMTime)? in
             let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
             guard size.width > 0, size.height > 0 else { return nil }
-            guard let duration = GuestCameraTiming.duration(in: durationRanges(format)) else { return nil }
+            guard let duration = GuestCameraTiming.duration(in: durationRanges(format, background: background),
+                                                            preferredFPS: maximumFPS) else { return nil }
             return (format, duration)
         }
+        // Keep a selected Background effect when any format can run it.
+        let supportsBackground = all.filter { choice in
+            if #available(macOS 15.0, *) { return choice.0.isBackgroundReplacementSupported }
+            return false
+        }
+        let choices = background && !supportsBackground.isEmpty ? supportsBackground : all
         // Prefer a native 720p format; other cameras retain their complete aspect
         // ratio and WebRTC scales them within the same pixel budget.
         func score(_ format: AVCaptureDevice.Format) -> Double {
@@ -371,13 +399,13 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
             } else { throw GuestCameraError.unsupportedConnection }
             video.setSampleBufferDelegate(sink, queue: frames)
         }
-        // Apply after committing the supported native macOS 720p preset, so a
-        // session default cannot replace the chosen device format and cadence.
+        // Apply after committing the supported native macOS 720p preset and hold
+        // the lock until startRunning returns. An unlocked session reapplies its
+        // preset format at start: a 1280x720 request then ran at 1920x1080.
         try camera.lockForConfiguration()
-        do {
-            defer { camera.unlockForConfiguration() }
-            try applyProfile(format: format, minimum: duration, maximum: duration, to: camera)
-        }
+        do { try applyProfile(format: format, minimum: duration, maximum: duration, to: camera) }
+        catch { camera.unlockForConfiguration(); throw error }
+        lockedForStart = camera
         let rate = 1 / CMTimeGetSeconds(duration) // Reporting/adaptation only; never used for device setters.
         let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
         let scale = min(1, min(1280 / Double(dimensions.width), 720 / Double(dimensions.height)))
@@ -397,7 +425,12 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
             pixelFormat: pixelFormat, mirrored: false, rotationDegrees: 0)
     }
 
+    private func releaseStartLock() {
+        lockedForStart?.unlockForConfiguration(); lockedForStart = nil
+    }
+
     private func cleanup() throws {
+        releaseStartLock()
         sink.retire()
         reactionObservation?.invalidate(); reactionObservation = nil; reactionRequested = false
         effectTimer?.cancel(); effectTimer = nil
@@ -423,8 +456,11 @@ final class GuestCamera: GuestCameraCapture, @unchecked Sendable {
         if let cleanupFailure { throw cleanupFailure }
     }
 
-    private func durationRanges(_ format: AVCaptureDevice.Format) -> [GuestCameraDurationRange] {
-        format.videoSupportedFrameRateRanges.map { .init(shortest: $0.minFrameDuration, longest: $0.maxFrameDuration) }
+    private func durationRanges(_ format: AVCaptureDevice.Format, background: Bool = false) -> [GuestCameraDurationRange] {
+        if background, #available(macOS 15.0, *), let range = format.videoFrameRateRangeForBackgroundReplacement {
+            return [.init(shortest: range.minFrameDuration, longest: range.maxFrameDuration)]
+        }
+        return format.videoSupportedFrameRateRanges.map { .init(shortest: $0.minFrameDuration, longest: $0.maxFrameDuration) }
     }
 
     /// Caller holds the configuration lock. Validate the saved/chosen profile
