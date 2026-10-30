@@ -1,0 +1,239 @@
+{
+  "sourceCommit": "b2a873819e68f3d42609e6e3b0f65e521b9bd32e",
+  "verifiedAtUTC": "2026-10-30T02:16:20.148534+00:00",
+  "release": {
+    "schemaVersion": 1,
+    "version": "0.3.0",
+    "build": "33",
+    "file": "RockNRoll-0.3.0-33-arm64.dmg",
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-33-arm64.dmg",
+    "sha256": "c0714d139a0eba8dc99aefb76930ee8c90c8561e9557a15992382f0085875242",
+    "length": 15606853,
+    "bundleIdentifier": "dev.vsmirn0v.conferenceguest.nativeguest",
+    "appStapleValidated": true,
+    "gatekeeperExecuteAccepted": true,
+    "outerDMGNotarized": false,
+    "outerDMGAssessmentAccepted": false
+  },
+  "qualification": {
+    "version": "0.3.0",
+    "build": "33",
+    "app": "/Users/v.smirnov/docs/conference-guest-ios-power-policy/.build/native-beta-release-20261030/export/App/Rock'N'Roll for Mac.app",
+    "archiveExportDSYMUUIDMatch": true,
+    "appUUIDs": {
+      "archive": "UUID: 184FAA04-6853-32BF-89F5-98C23D9F6B10",
+      "export": "UUID: 184FAA04-6853-32BF-89F5-98C23D9F6B10",
+      "dSYM": "UUID: 184FAA04-6853-32BF-89F5-98C23D9F6B10"
+    },
+    "frameworkUUIDs": {
+      "candidate": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D",
+      "archive": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D",
+      "export": "UUID: E1819813-08B8-38BE-82CC-15F072B6940D"
+    },
+    "r5FrameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+    "exportExecutableSHA256": "9f21471caf5b0115284ef84bd1963c99aa47ab4bef3a4b5db19e32353df5a012",
+    "architecture": "arm64",
+    "sandbox": true,
+    "cloudEnvironment": "Production",
+    "team": "5V64BP2H3P",
+    "debuggerEntitlement": false,
+    "signatureValid": true,
+    "stapleValid": true,
+    "gatekeeperAccepted": true,
+    "appGroupContainerPassed": true,
+    "cloudFixture": {
+      "marker": "3b31811a-431f-487c-9ff0-ca53b5b7dbb7",
+      "phases": {
+        "write": true,
+        "verify": true,
+        "cleanup": true
+      }
+    },
+    "sourceHashValidation": true,
+    "sourceCount": 178
+  },
+  "publication": {
+    "host": "root@kachat.app",
+    "publicRoot": "/var/www/rocknroll/releases",
+    "artifact": {
+      "file": "RockNRoll-0.3.0-33-arm64.dmg",
+      "sha256": "c0714d139a0eba8dc99aefb76930ee8c90c8561e9557a15992382f0085875242",
+      "length": 15606853
+    },
+    "state": {
+      "appcastSHA256": "092b8ae513f1393277155c20dedac45f1f061bc1a6d244c2eed9862517a20e58",
+      "inventorySHA256": "6013ebc2e932557aa564b773e03b4712e589ffe6ef08b5f80109732b3f2c0139",
+      "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+      "betaTarget": "../releases/RockNRoll-0.3.0-33-arm64.dmg"
+    },
+    "backupDirectory": "/var/www/rocknroll/.publish-stage/bf611188eb6045be92ef6d01b7b9b676/backup",
+    "httpsVerified": true
+  },
+  "independentHTTPSReadback": {
+    "appcast.xml": {
+      "url": "https://rock.glowsoft.ru/mac/appcast.xml",
+      "sha256": "092b8ae513f1393277155c20dedac45f1f061bc1a6d244c2eed9862517a20e58",
+      "length": 5772
+    },
+    "latest.json": {
+      "url": "https://rock.glowsoft.ru/mac/latest.json",
+      "sha256": "6013ebc2e932557aa564b773e03b4712e589ffe6ef08b5f80109732b3f2c0139",
+      "length": 487
+    },
+    "immutable": {
+      "url": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-33-arm64.dmg",
+      "sha256": "c0714d139a0eba8dc99aefb76930ee8c90c8561e9557a15992382f0085875242",
+      "length": 15606853
+    },
+    "beta": {
+      "url": "https://rock.glowsoft.ru/mac/beta/latest.dmg",
+      "sha256": "c0714d139a0eba8dc99aefb76930ee8c90c8561e9557a15992382f0085875242",
+      "length": 15606853
+    },
+    "stable": {
+      "url": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+      "sha256": "e9c7c9ddab9c7b10b81fd52da5b7fb54404b9e12cc1e5e29c6292fffe9625a21",
+      "length": 15334524
+    },
+    "verifiedAtUTC": "2026-10-30T02:14:07.903664+00:00",
+    "betaBuild": "33",
+    "stableBuild": "25"
+  },
+  "changes": [
+    "One app-owned native guest audio owner with foreground microphone readiness and exclusive room adoption",
+    "Fail-closed retirement and normal cold startup when optional readiness cannot be proven",
+    "Global playout mute gate independent of incoming source gain",
+    "Foreground/power/authorization limits and updater media draining"
+  ],
+  "deferred": [
+    "Remaining camera/video startup and baseline intermittent incoming-video pause investigation",
+    "Parallel meetings",
+    "AI features",
+    "iOS engine changes"
+  ],
+  "scopeDecision": "2026-10-30: if unsuccessful defer camera work and publish validated improvements; prior baseline-video HOLD superseded",
+  "validation": {
+    "fullMacXCTest": {
+      "executed": 186,
+      "passed": 182,
+      "skipped": 4,
+      "failed": 0,
+      "liveOptInSuitesExcludedFromOfflineRun": true
+    },
+    "standaloneSuites": [
+      "session",
+      "system-audio",
+      "system-audio DEBUG",
+      "engine"
+    ],
+    "distributionTestsPassed": 27,
+    "review": "6-astra xhigh source7 and runtime acceptance; controlled fallback and composite foreground evidence accepted; exact Release UI smoke completed",
+    "builtin": [
+      "Muted foreground readiness, first join, same-owner Leave/rejoin and second Leave passed.",
+      "Microphone controls took 108.96\u2013178.29ms.",
+      "Independent global mute: source gain 1, 50400 decoded samples; 48000 fresh output samples with zero energy.",
+      "SoundOn became audible 42.92ms after opening the master gain.",
+      "Cold fallback audio arrived 85ms after readiness.",
+      "Post-retirement process CPU averaged about 0.14% of one core; no whole-device energy claim."
+    ],
+    "airpodsRecovery": {
+      "controlledFailure": "one idle-validation sleep cancellation after real native preparation",
+      "realRetirementAndNewOwner": true,
+      "adopted": false,
+      "gateToAudioMS": 209.2180833,
+      "maximumPhysicalAudioGapMS": 220.316,
+      "independentMasterMuteWithPositiveSourceGain": true,
+      "fullFormatStableRoomSamples": 15,
+      "exactFinalIdleRestoration": true,
+      "actualHALChurnFixedOrReproduced": false,
+      "evidence": ".build/native-shared-media-candidate7-attempt4-20261030/retirement-validation.json",
+      "outerRunnerReportingMismatch": "Original outerrunner exit1 retained; actualchild exited0; offlinevalidator dispatched new schema, no hardware rerun"
+    },
+    "updateSafety": [
+      "Builtin and AirPods defer/drain/reservation/cancel/rewarm/shutdown fixtures passed",
+      "No real installer invoked by fixtures"
+    ],
+    "exactReleaseSmoke": {
+      "version": "0.3.0",
+      "build": "33",
+      "sourceCommit": "b2a873819e68f3d42609e6e3b0f65e521b9bd32e",
+      "verifiedAtUTC": "2026-10-30T02:06:17.328808+00:00",
+      "exportExecutableSHA256": "9f21471caf5b0115284ef84bd1963c99aa47ab4bef3a4b5db19e32353df5a012",
+      "method": "Normal notarized hook-free Release app, standalone Home, CUA controls; independent archived bt8 synthetic peer; actual AirPods input/output",
+      "connected": true,
+      "micStartedMuted": true,
+      "unmuteObservedRemotely": {
+        "packets": 174,
+        "samples": 632160,
+        "energy": 0.022681590169668198
+      },
+      "mutedAgain": {
+        "uiMicOffObserved": true,
+        "remotePacketDelta": 0,
+        "remoteEnergyDelta": 0.0,
+        "observationSeconds": 61.68376525002532
+      },
+      "soundOffAndOnUIObserved": true,
+      "incomingSyntheticVideoVisuallyVerified": true,
+      "videoCadenceClaim": false,
+      "leaveReturnedHome": true,
+      "allDevicesIdleAfterLeave": true,
+      "releaseQuitConfirmed": true,
+      "peerCleanExit": true,
+      "allDevicesIdleAtCompletion": true,
+      "originalAirPodsRouteRestored": true,
+      "foregroundEvidence": "Actual Finder/Home switch passed on C4 unchanged activation binding; C7 physical owner tests passed. Exact Release Home remained inactive and kept I/O idle; foreground warmup not directly exercised in Release33. Astra accepted composite evidence.",
+      "limitations": [
+        "No new human voice-quality listening test in this Release smoke",
+        "Existing intermittent camera/video pause investigation deferred by user",
+        "Optional AirPods foreground preparation can fail safely amid HAL profile churn; controlled real retirement/cold-join recovery passed, underlying churn not claimed fixed"
+      ]
+    },
+    "retainedFailuresAndLimits": [
+      {
+        "path": ".build/native-shared-media-candidate7-attempt3-20261030/run-airpods-auto-silent-7",
+        "result": "Active media/global mute and first leave/rejoin passed; second Leave optional readiness rejected stale callbacks amid24/48k HAL format churn; confirmed shutdown and physical lease release",
+        "resolution": "Controlled validation cancellation exercised real retirement and a fresh live join in the same process. This passed; the original HAL format churn was not reproduced or fixed. Optional warm readiness remains best effort."
+      },
+      {
+        "path": ".build/native-shared-media-candidate7-attempt3-20261030/updater-run-builtin-7",
+        "result": "Functional update safety passed; immediate idle HAL input channel count transient1to3; later returned1; unchanged controlled observation passed withall20postexit samples baseline; original settling duration unknown"
+      }
+    ],
+    "foregroundEvidenceLimit": "Actual Finder/Home switch passed on C4 unchanged activation binding; C7 physical owner tests passed. Exact Release Home remained inactive and kept I/O idle; foreground warmup not directly exercised in Release33. Astra accepted composite evidence."
+  },
+  "cleanup": {
+    "testProcessesExited": true,
+    "allAudioDevicesIdle": true,
+    "originalAirPodsRouteRestored": true,
+    "installedBuild32Unchanged": true,
+    "originalAppLaunchRegistrationRestored": true
+  },
+  "stableBuildPreserved": "25",
+  "evidenceSHA256": {
+    ".build/native-beta-release-20261030/qualification33.json": "b0d5b168e1009cef7716969c59b02747aebe8aa6f7355021ff7b16bc75bbff17",
+    ".build/native-beta-release-20261030/release33-runtime-validation.json": "954fdf69acfeb5103e76e74d8c5fdd254d005c8ded10e74edf3e9ed6a1bd39a6",
+    ".build/native-beta-release-20261030/publication33.json": "948184b31c7708799cd021d3a3657310e86459938743e7c431d9b5e6bd98ce85",
+    ".build/native-beta-release-20261030/https-readback.json": "b6f205208fec4fa8e2df025b4e3e714933b083db20cead288784d077b2a32e91",
+    ".build/native-beta-release-20261030/build/build-evidence.json": "411e45b9fea3bec88e5ece1ef84cd1d815bc77d36fa1359cbcad57914cf79b12",
+    ".build/native-beta-release-20261030/export/export-evidence.json": "7443a6e5eaf943a9c670261c1fecb4bebde3f7ce94544ebb670cd817a4264531",
+    ".build/native-beta-release-20261030/release33-route-final.json": "7b673a2edcf14d959ec00ddd56be12342087fc281391b8d1a5952a7a5d75c6b1",
+    ".build/native-beta-release-20261030/launch-registration-cleanup.json": "d3171bab63978e091665296b5872c12c56d549996bdab405de1f1a05ee8927f8",
+    ".build/native-beta-release-20261030/distribution-tests.log": "be03b36cd7fe5eedee99ae1b0fd8d1b8cbe95276edb777c494010d1b0c293fb5",
+    ".build/native-shared-media-candidate7-attempt2-20261030/full-tests.log": "887aa454f2ff169ee463ab1682ec3bf405a08eb923fdc7be60a75bacc542f7a9",
+    ".build/native-shared-media-candidate7-attempt4-20261030/diagnostic-build-evidence.json": "71924d5da85bb518c1402b9745f7c735431fb1284fadf405b120ac3ac5839f1a",
+    ".build/native-shared-media-candidate7-attempt4-20261030/retirement-validation.json": "b6bbb0bd0e48b1940918bf76fb2aee158885156b204597ee1fbe67c8c12b19af",
+    ".build/native-shared-media-candidate7-attempt4-20261030/run-airpods-retirement-cold-7/probe/probe-result.json": "25fa88abd3df919cd4c59ca67e161d66d544cac41c730a764e28cf719ea6480a",
+    ".build/native-shared-media-candidate7-attempt3-20261030/run-builtin-auto-silent-7/probe/probe-result.json": "732cfc278d261690055e5d7feddb72b1879b10d0515580bbeb1eaa0e95a061da",
+    ".build/native-shared-media-candidate7-attempt3-20261030/run-builtin-cold-7/probe/probe-result.json": "da7d084e5729a4d099d737fb176f5714a2be980d7dfa2baf6ba10632501008ce",
+    ".build/native-shared-media-candidate7-attempt3-20261030/run-airpods-auto-silent-7/probe/probe-result.json": "860a78398820d3e20435e8795f7493720b5b0a199a631c002d65e975f3687377",
+    ".build/native-shared-media-candidate7-attempt3-20261030/updater-run-builtin-7/updater-media-result.json": "bf86d878bf84466bfab00331dd0d58266a25291f868bc1c91be906240ec2b3c3",
+    ".build/native-shared-media-candidate7-attempt3-20261030/updater-run-builtin-settling-7/updater-media-result.json": "995b1a9007db700f978b08e0c28584e9b9a428af4b51fe4190819214e2ed72e0",
+    ".build/native-shared-media-candidate7-attempt3-20261030/updater-run-builtin-settling-7/settling-observation-summary.json": "070b54e8d768db306e258abaf371ba311c7fab3375617f67b7aaef514543ab93",
+    ".build/native-shared-media-candidate7-attempt3-20261030/updater-run-airpods-7/updater-media-result.json": "883199bb6ee70fb7daee5670e3b0148d8aa19074e61e82047df24c9c2c3286a6",
+    ".build/native-shared-media-candidate7-attempt2-20261030/standalone-session.log": "0623c82f5a9ba1f154c56fdeb0846fdd4a6d3c23cd79c2417acfcb3f5d4cc5de",
+    ".build/native-shared-media-candidate7-attempt2-20261030/standalone-system-audio.log": "58c0f9c4b603c8e79f2f0774283ed125ad033972cf8e3aa254e3f499cbeb9a28",
+    ".build/native-shared-media-candidate7-attempt2-20261030/standalone-system-audio-debug.log": "58c0f9c4b603c8e79f2f0774283ed125ad033972cf8e3aa254e3f499cbeb9a28",
+    ".build/native-shared-media-candidate7-attempt2-20261030/standalone-engine.log": "7a7c9484bcf968f8486c948eeb7d9a505c96be0a7909530b11c043f6153f41d7"
+  }
+}
