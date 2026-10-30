@@ -60,6 +60,8 @@ struct NativeRockLiveMediaEvidence {
     private var audioPreparation: Task<Void, Error>?
     private var audioProfile = GuestAudioProfile.speech
     private var audioLease: GuestAudioOwnerLease?
+    private var concurrentAudio = false
+    private var inputPermitted = true
 
     init(service: JamService = JamService(), chat: ChatStore? = nil, collectStatistics: Bool = false) {
         self.service = service; self.chat = chat ?? ChatStore(); self.collectStatistics = collectStatistics
@@ -85,7 +87,7 @@ struct NativeRockLiveMediaEvidence {
         do {
             let credentials = try await service.join(target, name: name)
             guard revision == token, !Task.isCancelled else { throw CancellationError() }
-            guard let lease = GuestAudioOwnerLease(privateCheck: false) else { throw NativeDesktopRockError.audioOwnerBusy }
+            guard let lease = GuestAudioOwnerLease(privateCheck: false, concurrent: concurrentAudio) else { throw NativeDesktopRockError.audioOwnerBusy }
             audioLease = lease
             if renderFactory == nil {
                 renderFactory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
@@ -132,6 +134,7 @@ struct NativeRockLiveMediaEvidence {
     func setMicrophone(_ enabled: Bool) async throws {
         let room = try connectedRoom(), token = revision
         if enabled {
+            guard inputPermitted else { throw NativeDesktopRockError.notConnected }
             guard try await GuestCaptureAuthorization.request(.audio) else { throw GuestSystemAudioError.microphonePermissionRequired }
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
             try Task.checkCancellation()
@@ -180,7 +183,7 @@ struct NativeRockLiveMediaEvidence {
     }
     func prepareMutedCaptureForAccessories() async throws {
         let room = try connectedRoom(), token = revision
-        guard !snapshot.microphoneOn, !ownsPreparedCapture else { return }
+        guard inputPermitted, !snapshot.microphoneOn, !ownsPreparedCapture else { return }
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             throw NativeDesktopRockError.microphoneAccessRequired
         }
@@ -281,6 +284,28 @@ struct NativeRockLiveMediaEvidence {
             if revision == token { screenBridge = nil; refresh(room) }
             throw error
         }
+    }
+    func configureConcurrentAudio(_ concurrent: Bool) { if room == nil { concurrentAudio = concurrent } }
+    /// LiveKit rooms share one ADM: releasing means unpublishing this room's
+    /// microphone and any prepared capture it owns, so it sends and holds nothing.
+    func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool {
+        inputPermitted = permitted
+        guard !permitted, let room else { return true }
+        var clean = true
+        do { _ = try await room.localParticipant.setMicrophone(enabled: false) } catch { clean = false }
+        for publication in room.localParticipant.audioTracks where publication.source == .microphone {
+            guard let local = publication as? LocalTrackPublication else { continue }
+            do { try await room.localParticipant.unpublish(publication: local) } catch { clean = false }
+        }
+        audioPreparation?.cancel(); _ = try? await audioPreparation?.value; audioPreparation = nil
+        if ownsPreparedCapture {
+            do {
+                try await Task.detached { try await AudioManager.shared.setRecordingAlwaysPreparedMode(false) }.value
+                ownsPreparedCapture = false
+            } catch { clean = false }
+        }
+        if self.room === room { refresh(room) }
+        return clean
     }
     func leave() async -> Bool { await disconnect(clearChat: true) }
     private func disconnect(clearChat: Bool) async -> Bool {

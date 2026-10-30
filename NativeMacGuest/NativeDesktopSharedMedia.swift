@@ -22,7 +22,7 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
 /// attempt cleanup detaches audio but cannot release that reservation.
 @MainActor final class NativeDesktopSharedMedia<Audio: NativeDesktopSharedAudioOwner> {
     struct Room: Equatable { fileprivate let id = UUID() }
-    struct Suspension: Equatable { fileprivate let id = UUID() }
+    struct Suspension: Hashable { fileprivate let id = UUID() }
     private enum Reservation: Equatable { case room(Room), suspended(Suspension) }
     private let create: (GuestAudioProfile) async throws -> Audio
     private let authorized: () -> Bool
@@ -32,6 +32,8 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
     private var owner: Audio?
     private var ownerID: UUID?
     private var reservation: Reservation?
+    /// Claims by additional simultaneous meetings that own separate audio.
+    private var alongside = Set<Suspension>()
     private var attachedAttempt: UUID?
     private var tail: Task<Bool, Never>?
     private var idleDeadline: Task<Void, Never>?
@@ -91,7 +93,7 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
         self.grace = grace; self.authorized = authorized; self.clock = clock; self.sleep = sleep; self.create = create
     }
     var foregroundActive: Bool { foreground && !stopped }
-    var busy: Bool { reservation != nil || cleanupFailed }
+    var busy: Bool { reservation != nil || cleanupFailed || !alongside.isEmpty }
     var evidence: [String: Any] {
         var value: [String: Any] = ["foreground": foreground, "microphoneEligible": microphone,
             "roomReserved": reservation.map { if case .room = $0 { return true }; return false } ?? false,
@@ -123,7 +125,7 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
         guard !stopped, foreground != active || self.microphone != microphone || self.profile != profile else { return }
         foreground = active; self.microphone = microphone; self.profile = profile
         revision = UUID(); idleDeadline?.cancel(); idleDeadline = nil
-        guard reservation == nil else { return }
+        guard reservation == nil, alongside.isEmpty else { return }
         if active { schedulePreparation() }
         else {
             let token = revision
@@ -138,10 +140,10 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
         }
     }
     private func schedulePreparation() {
-        guard foreground, reservation == nil, !stopped, !cleanupFailed else { return }
+        guard foreground, reservation == nil, alongside.isEmpty, !stopped, !cleanupFailed else { return }
         let token = revision
         _ = enqueue { [self] in
-            guard revision == token, foreground, reservation == nil, !stopped, !cleanupFailed else { return true }
+            guard revision == token, foreground, reservation == nil, alongside.isEmpty, !stopped, !cleanupFailed else { return true }
             preparing = true; defer { preparing = false }
             do {
                 try await ensureOwner(profile)
@@ -237,7 +239,7 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
         return false
     }
     func reserveRoom(profile: GuestAudioProfile) async throws -> Room {
-        guard !stopped, !cleanupFailed, reservation == nil else { throw GuestSystemAudioError.physicalOwnerBusy }
+        guard !stopped, !cleanupFailed, reservation == nil, alongside.isEmpty else { throw GuestSystemAudioError.physicalOwnerBusy }
         let room = Room(); reservation = .room(room); revision = UUID(); idleDeadline?.cancel()
         let task = enqueue { [self] in
             do { try await ensureOwner(profile); return true } catch { return false }
@@ -279,7 +281,7 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
             guard clean, attachedAttempt == nil, !cleanupFailed else { return fail() }
             // Hold the room's exclusion until a required retirement has
             // finished. Its completion cannot retire a subsequently claimed room.
-            if !foreground || stopped {
+            if !foreground || stopped || !alongside.isEmpty {
                 guard await retireOwner() else { return false }
             }
             reservation = nil; adopted = false
@@ -292,18 +294,36 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
     }
     /// Holds exclusion while another backend/private check owns physical media.
     func suspendIfDrained() -> Suspension? {
-        guard !stopped, !cleanupFailed, owner == nil, !preparing, reservation == nil else { return nil }
+        guard !stopped, !cleanupFailed, owner == nil, !preparing, reservation == nil, alongside.isEmpty else { return nil }
         let token = Suspension(); reservation = .suspended(token); revision = UUID(); idleDeadline?.cancel()
         return token
     }
     func suspend() async throws -> Suspension {
-        guard !stopped, !cleanupFailed, reservation == nil else { throw GuestSystemAudioError.physicalOwnerBusy }
+        guard !stopped, !cleanupFailed, reservation == nil, alongside.isEmpty else { throw GuestSystemAudioError.physicalOwnerBusy }
         let token = Suspension(); reservation = .suspended(token); revision = UUID(); idleDeadline?.cancel()
         guard await enqueue({ await self.retireOwner() }).value else { throw NativeDesktopRTCError.cleanupFailed }
         if Task.isCancelled { resume(token, clean: true); throw CancellationError() }
         return token
     }
+    /// A concurrent meeting owns separate audio. The shared owner neither prepares idle
+    /// input nor admits a new room while any such claim exists; a live room continues.
+    func suspendAlongside() async throws -> Suspension {
+        guard !stopped, !cleanupFailed else { throw GuestSystemAudioError.physicalOwnerBusy }
+        let token = Suspension(); alongside.insert(token); revision = UUID(); idleDeadline?.cancel()
+        if reservation == nil {
+            guard await enqueue({ self.reservation != nil ? true : await self.retireOwner() }).value else {
+                alongside.remove(token); throw NativeDesktopRTCError.cleanupFailed
+            }
+        }
+        if Task.isCancelled { resume(token, clean: true); throw CancellationError() }
+        return token
+    }
     func resume(_ token: Suspension, clean: Bool) {
+        if alongside.remove(token) != nil {
+            guard clean else { _ = fail(); return }
+            if alongside.isEmpty, reservation == nil, foreground, !stopped { schedulePreparation() }
+            return
+        }
         guard reservation == .suspended(token) else { return }
         guard clean else { _ = fail(); return }
         reservation = nil
@@ -311,7 +331,7 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
     }
     func shutdown() async -> Bool {
         stopped = true; foreground = false; revision = UUID(); idleDeadline?.cancel(); idleDeadline = nil
-        guard reservation == nil else { return false }
+        guard reservation == nil, alongside.isEmpty else { return false }
         return await enqueue { await self.retireOwner() }.value
     }
     private func fail() -> Bool { cleanupFailed = true; return false }
@@ -332,6 +352,16 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
             return try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false,
                 profile: profile, exclusive: true)
         })
+    /// A separate room service for an additional simultaneous Guest meeting. It is
+    /// never foregrounded, so its owner retires with the room and never idles input.
+    static func makeConcurrentGuestMedia() -> NativeDesktopSharedMedia<GuestSystemAudio> {
+        .init(authorized: { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized },
+            create: { profile in
+                _ = LKRTCInitializeSSL()
+                return try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false,
+                    profile: profile, concurrent: true)
+            })
+    }
 }
 
 /// App activity AND a visible window are required. Menu-bar residency alone

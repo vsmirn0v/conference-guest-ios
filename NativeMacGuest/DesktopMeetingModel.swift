@@ -151,6 +151,15 @@ import UniformTypeIdentifiers
     private var cameraMetadataTask: Task<NativeDesktopCameraMetadataPreparation.Outcome, Error>?
     private var cameraMetadataReport: [String: Any] = [:]
     private var externalMediaSuspension: NativeDesktopSharedMedia<GuestSystemAudio>.Suspension?
+    private let sharedMedia: NativeDesktopSharedMedia<GuestSystemAudio>
+    /// Simultaneous meetings: only the talk meeting holds the microphone, camera and
+    /// headset hook. Others keep listening with their physical input released.
+    @Published private(set) var ownsMicrophone = true
+    private(set) var concurrentAudio = false
+    /// Moves the talk role here; true only after any previous talk meeting confirmed release.
+    var microphoneArbiter: ((NativeDesktopMeetingModel) async -> Bool)?
+    private var mediaClaim: NativeDesktopSharedMedia<GuestSystemAudio>.Suspension?
+    var isClosed: Bool { closed }
     private(set) var joinReadinessReport: [String: Any] = [:]
 
     init(destination: JoinDestination, name: String, title: String?, quiet: Bool = false,
@@ -160,7 +169,9 @@ import UniformTypeIdentifiers
          cameraMetadata: NativeDesktopCameraMetadataPreparation? = nil,
          joinTimeout: TimeInterval = 45,
          power: NativeDesktopPowerMonitor? = nil,
-         readinessPolicy: (() -> NativeDesktopJoinReadinessPolicy)? = nil) {
+         readinessPolicy: (() -> NativeDesktopJoinReadinessPolicy)? = nil,
+         sharedMedia: NativeDesktopSharedMedia<GuestSystemAudio>? = nil) {
+        self.sharedMedia = sharedMedia ?? NativeDesktopMediaService.shared
         invitation = destination.invitationURL; kind = destination.engineKind; displayName = name; self.quiet = quiet
         self.readinessPolicy = readinessPolicy ?? { joinReadiness ?? .current() }
         self.power = power ?? NativeDesktopPowerMonitor(); self.joinCameraPrime = joinCameraPrime
@@ -302,13 +313,17 @@ import UniformTypeIdentifiers
         power.start { [weak self] in self?.refreshReadinessEligibility() }
         let completion = GuestCompletion<Void>(); connection = completion
         headset.onError = { [weak self] failure in self?.error = failure.localizedDescription }
-        let headsetReady = headset.begin { [weak self] muted in self?.setMicrophoneEnabled(!muted) }
+        let headsetReady = ownsMicrophone ? headset.begin { [weak self] muted in self?.setMicrophoneEnabled(!muted) } : true
         guard await NativeDesktopDeviceModel.stopPrivatePreview() else { throw NativeDesktopRTCError.cleanupFailed }
         try Task.checkCancellation()
-        if kind != .guest {
-            externalMediaSuspension = try await NativeDesktopMediaService.shared.suspend()
+        if concurrentAudio {
+            mediaClaim = try await sharedMedia.suspendAlongside()
+            try Task.checkCancellation()
+        } else if kind != .guest {
+            externalMediaSuspension = try await sharedMedia.suspend()
             try Task.checkCancellation()
         }
+        if !ownsMicrophone, !(await engine.setPhysicalInputPermitted(false)) { throw NativeDesktopRTCError.cleanupFailed }
         if kind == .guest {
             engine.microphoneReadinessPolicy = { [weak self] in self?.microphonePreparationEligible ?? false }
             updateMicrophoneRecoveryReadiness()
@@ -322,15 +337,15 @@ import UniformTypeIdentifiers
             try await withCheckedThrowingContinuation { continuation in completion.install(continuation, timeout: 45) }
         }, onCancel: { completion.finish(.failure(CancellationError())) })
         try Task.checkCancellation()
-        if !headsetReady { _ = headset.useEngineOnlyFallback(confirmedMuted: !snapshot.microphoneOn) }
-        if kind != .guest, !quiet, joinReadinessPolicy.microphoneExplicit,
+        if ownsMicrophone, !headsetReady { _ = headset.useEngineOnlyFallback(confirmedMuted: !snapshot.microphoneOn) }
+        if kind != .guest, !quiet, ownsMicrophone, !concurrentAudio, joinReadinessPolicy.microphoneExplicit,
            joinReadinessPolicy.microphone.allows(joinPower), joinReadinessPolicy.microphone.allows(power.snapshot) {
             try await engine.prepareMutedCaptureForAccessories()
         }
         beginJoinReadiness()
     }
     private var cameraMetadataEligible: Bool {
-        kind == .guest && !quiet && !closed && !transferHeld && display != .audioOnly &&
+        kind == .guest && !quiet && !closed && !transferHeld && display != .audioOnly && ownsMicrophone && !concurrentAudio &&
             joinReadinessPolicy.camera.allows(joinPower) && readinessPolicy().camera.allows(power.snapshot)
     }
     private func prepareJoinCameraMetadata() async throws {
@@ -353,6 +368,9 @@ import UniformTypeIdentifiers
     private func beginJoinReadiness() {
         guard kind == .guest, !quiet, !closed, !transferHeld, snapshot.phase == .connected else {
             joinReadinessReport = ["state": "skipped", "reason": "meetingPolicy"]; return
+        }
+        guard ownsMicrophone, !concurrentAudio else {
+            joinReadinessReport = ["state": "skipped", "reason": "concurrentMeeting"]; return
         }
         let token = generation, cameraCommand = cameraCommand
         joinReadinessReport = ["state": "scheduled", "joinedUptime": ProcessInfo.processInfo.systemUptime,
@@ -394,7 +412,8 @@ import UniformTypeIdentifiers
         if snapshot.phase == .connecting || snapshot.phase == .reconnecting { updateMicrophoneRecoveryReadiness() }
     }
     private var microphonePreparationEligible: Bool {
-        !quiet && !closed && !transferHeld && readinessPolicy().microphone.allows(power.snapshot)
+        !quiet && !closed && !transferHeld && ownsMicrophone && !concurrentAudio &&
+            readinessPolicy().microphone.allows(power.snapshot)
     }
     private func updateMicrophoneRecoveryReadiness() {
         guard kind == .guest else { return }
@@ -443,9 +462,68 @@ import UniformTypeIdentifiers
         NativeDesktopCameraLease.shared.setLiveTrack(track, owner: sessionID)
         Task { [weak self] in await self?.presenterStorage?.refreshBorrowedCamera(); self?.refreshSystemReactions() }
     }
-    func toggleMicrophone() { setMicrophoneEnabled(!(requestedMicrophone ?? snapshot.microphoneOn)) }
+    func toggleMicrophone() {
+        let enabled = !(requestedMicrophone ?? snapshot.microphoneOn)
+        guard enabled, !ownsMicrophone else { setMicrophoneEnabled(enabled); return }
+        claimTalkRole(microphone: true) { [weak self] in self?.setMicrophoneEnabled(true) }
+    }
+    /// Call before connect() for a meeting joined while another meeting is live.
+    func configureForConcurrentJoin(ownsMicrophone owns: Bool) {
+        guard connectionTask == nil, !closed else { return }
+        concurrentAudio = true; ownsMicrophone = owns
+        engine.configureConcurrentAudio(true)
+    }
+    /// Unmuting or starting the camera in a listening meeting first moves the talk
+    /// role here. Nothing is enabled unless the previous meeting confirmed its release.
+    private func claimTalkRole(microphone: Bool, then action: @escaping @MainActor () -> Void) {
+        guard !closed, !transferHeld, let arbiter = microphoneArbiter else { return }
+        if microphone { requestedMicrophone = true } else { requestedCamera = true }
+        let token = generation
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let claimed = await arbiter(self)
+            // A second click while the move was pending cancels it.
+            let wanted = microphone ? requestedMicrophone == true : requestedCamera == true
+            if microphone { if requestedMicrophone == true { requestedMicrophone = nil } }
+            else if requestedCamera == true { requestedCamera = nil }
+            guard claimed, wanted, token == generation, !closed, ownsMicrophone else { return }
+            action()
+        }
+    }
+    /// Privacy first: mute and stop the camera, drop the headset hook, then release
+    /// physical input. A failed release keeps this meeting the (muted) talk meeting.
+    func relinquishMicrophone() async -> Bool {
+        guard ownsMicrophone else { return true }
+        ownsMicrophone = false
+        if requestedMicrophone == true || snapshot.microphoneOn { setMicrophoneEnabled(false) }
+        if requestedCamera == true || snapshot.cameraOn { setCameraEnabled(false) }
+        await controlTail?.value
+        headset.end(); authorizedMicrophoneRequest = nil
+        // A leaving meeting may still send until its engine stops: wait for that.
+        guard !closed else { return await leave() }
+        engine.setMicrophoneReadinessForRecovery(false)
+        guard await engine.setPhysicalInputPermitted(false) else {
+            // Stay the (muted) talk meeting and keep the ability to unmute here.
+            _ = await engine.setPhysicalInputPermitted(true)
+            ownsMicrophone = true; registerHeadset(); return false
+        }
+        return true
+    }
+    /// Granting the permit starts no input; the next unmute activates it explicitly.
+    func assumeMicrophone() async {
+        guard !closed, !ownsMicrophone else { return }
+        ownsMicrophone = true
+        _ = await engine.setPhysicalInputPermitted(true)
+        guard !closed, ownsMicrophone else { return }
+        registerHeadset(); updateMicrophoneRecoveryReadiness()
+    }
+    private func registerHeadset() {
+        if !headset.begin(onRequestedMute: { [weak self] muted in self?.setMicrophoneEnabled(!muted) }) {
+            _ = headset.useEngineOnlyFallback(confirmedMuted: !snapshot.microphoneOn)
+        }
+    }
     private func setMicrophoneEnabled(_ enabled: Bool) {
-        guard !transferHeld, !closed else { _ = headset.requestIntent(muted: true); return }
+        guard !transferHeld, !closed, !enabled || ownsMicrophone else { _ = headset.requestIntent(muted: true); return }
         requestedMicrophone = enabled
         let command = UUID(); microphoneCommand = command
         microphoneControl?.cancel()
@@ -474,9 +552,14 @@ import UniformTypeIdentifiers
         }
     }
     func toggleCamera() {
-        guard !transferHeld, !closed else { return }
+        let enabled = !(requestedCamera ?? snapshot.cameraOn)
+        guard enabled, !ownsMicrophone else { setCameraEnabled(enabled); return }
+        claimTalkRole(microphone: false) { [weak self] in self?.setCameraEnabled(true) }
+    }
+    private func setCameraEnabled(_ enabled: Bool) {
+        guard !transferHeld, !closed, !enabled || ownsMicrophone else { return }
         cancelJoinCameraPrime()
-        let enabled = !(requestedCamera ?? snapshot.cameraOn); requestedCamera = enabled
+        requestedCamera = enabled
         let command = UUID(); cameraCommand = command
         cameraControl?.cancel()
         if !enabled, requestedMicrophone == true, !snapshot.microphoneOn {
@@ -611,13 +694,13 @@ import UniformTypeIdentifiers
         } else if let state = heldState {
             guard holdConfirmed else { throw NativeDesktopRTCError.cleanupFailed }
             try await engine.setPlayout(state.playout)
-            let microphone = restoreSending && state.microphone
+            let microphone = restoreSending && state.microphone && ownsMicrophone
             let request = headset.requestIntent(muted: !microphone)
             try await engine.setMicrophone(microphone)
             authorizedMicrophoneRequest = microphone && engine.snapshot.microphoneOn ? request : nil
             headset.confirm(muted: !engine.snapshot.microphoneOn, request: request)
-            try await engine.setCamera(restoreSending && state.camera)
-            if !(restoreSending && state.camera), let lease = cameraLease { NativeDesktopCameraLease.shared.release(lease); cameraLease = nil }
+            try await engine.setCamera(restoreSending && state.camera && ownsMicrophone)
+            if !(restoreSending && state.camera && ownsMicrophone), let lease = cameraLease { NativeDesktopCameraLease.shared.release(lease); cameraLease = nil }
             heldState = nil; transferHeld = false; holdConfirmed = false
         }
     }
@@ -923,9 +1006,10 @@ import UniformTypeIdentifiers
             let engineStopped = initiallyStopped && finallyStopped
             let clean = engineStopped && shareStopped && presenterStopped && previewsStopped && (self.joinCameraPrime?.cleanupSucceeded ?? true)
             if let token = self.externalMediaSuspension {
-                NativeDesktopMediaService.shared.resume(token, clean: clean)
+                self.sharedMedia.resume(token, clean: clean)
                 self.externalMediaSuspension = nil
             }
+            if let claim = self.mediaClaim { self.sharedMedia.resume(claim, clean: clean); self.mediaClaim = nil }
             if let lease = self.cameraLease {
                 if engineStopped { NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
                 else { NativeDesktopCameraLease.shared.reportFailedStop(lease) }

@@ -325,6 +325,11 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private var playoutEnabled: Bool
     private var closed = false
     private var mediaContext: LKRTCPeerConnection?
+    // Simultaneous meetings: only the talk meeting may hold physical input. A
+    // withdrawn permit releases input; activation requested meanwhile is deferred
+    // to the next permitted unmute. Mirrored into `cached` for readers.
+    private var inputPermitted = true
+    private var deferredActivation = false
     private var tappedInput: AVAudioNode?
     private weak var tappedEngine: AVAudioEngine?
     private var tappedPlayout: AVAudioNode?
@@ -365,7 +370,10 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     }
     @MainActor func sharedPlayoutIsOpen(expected: UUID?) -> Bool { sharedPlayoutGate.isOpen(expected: expected) }
     var canUnmuteMicrophone: Bool {
-        snapshot["microphoneOptIn"] as? Bool == true && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        let value = snapshot
+        return value["inputPermitted"] as? Bool != false &&
+            (value["microphoneOptIn"] as? Bool == true || value["deferredActivation"] as? Bool == true) &&
+            AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
     var privateInputLevel: Float? { locked { inputMeterEnabled } ? inputMeter.level : nil }
     var privateInputMeterEvidence: [String: Any] { meterEvidence(inputMeter).merging(["enabled": locked { inputMeterEnabled }]) { _, new in new } }
@@ -423,13 +431,15 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
 
     static func create(microphoneEnabled: Bool, playoutEnabled: Bool,
                        voiceProcessingEnabled: Bool = true, profile: GuestAudioProfile = .speech,
-                       privateCheckOnly: Bool = false, exclusive: Bool = false, timeout: TimeInterval = 3) async throws -> GuestSystemAudio {
+                       privateCheckOnly: Bool = false, exclusive: Bool = false, concurrent: Bool = false,
+                       timeout: TimeInterval = 3) async throws -> GuestSystemAudio {
         NativeScreenEncoderQuality.prepare()
-        if exclusive { _ = LKRTCInitializeSSL() }
+        if exclusive || concurrent { _ = LKRTCInitializeSSL() }
         if microphoneEnabled && AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
             throw GuestSystemAudioError.microphonePermissionRequired
         }
-        guard let lease = GuestAudioOwnerLease(privateCheck: privateCheckOnly, exclusive: exclusive) else { throw GuestSystemAudioError.physicalOwnerBusy }
+        guard let lease = GuestAudioOwnerLease(privateCheck: privateCheckOnly, exclusive: exclusive,
+                                               concurrent: concurrent) else { throw GuestSystemAudioError.physicalOwnerBusy }
         let owner = GuestSystemAudio(microphoneEnabled: microphoneEnabled, playoutEnabled: playoutEnabled,
             profile: profile, lease: lease, sharedNativeOwner: exclusive)
         let voiceProcessingEnabled = voiceProcessingEnabled && profile.usesPlatformVoiceProcessing
@@ -438,7 +448,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                 bypassVoiceProcessing: !voiceProcessingEnabled, encoderFactory: LKRTCDefaultVideoEncoderFactory(),
                 decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioProcessingModule: nil) }
             owner.locked { owner.ownedFactory = factory }
-            if exclusive {
+            if exclusive || concurrent {
                 // The first media peer initializes WebRtcVoiceEngine and binds
                 // its audio transport. Doing this after manual recording starts
                 // fails RegisterAudioCallback while the SDK buffer is active.
@@ -501,7 +511,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     /// Borrows this owner's input; never changes its sender or mute intent.
     func beginPrivateInputCheck(timeout: TimeInterval? = nil) async -> Bool {
         let success = await perform("private-input-borrow", timeout: timeout ?? inputStartupBudget) {
-            guard !self.closed, let module = self.currentModule,
+            guard !self.closed, self.inputPermitted, let module = self.currentModule,
                   AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
             self.inputActivation.beginCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable
             let success = self.applyAvailability(module)
@@ -523,7 +533,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         let remaining = deadline - ProcessInfo.processInfo.systemUptime
         guard remaining > 0 else { return false }
         return await perform("foreground-input-prepare", timeout: remaining) {
-            guard !self.closed, let module = self.currentModule,
+            guard !self.closed, self.inputPermitted, let module = self.currentModule,
                   AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
             self.inputActivation = .init(persistent: true); self.microphoneOptIn = true
             self.playoutEnabled = false
@@ -544,8 +554,12 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         if sharedNativeOwner, !(await sharedPlayoutGate.reset(sound: playout)) { _ = await shutdown(); return false }
         return await perform("room-audio-reset", timeout: 8) {
             guard !self.closed, let module = self.currentModule else { return false }
+            // A new room or recovery attempt starts permitted; the meeting reapplies
+            // its own withdrawal before any session can activate input.
+            self.inputPermitted = true
             let input = preparedInput && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
             self.inputActivation = .init(persistent: input); self.microphoneOptIn = input
+            self.deferredActivation = false; self.update(["deferredActivation": false, "inputPermitted": true])
             self.playoutEnabled = playout
             let muted = self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0
             let available = self.applyAvailability(module)
@@ -581,6 +595,10 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                   AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
                 self.update(["lastRejectedOperation": "microphone-not-authorized"]); return false
             }
+            // Another meeting holds the microphone: remember the request without input.
+            guard self.inputPermitted else {
+                self.deferredActivation = true; self.update(["deferredActivation": true]); return true
+            }
             let wasActivated = self.inputActivation
             self.inputActivation.activate(); self.microphoneOptIn = self.inputActivation.inputAvailable
             let success = self.applyAvailability(module)
@@ -605,8 +623,24 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
 
     /// Only opted-in capture remains available while muted. InputMixer avoids restarting playout.
     func setMicrophoneMuted(_ muted: Bool, timeout: TimeInterval = 2) async -> Bool {
-        await perform("microphone-mute", timeout: timeout) {
+        // Re-activating released input first initializes the voice-processing unit again.
+        let reactivates = !muted && snapshot["deferredActivation"] as? Bool == true
+        return await perform("microphone-mute", timeout: reactivates ? max(timeout, 8) : timeout) {
             guard !self.closed, let module = self.currentModule else { return false }
+            guard muted || self.inputPermitted else {
+                self.update(["lastRejectedOperation": "microphone-input-not-permitted"]); return false
+            }
+            if !muted, !self.microphoneOptIn, self.deferredActivation,
+               AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
+                let wasActivated = self.inputActivation
+                self.inputActivation.activate(); self.microphoneOptIn = self.inputActivation.inputAvailable
+                guard self.applyAvailability(module) else {
+                    self.inputActivation = wasActivated; self.microphoneOptIn = self.inputActivation.inputAvailable
+                    _ = self.applyAvailability(module); self.readSnapshot(module); return false
+                }
+                self.deferredActivation = false
+                self.update(["deferredActivation": false, "microphoneOptIn": self.microphoneOptIn])
+            }
             guard muted || (self.microphoneOptIn && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized) else {
                 self.update(["lastRejectedOperation": "microphone-not-authorized"]); return false
             }
@@ -615,6 +649,29 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             let success = changed && module.isMicrophoneMuted == muted
             self.readSnapshot(module)
             return success
+        }
+    }
+
+    /// Withdrawing the permit mutes and makes physical input unavailable;
+    /// granting it starts nothing. A later unmute re-activates input explicitly.
+    func setInputPermitted(_ permitted: Bool, timeout: TimeInterval = 8) async -> Bool {
+        if !permitted { setPrivateInputMeterEnabled(false) }
+        return await perform(permitted ? "input-permit" : "input-release", timeout: timeout) {
+            guard !self.closed, let module = self.currentModule else { return !permitted }
+            guard !permitted else {
+                self.inputPermitted = true; self.update(["inputPermitted": true]); return true
+            }
+            self.deferredActivation = self.deferredActivation || self.microphoneOptIn
+            self.inputPermitted = false
+            self.update(["microphoneMutedRequested": true])
+            let muted = self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0
+            self.inputActivation = .init(persistent: false); self.microphoneOptIn = false
+            // Unavailable input releases the device, as a finished private check does.
+            // WebRTC's recording demand stays, so a later activation resumes sending.
+            let available = self.applyAvailability(module)
+            self.update(["inputPermitted": false, "deferredActivation": self.deferredActivation, "microphoneOptIn": false])
+            self.readSnapshot(module)
+            return muted && module.isMicrophoneMuted && available
         }
     }
 

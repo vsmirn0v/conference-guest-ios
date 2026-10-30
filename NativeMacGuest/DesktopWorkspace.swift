@@ -15,7 +15,7 @@ import UserNotifications
     let library: NativeDesktopLibrary
     var mayAdmitMeeting: () -> Bool = { true }
     var onUpdateActivityChanged: () -> Void = {}
-    var busyForUpdate: Bool { preparing || meeting != nil || leaveTask != nil || shutdownBlocked }
+    var busyForUpdate: Bool { preparing || !meetings.isEmpty || leaveTask != nil || !meetingLeaves.isEmpty || shutdownBlocked }
     #if NATIVE_DIRECT_UPDATES
     var updates: NativeDesktopUpdates?
     #endif
@@ -24,9 +24,22 @@ import UserNotifications
     @Published var settingsTab = 0
     @Published var error: String?
     @Published private(set) var preparing = false { didSet { onUpdateActivityChanged() } }
-    @Published private(set) var meeting: NativeDesktopMeetingModel? { didSet { onUpdateActivityChanged() } }
+    /// Simultaneous meetings in join order. One talk meeting holds mic and camera.
+    @Published private(set) var meetings: [NativeDesktopMeetingModel] = [] { didSet { onUpdateActivityChanged() } }
+    @Published private(set) var talkID: UUID?
+    var talkMeeting: NativeDesktopMeetingModel? { meetings.first { $0.sessionID == talkID } }
+    /// The meeting single-meeting surfaces act on: the talk meeting, else the latest.
+    var meeting: NativeDesktopMeetingModel? { talkMeeting ?? meetings.last }
+    static let meetingLimit = 4
+    private let multipleMeetings: () -> Bool
     private var window: NSWindow?
-    private var meetingWindow: NativeDesktopMeetingWindow?
+    private var meetingWindows: [UUID: NativeDesktopMeetingWindow] = [:]
+    private var meetingSubscriptions: [UUID: AnyCancellable] = [:]
+    private var renderedMeetingStates: [UUID: String] = [:]
+    private var continuationSessions: [UUID: UUID] = [:]
+    private var meetingLeaves: [UUID: Task<Bool, Never>] = [:] { didSet { onUpdateActivityChanged() } }
+    private var handover: Task<Bool, Never>?
+    private weak var joiningModel: NativeDesktopMeetingModel?
     private var statusItem: NSStatusItem?
     private var statusIconLive: Bool?
     private var menuSubscriptionInstalled = false
@@ -34,8 +47,6 @@ import UserNotifications
     private var joinTask: Task<Void, Never>?
     private var joinGeneration = UUID()
     private var subscriptions = Set<AnyCancellable>()
-    private var renderedMeetingState: String?
-    private var meetingSubscription: AnyCancellable?
     private var keyMonitor: Any?
     private var activity: NSUserActivity?
     private var handoffLookup: Task<Void, Never>?
@@ -50,8 +61,10 @@ import UserNotifications
     init(library: NativeDesktopLibrary? = nil,
          detect: @escaping @MainActor (URL) async throws -> MeetingEngineDetection = { try await VendorEndpointResolver.makeDetector().detect($0) },
          makeMeeting: (@MainActor (JoinDestination, String, String?, Bool) -> NativeDesktopMeetingModel)? = nil,
-         makeHandoffActivity: @escaping @MainActor (ActiveJam) -> NSUserActivity = { NativeDesktopHandoff.activity(for: $0) }) {
+         makeHandoffActivity: @escaping @MainActor (ActiveJam) -> NSUserActivity = { NativeDesktopHandoff.activity(for: $0) },
+         multipleMeetings: @escaping () -> Bool = { UserDefaults.standard.object(forKey: "nativeDesktop.multipleMeetings") as? Bool ?? true }) {
         let library = library ?? NativeDesktopLibrary()
+        self.multipleMeetings = multipleMeetings
         self.library = library; self.detect = detect; self.makeHandoffActivity = makeHandoffActivity
         self.makeMeeting = makeMeeting ?? { NativeDesktopMeetingModel(destination: $0, name: $1, title: $2, quiet: $3) }
         super.init()
@@ -66,25 +79,27 @@ import UserNotifications
             guard let self, pendingScheduled != nil else { return }
             joinTask?.cancel()
         }
-        library.canAutomaticallyJoin = { [weak self] in self?.meeting == nil && self?.preparing == false && self?.mayAdmitMeeting() == true }
+        library.canAutomaticallyJoin = { [weak self] in self?.meetings.isEmpty == true && self?.preparing == false && self?.mayAdmitMeeting() == true }
         library.continuation.onSnapshot = { [weak self] in self?.continuationSnapshot() }
         library.continuation.onJoinTarget = { [weak self] jam, quiet in
-            guard let self, !preparing, meeting == nil, mayAdmitMeeting() else { return nil }
+            guard let self, !preparing, meetings.isEmpty, mayAdmitMeeting() else { return nil }
             join(jam.invitation, engine: jam.engine, title: jam.title, quiet: quiet, nameOverride: jam.name)
             return sessionID
         }
         library.continuation.onPrepareSource = { [weak self] id in
-            guard let self, self.sessionID == id, let meeting else { throw CancellationError() }
+            guard let self, let meeting = continuationMeeting(id) else { throw CancellationError() }
             try await meeting.setTransferHeld(true)
         }
         library.continuation.onResumeSource = { [weak self] id, restoreSending in
-            guard self?.sessionID == id else { return }; try? await self?.meeting?.setTransferHeld(false, restoreSending: restoreSending)
+            try? await self?.continuationMeeting(id)?.setTransferHeld(false, restoreSending: restoreSending)
         }
         library.continuation.onLeaveSource = { [weak self] id, _ in
-            guard self?.sessionID == id else { return false }; return await self?.leave() ?? false
+            guard let self, let meeting = continuationMeeting(id) else { return false }; return await leave(meeting)
         }
         library.continuation.onCancelTarget = { [weak self] _, id in
-            guard let self, id == sessionID else { return false }; return await leave()
+            guard let self else { return false }
+            if let id, let meeting = continuationMeeting(id) { return await leave(meeting) }
+            guard id == sessionID else { return false }; return await leave()
         }
         library.continuation.onActivityChanged = { [weak self] in self?.publishHandoff(self?.continuationSnapshot()) }
         CalendarReminderBroker.shared.install()
@@ -116,9 +131,9 @@ import UserNotifications
         }
         window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         library.calendar.showingMacSettings = selection == .settings
-        library.setup.finishLaunch(hasMeetingIntent: preparing || meeting != nil)
+        library.setup.finishLaunch(hasMeetingIntent: preparing || !meetings.isEmpty)
         library.foregrounded(allowAutomaticJoin: selection == .home)
-        library.setup.offerIfAppropriate(selection == .home && meeting == nil)
+        library.setup.offerIfAppropriate(selection == .home && meetings.isEmpty)
         installMenuBar(); installKeyboard()
     }
 
@@ -138,16 +153,21 @@ import UserNotifications
         guard mayAdmitMeeting() else {
             scheduled?.finish(); error = L("An update is being installed. Please try again after Rock'N'Roll for Mac restarts."); return
         }
-        guard !preparing, leaveTask == nil, !shutdownBlocked else { scheduled?.finish(); return }
-        if scheduled != nil, meeting != nil { scheduled?.finish(); return }
-        if let meeting {
-            if MeetingRoomIdentity(url, engine: known) == MeetingRoomIdentity(meeting.invitation, engine: meeting.kind) {
-                showMeeting(); return
-            }
+        guard !preparing, leaveTask == nil, meetingLeaves.isEmpty, !shutdownBlocked else { scheduled?.finish(); return }
+        // Calendar automation never adds a second meeting; a reminder's Join does.
+        if scheduled != nil, !meetings.isEmpty { scheduled?.finish(); return }
+        let room = MeetingRoomIdentity(url, engine: known)
+        if let existing = meetings.first(where: { MeetingRoomIdentity($0.invitation, engine: $0.kind) == room }) {
+            showMeeting(existing); return
+        }
+        let replacing = !meetings.isEmpty && !multipleMeetings()
+        if replacing {
             let alert = NSAlert(); alert.messageText = L("Join another meeting?")
             alert.informativeText = L("Your current meeting will end before joining the next one.")
             alert.addButton(withTitle: L("Switch meeting")); alert.addButton(withTitle: L("Cancel"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }
+        } else if meetings.count >= Self.meetingLimit {
+            error = L("You can be in up to %d meetings at once.", Self.meetingLimit); return
         }
         if scheduled == nil { library.setup.suspendForMeeting() }
         preparing = true; error = nil; sessionID = UUID(); joinGeneration = UUID(); pendingScheduled = scheduled
@@ -159,8 +179,9 @@ import UserNotifications
                 if joinGeneration == token { preparing = false; joinTask = nil; pendingScheduled = nil }
             }
             var ownedModel: NativeDesktopMeetingModel?
+            defer { if let ownedModel, joiningModel === ownedModel { joiningModel = nil } }
             do {
-                if meeting != nil, !(await leaveActive()) { throw NativeDesktopError.cleanupFailed }
+                if replacing, !(await leaveAllMeetings()) { throw NativeDesktopError.cleanupFailed }
                 try Task.checkCancellation(); guard token == joinGeneration else { return }
                 guard scheduled?.admission() != false else { throw CancellationError() }
                 let detection = try await detect(url)
@@ -175,18 +196,25 @@ import UserNotifications
                 let name = (nameOverride ?? library.displayName).trimmingCharacters(in: .whitespacesAndNewlines)
                 guard destination.engineKind.inputPolicy.accepts(name: name) else { throw NativeGuestEntryError.invalidName }
                 let model = makeMeeting(destination, name, title, quiet)
-                meeting = model; ownedModel = model
-                model.onLeave = { [weak self] in _ = await self?.leave() }
-                meetingSubscription = model.objectWillChange.sink { [weak self] in
-                    Task { @MainActor in self?.meetingDidChange() }
+                ownedModel = model; joiningModel = model
+                let concurrent = !meetings.isEmpty, owns = talkMeeting == nil
+                if concurrent { model.configureForConcurrentJoin(ownsMicrophone: owns) }
+                meetings.append(model); if owns { talkID = model.sessionID }
+                continuationSessions[model.sessionID] = requestedSession
+                model.microphoneArbiter = { [weak self] target in await self?.claimTalk(for: target) ?? false }
+                model.onLeave = { [weak self, weak model] in
+                    guard let self, let model else { return }; _ = await leave(model)
                 }
-                meetingWindow = NativeDesktopMeetingWindow(model: model, continuation: library.continuation)
+                meetingSubscriptions[model.sessionID] = model.objectWillChange.sink { [weak self, weak model] in
+                    Task { @MainActor in if let model { self?.meetingDidChange(model) } }
+                }
+                meetingWindows[model.sessionID] = NativeDesktopMeetingWindow(model: model, continuation: library.continuation, workspace: self)
                 if scheduled != nil && !NSApp.isActive { model.setMediaVisible(false); refreshMenu() }
-                else { showMeeting() }
+                else { showMeeting(model) }
                 guard scheduled?.admission() != false else { throw CancellationError() }
                 try await model.connect()
                 try Task.checkCancellation()
-                guard token == joinGeneration, meeting === model, scheduled?.admission() != false else { throw CancellationError() }
+                guard token == joinGeneration, meetings.contains(where: { $0 === model }), scheduled?.admission() != false else { throw CancellationError() }
                 // Commit only after final admission, including same-turn revocation.
                 pendingScheduled = nil
                 library.recordJoin(invitation: model.invitation, title: model.title,
@@ -196,7 +224,7 @@ import UserNotifications
             } catch {
                 if token == joinGeneration, !(error is CancellationError) { self.error = error.localizedDescription }
                 if token == joinGeneration, requestedSession == sessionID { library.continuation.targetDidFail() }
-                if let ownedModel, meeting === ownedModel { _ = await leaveActive() }
+                if let ownedModel, meetings.contains(where: { $0 === ownedModel }) { _ = await leave(ownedModel) }
             }
         }
     }
@@ -210,51 +238,111 @@ import UserNotifications
         guard alert.runModal() == .alertFirstButtonReturn else { throw CancellationError() }
         return try JoinDestination.verified(url, engine: kinds[picker.indexOfSelectedItem])
     }
+    /// Leaves every meeting (Quit, update, "Leave all meetings").
     @discardableResult func leave() async -> Bool {
         if let leaveTask { return await leaveTask.value }
-        let pending = joinTask, owned = meeting
+        let pending = joinTask
         joinTask = nil; joinGeneration = UUID(); preparing = true
         let cleanup = Task { @MainActor in
             pending?.cancel(); await pending?.value
-            if let owned, self.meeting === owned { return await self.leaveActive() }
-            return !self.shutdownBlocked
+            return await self.leaveAllMeetings()
         }
         leaveTask = cleanup
         let clean = await cleanup.value
         leaveTask = nil; preparing = false
         return clean
     }
-    private func leaveActive() async -> Bool {
-        guard let old = meeting else { return !shutdownBlocked }
-        let clean = await old.leave()
-        guard meeting === old else { return clean }
-        shutdownBlocked = !clean
-        if clean {
-            meetingWindow?.close(); meetingWindow = nil; meeting = nil; meetingSubscription = nil; renderedMeetingState = nil
-            updateContinuation()
-        } else { error = NativeDesktopError.cleanupFailed.localizedDescription }
-        refreshMenu(); return clean
+    private func leaveAllMeetings() async -> Bool {
+        var clean = true
+        for model in meetings.reversed() where !(await leave(model)) { clean = false }
+        return clean && !shutdownBlocked
     }
-    func showMeeting() { meetingWindow?.show(); refreshMenu() }
+    /// Leaves one meeting; a sole survivor of a departed talk meeting takes the talk role (muted).
+    @discardableResult func leave(_ model: NativeDesktopMeetingModel) async -> Bool {
+        let id = model.sessionID
+        if let task = meetingLeaves[id] { return await task.value }
+        if joiningModel === model { joinTask?.cancel() }
+        let task = Task { @MainActor () -> Bool in
+            let clean = await model.leave()
+            guard self.meetings.contains(where: { $0 === model }) else { return clean }
+            if clean {
+                self.meetings.removeAll { $0 === model }
+                self.meetingWindows.removeValue(forKey: id)?.close()
+                self.meetingSubscriptions[id] = nil; self.renderedMeetingStates[id] = nil; self.continuationSessions[id] = nil
+                if self.talkID == id { self.talkID = nil }
+                if self.talkID == nil, self.meetings.count == 1, let survivor = self.meetings.first {
+                    _ = await self.claimTalk(for: survivor)
+                }
+                self.updateContinuation()
+            } else {
+                self.shutdownBlocked = true; self.error = NativeDesktopError.cleanupFailed.localizedDescription
+            }
+            self.objectWillChange.send(); self.refreshMenu(); return clean
+        }
+        meetingLeaves[id] = task
+        let clean = await task.value
+        meetingLeaves[id] = nil
+        return clean
+    }
+    /// Serializes every talk-role move. The previous talk meeting must confirm it
+    /// released mic, camera and input before the target gets the permit and headset.
+    func claimTalk(for target: NativeDesktopMeetingModel) async -> Bool {
+        let previous = handover
+        let task = Task { @MainActor [weak self] () -> Bool in
+            _ = await previous?.value
+            guard let self, !target.isClosed, meetings.contains(where: { $0 === target }) else { return false }
+            if let current = talkMeeting, current !== target {
+                guard await current.relinquishMicrophone() else {
+                    target.error = L("Couldn’t move your microphone from “%@”. Try again, or leave that meeting.", current.title)
+                    return false
+                }
+            }
+            guard !target.isClosed, meetings.contains(where: { $0 === target }) else { return false }
+            talkID = target.sessionID
+            await target.assumeMicrophone()
+            refreshMenu()
+            return !target.isClosed && target.ownsMicrophone
+        }
+        handover = task
+        return await task.value
+    }
+    func showMeeting() { if let meeting { showMeeting(meeting) } }
+    func showMeeting(_ model: NativeDesktopMeetingModel) {
+        let visible = meetingWindows.first { $0.key != model.sessionID && $0.value.isVisible }?.value
+        meetingWindows[model.sessionID]?.show(tabbedWith: visible); refreshMenu()
+    }
+    func leaveAllConfirmed() {
+        let alert = NSAlert(); alert.messageText = L("Leave all meetings?")
+        alert.addButton(withTitle: L("Leave all")); alert.addButton(withTitle: L("Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { _ = await leave() }
+    }
+    private func continuationMeeting(_ session: UUID) -> NativeDesktopMeetingModel? {
+        meetings.first { continuationSessions[$0.sessionID] == session }
+    }
     func activate() { library.foregrounded(); if meeting != nil { showMeeting() } else { show() } }
     func backgrounded() { library.backgrounded() }
     func cloudNotification() async { await library.sync.synchronizeForNotification(); await library.continuation.refresh() }
     func handleURL(_ url: URL) { show(); invitation = url.absoluteString; joinInput() }
 
+    /// Handoff and active-jam reporting describe the talk meeting (else the latest).
     private func continuationSnapshot() -> ActiveJam? {
-        guard let meeting, meeting.snapshot.phase == .connected else { return nil }
-        return ActiveJam(deviceID: library.sync.deviceID, sessionID: sessionID, invitation: meeting.invitation,
+        guard let meeting, meeting.snapshot.phase == .connected,
+              let session = continuationSessions[meeting.sessionID] else { return nil }
+        return ActiveJam(deviceID: library.sync.deviceID, sessionID: session, invitation: meeting.invitation,
             title: meeting.title, name: meeting.displayName, deviceLabel: Host.current().localizedName ?? "Mac",
             isSharingScreen: meeting.snapshot.sharing, supportsCompanion: true,
             audioPaused: !meeting.snapshot.playoutOn, engine: meeting.kind)
     }
-    private func meetingDidChange() {
-        guard let meeting else { return }
+    private func meetingDidChange(_ meeting: NativeDesktopMeetingModel) {
+        guard meetings.contains(where: { $0 === meeting }) else { return }
         let state = [meeting.sessionID.uuidString, meeting.title, meeting.snapshot.phase.rawValue,
             String(meeting.snapshot.microphoneOn), String(meeting.snapshot.cameraOn), String(meeting.snapshot.sharing),
-            String(meeting.snapshot.playoutOn), String(meeting.participants.count), String(describing: meeting.localCamera.map(ObjectIdentifier.init))].joined(separator: "|")
-        guard state != renderedMeetingState else { return }
-        renderedMeetingState = state; objectWillChange.send(); refreshMenu(); updateContinuation()
+            String(meeting.snapshot.playoutOn), String(meeting.participants.count), String(meeting.ownsMicrophone),
+            String(meeting.participants.contains { !$0.isLocal && $0.speaking == true }),
+            String(describing: meeting.localCamera.map(ObjectIdentifier.init))].joined(separator: "|")
+        guard state != renderedMeetingStates[meeting.sessionID] else { return }
+        renderedMeetingStates[meeting.sessionID] = state; objectWillChange.send(); refreshMenu(); updateContinuation()
     }
     private func updateContinuation() {
         let snapshot = continuationSnapshot()
@@ -292,13 +380,18 @@ import UserNotifications
     private func installKeyboard() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, let meeting, event.isARepeat == false else { return event }
+            guard let self, let fallback = meeting, event.isARepeat == false else { return event }
             let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
-            let shortcut = event.charactersIgnoringModifiers?.lowercased() == "m" && modifiers == [.command, .shift]
+            let key = event.charactersIgnoringModifiers?.lowercased()
+            // Shortcuts act on the meeting whose window is key; unmuting there moves the mic.
+            let keyMeeting = meetings.first { self.meetingWindows[$0.sessionID]?.isKeyWindow == true }
             let typing = NSApp.keyWindow?.firstResponder is NSTextView || NSApp.keyWindow?.firstResponder is NSTextField
-            if shortcut || (event.keyCode == 49 && modifiers.isEmpty && !typing && meetingWindow?.isKeyWindow == true) {
-                meeting.toggleMicrophone(); return nil
+            if key == "m" && modifiers == [.command, .shift] { (keyMeeting ?? fallback).toggleMicrophone(); return nil }
+            if key == "s" && modifiers == [.command, .shift], let keyMeeting { keyMeeting.togglePlayout(); return nil }
+            if modifiers == [.command, .control], let digit = key.flatMap(Int.init), digit >= 1, digit <= meetings.count {
+                showMeeting(meetings[digit - 1]); return nil
             }
+            if event.keyCode == 49 && modifiers.isEmpty && !typing, let keyMeeting { keyMeeting.toggleMicrophone(); return nil }
             return event
         }
     }
@@ -311,22 +404,37 @@ import UserNotifications
         }.store(in: &subscriptions)
     }
     private func refreshMenu() {
-        guard library.calendar.keepInMenuBar || meeting != nil || preparing else {
+        guard library.calendar.keepInMenuBar || !meetings.isEmpty || preparing else {
             if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
             statusItem = nil; statusIconLive = nil; return
         }
         if statusItem == nil {
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         }
-        if statusIconLive != (meeting != nil) {
-            statusIconLive = meeting != nil
-            statusItem?.button?.image = NativeDesktopStatusIcon.image(live: meeting != nil)
+        if statusIconLive != !meetings.isEmpty {
+            statusIconLive = !meetings.isEmpty
+            statusItem?.button?.image = NativeDesktopStatusIcon.image(live: !meetings.isEmpty)
         }
         let menu = NSMenu()
         func item(_ title: String, _ action: Selector) {
             let row = NSMenuItem(title: title, action: action, keyEquivalent: ""); row.target = self; menu.addItem(row)
         }
-        if let meeting {
+        if meetings.count > 1 {
+            for model in meetings {
+                let row = NSMenuItem(title: model.title + " · " + Self.statusText(model), action: nil, keyEquivalent: "")
+                let actions = NSMenu()
+                func action(_ title: String, _ selector: Selector) {
+                    let entry = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+                    entry.target = self; entry.representedObject = model.sessionID; actions.addItem(entry)
+                }
+                action(L("Show meeting"), #selector(showMeetingItem(_:)))
+                action(model.snapshot.microphoneOn ? L("Mute") : L("Unmute"), #selector(toggleMicItem(_:)))
+                action(model.snapshot.playoutOn ? L("Silence") : L("Sound on"), #selector(toggleSoundItem(_:)))
+                action(L("Leave"), #selector(leaveItem(_:)))
+                row.submenu = actions; menu.addItem(row)
+            }
+            item(L("Leave all meetings…"), #selector(leaveAllFromMenu))
+        } else if let meeting {
             menu.addItem(withTitle: meeting.title, action: nil, keyEquivalent: "")
             item(L("Show meeting"), #selector(openMeeting))
             item(meeting.snapshot.microphoneOn ? L("Mute") : L("Unmute"), #selector(toggleMic))
@@ -349,6 +457,22 @@ import UserNotifications
     @objc private func openMeeting() { showMeeting() }
     @objc private func toggleMic() { meeting?.toggleMicrophone() }
     @objc private func leaveFromMenu() { Task { _ = await leave() } }
+    @objc private func leaveAllFromMenu() { leaveAllConfirmed() }
+    private func menuMeeting(_ sender: NSMenuItem) -> NativeDesktopMeetingModel? {
+        meetings.first { $0.sessionID == sender.representedObject as? UUID }
+    }
+    @objc private func showMeetingItem(_ sender: NSMenuItem) { if let model = menuMeeting(sender) { showMeeting(model) } }
+    @objc private func toggleMicItem(_ sender: NSMenuItem) { menuMeeting(sender)?.toggleMicrophone() }
+    @objc private func toggleSoundItem(_ sender: NSMenuItem) { menuMeeting(sender)?.togglePlayout() }
+    @objc private func leaveItem(_ sender: NSMenuItem) {
+        guard let model = menuMeeting(sender) else { return }; Task { _ = await leave(model) }
+    }
+    /// Talking, Muted, Listening or Silenced, shared by the menu and the Meetings popover.
+    static func statusText(_ model: NativeDesktopMeetingModel) -> String {
+        if !model.snapshot.playoutOn { return L("Silenced") }
+        if !model.ownsMicrophone { return L("Listening") }
+        return model.snapshot.microphoneOn ? L("Talking") : L("Muted")
+    }
     @objc private func skipSuggested() { if let next = library.calendar.suggestedMenuMeeting { library.calendar.suppressAutomaticJoin(for: next) } }
     @objc private func pauseSchedule() { library.calendar.pauseScheduledJoiningToday() }
     @objc private func resumeSchedule() { library.calendar.resumeScheduledJoining() }

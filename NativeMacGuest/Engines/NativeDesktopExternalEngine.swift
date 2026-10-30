@@ -56,6 +56,11 @@ protocol NativeDesktopMeetingEngine: AnyObject {
     func setPlayoutVolume(_ volume: Double) async
     /// Engines that receive each speaker separately report true; others never show the control.
     var supportsParticipantVolume: Bool { get }
+    /// An additional simultaneous meeting owns separate audio; call before connect.
+    func configureConcurrentAudio(_ concurrent: Bool)
+    /// Only the talk meeting may hold physical input. false mutes and releases it
+    /// (true when confirmed); true permits a later unmute and starts nothing.
+    func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool
     /// Listener-only level (0...2) for one remote participant; 1 removes the override.
     func setParticipantVolume(_ volume: Double, participantID: String) async
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws
@@ -79,6 +84,8 @@ extension NativeDesktopMeetingEngine {
     }
     func setPlayoutVolume(_ volume: Double) async {}
     var supportsParticipantVolume: Bool { false }
+    func configureConcurrentAudio(_ concurrent: Bool) {}
+    func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool { true }
     func setParticipantVolume(_ volume: Double, participantID: String) async {}
     func prepareMutedCaptureForAccessories() async throws {}
     func setMicrophoneReadinessForRecovery(_ enabled: Bool) {}

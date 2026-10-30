@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ConferenceCore
 import SwiftUI
 
@@ -7,20 +8,35 @@ import SwiftUI
     private let continuation: MeetingContinuationCoordinator?
     private let window: NSWindow
     private var mini: NSPanel?
-    init(model: NativeDesktopMeetingModel, continuation: MeetingContinuationCoordinator? = nil) {
+    private weak var workspace: NativeDesktopWorkspace?
+    private var titleSubscription: AnyCancellable?
+    init(model: NativeDesktopMeetingModel, continuation: MeetingContinuationCoordinator? = nil, workspace: NativeDesktopWorkspace? = nil) {
         self.model = model
         self.continuation = continuation
+        self.workspace = workspace
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1240, height: 800),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init()
         window.title = model.title; window.minSize = NSSize(width: 740, height: 520)
         window.isReleasedWhenClosed = false; window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden; window.delegate = self
-        window.setFrameAutosaveName("nativeDesktop.meeting"); window.center()
+        // Simultaneous meetings group as native tabs and can be dragged apart.
+        window.tabbingIdentifier = "nativeDesktop.meeting"; window.tabbingMode = .preferred
+        if !window.setFrameAutosaveName("nativeDesktop.meeting") { window.center() } else { window.center() }
+        titleSubscription = model.$title.sink { [weak window = window] in window?.title = $0 }
+    }
+    var isVisible: Bool { window.isVisible || mini?.isVisible == true }
+    /// Re-shown meetings join a visible meeting's tab group explicitly.
+    func show(tabbedWith other: NativeDesktopMeetingWindow?) {
+        if let other, other !== self, !window.isVisible, other.window.isVisible, other.window.tabbingIdentifier == window.tabbingIdentifier,
+           other.window.tabbedWindows?.contains(window) != true {
+            other.window.addTabbedWindow(window, ordered: .above)
+        }
+        show()
     }
     var isKeyWindow: Bool { window.isKeyWindow || mini?.isKeyWindow == true }
     private func mountMeeting() {
-        if !(window.contentView is NSHostingView<NativeDesktopMeetingView>) { window.contentView = NSHostingView(rootView: NativeDesktopMeetingView(model: model, onMini: { [weak self] in self?.showMini() }, continuation: continuation)) }
+        if !(window.contentView is NSHostingView<NativeDesktopMeetingView>) { window.contentView = NSHostingView(rootView: NativeDesktopMeetingView(model: model, onMini: { [weak self] in self?.showMini() }, continuation: continuation, workspace: workspace)) }
     }
     func show() {
         mini?.orderOut(nil); mini?.contentView = nil
@@ -69,6 +85,7 @@ struct NativeDesktopMeetingView: View {
     @ObservedObject var model: NativeDesktopMeetingModel
     let onMini: () -> Void
     var continuation: MeetingContinuationCoordinator? = nil
+    var workspace: NativeDesktopWorkspace? = nil
     @State private var reactionsOpen = false
     @State private var shareOpen = false
     @State private var soundOpen = false
@@ -97,6 +114,7 @@ struct NativeDesktopMeetingView: View {
                 if textSelection.isOpen { NativeDesktopSharedTextView(model: textSelection, meetingTools: AnyView(viewAndMoreMenus)) }
                 VStack(spacing: 0) {
                     if !model.controlsHidden && !textSelection.isOpen { header.padding(.horizontal, 18).padding(.top, 10) }
+                    if let workspace, !textSelection.isOpen { NativeDesktopListeningBanner(workspace: workspace, model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if model.isSharingLive && !textSelection.isOpen { shareBanner.padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { HStack { reactionOverlay; Spacer() }.padding(.leading, 22).padding(.top, 12) }
                     Spacer(minLength: 0)
@@ -173,6 +191,7 @@ struct NativeDesktopMeetingView: View {
             }.padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome()
             Spacer(minLength: 8)
             HStack(spacing: 6) {
+                if let workspace { NativeDesktopMeetingsButton(workspace: workspace, current: model) }
                 iconButton("person.2", L("Participants")) { togglePanel(.participants) }
                 iconButton("bubble.left", L("Conversation")) { togglePanel(.conversation) }
                 iconButton("pip.enter", L("Mini meeting"), action: onMini)
@@ -699,5 +718,91 @@ struct NativeDesktopParticipantVolumeButton: View {
                     Text(L("Only you hear this change.")).font(.caption).foregroundStyle(.secondary)
                 }.padding(16).frame(width: 260)
             }
+    }
+}
+
+/// Shown in a listening meeting while the microphone is live in another one, so
+/// the user never talks into the wrong room.
+struct NativeDesktopListeningBanner: View {
+    @ObservedObject var workspace: NativeDesktopWorkspace
+    @ObservedObject var model: NativeDesktopMeetingModel
+    var body: some View {
+        if workspace.meetings.count > 1, !model.ownsMicrophone, let talk = workspace.talkMeeting, talk !== model, talk.snapshot.microphoneOn {
+            HStack(spacing: 10) {
+                Image(systemName: "ear").foregroundStyle(.secondary)
+                Text(L("Your microphone is on in “%@”. Unmute to talk here instead.", talk.title)).font(.callout).lineLimit(2)
+                Button(L("Unmute here")) { model.toggleMicrophone() }.controlSize(.small)
+            }.padding(.horizontal, 14).padding(.vertical, 8).nativeMeetingChrome()
+        }
+    }
+}
+
+/// Header entry to every simultaneous meeting: switch, mute, silence or leave.
+struct NativeDesktopMeetingsButton: View {
+    @ObservedObject var workspace: NativeDesktopWorkspace
+    let current: NativeDesktopMeetingModel
+    @State private var open = false
+    var body: some View {
+        if workspace.meetings.count > 1 {
+            Button { open.toggle() } label: {
+                HStack(spacing: 4) { Image(systemName: "rectangle.stack"); Text("\(workspace.meetings.count)").font(.caption).monospacedDigit() }
+                    .frame(height: 30).padding(.horizontal, 6)
+            }.buttonStyle(.plain).help(L("Meetings")).accessibilityLabel(L("Meetings: %d", workspace.meetings.count))
+                .accessibilityIdentifier("meetings.switcher")
+                .popover(isPresented: $open, arrowEdge: .bottom) {
+                    NativeDesktopMeetingsPopover(workspace: workspace, current: current, close: { open = false })
+                }
+        }
+    }
+}
+
+struct NativeDesktopMeetingsPopover: View {
+    @ObservedObject var workspace: NativeDesktopWorkspace
+    let current: NativeDesktopMeetingModel
+    let close: () -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(L("Meetings")).font(.headline).padding(.bottom, 6)
+            ForEach(Array(workspace.meetings.enumerated()), id: \.element.sessionID) { index, model in
+                NativeDesktopMeetingRow(workspace: workspace, model: model, index: index, current: model === current, close: close)
+            }
+            Divider().padding(.vertical, 6)
+            Button(L("Leave all meetings…")) { close(); workspace.leaveAllConfirmed() }.buttonStyle(.plain).foregroundStyle(.red)
+            Text(L("Your microphone and camera work in one meeting at a time. Use headphones to avoid echo between meetings."))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.top, 4)
+        }.padding(16).frame(width: 380)
+    }
+}
+
+private struct NativeDesktopMeetingRow: View {
+    let workspace: NativeDesktopWorkspace
+    @ObservedObject var model: NativeDesktopMeetingModel
+    let index: Int
+    let current: Bool
+    let close: () -> Void
+    private var speaking: Bool { model.participants.contains { !$0.isLocal && $0.speaking == true } }
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle().fill(model.ownsMicrophone && model.snapshot.microphoneOn ? Color.red : speaking ? Color.green : Color.secondary.opacity(0.5))
+                .frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.title).font(.body.weight(current ? .semibold : .regular)).lineLimit(1)
+                Text(NativeDesktopWorkspace.statusText(model) + " · " + L("%d participants", model.participants.count) +
+                     (speaking && !model.snapshot.playoutOn ? " · " + L("Someone is speaking") : ""))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            Button { model.toggleMicrophone() } label: {
+                Image(systemName: model.ownsMicrophone && model.snapshot.microphoneOn ? "mic.fill" : "mic.slash")
+                    .foregroundStyle(model.ownsMicrophone && model.snapshot.microphoneOn ? Color.red : Color.primary)
+            }.buttonStyle(.plain).help(model.ownsMicrophone ? L("Mute or unmute") : L("Unmute here"))
+            Button { model.togglePlayout() } label: { Image(systemName: model.soundSymbol) }
+                .buttonStyle(.plain).help(L("Silence or restore this meeting (⇧⌘S)"))
+            Button { close(); workspace.showMeeting(model) } label: { Image(systemName: "macwindow") }
+                .buttonStyle(.plain).help(L("Show meeting") + (index < 9 ? " (⌃⌘\(index + 1))" : ""))
+            Button { Task { _ = await workspace.leave(model) } } label: { Image(systemName: "phone.down.fill").foregroundStyle(.red) }
+                .buttonStyle(.plain).help(L("Leave"))
+        }.padding(.vertical, 6).padding(.horizontal, 8)
+            .background(current ? Color.accentColor.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
     }
 }

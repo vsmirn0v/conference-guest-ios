@@ -86,6 +86,40 @@ private final class SharedAudioFixture: NativeDesktopSharedAudioOwner {
         native = nil
         XCTAssertNotNil(GuestAudioOwnerLease(privateCheck: false))
     }
+    func testConcurrentLeaseJoinsMeetingOwnersButNeverAPrivateCheck() {
+        var native = GuestAudioOwnerLease(privateCheck: false, exclusive: true)
+        var concurrent = GuestAudioOwnerLease(privateCheck: false, concurrent: true)
+        XCTAssertNotNil(native); XCTAssertNotNil(concurrent)
+        XCTAssertNil(GuestAudioOwnerLease(privateCheck: true))
+        native = nil
+        XCTAssertNil(GuestAudioOwnerLease(privateCheck: false, exclusive: true), "A concurrent meeting blocks a new exclusive owner")
+        XCTAssertNotNil(GuestAudioOwnerLease(privateCheck: false), "Ordinary owners ignore concurrent ones")
+        concurrent = nil
+        var check = GuestAudioOwnerLease(privateCheck: true)
+        XCTAssertNotNil(check)
+        XCTAssertNil(GuestAudioOwnerLease(privateCheck: false, concurrent: true), "Never beside a private check")
+        check = nil
+        XCTAssertNotNil(GuestAudioOwnerLease(privateCheck: false, exclusive: true))
+    }
+    func testAlongsideClaimKeepsLiveRoomRetiresOwnerOnReleaseAndBlocksIdlePreparation() async throws {
+        var created = 0
+        let fixture = SharedAudioFixture()
+        let media = NativeDesktopSharedMedia<SharedAudioFixture>(grace: .milliseconds(1), authorized: { true },
+            create: { _ in created += 1; return fixture })
+        let room = try await media.reserveRoom(profile: .speech)
+        let claim = try await media.suspendAlongside()
+        XCTAssertEqual(fixture.shutdowns, 0, "The talk meeting's live room keeps its owner")
+        XCTAssertTrue(media.busy)
+        do { _ = try await media.suspend(); XCTFail("Legacy suspension stays exclusive") } catch {}
+        media.setForeground(true, microphone: false, profile: .speech)
+        let released = await media.releaseRoom(room, clean: true); XCTAssertTrue(released)
+        XCTAssertEqual(fixture.shutdowns, 1, "Another meeting owns audio, so the released room's owner retires")
+        do { _ = try await media.reserveRoom(profile: .speech); XCTFail("No new shared room while a claim exists") } catch {}
+        await media.waitForWork(); XCTAssertEqual(created, 1, "No idle preparation while claimed")
+        media.resume(claim, clean: true)
+        try await spin { created == 2 }
+        XCTAssertFalse(media.busy)
+    }
     func testColdRoomPreparationRetainsJoinPolicyWithoutForegroundSpeculation() {
         var authorized = true
         let media = NativeDesktopSharedMedia<GuestSystemAudio>(authorized: { authorized }, create: { _ in

@@ -56,9 +56,13 @@ struct NativeDesktopHomeView: View {
                         }.onMove { library.moveFavorites(from: $0, to: $1) }
                     }
                 }
-                if workspace.meeting != nil {
-                    Section {
-                        Button { workspace.showMeeting() } label: { Label(L("Show meeting"), systemImage: "video.fill") }
+                if !workspace.meetings.isEmpty {
+                    Section(workspace.meetings.count > 1 ? L("Meetings") : "") {
+                        ForEach(workspace.meetings, id: \.sessionID) { model in
+                            Button { workspace.showMeeting(model) } label: {
+                                Label(workspace.meetings.count > 1 ? model.title : L("Show meeting"), systemImage: "video.fill").lineLimit(1)
+                            }.buttonStyle(.plain)
+                        }
                     }
                 }
             }
@@ -338,6 +342,7 @@ struct NativeDesktopSettingsView: View {
     var updates: NativeDesktopUpdates? = nil
     #endif
     @FocusState private var editingName: Bool
+    @AppStorage("nativeDesktop.multipleMeetings") private var multipleMeetings = true
     var body: some View {
         TabView(selection: $tab) {
             Form {
@@ -347,6 +352,11 @@ struct NativeDesktopSettingsView: View {
                     Text(L("Used for guest invitations that contain a room code without a website.")).font(.caption).foregroundStyle(.secondary)
                 }
                 RoomSyncSettingsView(sync: library.sync, continuation: library.continuation)
+                Section(L("Meetings")) {
+                    Toggle(L("Allow multiple meetings"), isOn: $multipleMeetings)
+                    Text(L("Stay connected to several meetings. Your microphone and camera work in one meeting at a time; the others keep playing unless you silence them."))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }.tabItem { Label(L("General"), systemImage: "person.crop.circle") }.tag(0)
             Form {
                 Section {

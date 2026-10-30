@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import XCTest
 @testable import RockNativeDesktop
@@ -242,6 +243,22 @@ private final class OutputGainFixture: NSObject {
         }
         XCTAssertLessThan(try XCTUnwrap(names.firstIndex(of: "verify-stopped")), try XCTUnwrap(names.firstIndex(of: "close-media-context")))
         XCTAssertNotNil(GuestAudioOwnerLease(privateCheck: false))
+    }
+
+    func testWithdrawnInputPermitDefersActivationAndRefusesUnmute() async throws {
+        let owner = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, concurrent: true)
+        XCTAssertEqual(owner.snapshot["mediaContextPrepared"] as? Bool, true, "A concurrent owner prepares its own media context")
+        let authorized = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        let released = await owner.setInputPermitted(false); XCTAssertTrue(released)
+        let activated = await owner.activateMicrophone()
+        XCTAssertEqual(activated, authorized, "Activation is remembered, never refused, while another meeting talks")
+        XCTAssertNotEqual(owner.snapshot["inputAvailable"] as? Bool, true, "No physical input while the permit is withdrawn")
+        XCTAssertFalse(owner.canUnmuteMicrophone)
+        let unmuted = await owner.setMicrophoneMuted(false); XCTAssertFalse(unmuted, "Unmute fails closed without the permit")
+        let permitted = await owner.setInputPermitted(true); XCTAssertTrue(permitted)
+        XCTAssertNotEqual(owner.snapshot["inputAvailable"] as? Bool, true, "Granting the permit starts no input")
+        XCTAssertEqual(owner.canUnmuteMicrophone, authorized)
+        let stopped = await owner.shutdown(); XCTAssertTrue(stopped)
     }
 
     func testEmptyKnownMutedAndSoundOffJoinsReleaseWithoutCreatingAMixer() async throws {

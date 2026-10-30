@@ -58,8 +58,16 @@ import XCTest
         if snapshot.phase == .idle || snapshot.phase == .connecting { initialMicrophoneReadiness = enabled }
         else { recoveryReadiness.append(enabled) }
     }
+    var concurrent = false
+    var permits: [Bool] = []
+    var permitResult = true
+    var log: ((String) -> Void)?
+    func configureConcurrentAudio(_ concurrent: Bool) { self.concurrent = concurrent }
+    func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool {
+        permits.append(permitted); log?("permit(\(permitted))"); return permitted || permitResult
+    }
     func setMicrophone(_ enabled: Bool) async throws {
-        microphoneCommands.append(enabled)
+        microphoneCommands.append(enabled); log?("mic(\(enabled))")
         if enabled { try await onMicrophoneEnable?() }
         else { try await onMicrophoneDisable?() }
         try await Task.sleep(for: .milliseconds(25))
@@ -1049,6 +1057,125 @@ private final class DesktopActivitySpy: NSUserActivity {
         model.setParticipantVolume(0.5, participantID: "b")
         XCTAssertEqual(model.participantVolume("b"), 0, "Engines without separate speakers ignore the control")
         _ = await model.leave()
+    }
+    private func multiWorkspace(_ engines: [DesktopTestEngine]) -> NativeDesktopWorkspace {
+        let preferences = UserDefaults(suiteName: "native-multi-\(UUID())")!
+        let library = NativeDesktopLibrary(preferences: preferences, history: RoomHistoryStore(storage: DesktopMemoryStorage()),
+                                           syncStorage: DesktopMemoryStorage())
+        library.displayName = "Multi meeting"
+        let media = NativeDesktopSharedMedia<GuestSystemAudio>(authorized: { false }, create: { _ in
+            throw GuestSystemAudioError.setupFailedOrTimedOut
+        })
+        var created = 0
+        return NativeDesktopWorkspace(library: library, detect: { .verified(.guest(endpoint: $0)) },
+            makeMeeting: { destination, name, title, quiet in
+                let engine = engines[created]; created += 1
+                return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: engine,
+                    joinReadiness: .init(microphone: .off, camera: .off), power: joinTestPower(), sharedMedia: media)
+            }, multipleMeetings: { true })
+    }
+    private func room(_ index: Int) -> URL { URL(string: "https://example.test/calls/multi-\(index)")! }
+    private func join(_ workspace: NativeDesktopWorkspace, _ index: Int) async throws {
+        let count = workspace.meetings.count
+        workspace.join(room(index), engine: .guest)
+        try await spin { workspace.meetings.count == count + 1 && workspace.meetings.last?.connected == true && !workspace.preparing }
+    }
+    func testSecondJoinAddsListeningMeetingWithoutLeavingFirst() async throws {
+        let first = DesktopTestEngine(), second = DesktopTestEngine()
+        let workspace = multiWorkspace([first, second])
+        try await join(workspace, 1); try await join(workspace, 2)
+        let (a, b) = (workspace.meetings[0], workspace.meetings[1])
+        XCTAssertEqual(first.leaves, 0, "Joining a second meeting keeps the first")
+        XCTAssertFalse(first.concurrent); XCTAssertTrue(second.concurrent)
+        XCTAssertEqual(second.permits, [false], "The second meeting starts listening with input released")
+        XCTAssertTrue(a.ownsMicrophone); XCTAssertFalse(b.ownsMicrophone)
+        XCTAssertEqual(workspace.talkID, a.sessionID)
+        XCTAssertEqual(second.mutedPreparationCalls, 0); XCTAssertTrue(second.microphoneCommands.isEmpty)
+        workspace.join(room(2), engine: .guest)
+        XCTAssertEqual(workspace.meetings.count, 2, "The same room shows the existing meeting")
+        let clean = await workspace.leave(); XCTAssertTrue(clean)
+        XCTAssertTrue(workspace.meetings.isEmpty); XCTAssertEqual(first.leaves, 1); XCTAssertEqual(second.leaves, 1)
+    }
+    func testUnmutingListenerMovesMicrophoneInPrivacyOrder() async throws {
+        let first = DesktopTestEngine(), second = DesktopTestEngine()
+        var log: [String] = []
+        first.log = { log.append("first." + $0) }; second.log = { log.append("second." + $0) }
+        let workspace = multiWorkspace([first, second])
+        try await join(workspace, 1); try await join(workspace, 2)
+        let (a, b) = (workspace.meetings[0], workspace.meetings[1])
+        a.toggleMicrophone(); try await spin { a.snapshot.microphoneOn }
+        log.removeAll()
+        b.toggleMicrophone()
+        try await spin { b.snapshot.microphoneOn && workspace.talkID == b.sessionID }
+        XCTAssertEqual(log, ["first.mic(false)", "first.permit(false)", "second.permit(true)", "second.mic(true)"],
+                       "The old meeting mutes and releases input before the new one may open it")
+        XCTAssertFalse(a.ownsMicrophone); XCTAssertFalse(a.snapshot.microphoneOn); XCTAssertTrue(b.ownsMicrophone)
+        _ = await workspace.leave()
+    }
+    func testFailedReleaseKeepsBothMutedAndNeverEnablesTarget() async throws {
+        let first = DesktopTestEngine(), second = DesktopTestEngine()
+        first.permitResult = false
+        let workspace = multiWorkspace([first, second])
+        try await join(workspace, 1); try await join(workspace, 2)
+        let (a, b) = (workspace.meetings[0], workspace.meetings[1])
+        a.toggleMicrophone(); try await spin { a.snapshot.microphoneOn }
+        b.toggleMicrophone()
+        try await spin { b.error != nil }
+        XCTAssertFalse(second.microphoneCommands.contains(true), "A failed release never enables the target")
+        XCTAssertEqual(workspace.talkID, a.sessionID); XCTAssertTrue(a.ownsMicrophone)
+        XCTAssertFalse(a.snapshot.microphoneOn); XCTAssertFalse(b.snapshot.microphoneOn)
+        XCTAssertEqual(first.permits, [false, true], "A failed release restores the talk meeting's permit")
+        a.toggleMicrophone()
+        try await spin { a.snapshot.microphoneOn }
+        _ = await workspace.leave()
+    }
+    func testSecondClickWhileMovingMicrophoneCancelsTheUnmute() async throws {
+        let first = DesktopTestEngine(), second = DesktopTestEngine()
+        let workspace = multiWorkspace([first, second])
+        try await join(workspace, 1); try await join(workspace, 2)
+        let (a, b) = (workspace.meetings[0], workspace.meetings[1])
+        a.toggleMicrophone(); try await spin { a.snapshot.microphoneOn }
+        b.toggleMicrophone()
+        XCTAssertTrue(b.microphoneStarting)
+        b.toggleMicrophone()
+        try await spin { workspace.talkID == b.sessionID && !a.snapshot.microphoneOn }
+        await b.waitForMediaActionsForTesting()
+        XCTAssertFalse(second.microphoneCommands.contains(true), "The cancelled move never opens the microphone")
+        XCTAssertFalse(b.snapshot.microphoneOn)
+        _ = await workspace.leave()
+    }
+    func testCameraAndSilencePerMeeting() async throws {
+        let first = DesktopTestEngine(), second = DesktopTestEngine()
+        let workspace = multiWorkspace([first, second])
+        try await join(workspace, 1); try await join(workspace, 2)
+        let (a, b) = (workspace.meetings[0], workspace.meetings[1])
+        b.toggleCamera()
+        try await spin { second.cameraCommands == [true] && workspace.talkID == b.sessionID }
+        XCTAssertFalse(a.ownsMicrophone); XCTAssertTrue(first.cameraCommands.allSatisfy { !$0 })
+        a.togglePlayout()
+        try await spin { !a.snapshot.playoutOn }
+        XCTAssertTrue(b.snapshot.playoutOn, "Silence applies to one meeting")
+        XCTAssertEqual(NativeDesktopWorkspace.statusText(a), L("Silenced"))
+        _ = await workspace.leave()
+    }
+    func testLeavingTalkPromotesSoleSurvivorAndLimitsMeetings() async throws {
+        let engines = (0..<5).map { _ in DesktopTestEngine() }
+        let workspace = multiWorkspace(engines)
+        for index in 1...4 { try await join(workspace, index) }
+        workspace.join(room(5), engine: .guest)
+        XCTAssertEqual(workspace.meetings.count, 4); XCTAssertNotNil(workspace.error, "Four meetings at most")
+        workspace.error = nil
+        let talk = workspace.meetings[0]
+        _ = await workspace.leave(talk)
+        XCTAssertNil(workspace.talkID, "Several survivors: nobody talks until the next unmute")
+        for model in Array(workspace.meetings.dropLast()) { _ = await workspace.leave(model) }
+        let survivor = try XCTUnwrap(workspace.meetings.first)
+        XCTAssertEqual(workspace.meetings.count, 1)
+        survivor.toggleMicrophone()
+        try await spin { survivor.snapshot.microphoneOn && workspace.talkID == survivor.sessionID }
+        XCTAssertEqual(engines[3].permits, [false, true])
+        _ = await workspace.leave()
+        XCTAssertTrue(workspace.meetings.isEmpty); XCTAssertFalse(workspace.busyForUpdate)
     }
     func testMinimizingSuspendsMediaAndPreservesEditorShellWithoutLeaving() async throws {
         let engine = DesktopTestEngine(), model = try model(engine)

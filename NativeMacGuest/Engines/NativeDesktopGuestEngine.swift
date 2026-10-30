@@ -48,6 +48,7 @@ private enum NativeDesktopGuestError: LocalizedError {
         return device
     }
     func startPrivateAudioCheck() async throws {
+        guard inputPermitted else { throw NativeDesktopPrivateAudioError.unavailable }
         guard let session, let owner = systemAudio, snapshot.phase == .connected else { throw NativeDesktopGuestError.notConnected }
         let token = revision
         guard try await GuestCaptureAuthorization.request(.audio) else { throw NativeDesktopGuestError.permissionDenied }
@@ -64,7 +65,8 @@ private enum NativeDesktopGuestError: LocalizedError {
     private var systemAudio: GuestSystemAudio?
     private var meetingVolume = 1.0
     private var participantVolumes: [String: Double] = [:]
-    private let media: NativeDesktopSharedMedia<GuestSystemAudio>
+    private var media: NativeDesktopSharedMedia<GuestSystemAudio>
+    private var inputPermitted = true
     private let microphoneAuthorized: () -> Bool
     private var room: NativeDesktopSharedMedia<GuestSystemAudio>.Room?
     private var revision = UUID()
@@ -111,6 +113,9 @@ private enum NativeDesktopGuestError: LocalizedError {
             }
             systemAudio = owner
             _ = owner.setMeetingVolume(meetingVolume)
+            if !inputPermitted, !(await owner.setInputPermitted(false)) {
+                _ = await media.detach(room, attempt: attempt, clean: false); throw NativeDesktopGuestError.cleanupFailed
+            }
 #if DEBUG
             let engine = NativeGuestEngine(label: name, systemAudio: owner,
                 icePolicy: diagnosticICEPolicyForTesting, verifyReceivedPixels: false)
@@ -242,6 +247,17 @@ private enum NativeDesktopGuestError: LocalizedError {
         participantVolumes[participantID] = volume == 1 ? nil : volume
         currentNativeEngine?.setParticipantVolumes(participantVolumes)
     }
+    /// A second simultaneous Guest meeting gets its own room service and owner.
+    func configureConcurrentAudio(_ concurrent: Bool) {
+        guard concurrent, session == nil, room == nil else { return }
+        media = NativeDesktopMediaService.makeConcurrentGuestMedia()
+    }
+    func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool {
+        inputPermitted = permitted
+        if !permitted { session?.setMicrophonePreparationRequested(false) }
+        guard let systemAudio else { return true }
+        return await systemAudio.setInputPermitted(permitted)
+    }
     func setPlayoutVolume(_ volume: Double) async {
         meetingVolume = volume
         _ = systemAudio?.setMeetingVolume(volume)
@@ -258,7 +274,7 @@ private enum NativeDesktopGuestError: LocalizedError {
     /// The shell invokes this only when its join power policy permits preparation.
     /// Authorization already exists; priming never changes the muted intent.
     func prepareMutedCaptureForAccessories() async throws {
-        guard microphoneAuthorized(),
+        guard inputPermitted, microphoneAuthorized(),
               let session, !leaving, snapshot.phase == .connected,
               session.snapshot.desiredIntent?.audioMuted == true,
               !session.snapshot.microphoneActivated else { return }
@@ -272,12 +288,12 @@ private enum NativeDesktopGuestError: LocalizedError {
 
     func setMicrophoneReadinessForRecovery(_ enabled: Bool) {
         microphoneReadinessAllowed = enabled
-        session?.setMicrophonePreparationRequested(enabled && !quietJoin &&
+        session?.setMicrophonePreparationRequested(enabled && !quietJoin && inputPermitted &&
             microphoneAuthorized())
     }
 
     private var microphonePreparationEligible: Bool {
-        permitsMicrophonePreparation(quiet: quietJoin)
+        inputPermitted && permitsMicrophonePreparation(quiet: quietJoin)
     }
     /// A claimed room keeps the existing join/recovery policy even when no
     /// speculative foreground lease existed before admission.
@@ -324,6 +340,8 @@ private enum NativeDesktopGuestError: LocalizedError {
         snapshot.microphoneLevel = nil; emit()
         let old = session
         let engineStopped = await old?.leave() ?? cleanupSucceeded
+        // The shared owner may outlive this room; never hand it on without input.
+        if !inputPermitted, let systemAudio { _ = await systemAudio.setInputPermitted(true) }
         let stopped: Bool
         if let room { stopped = await media.releaseRoom(room, clean: engineStopped) }
         else { stopped = engineStopped }

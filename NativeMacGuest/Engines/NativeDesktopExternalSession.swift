@@ -45,6 +45,8 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
     var screenTrack: LKRTCVideoTrack?
     var outputIntent = true
     private var accessoryCapturePrepared = false
+    private var concurrentAudio = false
+    private var inputPermitted = true
     private var privateAudioCheck = UUID()
     private var audioProfile = GuestAudioProfile.speech
     var privateAudioLevel: Float? { audio?.privateInputLevel }
@@ -100,10 +102,12 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         snapshot = .init(phase: .connecting, playoutOn: !quiet); publish()
         var admittedAudio: GuestSystemAudio?
         do {
-            let owner = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: !quiet, profile: audioProfile)
+            let owner = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: !quiet, profile: audioProfile,
+                                                          concurrent: concurrentAudio)
             guard epoch == attempt, snapshot.phase == .connecting else { _ = await owner.shutdown(); throw CancellationError() }
             audio = owner; admittedAudio = owner
             _ = owner.setMeetingVolume(meetingVolume)
+            if !inputPermitted, !(await owner.setInputPermitted(false)) { throw NativeDesktopRTCError.cleanupFailed }
             try await startConnection(attempt)
             try check(attempt)
             startMeterIfNeeded()
@@ -153,6 +157,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
             microphoneIntent = false; publisher?.setMicrophone(false); audio?.suppressMicrophone()
             snapshot.microphoneOn = false; publish(); scheduleMedia(); return
         }
+        guard inputPermitted else { throw NativeDesktopRTCError.permissionDenied }
         let authorized = try await GuestCaptureAuthorization.request(.audio)
         try check(attempt); guard microphoneRevision == revision else { throw CancellationError() }
         guard authorized else { throw NativeDesktopRTCError.permissionDenied }
@@ -163,7 +168,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
     /// Makes already-authorized hardware available for accessory mute gestures.
     /// This changes input availability, never publication intent or permission.
     func prepareMutedCaptureForAccessories() async throws {
-        guard snapshot.phase == .connected, !microphoneIntent, !snapshot.microphoneOn,
+        guard inputPermitted, snapshot.phase == .connected, !microphoneIntent, !snapshot.microphoneOn,
               !accessoryCapturePrepared, AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
               let owner = audio else { return }
         accessoryCapturePrepared = true
@@ -206,7 +211,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         if enabled { try Task.checkCancellation() }
     }
     func startPrivateAudioCheck() async throws {
-        guard snapshot.phase == .connected, let owner = audio else { throw NativeDesktopRTCError.closed }
+        guard inputPermitted, snapshot.phase == .connected, let owner = audio else { throw NativeDesktopRTCError.closed }
         let attempt = epoch, checkID = UUID(); privateAudioCheck = checkID
         do {
             guard try await GuestCaptureAuthorization.request(.audio) else { throw NativeDesktopRTCError.permissionDenied }
@@ -227,6 +232,14 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
     func setPlayoutVolume(_ volume: Double) async {
         meetingVolume = volume
         _ = audio?.setMeetingVolume(volume)
+    }
+    func configureConcurrentAudio(_ concurrent: Bool) { concurrentAudio = concurrent }
+    func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool {
+        inputPermitted = permitted
+        guard !permitted else { return await audio?.setInputPermitted(true) ?? true }
+        microphoneRevision &+= 1; microphoneIntent = false; accessoryCapturePrepared = false
+        publisher?.setMicrophone(false); snapshot.microphoneOn = false; publish(); scheduleMedia()
+        return await audio?.setInputPermitted(false) ?? true
     }
     func setPlayout(_ enabled: Bool) async throws {
         let attempt = epoch
