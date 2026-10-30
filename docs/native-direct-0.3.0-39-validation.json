@@ -1,0 +1,26 @@
+{
+  "version": "0.3.0",
+  "build": "39",
+  "channel": "beta",
+  "sourceCommit": "be4d560",
+  "changes": [
+    "Per-speaker volume (0-200%, mute for me) for Guest and Rock meetings from the participant tile menu and Participants list; hidden for Telemost/TrueConf (be4d560)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-39-arm64.dmg",
+    "sha256": "327b19db7bc03260c2fb4e9f45af9be02728feeb5739364039b0daa264edd85c",
+    "length": 15704124
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-39-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 39",
+    "live Guest and Rock meetings with per-speaker volume"
+  ]
+}
