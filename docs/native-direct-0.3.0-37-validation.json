@@ -1,0 +1,26 @@
+{
+  "version": "0.3.0",
+  "build": "37",
+  "channel": "beta",
+  "sourceCommit": "552e9c0",
+  "changes": [
+    "Audio only and Screen shares keep participant tiles, speaking state and Layout; only received video is reduced (552e9c0)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-37-arm64.dmg",
+    "sha256": "5df0103c0db43c809e19e35810a65351421567b459fde84fb4d3a7f18ca18792",
+    "length": 15610772
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-37-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 37",
+    "live meeting in Audio only and Screen shares modes"
+  ]
+}
