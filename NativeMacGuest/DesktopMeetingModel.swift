@@ -26,8 +26,6 @@ import UniformTypeIdentifiers
     @Published var display: ConferenceDisplayMode = .all {
         didSet {
             if display == .audioOnly { cancelJoinCameraPrime() }
-            // A camera pin cannot be shown without cameras; pinnedID's observer re-runs demand.
-            if display != .all, pinnedID != nil, pinnedSource != .screen { unpin() }
             focusAffinity = nil; updateDemand()
         }
     }
@@ -216,7 +214,8 @@ import UniformTypeIdentifiers
     var canReact: Bool { connected && guestFeatures.permissions.canSendReaction }
     var transcript: [GuestMeetingMessage] { guestFeatures.transcript }
     var participants: [NativeDesktopParticipant] { snapshot.participants }
-    /// Participants whose video the current display mode can show.
+    /// Participants whose video the display mode receives. Tiles, speaking state
+    /// and layouts always cover every participant; only media is reduced.
     var videoParticipants: [NativeDesktopParticipant] {
         switch display {
         case .all: participants
@@ -232,8 +231,8 @@ import UniformTypeIdentifiers
         case .audioOnly: []
         }
     }
-    var galleryParticipants: [NativeDesktopParticipant] { Array(videoParticipants.dropFirst(galleryPage * 6).prefix(6)) }
-    var galleryPages: Int { max(1, Int(ceil(Double(videoParticipants.count) / 6))) }
+    var galleryParticipants: [NativeDesktopParticipant] { Array(participants.dropFirst(galleryPage * 6).prefix(6)) }
+    var galleryPages: Int { max(1, Int(ceil(Double(participants.count) / 6))) }
     var focusedParticipantID: String? { focusedVideo?.participantID ?? focusAffinity?.participant ?? pinnedID }
     var focusedVideo: NativeDesktopExternalVideo? {
         if let pinnedID, participants.contains(where: { $0.id == pinnedID && $0.isLocal }) {
@@ -247,10 +246,11 @@ import UniformTypeIdentifiers
         if let pinnedID, let pinned = videos.first(where: { $0.id == pinnedID || $0.participantID == pinnedID }) { return pinned }
         return videos.first { $0.source == .screen } ?? videos.first { item in participants.first { $0.id == item.participantID }?.speaking == true } ?? videos.first
     }
+    /// Automatic focuses a share only when it is received; Focus works in every mode.
     var showsFocus: Bool {
-        guard display != .audioOnly else { return false }
-        return viewMode == .focused || (viewMode == .automatic && (participants.contains { $0.sharing == true && !$0.isLocal } ||
-            visibleVideos.contains { $0.source == .screen } || focusAffinity?.source == .screen))
+        viewMode == .focused || (viewMode == .automatic && display != .audioOnly &&
+            (participants.contains { $0.sharing == true && !$0.isLocal } ||
+             visibleVideos.contains { $0.source == .screen } || focusAffinity?.source == .screen))
     }
     var floatingVideo: NativeDesktopExternalVideo? {
         if showsFocus { return focusedVideo }
@@ -748,8 +748,8 @@ import UniformTypeIdentifiers
             } else if focusAffinity?.participant != pinnedID { focusAffinity = (pinnedID, pinnedSource ?? .camera) }
         } else if viewMode != .gallery && display != .audioOnly,
                   let screen = participants.first(where: { $0.sharing == true && !$0.isLocal }) { focusAffinity = (screen.id, .screen) }
-        else if viewMode == .gallery || display == .audioOnly { focusAffinity = nil }
-        else if viewMode == .focused && display == .screenShares {
+        else if viewMode == .gallery || (viewMode == .automatic && display == .audioOnly) { focusAffinity = nil }
+        else if viewMode == .focused && display == .screenShares && !videoParticipants.isEmpty {
             if focusAffinity?.source != .screen || !videoParticipants.contains(where: { $0.id == focusAffinity?.participant }) {
                 focusAffinity = videoParticipants.first.map { ($0.id, .screen) }
             }
@@ -773,7 +773,10 @@ import UniformTypeIdentifiers
             }
         }
         let focused = receivesVideo && singleVideo ? (showsFocus ? focusedParticipantID : floatingParticipantID) : nil
-        let ids = !receivesVideo ? Set<String>() : singleVideo ? Set([focused].compactMap { $0 }) : Set(galleryParticipants.map(\.id))
+        let shown = singleVideo ? [focused].compactMap { $0 } : galleryParticipants.map(\.id)
+        // Visible tiles stay; video is requested only for the ones this mode receives.
+        let receivable = Set(videoParticipants.map(\.id))
+        let ids = !receivesVideo ? Set<String>() : Set(shown.filter { display == .all || receivable.contains($0) })
         let floatingScreen = mediaPresentation == .floating && !showsFocus && participants.contains { $0.id == focused && $0.sharing == true }
         let preferredScreen = receivesVideo && (focusAffinity?.source == .screen || floatingScreen) ? focused : nil
         let cameras = receivesCameras

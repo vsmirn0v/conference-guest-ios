@@ -960,10 +960,11 @@ private final class DesktopActivitySpy: NSUserActivity {
 
         model.display = .screenShares; model.viewMode = .gallery
         try await spin { engine.cameraDemands.last == false && engine.demands.last?.ids == Set(["b", "c"]) }
-        XCTAssertNil(model.pinnedID, "A camera pin cannot survive into a mode that receives no cameras")
-        XCTAssertEqual(model.videoParticipants.map(\.id), ["b", "c"], "Only remote sharers have tiles")
+        XCTAssertEqual(model.pinnedID, "a", "Changing what is received keeps the user's pin")
+        XCTAssertEqual(model.galleryParticipants.map(\.id), ["me", "a", "b", "c"], "Every participant keeps a tile")
+        XCTAssertEqual(model.videoParticipants.map(\.id), ["b", "c"], "Video is requested only for remote sharers")
         XCTAssertTrue(model.visibleVideos.allSatisfy { $0.source == .screen }, "A late camera frame is never shown")
-        model.viewMode = .automatic
+        model.unpin(); model.viewMode = .automatic
         try await spin { engine.demands.last?.ids?.count == 1 && engine.cameraDemands.last == false }
         XCTAssertEqual(model.focusedVideo?.source, .screen)
         model.focus(participantID: "c", source: .camera)
@@ -976,7 +977,16 @@ private final class DesktopActivitySpy: NSUserActivity {
         engine.onState?(engine.snapshot); engine.onVideo?([video("a", .camera), video("b", .camera)])
         try await spin { engine.demands.last?.ids == Set<String>() }
         XCTAssertTrue(model.videoParticipants.isEmpty && model.visibleVideos.isEmpty, "No share leaves audio only, not cameras")
+        XCTAssertEqual(model.galleryParticipants.count, 4, "Participants stay visible while nobody shares")
         XCTAssertTrue(model.snapshot.playoutOn)
+
+        model.display = .audioOnly; model.viewMode = .focused
+        XCTAssertTrue(model.showsFocus, "Audio only keeps every layout available")
+        XCTAssertNotNil(model.focusedParticipantID, "Focus still names a participant for the avatar tile")
+        try await spin { engine.demands.last?.ids == Set<String>() && engine.demands.last?.focused == nil }
+        model.viewMode = .automatic
+        XCTAssertFalse(model.showsFocus, "Automatic audio only shows the participant gallery")
+        XCTAssertEqual(model.galleryParticipants.count, 4)
 
         model.display = .all
         try await spin { engine.cameraDemands.last == true && engine.demands.last?.ids == Set(["me", "a", "b", "c"]) }

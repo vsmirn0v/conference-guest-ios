@@ -86,7 +86,7 @@ struct NativeDesktopMeetingView: View {
                 Color.black
                 if model.mediaPresentation == .meeting { media.padding(.horizontal, 14)
                     .padding(.top, model.controlsHidden ? 12 : 70)
-                    .padding(.bottom, model.controlsHidden ? 12 : (model.showsFocus || model.display == .audioOnly ? 90 : 160))
+                    .padding(.bottom, model.controlsHidden ? 12 : (model.showsFocus ? 90 : 160))
                 }
                 if textSelection.isOpen { NativeDesktopSharedTextView(model: textSelection, meetingTools: AnyView(viewAndMoreMenus)) }
                 VStack(spacing: 0) {
@@ -167,8 +167,7 @@ struct NativeDesktopMeetingView: View {
     private var viewMenuTitle: String {
         switch model.display {
         case .all: L(model.viewMode.rawValue)
-        case .screenShares: model.display.title + " · " + L(model.viewMode.rawValue)
-        case .audioOnly: model.display.title
+        case .screenShares, .audioOnly: model.display.title + " · " + L(model.viewMode.rawValue)
         }
     }
     private var viewMenuSymbol: String {
@@ -182,7 +181,7 @@ struct NativeDesktopMeetingView: View {
                     }.pickerStyle(.inline)
                     Picker(L("Layout"), selection: $model.viewMode) {
                         ForEach(NativeDesktopMeetingModel.ViewMode.allCases, id: \.self) { Text(L($0.rawValue)).tag($0) }
-                    }.pickerStyle(.inline).disabled(model.display == .audioOnly)
+                    }.pickerStyle(.inline)
                     if model.display != .audioOnly {
                         ForEach(model.participants.filter { $0.sharing == true }) { person in
                             Button(L("Screen · %@", person.name)) { model.focus(participantID: person.id, source: .screen) }
@@ -203,27 +202,44 @@ struct NativeDesktopMeetingView: View {
                 } label: { Label(L("More"), systemImage: "ellipsis") }
         }
     }
+    /// Show modes only reduce received media; tiles, speaking state and layouts stay.
     @ViewBuilder private var media: some View {
-        if model.display == .audioOnly {
-            VStack(spacing: 18) { Image(systemName: "waveform").font(.system(size: 44)); Text(L("Audio only")).font(.title2); Text(model.title).foregroundStyle(.secondary) }
-        } else if model.display == .screenShares && model.videoParticipants.isEmpty {
-            VStack(spacing: 18) {
-                Image(systemName: ConferenceDisplayMode.screenShares.symbol).font(.system(size: 44)).foregroundStyle(.secondary)
-                Text(L("No screen share is live. Audio continues.")).font(.title3).multilineTextAlignment(.center)
-                Text(model.title).foregroundStyle(.secondary)
+        VStack(spacing: 8) {
+            if let caption = displayCaption {
+                Label(caption, systemImage: model.display.symbol).font(.callout).foregroundStyle(.secondary)
+                    .padding(.horizontal, 12).padding(.vertical, 6).background(.white.opacity(0.08), in: Capsule())
             }
-        } else if model.showsFocus, let focused = model.focusedVideo {
+            mediaContent
+        }
+    }
+    private var displayCaption: String? {
+        switch model.display {
+        case .all: nil
+        case .audioOnly: L("Audio only")
+        case .screenShares: model.videoParticipants.isEmpty ? L("No screen share is live. Audio continues.") : nil
+        }
+    }
+    private var focusFilmstrip: some View {
+        HStack(spacing: 8) {
+            ForEach(model.participants.prefix(6)) { person in
+                Button { model.focus(participantID: person.id, source: .camera) } label: {
+                    HStack(spacing: 6) { Image(systemName: person.microphoneOn == true ? "mic.fill" : "mic.slash"); Text(person.name).lineLimit(1) }.font(.caption).padding(9)
+                }.buttonStyle(.bordered).frame(maxWidth: 170)
+            }
+        }
+    }
+    @ViewBuilder private var mediaContent: some View {
+        if model.showsFocus, let focused = model.focusedVideo {
             VStack(spacing: 10) {
                 NativeDesktopZoomVideo(video: focused, name: name(focused.participantID), viewport: focusedViewport,
                     textFrame: textFrame, selectText: { model.controlsHidden = false; updateTextSource(); textSelection.open(zoom: focusedViewport.zoom, pan: focusedViewport.pan, viewportSize: focusedViewport.size) })
-                HStack(spacing: 8) {
-                    ForEach(model.videoParticipants.prefix(6)) { person in
-                        Button { model.focus(participantID: person.id, source: .camera) } label: {
-                            HStack(spacing: 6) { Image(systemName: person.microphoneOn == true ? "mic.fill" : "mic.slash"); Text(person.name).lineLimit(1) }.font(.caption).padding(9)
-                        }.buttonStyle(.bordered).frame(maxWidth: 170)
-                    }
-                }
+                focusFilmstrip
             }
+        } else if model.showsFocus, let focusedID = model.focusedParticipantID,
+                  let person = model.participants.first(where: { $0.id == focusedID }),
+                  model.display != .all || (person.cameraOn != true && person.sharing != true) {
+            // No video is expected here: keep the person, mic and speaking state in focus.
+            VStack(spacing: 10) { participantTile(person, compact: false); focusFilmstrip }
         } else if model.showsFocus, let focusedID = model.focusedParticipantID {
             VStack(spacing: 16) { ProgressView(); Text(L("Waiting for stream…")); Text(name(focusedID)).foregroundStyle(.secondary) }
         } else if !model.participants.isEmpty {
