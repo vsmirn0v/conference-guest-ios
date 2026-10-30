@@ -227,6 +227,10 @@ struct NativeDesktopUpdatesView: View {
     var body: some View {
         Form {
             Section("Software updates") {
+                if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+                   let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String {
+                    LabeledContent("Installed version", value: "\(version) (\(build))")
+                }
                 Toggle("Automatically check for updates", isOn: Binding(get: { updates.updater.automaticallyChecksForUpdates }, set: { updates.updater.automaticallyChecksForUpdates = $0; updates.objectWillChange.send() }))
                 Toggle("Automatically download updates", isOn: Binding(get: { updates.updater.automaticallyDownloadsUpdates }, set: { updates.updater.automaticallyDownloadsUpdates = $0; updates.objectWillChange.send() }))
                 Toggle("Beta updates", isOn: Binding(get: { updates.beta }, set: { updates.setBeta($0) })).disabled(updates.channelLocked)
