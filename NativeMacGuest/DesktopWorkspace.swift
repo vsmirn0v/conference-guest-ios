@@ -28,6 +28,7 @@ import UserNotifications
     private var window: NSWindow?
     private var meetingWindow: NativeDesktopMeetingWindow?
     private var statusItem: NSStatusItem?
+    private var statusIconLive: Bool?
     private var menuSubscriptionInstalled = false
     private var leaveTask: Task<Bool, Never>?
     private var joinTask: Task<Void, Never>?
@@ -312,11 +313,14 @@ import UserNotifications
     private func refreshMenu() {
         guard library.calendar.keepInMenuBar || meeting != nil || preparing else {
             if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
-            statusItem = nil; return
+            statusItem = nil; statusIconLive = nil; return
         }
         if statusItem == nil {
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-            statusItem?.button?.image = NSImage(systemSymbolName: "video", accessibilityDescription: "Rock'N'Roll for Mac")
+        }
+        if statusIconLive != (meeting != nil) {
+            statusIconLive = meeting != nil
+            statusItem?.button?.image = NativeDesktopStatusIcon.image(live: meeting != nil)
         }
         let menu = NSMenu()
         func item(_ title: String, _ action: Selector) {
@@ -359,5 +363,52 @@ enum NativeDesktopError: LocalizedError {
         case .ambiguousEngine: "The meeting engine could not be identified. Choose its engine before joining."
         case .unavailable(let message): message
         }
+    }
+}
+
+/// Menu bar glyph from the app icon's two-comma swirl; a center dot marks a live
+/// meeting. Template rendering lets macOS tint it for every menu bar appearance.
+enum NativeDesktopStatusIcon {
+    static func image(live: Bool) -> NSImage {
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: true) { rect in
+            guard let context = NSGraphicsContext.current else { return false }
+            // Geometry is authored on a 100-unit square, y down, centred at (50, 50).
+            var scale = AffineTransform(scaleByX: rect.width / 100, byY: rect.height / 100)
+            scale.append(AffineTransform(translationByX: rect.minX, byY: rect.minY))
+            let first = comma(), second = comma()
+            var turn = AffineTransform(translationByX: 100, byY: 100)
+            turn.prepend(AffineTransform(scaleByX: -1, byY: -1))
+            second.forEach { $0.transform(using: turn) }
+            for path in first + second { path.transform(using: scale) }
+            NSColor.black.setFill(); NSColor.black.setStroke()
+            first.forEach { $0.fill() }
+            // A thin knockout where one head overlaps the other's tail, as in the app icon.
+            context.compositingOperation = .clear
+            for path in second { path.lineWidth = 6 * rect.width / 100; path.stroke(); path.fill() }
+            context.compositingOperation = .sourceOver
+            second.forEach { $0.fill() }
+            if live {
+                let radius = 8 * rect.width / 100
+                NSBezierPath(ovalIn: NSRect(x: rect.midX - radius, y: rect.midY - radius, width: radius * 2, height: radius * 2)).fill()
+            }
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = live ? L("Rock'N'Roll for Mac · In a meeting") : "Rock'N'Roll for Mac"
+        return image
+    }
+    /// One swirl half: an outer arc, a tapering inner arc and a round head.
+    private static func comma() -> [NSBezierPath] {
+        let center = CGPoint(x: 50, y: 50), inner = CGPoint(x: 45.31, y: 58.83)
+        let tail = CGPoint(x: 28.80, y: 83.92), end = CGPoint(x: 70.00, y: 15.36), headInner = CGPoint(x: 60.14, y: 32.72)
+        func angle(_ from: CGPoint, _ to: CGPoint) -> CGFloat { atan2(to.y - from.y, to.x - from.x) * 180 / .pi }
+        let body = NSBezierPath()
+        body.move(to: tail)
+        body.appendArc(withCenter: center, radius: 40, startAngle: angle(center, tail), endAngle: angle(center, end), clockwise: false)
+        body.line(to: headInner)
+        body.appendArc(withCenter: inner, radius: 30.03, startAngle: angle(inner, headInner), endAngle: angle(inner, tail), clockwise: true)
+        body.close()
+        let head = NSBezierPath(ovalIn: NSRect(x: 63.56 - 11.18, y: 26.63 - 11.18, width: 22.36, height: 22.36))
+        return [body, head]
     }
 }
