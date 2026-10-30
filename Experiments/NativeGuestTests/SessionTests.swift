@@ -90,6 +90,7 @@ private final class Harness {
     var factoryErrors: [Error] = []
     var delays: [UInt64] = []
     var sleepGate: Gate?
+    var clock: TimeInterval = 0
     lazy var session = GuestSession(makeAttempt: { [self] in
         factoryCalls += 1
         if !factoryErrors.isEmpty { throw factoryErrors.removeFirst() }
@@ -97,7 +98,7 @@ private final class Harness {
         let engine = engines[made]; made += 1; return engine
     }, sleep: { [self] delay in
         delays.append(delay); await sleepGate?.wait(); try Task.checkCancellation()
-    })
+    }, now: { [self] in clock })
     init(_ engines: [FakeEngine]) { self.engines = engines }
 }
 
@@ -424,6 +425,33 @@ struct SessionTests {
         _ = await session.leave()
     }
 
+    /// A long meeting with separate network blips must not end on the fourth one.
+    @MainActor static func stableConnectionRefillsBudget() async throws {
+        let engines = (0..<7).map { _ in FakeEngine() }
+        let harness = Harness(engines), session = harness.session
+        try await connect(session)
+        for _ in 0..<5 {
+            harness.clock += GuestRecoveryPolicy.stableInterval + 1
+            try await session.reconnectForTesting()
+            try expect(session.state == .connected && session.recoveryAttempts == 1,
+                       "An outage after a stable minute starts a fresh budget")
+        }
+        try expect(harness.made == 6 && harness.delays == Array(repeating: 500_000_000, count: 5),
+                   "Each separate outage begins at the shortest backoff")
+        // Without another stable interval the rejoined attempt remains bounded.
+        harness.clock += GuestRecoveryPolicy.stableInterval - 1
+        try await session.reconnectForTesting()
+        try expect(session.recoveryAttempts == 2 && harness.delays.last == 1_000_000_000,
+                   "A failure soon after rejoining continues the same outage budget")
+        _ = await session.leave()
+
+        var policy = GuestRecoveryPolicy()
+        policy.noteConnected(at: 100)
+        _ = policy.nextDelay(after: GuestPeerError.iceFailed, at: 101)
+        _ = policy.nextDelay(after: GuestPeerError.iceFailed, at: 300)
+        try expect(policy.retries == 2, "Time spent failing, not connected, never refills the budget")
+    }
+
     @MainActor static func muteFailureRestoresLatestIntent() async throws {
         let first = FakeEngine(), second = FakeEngine()
         first.muteError = GuestTransportError.networkFailure
@@ -742,6 +770,7 @@ struct SessionTests {
             try await concurrentLeaveAndJoinFailureCallback()
             try await leaveDuringPublishAndCallerCancellation()
             try await successfulRejoinDoesNotRefillBudget()
+            try await stableConnectionRefillsBudget()
             try await muteFailureRestoresLatestIntent()
             try await forcedMuteDuringPublication()
             try await explicitConnectStartsFreshAfterLeave()
@@ -757,7 +786,7 @@ struct SessionTests {
             try await preparedMediaButtonsKeepAudioAndPublication()
             try await preparationRecoveryPreservesExplicitActivation()
             try await mediaIntentDuringDeviceReconciliation()
-            print("GuestSession: 29 deterministic policy/lifecycle scenarios passed (including startup gating and 8 preparation recovery combinations)")
+            print("GuestSession: 30 deterministic policy/lifecycle scenarios passed (including startup gating and 8 preparation recovery combinations)")
         } catch {
             print("GuestSession failed: \(error)")
             exit(1)

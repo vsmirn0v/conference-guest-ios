@@ -26,10 +26,17 @@ struct GuestSessionSnapshot {
     let appliedPlayoutEnabled: Bool?
 }
 
-/// A session has a finite automatic recovery budget, reset only by explicit connect.
+/// Each outage has a finite automatic recovery budget. Explicit connect resets it,
+/// and so does a recovered connection that stays up for `stableInterval`: isolated
+/// network blips across a long meeting must not accumulate into a fatal failure,
+/// while a connection that keeps failing right after reconnecting still exhausts it.
 struct GuestRecoveryPolicy {
+    static let stableInterval: TimeInterval = 60
     private(set) var retries = 0
     private let delays: [UInt64] = [500_000_000, 1_000_000_000, 2_000_000_000]
+    private var connectedAt: TimeInterval?
+
+    mutating func noteConnected(at now: TimeInterval) { connectedAt = now }
 
     static func isRecoverable(_ error: Error) -> Bool {
         if let error = error as? GuestTransportError {
@@ -49,7 +56,9 @@ struct GuestRecoveryPolicy {
         return false
     }
 
-    mutating func nextDelay(after error: Error) -> UInt64? {
+    mutating func nextDelay(after error: Error, at now: TimeInterval? = nil) -> UInt64? {
+        if let connectedAt, let now, now - connectedAt >= Self.stableInterval { retries = 0 }
+        connectedAt = nil
         guard Self.isRecoverable(error), retries < delays.count else { return nil }
         let delay = delays[retries]
         retries += 1
@@ -138,6 +147,7 @@ final class GuestSession {
     private var policy = GuestRecoveryPolicy()
     private let makeAttempt: @MainActor () async throws -> any GuestSessionEngine
     private let sleep: @MainActor (UInt64) async throws -> Void
+    private let now: @MainActor () -> TimeInterval
 
     #if canImport(LiveKitWebRTC)
     var engine: NativeGuestEngine? { current as? NativeGuestEngine }
@@ -148,8 +158,9 @@ final class GuestSession {
     #endif
 
     init(makeAttempt: @escaping @MainActor () async throws -> any GuestSessionEngine,
-         sleep: @escaping @MainActor (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }) {
-        self.makeAttempt = makeAttempt; self.sleep = sleep
+         sleep: @escaping @MainActor (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) },
+         now: @escaping @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.makeAttempt = makeAttempt; self.sleep = sleep; self.now = now
     }
 
     func connect(_ invitation: GuestInvitation, publish: Bool, codec: String, camera: Bool,
@@ -366,6 +377,7 @@ final class GuestSession {
                     if let desiredPlayoutEnabled, desiredPlayoutEnabled != appliedPlayoutEnabled { continue }
                     guard current.releaseStartupAudio() else { continue }
                     connectionCount &+= 1; connectedAttemptID = attempt
+                    policy.noteConnected(at: now())
                 }
                 state = .connected
                 control = nil
@@ -379,7 +391,7 @@ final class GuestSession {
                 pendingFailure = nil
                 probeLog("session-control-failure", ["causeType": String(describing: type(of: cause)),
                     "causeCode": (cause as NSError).code])
-                let delay = policy.nextDelay(after: cause)
+                let delay = policy.nextDelay(after: cause, at: now())
                 let stopped = await retireCurrent(sendLeave: delay == nil)
                 guard generation == expected, !Task.isCancelled else { return }
                 guard stopped else { finish(GuestSessionError.cleanupFailed); return }
