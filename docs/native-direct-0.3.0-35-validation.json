@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "35",
+  "channel": "beta",
+  "sourceCommit": "0fba34d",
+  "changes": [
+    "Home shows calendar meetings without 'Show updated meetings' (e79d456)",
+    "Guest recovery budget refills after a 60 s stable connection (0fba34d)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-35-arm64.dmg",
+    "sha256": "606faae7fae679ad76a9592e8f8e5bc0d6fbfe0725a5128965eded7fb6b73a58",
+    "length": 15608492
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-35-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 35",
+    "live large meeting on the installed build"
+  ]
+}
