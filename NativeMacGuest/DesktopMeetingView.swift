@@ -86,7 +86,7 @@ struct NativeDesktopMeetingView: View {
                 Color.black
                 if model.mediaPresentation == .meeting { media.padding(.horizontal, 14)
                     .padding(.top, model.controlsHidden ? 12 : 70)
-                    .padding(.bottom, model.controlsHidden ? 12 : (model.showsFocus || model.viewMode == .audioOnly ? 90 : 160))
+                    .padding(.bottom, model.controlsHidden ? 12 : (model.showsFocus || model.display == .audioOnly ? 90 : 160))
                 }
                 if textSelection.isOpen { NativeDesktopSharedTextView(model: textSelection, meetingTools: AnyView(viewAndMoreMenus)) }
                 VStack(spacing: 0) {
@@ -164,17 +164,32 @@ struct NativeDesktopMeetingView: View {
             }.padding(8).nativeMeetingChrome()
         }
     }
+    private var viewMenuTitle: String {
+        switch model.display {
+        case .all: L(model.viewMode.rawValue)
+        case .screenShares: model.display.title + " · " + L(model.viewMode.rawValue)
+        case .audioOnly: model.display.title
+        }
+    }
+    private var viewMenuSymbol: String {
+        model.display != .all ? model.display.symbol : model.showsFocus ? "rectangle.inset.filled" : "square.grid.2x2"
+    }
     private var viewAndMoreMenus: some View {
         Group {
                 Menu {
-                    Picker(L("View"), selection: $model.viewMode) {
+                    Picker(L("Show"), selection: $model.display) {
+                        ForEach(model.availableDisplays, id: \.self) { Label($0.title, systemImage: $0.symbol).tag($0) }
+                    }.pickerStyle(.inline)
+                    Picker(L("Layout"), selection: $model.viewMode) {
                         ForEach(NativeDesktopMeetingModel.ViewMode.allCases, id: \.self) { Text(L($0.rawValue)).tag($0) }
-                    }
-                    ForEach(model.participants.filter { $0.sharing == true }) { person in
-                        Button(L("Screen · %@", person.name)) { model.focus(participantID: person.id, source: .screen) }
+                    }.pickerStyle(.inline).disabled(model.display == .audioOnly)
+                    if model.display != .audioOnly {
+                        ForEach(model.participants.filter { $0.sharing == true }) { person in
+                            Button(L("Screen · %@", person.name)) { model.focus(participantID: person.id, source: .screen) }
+                        }
                     }
                     if model.pinnedID != nil { Button(L("Unpin")) { model.unpin() } }
-                } label: { Label(L(model.viewMode.rawValue), systemImage: model.showsFocus ? "rectangle.inset.filled" : "square.grid.2x2") }
+                } label: { Label(viewMenuTitle, systemImage: viewMenuSymbol) }
                 Divider().frame(height: 18)
                 Menu {
                     Button(L("Participants")) { togglePanel(.participants) }
@@ -189,14 +204,20 @@ struct NativeDesktopMeetingView: View {
         }
     }
     @ViewBuilder private var media: some View {
-        if model.viewMode == .audioOnly {
+        if model.display == .audioOnly {
             VStack(spacing: 18) { Image(systemName: "waveform").font(.system(size: 44)); Text(L("Audio only")).font(.title2); Text(model.title).foregroundStyle(.secondary) }
+        } else if model.display == .screenShares && model.videoParticipants.isEmpty {
+            VStack(spacing: 18) {
+                Image(systemName: ConferenceDisplayMode.screenShares.symbol).font(.system(size: 44)).foregroundStyle(.secondary)
+                Text(L("No screen share is live. Audio continues.")).font(.title3).multilineTextAlignment(.center)
+                Text(model.title).foregroundStyle(.secondary)
+            }
         } else if model.showsFocus, let focused = model.focusedVideo {
             VStack(spacing: 10) {
                 NativeDesktopZoomVideo(video: focused, name: name(focused.participantID), viewport: focusedViewport,
                     textFrame: textFrame, selectText: { model.controlsHidden = false; updateTextSource(); textSelection.open(zoom: focusedViewport.zoom, pan: focusedViewport.pan, viewportSize: focusedViewport.size) })
                 HStack(spacing: 8) {
-                    ForEach(model.participants.prefix(6)) { person in
+                    ForEach(model.videoParticipants.prefix(6)) { person in
                         Button { model.focus(participantID: person.id, source: .camera) } label: {
                             HStack(spacing: 6) { Image(systemName: person.microphoneOn == true ? "mic.fill" : "mic.slash"); Text(person.name).lineLimit(1) }.font(.caption).padding(9)
                         }.buttonStyle(.bordered).frame(maxWidth: 170)
@@ -226,7 +247,9 @@ struct NativeDesktopMeetingView: View {
         ZStack(alignment: .bottomLeading) {
             Color(white: 0.11)
             if person.isLocal, let track = model.localCamera { NativeDesktopVideoView(track: track, mirrored: true) }
-            else if let video = model.videos.first(where: { $0.participantID == person.id && $0.source == .camera }) {
+            else if let video = model.visibleVideos.first(where: {
+                $0.participantID == person.id && $0.source == (model.display == .screenShares ? .screen : .camera)
+            }) {
                 NativeDesktopVideoView(track: video.track, crop: video.crop)
             } else {
                 VStack(spacing: 12) {
@@ -458,8 +481,8 @@ struct NativeDesktopMiniMeeting: View {
         VStack(spacing: 0) {
             ZStack {
                 Color.black
-                if model.mediaPresentation == .floating, model.viewMode != .audioOnly, let video = model.floatingVideo { NativeDesktopVideoView(track: video.track, crop: video.crop) }
-                else if model.mediaPresentation == .floating, model.viewMode != .audioOnly, let camera = model.localCamera { NativeDesktopVideoView(track: camera, mirrored: true) }
+                if model.mediaPresentation == .floating, model.display != .audioOnly, let video = model.floatingVideo { NativeDesktopVideoView(track: video.track, crop: video.crop) }
+                else if model.mediaPresentation == .floating, model.display == .all, let camera = model.localCamera { NativeDesktopVideoView(track: camera, mirrored: true) }
                 else { Text(model.title).foregroundStyle(.white).padding() }
             }
             HStack {

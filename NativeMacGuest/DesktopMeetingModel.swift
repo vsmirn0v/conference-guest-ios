@@ -6,7 +6,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 @MainActor final class NativeDesktopMeetingModel: ObservableObject {
-    enum ViewMode: String, CaseIterable { case automatic = "Automatic", gallery = "Gallery", focused = "Focus", audioOnly = "Audio only" }
+    /// Layout only; what is received is `display`, shared with iOS.
+    enum ViewMode: String, CaseIterable { case automatic = "Automatic", gallery = "Gallery", focused = "Focus" }
     enum Panel: String, CaseIterable { case participants = "Participants", conversation = "Conversation", studio = "Camera & sound", presenter = "Presenter" }
     let invitation: URL
     let kind: MeetingEngineKind
@@ -21,9 +22,20 @@ import UniformTypeIdentifiers
     @Published private(set) var localShare: LKRTCVideoTrack?
     @Published private(set) var guestFeatures = GuestMeetingSnapshot()
     @Published var panel: Panel?
-    @Published var viewMode: ViewMode = .automatic {
-        didSet { if viewMode == .audioOnly { cancelJoinCameraPrime() }; updateDemand() }
+    @Published var viewMode: ViewMode = .automatic { didSet { updateDemand() } }
+    @Published var display: ConferenceDisplayMode = .all {
+        didSet {
+            if display == .audioOnly { cancelJoinCameraPrime() }
+            // A camera pin cannot be shown without cameras; pinnedID's observer re-runs demand.
+            if display != .all, pinnedID != nil, pinnedSource != .screen { unpin() }
+            focusAffinity = nil; updateDemand()
+        }
     }
+    /// "Screen shares" needs an engine that can subscribe screens without cameras.
+    var availableDisplays: [ConferenceDisplayMode] {
+        ConferenceDisplayMode.allCases.filter { $0 != .screenShares || engine.supportsScreenOnlyVideo }
+    }
+    var receivesCameras: Bool { display == .all }
     @Published var pinnedID: String? { didSet { focusAffinity = nil; updateDemand() } }
     @Published private(set) var pinnedSource: NativeDesktopVideoSource?
     @Published var galleryPage = 0 { didSet { updateDemand() } }
@@ -204,23 +216,45 @@ import UniformTypeIdentifiers
     var canReact: Bool { connected && guestFeatures.permissions.canSendReaction }
     var transcript: [GuestMeetingMessage] { guestFeatures.transcript }
     var participants: [NativeDesktopParticipant] { snapshot.participants }
-    var galleryParticipants: [NativeDesktopParticipant] { Array(participants.dropFirst(galleryPage * 6).prefix(6)) }
-    var galleryPages: Int { max(1, Int(ceil(Double(participants.count) / 6))) }
+    /// Participants whose video the current display mode can show.
+    var videoParticipants: [NativeDesktopParticipant] {
+        switch display {
+        case .all: participants
+        case .screenShares: participants.filter { $0.sharing == true && !$0.isLocal }
+        case .audioOnly: []
+        }
+    }
+    /// Received video permitted by the display mode, even if an engine still delivers more.
+    var visibleVideos: [NativeDesktopExternalVideo] {
+        switch display {
+        case .all: videos
+        case .screenShares: videos.filter { $0.source == .screen }
+        case .audioOnly: []
+        }
+    }
+    var galleryParticipants: [NativeDesktopParticipant] { Array(videoParticipants.dropFirst(galleryPage * 6).prefix(6)) }
+    var galleryPages: Int { max(1, Int(ceil(Double(videoParticipants.count) / 6))) }
     var focusedParticipantID: String? { focusedVideo?.participantID ?? focusAffinity?.participant ?? pinnedID }
     var focusedVideo: NativeDesktopExternalVideo? {
         if let pinnedID, participants.contains(where: { $0.id == pinnedID && $0.isLocal }) {
             if pinnedSource == .screen, let localShare { return .init(id: "local-screen", participantID: pinnedID, source: .screen, track: localShare) }
             if pinnedSource != .screen, let localCamera { return .init(id: "local-camera", participantID: pinnedID, source: .camera, track: localCamera) }
         }
+        let videos = visibleVideos
         if let affinity = focusAffinity,
            let match = videos.first(where: { $0.participantID == affinity.participant && $0.source == affinity.source }) { return match }
         if focusAffinity != nil { return nil }
         if let pinnedID, let pinned = videos.first(where: { $0.id == pinnedID || $0.participantID == pinnedID }) { return pinned }
         return videos.first { $0.source == .screen } ?? videos.first { item in participants.first { $0.id == item.participantID }?.speaking == true } ?? videos.first
     }
-    var showsFocus: Bool { viewMode == .focused || (viewMode == .automatic && (participants.contains { $0.sharing == true && !$0.isLocal } || videos.contains { $0.source == .screen } || focusAffinity?.source == .screen)) }
+    var showsFocus: Bool {
+        guard display != .audioOnly else { return false }
+        return viewMode == .focused || (viewMode == .automatic && (participants.contains { $0.sharing == true && !$0.isLocal } ||
+            visibleVideos.contains { $0.source == .screen } || focusAffinity?.source == .screen))
+    }
     var floatingVideo: NativeDesktopExternalVideo? {
         if showsFocus { return focusedVideo }
+        let videos = visibleVideos
         return videos.first { $0.participantID == floatingParticipantID && $0.source == .screen }
             ?? videos.first { $0.participantID == floatingParticipantID }
     }
@@ -288,7 +322,7 @@ import UniformTypeIdentifiers
         beginJoinReadiness()
     }
     private var cameraMetadataEligible: Bool {
-        kind == .guest && !quiet && !closed && !transferHeld && viewMode != .audioOnly &&
+        kind == .guest && !quiet && !closed && !transferHeld && display != .audioOnly &&
             joinReadinessPolicy.camera.allows(joinPower) && readinessPolicy().camera.allows(power.snapshot)
     }
     private func prepareJoinCameraMetadata() async throws {
@@ -327,14 +361,14 @@ import UniformTypeIdentifiers
         guard cameraMetadata.isPrepared(deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")) else {
             joinReadinessReport["camera"] = ["state": "skipped", "reason": "metadataUnavailable"]; return
         }
-        guard viewMode != .audioOnly else {
+        guard display != .audioOnly else {
             joinReadinessReport["camera"] = ["state": "skipped", "reason": "audioOnly"]; return
         }
         let prime = joinCameraPrime ?? NativeDesktopJoinCameraPrime(); joinCameraPrime = prime
         // Camera first-frame initialization never occupies the media-control queue.
         joinCameraPrimeTask = Task { @MainActor [weak self] in
             guard let self, token == generation, !closed, !transferHeld,
-                  viewMode != .audioOnly,
+                  display != .audioOnly,
                   self.readinessPolicy().camera.allows(power.snapshot),
                   cameraMetadata.isPrepared(deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")),
                   snapshot.phase == .connected, cameraCommand == self.cameraCommand,
@@ -698,7 +732,7 @@ import UniformTypeIdentifiers
     func loadMoreTranscript() { perform { if let guest = $0 as? NativeDesktopGuestEngine { try await guest.currentNativeEngine?.loadTranscriptHistory() } } }
     func setTranscription(_ enabled: Bool) { perform { if let guest = $0 as? NativeDesktopGuestEngine { try await guest.currentNativeEngine?.setTranscriptionEnabled(enabled) } } }
     func focus(participantID: String, source: NativeDesktopVideoSource) {
-        pinnedSource = source; pinnedID = participantID; viewMode = .focused
+        pinnedSource = display == .screenShares ? .screen : source; pinnedID = participantID; viewMode = .focused
     }
     func unpin() { pinnedSource = nil; pinnedID = nil }
     func setMediaVisible(_ visible: Bool) { setMediaPresentation(visible ? .meeting : .hidden) }
@@ -712,39 +746,46 @@ import UniformTypeIdentifiers
             if let pinned = videos.first(where: { ($0.id == pinnedID || $0.participantID == pinnedID) && (pinnedSource == nil || $0.source == pinnedSource) }) {
                 focusAffinity = (pinned.participantID, pinned.source)
             } else if focusAffinity?.participant != pinnedID { focusAffinity = (pinnedID, pinnedSource ?? .camera) }
-        } else if viewMode != .gallery && viewMode != .audioOnly,
+        } else if viewMode != .gallery && display != .audioOnly,
                   let screen = participants.first(where: { $0.sharing == true && !$0.isLocal }) { focusAffinity = (screen.id, .screen) }
-        else if viewMode == .gallery || viewMode == .audioOnly { focusAffinity = nil }
+        else if viewMode == .gallery || display == .audioOnly { focusAffinity = nil }
+        else if viewMode == .focused && display == .screenShares {
+            if focusAffinity?.source != .screen || !videoParticipants.contains(where: { $0.id == focusAffinity?.participant }) {
+                focusAffinity = videoParticipants.first.map { ($0.id, .screen) }
+            }
+        }
         else if viewMode == .focused && (focusAffinity == nil || !participants.contains(where: { $0.id == focusAffinity?.participant })) {
             let camera = videos.first(where: { $0.source == .camera })?.participantID
                 ?? participants.first(where: { !$0.isLocal && $0.cameraOn == true })?.id
                 ?? participants.first(where: { !$0.isLocal })?.id
             focusAffinity = camera.map { ($0, .camera) }
         }
-        let receivesVideo = mediaPresentation != .hidden && viewMode != .audioOnly
+        let receivesVideo = mediaPresentation != .hidden && display != .audioOnly
         let singleVideo = showsFocus || mediaPresentation == .floating
         if mediaPresentation == .floating && !showsFocus {
             // Track lists disappear while unsubscribed. Keep demand anchored to
             // roster identity so restoring the floating window can request it again.
-            if !participants.contains(where: { $0.id == floatingParticipantID && !$0.isLocal }) {
-                floatingParticipantID = participants.first(where: { !$0.isLocal && $0.sharing == true })?.id
-                    ?? participants.first(where: { !$0.isLocal && $0.cameraOn == true })?.id
-                    ?? participants.first(where: { !$0.isLocal })?.id
+            if !videoParticipants.contains(where: { $0.id == floatingParticipantID && !$0.isLocal }) {
+                let remote = videoParticipants.filter { !$0.isLocal }
+                floatingParticipantID = remote.first(where: { $0.sharing == true })?.id
+                    ?? remote.first(where: { $0.cameraOn == true })?.id
+                    ?? remote.first?.id
             }
         }
         let focused = receivesVideo && singleVideo ? (showsFocus ? focusedParticipantID : floatingParticipantID) : nil
         let ids = !receivesVideo ? Set<String>() : singleVideo ? Set([focused].compactMap { $0 }) : Set(galleryParticipants.map(\.id))
         let floatingScreen = mediaPresentation == .floating && !showsFocus && participants.contains { $0.id == focused && $0.sharing == true }
         let preferredScreen = receivesVideo && (focusAffinity?.source == .screen || floatingScreen) ? focused : nil
-        let key = ids.sorted().joined(separator: "|") + "#" + (focused ?? "") + "#" + (preferredScreen ?? "")
+        let cameras = receivesCameras
+        let key = ids.sorted().joined(separator: "|") + "#" + (focused ?? "") + "#" + (preferredScreen ?? "") + "#" + (cameras ? "cameras" : "screens")
         guard demandKey != key, connected else { return }
         demandKey = key; demandTask?.cancel()
         demandTask = Task { [weak self] in
             guard let self else { return }
             do {
                 if let guest = engine as? NativeDesktopGuestEngine {
-                    try await guest.currentNativeEngine?.setVisibleParticipantIDs(ids, preferredScreenParticipantID: preferredScreen)
-                } else { try await engine.setVisibleParticipantIDs(ids, focusedParticipantID: focused) }
+                    try await guest.currentNativeEngine?.setVisibleParticipantIDs(ids, preferredScreenParticipantID: preferredScreen, cameras: cameras)
+                } else { try await engine.setVisibleParticipantIDs(ids, focusedParticipantID: focused, cameras: cameras) }
             }
             catch { if !Task.isCancelled { demandKey = nil } }
         }

@@ -1326,3 +1326,4 @@
 "Low Power Mode prevents automatic microphone and camera preparation. Preparation uses existing permission. Defaults apply to native Guest meetings; explicit microphone choices also apply to supported headset controls in other meetings." = "Low Power Mode prevents automatic microphone and camera preparation. Preparation uses existing permission. Defaults apply to native Guest meetings; explicit microphone choices also apply to supported headset controls in other meetings.";
 
 "Prepares camera information while the app is active. Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view." = "Prepares camera information while the app is active. Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view.";
+"Show" = "Show";

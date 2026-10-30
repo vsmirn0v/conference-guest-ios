@@ -72,6 +72,10 @@ swiftc -swift-version 5 -parse-as-library -I "$products" -I "$core_products" \
     "$products/CLiveKitProto.o" "$products/LKObjCHelpers.o" "$products/LiveKitNanopb.o" "$products/LiveKitUniFFI.o" \
     "$source_dir/Engines/NativeDesktopExternalEngine.swift" "$source_dir/Engines/NativeDesktopRockEngine.swift" \
     "$source_dir/Engines/NativeDesktopRockPolicies.swift" "$repo_dir/RockNRoll/VideoSubscriptionCoordinator.swift" \
+    "$repo_dir/Experiments/NativeGuest/GuestCaptureAuthorization.swift" "$repo_dir/Experiments/NativeGuest/GuestCamera.swift" \
+    "$repo_dir/Experiments/NativeGuest/GuestSystemAudio.swift" "$repo_dir/Experiments/NativeGuest/GuestSyntheticAudio.swift" \
+    "$repo_dir/Experiments/NativeGuest/GuestStartupAudio.swift" "$repo_dir/Experiments/NativeGuest/NativeScreenEncoderQuality.swift" \
+    "$repo_dir/Experiments/NativeGuest/ProbeLog.swift" \
     "$repo_dir/RockNRoll/JamService.swift" "$repo_dir/RockNRoll/ChatStore.swift" \
     "$repo_dir/RockNRoll/ReactionHistoryStore.swift" "$repo_dir/RockNRoll/NativeVideoPixelBuffer.swift" \
     "$repo_dir/Shared/Localization.swift" "$repo_dir/Shared/GuestAudioProfile.swift" "$repo_dir/Shared/GuestAudioOwnerLease.swift" \

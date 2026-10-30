@@ -236,6 +236,10 @@ private enum NativeDesktopGuestError: LocalizedError {
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws {
         try await currentNativeEngine?.setVisibleParticipantIDs(ids, preferredScreenParticipantID: focusedParticipantID)
     }
+    var supportsScreenOnlyVideo: Bool { true }
+    func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?, cameras: Bool) async throws {
+        try await currentNativeEngine?.setVisibleParticipantIDs(ids, preferredScreenParticipantID: focusedParticipantID, cameras: cameras)
+    }
 
     /// The shell invokes this only when its join power policy permits preparation.
     /// Authorization already exists; priming never changes the muted intent.

@@ -49,6 +49,7 @@ struct NativeRockLiveMediaEvidence {
     private var subscriptionFailure: Error?
     private var visibleParticipantIDs: Set<String>?
     private var focusedParticipantID: String?
+    private var receivesCameras = true
     private var renderers: [String: NativeRockVideoBridge] = [:]
     private var localRenderer: NativeRockVideoBridge?
     private var screenBridge: NativeRockScreenBridge?
@@ -216,8 +217,12 @@ struct NativeRockLiveMediaEvidence {
         } catch { if revision == token { playoutIntent = previous }; throw error }
     }
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws {
-        guard visibleParticipantIDs != ids || self.focusedParticipantID != focusedParticipantID else { return }
-        visibleParticipantIDs = ids; self.focusedParticipantID = focusedParticipantID
+        try await setVisibleParticipantIDs(ids, focusedParticipantID: focusedParticipantID, cameras: true)
+    }
+    var supportsScreenOnlyVideo: Bool { true }
+    func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?, cameras: Bool) async throws {
+        guard visibleParticipantIDs != ids || self.focusedParticipantID != focusedParticipantID || receivesCameras != cameras else { return }
+        visibleParticipantIDs = ids; self.focusedParticipantID = focusedParticipantID; receivesCameras = cameras
         guard let room else { return }
         refresh(room)
         try await subscribe(room)
@@ -335,7 +340,8 @@ struct NativeRockLiveMediaEvidence {
                     muted: publication.isMuted, ready: publication.track != nil)
             }
         }
-        return NativeRockVideoPolicy.demand(for: tracks, visible: visibleParticipantIDs, focused: focusedParticipantID, playout: playoutIntent)
+        return NativeRockVideoPolicy.demand(for: tracks, visible: visibleParticipantIDs, focused: focusedParticipantID,
+                                            playout: playoutIntent, cameras: receivesCameras)
     }
     private func refresh(_ room: Room) {
         guard self.room === room, let factory = renderFactory else { return }

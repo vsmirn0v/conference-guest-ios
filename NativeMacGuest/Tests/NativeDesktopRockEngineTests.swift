@@ -57,6 +57,10 @@ private final class RockFrameSink: NSObject, LiveKit.VideoRenderer, @unchecked S
         let quiet = NativeRockVideoPolicy.demand(for: tracks, visible: ["person-0"], focused: nil, playout: false)
         try expect(tracks.filter { $0.kind == .audio }.allSatisfy { quiet[$0.id]?.subscribed == false } && quiet["video-0"]?.subscribed == true,
             "Only the explicit playout action disables remote audio")
+        let screens = NativeRockVideoPolicy.demand(for: tracks, visible: ["person-0", "person-49"], focused: "person-49", playout: true, cameras: false)
+        try expect(Set(screens.filter { $0.value.subscribed && !$0.key.hasPrefix("audio-") }.keys) == ["share"],
+            "Screen shares mode subscribes screens, never a visible or focused camera")
+        try expect(tracks.filter { $0.kind == .audio }.allSatisfy { screens[$0.id] == initial[$0.id] }, "Screen shares mode keeps every audio track")
         let muted = NativeRockRemoteTrack(id: "muted", participantID: "person-0", kind: .camera, muted: true)
         try expect(NativeRockVideoPolicy.demand(for: [muted], visible: nil, focused: nil, playout: true)["muted"]?.subscribed == false,
             "Muted publications need no decoder or pixel bridge")

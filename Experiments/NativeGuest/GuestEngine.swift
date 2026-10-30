@@ -69,6 +69,7 @@ final class NativeGuestEngine {
             if let trackID {
                 if let state = remoteTracks[trackID] {
                     if state.muted { return nil }
+                    if !receivesCameras, state.source != "SCREEN_SHARE" { return nil }
                     if let visibleParticipantIDs, state.source != "SCREEN_SHARE",
                        !visibleParticipantIDs.contains(remoteParticipantIdentities[state.participant] ?? "") { return nil }
                 } else if seenRemoteVideoTrackIDs.contains(trackID) { return nil }
@@ -100,6 +101,7 @@ final class NativeGuestEngine {
     private var remoteParticipantIdentities: [String: String] = [:]
     private var visibleParticipantIDs: Set<String>?
     private var preferredScreenParticipantID: String?
+    private var receivesCameras = true
     private var leaveTask: Task<Bool, Never>?
     private var muteWaiters: [String: (Bool, GuestCompletion<Void>, Int)] = [:]
     private var localMuteIntent: [Bool: Bool] = [:]
@@ -479,8 +481,10 @@ final class NativeGuestEngine {
             // nil permits discovery; an explicit empty viewport retires all
             // video, including screens and warm muted subscriptions.
             guard visibleParticipantIDs?.isEmpty != true else { return false }
-            return track.source == "SCREEN_SHARE" || visibleParticipantIDs == nil ||
-                visibleParticipantIDs!.contains(remoteParticipantIdentities[track.participant] ?? "")
+            if track.source == "SCREEN_SHARE" { return true }
+            guard receivesCameras else { return false }
+            guard let visibleParticipantIDs else { return true }
+            return visibleParticipantIDs.contains(remoteParticipantIdentities[track.participant] ?? "")
         }
         let activeVideoIDs = remoteTracks.filter { $0.value.type == "VIDEO" && !$0.value.muted && eligible($0.value) }
             .map(\.key).sorted { lhs, rhs in
@@ -1171,9 +1175,12 @@ extension NativeGuestEngine {
 
     /// Room participant identities, not RTC SIDs. The SFU remains subscribed to
     /// every audio track; a viewport only changes the bounded video demand.
-    func setVisibleParticipantIDs(_ ids: Set<String>?, preferredScreenParticipantID: String? = nil) async throws {
+    /// Without cameras only screen shares are subscribed or delivered.
+    func setVisibleParticipantIDs(_ ids: Set<String>?, preferredScreenParticipantID: String? = nil,
+                                  cameras: Bool = true) async throws {
         try checkActive()
         visibleParticipantIDs = ids; self.preferredScreenParticipantID = preferredScreenParticipantID
+        receivesCameras = cameras
         onIncomingVideoChange?(incomingVideo)
         try await reconcileSubscriptions()
         onIncomingVideoChange?(incomingVideo)

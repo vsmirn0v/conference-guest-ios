@@ -21,9 +21,10 @@ struct NativeRockTrackDemand: Equatable {
 enum NativeRockVideoPolicy {
     static let maximumVideoTracks = 16
     static func demand(for tracks: [NativeRockRemoteTrack], visible: Set<String>?, focused: String?,
-                       playout: Bool) -> [String: NativeRockTrackDemand] {
+                       playout: Bool, cameras: Bool = true) -> [String: NativeRockTrackDemand] {
         let candidates = tracks.filter {
-            $0.kind != .audio && !$0.muted && (visible == nil || visible!.contains($0.participantID) || $0.participantID == focused)
+            $0.kind != .audio && !$0.muted && (cameras || $0.kind == .screen) &&
+                (visible == nil || visible!.contains($0.participantID) || $0.participantID == focused)
         }.sorted {
             if ($0.participantID == focused) != ($1.participantID == focused) { return $0.participantID == focused }
             if ($0.kind == .screen) != ($1.kind == .screen) { return $0.kind == .screen }

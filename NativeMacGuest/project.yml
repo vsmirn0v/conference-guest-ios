@@ -57,6 +57,7 @@ targets:
       - path: ../RockNRoll/H264InputColorSignalling.swift
       - path: ../RockNRoll/VendorIntegration/H264ColorSignalling.swift
       - path: ../RockNRoll/VideoSubscriptionCoordinator.swift
+      - path: ../RockNRoll/ConferenceDisplayMode.swift
       - path: ../RockNRoll/JamService.swift
       - path: ../RockNRoll/MacScreenCaptureBridge.m
       - path: ../RockNRoll/MacScreenCaptureBridge.h

@@ -54,6 +54,10 @@ protocol NativeDesktopMeetingEngine: AnyObject {
     func setPlayout(_ enabled: Bool) async throws
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws
+    /// Engines that can subscribe screens without cameras report true; the shell
+    /// offers "Screen shares" only for them and never sends cameras: false otherwise.
+    var supportsScreenOnlyVideo: Bool { get }
+    func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?, cameras: Bool) async throws
     func prepareMutedCaptureForAccessories() async throws
     func setMicrophoneReadinessForRecovery(_ enabled: Bool)
     func cameraCaptureDevice() async -> AVCaptureDevice?
@@ -63,6 +67,10 @@ protocol NativeDesktopMeetingEngine: AnyObject {
 }
 extension NativeDesktopMeetingEngine {
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws {}
+    var supportsScreenOnlyVideo: Bool { false }
+    func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?, cameras: Bool) async throws {
+        try await setVisibleParticipantIDs(ids, focusedParticipantID: focusedParticipantID)
+    }
     func prepareMutedCaptureForAccessories() async throws {}
     func setMicrophoneReadinessForRecovery(_ enabled: Bool) {}
     func cameraCaptureDevice() async -> AVCaptureDevice? { nil }

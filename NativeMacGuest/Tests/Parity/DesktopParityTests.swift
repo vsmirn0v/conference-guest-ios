@@ -29,6 +29,9 @@ import XCTest
     var onMutedPreparation: (() async throws -> Void)?
     var clean = true
     var demands: [(ids: Set<String>?, focused: String?)] = []
+    var cameraDemands: [Bool] = []
+    var screenOnlySupported = true
+    var supportsScreenOnlyVideo: Bool { screenOnlySupported }
     var onConnect: (() async throws -> Void)?
     var onMicrophoneEnable: (() async throws -> Void)?
     var onMicrophoneDisable: (() async throws -> Void)?
@@ -71,6 +74,9 @@ import XCTest
     func setPlayout(_ enabled: Bool) async throws { snapshot.playoutOn = enabled; onState?(snapshot) }
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws { snapshot.sharing = track != nil; onState?(snapshot) }
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws { demands.append((ids, focusedParticipantID)) }
+    func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?, cameras: Bool) async throws {
+        cameraDemands.append(cameras); demands.append((ids, focusedParticipantID))
+    }
     func leave() async -> Bool {
         leaveRequests += 1
         if retired { return clean }
@@ -280,7 +286,7 @@ private final class DesktopActivitySpy: NSUserActivity {
                 quiet: scenario == 5, engine: engine, joinReadiness: .init(microphone: .off, camera: mode),
                 joinCameraPrime: .init(authorized: { false }), cameraMetadata: metadata,
                 power: joinTestPower(pluggedIn: scenario != 2, lowPowerMode: scenario == 3))
-            if scenario == 6 { model.viewMode = .audioOnly }
+            if scenario == 6 { model.display = .audioOnly }
             try await model.connect(); await model.waitForJoinReadinessForTesting()
             XCTAssertEqual(reads, scenario == 0 ? 1 : 0, "Only an eligible authorized Guest video join may need cold metadata")
             XCTAssertTrue(engine.microphoneCommands.isEmpty && engine.cameraCommands.isEmpty)
@@ -529,7 +535,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Fixture", title: nil,
             engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: await joinTestCameraMetadata(), power: joinTestPower())
-        model.viewMode = .audioOnly
+        model.display = .audioOnly
         try await model.connect(); await model.waitForJoinReadinessForTesting()
         XCTAssertEqual(capture.starts, 0); XCTAssertEqual(capture.stops, 0)
         XCTAssertEqual(engine.mutedPreparationCalls, 1)
@@ -549,7 +555,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Fixture", title: nil,
             engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: await joinTestCameraMetadata(), power: joinTestPower())
         try await model.connect(); try await spin { capture.starts == 1 }
-        model.viewMode = .audioOnly
+        model.display = .audioOnly
         await model.waitForJoinReadinessForTesting()
         XCTAssertEqual(capture.starts, 1); XCTAssertEqual(capture.stops, 1)
         XCTAssertFalse(capture.frameReady)
@@ -559,7 +565,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertEqual(cameraReport?["stopped"] as? Bool, true)
         XCTAssertTrue(engine.microphoneCommands.isEmpty); XCTAssertTrue(engine.cameraCommands.isEmpty)
         XCTAssertFalse(model.snapshot.microphoneOn); XCTAssertNil(model.localCamera)
-        model.viewMode = .automatic; await Task.yield()
+        model.display = .all; await Task.yield()
         XCTAssertEqual(capture.starts, 1, "Returning to video view must not restart the one-shot prime")
         let left = await model.leave(); XCTAssertTrue(left)
     }
@@ -896,7 +902,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertTrue(model.snapshot.playoutOn); XCTAssertTrue(engine.microphoneCommands.isEmpty)
         model.setMediaVisible(true)
         try await spin { engine.demands.last?.ids == Set(["a"]) }
-        model.viewMode = .audioOnly
+        model.display = .audioOnly
         try await spin { engine.demands.last?.ids == Set<String>() }
         XCTAssertNil(engine.demands.last?.focused)
         XCTAssertTrue(model.snapshot.playoutOn)
@@ -929,9 +935,53 @@ private final class DesktopActivitySpy: NSUserActivity {
         model.setMediaPresentation(.hidden); engine.onVideo?([])
         model.setMediaPresentation(.meeting)
         try await spin { engine.demands.last?.ids == Set([focusID].compactMap { $0 }) && engine.demands.last?.focused == focusID }
-        model.viewMode = .audioOnly; model.setMediaPresentation(.floating)
+        model.display = .audioOnly; model.setMediaPresentation(.floating)
         try await spin { engine.demands.last?.ids == [] && engine.demands.last?.focused == nil }
-        XCTAssertEqual(model.viewMode, .audioOnly); XCTAssertTrue(model.snapshot.playoutOn)
+        XCTAssertEqual(model.display, .audioOnly); XCTAssertTrue(model.snapshot.playoutOn)
+        _ = await model.leave()
+    }
+    func testScreenSharesModeReceivesScreensWithoutCameras() async throws {
+        let engine = DesktopTestEngine(), model = try model(engine)
+        try await model.connect()
+        let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory())
+        func video(_ participant: String, _ source: NativeDesktopVideoSource) -> NativeDesktopExternalVideo {
+            .init(id: participant + "-" + source.rawValue, participantID: participant, source: source,
+                  track: factory.videoTrack(with: factory.videoSource(), trackId: participant + source.rawValue))
+        }
+        engine.snapshot.participants = [.init(id: "me", name: "Me", isLocal: true, cameraOn: true),
+            .init(id: "a", name: "A", cameraOn: true), .init(id: "b", name: "B", cameraOn: true, sharing: true),
+            .init(id: "c", name: "C", cameraOn: true, sharing: true)]
+        engine.onState?(engine.snapshot)
+        engine.onVideo?([video("a", .camera), video("b", .camera), video("b", .screen), video("c", .screen)])
+        model.viewMode = .gallery
+        model.focus(participantID: "a", source: .camera)
+        try await spin { engine.cameraDemands.last == true }
+        XCTAssertEqual(model.availableDisplays, [.all, .screenShares, .audioOnly])
+
+        model.display = .screenShares; model.viewMode = .gallery
+        try await spin { engine.cameraDemands.last == false && engine.demands.last?.ids == Set(["b", "c"]) }
+        XCTAssertNil(model.pinnedID, "A camera pin cannot survive into a mode that receives no cameras")
+        XCTAssertEqual(model.videoParticipants.map(\.id), ["b", "c"], "Only remote sharers have tiles")
+        XCTAssertTrue(model.visibleVideos.allSatisfy { $0.source == .screen }, "A late camera frame is never shown")
+        model.viewMode = .automatic
+        try await spin { engine.demands.last?.ids?.count == 1 && engine.cameraDemands.last == false }
+        XCTAssertEqual(model.focusedVideo?.source, .screen)
+        model.focus(participantID: "c", source: .camera)
+        XCTAssertEqual(model.pinnedSource, .screen, "Focusing in Screen shares targets the participant's screen")
+        try await spin { engine.demands.last?.ids == Set(["c"]) }
+        XCTAssertEqual(model.focusedVideo?.id, "c-screen")
+
+        model.unpin(); model.viewMode = .gallery
+        engine.snapshot.participants = engine.snapshot.participants.map { var p = $0; p.sharing = false; return p }
+        engine.onState?(engine.snapshot); engine.onVideo?([video("a", .camera), video("b", .camera)])
+        try await spin { engine.demands.last?.ids == Set<String>() }
+        XCTAssertTrue(model.videoParticipants.isEmpty && model.visibleVideos.isEmpty, "No share leaves audio only, not cameras")
+        XCTAssertTrue(model.snapshot.playoutOn)
+
+        model.display = .all
+        try await spin { engine.cameraDemands.last == true && engine.demands.last?.ids == Set(["me", "a", "b", "c"]) }
+        engine.screenOnlySupported = false
+        XCTAssertEqual(model.availableDisplays, [.all, .audioOnly], "Engines without screen-only reception never offer it")
         _ = await model.leave()
     }
     func testMinimizingSuspendsMediaAndPreservesEditorShellWithoutLeaving() async throws {
