@@ -72,6 +72,138 @@ enum GuestSystemAudioError: LocalizedError {
     }
 }
 
+/// Native recording startup may reset the SDK's mixer state. Re-establish the
+/// privacy barrier after startup and require its affirmative readback.
+enum GuestMutedInputPreparation {
+    static func start(mute: () -> Bool, makeAvailable: () -> Bool,
+                      startRecording: () -> Bool, isMuted: () -> Bool) -> Bool {
+        guard mute() else { return false }
+        let available = makeAvailable()
+        let started = available && startRecording()
+        // A failing native start can still have partially changed mixer state.
+        let restored = mute(), confirmed = isMuted()
+        return available && started && restored && confirmed
+    }
+}
+
+/// The shared VPIO owner needs its silent output leg to keep physical input
+/// running. Sound remains a separate intent, enforced by the output gain gate.
+struct GuestPhysicalAudioAvailability: Equatable {
+    let input, output: Bool
+    init(input: Bool, playoutRequested: Bool, sharedNativeOwner: Bool) {
+        self.input = input
+        output = playoutRequested || (sharedNativeOwner && input)
+    }
+}
+
+/// Positive writes and logical state changes share MainActor. Native graph
+/// callbacks can only silence/bind weak nodes; they never restore positive gain.
+final class GuestSharedPlayoutGate: @unchecked Sendable {
+    private struct Target {
+        let identity: ObjectIdentifier
+        let setGain: (Double) -> Bool
+    }
+    private let enabled: Bool
+    private let lock = NSLock()
+    private var epoch = UUID(), revision: UInt64 = 0
+    private var target: Target?
+    private var sound = false, ready = false, retired = false
+    private var lastGain: Double = 0
+    private var lastPositiveUptime: TimeInterval?
+    private var lastWriteSucceeded = true
+    init(enabled: Bool) { self.enabled = enabled }
+    private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
+    var currentEpoch: UUID? { enabled ? locked { epoch } : nil }
+    func matches(_ expected: UUID?) -> Bool { !enabled || locked { expected == epoch && !retired } }
+    var evidence: [String: Any] {
+        locked { ["enabled": enabled, "epoch": enabled ? epoch.uuidString : "", "soundRequested": sound,
+                  "ready": ready, "retired": retired, "mixerBound": target != nil,
+                  "lastGain": lastGain, "lastWriteSucceeded": lastWriteSucceeded,
+                  "lastPositiveUptime": lastPositiveUptime.map { $0 as Any } ?? NSNull()] }
+    }
+    func bind(identity: ObjectIdentifier, setGain: @escaping (Double) -> Bool) -> Bool {
+        guard enabled else { return true }
+        let muted = setGain(0)
+        locked {
+            target = muted ? Target(identity: identity, setGain: setGain) : nil; revision &+= 1
+            lastGain = 0; lastWriteSucceeded = muted
+            if !muted { ready = false }
+        }
+        if locked({ ready && sound && !retired }) {
+            Task { @MainActor [weak self] in _ = self?.reconcile() }
+        }
+        return muted
+    }
+    func remove(identity: ObjectIdentifier) {
+        guard enabled else { return }
+        let removed: Target? = locked {
+            guard target?.identity == identity else { return nil }
+            let old = target; target = nil; revision &+= 1; return old
+        }
+        _ = removed?.setGain(0)
+    }
+    @MainActor func reset(sound: Bool) -> Bool {
+        guard enabled else { return true }
+        locked { epoch = UUID(); ready = false; retired = false; self.sound = sound; revision &+= 1 }
+        return reconcile()
+    }
+    @MainActor func setSound(_ sound: Bool, expected: UUID?) -> Bool {
+        guard enabled else { return true }
+        guard matches(expected) else { return false }
+        locked {
+            self.sound = sound
+            if sound && target == nil { ready = false }
+            revision &+= 1
+        }
+        return reconcile()
+    }
+    @MainActor func close(expected: UUID? = nil, retire: Bool = false) -> Bool {
+        guard enabled else { return true }
+        if let expected, !matches(expected) { return true }
+        locked {
+            ready = false
+            if retire { epoch = UUID(); sound = false; retired = true }
+            revision &+= 1
+        }
+        return reconcile()
+    }
+    @MainActor func open(expected: UUID?) -> Bool {
+        guard enabled else { return true }
+        guard matches(expected), locked({ sound && target != nil }) else { return false }
+        locked { ready = true; revision &+= 1 }
+        guard reconcile() else { _ = close(expected: expected); return false }
+        return isOpen(expected: expected)
+    }
+    @MainActor func isOpen(expected: UUID?) -> Bool {
+        !enabled || locked { expected == epoch && !retired && sound && ready && target != nil &&
+            lastGain == 1 && lastWriteSucceeded }
+    }
+#if DEBUG
+    @MainActor func permitsSoundOffProof(expected: UUID?) -> Bool {
+        enabled && locked { expected == epoch && !retired && ready && !sound && target != nil &&
+            lastGain == 0 && lastWriteSucceeded }
+    }
+#endif
+    @MainActor private func reconcile() -> Bool {
+        guard enabled else { return true }
+        for _ in 0..<3 {
+            let state = locked { (target, revision, !retired && ready && sound ? 1.0 : 0.0) }
+            guard let current = state.0 else { return state.2 == 0 }
+            let success = current.setGain(state.2) // No AV/SDK calls under the metadata lock.
+            let unchanged = locked { () -> Bool in
+                guard revision == state.1 else { return false }
+                if success && state.2 == 1 && lastGain != 1 { lastPositiveUptime = ProcessInfo.processInfo.systemUptime }
+                lastGain = state.2; lastWriteSucceeded = success; return true
+            }
+            if unchanged { return success }
+        }
+        let fallback = locked { () -> (Target?, UInt64) in ready = false; revision &+= 1; return (target, revision) }
+        let muted = fallback.0?.setGain(0) ?? true
+        locked { if revision == fallback.1 { lastGain = 0; lastWriteSucceeded = muted } }
+        return false
+    }
+}
+
 /// Cached timing only: inspecting a stalled operation never calls the ADM worker.
 final class GuestAudioOperationTrace: @unchecked Sendable {
     private struct Entry {
@@ -159,11 +291,19 @@ final class GuestAudioOperationTrace: @unchecked Sendable {
 /// This owner belongs only to the native probe process. Availability is an explicit privacy gate.
 /// Native ADM calls can block internally, so none run on the main actor and every caller has a deadline.
 final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @unchecked Sendable {
+    private static let quarantineLock = NSLock()
+    private static var quarantined: [ObjectIdentifier: GuestSystemAudio] = [:]
+    private static func retainFailedOwner(_ owner: GuestSystemAudio) {
+        quarantineLock.lock(); defer { quarantineLock.unlock() }
+        quarantined[ObjectIdentifier(owner)] = owner
+    }
     private let audioQueue = DispatchQueue(label: "NativeGuest.system-audio", qos: .userInitiated)
     private let lock = NSLock()
     private let operationTrace = GuestAudioOperationTrace()
     private var microphoneOptIn: Bool
     private var inputActivation: GuestInputActivationPolicy
+    private let sharedNativeOwner: Bool
+    private let sharedPlayoutGate: GuestSharedPlayoutGate
     let profile: GuestAudioProfile
     private var ownerLease: GuestAudioOwnerLease?
     private let inputMeter = GuestPCMMeter()
@@ -175,6 +315,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     // The following fields are confined to audioQueue.
     private var playoutEnabled: Bool
     private var closed = false
+    private var mediaContext: LKRTCPeerConnection?
     private var tappedInput: AVAudioNode?
     private weak var tappedEngine: AVAudioEngine?
     private var tappedPlayout: AVAudioNode?
@@ -187,7 +328,20 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         }
     }
     /// Cached only: reading diagnostics never calls the native worker or accesses a device.
-    var snapshot: [String: Any] { locked { cached }.merging(operationTrace.snapshot()) { _, value in value } }
+    var snapshot: [String: Any] {
+        locked { cached }.merging(operationTrace.snapshot()) { _, value in value }
+            .merging(["sharedPlayoutGate": sharedPlayoutGate.evidence]) { _, value in value }
+    }
+    var playoutEpoch: UUID? { sharedPlayoutGate.currentEpoch }
+    @MainActor func openSharedPlayout(expected: UUID?) -> Bool { sharedPlayoutGate.open(expected: expected) }
+    @MainActor func setSharedSoundIntent(_ sound: Bool, expected: UUID?) -> Bool {
+        sharedPlayoutGate.setSound(sound, expected: expected)
+    }
+    @MainActor func closeSharedPlayout(expected: UUID?) -> Bool {
+        if sharedNativeOwner && expected == nil { return true }
+        return sharedPlayoutGate.close(expected: expected)
+    }
+    @MainActor func sharedPlayoutIsOpen(expected: UUID?) -> Bool { sharedPlayoutGate.isOpen(expected: expected) }
     var canUnmuteMicrophone: Bool {
         snapshot["microphoneOptIn"] as? Bool == true && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
@@ -195,6 +349,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     var privateInputMeterEvidence: [String: Any] { meterEvidence(inputMeter).merging(["enabled": locked { inputMeterEnabled }]) { _, new in new } }
     var playoutMeterEvidence: [String: Any] { meterEvidence(playoutMeter) }
 #if DEBUG
+    var sharedPlayoutGateForTesting: GuestSharedPlayoutGate { sharedPlayoutGate }
     var startupCallbackEvidence: [String: Any] {
         ["input": locked { inputCallback }.evidence, "output": playoutMeter.callbackEvidence]
     }
@@ -214,14 +369,18 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         locked { inputMeterEnabled = enabled }; inputMeter.reset()
     }
 
-    private init(microphoneEnabled: Bool, playoutEnabled: Bool, profile: GuestAudioProfile, lease: GuestAudioOwnerLease) {
+    private init(microphoneEnabled: Bool, playoutEnabled: Bool, profile: GuestAudioProfile,
+                 lease: GuestAudioOwnerLease, sharedNativeOwner: Bool) {
         microphoneOptIn = microphoneEnabled
         inputActivation = .init(persistent: microphoneEnabled)
         self.profile = profile; ownerLease = lease
+        self.sharedNativeOwner = sharedNativeOwner
+        sharedPlayoutGate = GuestSharedPlayoutGate(enabled: sharedNativeOwner)
         self.playoutEnabled = playoutEnabled
         cached = ["mode": "system", "module": "audioEngine", "microphoneOptIn": microphoneEnabled,
                   "playoutOptIn": playoutEnabled, "microphoneMutedRequested": !microphoneEnabled,
                   "playoutEnabledRequested": playoutEnabled, "cleanupSucceeded": false,
+                  "sharedInputOutputDependency": sharedNativeOwner,
                   "microphoneAvailabilityPolicy": "explicit-authorized-activation-until-shutdown",
                   "pcmEvidence": "track-renderer-energy-separate-from-hardware-state"]
         super.init()
@@ -231,26 +390,53 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         // Even an incompletely constructed/failed owner releases its native factory off the UI thread.
         let remaining = ownedFactory
         let lease = ownerLease
+        let context = mediaContext
         ownedFactory = nil
         ownerLease = nil
-        if let remaining { audioQueue.async { withExtendedLifetime((remaining, lease)) {} } }
+        mediaContext = nil
+        if let remaining {
+            audioQueue.async { context?.close(); withExtendedLifetime((remaining, lease, context)) {} }
+        }
     }
 
     static func create(microphoneEnabled: Bool, playoutEnabled: Bool,
                        voiceProcessingEnabled: Bool = true, profile: GuestAudioProfile = .speech,
-                       privateCheckOnly: Bool = false, timeout: TimeInterval = 3) async throws -> GuestSystemAudio {
+                       privateCheckOnly: Bool = false, exclusive: Bool = false, timeout: TimeInterval = 3) async throws -> GuestSystemAudio {
         NativeScreenEncoderQuality.prepare()
+        if exclusive { _ = LKRTCInitializeSSL() }
         if microphoneEnabled && AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
             throw GuestSystemAudioError.microphonePermissionRequired
         }
-        guard let lease = GuestAudioOwnerLease(privateCheck: privateCheckOnly) else { throw GuestSystemAudioError.physicalOwnerBusy }
-        let owner = GuestSystemAudio(microphoneEnabled: microphoneEnabled, playoutEnabled: playoutEnabled, profile: profile, lease: lease)
+        guard let lease = GuestAudioOwnerLease(privateCheck: privateCheckOnly, exclusive: exclusive) else { throw GuestSystemAudioError.physicalOwnerBusy }
+        let owner = GuestSystemAudio(microphoneEnabled: microphoneEnabled, playoutEnabled: playoutEnabled,
+            profile: profile, lease: lease, sharedNativeOwner: exclusive)
         let voiceProcessingEnabled = voiceProcessingEnabled && profile.usesPlatformVoiceProcessing
         let success = await owner.perform("create", timeout: timeout) {
             let factory = owner.nativeCall("create-factory") { LKRTCPeerConnectionFactory(audioDeviceModuleType: .audioEngine,
                 bypassVoiceProcessing: !voiceProcessingEnabled, encoderFactory: LKRTCDefaultVideoEncoderFactory(),
                 decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioProcessingModule: nil) }
             owner.locked { owner.ownedFactory = factory }
+            if exclusive {
+                // The first media peer initializes WebRtcVoiceEngine and binds
+                // its audio transport. Doing this after manual recording starts
+                // fails RegisterAudioCallback while the SDK buffer is active.
+                // This peer has no media, descriptions, data channels or ICE pool.
+                let configuration = LKRTCConfiguration()
+                configuration.sdpSemantics = .unifiedPlan
+                configuration.iceServers = []
+                configuration.iceCandidatePoolSize = 0
+                let context = owner.nativeCall("prepare-media-context") {
+                    factory.peerConnection(with: configuration,
+                        constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: nil)
+                }
+                owner.mediaContext = context
+                guard let context, context.localDescription == nil, context.remoteDescription == nil,
+                      context.senders.isEmpty, context.receivers.isEmpty, context.transceivers.isEmpty,
+                      context.iceGatheringState == .new else { return false }
+                owner.update(["mediaContextPrepared": true, "mediaContextGeneration": UUID().uuidString,
+                    "mediaContextSenders": 0, "mediaContextReceivers": 0, "mediaContextTransceivers": 0,
+                    "mediaContextGatheringNew": true])
+            }
             let module = factory.audioDeviceModule
             owner.nativeCall("set-observer") { module.observer = owner }
             guard owner.nativeCall("set-platform-processing", { module.setPlatformVoiceProcessingAllowed(voiceProcessingEnabled) }) == 0 else { return false }
@@ -270,7 +456,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         return owner
     }
 
-    /// Only a prejoin exclusive owner calls this. There is no peer, sender or audio track.
+    /// Only a prejoin private owner calls this. There is no room, sender or audio track.
     /// A raw-input tap measures aggregate energy before the muted input mixer.
     func startStandalonePrivateInputCheck(timeout: TimeInterval = 8) async -> Bool {
         setPrivateInputMeterEnabled(true)
@@ -278,11 +464,13 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             guard !self.closed, self.ownerLease?.privateCheck == true, let module = self.currentModule,
                   AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
             self.inputActivation.beginCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable
-            let muted = self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0
-            let available = self.applyAvailability(module)
-            let recording = self.nativeCall("start-recording", { module.initAndStartRecording(audioProcessingOptions: nil) }) == 0
+            let success = GuestMutedInputPreparation.start(
+                mute: { self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0 },
+                makeAvailable: { self.applyAvailability(module) },
+                startRecording: { self.nativeCall("start-recording", { module.initAndStartRecording(audioProcessingOptions: nil) }) == 0 },
+                isMuted: { module.isMicrophoneMuted })
             self.readSnapshot(module)
-            return muted && available && recording && module.isMicrophoneMuted
+            return success
         }
         if !success { setPrivateInputMeterEnabled(false) }
         return success
@@ -301,6 +489,49 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         }
         if success { setPrivateInputMeterEnabled(true) }
         return success
+    }
+
+    /// App readiness owns this same ADM and its inert software context, with no
+    /// room sender or publishable track.
+    /// Explicit recording demand retains the muted physical graph for adoption.
+    func prepareIdleInput(timeout: TimeInterval = 8) async -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        setPrivateInputMeterEnabled(false)
+        if sharedNativeOwner, !(await sharedPlayoutGate.reset(sound: false)) { _ = await shutdown(); return false }
+        let remaining = deadline - ProcessInfo.processInfo.systemUptime
+        guard remaining > 0 else { return false }
+        return await perform("foreground-input-prepare", timeout: remaining) {
+            guard !self.closed, let module = self.currentModule,
+                  AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
+            self.inputActivation = .init(persistent: true); self.microphoneOptIn = true
+            self.playoutEnabled = false
+            let success = GuestMutedInputPreparation.start(
+                mute: { self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0 },
+                makeAvailable: { self.applyAvailability(module) },
+                startRecording: { self.nativeCall("start-recording", { module.initAndStartRecording(audioProcessingOptions: nil) }) == 0 },
+                isMuted: { module.isMicrophoneMuted })
+            self.readSnapshot(module)
+            return success
+        }
+    }
+
+    /// Peers are detached before this privacy barrier. A room never inherits
+    /// another room's activation or unmute choice.
+    func resetForRoom(playout: Bool, preparedInput: Bool) async -> Bool {
+        setPrivateInputMeterEnabled(false)
+        if sharedNativeOwner, !(await sharedPlayoutGate.reset(sound: playout)) { _ = await shutdown(); return false }
+        return await perform("room-audio-reset", timeout: 8) {
+            guard !self.closed, let module = self.currentModule else { return false }
+            let input = preparedInput && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            self.inputActivation = .init(persistent: input); self.microphoneOptIn = input
+            self.playoutEnabled = playout
+            let muted = self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0
+            let available = self.applyAvailability(module)
+            let recording = input || self.nativeCall("stop-recording", { module.stopRecording() }) == 0
+            let restored = self.nativeCall("restore-microphone-muted", { module.setMicrophoneMuted(true) }) == 0
+            self.readSnapshot(module)
+            return muted && restored && module.isMicrophoneMuted && available && recording
+        }
     }
 
     /// Restores capture-off only when the check was the sole activation reason.
@@ -365,15 +596,24 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         }
     }
 
-    func setPlayoutEnabled(_ enabled: Bool, timeout: TimeInterval = 2) async -> Bool {
-        await perform("playout", timeout: timeout) {
+    func setPlayoutEnabled(_ enabled: Bool, timeout: TimeInterval = 2, expectedEpoch: UUID? = nil) async -> Bool {
+        if sharedNativeOwner {
+            guard await sharedPlayoutGate.setSound(enabled, expected: expectedEpoch) else {
+                if sharedPlayoutGate.matches(expectedEpoch) { _ = await shutdown() }
+                return false
+            }
+        }
+        let success = await perform("playout", timeout: timeout) {
             guard !self.closed, let module = self.currentModule else { return false }
+            guard self.sharedPlayoutGate.matches(expectedEpoch) else { return false }
             self.playoutEnabled = enabled
             self.update(["playoutEnabledRequested": enabled])
             let success = self.applyAvailability(module)
             self.readSnapshot(module)
             return success
         }
+        if sharedNativeOwner, !success, !(await sharedPlayoutGate.close(expected: expectedEpoch)) { _ = await shutdown() }
+        return success
     }
 
     /// Explicit acoustic comparison only. The native knob couples AEC, NS and AGC.
@@ -401,11 +641,13 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
 
     /// Close peers and remove track renderers first. A false result means cleanup is unproven.
     func shutdown(timeout: TimeInterval = 2) async -> Bool {
+        if sharedNativeOwner { _ = await sharedPlayoutGate.close(retire: true) }
         let success = await perform("shutdown", timeout: timeout) {
             if self.closed { return self.snapshot["cleanupSucceeded"] as? Bool == true }
             self.closed = true
             guard let module = self.currentModule else { self.update(["cleanupSucceeded": true]); return true }
             self.playoutEnabled = false
+            let muted = self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0 && module.isMicrophoneMuted
             var unavailable = LKRTCAudioEngineAvailability()
             unavailable.isInputAvailable = false; unavailable.isOutputAvailable = false
             let gated = self.nativeCall("set-engine-unavailable", { module.setEngineAvailability(unavailable) }) == 0
@@ -413,18 +655,37 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             let playout = self.nativeCall("stop-playout", { module.stopPlayout() }) == 0
             let prepared = self.nativeCall("set-recording-prepared", { module.setRecordingAlwaysPreparedMode(false) }) == 0
             let stopped = self.nativeCall("verify-stopped") { !module.isEngineRunning && !module.isRecording && !module.isPlaying }
+            guard muted && gated && recording && playout && prepared && stopped else {
+                self.readSnapshot(module)
+                self.update(["cleanupSucceeded": false, "mediaContextClosed": false,
+                             "microphoneMutedRequested": true, "playoutEnabledRequested": false])
+                // The AudioState owns the installed AudioTransport callback.
+                // Dropping it while a buffer may remain active is unsafe.
+                return false
+            }
+            // Release the last software media reference only after both native
+            // buffers stop, so transport deregistration cannot race capture.
+            self.nativeCall("close-media-context") { self.mediaContext?.close(); self.mediaContext = nil }
+            let contextClosed = self.mediaContext == nil
             self.readSnapshot(module)
             self.nativeCall("remove-observer") { module.observer = nil }
             let retiredFactory = self.locked {
                 let retired = self.ownedFactory; self.ownedFactory = nil; return retired
             }
-            let success = gated && recording && playout && prepared && stopped
-            self.update(["cleanupSucceeded": success, "microphoneMutedRequested": true, "playoutEnabledRequested": false])
+            let success = muted && gated && recording && playout && prepared && stopped && contextClosed
+            self.update(["cleanupSucceeded": success, "mediaContextClosed": contextClosed,
+                         "microphoneMutedRequested": true, "playoutEnabledRequested": false])
             withExtendedLifetime(retiredFactory) {}
             if success { self.ownerLease = nil }
             return success
         }
-        if !success { GuestAudioOwnerLease.reportFailedStop() }
+        if !success {
+            GuestAudioOwnerLease.reportFailedStop()
+            // A timed-out creator can lose its last caller while native work
+            // is still pending. Keep its observer, context, factory and lease
+            // alive until process exit rather than leaving a dangling callback.
+            Self.retainFailedOwner(self)
+        }
         return success
     }
 
@@ -433,9 +694,11 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private func update(_ values: [String: Any]) { locked { cached.merge(values) { _, value in value } } }
 
     private func applyAvailability(_ module: LKRTCAudioDeviceModule) -> Bool {
+        let physical = GuestPhysicalAudioAvailability(input: microphoneOptIn,
+            playoutRequested: playoutEnabled, sharedNativeOwner: sharedNativeOwner)
         var availability = LKRTCAudioEngineAvailability()
-        availability.isInputAvailable = ObjCBool(microphoneOptIn)
-        availability.isOutputAvailable = ObjCBool(playoutEnabled)
+        availability.isInputAvailable = ObjCBool(physical.input)
+        availability.isOutputAvailable = ObjCBool(physical.output)
         return nativeCall("set-engine-availability", { module.setEngineAvailability(availability) }) == 0
     }
 
@@ -526,6 +789,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             tappedInput.removeTap(onBus: 0); self.tappedInput = nil; tappedEngine = nil
         }
         if let tappedPlayout, tappedPlayoutEngine === engine {
+            sharedPlayoutGate.remove(identity: ObjectIdentifier(tappedPlayout))
             tappedPlayout.removeTap(onBus: 0); self.tappedPlayout = nil; tappedPlayoutEngine = nil
         }
         locked { cached["enginesReleased"] = (cached["enginesReleased"] as? Int ?? 0) + 1 }; return 0
@@ -555,6 +819,14 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, engine: AVAudioEngine,
                            configureOutputFromSource source: AVAudioNode, toDestination destination: AVAudioNode?,
                            format: AVAudioFormat, context: [AnyHashable: Any]) -> Int {
+        if sharedNativeOwner {
+            guard let mixer = source as? AVAudioMixerNode,
+                  sharedPlayoutGate.bind(identity: ObjectIdentifier(mixer), setGain: { [weak mixer] value in
+                      guard let mixer else { return value == 0 }
+                      mixer.outputVolume = Float(value)
+                      return mixer.outputVolume == Float(value)
+                  }) else { return -1 }
+        }
         update(["outputSampleRate": format.sampleRate, "outputChannels": Int(format.channelCount), "outputASBD": Self.signature(format)])
         // Hardware's existing output pull drives this aggregate meter. No
         // recorder, second engine, audio-file storage or monitoring route exists.

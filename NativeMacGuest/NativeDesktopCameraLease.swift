@@ -10,30 +10,37 @@ import LiveKitWebRTC
     static let shared = NativeDesktopCameraMetadataPreparation()
     private static let queue = DispatchQueue(label: "native-guest.camera.metadata")
     private let authorized: @MainActor () -> Bool
-    private let read: @MainActor (String?) async -> Void
+    private let read: @MainActor (String?) async -> Bool
     private let timeout: TimeInterval
     private var pending: (id: UUID, task: Task<Bool, Never>)?
+    private var preparedDeviceIDs = Set<String>()
+    private var generation = UUID()
+    func isPrepared(deviceID: String?) -> Bool { authorized() && preparedDeviceIDs.contains(deviceID ?? "") }
+    func invalidate() { generation = UUID(); preparedDeviceIDs.removeAll() }
 
     init(timeout: TimeInterval = 3,
          authorized: @escaping @MainActor () -> Bool = { AVCaptureDevice.authorizationStatus(for: .video) == .authorized },
          read: (@MainActor (String?) async -> Void)? = nil) {
         self.timeout = timeout; self.authorized = authorized
-        self.read = read ?? { id in await Self.readMetadata(deviceID: id) }
+        if let read { self.read = { id in await read(id); return authorized() } }
+        else { self.read = { id in await Self.readMetadata(deviceID: id) } }
     }
 
     func prepare(eligible: @escaping @MainActor () -> Bool, deviceID: String?) async throws -> Outcome {
         try Task.checkCancellation()
         let draining = pending != nil
-        if pending == nil, eligible(), authorized() {
-            let id = UUID()
+        let key = deviceID ?? ""
+        if pending == nil, !preparedDeviceIDs.contains(key), eligible(), authorized() {
+            let id = UUID(), generation = generation
             let task = Task { @MainActor [self] in
                 // A policy change can withdraw work before the native read enters.
                 guard eligible(), authorized() else {
                     if pending?.id == id { pending = nil }; return false
                 }
-                await self.read(deviceID)
+                let performed = await self.read(deviceID)
+                if performed, authorized(), self.generation == generation { preparedDeviceIDs.insert(key) }
                 if pending?.id == id { pending = nil }
-                return true
+                return performed
             }
             pending = (id, task)
         }
@@ -50,10 +57,11 @@ import LiveKitWebRTC
         return performed ? (draining ? .drained : .prepared) : .skipped
     }
 
-    private static func readMetadata(deviceID: String?) async {
+    private static func readMetadata(deviceID: String?) async -> Bool {
         await withCheckedContinuation { continuation in
             queue.async {
-                if AVCaptureDevice.authorizationStatus(for: .video) == .authorized {
+                let authorized = AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+                if authorized {
                     if let deviceID, !deviceID.isEmpty {
                         _ = AVCaptureDevice.devices(for: .video).first { $0.uniqueID == deviceID }
                     } else {
@@ -61,7 +69,7 @@ import LiveKitWebRTC
                             ?? AVCaptureDevice.default(for: .video)
                     }
                 }
-                continuation.resume()
+                continuation.resume(returning: authorized)
             }
         }
     }

@@ -30,12 +30,17 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     let pcmMeter = GuestPCMMeter()
     private let physicalAudio: Bool
     private let icePolicy: GuestICEPolicy
-    private var incomingAudio: [LKRTCAudioTrack] = []
+    private var incomingAudio: [(track: LKRTCAudioTrack, source: GuestStartupPlaybackGain.Source)] = []
     nonisolated private let startupPlaybackGain: GuestStartupPlaybackGain?
     var onIncomingAudioChange: (() -> Void)?
     private var iceTimeout: Task<Void, Never>?
     private var lastICEState: LKRTCIceConnectionState = .new
     private var activeIncomingMediaDemand = false
+    // Initial trickle failure may precede a relay connection. Real demand owns
+    // one deadline across checking/failed transitions and demand churn.
+    private var hasEstablishedConnection = false
+    private var initialRequiredDeadline: TimeInterval?
+    private var initialExpiryReported = false
     var sendCandidate: (([String: Any]) async throws -> Void)?
     var onFailure: ((Error) -> Void)?
     private var remoteICE: [LKRTCIceCandidate] = []
@@ -43,11 +48,13 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     private var localSDPSent = false
     private var closed = false
     private(set) var iceConnected = false
+    private(set) var transportConnected = false
     private var incomingVideo: [(video: GuestRemoteVideo, sink: GuestTrackRenderer)] = []
     var onIncomingVideoChange: (([GuestRemoteVideo]) -> Void)? {
         didSet { onIncomingVideoChange?(receivedVideo) }
     }
     var receivedVideo: [GuestRemoteVideo] { incomingVideo.map(\.video) }
+    var receivedAudioSources: [GuestStartupPlaybackGain.Source] { incomingAudio.map { $0.source } }
     var localVideoTrack: LKRTCVideoTrack? { videoTrack }
     var localScreenVideoTrack: LKRTCVideoTrack? { screenTrack }
     private(set) var screenSource: LKRTCVideoSource?
@@ -76,6 +83,8 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     var iceCandidateEventFinishedForTesting: (() -> Void)?
     var iceGatherEventFinishedForTesting: (() -> Void)?
     var iceWaitForTesting: ((UInt64) async throws -> Void)?
+    var iceClockForTesting: (() -> TimeInterval)?
+    var transportEventFinishedForTesting: (() -> Void)?
     var iceEventFinishedForTesting: (() -> Void)?
     var iceTimerFinishedForTesting: (() -> Void)?
     private(set) var videoEnableCallsForTesting = 0
@@ -83,6 +92,25 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     private(set) var receiverDetachmentsForTesting = 0
     var receiverEventFinishedForTesting: (() -> Void)?
     var retainedReceiverTracksForTesting: Int { incomingVideo.count + incomingAudio.count }
+    struct SoundOffSourceProof {
+        let trackID: String
+        let gain: @MainActor () -> Double?
+        let restore: @MainActor () -> Bool
+    }
+    func beginSoundOffSourceProofForTesting() -> SoundOffSourceProof? {
+        guard !closed, target == .subscriber, physicalAudio, incomingAudio.count == 1 else { return nil }
+        let track = incomingAudio[0].track
+        track.source.volume = 1
+        guard track.source.volume == 1 else { track.source.volume = 0; return nil }
+        return .init(trackID: track.trackId, gain: { [weak self, track] in
+            guard let self, !self.closed, self.incomingAudio.count == 1,
+                  self.incomingAudio[0].track.isEqual(track) else { return nil }
+            return track.source.volume
+        }, restore: {
+            track.source.volume = 0
+            return track.source.volume == 0
+        })
+    }
 #endif
 
     init(target: GuestPeerTarget, factory: LKRTCPeerConnectionFactory, physicalAudio: Bool = false, icePolicy: GuestICEPolicy = .automatic, verifyReceivedPixels: Bool = true,
@@ -379,6 +407,16 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             "remoteSDPVideoCodecs": Self.videoCodecNames(connection.remoteDescription?.sdp)]
     }
 
+#if DEBUG
+    /// Scalar correlation only: this must never query a native track or sender.
+    var videoTraceStateForTesting: [String: Any] {
+        ["peerID": diagnosticID, "target": target.rawValue, "generatedFrames": generatedFrames,
+         "generatedLastUptime": generatedLastUptime, "transportConnected": transportConnected, "closed": closed,
+         "receiverAttachments": receiverAttachmentsForTesting, "receiverDetachments": receiverDetachmentsForTesting,
+         "retainedVideoReceivers": incomingVideo.count, "videoEnableCalls": videoEnableCallsForTesting]
+    }
+#endif
+
     /// Sanitized formal SDP metadata only; never emit descriptions, ICE or addresses.
     private static func videoCodecNames(_ sdp: String?) -> [String] {
         guard let sdp else { return [] }
@@ -400,7 +438,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         guard let report: LKRTCStatisticsReport = try? await guestAwait(timeout: 3, { done in
             self.connection.statistics { done(.success($0)) }
         }) else { return nil }
-        let keys = ["kind", "mid", "bytesReceived", "bytesSent", "packetsReceived", "packetsSent",
+        var keys = ["kind", "mid", "bytesReceived", "bytesSent", "packetsReceived", "packetsSent",
             "frames", "framesSent", "framesDecoded", "framesEncoded",
             "qualityLimitationReason", "qualityLimitationDurations", "qualityLimitationResolutionChanges",
             "totalEncodeTime", "qpSum", "targetBitrate", "totalPacketSendDelay",
@@ -412,6 +450,12 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             "packetsLost", "jitter", "framesDropped", "totalDecodeTime", "freezeCount", "totalFreezesDuration",
             "retransmittedPacketsSent", "retransmittedPacketsReceived",
             "audioLevel", "totalSamplesDuration", "totalSamplesReceived", "framesPerSecond", "encoderImplementation", "decoderImplementation", "powerEfficientEncoder", "powerEfficientDecoder"]
+#if DEBUG
+        // RTCP report progress distinguishes a fresh downstream observation from
+        // an old cumulative loss value. Unsupported fields remain absent.
+        keys += ["localId", "remoteId", "ssrc", "reportsReceived", "roundTripTimeMeasurements",
+            "state", "nominated", "writable", "requestsSent", "responsesReceived", "totalRoundTripTime"]
+#endif
         let selectedPairs = Set(report.statistics.values.filter { $0.type == "transport" }
             .compactMap { $0.values["selectedCandidatePairId"] as? String })
         let candidateIDs = Set(report.statistics.values.filter { selectedPairs.contains($0.id) }
@@ -421,6 +465,20 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             selectedPairs.contains($0.id) || candidateIDs.contains($0.id)
         }.map { stat in
             var value: [String: Any] = ["target": target.rawValue, "type": stat.type, "id": stat.id, "sampleUptime": ProcessInfo.processInfo.systemUptime, "nativeTimestampUS": stat.timestamp_us]
+#if DEBUG
+            value["peerID"] = diagnosticID
+            if stat.values["candidateType"] as? String == "relay" {
+                // These identify the allocated relay socket, not the TURN server.
+                if let address = stat.values["address"] as? String, address.utf8.count <= 255,
+                   !address.contains(where: { $0.isWhitespace }) { value["relayAllocationAddress"] = address }
+                if let port = stat.values["port"] as? NSNumber, (1...65_535).contains(port.intValue),
+                   port.doubleValue == Double(port.intValue) { value["relayAllocationPort"] = port }
+            }
+            if stat.type == "local-candidate" {
+                value["turnServerEndpoint"] = (stat.values["url"] as? String)
+                    .flatMap(GuestICEPolicy.diagnosticTurnServer).map { $0 as Any } ?? NSNull()
+            }
+#endif
             for key in keys { if let item = stat.values[key] { value[key] = item } }
             return value
         }
@@ -431,18 +489,24 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     func setActiveIncomingMediaDemand(_ active: Bool) {
         guard target == .subscriber, !closed, activeIncomingMediaDemand != active else { return }
         activeIncomingMediaDemand = active
-        if lastICEState == .checking { refreshICETimeout() }
+        if active, !hasEstablishedConnection, initialRequiredDeadline == nil { initialRequiredDeadline = iceNow() + 10 }
+        if lastICEState == .checking || lastICEState == .failed { refreshICETimeout() }
         probeLog("ice-incoming-demand", ["target": target.rawValue, "active": active])
     }
 
     func close() {
         guard !closed else { return }; closed = true
+#if DEBUG
+        probeLog("video-peer-close", ["peerID": diagnosticID, "target": target.rawValue,
+            "videoReceivers": incomingVideo.count, "audioReceivers": incomingAudio.count])
+#endif
+        transportConnected = false
         patternTask?.cancel(); patternTask = nil
         iceTimeout?.cancel(); iceTimeout = nil
         audioTrack?.isEnabled = false; videoTrack?.isEnabled = false; screenTrack?.isEnabled = false
         incomingVideo.forEach { $0.sink.stop(); $0.video.track.remove($0.sink) }; incomingVideo.removeAll()
         onIncomingVideoChange?([]); onIncomingVideoChange = nil
-        incomingAudio.forEach { $0.remove(pcmMeter) }; incomingAudio.removeAll()
+        incomingAudio.forEach { $0.track.remove(pcmMeter) }; incomingAudio.removeAll()
         onIncomingAudioChange = nil
         localICE.removeAll(); remoteICE.removeAll(); sendCandidate = nil
         connection.stopRtcEventLog()
@@ -625,7 +689,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 #endif
 
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didAdd receiver: LKRTCRtpReceiver, streams: [LKRTCMediaStream]) {
-        if let track = receiver.track as? LKRTCAudioTrack { startupPlaybackGain?.register(track) }
+        if let track = receiver.track as? LKRTCAudioTrack { startupPlaybackGain?.register(track, streamIDs: streams.map(\.streamId)) }
         Task { @MainActor [weak self] in
             guard let self, !closed else { return }
             self.startupPlaybackGain?.reconcile()
@@ -652,14 +716,24 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 #endif
                 }
             }
-            if let track = receiver.track as? LKRTCAudioTrack, !incomingAudio.contains(where: { $0.isEqual(track) }) {
-                incomingAudio.append(track); track.add(pcmMeter)
-                onIncomingAudioChange?()
+            if let track = receiver.track as? LKRTCAudioTrack {
+                let source = GuestStartupPlaybackGain.Source(trackID: track.trackId, streamIDs: streams.map(\.streamId))
+                if let index = incomingAudio.firstIndex(where: { $0.track.isEqual(track) }) {
+                    incomingAudio[index].source = source
+                } else {
+                    incomingAudio.append((track, source)); track.add(pcmMeter)
 #if DEBUG
-                receiverAttachmentsForTesting += 1
+                    receiverAttachmentsForTesting += 1
 #endif
+                }
+                onIncomingAudioChange?()
             }
-            probeLog("remote-track", ["target": target.rawValue, "kind": receiver.track?.kind ?? "unknown"])
+            var fields: [String: Any] = ["target": target.rawValue, "kind": receiver.track?.kind ?? "unknown"]
+#if DEBUG
+            fields["peerID"] = diagnosticID; fields["streamIDs"] = streams.map(\.streamId)
+            fields["receiverAttachments"] = receiverAttachmentsForTesting
+#endif
+            probeLog("remote-track", fields)
         }
     }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didRemove receiver: LKRTCRtpReceiver) {
@@ -678,25 +752,70 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
                 receiverDetachmentsForTesting += 1
 #endif
             }
-            if let index = incomingAudio.firstIndex(where: { $0.isEqual(track) }) {
-                incomingAudio.remove(at: index).remove(pcmMeter)
+            if let index = incomingAudio.firstIndex(where: { $0.track.isEqual(track) }) {
+                incomingAudio.remove(at: index).track.remove(pcmMeter)
                 onIncomingAudioChange?()
 #if DEBUG
                 receiverDetachmentsForTesting += 1
 #endif
             }
+#if DEBUG
+            probeLog("remote-track-removed", ["peerID": diagnosticID, "target": target.rawValue,
+                "trackID": track.trackId, "receiverDetachments": receiverDetachmentsForTesting])
+#endif
         }
     }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didChange stateChanged: LKRTCSignalingState) {}
+    nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didChange newState: LKRTCPeerConnectionState) {
+        Task { @MainActor [weak self] in
+            guard let self, !closed else { return }
+#if DEBUG
+            defer { self.transportEventFinishedForTesting?() }
+#endif
+            transportConnected = newState == .connected
+            if target == .subscriber, newState == .connected, !hasEstablishedConnection {
+                hasEstablishedConnection = true; initialRequiredDeadline = nil
+                iceTimeout?.cancel(); iceTimeout = nil
+            }
+            probeLog("peer-transport-state", ["target": target.rawValue, "state": newState.rawValue])
+        }
+    }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didAdd stream: LKRTCMediaStream) {}
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didRemove stream: LKRTCMediaStream) {}
     nonisolated func peerConnectionShouldNegotiate(_ pc: LKRTCPeerConnection) {}
+    private func iceNow() -> TimeInterval {
+#if DEBUG
+        if let iceClockForTesting { return iceClockForTesting() }
+#endif
+        return ProcessInfo.processInfo.systemUptime
+    }
+    private func reportInitialICEExpiry(_ state: LKRTCIceConnectionState) {
+        guard !initialExpiryReported else { return }
+        initialExpiryReported = true
+        probeLog("ice-timeout", ["target": target.rawValue, "state": state.rawValue])
+#if DEBUG
+        logICEFailureDiagnostics(reason: "deadline", state: state)
+#endif
+        onFailure?(GuestPeerError.iceFailed)
+    }
     private func refreshICETimeout() {
         iceTimeout?.cancel(); iceTimeout = nil
         let state = lastICEState
-        guard !closed, !iceConnected, state == .checking || state == .disconnected else { return }
-        guard state != .checking || target != .subscriber || activeIncomingMediaDemand else { return }
-        let delay: UInt64 = state == .checking ? 10_000_000_000 : 5_000_000_000
+        guard !closed, !iceConnected else { return }
+        let establishmentDeadline: TimeInterval?
+        let delay: UInt64
+        if target == .subscriber, !hasEstablishedConnection, state == .checking || state == .failed {
+            guard activeIncomingMediaDemand, let deadline = initialRequiredDeadline, !initialExpiryReported else { return }
+            let remaining = deadline - iceNow()
+            guard remaining > 0 else { reportInitialICEExpiry(state); return }
+            establishmentDeadline = deadline
+            delay = UInt64(max(1, ceil(remaining * 1_000_000_000)))
+        } else {
+            guard state == .checking || state == .disconnected else { return }
+            guard state != .checking || target != .subscriber || activeIncomingMediaDemand else { return }
+            establishmentDeadline = nil
+            delay = state == .checking ? 10_000_000_000 : 5_000_000_000
+        }
 #if DEBUG
         let testWait = iceWaitForTesting
 #endif
@@ -712,7 +831,15 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
                 try await Task.sleep(nanoseconds: delay)
 #endif
             } catch { return }
-            guard !Task.isCancelled, let self, !closed, !iceConnected, lastICEState == state,
+            guard !Task.isCancelled, let self, !closed, !iceConnected else { return }
+            if let establishmentDeadline {
+                guard !hasEstablishedConnection, activeIncomingMediaDemand,
+                      initialRequiredDeadline == establishmentDeadline,
+                      lastICEState == .checking || lastICEState == .failed else { return }
+                guard iceNow() >= establishmentDeadline else { refreshICETimeout(); return }
+                reportInitialICEExpiry(lastICEState); return
+            }
+            guard lastICEState == state,
                   state != .checking || target != .subscriber || activeIncomingMediaDemand else { return }
             probeLog("ice-timeout", ["target": target.rawValue, "state": state.rawValue])
 #if DEBUG
@@ -730,6 +857,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             guard newState != lastICEState else { return }
             lastICEState = newState
             iceConnected = newState == .connected || newState == .completed
+            if iceConnected { hasEstablishedConnection = true; initialRequiredDeadline = nil }
             refreshICETimeout()
             probeLog("ice-state", ["target": target.rawValue, "state": newState.rawValue])
 #if DEBUG
@@ -737,7 +865,9 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
                 logICEFailureDiagnostics(reason: "native-failed", state: newState)
             }
 #endif
-            if newState == .failed || newState == .closed { onFailure?(GuestPeerError.iceFailed) }
+            if newState == .closed || (newState == .failed && (target != .subscriber || hasEstablishedConnection)) {
+                onFailure?(GuestPeerError.iceFailed)
+            }
         }
     }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didChange newState: LKRTCIceGatheringState) {

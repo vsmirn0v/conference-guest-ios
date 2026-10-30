@@ -253,17 +253,23 @@ private final class DesktopActivitySpy: NSUserActivity {
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Metadata fixture", title: nil,
             engine: engine, joinReadiness: .init(microphone: .off, camera: .whenPluggedIn),
             joinCameraPrime: .init(authorized: { false }), cameraMetadata: metadata, power: joinTestPower())
-        let connecting = Task { try await model.connect() }
+        let warming = Task { try await metadata.prepare(eligible: { true }, deviceID: nil) }
         try await spin { release != nil }
+        let connecting = Task { try await model.connect() }
+        await Task.yield(); await Task.yield()
         XCTAssertEqual(reads, 1); XCTAssertEqual(connects, 0)
         XCTAssertTrue(engine.microphoneCommands.isEmpty && engine.cameraCommands.isEmpty)
         release?.resume(); release = nil
         try await connecting.value
+        _ = try await warming.value
         XCTAssertEqual(connects, 1)
-        XCTAssertEqual((model.joinReadinessReport["cameraMetadata"] as? [String: Any])?["state"] as? String, "prepared")
+        let state = (model.joinReadinessReport["cameraMetadata"] as? [String: Any])?["state"] as? String
+        // Foreground discovery may finish during another join preflight await;
+        // an already-completed read needs no additional barrier or discovery.
+        XCTAssertTrue(state == "drained" || state == "skipped")
         let left = await model.leave(); XCTAssertTrue(left)
     }
-    func testCameraMetadataEligibilitySkipsDeviceReads() async throws {
+    func testColdJoinMetadataFallbackRequiresExistingPermissionAndEligiblePolicy() async throws {
         for scenario in 0..<8 {
             let engine = DesktopTestEngine(); var reads = 0
             let metadata = NativeDesktopCameraMetadataPreparation(authorized: { scenario != 4 }, read: { _ in reads += 1 })
@@ -276,9 +282,31 @@ private final class DesktopActivitySpy: NSUserActivity {
                 power: joinTestPower(pluggedIn: scenario != 2, lowPowerMode: scenario == 3))
             if scenario == 6 { model.viewMode = .audioOnly }
             try await model.connect(); await model.waitForJoinReadinessForTesting()
-            XCTAssertEqual(reads, scenario == 0 ? 1 : 0, "Only eligible authorized Guest video joins may read metadata")
+            XCTAssertEqual(reads, scenario == 0 ? 1 : 0, "Only an eligible authorized Guest video join may need cold metadata")
             XCTAssertTrue(engine.microphoneCommands.isEmpty && engine.cameraCommands.isEmpty)
             let left = await model.leave(); XCTAssertTrue(left)
+        }
+    }
+    func testColdMetadataFallbackPreparesOnlyTheMissingSelectionBeforeConnection() async throws {
+        let selection = UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")
+        for scenario in 0..<3 {
+            let engine = DesktopTestEngine(), capture = JoinPrimeCapture()
+            engine.testFactory = LKRTCPeerConnectionFactory()
+            var reads = 0
+            let metadata = NativeDesktopCameraMetadataPreparation(authorized: { true }, read: { _ in reads += 1 })
+            if scenario != 0 {
+                _ = try await metadata.prepare(eligible: { true }, deviceID: scenario == 1 ? selection : "unselected-fixture-camera")
+            }
+            engine.onConnect = { XCTAssertTrue(metadata.isPrepared(deviceID: selection)) }
+            let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Foreground metadata fixture", title: nil,
+                engine: engine, joinReadiness: .init(microphone: .off, camera: .whenPluggedIn),
+                joinCameraPrime: .init(authorized: { true }, makeCapture: { _ in capture }), cameraMetadata: metadata,
+                power: joinTestPower())
+            try await model.connect(); await model.waitForJoinReadinessForTesting()
+            XCTAssertEqual(reads, scenario == 2 ? 2 : 1, "A completed matching foreground read is reused")
+            XCTAssertEqual(capture.starts, 1)
+            XCTAssertTrue(engine.cameraCommands.isEmpty)
+            let clean = await model.leave(); XCTAssertTrue(clean)
         }
     }
     func testCameraMetadataRequiresFrozenAndLatestPolicyAndSkipsUnstartedPowerLoss() async throws {
@@ -316,11 +344,13 @@ private final class DesktopActivitySpy: NSUserActivity {
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Entered metadata fixture", title: nil,
             engine: engine, joinReadiness: .init(), joinCameraPrime: .init(authorized: { true }, makeCapture: { _ in capture }),
             cameraMetadata: metadata, power: power)
-        let connecting = Task { try await model.connect() }; try await spin { release != nil }
+        let warming = Task { try await metadata.prepare(eligible: { true }, deviceID: nil) }
+        try await spin { release != nil }
+        let connecting = Task { try await model.connect() }; await Task.yield(); await Task.yield()
         state.lowPowerMode = true; notify?(); await Task.yield()
         XCTAssertEqual(connects, 0, "An entered AVFoundation read remains a barrier after policy withdrawal")
         release?.resume(); release = nil
-        try await connecting.value; await model.waitForJoinReadinessForTesting()
+        try await connecting.value; _ = try await warming.value; await model.waitForJoinReadinessForTesting()
         XCTAssertEqual(connects, 1); XCTAssertEqual(capture.starts, 0)
         let left = await model.leave(); XCTAssertTrue(left)
     }
@@ -333,7 +363,9 @@ private final class DesktopActivitySpy: NSUserActivity {
         firstEngine.onConnect = { firstConnects += 1 }; secondEngine.onConnect = { secondConnects += 1 }
         let first = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Canceled metadata fixture", title: nil,
             engine: firstEngine, joinReadiness: .init(), cameraMetadata: metadata, power: joinTestPower())
-        let connecting = Task { try await first.connect() }; try await spin { release != nil }
+        let warming = Task { try await metadata.prepare(eligible: { true }, deviceID: nil) }
+        try await spin { release != nil }
+        let connecting = Task { try await first.connect() }; await Task.yield(); await Task.yield()
         let left = await first.leave(); XCTAssertTrue(left)
         do { try await connecting.value; XCTFail("Canceled join connected") } catch {}
         let second = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Off metadata fixture", title: nil,
@@ -341,7 +373,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         let later = Task { try await second.connect() }; await Task.yield(); await Task.yield()
         XCTAssertEqual(firstConnects, 0); XCTAssertEqual(secondConnects, 0)
         release?.resume(); release = nil
-        try await later.value
+        try await later.value; _ = try await warming.value
         XCTAssertEqual(reads, 1); XCTAssertEqual(secondConnects, 1)
         let secondLeft = await second.leave(); XCTAssertTrue(secondLeft)
     }
@@ -353,11 +385,12 @@ private final class DesktopActivitySpy: NSUserActivity {
                     engine.testFactory = LKRTCPeerConnectionFactory()
                     let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
                     let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Power fixture", title: nil,
-                        engine: engine, joinReadiness: .init(microphone: mode, camera: mode), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(),
+                        engine: engine, joinReadiness: .init(microphone: mode, camera: mode), joinCameraPrime: prime, cameraMetadata: await joinTestCameraMetadata(),
                         power: joinTestPower(pluggedIn: pluggedIn, lowPowerMode: lowPowerMode))
                     try await model.connect(); await model.waitForJoinReadinessForTesting()
                     let expected = mode.allows(.init(pluggedIn: pluggedIn, lowPowerMode: lowPowerMode)) ? 1 : 0
                     XCTAssertEqual(engine.mutedPreparationCalls, expected)
+                    XCTAssertEqual(engine.preparationBeforeConnection, expected == 1)
                     XCTAssertEqual(capture.starts, expected); XCTAssertEqual(capture.stops, expected)
                     XCTAssertTrue(engine.microphoneCommands.isEmpty); XCTAssertTrue(engine.cameraCommands.isEmpty)
                     let left = await model.leave(); XCTAssertTrue(left)
@@ -399,7 +432,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         }
         let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Power fixture", title: nil,
-            engine: engine, joinReadiness: .init(), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(), power: power)
+            engine: engine, joinReadiness: .init(), joinCameraPrime: prime, cameraMetadata: await joinTestCameraMetadata(), power: power)
         try await model.connect(); try await spin { capture.starts == 1 && engine.mutedPreparationCalls == 1 }
         model.toggleMicrophone(); await model.waitForMediaActionsForTesting()
         state.pluggedIn = false; notify?()
@@ -454,7 +487,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         }
         let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Power fixture", title: nil,
-            engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(), power: power)
+            engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: await joinTestCameraMetadata(), power: power)
         try await model.connect(); try await spin { capture.starts == 1 }
         state.lowPowerMode = true; notify?()
         XCTAssertGreaterThan(capture.cancellations, 0)
@@ -495,7 +528,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         engine.testFactory = LKRTCPeerConnectionFactory()
         let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Fixture", title: nil,
-            engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(), power: joinTestPower())
+            engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: await joinTestCameraMetadata(), power: joinTestPower())
         model.viewMode = .audioOnly
         try await model.connect(); await model.waitForJoinReadinessForTesting()
         XCTAssertEqual(capture.starts, 0); XCTAssertEqual(capture.stops, 0)
@@ -514,7 +547,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         }
         let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Fixture", title: nil,
-            engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(), power: joinTestPower())
+            engine: engine, joinReadiness: .init(microphone: .alsoOnBattery, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: await joinTestCameraMetadata(), power: joinTestPower())
         try await model.connect(); try await spin { capture.starts == 1 }
         model.viewMode = .audioOnly
         await model.waitForJoinReadinessForTesting()
@@ -582,7 +615,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         }
         let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Fixture", title: nil,
-            engine: engine, joinReadiness: .init(microphone: .off, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: joinTestCameraMetadata(), power: joinTestPower())
+            engine: engine, joinReadiness: .init(microphone: .off, camera: .alsoOnBattery), joinCameraPrime: prime, cameraMetadata: await joinTestCameraMetadata(), power: joinTestPower())
         try await model.connect()
         try await spin { capture.starts == 1 }
         model.toggleMicrophone(); await model.waitForMediaActionsForTesting()

@@ -41,7 +41,7 @@ private actor DirectUpdaterCalendar: CalendarReading {
     private let failure = NSError(domain: "DirectUpdaterTests", code: 1,
                                   userInfo: [NSLocalizedDescriptionKey: "Fixture updater failure"])
 
-    private func fixture(recovery: Bool = false) throws -> Fixture {
+    private func fixture(recovery: Bool = false, mediaGate: NativeDesktopUpdateMediaGate? = nil) throws -> Fixture {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("direct-updater-\(UUID())")
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
         if recovery {
@@ -49,7 +49,8 @@ private actor DirectUpdaterCalendar: CalendarReading {
             try original.prepareUpdate(targetBuild: 101)
         }
         let safety = try NativeUpdateSafety(stateDirectoryURL: directory, currentBuild: 100)
-        return Fixture(safety: safety, updates: NativeDesktopUpdates(safety: safety), directory: directory)
+        let mediaGate = mediaGate ?? .init(claimIfDrained: { _ in true }, drain: { _ in true }, release: { _ in })
+        return Fixture(safety: safety, updates: NativeDesktopUpdates(safety: safety, mediaGate: mediaGate), directory: directory)
     }
 
     private func item(_ version: String = "101") throws -> SUAppcastItem {
@@ -176,6 +177,44 @@ private actor DirectUpdaterCalendar: CalendarReading {
         XCTAssertEqual(replies, 0)
         XCTAssertEqual(installerBlocks, 0)
         XCTAssertFalse(fixture.safety.installationReserved)
+    }
+    func testAbortBeforeQueuedMediaDrainCannotCreateALateSuspension() async throws {
+        var drains = 0, replies = 0
+        let fixture = try fixture(mediaGate: .init(claimIfDrained: { _ in false }, drain: { _ in drains += 1; return true }, release: { _ in }))
+        let updates = fixture.updates; updates.busy = { false }
+        _ = try prepare(fixture)
+        updates.installChoice(.install) { _ in replies += 1 }
+        updates.updater(updates.updater, didAbortWithError: failure)
+        updates.updater(updates.updater, didFinishUpdateCycleFor: .updates, error: failure)
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertEqual(drains, 0); XCTAssertEqual(replies, 0)
+        XCTAssertFalse(fixture.safety.installationReserved)
+    }
+    func testAbortRetainsPendingDrainUntilCompletionAndReleasesOnlyItsEpoch() async throws {
+        var pending: CheckedContinuation<Void, Never>?, drainingID: UUID?, heldID: UUID?
+        var replies = 0, mayClaim = false
+        let fixture = try fixture(mediaGate: .init(claimIfDrained: { id in
+            guard mayClaim else { return false }; heldID = id; return true
+        }, drain: { id in
+            drainingID = id; heldID = id
+            await withCheckedContinuation { pending = $0 }; return true
+        }, release: { id in if heldID == id { heldID = nil } }))
+        let updates = fixture.updates; updates.busy = { false }
+        _ = try prepare(fixture)
+        updates.installChoice(.install) { _ in replies += 1 }
+        for _ in 0..<100 { if pending != nil { break }; await Task.yield() }
+        XCTAssertNotNil(pending)
+        updates.updater(updates.updater, didAbortWithError: failure)
+        updates.updater(updates.updater, didFinishUpdateCycleFor: .updates, error: failure)
+        XCTAssertEqual(heldID, drainingID, "Cancellation cannot release a native operation that is still draining")
+        mayClaim = true; _ = try prepare(fixture)
+        updates.installChoice(.install) { _ in replies += 1 }
+        let freshID = heldID
+        XCTAssertNotEqual(freshID, drainingID)
+        pending?.resume(); pending = nil
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertEqual(heldID, freshID, "An old drain completion cannot release a newer update reservation")
+        XCTAssertEqual(replies, 1); XCTAssertTrue(fixture.safety.installationReserved)
     }
 
     func testHeldInstallReplyFromAbortedCycleDoesNotReserveNextCycle() throws {

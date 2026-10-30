@@ -111,6 +111,7 @@ import UserNotifications
             value.isReleasedWhenClosed = false; value.titlebarAppearsTransparent = true
             value.contentView = NSHostingView(rootView: NativeDesktopHomeView(workspace: self, library: library))
             value.setFrameAutosaveName("nativeDesktop.library"); value.center(); window = value
+            NativeDesktopForegroundMedia.shared.setHomeWindow(value)
         }
         window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         library.calendar.showingMacSettings = selection == .settings

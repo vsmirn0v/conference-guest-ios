@@ -130,6 +130,7 @@ struct NativeGuestApplication {
         }
         #endif
         launched = true
+        NativeDesktopForegroundMedia.shared.start()
         accept()
         if !launchURLs.isEmpty { let urls = launchURLs; launchURLs.removeAll(); application(NSApp, open: urls) }
         if let activity = launchActivity {
@@ -188,6 +189,8 @@ struct NativeGuestApplication {
         Task { @MainActor in
             _ = await workspace?.leave()
             if let controller, !controller.finished { await controller.finish() }
+            let clean = await NativeDesktopForegroundMedia.shared.shutdown()
+            if !clean { NSLog("Media cleanup was unproven during explicit Quit; process exit releases its devices.") }
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

@@ -3,14 +3,16 @@ import Foundation
 /// A private check cannot create a second physical owner beside a meeting.
 final class GuestAudioOwnerLease: @unchecked Sendable {
     private static let lock = NSLock()
-    private static var owners: [UUID: Bool] = [:]
+    private struct Owner { let privateCheck: Bool; let exclusive: Bool }
+    private static var owners: [UUID: Owner] = [:]
     private static var cleanupFailed = false
     private let id = UUID()
     let privateCheck: Bool
-    init?(privateCheck: Bool) {
+    init?(privateCheck: Bool, exclusive: Bool = false) {
         Self.lock.lock(); defer { Self.lock.unlock() }
-        guard !Self.cleanupFailed, privateCheck ? Self.owners.isEmpty : !Self.owners.values.contains(true) else { return nil }
-        self.privateCheck = privateCheck; Self.owners[id] = privateCheck
+        guard !Self.cleanupFailed,
+              (privateCheck || exclusive) ? Self.owners.isEmpty : !Self.owners.values.contains(where: { $0.privateCheck || $0.exclusive }) else { return nil }
+        self.privateCheck = privateCheck; Self.owners[id] = Owner(privateCheck: privateCheck, exclusive: exclusive)
     }
     deinit { Self.lock.lock(); Self.owners[id] = nil; Self.lock.unlock() }
     static func reportFailedStop() { lock.lock(); cleanupFailed = true; lock.unlock() }

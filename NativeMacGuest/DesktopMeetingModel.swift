@@ -135,6 +135,7 @@ import UniformTypeIdentifiers
     private let cameraMetadata: NativeDesktopCameraMetadataPreparation
     private var cameraMetadataTask: Task<NativeDesktopCameraMetadataPreparation.Outcome, Error>?
     private var cameraMetadataReport: [String: Any] = [:]
+    private var externalMediaSuspension: NativeDesktopSharedMedia<GuestSystemAudio>.Suspension?
     private(set) var joinReadinessReport: [String: Any] = [:]
 
     init(destination: JoinDestination, name: String, title: String?, quiet: Bool = false,
@@ -262,6 +263,10 @@ import UniformTypeIdentifiers
         let headsetReady = headset.begin { [weak self] muted in self?.setMicrophoneEnabled(!muted) }
         guard await NativeDesktopDeviceModel.stopPrivatePreview() else { throw NativeDesktopRTCError.cleanupFailed }
         try Task.checkCancellation()
+        if kind != .guest {
+            externalMediaSuspension = try await NativeDesktopMediaService.shared.suspend()
+            try Task.checkCancellation()
+        }
         if kind == .guest {
             engine.microphoneReadinessPolicy = { [weak self] in self?.microphonePreparationEligible ?? false }
             updateMicrophoneRecoveryReadiness()
@@ -290,6 +295,9 @@ import UniformTypeIdentifiers
         let began = ProcessInfo.processInfo.systemUptime
         let task = Task { @MainActor [weak self] in
             guard let self else { throw CancellationError() }
+            // Completed foreground metadata is cached. An eligible cold join
+            // finishes discovery before audio starts, avoiding its main-thread
+            // AVFoundation refresh during the first camera action.
             return try await cameraMetadata.prepare(eligible: { [weak self] in self?.cameraMetadataEligible == true },
                 deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID"))
         }
@@ -316,6 +324,9 @@ import UniformTypeIdentifiers
             joinReadinessReport["startupAudio"] = guest.currentNativeEngine?.startupAudioReport ?? [:]
         }
         guard joinReadinessPolicy.camera.allows(joinPower) else { return }
+        guard cameraMetadata.isPrepared(deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")) else {
+            joinReadinessReport["camera"] = ["state": "skipped", "reason": "metadataUnavailable"]; return
+        }
         guard viewMode != .audioOnly else {
             joinReadinessReport["camera"] = ["state": "skipped", "reason": "audioOnly"]; return
         }
@@ -325,6 +336,7 @@ import UniformTypeIdentifiers
             guard let self, token == generation, !closed, !transferHeld,
                   viewMode != .audioOnly,
                   self.readinessPolicy().camera.allows(power.snapshot),
+                  cameraMetadata.isPrepared(deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")),
                   snapshot.phase == .connected, cameraCommand == self.cameraCommand,
                   !snapshot.cameraOn, requestedCamera != true else { prime.cancel(); return }
             do { try await prime.run(source: { self.engine.factory?.videoSource() }) }
@@ -776,6 +788,10 @@ import UniformTypeIdentifiers
             let finallyStopped = await self.engine.leave()
             let engineStopped = initiallyStopped && finallyStopped
             let clean = engineStopped && shareStopped && presenterStopped && previewsStopped && (self.joinCameraPrime?.cleanupSucceeded ?? true)
+            if let token = self.externalMediaSuspension {
+                NativeDesktopMediaService.shared.resume(token, clean: clean)
+                self.externalMediaSuspension = nil
+            }
             if let lease = self.cameraLease {
                 if engineStopped { NativeDesktopCameraLease.shared.release(lease); self.cameraLease = nil }
                 else { NativeDesktopCameraLease.shared.reportFailedStop(lease) }

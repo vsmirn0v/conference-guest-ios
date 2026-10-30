@@ -4,6 +4,16 @@ import Combine
 import LiveKitWebRTC
 import SwiftUI
 
+@MainActor protocol NativeDesktopPrivateAudioOwner: AnyObject {
+    var privateInputLevel: Float? { get }
+    func startPrivateCheck() async -> Bool
+    func closePrivateCheck() async -> Bool
+}
+extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
+    func startPrivateCheck() async -> Bool { await startStandalonePrivateInputCheck() }
+    func closePrivateCheck() async -> Bool { await shutdown() }
+}
+
 @MainActor final class NativeDesktopDeviceModel: ObservableObject {
     private static weak var activePreview: NativeDesktopDeviceModel?
     let audio = MacAudioDevices(isMac: true)
@@ -25,14 +35,29 @@ import SwiftUI
     private var cleanupFailed = false
     private let cameraOwnerID = UUID()
     private var cameraLease: NativeDesktopCameraLease.Token?
-    private var audioOwner: GuestSystemAudio?
+    private var audioOwner: (any NativeDesktopPrivateAudioOwner)?
+    private var resumeReadiness: ((Bool) -> Void)?
+    private let authorizeAudio: () async throws -> Bool
+    private let createAudioOwner: () async throws -> any NativeDesktopPrivateAudioOwner
+    private let suspendReadiness: () async throws -> ((Bool) -> Void)
     private var audioTask: Task<Void, Never>?
     private var audioGeneration = UUID()
     private var stopBorrowedAudio: (() async throws -> Void)?
     private var audioStopping: Task<Bool, Never>?
     private var discovery: Task<Void, Never>?
     static func stopPrivatePreview() async -> Bool { await activePreview?.stop() ?? true }
-    init(discoverCameras: @escaping @Sendable () -> [AVCaptureDevice] = { AVCaptureDevice.devices(for: .video) }) {
+    init(discoverCameras: @escaping @Sendable () -> [AVCaptureDevice] = { AVCaptureDevice.devices(for: .video) },
+         authorizeAudio: (() async throws -> Bool)? = nil,
+         createAudioOwner: (() async throws -> any NativeDesktopPrivateAudioOwner)? = nil,
+         suspendReadiness: (() async throws -> ((Bool) -> Void))? = nil) {
+        self.authorizeAudio = authorizeAudio ?? { try await GuestCaptureAuthorization.request(.audio) }
+        self.createAudioOwner = createAudioOwner ?? {
+            try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, profile: .saved, privateCheckOnly: true)
+        }
+        self.suspendReadiness = suspendReadiness ?? {
+            let token = try await NativeDesktopMediaService.shared.suspend()
+            return { NativeDesktopMediaService.shared.resume(token, clean: $0) }
+        }
         cameraID = UserDefaults.standard.string(forKey: "nativeDesktop.cameraID") ?? ""
         discovery = Task { [weak self] in
             let devices = await Task.detached(priority: .userInitiated, operation: discoverCameras).value
@@ -59,7 +84,7 @@ import SwiftUI
                 if let other = Self.activePreview, other !== self, !(await other.stop()) { throw NativeDesktopRTCError.cleanupFailed }
                 guard audioGeneration == token, !Task.isCancelled else { return }
                 Self.activePreview = self
-                let granted = try await GuestCaptureAuthorization.request(.audio)
+                let granted = try await authorizeAudio()
                 guard granted else { throw GuestSystemAudioError.microphonePermissionRequired }
                 guard audioGeneration == token, !Task.isCancelled else { return }
                 if live {
@@ -67,11 +92,17 @@ import SwiftUI
                     stopBorrowedAudio = stop
                     try await start()
                 } else {
-                    let owner = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false,
-                                                                 profile: .saved, privateCheckOnly: true)
-                    guard audioGeneration == token, !Task.isCancelled else { _ = await owner.shutdown(); return }
+                    resumeReadiness = try await suspendReadiness()
+                    guard audioGeneration == token, !Task.isCancelled else { return }
+                    let owner = try await createAudioOwner()
+                    guard audioGeneration == token, !Task.isCancelled else {
+                        let clean = await owner.closePrivateCheck()
+                        cleanupFailed = cleanupFailed || !clean
+                        if !clean { audioOwner = owner }
+                        return
+                    }
                     audioOwner = owner
-                    guard await owner.startStandalonePrivateInputCheck() else { throw GuestSystemAudioError.setupFailedOrTimedOut }
+                    guard await owner.startPrivateCheck() else { throw GuestSystemAudioError.setupFailedOrTimedOut }
                 }
                 guard audioGeneration == token, !Task.isCancelled else { return }
                 while audioGeneration == token, !Task.isCancelled {
@@ -86,8 +117,10 @@ import SwiftUI
                     do { try await stop() } catch { cleanupFailed = true; self.error = error.localizedDescription }
                 }
                 if let owner = audioOwner {
-                    audioOwner = nil; let clean = await owner.shutdown(); cleanupFailed = cleanupFailed || !clean
+                    audioOwner = nil; let clean = await owner.closePrivateCheck(); cleanupFailed = cleanupFailed || !clean
+                    if !clean { audioOwner = owner }
                 }
+                resumeReadiness?(!cleanupFailed); resumeReadiness = nil
             }
         }
     }
@@ -98,9 +131,13 @@ import SwiftUI
         let stopping = Task { [self] () -> Bool in
             await task?.value
             let stop = stopBorrowedAudio; stopBorrowedAudio = nil
-            do { try await stop?() } catch { return false }
+            do { try await stop?() } catch { cleanupFailed = true }
             let owner = audioOwner; audioOwner = nil
-            return await owner?.shutdown() ?? true
+            let clean = await owner?.closePrivateCheck() ?? true
+            cleanupFailed = cleanupFailed || !clean
+            if !clean { audioOwner = owner }
+            resumeReadiness?(!cleanupFailed); resumeReadiness = nil
+            return !cleanupFailed
         }
         audioStopping = stopping
         let clean = await stopping.value
@@ -212,7 +249,7 @@ struct NativeDesktopDeviceSettings: View {
                 readinessPicker(L("Microphone readiness"), selection: Binding(
                     get: { NativeDesktopJoinReadinessPolicy.current().microphone },
                     set: { microphoneReadiness = $0.rawValue }))
-                Text(L("Keeps the microphone ready while muted for faster unmuting and headset controls. Muted audio is never sent. Uses extra energy. Bluetooth headsets may switch to call audio quality. Applies at the next join or reconnect. Power changes do not interrupt meeting audio.")).font(.caption).foregroundStyle(.secondary)
+                Text(L("Prepares the muted microphone while the app is active with a visible window, so native Guest meetings can reuse it for faster unmuting and headset controls. Muted audio is never sent. Uses extra energy. Bluetooth headsets may switch to call audio quality. Preparation stops shortly after the app becomes inactive. Power changes do not interrupt an active meeting.")).font(.caption).foregroundStyle(.secondary)
                 Text(L("Low Power Mode prevents automatic microphone and camera preparation. Preparation uses existing permission. Defaults apply to native Guest meetings; explicit microphone choices also apply to supported headset controls in other meetings.")).font(.caption).foregroundStyle(.secondary)
                 Text(L("Device choices follow the Mac’s system audio routes.")).font(.caption).foregroundStyle(.secondary)
                 HStack {
@@ -231,7 +268,7 @@ struct NativeDesktopDeviceSettings: View {
                 readinessPicker(L("Camera readiness"), selection: Binding(
                     get: { NativeDesktopJoinReadinessPolicy.current().camera },
                     set: { cameraReadiness = $0.rawValue }))
-                Text(L("Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view.")).font(.caption).foregroundStyle(.secondary)
+                Text(L("Prepares camera information while the app is active. Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view.")).font(.caption).foregroundStyle(.secondary)
                 Toggle(L("Share camera reactions"), isOn: $shareCameraReactions)
                 Text(L("System heart, thumbs and celebration effects also send matching meeting reactions when your camera is shared.")).font(.caption).foregroundStyle(.secondary)
                 Picker(L("Camera"), selection: Binding(get: { model.cameraID }, set: { model.selectCamera($0) })) {

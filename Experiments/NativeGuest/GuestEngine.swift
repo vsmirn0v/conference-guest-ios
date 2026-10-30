@@ -30,6 +30,7 @@ final class NativeGuestEngine {
     let label: String
     let audio: GuestSyntheticAudio?
     let systemAudio: GuestSystemAudio?
+    var releaseSystemAudio: ((Bool) async -> Bool)?
     private let icePolicy: GuestICEPolicy
     private let verifyReceivedPixels: Bool
     private let factory: LKRTCPeerConnectionFactory
@@ -106,6 +107,8 @@ final class NativeGuestEngine {
     private var startupPlaybackGain: GuestStartupPlaybackGain?
     private var startupAudioTask: Task<Void, Error>?
     private var startupAudioGeneration = UUID()
+    private var startupPlayoutEpoch: UUID?
+    private var sharedPlayoutClosed = true
     private var startupAudioDeadline: TimeInterval?
     private var startupReadyTopology: GuestStartupAudioObservation.Topology?
     private var startupDecision: GuestStartupAudioReport.Decision?
@@ -148,6 +151,7 @@ final class NativeGuestEngine {
     private(set) var screenCodecs: Set<String> = []
     private var localIdentity = ""
     private var subscriptions = Set<String>()
+    private var activePublicationDemand = false
     private var participantVersions: [String: Int] = [:]
     private var permissions: [String: Bool] = [:]
     private var published: [String: String] = [:]
@@ -156,6 +160,21 @@ final class NativeGuestEngine {
     private var pendingPublications: [String: GuestCompletion<[String: Any]>] = [:]
     private(set) var failure: Error?
 #if DEBUG
+    private var videoTraceSubscriptionState: [String: Any] = [:]
+    private var videoTraceSubscriptionRevision: UInt64 = 0
+    func beginSharedSoundOffProofForTesting() throws -> GuestPeer.SoundOffSourceProof {
+        try checkActive()
+        guard startupConnected, startupPlaybackGain?.soundEnabled == false, let owner = systemAudio,
+              owner.sharedPlayoutGateForTesting.permitsSoundOffProof(expected: startupPlayoutEpoch),
+              let subscriber, subscriber.transportConnected, subscriber.receivedAudioSources.count == 1,
+              let publication = knownPublication(subscriber.receivedAudioSources[0], type: "AUDIO"), !publication.muted,
+              owner.startupAudioObservation.supports(input: true),
+              let proof = subscriber.beginSoundOffSourceProofForTesting() else { throw GuestEngineError.disconnected }
+        guard owner.sharedPlayoutGateForTesting.permitsSoundOffProof(expected: startupPlayoutEpoch) else {
+            _ = proof.restore(); throw GuestEngineError.disconnected
+        }
+        return proof
+    }
     var cameraFactoryForTesting: ((LKRTCVideoSource) -> any GuestCameraCapture)?
     /// Opt-in SDK transport probe only. Shipping/native companion never sets it.
     /// SFU addTrack admission remains authoritative; app screen permission UI
@@ -225,9 +244,13 @@ final class NativeGuestEngine {
         }
         peer.onFailure = { [weak self] in self?.recordFailure($0) }
         if target == .subscriber {
-            peer.onIncomingAudioChange = { [weak self] in self?.continueArmedStartupAudio() }
+            peer.onIncomingAudioChange = { [weak self, weak peer] in
+                guard let self, let peer, self.subscriber === peer, !self.closing else { return }
+                self.refreshSubscriberDemand(); self.continueArmedStartupAudio()
+            }
             peer.onIncomingVideoChange = { [weak self, weak peer] _ in
                 guard let self, let peer, self.subscriber === peer, !self.closing, !self.outputSuppressed else { return }
+                self.refreshSubscriberDemand()
                 self.onIncomingVideoChange?(self.incomingVideo)
             }
         }
@@ -474,7 +497,8 @@ final class NativeGuestEngine {
                 return leftActive == rightActive ? lhs < rhs : leftActive
             }
         let activeAudio = remoteTracks.values.contains { $0.type == "AUDIO" && !$0.muted }
-        subscriber?.setActiveIncomingMediaDemand(activeAudio || !activeVideoIDs.isEmpty)
+        activePublicationDemand = activeAudio || !activeVideoIDs.isEmpty
+        refreshSubscriberDemand()
         var videoIDs = Array(activeVideoIDs.prefix(6))
         // A camera can resume RTP before the SFU's unmute snapshot arrives.
         // Keep already-subscribed muted tracks warm while gallery capacity is
@@ -488,13 +512,33 @@ final class NativeGuestEngine {
         }
         let desired = Set(audioIDs + videoIDs)
         let removed = subscriptions.subtracting(desired).sorted()
+#if DEBUG
+        let remoteVideoIDs = remoteTracks.keys.filter { remoteTracks[$0]?.type == "VIDEO" }.sorted()
+        let traceState: [String: Any] = ["desired": Array(desired.sorted().prefix(64)), "desiredCount": desired.count,
+            "remoteVideoCount": remoteVideoIDs.count, "videoTracks": remoteVideoIDs.prefix(64).map { id -> [String: Any] in
+                ["trackID": id, "muted": remoteTracks[id]?.muted ?? true, "source": remoteTracks[id]?.source ?? ""]
+            }]
+        if !NSDictionary(dictionary: traceState).isEqual(to: videoTraceSubscriptionState) {
+            videoTraceSubscriptionState = traceState; videoTraceSubscriptionRevision += 1
+            probeLog("video-subscription-intent", traceState.merging(["client": label,
+                "peerID": subscriber?.diagnosticID ?? "", "revision": videoTraceSubscriptionRevision]) { _, value in value })
+        }
+#endif
         if !removed.isEmpty {
+#if DEBUG
+            probeLog("video-subscription-request", ["client": label, "peerID": subscriber?.diagnosticID ?? "",
+                "subscribe": false, "trackIDs": Array(removed.prefix(64)), "count": removed.count])
+#endif
             try await media(["method": "rtc:track:subscription:change",
                              "subscription": ["trackSids": removed, "subscribe": false]])
             subscriptions.subtract(removed)
         }
         let added = desired.subtracting(subscriptions).sorted()
         if !added.isEmpty {
+#if DEBUG
+            probeLog("video-subscription-request", ["client": label, "peerID": subscriber?.diagnosticID ?? "",
+                "subscribe": true, "trackIDs": Array(added.prefix(64)), "count": added.count])
+#endif
             try await media(["method": "rtc:track:subscription:change",
                              "subscription": ["trackSids": added, "subscribe": true]])
             subscriptions.formUnion(added)
@@ -590,11 +634,20 @@ final class NativeGuestEngine {
     func setPlayoutEnabled(_ enabled: Bool) async throws {
         try checkActive()
         setStartupPlaybackIntent(enabled)
-        if let systemAudio, !(await systemAudio.setPlayoutEnabled(enabled)) { throw GuestEngineError.disconnected }
+        try checkActive()
+        if let systemAudio, !(await systemAudio.setPlayoutEnabled(enabled, expectedEpoch: startupPlayoutEpoch)) {
+            throw GuestEngineError.disconnected
+        }
         try checkActive()
     }
 
     func configureStartupPlayback(sound: Bool) {
+        guard !closing else { return }
+        startupPlayoutEpoch = systemAudio?.playoutEpoch
+        if systemAudio?.closeSharedPlayout(expected: startupPlayoutEpoch) == false {
+            sharedPlayoutClosed = false; recordFailure(GuestEngineError.disconnected); return
+        }
+        _ = systemAudio?.setSharedSoundIntent(sound, expected: startupPlayoutEpoch)
         startupPlaybackGain = GuestStartupPlaybackGain(sound: sound)
         startupReport = .init(configuredUptime: ProcessInfo.processInfo.systemUptime,
             initialSoundIntent: sound, latestSoundIntent: sound)
@@ -602,12 +655,55 @@ final class NativeGuestEngine {
 
     /// Intent is recorded immediately, even when session control is awaiting readiness.
     func setStartupPlaybackIntent(_ enabled: Bool) {
+        if let systemAudio {
+            let accepted = systemAudio.setSharedSoundIntent(enabled, expected: startupPlayoutEpoch)
+            if !accepted, systemAudio.playoutEpoch == startupPlayoutEpoch {
+                sharedPlayoutClosed = false; recordFailure(GuestEngineError.disconnected)
+            }
+        }
         startupPlaybackGain?.setSound(enabled); startupReport?.latestSoundIntent = enabled
+        if let systemAudio {
+            if enabled, startupPlaybackGain?.isOpen == true,
+               !systemAudio.sharedPlayoutIsOpen(expected: startupPlayoutEpoch) {
+                startupPlaybackGain?.hold(); startupDecision = nil; startupReadyTopology = nil
+            }
+        }
         continueArmedStartupAudio()
     }
 
     private var startupRequiresInput: Bool {
         published["audio"] != nil && systemAudio?.snapshot["inputAvailable"] as? Bool == true
+    }
+
+    private func knownPublication(_ source: GuestStartupPlaybackGain.Source, type: String) -> GuestRemoteTrackState? {
+        let references = Set(source.streamIDs.compactMap(GuestRemotePublication.init(streamID:)))
+        guard references.count <= 1 else { return nil }
+        let id = references.count == 1 ? references.first?.track : source.trackID
+        guard let id, let publication = remoteTracks[id], publication.type == type else { return nil }
+        if let reference = references.first, reference.participant != publication.participant { return nil }
+        return publication
+    }
+    private func refreshSubscriberDemand() {
+        guard let subscriber, !closing else { return }
+        // Unacknowledged desired publications already count as demand. An
+        // attached receiver remains conservative until typed metadata resolves
+        // it; matched muted/offscreen publications do not reactivate idle ICE.
+        let unknownAudio = subscriber.receivedAudioSources.contains { knownPublication($0, type: "AUDIO") == nil }
+        let unknownVideo = subscriber.receivedVideo.contains {
+            knownPublication(.init(trackID: nil, streamIDs: $0.streamIDs), type: "VIDEO") == nil
+        }
+        subscriber.setActiveIncomingMediaDemand(activePublicationDemand || unknownAudio || unknownVideo)
+    }
+    private func startupReceiveReadiness(_ sources: GuestStartupPlaybackGain.SourceSnapshot) -> GuestStartupAudioReceiveReadiness {
+        // remoteTracks is authoritative even while subscribe acknowledgement is
+        // pending. A receiver without matching metadata remains conservative.
+        let active = remoteTracks.values.contains { $0.type == "AUDIO" && !$0.muted }
+        let sourceRequiresTransport = sources.sources.contains { source in
+            guard let publication = knownPublication(source, type: "AUDIO") else { return true }
+            return !publication.muted
+        }
+        return .init(activePublication: active, sourceRequiresTransport: sourceRequiresTransport,
+                     transportConnected: subscriber?.transportConnected == true)
     }
 
     func waitForStartupAudio() async throws {
@@ -623,8 +719,10 @@ final class NativeGuestEngine {
             @MainActor func record(_ event: String) {
                 let now = ProcessInfo.processInfo.systemUptime
                 let value = owner.startupAudioObservation
+                let receive = startupReceiveReadiness(gain.sourceSnapshot)
                 startupReport?.record(["event": event, "uptime": now,
                     "deadline": startupAudioDeadline ?? 0, "inputRequired": startupRequiresInput,
+                    "receiveTransportRequired": receive.requiresTransport, "receiveTransportConnected": receive.transportConnected,
                     "supports": value.supports(input: startupRequiresInput), "observation": value.evidence,
                     "stability": stability.evidence(at: now), "tap": owner.startupCallbackEvidence])
             }
@@ -634,7 +732,9 @@ final class NativeGuestEngine {
                 try checkActive()
                 guard generation == startupAudioGeneration else { throw CancellationError() }
                 if !gain.soundEnabled { startupDecision = .soundDisabled; return }
-                if !startupRequiresInput && !gain.hasSources { startupDecision = .noDemand; return }
+                if !startupRequiresInput && !gain.hasSources && !startupReceiveReadiness(gain.sourceSnapshot).requiresTransport {
+                    startupDecision = .noDemand; return
+                }
                 guard await GuestStartupAudioBudget.refresh(deadline: startupAudioDeadline ?? 0,
                     clock: { ProcessInfo.processInfo.systemUptime },
                     read: { await owner.refreshSnapshot(timeout: $0) }) else { throw GuestStartupAudioError.timedOut }
@@ -642,10 +742,11 @@ final class NativeGuestEngine {
                 guard generation == startupAudioGeneration else { throw CancellationError() }
                 let value = owner.startupAudioObservation
                 let ready = stability.observe(value, input: startupRequiresInput, at: ProcessInfo.processInfo.systemUptime)
+                let receiveReady = startupReceiveReadiness(gain.sourceSnapshot).ready
 #if DEBUG
                 record("observed")
 #endif
-                if ready {
+                if ready && receiveReady {
                     startupReadyTopology = value.topology; startupDecision = .active
                     startupReport?.graphReadyUptime = ProcessInfo.processInfo.systemUptime
                     return
@@ -672,14 +773,35 @@ final class NativeGuestEngine {
     /// No await separates gain release from GuestSession's Connected notification.
     func releaseStartupAudio() -> Bool {
         guard !closing, failure == nil, !outputSuppressed else { return false }
-        guard let gain = startupPlaybackGain, !gain.isOpen else { return true }
+        guard let gain = startupPlaybackGain else { return true }
+        if gain.isOpen {
+            if !gain.soundEnabled || systemAudio?.sharedPlayoutIsOpen(expected: startupPlayoutEpoch) != false { return true }
+            gain.hold(); startupDecision = nil; startupReadyTopology = nil
+            return false
+        }
         switch startupDecision {
         case .soundDisabled: guard !gain.soundEnabled else { return false }
-        case .noDemand: guard !startupRequiresInput, !gain.hasSources else { return false }
+        case .noDemand:
+            guard !startupRequiresInput, !gain.hasSources,
+                  !startupReceiveReadiness(gain.sourceSnapshot).requiresTransport else { return false }
         case .active:
+            let sources = gain.sourceSnapshot
             guard ProcessInfo.processInfo.systemUptime < (startupAudioDeadline ?? 0),
                   gain.soundEnabled, startupReadyTopology == systemAudio?.startupAudioObservation.topology,
-                  gain.open() else { return false }
+                  startupReceiveReadiness(sources).ready,
+                  gain.open(expectedSourceRevision: sources.revision, releaseGlobal: {
+                      guard ProcessInfo.processInfo.systemUptime < (self.startupAudioDeadline ?? 0) else { return false }
+                      guard self.systemAudio?.openSharedPlayout(expected: self.startupPlayoutEpoch) != false,
+                            ProcessInfo.processInfo.systemUptime < (self.startupAudioDeadline ?? 0) else {
+                          _ = self.systemAudio?.closeSharedPlayout(expected: self.startupPlayoutEpoch)
+                          return false
+                      }
+                      return true
+                  }) else {
+                _ = systemAudio?.closeSharedPlayout(expected: startupPlayoutEpoch)
+                startupDecision = nil; startupReadyTopology = nil
+                return false
+            }
             startupReport?.openUptime = ProcessInfo.processInfo.systemUptime
         default: return false
         }
@@ -789,6 +911,7 @@ final class NativeGuestEngine {
     }
 
     func suppressOutgoingMedia() {
+        sharedPlayoutClosed = (systemAudio?.closeSharedPlayout(expected: startupPlayoutEpoch) ?? true) && sharedPlayoutClosed
         startupPlaybackGain?.close(); startupAudioTask?.cancel(); startupAudioGeneration = UUID()
         startupReport?.retiredUptime = ProcessInfo.processInfo.systemUptime
         outputSuppressed = true
@@ -935,6 +1058,18 @@ final class NativeGuestEngine {
     }
 
 #if DEBUG
+    func videoTraceStateForTesting(_ target: GuestPeerTarget, includingDemand: Bool = false) -> [String: Any]? {
+        guard !closing else { return nil }
+        guard var state = (target == .publisher ? publisher : subscriber)?.videoTraceStateForTesting else { return nil }
+        state["localVideoMutedIntent"] = localMuteIntent[true].map { $0 as Any } ?? NSNull()
+        if includingDemand {
+            state["subscriptionState"] = videoTraceSubscriptionState
+            state["subscriptionRevision"] = videoTraceSubscriptionRevision
+            state["confirmedSubscriptions"] = Array(subscriptions.sorted().prefix(64))
+            state["confirmedSubscriptionCount"] = subscriptions.count
+        }
+        return state
+    }
     func screenShareStatsForTesting(_ target: GuestPeerTarget) async -> [[String: Any]]? {
         guard !closing else { return nil }
         return await (target == .publisher ? publisher : subscriber)?.stats()
@@ -1015,7 +1150,13 @@ final class NativeGuestEngine {
         await transport?.close(); transport = nil
         reader?.cancel(); reader = nil
         let audioStopped: Bool
-        if let systemAudio { audioStopped = await systemAudio.shutdown() }
+        if let releaseSystemAudio {
+            if !sharedPlayoutClosed, let systemAudio, systemAudio.playoutEpoch == startupPlayoutEpoch {
+                _ = await systemAudio.shutdown()
+            }
+            audioStopped = await releaseSystemAudio(cameraStopped && screenStopped && sharedPlayoutClosed)
+        }
+        else if let systemAudio { audioStopped = await systemAudio.shutdown() }
         else { audioStopped = audio?.terminateDevice() ?? true }
         cleanupSucceeded = audioStopped && cameraStopped && screenStopped
         joined = false; rtcJoined = false

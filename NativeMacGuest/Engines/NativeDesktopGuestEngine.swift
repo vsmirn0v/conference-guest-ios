@@ -32,6 +32,9 @@ private enum NativeDesktopGuestError: LocalizedError {
     private(set) var currentNativeEngine: NativeGuestEngine?
     private(set) var microphoneStartupMilliseconds: [String: Double] = [:]
     var microphoneReadinessPolicy: (() -> Bool)?
+#if DEBUG
+    var diagnosticICEPolicyForTesting: GuestICEPolicy = .automatic
+#endif
     var factory: LKRTCPeerConnectionFactory? {
         guard currentNativeEngine != nil, [.connecting, .connected, .reconnecting].contains(snapshot.phase) else { return nil }
         return systemAudio?.factory
@@ -59,6 +62,9 @@ private enum NativeDesktopGuestError: LocalizedError {
 
     private var session: GuestSession?
     private var systemAudio: GuestSystemAudio?
+    private let media: NativeDesktopSharedMedia<GuestSystemAudio>
+    private let microphoneAuthorized: () -> Bool
+    private var room: NativeDesktopSharedMedia<GuestSystemAudio>.Room?
     private var revision = UUID()
     private var microphoneRevision: UInt64 = 0
     private var cameraRevision: UInt64 = 0
@@ -72,6 +78,12 @@ private enum NativeDesktopGuestError: LocalizedError {
     private var chatHistoryTask: Task<Void, Never>?
     private var transcriptHistoryTask: Task<Void, Never>?
 
+    init(media: NativeDesktopSharedMedia<GuestSystemAudio> = NativeDesktopMediaService.shared,
+         microphoneAuthorized: (() -> Bool)? = nil) {
+        self.media = media
+        self.microphoneAuthorized = microphoneAuthorized ?? { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
+    }
+
     func connect(invitation: URL, name: String, quiet: Bool) async throws {
         guard session == nil, [.idle, .left, .failed].contains(snapshot.phase), cleanupSucceeded else {
             throw NativeDesktopGuestError.cleanupFailed
@@ -82,12 +94,27 @@ private enum NativeDesktopGuestError: LocalizedError {
         snapshot = .init(phase: .connecting, playoutOn: !quiet)
         guestSnapshot = .init(); onFeatures?(guestSnapshot); emit()
         let profile = GuestAudioProfile.saved
+        let room = try await media.reserveRoom(profile: profile)
+        self.room = room
+        guard revision == token, !leaving, !Task.isCancelled else {
+            _ = await media.releaseRoom(room, clean: true); self.room = nil; throw CancellationError()
+        }
         let session = GuestSession(makeEngine: { [weak self] in
             guard let self, revision == token, !leaving, !Task.isCancelled else { throw CancellationError() }
-            let owner = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: outputIntent, profile: profile)
-            guard revision == token, !leaving, !Task.isCancelled else { _ = await owner.shutdown(); throw CancellationError() }
+            let attempt = UUID()
+            let owner = try await media.attach(room, attempt: attempt, playout: outputIntent,
+                                               preparedInput: microphonePreparationEligible)
+            guard revision == token, !leaving, !Task.isCancelled else {
+                _ = await media.detach(room, attempt: attempt, clean: true); throw CancellationError()
+            }
             systemAudio = owner
+#if DEBUG
+            let engine = NativeGuestEngine(label: name, systemAudio: owner,
+                icePolicy: diagnosticICEPolicyForTesting, verifyReceivedPixels: false)
+#else
             let engine = NativeGuestEngine(label: name, systemAudio: owner, verifyReceivedPixels: false)
+#endif
+            engine.releaseSystemAudio = { [media] clean in await media.detach(room, attempt: attempt, clean: clean) }
             engine.configureStartupPlayback(sound: outputIntent)
             // Re-read actual policy/power after owner creation. Session control
             // activates muted input before transport join, never during playout.
@@ -120,10 +147,11 @@ private enum NativeDesktopGuestError: LocalizedError {
         } catch {
             if revision == token, self.session === session, !leaving {
                 snapshot.phase = .failed; snapshot.lastError = error.localizedDescription; emit()
-                let stopped = await session.leave()
+                let engineStopped = await session.leave()
+                let stopped = await media.releaseRoom(room, clean: engineStopped)
                 if revision == token, self.session === session {
                     cleanupSucceeded = stopped
-                    self.session = nil; systemAudio = nil; bind(nil, token: token)
+                    self.session = nil; self.room = nil; systemAudio = nil; bind(nil, token: token)
                     snapshot.phase = .failed; snapshot.lastError = error.localizedDescription; emit()
                 }
             }
@@ -212,7 +240,7 @@ private enum NativeDesktopGuestError: LocalizedError {
     /// The shell invokes this only when its join power policy permits preparation.
     /// Authorization already exists; priming never changes the muted intent.
     func prepareMutedCaptureForAccessories() async throws {
-        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+        guard microphoneAuthorized(),
               let session, !leaving, snapshot.phase == .connected,
               session.snapshot.desiredIntent?.audioMuted == true,
               !session.snapshot.microphoneActivated else { return }
@@ -227,12 +255,16 @@ private enum NativeDesktopGuestError: LocalizedError {
     func setMicrophoneReadinessForRecovery(_ enabled: Bool) {
         microphoneReadinessAllowed = enabled
         session?.setMicrophonePreparationRequested(enabled && !quietJoin &&
-            AVCaptureDevice.authorizationStatus(for: .audio) == .authorized)
+            microphoneAuthorized())
     }
 
     private var microphonePreparationEligible: Bool {
-        !quietJoin && (microphoneReadinessPolicy?() ?? microphoneReadinessAllowed) &&
-            AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        permitsMicrophonePreparation(quiet: quietJoin)
+    }
+    /// A claimed room keeps the existing join/recovery policy even when no
+    /// speculative foreground lease existed before admission.
+    func permitsMicrophonePreparation(quiet: Bool) -> Bool {
+        !quiet && (microphoneReadinessPolicy?() ?? microphoneReadinessAllowed) && microphoneAuthorized()
     }
 
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws {
@@ -273,10 +305,13 @@ private enum NativeDesktopGuestError: LocalizedError {
         snapshot.phase = .leaving; snapshot.microphoneOn = false; snapshot.cameraOn = false; snapshot.sharing = false
         snapshot.microphoneLevel = nil; emit()
         let old = session
-        let stopped = await old?.leave() ?? cleanupSucceeded
+        let engineStopped = await old?.leave() ?? cleanupSucceeded
+        let stopped: Bool
+        if let room { stopped = await media.releaseRoom(room, clean: engineStopped) }
+        else { stopped = engineStopped }
         revision = UUID(); cleanupSucceeded = stopped
         old?.onEngineChange = nil; old?.onStateChange = nil
-        session = nil; systemAudio = nil; detachEngine()
+        session = nil; room = nil; systemAudio = nil; detachEngine()
         guestSnapshot = .init(); onFeatures?(guestSnapshot)
         snapshot = .init(phase: .left, playoutOn: outputIntent)
         leaving = false; emit()

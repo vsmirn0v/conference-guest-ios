@@ -46,11 +46,20 @@ struct GuestStartupAudioReport {
 /// The lock protects metadata only. SDK gain calls may block on signaling.
 /// Positive gain is restored only on MainActor; signaling registration can only mute.
 final class GuestStartupPlaybackGain: @unchecked Sendable {
+    struct Source: Equatable {
+        var trackID: String?
+        var streamIDs: [String] = []
+    }
+    struct SourceSnapshot {
+        let revision: UInt64
+        let sources: [Source]
+    }
     private final class Entry {
         let identity: NSObject; let gain: Double; let setGain: (Double) -> Void
+        var source: Source
         var active = true
-        init(identity: NSObject, gain: Double, setGain: @escaping (Double) -> Void) {
-            self.identity = identity; self.gain = gain; self.setGain = setGain
+        init(identity: NSObject, source: Source, gain: Double, setGain: @escaping (Double) -> Void) {
+            self.identity = identity; self.source = source; self.gain = gain; self.setGain = setGain
         }
     }
     private let lock = NSLock()
@@ -61,13 +70,15 @@ final class GuestStartupPlaybackGain: @unchecked Sendable {
     private var sound: Bool
     init(sound: Bool) { self.sound = sound }
     var hasSources: Bool { locked { entries.contains(where: \.active) } }
+    var sourceSnapshot: SourceSnapshot { locked { .init(revision: revision, sources: entries.filter(\.active).map(\.source)) } }
     var isOpen: Bool { locked { ready && !closed } }
     var soundEnabled: Bool { locked { sound } }
     private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
-    func register(_ track: LKRTCAudioTrack) {
-        register(identity: track, gain: { track.source.volume }, setGain: { track.source.volume = $0 })
+    func register(_ track: LKRTCAudioTrack, streamIDs: [String] = []) {
+        register(identity: track, source: .init(trackID: track.trackId, streamIDs: streamIDs),
+            gain: { track.source.volume }, setGain: { track.source.volume = $0 })
     }
-    func register(identity: NSObject, gain: () -> Double, setGain: @escaping (Double) -> Void) {
+    func register(identity: NSObject, source: Source = .init(trackID: nil), gain: () -> Double, setGain: @escaping (Double) -> Void) {
         let original = gain() // SDK getter outside the metadata lock.
         while true {
             let snapshot = locked { (entries, revision) }
@@ -78,9 +89,10 @@ final class GuestStartupPlaybackGain: @unchecked Sendable {
                 if let existing {
                     let reattached = !existing.active
                     if reattached { existing.active = true; revision &+= 1 }
+                    if existing.source != source { existing.source = source; revision &+= 1 }
                     return (false, reattached)
                 }
-                entries.append(Entry(identity: identity, gain: original, setGain: setGain)); revision &+= 1
+                entries.append(Entry(identity: identity, source: source, gain: original, setGain: setGain)); revision &+= 1
                 return (false, true)
             }
             if result.retry { continue }
@@ -118,12 +130,18 @@ final class GuestStartupPlaybackGain: @unchecked Sendable {
     @MainActor func setSound(_ enabled: Bool) {
         locked { sound = enabled }; reconcile()
     }
-    @MainActor func open() -> Bool {
+    @MainActor func hold() {
+        locked { ready = false }; reconcile()
+    }
+    @MainActor func open(expectedSourceRevision: UInt64? = nil, releaseGlobal: (() -> Bool)? = nil) -> Bool {
         let allowed = locked {
-            guard !closed, sound else { return false }; ready = true; return true
+            guard !closed, sound, expectedSourceRevision == nil || expectedSourceRevision == revision else { return false }
+            ready = true; return true
         }
         guard allowed else { return false }
         reconcile()
+        guard locked({ ready && sound && !closed }) else { return false }
+        guard releaseGlobal?() != false else { hold(); return false }
         return locked { ready && sound && !closed }
     }
     @MainActor func close() {
@@ -135,6 +153,16 @@ final class GuestStartupPlaybackGain: @unchecked Sendable {
         }
         retired.forEach { $0.setGain(0) }
     }
+}
+
+/// An unmuted publication can be awaiting its subscription response or receiver
+/// callback. Physical device callbacks alone do not prove its receive transport.
+struct GuestStartupAudioReceiveReadiness {
+    let activePublication: Bool
+    let sourceRequiresTransport: Bool
+    let transportConnected: Bool
+    var requiresTransport: Bool { activePublication || sourceRequiresTransport }
+    var ready: Bool { !requiresTransport || transportConnected }
 }
 
 /// Delivered tap metadata is independent of the SDK's cached configured format.
@@ -209,10 +237,9 @@ struct GuestStartupAudioObservation {
     static func valid(_ format: [Double]) -> Bool {
         format.count == 9 && format.allSatisfy(\.isFinite) && format[0] > 0 && format[1] > 0 && format[5] > 0 && format[6] > 0
     }
-    func supports(input: Bool) -> Bool {
+    func supports(input: Bool, output: Bool = true) -> Bool {
         let t = topology
-        return t.running && t.outputAvailable && Self.valid(t.outputFormat) &&
-            outputCallback.supportedCadence &&
+        return t.running && (!output || (t.outputAvailable && Self.valid(t.outputFormat) && outputCallback.supportedCadence)) &&
             (!input || (t.inputAvailable && t.inputEnabled && t.inputRunning && Self.valid(t.inputFormat) && inputCallback.supportedCadence))
     }
 #if DEBUG
@@ -233,6 +260,7 @@ struct GuestStartupAudioStability {
     let window: TimeInterval
     private var topology: GuestStartupAudioObservation.Topology?
     private var inputRequired = false
+    private var outputRequired = true
     private var since: TimeInterval = 0
     private var input: UInt64 = 0, output: UInt64 = 0
     private var inputAdvanced = false, outputAdvanced = false
@@ -248,15 +276,15 @@ struct GuestStartupAudioStability {
     }
 #endif
     init(window: TimeInterval = 0.35) { self.window = window }
-    mutating func observe(_ value: GuestStartupAudioObservation, input required: Bool, at now: TimeInterval) -> Bool {
-        guard value.supports(input: required) else {
+    mutating func observe(_ value: GuestStartupAudioObservation, input required: Bool, output requiredOutput: Bool = true, at now: TimeInterval) -> Bool {
+        guard value.supports(input: required, output: requiredOutput) else {
 #if DEBUG
             lastDecision = "unsupported"
 #endif
             topology = nil; return false
         }
-        if topology != value.topology || inputRequired != required || value.inputCallbacks < input || value.outputCallbacks < output {
-            topology = value.topology; inputRequired = required; since = now
+        if topology != value.topology || inputRequired != required || outputRequired != requiredOutput || value.inputCallbacks < input || value.outputCallbacks < output {
+            topology = value.topology; inputRequired = required; outputRequired = requiredOutput; since = now
             input = value.inputCallbacks; output = value.outputCallbacks
             inputAdvanced = false; outputAdvanced = false; inputProgress = now; outputProgress = now
 #if DEBUG
@@ -273,14 +301,14 @@ struct GuestStartupAudioStability {
             now >= progress + callback.freshness ||
                 (callback.uptime > 0 && now >= callback.uptime + callback.freshness)
         }
-        if stale(value.outputCallback, progress: outputProgress) ||
+        if (requiredOutput && stale(value.outputCallback, progress: outputProgress)) ||
             (required && stale(value.inputCallback, progress: inputProgress)) {
 #if DEBUG
             lastDecision = "callbackStale"
 #endif
             topology = nil; return false
         }
-        let ready = now - since >= window && outputAdvanced && (!required || inputAdvanced)
+        let ready = now - since >= window && (!requiredOutput || outputAdvanced) && (!required || inputAdvanced)
 #if DEBUG
         lastDecision = ready ? "ready" : "stabilizing"
 #endif

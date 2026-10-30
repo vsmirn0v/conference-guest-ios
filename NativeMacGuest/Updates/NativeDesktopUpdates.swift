@@ -4,6 +4,16 @@ import Combine
 import Sparkle
 import SwiftUI
 
+@MainActor struct NativeDesktopUpdateMediaGate {
+    var claimIfDrained: (UUID) -> Bool
+    var drain: (UUID) async -> Bool
+    var release: (UUID) -> Void
+    static var live: Self { .init(
+        claimIfDrained: { NativeDesktopForegroundMedia.shared.prepareForUpdateIfDrained($0) },
+        drain: { await NativeDesktopForegroundMedia.shared.prepareForUpdate($0) },
+        release: { NativeDesktopForegroundMedia.shared.cancelUpdatePreparation($0) }) }
+}
+
 /// Direct-distribution only. Meeting admission and Sparkle callbacks share MainActor.
 @MainActor final class NativeDesktopUpdates: NSObject, ObservableObject, SPUUpdaterDelegate {
     let safety: NativeUpdateSafety
@@ -20,10 +30,13 @@ import SwiftUI
     private var stage2Requested = false
     private var cycleActive = false
     private var cycleEpoch = UUID()
+    private var mediaPreparedForInstall = false
+    private var mediaPreparation: Task<Bool, Never>?
+    private let mediaGate: NativeDesktopUpdateMediaGate
     var mayStartMeeting: Bool { safety.mayStartMeeting }
 
-    init(safety: NativeUpdateSafety) {
-        self.safety = safety
+    init(safety: NativeUpdateSafety, mediaGate: NativeDesktopUpdateMediaGate? = nil) {
+        self.safety = safety; self.mediaGate = mediaGate ?? .live
         super.init()
         driver = MeetingSafeUpdateDriver(owner: self)
         updater = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: driver, delegate: self)
@@ -56,7 +69,9 @@ import SwiftUI
         }
     }
     private func reserve() -> Bool {
-        guard cycleActive else { return false }
+        guard cycleActive, !busy() else { return false }
+        if !mediaPreparedForInstall { mediaPreparedForInstall = mediaGate.claimIfDrained(cycleEpoch) }
+        guard mediaPreparedForInstall else { return false }
         do { return try safety.reserveInstallation(busy: busy()) }
         catch { status = error.localizedDescription; return false }
     }
@@ -70,14 +85,30 @@ import SwiftUI
     func installChoice(_ choice: SPUUserUpdateChoice, reply: @escaping (SPUUserUpdateChoice) -> Void) {
         guard cycleActive else { return }
         guard choice == .install else { reply(choice); return }
-        if reserve() { reply(choice) }
-        else {
+        if reserve() { reply(choice); return }
+        if busy() {
             let epoch = cycleEpoch
             installWhenIdle = { [weak self] in
                 guard let self, self.cycleActive, self.cycleEpoch == epoch else { return }
                 self.installChoice(choice, reply: reply)
             }
             status = "The update will install after the meeting ends."
+            return
+        }
+        let epoch = cycleEpoch
+        Task { @MainActor [weak self] in
+            guard let self, cycleActive, cycleEpoch == epoch else { return }
+            if mediaPreparation == nil {
+                mediaPreparation = Task { await self.mediaGate.drain(epoch) }
+            }
+            let clean = await mediaPreparation?.value == true
+            guard cycleActive, cycleEpoch == epoch else { return }
+            mediaPreparation = nil; mediaPreparedForInstall = clean
+            guard clean, reserve() else {
+                status = "Media could not stop safely for the update. Leave any private check and try again."
+                reply(.dismiss); return
+            }
+            reply(choice)
         }
     }
     func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
@@ -98,15 +129,16 @@ import SwiftUI
         guard cycleActive, prepareChoice(item) else { return true }
         let epoch = cycleEpoch
         installWhenIdle = { [weak self] in
-            guard let self, self.cycleActive, self.cycleEpoch == epoch, self.reserve() else { return }; action()
+            guard let self, self.cycleActive, self.cycleEpoch == epoch else { return }
+            self.installChoice(.install) { if $0 == .install { action() } }
         }
         Task { @MainActor [weak self] in self?.activityChanged() }
         return true
     }
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
         status = error.localizedDescription
-        invalidateCycle()
         if !stage2Requested { safety.releaseReservationAfterVerifiedStage2NotRequested() }
+        invalidateCycle()
     }
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
         invalidateCycle()
@@ -114,7 +146,16 @@ import SwiftUI
         if error == nil, !prepared { status = "Updates install only when no meeting is active." }
     }
     private func invalidateCycle() {
+        let epoch = cycleEpoch
         cycleActive = false; cycleEpoch = UUID(); installWhenIdle = nil; deferred.removeAll(); driver.invalidate()
+        if !safety.installationReserved {
+            mediaPreparedForInstall = false
+            // A native operation may outlive cancellation. Release its exclusion
+            // only after that retained drain task has actually completed.
+            let pending = mediaPreparation; mediaPreparation = nil
+            if let pending { Task { _ = await pending.value; self.mediaGate.release(epoch) } }
+            else { mediaGate.release(epoch) }
+        }
     }
     func clearPreparedIfSafe() {
         do { if try safety.clearPreparedUpdateIfSafe() { prepared = false } }

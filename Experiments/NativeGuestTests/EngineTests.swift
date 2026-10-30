@@ -44,6 +44,8 @@ import CoreMedia
             let audio = GuestSyntheticAudio(); defer { precondition(audio.terminateDevice()) }
             let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
             let peer = try GuestPeer(target: .subscriber, factory: factory); defer { peer.close() }
+            var clock: TimeInterval = 100
+            peer.iceClockForTesting = { clock }
             peer.setActiveIncomingMediaDemand(true)
             var delays: [UInt64] = [], releases: [() -> Void] = [], failures = 0, finished = 0
             var diagnostics: [[String: Any]] = []
@@ -79,6 +81,7 @@ import CoreMedia
                 releases[1](); await drain { finished == 2 }
                 precondition(failures == 1)
             } else {
+                if action == "timeout" { clock = 110 }
                 releases[0](); await drain { finished == 1 }
                 precondition(failures == (action == "timeout" ? 1 : 0))
             }
@@ -95,6 +98,7 @@ import CoreMedia
         try await exercise("subscriber-active-demand") { engine in
             _ = try engine.prepareJoinForTesting()
             let peer = try engine.prepareSubscriberForTesting()
+            peer.iceClockForTesting = { 100 }
             var subscribed = Set<String>(), delays: [UInt64] = [], releases: [() -> Void] = []
             var failures = 0, finished = 0
             engine.mediaNotifyForTesting = { command in
@@ -166,7 +170,7 @@ import CoreMedia
             let failed = Signal()
             peer.iceWaitForTesting = { delays.append($0) }
             peer.onFailure = { _ in failures += 1; failed.fire() }
-            if state == .disconnected {
+            if target == .subscriber {
                 try await guestAwait { done in
                     peer.iceEventFinishedForTesting = { done(.success(())) }
                     peer.peerConnection(peer.connection, didChange: LKRTCIceConnectionState.connected)
@@ -221,7 +225,7 @@ import CoreMedia
             peer.iceEventFinishedForTesting = { done(.success(())) }
             peer.peerConnection(peer.connection, didChange: LKRTCIceConnectionState.failed)
         }
-        precondition(failures == 1 && observed.count == 33, "Existing ICE failed behavior remains unchanged")
+        precondition(failures == 0 && observed.count == 33, "An unused initial subscriber failure remains diagnostic and provisional")
         let (event, fields) = observed.last!
         precondition(event == "ice-failure-diagnostics" && Set(fields.keys) == [
             "peerID", "target", "reason", "state", "generatedCandidates", "gatheringErrors", "gatheringErrorsLogged",
@@ -236,7 +240,7 @@ import CoreMedia
                      fields["addedRemoteCandidates"] as? Int == 0)
         peer.close()
         try await gatheringError(); try await generated()
-        precondition(observed.count == 33 && failures == 1, "Late callbacks on retired peer add no diagnostics or failures")
+        precondition(observed.count == 33 && failures == 0, "Late callbacks on retired peer add no diagnostics or failures")
     }
 
     private static func failedChecklistPrivacy() {

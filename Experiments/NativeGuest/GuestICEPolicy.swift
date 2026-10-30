@@ -47,4 +47,23 @@ enum GuestICEPolicy: String {
               !rest[0].contains(where: { "/@#".contains($0) }) else { return false }
         return true
     }
+#if DEBUG
+    /// Diagnostic metadata only. Never return raw URLs, userinfo or credentials.
+    static func diagnosticTurnServer(_ text: String) -> [String: Any]? {
+        guard let transport = ["tcp", "udp"].first(where: { isExplicitRelay(text, transport: $0) }),
+              let colon = text.firstIndex(of: ":") else { return nil }
+        let scheme = text[..<colon].lowercased()
+        let authority = text[text.index(after: colon)...].split(separator: "?", maxSplits: 1,
+            omittingEmptySubsequences: false)[0]
+        guard !authority.contains("%"), !authority.hasSuffix(":"),
+              let components = URLComponents(string: "\(scheme)://\(authority)"),
+              components.user == nil, components.password == nil, components.path.isEmpty,
+              components.query == nil, components.fragment == nil,
+              let parsedHost = components.host, !parsedHost.isEmpty else { return nil }
+        let host = parsedHost.hasPrefix("[") && parsedHost.hasSuffix("]") ? String(parsedHost.dropFirst().dropLast()) : parsedHost
+        guard !host.contains("@"), components.port.map({ (1...65_535).contains($0) }) ?? true else { return nil }
+        return ["scheme": scheme, "host": host.lowercased(), "port": components.port.map { $0 as Any } ?? NSNull(),
+                "transport": transport]
+    }
+#endif
 }

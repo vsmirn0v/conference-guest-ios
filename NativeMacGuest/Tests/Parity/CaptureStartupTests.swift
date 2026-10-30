@@ -3,7 +3,40 @@ import AVFoundation
 import XCTest
 @testable import RockNativeDesktop
 
+@MainActor private final class CanceledPrivateAudioFixture: NativeDesktopPrivateAudioOwner {
+    var privateInputLevel: Float? { nil }
+    var starts = 0, stops = 0
+    var stopSucceeds = true
+    func startPrivateCheck() async -> Bool { starts += 1; return true }
+    func closePrivateCheck() async -> Bool { stops += 1; return stopSucceeds }
+}
+
 @MainActor final class CaptureStartupTests: XCTestCase {
+    func testCanceledPrivateCreationCannotReleaseReadinessAfterUnprovenShutdown() async throws {
+        for stopSucceeds in [false, true] {
+            let audio = CanceledPrivateAudioFixture(); audio.stopSucceeds = stopSucceeds
+            var created: CheckedContinuation<Void, Never>?, resumes: [Bool] = [], creations = 0
+            let model = NativeDesktopDeviceModel(discoverCameras: { [] }, authorizeAudio: { true }, createAudioOwner: {
+                creations += 1; await withCheckedContinuation { created = $0 }; return audio
+            }, suspendReadiness: { { resumes.append($0) } })
+            model.startAudioCheck(live: false, start: nil, stop: nil, level: nil)
+            for _ in 0..<100 { if created != nil { break }; await Task.yield() }
+            XCTAssertNotNil(created)
+            let stopping = Task { await model.stopAudioCheck() }
+            for _ in 0..<100 { if !model.checkingAudio { break }; await Task.yield() }
+            created?.resume(); created = nil
+            let clean = await stopping.value
+            XCTAssertEqual(clean, stopSucceeds)
+            XCTAssertEqual(resumes, [stopSucceeds], "An unproven late shutdown must keep the physical exclusion quarantined")
+            XCTAssertEqual(audio.starts, 0, "Canceled creation cannot start input capture")
+            if !stopSucceeds {
+                model.startAudioCheck(live: false, start: nil, stop: nil, level: nil)
+                for _ in 0..<3 { await Task.yield() }
+                XCTAssertEqual(creations, 1, "A failed private owner cannot be replaced")
+            }
+            _ = await model.stop()
+        }
+    }
     func testKnownPermissionStatesDoNotPrompt() async throws {
         var prompts = 0
         for status in [AVAuthorizationStatus.authorized, .denied, .restricted] {

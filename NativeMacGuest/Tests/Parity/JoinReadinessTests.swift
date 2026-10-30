@@ -7,8 +7,10 @@ import XCTest
     NativeDesktopPowerMonitor(read: { .init(pluggedIn: pluggedIn, lowPowerMode: lowPowerMode) }, observe: { _ in {} })
 }
 
-@MainActor func joinTestCameraMetadata() -> NativeDesktopCameraMetadataPreparation {
-    .init(authorized: { true }, read: { _ in })
+@MainActor func joinTestCameraMetadata() async -> NativeDesktopCameraMetadataPreparation {
+    let metadata = NativeDesktopCameraMetadataPreparation(authorized: { true }, read: { _ in })
+    _ = try? await metadata.prepare(eligible: { true }, deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID"))
+    return metadata
 }
 
 @MainActor final class JoinPrimeCapture: GuestCameraCapture {
@@ -67,6 +69,18 @@ import XCTest
         XCTAssertEqual(policy.microphone, .whenPluggedIn); XCTAssertEqual(policy.camera, .whenPluggedIn)
         XCTAssertNil(defaults.object(forKey: NativeDesktopJoinReadinessPolicy.microphoneKey))
         XCTAssertNil(defaults.object(forKey: NativeDesktopJoinReadinessPolicy.cameraKey))
+    }
+    func testMetadataInvalidationDuringReadCannotAdvertisePreparedDevice() async throws {
+        var release: CheckedContinuation<Void, Never>?
+        let metadata = NativeDesktopCameraMetadataPreparation(authorized: { true }, read: { _ in
+            await withCheckedContinuation { release = $0 }
+        })
+        let warm = Task { try await metadata.prepare(eligible: { true }, deviceID: "camera") }
+        try await spin { release != nil }
+        XCTAssertFalse(metadata.isPrepared(deviceID: "camera"))
+        metadata.invalidate(); release?.resume(); release = nil
+        _ = try await warm.value
+        XCTAssertFalse(metadata.isPrepared(deviceID: "camera"), "A disconnected/changed camera cannot be validated by an older read")
     }
     func testUnauthorizedJoinCannotCreateSourceOrAcquireCamera() async throws {
         let lease = NativeDesktopCameraLease()
