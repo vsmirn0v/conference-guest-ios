@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "38",
+  "channel": "beta",
+  "sourceCommit": "f6c26c8",
+  "changes": [
+    "Private microphone check starts reliably and shows speech level (ad5f25e)",
+    "Side panels float over the stage; Share popover starts a screen/window or image share after one picker; live share banner and red Stop share; Presenter studio Annotate/Arrange with Close-up zoom replacing Crop; app-only meeting volume in the Sound popover and mini meeting (f6c26c8)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-38-arm64.dmg",
+    "sha256": "0474a161c46da9432f0b3f226bb462121456036ee03fc0111138f66ea6bfdc38",
+    "length": 15666874
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-38-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 38",
+    "live meeting with the new Share popover, banner, Presenter studio and meeting volume"
+  ]
+}
