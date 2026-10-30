@@ -46,13 +46,25 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
     private var audioStopping: Task<Bool, Never>?
     private var discovery: Task<Void, Never>?
     static func stopPrivatePreview() async -> Bool { await activePreview?.stop() ?? true }
+    /// Live camera capture conflicts only with the private camera preview; a
+    /// running private microphone check keeps going.
+    static func stopPrivateCameraPreview() async -> Bool { await activePreview?.stopCamera() ?? true }
+    /// Linear RMS to a -60...0 dBFS meter: speech (about -30...-20 dBFS) fills half
+    /// to two thirds of the bar instead of 3-10%.
+    static func meterLevel(rms: Float?) -> Float {
+        guard let rms, rms.isFinite, rms > 0 else { return 0 }
+        return min(1, max(0, (20 * log10(rms) + 60) / 60))
+    }
     init(discoverCameras: @escaping @Sendable () -> [AVCaptureDevice] = { AVCaptureDevice.devices(for: .video) },
          authorizeAudio: (() async throws -> Bool)? = nil,
          createAudioOwner: (() async throws -> any NativeDesktopPrivateAudioOwner)? = nil,
          suspendReadiness: (() async throws -> ((Bool) -> Void))? = nil) {
         self.authorizeAudio = authorizeAudio ?? { try await GuestCaptureAuthorization.request(.audio) }
         self.createAudioOwner = createAudioOwner ?? {
-            try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, profile: .saved, privateCheckOnly: true)
+            // Same native setup as the meeting owner: without its media context the
+            // M156 audio engine blocks in start-recording (measured > 8 s, no buffers).
+            try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, profile: .saved,
+                                              privateCheckOnly: true, exclusive: true)
         }
         self.suspendReadiness = suspendReadiness ?? {
             let token = try await NativeDesktopMediaService.shared.suspend()
@@ -106,7 +118,7 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
                 }
                 guard audioGeneration == token, !Task.isCancelled else { return }
                 while audioGeneration == token, !Task.isCancelled {
-                    audioLevel = min(1, max(0, audioOwner?.privateInputLevel ?? level?() ?? 0))
+                    audioLevel = Self.meterLevel(rms: audioOwner?.privateInputLevel ?? level?())
                     try await Task.sleep(nanoseconds: 100_000_000)
                 }
             } catch {
@@ -196,7 +208,13 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
     }
     @discardableResult func stop() async -> Bool {
         let audioClean = await stopAudioCheck()
-        if let stopping { let cameraClean = await stopping.value; return cameraClean && audioClean && !cleanupFailed }
+        let cameraClean = await stopCamera()
+        cleanupFailed = cleanupFailed || !audioClean
+        return cameraClean && audioClean && !cleanupFailed
+    }
+    /// Stops only the private camera preview.
+    @discardableResult func stopCamera() async -> Bool {
+        if let stopping { return await stopping.value && !cleanupFailed }
         generation = UUID(); previewTask?.cancel(); previewTask = nil
         previewTrack = nil; previewing = false
         let old = preview, oldFactory = factory, lease = cameraLease
@@ -207,14 +225,14 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
         }
         stopping = stop
         let clean = await stop.value
-        stopping = nil; cleanupFailed = cleanupFailed || !clean || !audioClean
+        stopping = nil; cleanupFailed = cleanupFailed || !clean
         if let lease {
             if clean { NativeDesktopCameraLease.shared.release(lease) }
             else { NativeDesktopCameraLease.shared.reportFailedStop(lease) }
         }
-        if Self.activePreview === self { Self.activePreview = nil }
+        if !checkingAudio, Self.activePreview === self { Self.activePreview = nil }
         if !clean { error = L("Camera preview could not stop. Quit and reopen the app before starting camera video.") }
-        return clean && audioClean && !cleanupFailed
+        return clean && !cleanupFailed
     }
     deinit { discovery?.cancel() }
 }
@@ -288,7 +306,7 @@ struct NativeDesktopDeviceSettings: View {
             }
             if let error = model.error { Text(error).foregroundStyle(.red) }
         }.onDisappear { Task { await model.stop() } }
-            .onChange(of: liveTrack != nil) { if $0 { Task { await model.stop() } } }
+            .onChange(of: liveTrack != nil) { if $0 { Task { await model.stopCamera() } } }
     }
     private func readinessPicker(_ title: String, selection: Binding<NativeDesktopMediaReadinessMode>) -> some View {
         Picker(title, selection: selection) {

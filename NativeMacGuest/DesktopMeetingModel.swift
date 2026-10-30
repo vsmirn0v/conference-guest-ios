@@ -486,7 +486,7 @@ import UniformTypeIdentifiers
                     }
                     try await self.presenterStorage?.releasePrivateCameraBeforeLiveCapture()
                 }
-                if enabled, !(await NativeDesktopDeviceModel.stopPrivatePreview()) { throw NativeDesktopRTCError.cleanupFailed }
+                if enabled, !(await NativeDesktopDeviceModel.stopPrivateCameraPreview()) { throw NativeDesktopRTCError.cleanupFailed }
                 if enabled {
                     try Task.checkCancellation()
                     guard command == self.cameraCommand, !self.closed, !self.transferHeld else { throw CancellationError() }

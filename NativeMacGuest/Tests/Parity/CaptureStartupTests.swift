@@ -37,6 +37,33 @@ import XCTest
             _ = await model.stop()
         }
     }
+    func testPrivateMicrophoneMeterUsesDecibelScale() {
+        XCTAssertEqual(NativeDesktopDeviceModel.meterLevel(rms: nil), 0)
+        XCTAssertEqual(NativeDesktopDeviceModel.meterLevel(rms: 0), 0)
+        XCTAssertEqual(NativeDesktopDeviceModel.meterLevel(rms: .nan), 0)
+        XCTAssertEqual(NativeDesktopDeviceModel.meterLevel(rms: 0.001), 0, accuracy: 0.001, "-60 dBFS is the floor")
+        XCTAssertEqual(NativeDesktopDeviceModel.meterLevel(rms: 1), 1, accuracy: 0.001)
+        XCTAssertEqual(NativeDesktopDeviceModel.meterLevel(rms: 2), 1, "Clipped input never exceeds the bar")
+        // Measured on Mac16,12: room noise ~0.003 RMS, nearby speech 0.03...0.13 RMS.
+        XCTAssertLessThan(NativeDesktopDeviceModel.meterLevel(rms: 0.003), 0.2)
+        XCTAssertGreaterThan(NativeDesktopDeviceModel.meterLevel(rms: 0.03), 0.45, "Speech fills about half the bar")
+    }
+    func testCameraOnlyStopKeepsPrivateMicrophoneCheckRunning() async throws {
+        let audio = CanceledPrivateAudioFixture()
+        var resumes: [Bool] = []
+        let model = NativeDesktopDeviceModel(discoverCameras: { [] }, authorizeAudio: { true }, createAudioOwner: { audio },
+            suspendReadiness: { { resumes.append($0) } })
+        model.startAudioCheck(live: false, start: nil, stop: nil, level: nil)
+        for _ in 0..<200 { if audio.starts == 1 { break }; await Task.yield() }
+        XCTAssertEqual(audio.starts, 1)
+        let cameraClean = await model.stopCamera()
+        XCTAssertTrue(cameraClean)
+        XCTAssertTrue(model.checkingAudio, "Live camera capture must not cancel the private microphone check")
+        XCTAssertEqual(audio.stops, 0); XCTAssertTrue(resumes.isEmpty)
+        let clean = await model.stop()
+        XCTAssertTrue(clean); XCTAssertFalse(model.checkingAudio)
+        XCTAssertEqual(audio.stops, 1); XCTAssertEqual(resumes, [true])
+    }
     func testKnownPermissionStatesDoNotPrompt() async throws {
         var prompts = 0
         for status in [AVAuthorizationStatus.authorized, .denied, .restricted] {
