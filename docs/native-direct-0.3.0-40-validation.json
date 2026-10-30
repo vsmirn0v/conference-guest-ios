@@ -1,0 +1,28 @@
+{
+  "version": "0.3.0",
+  "build": "40",
+  "channel": "stable",
+  "alsoBeta": true,
+  "sourceCommit": "cea8caa",
+  "changes": [
+    "Menu bar icon drawn from the app icon swirl, with a center dot during a meeting (cea8caa)",
+    "Promoted to stable: includes betas 34-39 (camera energy, Share redesign, meeting and per-speaker volume, mic check fix)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-40-arm64.dmg",
+    "sha256": "173611090209382be4f5517797845ca85be6bdee66ac12acff21fea5bd43dacd",
+    "length": 15704797
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 40",
+    "menu bar icon on a physical menu bar"
+  ]
+}
