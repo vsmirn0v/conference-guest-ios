@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "36",
+  "channel": "beta",
+  "sourceCommit": "036183b",
+  "changes": [
+    "Mac View menu: Show (All video / Screen shares / Audio only) and Layout (Automatic / Gallery / Focus), matching iOS (036183b)",
+    "Screen shares receives screens without cameras on guest and Rock engines; hidden for Telemost and TrueConf"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-36-arm64.dmg",
+    "sha256": "81ec0a06ce323281e06bde6324ae4083b2a749469979521273feecbe141b406b",
+    "length": 15620339
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-25-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-36-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 36",
+    "live meeting with a remote screen share in Screen shares mode"
+  ]
+}
