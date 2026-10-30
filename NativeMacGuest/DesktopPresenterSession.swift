@@ -46,7 +46,9 @@ extension NativeDesktopShareCapture: NativeDesktopPresenterCapture {}
 /// independent: scene edits and camera preparation cannot publish a track.
 @MainActor final class NativeDesktopPresenterSession: ObservableObject {
     enum Source: String { case canvas, screen }
-    enum Tool: String, CaseIterable { case move, draw, crop }
+    /// Studio modes: Arrange (move) and Annotate (draw). Close-up reframing is
+    /// part of Arrange, so there is no separate crop tool.
+    enum Tool: String, CaseIterable { case move, draw }
     @Published var scene = PresenterScene() { didSet { capture?.setScene(scene) } }
     @Published var encodingPreference = ShareEncodingPreference.saved() {
         didSet { encodingPreference.save(in: preferences) }

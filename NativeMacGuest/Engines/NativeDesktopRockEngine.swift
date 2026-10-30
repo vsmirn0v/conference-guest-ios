@@ -45,6 +45,7 @@ struct NativeRockLiveMediaEvidence {
     private var displayName = ""
     private var revision = UUID()
     private var playoutIntent = true
+    private var meetingVolume = 1.0
     private let subscriptions = MediaConfigurationCoordinator<ObjectIdentifier, NativeRockTrackDemand>()
     private var subscriptionFailure: Error?
     private var visibleParticipantIDs: Set<String>?
@@ -206,15 +207,25 @@ struct NativeRockLiveMediaEvidence {
         let room = try connectedRoom(), token = revision, previous = playoutIntent
         playoutIntent = enabled
         do {
-            for publication in room.remoteParticipants.values.flatMap({ $0.audioTracks }) {
-                if let track = publication.track as? RemoteAudioTrack {
-                    await Task.detached { track.volume = enabled ? 1 : 0 }.value
-                }
-            }
+            await applyVolume(room)
             try await subscribe(room)
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
             refresh(room)
         } catch { if revision == token { playoutIntent = previous }; throw error }
+    }
+    func setPlayoutVolume(_ volume: Double) async {
+        meetingVolume = volume.isFinite ? min(1, max(0, volume)) : 1
+        if let room { await applyVolume(room) }
+    }
+    /// Newly subscribed tracks start at full level, so every subscription reapplies it.
+    private func applyVolume(_ room: Room) async {
+        for publication in room.remoteParticipants.values.flatMap({ $0.audioTracks }) {
+            // Read per track so an overlapping later change always wins.
+            let volume = playoutIntent ? meetingVolume : 0
+            if let track = publication.track as? RemoteAudioTrack {
+                await Task.detached { track.volume = volume }.value
+            }
+        }
     }
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws {
         try await setVisibleParticipantIDs(ids, focusedParticipantID: focusedParticipantID, cameras: true)
@@ -445,7 +456,12 @@ struct NativeRockLiveMediaEvidence {
     nonisolated func room(_ room: Room, participant: Participant, trackPublication: TrackPublication, didUpdateIsMuted isMuted: Bool) { changed(room) }
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didPublishTrack publication: RemoteTrackPublication) { changed(room) }
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didUnpublishTrack publication: RemoteTrackPublication) { changed(room) }
-    nonisolated func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) { changed(room) }
+    nonisolated func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) {
+        if publication.kind == .audio {
+            Task { @MainActor [weak self] in if let self, self.room === room { await applyVolume(room) } }
+        }
+        changed(room)
+    }
     nonisolated func room(_ room: Room, participant: RemoteParticipant, didUnsubscribeTrack publication: RemoteTrackPublication) { changed(room) }
     nonisolated private func changed(_ room: Room) { Task { @MainActor [weak self] in self?.refresh(room) } }
     nonisolated func room(_ room: Room, didUpdateConnectionState state: ConnectionState, from oldState: ConnectionState) {

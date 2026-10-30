@@ -1325,3 +1325,27 @@
 
 "Prepares camera information while the app is active. Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view." = "Подготавливает сведения о камере, пока приложение активно. Ненадолго подготавливает камеру приватно после входа и затем останавливает её. Кадры не передаются. Расходует дополнительную энергию и может ненадолго включить индикатор камеры. Пропускается в режиме «Только звук».";
 "Show" = "Показывать";
+"Meeting volume" = "Громкость встречи";
+"Only this meeting. Your Mac volume doesn’t change." = "Только для этой встречи. Громкость Mac не меняется.";
+"Meeting sound on or off. Use the arrow for meeting volume." = "Включить или выключить звук встречи. Стрелка открывает громкость встречи.";
+"Turn meeting sound off" = "Выключить звук встречи";
+"Turn meeting sound on" = "Включить звук встречи";
+"You’re sharing" = "Вы показываете";
+"Change…" = "Сменить…";
+"Slides or image…" = "Слайды или изображение…";
+"Presenter studio" = "Студия докладчика";
+"Presenter studio…" = "Студия докладчика…";
+"Pick in the macOS picker. Sharing starts right after." = "Выберите в окне macOS — показ начнётся сразу.";
+"Share a picture or an exported slide." = "Покажите картинку или экспортированный слайд.";
+"Draw, arrange your camera and preview privately first." = "Сначала порисуйте, расставьте камеру и проверьте приватно.";
+"Nothing is visible to the meeting until you pick a source." = "Участники ничего не увидят, пока вы не выберете источник.";
+"Open presenter studio" = "Открыть студию докладчика";
+"Studio mode" = "Режим студии";
+"Annotate" = "Рисование";
+"Arrange" = "Расстановка";
+"Hide setup" = "Скрыть настройки";
+"Show setup" = "Показать настройки";
+"Setup" = "Настройки";
+"Drag the camera frame to move it, or its corner to resize. Use − and + to zoom; ⌥-drag inside the frame to reframe." = "Перетащите рамку камеры, чтобы переместить её, или её угол, чтобы изменить размер. Кнопки − и + меняют масштаб; перетаскивание с ⌥ внутри рамки сдвигает кадр.";
+"Close-up" = "Крупный план";
+"Reset" = "Сбросить";

@@ -1327,3 +1327,27 @@
 
 "Prepares camera information while the app is active. Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view." = "Prepares camera information while the app is active. Briefly prepares the camera privately after joining, then stops it. No frames are shared. Uses extra energy and may briefly light the camera indicator. Skipped in Audio only view.";
 "Show" = "Show";
+"Meeting volume" = "Meeting volume";
+"Only this meeting. Your Mac volume doesn’t change." = "Only this meeting. Your Mac volume doesn’t change.";
+"Meeting sound on or off. Use the arrow for meeting volume." = "Meeting sound on or off. Use the arrow for meeting volume.";
+"Turn meeting sound off" = "Turn meeting sound off";
+"Turn meeting sound on" = "Turn meeting sound on";
+"You’re sharing" = "You’re sharing";
+"Change…" = "Change…";
+"Slides or image…" = "Slides or image…";
+"Presenter studio" = "Presenter studio";
+"Presenter studio…" = "Presenter studio…";
+"Pick in the macOS picker. Sharing starts right after." = "Pick in the macOS picker. Sharing starts right after.";
+"Share a picture or an exported slide." = "Share a picture or an exported slide.";
+"Draw, arrange your camera and preview privately first." = "Draw, arrange your camera and preview privately first.";
+"Nothing is visible to the meeting until you pick a source." = "Nothing is visible to the meeting until you pick a source.";
+"Open presenter studio" = "Open presenter studio";
+"Studio mode" = "Studio mode";
+"Annotate" = "Annotate";
+"Arrange" = "Arrange";
+"Hide setup" = "Hide setup";
+"Show setup" = "Show setup";
+"Setup" = "Setup";
+"Drag the camera frame to move it, or its corner to resize. Use − and + to zoom; ⌥-drag inside the frame to reframe." = "Drag the camera frame to move it, or its corner to resize. Use − and + to zoom; ⌥-drag inside the frame to reframe.";
+"Close-up" = "Close-up";
+"Reset" = "Reset";

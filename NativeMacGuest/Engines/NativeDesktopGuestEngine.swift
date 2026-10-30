@@ -62,6 +62,7 @@ private enum NativeDesktopGuestError: LocalizedError {
 
     private var session: GuestSession?
     private var systemAudio: GuestSystemAudio?
+    private var meetingVolume = 1.0
     private let media: NativeDesktopSharedMedia<GuestSystemAudio>
     private let microphoneAuthorized: () -> Bool
     private var room: NativeDesktopSharedMedia<GuestSystemAudio>.Room?
@@ -108,6 +109,7 @@ private enum NativeDesktopGuestError: LocalizedError {
                 _ = await media.detach(room, attempt: attempt, clean: true); throw CancellationError()
             }
             systemAudio = owner
+            _ = owner.setMeetingVolume(meetingVolume)
 #if DEBUG
             let engine = NativeGuestEngine(label: name, systemAudio: owner,
                 icePolicy: diagnosticICEPolicyForTesting, verifyReceivedPixels: false)
@@ -231,6 +233,11 @@ private enum NativeDesktopGuestError: LocalizedError {
         currentNativeEngine?.setStartupPlaybackIntent(enabled)
         try await session.setPlayoutEnabled(enabled)
         try check(token, session: session); refresh(session.snapshot)
+    }
+
+    func setPlayoutVolume(_ volume: Double) async {
+        meetingVolume = volume
+        _ = systemAudio?.setMeetingVolume(volume)
     }
 
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws {

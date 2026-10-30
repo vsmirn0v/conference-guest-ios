@@ -29,6 +29,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         return audio?.factory
     }
     var audio: GuestSystemAudio?
+    private var meetingVolume = 1.0
     var publisher: NativeDesktopRTCPeer?
     var subscriber: NativeDesktopRTCPeer?
     var telemost: TelemostTransport?
@@ -102,6 +103,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
             let owner = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: !quiet, profile: audioProfile)
             guard epoch == attempt, snapshot.phase == .connecting else { _ = await owner.shutdown(); throw CancellationError() }
             audio = owner; admittedAudio = owner
+            _ = owner.setMeetingVolume(meetingVolume)
             try await startConnection(attempt)
             try check(attempt)
             startMeterIfNeeded()
@@ -221,6 +223,10 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
     func stopPrivateAudioCheck() async throws {
         privateAudioCheck = UUID()
         if let audio, !(await audio.endPrivateInputCheck()) { throw NativeDesktopRTCError.cleanupFailed }
+    }
+    func setPlayoutVolume(_ volume: Double) async {
+        meetingVolume = volume
+        _ = audio?.setMeetingVolume(volume)
     }
     func setPlayout(_ enabled: Bool) async throws {
         let attempt = epoch

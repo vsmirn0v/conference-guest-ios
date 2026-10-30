@@ -50,6 +50,20 @@ private final class OutputGainFixture: NSObject {
         XCTAssertEqual(output.gain * unregisteredTrackGain, 0, "The gate protects a receiver absent from the source registry")
     }
 
+    func testMeetingVolumeScalesOnlyAnOpenGateAndSoundOffStaysExactZero() {
+        let gate = GuestSharedPlayoutGate(enabled: true), output = OutputGainFixture()
+        XCTAssertTrue(gate.reset(sound: true)); let epoch = gate.currentEpoch
+        XCTAssertTrue(gate.bind(identity: ObjectIdentifier(output), setGain: output.set))
+        XCTAssertTrue(gate.setVolume(0.4)); XCTAssertEqual(output.gain, 0, "Volume never bypasses startup readiness")
+        XCTAssertTrue(gate.open(expected: epoch)); XCTAssertEqual(output.gain, 0.4)
+        XCTAssertTrue(gate.isOpen(expected: epoch))
+        XCTAssertTrue(gate.setVolume(0.8)); XCTAssertEqual(output.gain, 0.8)
+        XCTAssertTrue(gate.setSound(false, expected: epoch)); XCTAssertEqual(output.gain, 0)
+        XCTAssertTrue(gate.setVolume(0.6)); XCTAssertEqual(output.gain, 0, "Sound off stays an exact zero")
+        XCTAssertTrue(gate.setSound(true, expected: epoch)); XCTAssertEqual(output.gain, 0.6)
+        XCTAssertTrue(gate.setVolume(.nan)); XCTAssertEqual(output.gain, 1)
+    }
+
     func testRequiredOpenFailureRollsBackSourcesAndCanRecoverWithoutDiscardingThem() {
         let gate = GuestSharedPlayoutGate(enabled: true)
         XCTAssertTrue(gate.reset(sound: true))

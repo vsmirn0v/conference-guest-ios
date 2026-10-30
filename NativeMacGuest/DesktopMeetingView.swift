@@ -70,6 +70,8 @@ struct NativeDesktopMeetingView: View {
     let onMini: () -> Void
     var continuation: MeetingContinuationCoordinator? = nil
     @State private var reactionsOpen = false
+    @State private var shareOpen = false
+    @State private var soundOpen = false
     @StateObject private var focusedViewport = NativeDesktopVideoViewport()
     @StateObject private var textFrame = NativeDesktopTextFrame()
     @StateObject private var textSelection = NativeDesktopSharedText()
@@ -81,16 +83,21 @@ struct NativeDesktopMeetingView: View {
         VStack(spacing: 0) {
         if let continuation { NativeDesktopContinuationStatus(coordinator: continuation) }
         GeometryReader { geometry in
-        HStack(spacing: 0) {
+        // Side panels float over the stage: the control bar stays centred on the
+        // window, so opening Chat or Share never moves Mic, Video or Leave.
+        let docked = geometry.size.width >= 1040 ? model.panel : nil
+        let reserved: CGFloat = docked == nil ? 0 : Self.panelWidth + 14
+        ZStack(alignment: .topTrailing) {
             ZStack {
                 Color.black
-                if model.mediaPresentation == .meeting { media.padding(.horizontal, 14)
-                    .padding(.top, model.controlsHidden ? 12 : 70)
+                if model.mediaPresentation == .meeting { media.padding(.leading, 14).padding(.trailing, 14 + reserved)
+                    .padding(.top, (model.controlsHidden ? 12 : 70) + (model.isSharingLive ? 48 : 0))
                     .padding(.bottom, model.controlsHidden ? 12 : (model.showsFocus ? 90 : 160))
                 }
                 if textSelection.isOpen { NativeDesktopSharedTextView(model: textSelection, meetingTools: AnyView(viewAndMoreMenus)) }
                 VStack(spacing: 0) {
                     if !model.controlsHidden && !textSelection.isOpen { header.padding(.horizontal, 18).padding(.top, 10) }
+                    if model.isSharingLive && !textSelection.isOpen { shareBanner.padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { HStack { reactionOverlay; Spacer() }.padding(.leading, 22).padding(.top, 12) }
                     Spacer(minLength: 0)
                     if !model.controlsHidden { controls.padding(.bottom, 18) }
@@ -99,10 +106,16 @@ struct NativeDesktopMeetingView: View {
                     VStack { Spacer(); Button(L("Show controls")) { model.controlsHidden = false }.buttonStyle(.bordered).padding() }
                 }
             }.foregroundStyle(.white)
-            if geometry.size.width >= 1040, let panel = model.panel {
-                inspector(panel).frame(width: 320).background(.regularMaterial)
+            if let docked {
+                inspector(docked).frame(width: Self.panelWidth)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
+                    .padding(.trailing, 14).padding(.top, model.controlsHidden ? 12 : 64)
+                    .padding(.bottom, model.controlsHidden ? 12 : 150)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
-        }
+        }.animation(.easeOut(duration: 0.18), value: docked)
         .sheet(isPresented: Binding(get: { geometry.size.width < 1040 && model.panel != nil }, set: { if !$0 { model.panel = nil } })) {
             if let panel = model.panel { inspector(panel).frame(width: 380, height: 560) }
         }
@@ -114,6 +127,40 @@ struct NativeDesktopMeetingView: View {
         .alert(L("Meeting"), isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button(L("OK")) { model.error = nil }
         } message: { Text(model.error ?? "") }
+    }
+    private static let panelWidth: CGFloat = 320
+    private var shareBanner: some View {
+        HStack(spacing: 10) {
+            Circle().fill(Color.red).frame(width: 8, height: 8)
+            Text(L("You’re sharing")).font(.callout.bold())
+            Text(model.shareSourceTitle).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+            if let start = model.shareStartedAt {
+                TimelineView(.periodic(from: start, by: 1)) { context in
+                    Text(Self.elapsed(since: start, now: context.date)).font(.callout).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+            Divider().frame(height: 16)
+            if model.presenterSharing {
+                Menu(L("Change…")) {
+                    Button(L("Screen or window…")) { model.quickShare() }
+                    Button(L("Slides or image…")) { Task { await chooseShareImage() } }
+                }.menuStyle(.borderlessButton).fixedSize().disabled(model.quickSharePending)
+                Button(L("Studio")) { model.panel = .presenter }.buttonStyle(.plain)
+            }
+            Button(L("Stop sharing")) { Task { await model.endShare() } }
+                .buttonStyle(.borderedProminent).tint(.red).controlSize(.small)
+                .accessibilityIdentifier("share.stop")
+        }.padding(.horizontal, 14).padding(.vertical, 8).nativeMeetingChrome()
+            .accessibilityElement(children: .contain).accessibilityLabel(L("You’re sharing"))
+    }
+    static func elapsed(since start: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        return seconds >= 3600 ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+            : String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+    private func chooseShareImage() async {
+        do { if let data = try await NativeDesktopPresenterImagePicker.choose() { model.quickShare(image: data) } }
+        catch { model.error = error.localizedDescription }
     }
     private var header: some View {
         HStack(spacing: 12) {
@@ -155,8 +202,32 @@ struct NativeDesktopMeetingView: View {
                 controlButton(model.snapshot.cameraOn ? "video.fill" : "video.slash", L("Video"), selected: model.snapshot.cameraOn, pending: model.cameraStarting) { model.toggleCamera() }
                     .help(model.cameraStarting ? L("Starting camera. Click to cancel.") : L("Video"))
                     .contextMenu { Button(L("Camera settings")) { model.panel = .studio } }
-                controlButton("rectangle.on.rectangle", L("Share"), selected: model.snapshot.sharing || model.sharingPending) { togglePanel(.presenter) }
-                controlButton(model.snapshot.playoutOn ? "speaker.wave.2.fill" : "speaker.slash", L("Sound"), selected: model.snapshot.playoutOn) { model.togglePlayout() }
+                if model.isSharingLive || model.sharingPending {
+                    controlButton("stop.circle.fill", L("Stop share"), selected: false, destructive: true) { Task { await model.endShare() } }
+                        .help(L("Stop sharing")).accessibilityIdentifier("share.control-stop")
+                } else {
+                    controlButton("rectangle.on.rectangle", L("Share"), selected: shareOpen, pending: model.quickSharePending) { shareOpen.toggle() }
+                        .accessibilityIdentifier("share.control")
+                        .popover(isPresented: $shareOpen, arrowEdge: .top) {
+                            NativeDesktopSharePopover(model: model, chooseImage: { Task { await chooseShareImage() } }, close: { shareOpen = false })
+                        }
+                }
+                controlButton(model.soundSymbol, L("Sound"), selected: model.snapshot.playoutOn) { model.togglePlayout() }
+                    .help(L("Meeting sound on or off. Use the arrow for meeting volume."))
+                    .overlay(alignment: .topTrailing) {
+                        Button { soundOpen.toggle() } label: {
+                            Image(systemName: "chevron.up").font(.system(size: 9, weight: .bold)).frame(width: 18, height: 18).contentShape(Rectangle())
+                        }.buttonStyle(.plain).help(L("Meeting volume")).accessibilityLabel(L("Meeting volume"))
+                            .popover(isPresented: $soundOpen, arrowEdge: .top) {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    Text(L("Meeting volume")).font(.headline)
+                                    NativeDesktopMeetingVolume(model: model)
+                                    Text(L("Only this meeting. Your Mac volume doesn’t change.")).font(.caption).foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }.padding(16).frame(width: 280)
+                            }
+                    }
+                    .contextMenu { Button(L("Meeting volume")) { soundOpen = true } }
                 controlButton("face.smiling", L("Reactions"), selected: reactionsOpen) { reactionsOpen.toggle() }
                     .disabled(!model.canReact).popover(isPresented: $reactionsOpen, arrowEdge: .bottom) { reactionPicker }
                 Divider().frame(height: 34).padding(.horizontal, 6)
@@ -195,7 +266,7 @@ struct NativeDesktopMeetingView: View {
                     Button(L("Conversation")) { togglePanel(.conversation) }
                     Button(L("Mini meeting"), action: onMini)
                     Button(L("Camera & sound")) { togglePanel(.studio) }
-                    Button(L("Share")) { togglePanel(.presenter) }
+                    Button(L("Presenter studio")) { togglePanel(.presenter) }
                     Button(L("Reconnect")) { model.reconnect() }
                     Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
                     Button(L("Hide controls")) { model.controlsHidden = true }
@@ -304,7 +375,7 @@ struct NativeDesktopMeetingView: View {
     }
     @ViewBuilder private func inspector(_ panel: NativeDesktopMeetingModel.Panel) -> some View {
         VStack(spacing: 0) {
-            HStack { Text(panel == .presenter ? L("Share") : L(panel.rawValue)).font(.headline); Spacer(); Button { model.panel = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).help(L("Close")) }.padding(18)
+            HStack { Text(panel == .presenter ? L("Presenter studio") : L(panel.rawValue)).font(.headline); Spacer(); Button { model.panel = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).help(L("Close")) }.padding(18)
             Divider()
             switch panel {
             case .participants:
@@ -504,9 +575,64 @@ struct NativeDesktopMiniMeeting: View {
             HStack {
                 Button { model.toggleMicrophone() } label: { Image(systemName: model.snapshot.microphoneOn ? "mic.fill" : "mic.slash") }.help(L("Mute or unmute"))
                 NativeDesktopLevelMeter(level: model.snapshot.microphoneLevel ?? 0)
-                Spacer(); Button(L("Show meeting"), action: onRestore)
+                NativeDesktopMeetingVolume(model: model, compact: true).frame(minWidth: 70, maxWidth: 150)
+                Spacer(minLength: 4); Button(L("Show meeting"), action: onRestore)
                 Button { Task { await model.onLeave?() } } label: { Image(systemName: "phone.down.fill").foregroundStyle(.red) }.help(L("Leave"))
             }.padding(10).background(.ultraThinMaterial)
         }
+    }
+}
+
+/// App-only meeting level; the speaker button keeps the existing sound on/off intent.
+struct NativeDesktopMeetingVolume: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    var compact = false
+    private var percent: String { "\(Int((model.meetingVolume * 100).rounded()))%" }
+    var body: some View {
+        HStack(spacing: 8) {
+            Button { model.togglePlayout() } label: { Image(systemName: model.soundSymbol).frame(width: 22) }
+                .buttonStyle(.plain).help(model.snapshot.playoutOn ? L("Turn meeting sound off") : L("Turn meeting sound on"))
+                .accessibilityLabel(L("Sound")).accessibilityValue(model.snapshot.playoutOn ? L("On") : L("Off"))
+            Slider(value: Binding(get: { model.meetingVolume }, set: { model.setMeetingVolume($0, persist: false) }), in: 0...1,
+                   onEditingChanged: { editing in if !editing { model.setMeetingVolume(model.meetingVolume) } })
+                .controlSize(compact ? .mini : .regular)
+                .accessibilityLabel(L("Meeting volume")).accessibilityValue(percent)
+                .accessibilityIdentifier("meeting.volume")
+            if !compact { Text(percent).font(.caption).monospacedDigit().foregroundStyle(.secondary).frame(width: 38, alignment: .trailing) }
+        }.opacity(model.snapshot.playoutOn ? 1 : 0.6)
+    }
+}
+
+/// Two clicks to a live share: Share, then a source. Studio work is optional.
+private struct NativeDesktopSharePopover: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    let chooseImage: () -> Void
+    let close: () -> Void
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L("Share")).font(.headline).padding(.bottom, 4)
+            row("macwindow.on.rectangle", L("Screen or window…"), L("Pick in the macOS picker. Sharing starts right after.")) { close(); model.quickShare() }
+                .accessibilityIdentifier("share.quick-screen")
+            row("photo.on.rectangle", L("Slides or image…"), L("Share a picture or an exported slide.")) { close(); chooseImage() }
+                .accessibilityIdentifier("share.quick-image")
+            row("slider.horizontal.below.rectangle", L("Presenter studio…"), L("Draw, arrange your camera and preview privately first.")) { close(); model.panel = .presenter }
+                .accessibilityIdentifier("share.studio")
+            Divider().padding(.vertical, 6)
+            Toggle(L("Include my camera"), isOn: $model.shareIncludesCamera).accessibilityIdentifier("share.include-camera")
+            Text(L("Nothing is visible to the meeting until you pick a source.")).font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }.padding(16).frame(width: 320)
+    }
+    private func row(_ symbol: String, _ title: String, _ detail: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol).font(.title3).frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.body.weight(.medium))
+                    Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }.padding(8).contentShape(Rectangle())
+        }.buttonStyle(.plain).disabled(!model.connected || model.quickSharePending)
     }
 }

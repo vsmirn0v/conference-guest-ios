@@ -72,6 +72,8 @@ import XCTest
         snapshot.cameraOn = enabled; onState?(snapshot)
     }
     func setPlayout(_ enabled: Bool) async throws { snapshot.playoutOn = enabled; onState?(snapshot) }
+    var volumes: [Double] = []
+    func setPlayoutVolume(_ volume: Double) async { volumes.append(volume) }
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws { snapshot.sharing = track != nil; onState?(snapshot) }
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?) async throws { demands.append((ids, focusedParticipantID)) }
     func setVisibleParticipantIDs(_ ids: Set<String>?, focusedParticipantID: String?, cameras: Bool) async throws {
@@ -993,6 +995,34 @@ private final class DesktopActivitySpy: NSUserActivity {
         engine.screenOnlySupported = false
         XCTAssertEqual(model.availableDisplays, [.all, .audioOnly], "Engines without screen-only reception never offer it")
         _ = await model.leave()
+    }
+    func testMeetingVolumeIsAppOnlyAndRememberedPerService() async throws {
+        let key = "nativeDesktop.meetingVolume." + MeetingEngineKind.guest.rawValue
+        UserDefaults.standard.removeObject(forKey: key)
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        let first = DesktopTestEngine(), model = try model(first)
+        XCTAssertEqual(model.meetingVolumeKey, key)
+        try await model.connect()
+        try await spin { first.volumes == [1] }
+        model.setMeetingVolume(0.35, persist: false)
+        try await spin { first.volumes.last == 0.35 }
+        XCTAssertNil(UserDefaults.standard.object(forKey: key), "A slider drag is not saved until release")
+        XCTAssertTrue(model.snapshot.playoutOn, "Volume never changes the Sound on/off intent")
+        model.setMeetingVolume(0.35)
+        XCTAssertEqual(UserDefaults.standard.double(forKey: key), 0.35)
+        model.setMeetingVolume(7); try await spin { first.volumes.last == 1 }
+        model.setMeetingVolume(0.35)
+        model.togglePlayout(); try await spin { !model.snapshot.playoutOn }
+        XCTAssertEqual(model.soundSymbol, "speaker.slash")
+        XCTAssertEqual(model.meetingVolume, 0.35, "Mute keeps the chosen level for Sound on")
+        _ = await model.leave()
+
+        let second = DesktopTestEngine(), next = try self.model(second)
+        XCTAssertEqual(next.meetingVolume, 0.35)
+        try await spin { second.volumes.first == 0.35 }
+        XCTAssertEqual(NativeDesktopMeetingView.elapsed(since: Date(timeIntervalSince1970: 0), now: Date(timeIntervalSince1970: 75)), "1:15")
+        XCTAssertEqual(NativeDesktopMeetingView.elapsed(since: Date(timeIntervalSince1970: 0), now: Date(timeIntervalSince1970: 3_725)), "1:02:05")
+        _ = await next.leave()
     }
     func testMinimizingSuspendsMediaAndPreservesEditorShellWithoutLeaving() async throws {
         let engine = DesktopTestEngine(), model = try model(engine)

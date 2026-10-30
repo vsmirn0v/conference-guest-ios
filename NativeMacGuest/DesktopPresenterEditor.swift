@@ -19,7 +19,7 @@ private struct NativeDesktopPresenterInspector: View {
                 NativeDesktopPresenterCanvas(session: session.workspace).aspectRatio(session.aspectRatio, contentMode: .fit)
                     .frame(minHeight: 140).clipShape(RoundedRectangle(cornerRadius: 10))
                 NativeDesktopPresenterStatus(session: session)
-                Button { expanded = true } label: { Label(L("Open canvas editor"), systemImage: "arrow.up.left.and.arrow.down.right") }
+                Button { expanded = true } label: { Label(L("Open presenter studio"), systemImage: "arrow.up.left.and.arrow.down.right") }
                     .frame(maxWidth: .infinity).accessibilityIdentifier("presenter.expand")
                 NativeDesktopPresenterControls(session: session.workspace, owner: session)
                 NativeDesktopPresenterPublication(session: session)
@@ -32,15 +32,25 @@ private struct NativeDesktopPresenterInspector: View {
     }
 }
 
+/// Annotate draws; Arrange moves the camera frame. Setup (content, camera and
+/// encoding) is a separate, collapsible column so drawing gets the full canvas.
 struct NativeDesktopPresenterEditor: View {
     @ObservedObject var session: NativeDesktopPresenterSession
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("presenter.setup-visible.v1") private var setupVisible = true
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text(L("Share")).font(.title2.bold())
+            HStack(spacing: 14) {
+                Text(L("Presenter studio")).font(.title2.bold())
                 NativeDesktopPresenterStatus(session: session)
                 Spacer()
+                Picker(L("Studio mode"), selection: Binding(get: { session.workspace.tool }, set: { session.workspace.tool = $0 })) {
+                    Label(L("Annotate"), systemImage: "pencil.tip").tag(NativeDesktopPresenterSession.Tool.draw)
+                    Label(L("Arrange"), systemImage: "rectangle.and.hand.point.up.left").tag(NativeDesktopPresenterSession.Tool.move)
+                }.pickerStyle(.segmented).labelsHidden().frame(width: 230).accessibilityIdentifier("presenter.mode")
+                Button { setupVisible.toggle() } label: { Image(systemName: "sidebar.right") }
+                    .help(setupVisible ? L("Hide setup") : L("Show setup")).accessibilityLabel(L("Setup"))
+                    .accessibilityIdentifier("presenter.setup-toggle")
                 Button(L("Done")) { dismiss() }.keyboardShortcut(.escape, modifiers: [])
             }.padding(18)
             Divider()
@@ -48,25 +58,27 @@ struct NativeDesktopPresenterEditor: View {
                 VStack(spacing: 12) {
                     NativeDesktopPresenterCanvas(session: session.workspace).frame(maxWidth: .infinity, maxHeight: .infinity)
                     HStack {
-                        Picker(L("Canvas tool"), selection: Binding(get: { session.workspace.tool }, set: { session.workspace.tool = $0 })) {
-                            Label(L("Move camera"), systemImage: "move.3d").tag(NativeDesktopPresenterSession.Tool.move)
-                            Label(L("Draw"), systemImage: "pencil.tip").tag(NativeDesktopPresenterSession.Tool.draw)
-                            Label(L("Crop"), systemImage: "crop").tag(NativeDesktopPresenterSession.Tool.crop)
-                        }.pickerStyle(.segmented).frame(maxWidth: 340)
+                        Text(hint).font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         Button { session.workspace.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                             .help(L("Undo")).disabled(!session.workspace.canUndo).keyboardShortcut("z", modifiers: .command)
                         Button { session.workspace.redo() } label: { Image(systemName: "arrow.uturn.forward") }
                             .help(L("Redo")).disabled(!session.workspace.canRedo).keyboardShortcut("z", modifiers: [.command, .shift])
-                        Button { session.workspace.clearDrawings() } label: { Image(systemName: "trash") }
-                            .help(L("Clear drawings")).disabled(session.workspace.scene.strokes.isEmpty)
+                        if session.workspace.tool == .draw {
+                            Button { session.workspace.clearDrawings() } label: { Image(systemName: "trash") }
+                                .help(L("Clear drawings")).disabled(session.workspace.scene.strokes.isEmpty)
+                        }
                     }
-                    Text(hint).font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                     if let error = session.error { Text(error).foregroundStyle(.red).font(.caption).textSelection(.enabled) }
                 }.padding(18).frame(maxWidth: .infinity)
-                Divider()
-                ScrollView { NativeDesktopPresenterControls(session: session.workspace, owner: session).padding(18) }.frame(width: 270)
-            }
+                if setupVisible {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(L("Setup")).font(.headline).padding([.horizontal, .top], 18)
+                        ScrollView { NativeDesktopPresenterControls(session: session.workspace, owner: session).padding(18) }
+                    }.frame(width: 280).transition(.move(edge: .trailing))
+                }
+            }.animation(.easeOut(duration: 0.18), value: setupVisible)
             Divider()
             HStack { NativeDesktopPresenterPublication(session: session) }.padding(18)
         }.frame(minWidth: 860, idealWidth: 1100, minHeight: 600, idealHeight: 760)
@@ -74,10 +86,26 @@ struct NativeDesktopPresenterEditor: View {
     }
     private var hint: String {
         switch session.workspace.tool {
-        case .move: return L("Drag the camera frame to move it. Drag its corner to resize.")
         case .draw: return L("Draw directly on the canvas. Undo removes the last stroke.")
-        case .crop: return L("Choose Instrument, then drag inside the camera frame to adjust its crop.")
+        case .move: return session.workspace.scene.layout == .instrument
+            ? L("Drag the camera frame to move it, or its corner to resize. Use − and + to zoom; ⌥-drag inside the frame to reframe.")
+            : L("Drag the camera frame to move it. Drag its corner to resize.")
         }
+    }
+}
+
+/// One file picker for the Share popover, banner and Setup column.
+enum NativeDesktopPresenterImagePicker {
+    @MainActor static func choose() async throws -> Data? {
+        let panel = NSOpenPanel(); panel.allowedContentTypes = [.image]; panel.allowsMultipleSelection = false; panel.canChooseDirectories = false
+        guard await panel.begin() == .OK, let url = panel.url else { return nil }
+        return try await Task.detached(priority: .userInitiated) {
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let values = try url.resourceValues(forKeys: [.fileSizeKey])
+            guard let size = values.fileSize, size <= 25_000_000 else { throw NativeDesktopPresenterError.invalidImage }
+            return try Data(contentsOf: url, options: .mappedIfSafe)
+        }.value
     }
 }
 
@@ -149,7 +177,7 @@ private struct NativeDesktopPresenterControls: View {
                     Text(L("Person cutout")).tag(PresenterScene.Layout.cutout)
                     Text(L("Camera card")).tag(PresenterScene.Layout.card)
                     Text(L("Beside content")).tag(PresenterScene.Layout.beside)
-                    Text(L("Instrument")).tag(PresenterScene.Layout.instrument)
+                    Text(L("Close-up")).tag(PresenterScene.Layout.instrument)
                 }
                 Toggle(L("Mirror camera"), isOn: Binding(get: { session.cameraMirrored }, set: { session.cameraMirrored = $0 }))
                 HStack {
@@ -168,12 +196,6 @@ private struct NativeDesktopPresenterControls: View {
                             Button(L("Bottom right")) { place(right: true, bottom: true) }
                         }
                     }
-                }
-                if session.scene.layout == .instrument {
-                    Text(L("Crop zoom")).font(.caption)
-                    Slider(value: Binding(get: { session.scene.zoom }, set: { session.scene.zoom = $0 }), in: 1...4,
-                           onEditingChanged: { if $0 { session.beginEdit() } else { session.commitEdit() } })
-                    Button(L("Reset crop")) { session.edit { $0.zoom = 1; $0.focus = CGPoint(x: 0.5, y: 0.5) } }
                 }
             }
             Divider()
@@ -210,16 +232,8 @@ private struct NativeDesktopPresenterControls: View {
     }
     @MainActor private func chooseImage() async {
         let revision = owner.imageImportRevision
-        let panel = NSOpenPanel(); panel.allowedContentTypes = [.image]; panel.allowsMultipleSelection = false; panel.canChooseDirectories = false
-        guard await panel.begin() == .OK, let url = panel.url else { return }
         do {
-            let data = try await Task.detached(priority: .userInitiated) {
-                let accessed = url.startAccessingSecurityScopedResource()
-                defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                let values = try url.resourceValues(forKeys: [.fileSizeKey])
-                guard let size = values.fileSize, size <= 25_000_000 else { throw NativeDesktopPresenterError.invalidImage }
-                return try Data(contentsOf: url, options: .mappedIfSafe)
-            }.value
+            guard let data = try await NativeDesktopPresenterImagePicker.choose() else { return }
             await owner.chooseImage(data, expectedRevision: revision)
         } catch { session.reportError(error) }
     }
@@ -233,6 +247,7 @@ private struct NativeDesktopPresenterCanvas: View {
     @State private var startingFocus: CGPoint?
     @State private var points: [CGPoint] = []
     @State private var dragging = false
+    @State private var reframing = false
     var body: some View {
         GeometryReader { geometry in
             let size = Self.fittedSize(geometry.size, aspect: session.aspectRatio)
@@ -250,11 +265,28 @@ private struct NativeDesktopPresenterCanvas: View {
                     Circle().fill(.orange).frame(width: 14, height: 14)
                         .position(x: (placement.x + placement.width) * size.width, y: (placement.y + placement.height) * size.height)
                         .highPriorityGesture(resizeGesture(size)).accessibilityLabel(L("Resize camera"))
+                    if session.scene.layout == .instrument {
+                        closeUpControls.fixedSize()
+                            .position(x: min(max(70, (placement.x + placement.width / 2) * size.width), size.width - 70),
+                                      y: min((placement.y + placement.height) * size.height + 20, size.height - 16))
+                    }
                 }
             }.frame(width: size.width, height: size.height).clipped()
                 .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
         }.background(.black).accessibilityIdentifier("presenter.canvas")
     }
+    /// Close-up zoom lives on the selected frame instead of a separate Crop tool.
+    private var closeUpControls: some View {
+        HStack(spacing: 10) {
+            Button { zoomCloseUp(by: -0.25) } label: { Image(systemName: "minus") }.help(L("Zoom out")).disabled(session.scene.zoom <= 1)
+            Text("\(Int((session.scene.zoom * 100).rounded()))%").font(.caption).monospacedDigit().frame(minWidth: 38)
+            Button { zoomCloseUp(by: 0.25) } label: { Image(systemName: "plus") }.help(L("Zoom in")).disabled(session.scene.zoom >= 4)
+            Button(L("Reset")) { session.edit { $0.zoom = 1; $0.focus = CGPoint(x: 0.5, y: 0.5) } }
+                .disabled(session.scene.zoom == 1 && session.scene.focus == CGPoint(x: 0.5, y: 0.5))
+        }.buttonStyle(.plain).foregroundStyle(.white).padding(.horizontal, 10).padding(.vertical, 5)
+            .background(.black.opacity(0.65), in: Capsule()).accessibilityIdentifier("presenter.closeup-zoom")
+    }
+    private func zoomCloseUp(by step: CGFloat) { session.edit { $0.zoom = min(4, max(1, $0.zoom + step)) } }
     static func fittedSize(_ available: CGSize, aspect: CGFloat) -> CGSize {
         guard available.width > 0, available.height > 0, aspect.isFinite, aspect > 0 else { return .zero }
         let width = min(available.width, available.height * aspect); return CGSize(width: width, height: width / aspect)
@@ -267,27 +299,28 @@ private struct NativeDesktopPresenterCanvas: View {
                 let start = CGPoint(x: value.startLocation.x / size.width, y: value.startLocation.y / size.height)
                 guard session.tool == .draw || (session.includeCamera && session.scene.layout != .beside && session.scene.placement.rect.contains(start)) else { return }
                 dragging = true; startingPlacement = session.scene.placement; startingFocus = session.scene.focus; points = []
+                reframing = session.tool == .move && session.scene.layout == .instrument && NSEvent.modifierFlags.contains(.option)
                 session.beginEdit()
             }
             switch session.tool {
             case .draw:
                 if points.count < 512 { points.append(point) }; session.scene.draftStroke = points
+            case .move where reframing:
+                guard let focus = startingFocus else { return }
+                let sign: CGFloat = session.scene.cameraMirrored ? -1 : 1
+                session.scene.focus = NativeDesktopPresenterSession.normalized(CGPoint(
+                    x: focus.x - sign * value.translation.width / (size.width * session.scene.placement.width * session.scene.zoom),
+                    y: focus.y - value.translation.height / (size.height * session.scene.placement.height * session.scene.zoom)))
             case .move:
                 if var placement = startingPlacement {
                     placement.x += value.translation.width / size.width; placement.y += value.translation.height / size.height
                     placement.clamp(); session.scene.placement = placement
                 }
-            case .crop:
-                guard session.scene.layout == .instrument, let focus = startingFocus else { return }
-                let sign: CGFloat = session.scene.cameraMirrored ? -1 : 1
-                session.scene.focus = NativeDesktopPresenterSession.normalized(CGPoint(
-                    x: focus.x - sign * value.translation.width / (size.width * session.scene.placement.width * session.scene.zoom),
-                    y: focus.y - value.translation.height / (size.height * session.scene.placement.height * session.scene.zoom)))
             }
         }.onEnded { _ in
             guard dragging else { return }; dragging = false
             if session.tool == .draw { session.appendStroke(points) } else { session.commitEdit() }
-            startingPlacement = nil; startingFocus = nil; points = []
+            startingPlacement = nil; startingFocus = nil; points = []; reframing = false
         }
     }
     private func resizeGesture(_ size: CGSize) -> some Gesture {

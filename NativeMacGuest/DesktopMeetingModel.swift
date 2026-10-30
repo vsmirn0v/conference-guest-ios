@@ -67,7 +67,9 @@ import UniformTypeIdentifiers
             do { try guest.currentNativeEngine?.updateScreenShareProfile(profile) }
             catch { self.error = error.localizedDescription }
         }
-        session.objectWillChange.sink { [weak self] in self?.objectWillChange.send(); Task { @MainActor in self?.refreshSystemReactions() } }.store(in: &subscriptions)
+        session.objectWillChange.sink { [weak self] in
+            self?.objectWillChange.send(); Task { @MainActor in self?.refreshSystemReactions(); self?.noteShareState() }
+        }.store(in: &subscriptions)
         session.supportsVP9 = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine?.screenCodecs.contains("video/vp9") == true
         session.vp9UnavailableReason = session.supportsVP9 ? nil : L("VP9 sharing is unavailable in this meeting.")
         presenterStorage = session; return session
@@ -135,6 +137,9 @@ import UniformTypeIdentifiers
     var microphoneStarting: Bool { !closed && !transferHeld && requestedMicrophone == true && !snapshot.microphoneOn }
     var cameraStarting: Bool { !closed && !transferHeld && requestedCamera == true && !snapshot.cameraOn }
     private var requestedPlayout: Bool?
+    /// App-only meeting level, remembered per service; the Mac output volume is untouched.
+    @Published private(set) var meetingVolume: Double = 1
+    var meetingVolumeKey: String { "nativeDesktop.meetingVolume." + kind.rawValue }
     private let quiet: Bool
     private let readinessPolicy: () -> NativeDesktopJoinReadinessPolicy
     private let power: NativeDesktopPowerMonitor
@@ -178,6 +183,9 @@ import UniformTypeIdentifiers
         catchUp.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         chat.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         chat.reactionHistory.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+        if let saved = UserDefaults.standard.object(forKey: meetingVolumeKey) as? Double { meetingVolume = Self.clampedVolume(saved) }
+        let initialVolume = meetingVolume
+        Task { [engine] in await engine.setPlayoutVolume(initialVolume) }
         engine.onState = { [weak self] value in self?.update(value) }
         engine.onVideo = { [weak self] value in
             guard let self, !closed else { return }; videos = value; updateDemand()
@@ -395,6 +403,7 @@ import UniformTypeIdentifiers
     private func update(_ value: NativeDesktopExternalSnapshot) {
         guard !closed else { return }
         let previous = snapshot; snapshot = value
+        noteShareState()
         if value.phase == .reconnecting || value.phase == .failed { cancelJoinCameraPrime() }
         if previous.phase != .reconnecting, value.phase == .reconnecting { updateMicrophoneRecoveryReadiness() }
         if let presenterStorage {
@@ -513,6 +522,17 @@ import UniformTypeIdentifiers
             catch { if self.requestedPlayout == enabled { self.requestedPlayout = nil }; throw error }
         }
     }
+    static func clampedVolume(_ value: Double) -> Double { value.isFinite ? min(1, max(0, value)) : 1 }
+    /// Slider drags pass persist: false and save once on release.
+    func setMeetingVolume(_ value: Double, persist: Bool = true) {
+        guard !closed else { return }
+        let volume = Self.clampedVolume(value)
+        if volume != meetingVolume {
+            meetingVolume = volume
+            Task { [engine] in await engine.setPlayoutVolume(volume) }
+        }
+        if persist { UserDefaults.standard.set(volume, forKey: meetingVolumeKey) }
+    }
     func reconnect() {
         cancelJoinCameraPrime()
         updateMicrophoneRecoveryReadiness()
@@ -588,6 +608,64 @@ import UniformTypeIdentifiers
             if !(restoreSending && state.camera), let lease = cameraLease { NativeDesktopCameraLease.shared.release(lease); cameraLease = nil }
             heldState = nil; transferHeld = false; holdConfirmed = false
         }
+    }
+    /// Live means visible to the meeting, not a private Presenter preview.
+    var isSharingLive: Bool { snapshot.sharing || presenterStorage?.isSharing == true }
+    var presenterSharing: Bool { presenterStorage?.isSharing == true }
+    @Published private(set) var shareStartedAt: Date?
+    @Published private(set) var quickSharePending = false
+    private func noteShareState() {
+        let live = !closed && isSharingLive
+        if live, shareStartedAt == nil { shareStartedAt = Date() } else if !live, shareStartedAt != nil { shareStartedAt = nil }
+    }
+    var shareSourceTitle: String {
+        guard let presenter = presenterStorage, presenter.isSharing else { return L("Screen") }
+        if presenter.source == .screen { return L("Screen or window") }
+        return presenter.scene.image != nil ? L("Image or slides") : L("Presenter studio")
+    }
+    var shareIncludesCamera: Bool {
+        get { UserDefaults.standard.bool(forKey: "nativeDesktop.shareIncludesCamera") }
+        set { objectWillChange.send(); UserDefaults.standard.set(newValue, forKey: "nativeDesktop.shareIncludesCamera") }
+    }
+    /// Share popover path: the macOS picker (or an image file) is the only extra
+    /// step. Cancelling the picker shares nothing; a live share switches content.
+    func quickShare(image: Data? = nil) {
+        guard connected, !closed, !transferHeld, !quickSharePending, !sharingPending, capture == nil else { return }
+        let session = presenter, includeCamera = shareIncludesCamera, live = session.isSharing
+        quickSharePending = true
+        Task { @MainActor [weak self] in
+            defer { self?.quickSharePending = false }
+            if let image {
+                if !live { await session.open() }
+                await session.chooseImage(image)
+            } else { await session.chooseScreen() }
+            guard let self, !closed, !transferHeld else { return }
+            if live {
+                guard session.contentDraft?.previewTrack != nil else { return }
+                do { try await session.applyContentChange() }
+                catch { if !(error is CancellationError) { self.error = error.localizedDescription } }
+                return
+            }
+            guard session.previewTrack != nil, !session.isSharing else {
+                if panel != .presenter, !session.isSharing { _ = await session.close() }
+                return
+            }
+            if includeCamera, !session.includeCamera { await session.setIncludeCamera(true) }
+            do { try await session.startSharing() }
+            catch {
+                if !(error is CancellationError) { self.error = error.localizedDescription }
+                if panel != .presenter { _ = await session.close() }
+            }
+        }
+    }
+    /// Stop from the control bar or banner; a Presenter not open in the panel is released.
+    func endShare() async {
+        guard await stopSharing() else { return }
+        if panel != .presenter, let presenter = presenterStorage, !presenter.isSharing { _ = await presenter.close() }
+    }
+    var soundSymbol: String {
+        guard snapshot.playoutOn else { return "speaker.slash" }
+        return meetingVolume == 0 ? "speaker.fill" : meetingVolume < 0.34 ? "speaker.wave.1.fill" : meetingVolume < 0.67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
     }
     func toggleSharing() {
         if snapshot.sharing || sharingPending { Task { await stopSharing() } }

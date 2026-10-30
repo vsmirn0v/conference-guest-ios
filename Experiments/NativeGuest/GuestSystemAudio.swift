@@ -109,6 +109,8 @@ final class GuestSharedPlayoutGate: @unchecked Sendable {
     private var target: Target?
     private var sound = false, ready = false, retired = false
     private var lastGain: Double = 0
+    /// Meeting volume applied while sound is on; mute stays an exact zero.
+    private var positiveGain: Double = 1
     private var lastPositiveUptime: TimeInterval?
     private var lastWriteSucceeded = true
     init(enabled: Bool) { self.enabled = enabled }
@@ -157,6 +159,13 @@ final class GuestSharedPlayoutGate: @unchecked Sendable {
         }
         return reconcile()
     }
+    /// Changes only the level of an open gate; it never opens or closes sound.
+    @MainActor func setVolume(_ volume: Double) -> Bool {
+        guard enabled else { return true }
+        let value = volume.isFinite ? min(1, max(0, volume)) : 1
+        locked { positiveGain = value; revision &+= 1 }
+        return reconcile()
+    }
     @MainActor func close(expected: UUID? = nil, retire: Bool = false) -> Bool {
         guard enabled else { return true }
         if let expected, !matches(expected) { return true }
@@ -176,7 +185,7 @@ final class GuestSharedPlayoutGate: @unchecked Sendable {
     }
     @MainActor func isOpen(expected: UUID?) -> Bool {
         !enabled || locked { expected == epoch && !retired && sound && ready && target != nil &&
-            lastGain == 1 && lastWriteSucceeded }
+            lastGain == positiveGain && lastWriteSucceeded }
     }
 #if DEBUG
     @MainActor func permitsSoundOffProof(expected: UUID?) -> Bool {
@@ -187,12 +196,12 @@ final class GuestSharedPlayoutGate: @unchecked Sendable {
     @MainActor private func reconcile() -> Bool {
         guard enabled else { return true }
         for _ in 0..<3 {
-            let state = locked { (target, revision, !retired && ready && sound ? 1.0 : 0.0) }
+            let state = locked { (target, revision, !retired && ready && sound ? positiveGain : 0.0, !retired && ready && sound) }
             guard let current = state.0 else { return state.2 == 0 }
             let success = current.setGain(state.2) // No AV/SDK calls under the metadata lock.
             let unchanged = locked { () -> Bool in
                 guard revision == state.1 else { return false }
-                if success && state.2 == 1 && lastGain != 1 { lastPositiveUptime = ProcessInfo.processInfo.systemUptime }
+                if success && state.3 && state.2 > 0 && lastGain == 0 { lastPositiveUptime = ProcessInfo.processInfo.systemUptime }
                 lastGain = state.2; lastWriteSucceeded = success; return true
             }
             if unchanged { return success }
@@ -320,6 +329,19 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private weak var tappedEngine: AVAudioEngine?
     private var tappedPlayout: AVAudioNode?
     private weak var tappedPlayoutEngine: AVAudioEngine?
+    // Meeting volume for owners without the shared gate; read under the state lock.
+    private var meetingVolume: Double = 1
+    private weak var volumeMixer: AVAudioMixerNode?
+
+    /// App-only meeting level (0...1). macOS output volume is never changed;
+    /// mute and sound-on intent remain separate.
+    @MainActor func setMeetingVolume(_ volume: Double) -> Bool {
+        let value = volume.isFinite ? min(1, max(0, volume)) : 1
+        if sharedNativeOwner { return sharedPlayoutGate.setVolume(value) }
+        let mixer = locked { () -> AVAudioMixerNode? in meetingVolume = value; return volumeMixer }
+        mixer?.outputVolume = Float(value)
+        return true
+    }
 
     var factory: LKRTCPeerConnectionFactory {
         locked {
@@ -826,6 +848,9 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                       mixer.outputVolume = Float(value)
                       return mixer.outputVolume == Float(value)
                   }) else { return -1 }
+        } else if let mixer = source as? AVAudioMixerNode {
+            let volume = locked { () -> Double in volumeMixer = mixer; return meetingVolume }
+            mixer.outputVolume = Float(volume)
         }
         update(["outputSampleRate": format.sampleRate, "outputChannels": Int(format.channelCount), "outputASBD": Self.signature(format)])
         // Hardware's existing output pull drives this aggregate meter. No
