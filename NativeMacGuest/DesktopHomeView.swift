@@ -12,7 +12,7 @@ struct NativeDesktopHomeView: View {
     @State private var editRoom: RecentRoom?
     @State private var renamed = ""
     @State private var homeSnapshot = HomeMeetingSnapshot()
-    @State private var acceptsHomeChanges = true
+    @State private var hoveringHomeMeetings = false
     @State private var bindingLink = ""
     @State private var bindingSeries = true
     @FocusState private var editingName: Bool
@@ -20,6 +20,9 @@ struct NativeDesktopHomeView: View {
         editingName || addingFavorite || editRoom != nil || library.calendar.choosingMeeting != nil ||
         library.calendar.reminders.editing != nil || library.setup.isPresented
     }
+    /// Discoveries apply immediately; only rows under the pointer or behind an
+    /// open editor are held, so a card cannot move as it is clicked.
+    private var acceptsHomeChanges: Bool { !hoveringHomeMeetings && !blocksScheduledJoining }
     private var showsFirstLibraryGuidance: Bool {
         library.history.rooms.isEmpty && library.calendar.meetings.isEmpty &&
         library.continuation.candidates.isEmpty && homeSnapshot.items.isEmpty &&
@@ -84,8 +87,9 @@ struct NativeDesktopHomeView: View {
             #endif
         }
         .tint(.orange)
-        .onAppear { refreshHome(); acceptsHomeChanges = false; library.calendar.setScheduledUIBlocked(blocksScheduledJoining) }
-        .onChange(of: blocksScheduledJoining) { library.calendar.setScheduledUIBlocked($0) }
+        .onAppear { refreshHome(); library.calendar.setScheduledUIBlocked(blocksScheduledJoining) }
+        .onChange(of: blocksScheduledJoining) { library.calendar.setScheduledUIBlocked($0); refreshHome() }
+        .onChange(of: homeSnapshot.items.isEmpty) { if $0 { hoveringHomeMeetings = false } }
         .onDisappear { library.calendar.setScheduledUIBlocked(false); if editingName { library.sync.endNameEditing() } }
         .onReceive(library.objectWillChange) { _ in Task { @MainActor in refreshHome() } }
         .onChange(of: editingName) { value in
@@ -182,7 +186,7 @@ struct NativeDesktopHomeView: View {
                                 }
                             }.padding(16).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 16))
                         }
-                    }
+                    }.onHover { hovering in hoveringHomeMeetings = hovering; if !hovering { refreshHome() } }
                 }
                 if let status = library.continuation.status {
                     HStack {
