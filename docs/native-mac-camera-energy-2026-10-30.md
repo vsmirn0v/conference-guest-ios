@@ -55,3 +55,16 @@ reported 43% camera-off baseline (incoming video decode/render) is separate.
 
 Probes: `Experiments/NativeMacCameraEnergy`. Raw rows stay local under
 `.build/camera-energy-720p-20261030` (no images were captured).
+
+## Release
+
+Published as direct beta **0.3.0 (34)** from `2460aee` with the unchanged r5
+WebRTC framework (`a6b628d0…`). Developer ID export notarized and stapled;
+Gatekeeper accepted the app and the app mounted from the DMG. Public HTTPS
+readback: `RockNRoll-0.3.0-34-arm64.dmg`, SHA-256
+`7a2b4826c7ab5b8acec4d2db3706b96c28e390ea5faf3d124e0bcbe7882d8840`; beta alias
+and signed appcast updated, stable remains 0.3.0 (25). The previous published
+appcast/inventory hashes matched the build 33 record before promotion. The
+outer DMG itself is not notarized. Build 34 also carries the Settings → Updates
+version/build label. Not yet checked: Sparkle update of an installed app to 34
+and a live meeting on the installed build.
