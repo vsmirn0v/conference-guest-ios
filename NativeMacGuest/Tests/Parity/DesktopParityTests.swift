@@ -1177,6 +1177,37 @@ private final class DesktopActivitySpy: NSUserActivity {
         _ = await workspace.leave()
         XCTAssertTrue(workspace.meetings.isEmpty); XCTAssertFalse(workspace.busyForUpdate)
     }
+    private func waitUpTo(_ seconds: Double, _ predicate: () -> Bool) async throws -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + seconds
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if predicate() { return true }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        return predicate()
+    }
+    func testFullScreenMeetingWindowLeavesFullScreenWhenHiddenOrClosed() async throws {
+        let engine = DesktopTestEngine(), model = try model(engine)
+        try await model.connect()
+        let meetingWindow = NativeDesktopMeetingWindow(model: model)
+        meetingWindow.show()
+        let native = try XCTUnwrap(NSApp.windows.first { $0.delegate === meetingWindow })
+        native.toggleFullScreen(nil)
+        guard try await waitUpTo(5, { native.styleMask.contains(.fullScreen) }) else {
+            meetingWindow.close(); _ = await model.leave()
+            throw XCTSkip("This test host cannot enter full screen")
+        }
+        XCTAssertFalse(meetingWindow.windowShouldClose(native), "Closing the window keeps the meeting")
+        let hidden = try await waitUpTo(5) { !native.styleMask.contains(.fullScreen) && !native.isVisible }
+        XCTAssertTrue(hidden, "Hiding a full-screen meeting leaves full screen instead of leaving an empty Space " +
+            "(fullScreen=\(native.styleMask.contains(.fullScreen)) visible=\(native.isVisible) active=\(NSApp.isActive) " +
+            "events=\(meetingWindow.fullScreenEventsForTesting))")
+        meetingWindow.show(); native.toggleFullScreen(nil)
+        _ = try await waitUpTo(5) { native.styleMask.contains(.fullScreen) }
+        meetingWindow.close()
+        let closed = try await waitUpTo(5) { !native.styleMask.contains(.fullScreen) && !native.isVisible }
+        XCTAssertTrue(closed, "Leave closes a full-screen meeting window and its Space")
+        _ = await model.leave()
+    }
     func testMinimizingSuspendsMediaAndPreservesEditorShellWithoutLeaving() async throws {
         let engine = DesktopTestEngine(), model = try model(engine)
         try await model.connect()

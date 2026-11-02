@@ -44,8 +44,51 @@ import SwiftUI
         mountMeeting(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         synchronizePresentation()
     }
-    func close() { model.setMediaVisible(false); mini?.close(); mini = nil; window.orderOut(nil); window.contentView = nil }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { sender.orderOut(nil); sender.contentView = nil; synchronizePresentation(); return false }
+    func close() {
+        model.setMediaVisible(false); mini?.close(); mini = nil
+        // orderOut keeps a full-screen window in its Space; closing ends the Space too.
+        if window.styleMask.contains(.fullScreen) { window.close() } else { window.orderOut(nil) }
+        window.contentView = nil
+    }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        hideWindow { [weak self] in self?.window.contentView = nil; self?.synchronizePresentation() }
+        return false
+    }
+    private var afterFullScreenExit: (() -> Void)?
+    private var fullScreenTransition = false
+    /// Hides without ending the meeting. A full-screen window leaves full screen
+    /// first; ordering it out directly would leave its Space behind. AppKit ignores
+    /// a toggle during a running transition, so a pending hide waits for it.
+#if DEBUG
+    private(set) var fullScreenEventsForTesting: [String] = []
+#endif
+    private func note(_ event: String) {
+#if DEBUG
+        fullScreenEventsForTesting.append(event)
+#endif
+    }
+    private func hideWindow(then action: @escaping () -> Void = {}) {
+        note("hide transition=\(fullScreenTransition)")
+        guard window.styleMask.contains(.fullScreen) else { window.orderOut(nil); action(); return }
+        afterFullScreenExit = { [weak self] in self?.window.orderOut(nil); action() }
+        if !fullScreenTransition { window.toggleFullScreen(nil) }
+    }
+    private func finishPendingHide() { let action = afterFullScreenExit; afterFullScreenExit = nil; action?() }
+    func windowWillEnterFullScreen(_ notification: Notification) { note("willEnter"); fullScreenTransition = true }
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        note("didEnter"); fullScreenTransition = false
+        // A toggle inside this callback is ignored; AppKit finishes the transition first.
+        guard afterFullScreenExit != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, afterFullScreenExit != nil, !fullScreenTransition,
+                  window.styleMask.contains(.fullScreen) else { return }
+            window.toggleFullScreen(nil)
+        }
+    }
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) { note("failEnter"); fullScreenTransition = false; finishPendingHide() }
+    func windowWillExitFullScreen(_ notification: Notification) { note("willExit"); fullScreenTransition = true }
+    func windowDidExitFullScreen(_ notification: Notification) { note("didExit"); fullScreenTransition = false; finishPendingHide() }
+    func windowDidFailToExitFullScreen(_ window: NSWindow) { note("failExit"); fullScreenTransition = false; finishPendingHide() }
     func windowWillMiniaturize(_ notification: Notification) {
         model.setMediaPresentation(.hidden)
     }
@@ -76,8 +119,8 @@ import SwiftUI
             panel.center(); mini = panel
         }
         if !(mini?.contentView is NSHostingView<NativeDesktopMiniMeeting>) { mini?.contentView = NSHostingView(rootView: NativeDesktopMiniMeeting(model: model, onRestore: { [weak self] in self?.show() })) }
-        mini?.orderFrontRegardless(); window.orderOut(nil)
-        synchronizePresentation()
+        mini?.orderFrontRegardless()
+        hideWindow { [weak self] in self?.synchronizePresentation() }
     }
 }
 
