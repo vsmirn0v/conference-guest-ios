@@ -1,0 +1,26 @@
+{
+  "version": "0.3.0",
+  "build": "42",
+  "channel": "beta",
+  "sourceCommit": "be8c657",
+  "changes": [
+    "Leave closes a full-screen meeting window and its Space; Cmd-W and Mini meeting exit full screen before hiding (be8c657)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-42-arm64.dmg",
+    "sha256": "ab086c97ac9caf588c4ddf01f31be87526482291b86af1a3de756c1264a561e5",
+    "length": 15747146
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-42-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 42",
+    "live multi-meeting checks carried over from 41"
+  ]
+}
