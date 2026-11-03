@@ -31,7 +31,12 @@ private final class FakeEngine: GuestSessionEngine {
     var startupGate: Gate?
     var startupWaits = 0, startupReleases = 0
     var onStartupReady: (() -> Void)?
-    func waitForStartupAudio() async throws { startupWaits += 1; await startupGate?.wait(); onStartupReady?() }
+    var startupError: Error?
+    func waitForStartupAudio() async throws {
+        startupWaits += 1; await startupGate?.wait()
+        if let startupError { throw startupError }
+        onStartupReady?()
+    }
     func releaseStartupAudio() -> Bool { startupReleases += 1; return true }
     func activateMicrophone() async throws { startupEvents.append("microphone"); microphoneActivations += 1; await microphoneActivationGate?.wait() }
     func setPlayoutEnabled(_ enabled: Bool) async throws { playoutChanges.append(enabled); await playoutGate?.wait() }
@@ -81,6 +86,8 @@ private final class FakeEngine: GuestSessionEngine {
     }
     func interruptTransportForTesting() async { onFailure?(interruptError) }
 }
+
+private struct SessionTestStartupTimeout: GuestRecoverableError {}
 
 @MainActor
 private final class Harness {
@@ -666,6 +673,21 @@ struct SessionTests {
         _ = await session.leave()
     }
 
+    /// A startup audio timeout is per attempt: the next attempt rebuilds audio.
+    @MainActor static func startupAudioTimeoutRecoversOnNextAttempt() async throws {
+        let engines = [FakeEngine(), FakeEngine()]
+        engines[0].startupError = SessionTestStartupTimeout()
+        let harness = Harness(engines), session = harness.session
+        try await connect(session)
+        try expect(session.state == .connected && harness.made == 2 && session.recoveryAttempts == 1 &&
+                   harness.delays == [500_000_000] && engines[0].leaves.count == 1 && engines[1].startupReleases == 1,
+                   "A startup audio timeout reconnects with a fresh attempt instead of ending the meeting")
+        var policy = GuestRecoveryPolicy()
+        for _ in 0..<3 { try expect(policy.nextDelay(after: SessionTestStartupTimeout()) != nil, "Within the outage budget") }
+        try expect(policy.nextDelay(after: SessionTestStartupTimeout()) == nil, "Repeated timeouts still exhaust the budget")
+        _ = await session.leave()
+    }
+
     @MainActor static func staleStartupReadinessCannotReleaseGain() async throws {
         let engine = FakeEngine(), gate = Gate(), session = GuestSession(makeAttempt: { engine })
         engine.startupGate = gate
@@ -782,11 +804,12 @@ struct SessionTests {
             try await preparationOptInDuringJoinWaitsForNextAttempt()
             try await connectingWaitsForStartupAndLatestSoundIntent()
             try await staleStartupReadinessCannotReleaseGain()
+            try await startupAudioTimeoutRecoversOnNextAttempt()
             try await leaveDrainsInitialPreparationBeforeAnyTransportJoin()
             try await preparedMediaButtonsKeepAudioAndPublication()
             try await preparationRecoveryPreservesExplicitActivation()
             try await mediaIntentDuringDeviceReconciliation()
-            print("GuestSession: 30 deterministic policy/lifecycle scenarios passed (including startup gating and 8 preparation recovery combinations)")
+            print("GuestSession: 31 deterministic policy/lifecycle scenarios passed (including startup gating and 8 preparation recovery combinations)")
         } catch {
             print("GuestSession failed: \(error)")
             exit(1)

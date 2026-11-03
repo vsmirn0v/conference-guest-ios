@@ -774,6 +774,13 @@ final class NativeGuestEngine {
             }
             throw GuestStartupAudioError.timedOut
             } catch {
+                if error is GuestStartupAudioError {
+                    let receive = startupReceiveReadiness(gain.sourceSnapshot)
+                    probeLog("startup-audio-timeout", ["client": label, "inputRequired": startupRequiresInput,
+                        "supports": owner.startupAudioObservation.supports(input: startupRequiresInput),
+                        "receiveTransportRequired": receive.requiresTransport,
+                        "receiveTransportConnected": receive.transportConnected])
+                }
 #if DEBUG
                 record("failed")
                 let value: [String: Any] = ["event": "startup-audio-failure",

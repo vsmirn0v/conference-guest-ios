@@ -26,6 +26,10 @@ struct GuestSessionSnapshot {
     let appliedPlayoutEnabled: Bool?
 }
 
+/// A per-attempt media failure that a fresh attempt can clear (for example a
+/// startup audio graph that did not settle in time). It uses the outage budget.
+protocol GuestRecoverableError: Error {}
+
 /// Each outage has a finite automatic recovery budget. Explicit connect resets it,
 /// and so does a recovered connection that stays up for `stableInterval`: isolated
 /// network blips across a long meeting must not accumulate into a fatal failure,
@@ -53,7 +57,7 @@ struct GuestRecoveryPolicy {
             }
         }
         if case GuestPeerError.iceFailed = error { return true }
-        return false
+        return error is GuestRecoverableError
     }
 
     mutating func nextDelay(after error: Error, at now: TimeInterval? = nil) -> UInt64? {

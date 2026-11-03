@@ -2,7 +2,12 @@ import Foundation
 import AudioToolbox
 import LiveKitWebRTC
 
-enum GuestStartupAudioError: Error { case timedOut }
+/// A fresh session attempt rebuilds the room's audio, so a timeout reconnects
+/// instead of ending the meeting.
+enum GuestStartupAudioError: LocalizedError, GuestRecoverableError {
+    case timedOut
+    var errorDescription: String? { "Meeting audio did not start in time. Reconnecting may help." }
+}
 
 @MainActor enum GuestStartupAudioBudget {
     static func refresh(deadline: TimeInterval, clock: @MainActor () -> TimeInterval,
