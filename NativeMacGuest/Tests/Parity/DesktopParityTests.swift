@@ -1220,6 +1220,20 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertEqual(workspace.selectedMeetingID, a.sessionID)
         _ = await workspace.leave()
     }
+    func testOrganizerEndingMeetingLeavesItWithANoticeInsteadOfAnError() async throws {
+        let engine = DesktopTestEngine()
+        let workspace = multiWorkspace([engine])
+        try await join(workspace, 1)
+        let model = workspace.meetings[0]
+        engine.snapshot.phase = .failed; engine.snapshot.endedByOrganizer = true
+        engine.snapshot.lastError = GuestEngineError.evicted.localizedDescription
+        engine.onState?(engine.snapshot)
+        try await spin { workspace.meetings.isEmpty }
+        XCTAssertEqual(engine.leaves, 1, "The ended meeting is left and removed")
+        XCTAssertNil(model.error); XCTAssertNil(workspace.error, "Ending by the organizer is not an error")
+        XCTAssertEqual(workspace.notice?.title, L("Meeting ended"))
+        XCTAssertFalse(GuestEngineError.evicted.localizedDescription.contains("error 2"))
+    }
     func testDockReopenReturnsToTheMeetingOnlyWhenTheWindowIsAway() async throws {
         let workspace = multiWorkspace([DesktopTestEngine()])
         try await join(workspace, 1)

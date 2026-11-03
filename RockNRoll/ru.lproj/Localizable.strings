@@ -1394,3 +1394,5 @@
 "Mute Microphone" = "Выключить микрофон";
 "Unmute Microphone" = "Включить микрофон";
 "Leave “%@”" = "Выйти из «%@»";
+"Meeting ended" = "Встреча завершена";
+"“%@” was ended by the organizer, or you were removed from it." = "Организатор завершил встречу «%@» или удалил вас из неё.";

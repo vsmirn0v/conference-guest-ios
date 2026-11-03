@@ -98,7 +98,7 @@ struct NativeDesktopHomeView: View {
                     let shown = workspace.selectedMeetingID == model.sessionID
                     NativeDesktopMeetingView(model: model, onMini: { workspace.showMini(model) }, continuation: library.continuation,
                                              workspace: workspace, onWindowToggle: { workspace.toggleWindow(model) }, embedded: true,
-                                             presentsErrors: shown && workspace.error == nil)
+                                             presentsErrors: shown && workspace.error == nil && workspace.notice == nil)
                         .opacity(shown ? 1 : 0).allowsHitTesting(shown).accessibilityHidden(!shown)
                 }
                 if let selected = workspace.selectedMeeting {
@@ -189,9 +189,22 @@ struct NativeDesktopHomeView: View {
         .sheet(isPresented: Binding(get: { library.setup.isPresented }, set: { if !$0 { library.setup.finishLater() } }), onDismiss: { library.setup.presentationDidDismiss() }) {
             NativeDesktopSetupView(library: library)
         }
-        .alert(L("Could not complete the action"), isPresented: Binding(get: { workspace.error != nil }, set: { if !$0 && workspace.error != nil { workspace.error = nil } })) {
-            Button(L("OK")) { workspace.error = nil }
-        } message: { Text(workspace.error ?? "") }
+        .alert(alertTitle, isPresented: alertShown) {
+            Button(L("OK")) { dismissAlert() }
+        } message: { Text(alertMessage) }
+    }
+    /// One window alert: an error first, else a notice such as an ended meeting.
+    private var alertTitle: String {
+        if workspace.error != nil { return L("Could not complete the action") }
+        return workspace.notice?.title ?? ""
+    }
+    private var alertMessage: String { workspace.error ?? workspace.notice?.message ?? "" }
+    private var alertShown: Binding<Bool> {
+        Binding(get: { workspace.error != nil || workspace.notice != nil }, set: { if !$0 { dismissAlert() } })
+    }
+    private func dismissAlert() {
+        if workspace.error != nil { workspace.error = nil }
+        if workspace.notice != nil { workspace.notice = nil }
     }
     private func detachedMeeting(_ model: NativeDesktopMeetingModel) -> some View {
         VStack(spacing: 14) {

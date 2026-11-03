@@ -26,6 +26,8 @@ import UserNotifications
     @Published var invitation = ""
     @Published var settingsTab = 0
     @Published var error: String?
+    /// An informational alert, such as a meeting the organizer ended.
+    @Published var notice: (title: String, message: String)?
     @Published private(set) var preparing = false { didSet { onUpdateActivityChanged() } }
     /// Simultaneous meetings in join order. One talk meeting holds mic and camera.
     @Published private(set) var meetings: [NativeDesktopMeetingModel] = [] { didSet { onUpdateActivityChanged() } }
@@ -227,6 +229,10 @@ import UserNotifications
                 model.microphoneArbiter = { [weak self] target in await self?.claimTalk(for: target) ?? false }
                 model.onLeave = { [weak self, weak model] in
                     guard let self, let model else { return }; _ = await leave(model)
+                }
+                model.onEndedByOrganizer = { [weak self, weak model] in
+                    guard let self, let model else { return }
+                    notice = (L("Meeting ended"), L("“%@” was ended by the organizer, or you were removed from it.", model.title))
                 }
                 meetingSubscriptions[model.sessionID] = model.objectWillChange.sink { [weak self, weak model] in
                     Task { @MainActor in if let model { self?.meetingDidChange(model) } }

@@ -2,7 +2,20 @@ import AVFoundation
 import Foundation
 import LiveKitWebRTC
 
-enum GuestEngineError: Error { case malformed, admissionDenied, evicted, publicationTimedOut, disconnected, mediaMissing }
+enum GuestEngineError: LocalizedError {
+    case malformed, admissionDenied, evicted, publicationTimedOut, disconnected, mediaMissing
+    var errorDescription: String? {
+        switch self {
+        case .malformed: "The meeting server sent an unexpected response."
+        case .admissionDenied: "The meeting did not let you in."
+        // The server evicts every guest when the organizer ends the meeting.
+        case .evicted: "The organizer ended the meeting or removed you from it."
+        case .publicationTimedOut: "Your microphone or camera did not start in time."
+        case .disconnected: "The meeting connection closed."
+        case .mediaMissing: "Meeting audio or video did not arrive."
+        }
+    }
+}
 
 /// LiveKit's legacy stream ID carries the authoritative participant and track SID.
 private struct GuestRemotePublication: Hashable {

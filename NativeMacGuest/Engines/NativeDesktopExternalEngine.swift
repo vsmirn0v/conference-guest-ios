@@ -31,6 +31,8 @@ struct NativeDesktopExternalSnapshot: Equatable {
     var participants: [NativeDesktopParticipant] = []
     var lastError: String?
     var microphoneLevel: Float?
+    /// The meeting ended for this participant on the organizer's side, not by a fault.
+    var endedByOrganizer = false
 }
 
 /// Actions request media intent. Snapshot changes confirm effective local media

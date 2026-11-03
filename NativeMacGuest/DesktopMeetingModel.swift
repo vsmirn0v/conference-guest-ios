@@ -92,6 +92,9 @@ import UniformTypeIdentifiers
     }
     var onConnected: (() -> Void)?
     var onLeave: (() async -> Void)?
+    /// The organizer ended the meeting: the shell leaves it and says so instead of reporting an error.
+    var onEndedByOrganizer: (() -> Void)?
+    private var endedByOrganizer = false
     private(set) var engine: any NativeDesktopMeetingEngine
     private var capture: NativeDesktopShareCapture?
     private var sharingTask: Task<Void, Never>?
@@ -454,7 +457,11 @@ import UniformTypeIdentifiers
         }
         updateDemand(); refreshSystemReactions()
         if galleryPage >= galleryPages { galleryPage = max(0, galleryPages - 1) }
-        if value.phase == .failed { error = value.lastError ?? L("Meeting connection failed.") }
+        if value.phase == .failed && value.endedByOrganizer {
+            guard !endedByOrganizer else { return }
+            endedByOrganizer = true; onEndedByOrganizer?()
+            Task { [weak self] in await self?.onLeave?() }
+        } else if value.phase == .failed { error = value.lastError ?? L("Meeting connection failed.") }
     }
     private func setLocalCamera(_ track: LKRTCVideoTrack?) {
         guard !closed else { return }

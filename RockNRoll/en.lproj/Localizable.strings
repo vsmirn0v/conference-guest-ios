@@ -1396,3 +1396,5 @@
 "Mute Microphone" = "Mute Microphone";
 "Unmute Microphone" = "Unmute Microphone";
 "Leave “%@”" = "Leave “%@”";
+"Meeting ended" = "Meeting ended";
+"“%@” was ended by the organizer, or you were removed from it." = "“%@” was ended by the organizer, or you were removed from it.";

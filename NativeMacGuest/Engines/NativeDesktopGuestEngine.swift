@@ -434,6 +434,7 @@ private enum NativeDesktopGuestError: LocalizedError {
         let level = guestSnapshot.participants.first { $0.isLocal }?.audioLevel
         snapshot.microphoneLevel = snapshot.microphoneOn ? level.map { Float(min(1, max(0, $0))) } : nil
         snapshot.lastError = state.failure?.localizedDescription
+        snapshot.endedByOrganizer = state.state == .failed && (state.failure as? GuestEngineError) == .evicted
         snapshot.participants = guestSnapshot.participants.map { participant in
             NativeDesktopParticipant(id: participant.id, name: participant.name, isLocal: participant.isLocal,
                 microphoneOn: participant.isLocal ? snapshot.microphoneOn : !participant.microphoneMuted,
