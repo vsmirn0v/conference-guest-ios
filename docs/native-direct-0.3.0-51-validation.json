@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "51",
+  "channel": "beta",
+  "sourceCommit": "dbba75d",
+  "changes": [
+    "Transcription pill is its own toolbar item using the system glass as its capsule; announcement text uses the primary colour with orange only for the status, regular bordered Show live text button (dbba75d)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-51-arm64.dmg",
+    "sha256": "6c0ec46bbd65a386c88a66098a0a95005bccc96b116114cea06fce809896ed5c",
+    "length": 15915197
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-51-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 51",
+    "toolbar pill and announcement checked in offscreen window renders only, not a live meeting",
+    "join alert fix not yet observed in a live join"
+  ]
+}
