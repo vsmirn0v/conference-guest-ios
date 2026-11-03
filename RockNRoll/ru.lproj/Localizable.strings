@@ -1432,3 +1432,5 @@
 "Copy Diagnostics" = "Скопировать диагностику";
 "Diagnostics copied" = "Диагностика скопирована";
 "Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content." = "Вставьте её в сообщение в поддержку. В ней есть версии приложения и macOS, аудиоустройства и последние события подключения, но нет содержимого встреч.";
+"Export Diagnostics…" = "Экспортировать диагностику…";
+"Unable to export diagnostics" = "Не удалось экспортировать диагностику";

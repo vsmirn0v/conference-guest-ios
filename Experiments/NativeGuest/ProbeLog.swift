@@ -8,6 +8,13 @@ nonisolated(unsafe) private var history: [String] = []
 private let historyCapacity = 400
 /// Keep-alives would push every useful event out of the bounded history.
 private let historySkipped: Set<String> = ["rtc-pong"]
+/// Receives each kept line in order, under the output lock (the app's saved log).
+nonisolated(unsafe) private var sink: ((String) -> Void)?
+
+func setProbeLogSink(_ value: ((String) -> Void)?) {
+    outputLock.lock(); defer { outputLock.unlock() }
+    sink = value
+}
 
 /// Diagnostic allowlisted fields only. Callers must never pass SDP, ICE or credentials.
 /// Events also reach the unified system log, so release builds can be diagnosed.
@@ -23,6 +30,7 @@ func probeLog(_ event: String, _ fields: [String: Any] = [:]) {
     if !historySkipped.contains(event) {
         history.append(line)
         if history.count > historyCapacity { history.removeFirst(history.count - historyCapacity) }
+        sink?(line)
     }
     FileHandle.standardOutput.write(data)
     FileHandle.standardOutput.write(Data([10]))

@@ -1317,6 +1317,54 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertEqual((summary["output"] as? [String: Any])?["callbacks"] as? UInt64, 12)
     }
 
+    private func diagnosticsDirectory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("diagnostics-test-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    func testSavedDiagnosticsRotateWithinTheFileCountAndKeepTheNewestLines() throws {
+        let log = NativeDiagnosticsLog(directory: try diagnosticsDirectory(), maxFileBytes: 300, maxFiles: 3)
+        log.start()
+        for index in 0..<60 { log.append("{\"event\":\"rotation\",\"index\":\(index)}") }
+        log.flush()
+        let files = log.files
+        XCTAssertEqual(files.count, 3)
+        let newest = try String(contentsOf: files.last!, encoding: .utf8)
+        XCTAssertTrue(newest.contains("\"index\":59}"))
+        for url in files { XCTAssertLessThanOrEqual(try Data(contentsOf: url).count, 300) }
+        log.stop()
+    }
+
+    func testSavedDiagnosticsDropFilesOlderThanTheAgeLimit() throws {
+        let directory = try diagnosticsDirectory()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let old = directory.appendingPathComponent("events-20000101-000000-000-1-0001.log")
+        XCTAssertTrue(FileManager.default.createFile(atPath: old.path, contents: Data("old\n".utf8)))
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-8 * 86_400)], ofItemAtPath: old.path)
+        let log = NativeDiagnosticsLog(directory: directory)
+        log.start()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
+        XCTAssertEqual(log.files.count, 1)
+        log.stop()
+    }
+
+    func testDiagnosticsArchiveIsAZipWithReportLogsAndReports() throws {
+        let directory = try diagnosticsDirectory()
+        let log = NativeDiagnosticsLog(directory: directory.appendingPathComponent("Logs"))
+        log.start(); log.append("{\"event\":\"archived\"}"); log.flush()
+        let reports = NativeDiagnosticReports(directory: directory.appendingPathComponent("Reports"))
+        reports.save([Data("{\"crash\":true}".utf8)])
+        let destination = directory.appendingPathComponent("out.zip")
+        try NativeDiagnosticsArchive.make(report: "report body", logs: log.files, reports: reports.files, destination: destination)
+        let zip = try Data(contentsOf: destination)
+        XCTAssertEqual(zip.prefix(2), Data("PK".utf8))
+        for name in ["report.txt", "Logs/" + log.files[0].lastPathComponent, "Reports/" + reports.files[0].lastPathComponent] {
+            XCTAssertNotNil(zip.range(of: Data(name.utf8)), name)
+        }
+        log.stop()
+    }
+
     func testDockReopenReturnsToTheMeetingOnlyWhenTheWindowIsAway() async throws {
         let workspace = multiWorkspace([DesktopTestEngine()])
         try await join(workspace, 1)

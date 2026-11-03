@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import AVFoundation
+import UniformTypeIdentifiers
 
 @main
 struct NativeGuestApplication {
@@ -85,8 +86,12 @@ struct NativeGuestApplication {
     init(mode: NativeGuestLaunchMode) { self.mode = mode }
     func applicationDidFinishLaunching(_ notification: Notification) {
         let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Rock'N'Roll for Mac"
+        NativeDiagnosticsLog.shared.start()
+        setProbeLogSink { NativeDiagnosticsLog.shared.append($0) }
+        NativeDiagnosticReports.shared.start()
         probeLog("app-launch", ["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
-            "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"])
+            "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?",
+            "macOS": ProcessInfo.processInfo.operatingSystemVersionString])
         let menu = NSMenu(), appMenu = NSMenu(title: appName)
         let item = NSMenuItem(title: appName, action: nil, keyEquivalent: "")
         appMenu.addItem(withTitle: L("Quit Rock'N'Roll for Mac"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -107,6 +112,8 @@ struct NativeGuestApplication {
         let helpMenu = NSMenu(title: L("Help")), helpItem = NSMenuItem()
         let diagnostics = NSMenuItem(title: L("Copy Diagnostics"), action: #selector(copyDiagnostics), keyEquivalent: "")
         diagnostics.target = self; helpMenu.addItem(diagnostics)
+        let export = NSMenuItem(title: L("Export Diagnostics…"), action: #selector(exportDiagnostics), keyEquivalent: "")
+        export.target = self; helpMenu.addItem(export)
         helpItem.submenu = helpMenu; menu.addItem(helpItem); NSApp.helpMenu = helpMenu; NSApp.mainMenu = menu
         let settings = NSMenuItem(title: L("Settings…"), action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self; appMenu.insertItem(settings, at: 0)
@@ -252,6 +259,22 @@ struct NativeGuestApplication {
         alert.informativeText = L("Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content.")
         alert.runModal()
     }
+    @objc private func exportDiagnostics() {
+        let stamp = DateFormatter(); stamp.locale = Locale(identifier: "en_US_POSIX"); stamp.dateFormat = "yyyy-MM-dd HH.mm"
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "RockNRoll Diagnostics \(stamp.string(from: Date())).zip"
+        panel.allowedContentTypes = [.zip]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        NativeDiagnosticsLog.shared.flush()
+        do {
+            try NativeDiagnosticsArchive.make(report: NativeDesktopDiagnostics.report(), logs: NativeDiagnosticsLog.shared.files,
+                reports: NativeDiagnosticReports.shared.files, destination: url)
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } catch {
+            let alert = NSAlert(); alert.messageText = L("Unable to export diagnostics")
+            alert.informativeText = error.localizedDescription; alert.runModal()
+        }
+    }
 }
 
 /// Text a person pastes into a support message: versions, permissions, audio route,
@@ -296,6 +319,7 @@ struct NativeGuestApplication {
         let copies = Bundle.main.bundleIdentifier.map { NSWorkspace.shared.urlsForApplications(withBundleIdentifier: $0) } ?? []
         lines += copies.prefix(8).map { url in "  \(path(url.path)) \(Bundle(url: url).map(version) ?? "?")" }
         if copies.count > 8 { lines.append("  and \(copies.count - 8) more") }
+        lines.append("Saved logs: \(NativeDiagnosticsLog.shared.files.count) files; crash and hang reports: \(NativeDiagnosticReports.shared.files.count)")
         let events = probeLogHistory()
         lines.append("Recent events (\(events.count), oldest first):")
         lines += events

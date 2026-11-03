@@ -1434,3 +1434,5 @@
 "Copy Diagnostics" = "Copy Diagnostics";
 "Diagnostics copied" = "Diagnostics copied";
 "Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content." = "Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content.";
+"Export Diagnostics…" = "Export Diagnostics…";
+"Unable to export diagnostics" = "Unable to export diagnostics";
