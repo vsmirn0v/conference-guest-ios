@@ -1436,3 +1436,11 @@
 "Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content." = "Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content.";
 "Export Diagnostics…" = "Export Diagnostics…";
 "Unable to export diagnostics" = "Unable to export diagnostics";
+"Catch up (%ld)" = "Catch up (%ld)";
+"Your sound is off" = "Your sound is off";
+"While your sound was off" = "While your sound was off";
+"While reconnecting" = "While reconnecting";
+"Nothing was transcribed while your sound was off." = "Nothing was transcribed while your sound was off.";
+"%ld lines of live text" = "%ld lines of live text";
+"Read what you missed" = "Read what you missed";
+"Sound is off · live text is saved for catch-up" = "Sound is off · live text is saved for catch-up";

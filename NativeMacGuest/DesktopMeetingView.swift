@@ -237,6 +237,7 @@ struct NativeDesktopMeetingView: View {
                     if !model.controlsHidden && !textSelection.isOpen && !embedded && chromeShown { header.padding(.horizontal, 18).padding(.top, 10) }
                     if let workspace, !textSelection.isOpen { NativeDesktopListeningBanner(workspace: workspace, model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen && !embedded { NativeDesktopTranscriptionBanner(model: model).padding(.top, 8).padding(.trailing, reserved) }
+                    if !textSelection.isOpen { NativeDesktopCatchUpCard(model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if model.isSharingLive && !textSelection.isOpen { shareBanner.padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { HStack { reactionOverlay; Spacer() }.padding(.leading, 22).padding(.top, 12) }
                     Spacer(minLength: 0)
@@ -778,7 +779,11 @@ struct NativeDesktopConversationView: View {
     private var tab: Int { model.conversationTab }
     var body: some View {
         VStack(spacing: 0) {
-            Picker(L("Conversation"), selection: $model.conversationTab) { Text(L("Chat")).tag(0); Text(L("Live text")).tag(1); Text(L("Catch up")).tag(2) }.pickerStyle(.segmented).labelsHidden().padding(12)
+            let unread = model.catchUp.timeline.unreadCount
+            Picker(L("Conversation"), selection: $model.conversationTab) {
+                Text(L("Chat")).tag(0); Text(L("Live text")).tag(1)
+                Text(unread > 0 ? L("Catch up (%ld)", unread) : L("Catch up")).tag(2)
+            }.pickerStyle(.segmented).labelsHidden().padding(12)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
@@ -802,15 +807,26 @@ struct NativeDesktopConversationView: View {
                             if model.catchUp.timeline.intervals.isEmpty { Text(L("No missed intervals recorded in this meeting.")).foregroundStyle(.secondary) }
                             ForEach(model.catchUp.timeline.intervals) { interval in
                                 VStack(alignment: .leading, spacing: 8) {
-                                    Text(interval.start, style: .time).font(.headline)
-                                    Text(interval.isOngoing ? L("Audio interruption in progress") : L("While meeting audio was unavailable")).font(.caption).foregroundStyle(.secondary)
+                                    HStack(spacing: 4) {
+                                        Text(interval.start, style: .time)
+                                        if let end = interval.end { Text("–"); Text(end, style: .time) }
+                                    }.font(.headline)
+                                    Text(NativeDesktopCatchUpCard.title(interval)).font(.caption).foregroundStyle(.secondary)
                                     let lines = model.catchUp.timeline.transcript(during: interval)
                                     if lines.isEmpty { Text(L("No transcript is available for this interval.")).foregroundStyle(.secondary) }
                                     ForEach(lines) { line in
-                                        Text((line.speaker.map { $0 + ": " } ?? "") + line.text).textSelection(.enabled)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            if let speaker = line.speaker { Text(speaker).font(.caption.bold()) }
+                                            Text(line.text).textSelection(.enabled)
+                                        }
                                     }
-                                    Button(L("Mark reviewed")) { model.catchUp.markReviewed(interval.id) }.font(.caption)
-                                }.padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                                    if !interval.isOngoing && !model.catchUp.timeline.isReviewed(interval) {
+                                        Button(L("Mark reviewed")) { model.catchUp.markReviewed(interval.id) }.font(.caption)
+                                    }
+                                }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(model.catchUpFocus == interval.id ? Color.accentColor : .clear, lineWidth: 2))
+                                    .id(interval.id)
                             }
                         } else {
                             if model.guestFeatures.transcriptionStatus == .active {
@@ -833,6 +849,8 @@ struct NativeDesktopConversationView: View {
                         Color.clear.frame(height: 1).id("latest")
                     }.padding(16)
                 }.onChange(of: chat.items.last?.id) { _ in proxy.scrollTo("latest", anchor: .bottom) }
+                    .onChange(of: model.catchUpFocus) { id in if let id { proxy.scrollTo(id, anchor: .top) } }
+                    .onAppear { if tab == 2, let id = model.catchUpFocus { DispatchQueue.main.async { proxy.scrollTo(id, anchor: .top) } } }
             }
             if tab == 0 && !chat.isReadOnly {
                 Divider()
@@ -1169,6 +1187,44 @@ struct NativeDesktopTranscriptionBanner: View {
                     .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel(L("Dismiss"))
             }.padding(.horizontal, 14).padding(.vertical, 8).nativeMeetingChrome()
                 .accessibilityElement(children: .contain).accessibilityIdentifier("transcription.announcement")
+        }
+    }
+}
+
+/// While sound is off, says live text is being kept; when sound returns, offers
+/// what was said in the meantime.
+struct NativeDesktopCatchUpCard: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    static func title(_ interval: MissedInterval) -> String {
+        let sound = interval.reasons == [.audioInterruption]
+        if interval.isOngoing { return sound ? L("Your sound is off") : L("Audio interruption in progress") }
+        if sound { return L("While your sound was off") }
+        if interval.reasons == [.connection] { return L("While reconnecting") }
+        return L("While meeting audio was unavailable")
+    }
+    var body: some View {
+        if let id = model.catchUpOffer, let interval = model.catchUpInterval(id) {
+            let lines = model.catchUpLines(id)
+            HStack(spacing: 10) {
+                Image(systemName: "text.bubble.fill").foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 4) {
+                        Text(Self.title(interval)).bold()
+                        Text(interval.start, style: .time).foregroundStyle(.secondary)
+                        if let end = interval.end { Text("–").foregroundStyle(.secondary); Text(end, style: .time).foregroundStyle(.secondary) }
+                    }
+                    Text(lines.isEmpty ? L("Nothing was transcribed while your sound was off.") : L("%ld lines of live text", lines.count))
+                        .foregroundStyle(.secondary)
+                }.lineLimit(1)
+                if !lines.isEmpty { Button(L("Read what you missed")) { model.showCatchUp(id) }.controlSize(.small) }
+                Button { model.dismissCatchUpOffer() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel(L("Dismiss"))
+            }.font(.callout).padding(.horizontal, 14).padding(.vertical, 8).nativeMeetingChrome()
+                .accessibilityElement(children: .contain).accessibilityIdentifier("catchup.offer")
+        } else if model.soundOffSavingText {
+            Label(L("Sound is off · live text is saved for catch-up"), systemImage: "speaker.slash.fill")
+                .font(.callout).padding(.horizontal, 14).padding(.vertical, 7).nativeMeetingChrome()
+                .accessibilityIdentifier("catchup.saving")
         }
     }
 }

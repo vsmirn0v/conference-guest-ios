@@ -1258,6 +1258,34 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertEqual(model.snapshot.phase, .connected)
         XCTAssertNil(model.error)
     }
+    func testSoundOffPeriodIsOfferedAsCatchUpWithItsLiveText() async throws {
+        let engine = DesktopTestEngine()
+        let model = try model(engine)
+        try await model.connect()
+        var features = GuestMeetingSnapshot(); features.transcriptionStatus = .active; features.permissions.canViewTranscript = true
+        model.receiveFeaturesForTesting(features)
+        engine.snapshot.playoutOn = false; engine.onState?(engine.snapshot)
+        XCTAssertTrue(model.soundOffSavingText, "Muted sound says live text is kept")
+        XCTAssertNil(model.catchUpOffer)
+        features.transcript = [GuestMeetingMessage(id: "t1", participantID: "p", participantName: "Anna",
+            text: "The budget is approved", sentAt: Date(), isOwn: false)]
+        model.receiveFeaturesForTesting(features)
+        engine.snapshot.playoutOn = true; engine.onState?(engine.snapshot)
+        let offer = try XCTUnwrap(model.catchUpOffer, "Sound returning offers what was said meanwhile")
+        XCTAssertEqual(model.catchUpLines(offer).map(\.text), ["The budget is approved"])
+        XCTAssertEqual(NativeDesktopCatchUpCard.title(try XCTUnwrap(model.catchUpInterval(offer))), L("While your sound was off"))
+        model.showCatchUp(offer)
+        XCTAssertEqual(model.conversationTab, 2); XCTAssertEqual(model.panel, .conversation)
+        XCTAssertEqual(model.catchUpFocus, offer); XCTAssertNil(model.catchUpOffer)
+        _ = await model.leave()
+        let quiet = DesktopTestEngine(), plain = try self.model(quiet)
+        try await plain.connect()
+        quiet.snapshot.playoutOn = false; quiet.onState?(quiet.snapshot)
+        XCTAssertFalse(plain.soundOffSavingText, "Without transcription nothing is being kept")
+        quiet.snapshot.playoutOn = true; quiet.onState?(quiet.snapshot)
+        XCTAssertNil(plain.catchUpOffer, "A short mute with nothing transcribed offers nothing")
+        _ = await plain.leave()
+    }
     func testTranscriptionIndicatorAnnouncesOnceAndExplainsItself() async throws {
         let model = try model(DesktopTestEngine())
         var features = GuestMeetingSnapshot(); features.transcriptionStatus = .active

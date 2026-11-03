@@ -115,6 +115,28 @@ import UniformTypeIdentifiers
         }
     }
     func showLiveText() { conversationTab = 1; panel = .conversation; dismissTranscriptionAnnouncement() }
+    /// The sound-off period offered for catch-up after sound returns.
+    @Published private(set) var catchUpOffer: UUID?
+    /// The Catch up tab scrolls to this period once.
+    @Published var catchUpFocus: UUID?
+    /// Sound is off while the service transcribes: what is said is kept for catch-up.
+    var soundOffSavingText: Bool { connected && !snapshot.playoutOn && transcriptionIndicator == .on }
+    func catchUpInterval(_ id: UUID) -> MissedInterval? { catchUp.timeline.intervals.first { $0.id == id } }
+    func catchUpLines(_ id: UUID) -> [TranscriptSegment] {
+        catchUpInterval(id).map { catchUp.timeline.transcript(during: $0) } ?? []
+    }
+    func showCatchUp(_ id: UUID) { conversationTab = 2; panel = .conversation; catchUpFocus = id; catchUpOffer = nil }
+    func dismissCatchUpOffer() { catchUpOffer = nil }
+    /// Offered when the period that just closed was a sound-off one with live text,
+    /// or a long one while transcription was on (so "nothing was said" is known).
+    private func offerCatchUpForSoundReturn(now: Date = Date()) {
+        guard let interval = catchUp.timeline.intervals.last, interval.reasons.contains(.audioInterruption),
+              let end = interval.end, now.timeIntervalSince(end) < 2 else { return }
+        let lines = catchUp.timeline.transcript(during: interval, now: now)
+        if !lines.isEmpty || (catchUp.transcriptionEnabled && end.timeIntervalSince(interval.start) >= 10) {
+            catchUpOffer = interval.id
+        }
+    }
     func dismissTranscriptionAnnouncement() {
         transcriptionAnnouncementTask?.cancel(); transcriptionAnnouncementTask = nil
         if transcriptionAnnouncement { transcriptionAnnouncement = false }
@@ -522,8 +544,8 @@ import UniformTypeIdentifiers
         if previous.phase == .reconnecting && value.phase == .connected { chat.reactionHistory.endGap() }
         if previous.phase != .reconnecting && value.phase == .reconnecting { catchUp.begin(.connection); demandKey = nil }
         if previous.phase == .reconnecting && value.phase == .connected { catchUp.end(.connection) }
-        if previous.playoutOn && !value.playoutOn { catchUp.begin(.audioInterruption) }
-        if !previous.playoutOn && value.playoutOn { catchUp.end(.audioInterruption) }
+        if previous.playoutOn && !value.playoutOn { catchUp.begin(.audioInterruption); catchUpOffer = nil }
+        if !previous.playoutOn && value.playoutOn { catchUp.end(.audioInterruption); offerCatchUpForSoundReturn() }
         if value.phase == .connected, !value.participants.isEmpty, let affinity = focusAffinity {
             let participant = value.participants.first { $0.id == affinity.participant }
             if participant == nil || (affinity.source == .screen && participant?.sharing == false) {
