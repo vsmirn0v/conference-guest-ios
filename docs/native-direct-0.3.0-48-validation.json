@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "48",
+  "channel": "beta",
+  "sourceCommit": "cb30183",
+  "changes": [
+    "Release diagnostics: probe events reach the unified log (category guest) and a bounded in-memory history; startup-audio-timeout names each readiness condition, microphone access and audio route; Help > Copy Diagnostics copies versions, permissions, audio devices, installed copies and recent events (cb30183)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-48-arm64.dmg",
+    "sha256": "8a388f86aa6817a516c0a1350b92123167a1c7485ba1f71e04cc1f658a2f19b7",
+    "length": 15891180
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-48-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 48",
+    "unified-log events from a Finder-launched release app not yet observed",
+    "screen share stage not yet seen in a live meeting"
+  ]
+}
