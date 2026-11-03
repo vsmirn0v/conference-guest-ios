@@ -1,0 +1,28 @@
+{
+  "version": "0.3.0",
+  "build": "52",
+  "channel": "beta",
+  "sourceCommit": "01ded15",
+  "changes": [
+    "Catch-up for meeting sound off: saving hint while muted, offer card when sound returns, Catch up tab with unread count, cause labels, time ranges and focus (52a5ef2)",
+    "Meetings popover: the whole row shows the meeting; window icon removed (01ded15)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-52-arm64.dmg",
+    "sha256": "ab1940fee267128dac413af202ac244a7f89fd3034c887cc762b01e65f3f29fc",
+    "length": 15931768
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-52-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 52",
+    "catch-up card and saving hint not yet seen in a live transcribed meeting",
+    "Meetings popover row click not exercised in the running app"
+  ]
+}
