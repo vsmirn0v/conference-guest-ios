@@ -19,7 +19,8 @@ struct NativeDesktopJoinReadinessPolicy {
     static let microphoneKey = "nativeDesktop.microphoneReadinessPolicy"
     static let cameraKey = "nativeDesktop.cameraReadinessPolicy"
     var microphone: NativeDesktopMediaReadinessMode = .whenPluggedIn
-    var camera: NativeDesktopMediaReadinessMode = .whenPluggedIn
+    /// Off unless chosen: preparing the camera can light its indicator.
+    var camera: NativeDesktopMediaReadinessMode = .off
     var microphoneExplicit = false
 
     /// Read-only compatibility: a previous explicit headset opt-in keeps its
@@ -32,7 +33,7 @@ struct NativeDesktopJoinReadinessPolicy {
             microphone = defaults.bool(forKey: "nativeDesktop.headsetMuteControls") ? .alsoOnBattery : .whenPluggedIn
         }
         return .init(microphone: microphone,
-            camera: defaults.string(forKey: cameraKey).flatMap(NativeDesktopMediaReadinessMode.init(rawValue:)) ?? .whenPluggedIn,
+            camera: defaults.string(forKey: cameraKey).flatMap(NativeDesktopMediaReadinessMode.init(rawValue:)) ?? .off,
             microphoneExplicit: defaults.object(forKey: microphoneKey) != nil || defaults.bool(forKey: "nativeDesktop.headsetMuteControls"))
     }
 }

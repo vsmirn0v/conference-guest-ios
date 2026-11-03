@@ -416,12 +416,8 @@ import UserNotifications
         let mainShown = window.map { $0.isVisible && !$0.isMiniaturized } ?? false
         if !host.isEmbedded || !hasVisibleWindows || !mainShown { showMeeting(current) } else { presentMainWindow() }
     }
-    func leaveAllConfirmed() {
-        let alert = NSAlert(); alert.messageText = L("Leave all meetings?")
-        alert.addButton(withTitle: L("Leave all")); alert.addButton(withTitle: L("Cancel"))
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        Task { _ = await leave() }
-    }
+    /// An explicit "Leave all meetings" acts at once, like each row's Leave button.
+    func leaveAllNow() { Task { _ = await leave() } }
     private func continuationMeeting(_ session: UUID) -> NativeDesktopMeetingModel? {
         meetings.first { continuationSessions[$0.sessionID] == session }
     }
@@ -541,7 +537,7 @@ import UserNotifications
                 action(L("Leave"), #selector(leaveItem(_:)))
                 row.submenu = actions; menu.addItem(row)
             }
-            item(L("Leave all meetings…"), #selector(leaveAllFromMenu))
+            item(L("Leave all meetings"), #selector(leaveAllFromMenu))
         } else if let meeting {
             menu.addItem(withTitle: meeting.title, action: nil, keyEquivalent: "")
             item(L("Show meeting"), #selector(openMeeting))
@@ -620,7 +616,7 @@ import UserNotifications
     @objc private func openMeeting() { showMeeting() }
     @objc private func toggleMic() { meeting?.toggleMicrophone() }
     @objc private func leaveFromMenu() { Task { _ = await leave() } }
-    @objc private func leaveAllFromMenu() { leaveAllConfirmed() }
+    @objc private func leaveAllFromMenu() { leaveAllNow() }
     private func menuMeeting(_ sender: NSMenuItem) -> NativeDesktopMeetingModel? {
         meetings.first { $0.sessionID == sender.representedObject as? UUID }
     }

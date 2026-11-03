@@ -18,7 +18,7 @@ import Foundation
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
         let initial = NativeDesktopJoinReadinessPolicy.current(defaults: defaults)
-        expect(initial.microphone == .whenPluggedIn && initial.camera == .whenPluggedIn && !initial.microphoneExplicit,
+        expect(initial.microphone == .whenPluggedIn && initial.camera == .off && !initial.microphoneExplicit,
             "New users default to preparation while plugged in")
         defaults.set(true, forKey: "nativeDesktop.joinMicrophoneReady")
         defaults.set(true, forKey: "nativeDesktop.joinCameraPrime")

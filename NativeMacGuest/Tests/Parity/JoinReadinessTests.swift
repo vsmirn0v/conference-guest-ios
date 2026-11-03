@@ -66,7 +66,7 @@ import XCTest
     func testReadinessDefaultsToPluggedInWithoutWritingPreferences() {
         let defaults = UserDefaults(suiteName: "join-readiness-\(UUID())")!
         let policy = NativeDesktopJoinReadinessPolicy.current(defaults: defaults)
-        XCTAssertEqual(policy.microphone, .whenPluggedIn); XCTAssertEqual(policy.camera, .whenPluggedIn)
+        XCTAssertEqual(policy.microphone, .whenPluggedIn); XCTAssertEqual(policy.camera, .off, "Camera readiness is off unless chosen")
         XCTAssertNil(defaults.object(forKey: NativeDesktopJoinReadinessPolicy.microphoneKey))
         XCTAssertNil(defaults.object(forKey: NativeDesktopJoinReadinessPolicy.cameraKey))
     }

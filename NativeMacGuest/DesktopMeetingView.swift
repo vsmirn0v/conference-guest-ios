@@ -1056,7 +1056,7 @@ struct NativeDesktopMeetingsPopover: View {
                 NativeDesktopMeetingRow(workspace: workspace, model: model, index: index, current: model === current, close: close)
             }
             Divider().padding(.vertical, 6)
-            Button(L("Leave all meetings…")) { close(); workspace.leaveAllConfirmed() }.buttonStyle(.plain).foregroundStyle(.red)
+            Button(L("Leave all meetings")) { close(); workspace.leaveAllNow() }.buttonStyle(.plain).foregroundStyle(.red)
             Text(L("Your microphone and camera work in one meeting at a time. Use headphones to avoid echo between meetings."))
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.top, 4)
         }.padding(16).frame(width: 380)

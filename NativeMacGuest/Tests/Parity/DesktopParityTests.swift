@@ -454,7 +454,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         }
         let prime = NativeDesktopJoinCameraPrime(authorized: { true }, makeCapture: { _ in capture })
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Power fixture", title: nil,
-            engine: engine, joinReadiness: .init(), joinCameraPrime: prime, cameraMetadata: await joinTestCameraMetadata(), power: power)
+            engine: engine, joinReadiness: .init(camera: .whenPluggedIn), joinCameraPrime: prime, cameraMetadata: await joinTestCameraMetadata(), power: power)
         try await model.connect(); try await spin { capture.starts == 1 && engine.mutedPreparationCalls == 1 }
         model.toggleMicrophone(); await model.waitForMediaActionsForTesting()
         state.pluggedIn = false; notify?()
