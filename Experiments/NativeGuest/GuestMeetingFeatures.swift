@@ -53,6 +53,9 @@ struct GuestMeetingMessage: Identifiable, Equatable, Sendable {
     var sentAt: Date?
     var isOwn: Bool
     var delivery: Delivery = .sent
+    /// When a live event first delivered this message here; nil for history pages.
+    /// It places live text in time when the provider's own timestamp is absent.
+    var receivedAt: Date? = nil
 }
 
 struct GuestMeetingReactionEvent: Identifiable, Equatable, Sendable {
@@ -141,7 +144,7 @@ struct GuestMeetingFeatures {
             case "settings-updated":
                 if let title = payload["title"] as? String { snapshot.title = String(title.prefix(512)) }
             case "chat-message":
-                if snapshot.permissions.canViewChat, let message = decodeMessage(payload["message"], fallbackID: envelope["requestId"]) {
+                if snapshot.permissions.canViewChat, let message = decodeMessage(payload["message"], fallbackID: envelope["requestId"], receivedAt: Date()) {
                     upsert(message, transcript: false)
                 }
             case "reaction":
@@ -152,7 +155,14 @@ struct GuestMeetingFeatures {
                     snapshot.reactions = Array(snapshot.reactions.suffix(100))
                 }
             case "transcription-message":
-                if snapshot.permissions.canViewTranscript, let message = decodeMessage(payload["message"]) { upsert(message, transcript: true) }
+                if snapshot.permissions.canViewTranscript, let message = decodeMessage(payload["message"], receivedAt: Date()) {
+                    if !loggedTranscriptShape, let fields = payload["message"] as? [String: Any] {
+                        // Field names only, never content: which timestamp the provider sends.
+                        loggedTranscriptShape = true
+                        probeLog("transcript-message-shape", ["keys": fields.keys.sorted(), "dated": message.sentAt != nil])
+                    }
+                    upsert(message, transcript: true)
+                }
             case "transcription-started": snapshot.transcriptionStatus = .active
             case "transcription-stopped": snapshot.transcriptionStatus = .stopped
             case "transcription-error": snapshot.transcriptionStatus = .failed
@@ -283,18 +293,23 @@ struct GuestMeetingFeatures {
             return member
         }.sorted { $0.isLocal != $1.isLocal ? $0.isLocal : $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
-    private func decodeMessage(_ raw: Any?, fallbackID: Any? = nil) -> GuestMeetingMessage? {
+    private var loggedTranscriptShape = false
+    private func decodeMessage(_ raw: Any?, fallbackID: Any? = nil, receivedAt: Date? = nil) -> GuestMeetingMessage? {
         guard let value = raw as? [String: Any], let id = Self.identifier(value["id"] ?? fallbackID),
               let participant = Self.identifier(value["participantId"]), let text = value["text"] as? String,
               !text.isEmpty, text.utf8.count <= 64 * 1024 else { return nil }
         return .init(id: id, participantID: participant,
                      participantName: String((value["participantName"] as? String ?? members[participant]?.name ?? "Participant").prefix(256)),
-                     text: String(text.prefix(4_096)), sentAt: Self.date(value["createdAt"]),
-                     isOwn: participant == snapshot.localParticipantID)
+                     text: String(text.prefix(4_096)),
+                     sentAt: ["createdAt", "timestamp", "startTime", "startedAt", "time"].lazy.compactMap { Self.date(value[$0]) }.first,
+                     isOwn: participant == snapshot.localParticipantID, receivedAt: receivedAt)
     }
     private mutating func upsert(_ message: GuestMeetingMessage, transcript: Bool) {
         var values = transcript ? snapshot.transcript : snapshot.messages
-        if let index = values.firstIndex(where: { $0.id == message.id }) { values[index] = message }
+        if let index = values.firstIndex(where: { $0.id == message.id }) {
+            var updated = message; updated.receivedAt = values[index].receivedAt ?? message.receivedAt
+            values[index] = updated
+        }
         else { values.append(message) }
         values.sort {
             if $0.sentAt != $1.sentAt { return ($0.sentAt ?? .distantPast) < ($1.sentAt ?? .distantPast) }
@@ -309,9 +324,11 @@ struct GuestMeetingFeatures {
     }
     private static func date(_ value: Any?) -> Date? {
         if let number = value as? NSNumber {
-            let milliseconds = number.doubleValue
-            guard milliseconds.isFinite else { return nil }
-            return Date(timeIntervalSince1970: milliseconds / 1_000)
+            // Milliseconds or seconds since 1970; anything before 2020 is not a wall-clock time.
+            let raw = number.doubleValue
+            guard raw.isFinite else { return nil }
+            let date = Date(timeIntervalSince1970: raw > 10_000_000_000 ? raw / 1_000 : raw)
+            return date > Date(timeIntervalSince1970: 1_577_836_800) ? date : nil
         }
         if let value = value as? String {
             let parser = ISO8601DateFormatter(); parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

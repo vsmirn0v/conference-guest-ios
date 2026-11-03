@@ -121,6 +121,39 @@ import UniformTypeIdentifiers
     @Published var catchUpFocus: UUID?
     /// Sound is off while the service transcribes: what is said is kept for catch-up.
     var soundOffSavingText: Bool { connected && !snapshot.playoutOn && transcriptionIndicator == .on }
+    /// When a line of live text was spoken: the provider's time when it agrees with
+    /// when the line arrived here (within 10 minutes), else the arrival time.
+    static func spokenAt(_ message: GuestMeetingMessage) -> Date? {
+        guard let received = message.receivedAt else { return message.sentAt }
+        guard let sent = message.sentAt, abs(sent.timeIntervalSince(received)) <= 600 else { return received }
+        return sent
+    }
+    enum LiveTextRow: Identifiable {
+        case line(GuestMeetingMessage, Date?)
+        case reaction(MeetingReactionEvent)
+        var id: String { switch self { case .line(let item, _): "line-" + item.id; case .reaction(let item): "reaction-" + item.id } }
+    }
+    /// Live text in spoken order with reactions placed among the lines. A line
+    /// without any time keeps its place after the line before it.
+    func liveTextRows(limit: Int = 1000) -> [LiveTextRow] {
+        var rows: [(Date, Int, LiveTextRow)] = [], last = Date.distantPast, order = 0
+        for line in transcript.suffix(limit) {
+            let time = Self.spokenAt(line); last = time ?? last
+            rows.append((last, order, .line(line, time))); order += 1
+        }
+        if let first = rows.first?.0 {
+            for event in chat.reactionHistory.events where event.timestamp >= first {
+                rows.append((event.timestamp, order, .reaction(event))); order += 1
+            }
+        } else {
+            for event in chat.reactionHistory.events { rows.append((event.timestamp, order, .reaction(event))); order += 1 }
+        }
+        return rows.sorted { $0.0 == $1.0 ? $0.1 < $1.1 : $0.0 < $1.0 }.map(\.2)
+    }
+    func catchUpReactions(_ interval: MissedInterval, now: Date = Date()) -> [MeetingReactionEvent] {
+        let end = interval.end ?? now
+        return chat.reactionHistory.events.filter { $0.timestamp >= interval.start && $0.timestamp <= end }
+    }
     func catchUpInterval(_ id: UUID) -> MissedInterval? { catchUp.timeline.intervals.first { $0.id == id } }
     func catchUpLines(_ id: UUID) -> [TranscriptSegment] {
         catchUpInterval(id).map { catchUp.timeline.transcript(during: $0) } ?? []
@@ -968,13 +1001,13 @@ import UniformTypeIdentifiers
         let previousTranscription = guestFeatures.transcriptionStatus
         guestFeatures = features
         noteTranscription(from: previousTranscription, to: features.transcriptionStatus)
-        catchUp.observe(messages: features.transcript.map { TranscriptSegment(id: $0.id, speaker: $0.participantName, text: $0.text, spokenAt: $0.sentAt) }, canView: features.permissions.canViewTranscript, enabled: features.transcriptionStatus == .active)
+        catchUp.observe(messages: features.transcript.map { TranscriptSegment(id: $0.id, speaker: $0.participantName, text: $0.text, spokenAt: Self.spokenAt($0)) }, canView: features.permissions.canViewTranscript, enabled: features.transcriptionStatus == .active)
         chat.reactionHistoryAvailable = features.permissions.canSendReaction
         chat.canSend = features.permissions.canSendChat && features.connected
         chat.unavailableReason = features.permissions.canViewChat ? nil : L("Chat is unavailable in this meeting.")
         chat.replace(features.messages.map { message in
             ChatEntry(id: message.id, sender: message.participantName, text: message.text,
-                sentAt: message.sentAt ?? Date.distantPast, isOwn: message.isOwn,
+                sentAt: message.sentAt ?? message.receivedAt ?? Date.distantPast, isOwn: message.isOwn,
                 delivery: message.delivery == .pending ? .pending : message.delivery == .failed ? .failed : .sent)
         })
         for event in features.reactions where receivedReactions.insert(event.id).inserted {

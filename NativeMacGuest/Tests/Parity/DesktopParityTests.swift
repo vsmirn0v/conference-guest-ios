@@ -1286,6 +1286,30 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertNil(plain.catchUpOffer, "A short mute with nothing transcribed offers nothing")
         _ = await plain.leave()
     }
+    /// The provider may send live text without its own timestamp; the arrival time
+    /// still places it in the period when sound was off.
+    func testUndatedLiveTextReceivedWhileMutedIsCaughtUpAndListedWithReactions() async throws {
+        let engine = DesktopTestEngine()
+        let model = try model(engine)
+        try await model.connect()
+        var features = GuestMeetingSnapshot(); features.transcriptionStatus = .active; features.permissions.canViewTranscript = true
+        features.permissions.canSendReaction = true
+        model.receiveFeaturesForTesting(features)
+        engine.snapshot.playoutOn = false; engine.onState?(engine.snapshot)
+        features.transcript = [GuestMeetingMessage(id: "t1", participantID: "p", participantName: "Anna",
+            text: "Undated line", sentAt: nil, isOwn: false, receivedAt: Date())]
+        features.reactions = [GuestMeetingReactionEvent(id: UUID(), participantID: "p", participantName: "Anna", reaction: .like, receivedAt: Date())]
+        model.receiveFeaturesForTesting(features)
+        engine.snapshot.playoutOn = true; engine.onState?(engine.snapshot)
+        let offer = try XCTUnwrap(model.catchUpOffer)
+        XCTAssertEqual(model.catchUpLines(offer).map(\.text), ["Undated line"])
+        XCTAssertEqual(model.chat.reactionHistory.events.count, 1, "Reactions reach the chat history")
+        XCTAssertEqual(model.catchUpReactions(try XCTUnwrap(model.catchUpInterval(offer))).count, 1)
+        let rows = model.liveTextRows()
+        XCTAssertEqual(rows.count, 2, "Live text lists the line and the reaction")
+        if case .line(_, let time) = rows[0] { XCTAssertNotNil(time, "Live text shows a time") } else { XCTFail("line first") }
+        _ = await model.leave()
+    }
     func testTranscriptionIndicatorAnnouncesOnceAndExplainsItself() async throws {
         let model = try model(DesktopTestEngine())
         var features = GuestMeetingSnapshot(); features.transcriptionStatus = .active

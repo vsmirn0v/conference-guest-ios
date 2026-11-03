@@ -813,12 +813,22 @@ struct NativeDesktopConversationView: View {
                                     }.font(.headline)
                                     Text(NativeDesktopCatchUpCard.title(interval)).font(.caption).foregroundStyle(.secondary)
                                     let lines = model.catchUp.timeline.transcript(during: interval)
+                                    let reactions = model.catchUpReactions(interval)
                                     if lines.isEmpty { Text(L("No transcript is available for this interval.")).foregroundStyle(.secondary) }
                                     ForEach(lines) { line in
                                         VStack(alignment: .leading, spacing: 2) {
-                                            if let speaker = line.speaker { Text(speaker).font(.caption.bold()) }
+                                            HStack {
+                                                if let speaker = line.speaker { Text(speaker).font(.caption.bold()) }
+                                                Spacer()
+                                                if let time = line.spokenAt { Text(time, style: .time).font(.caption2).foregroundStyle(.secondary) }
+                                            }
                                             Text(line.text).textSelection(.enabled)
                                         }
+                                    }
+                                    if !reactions.isEmpty {
+                                        HStack(spacing: 6) {
+                                            ForEach(reactions.suffix(12)) { event in Text(event.kind.emoji).help(event.displayName ?? L("Participant")) }
+                                        }.font(.title3).accessibilityLabel(L("%ld reactions", reactions.count))
                                     }
                                     if !interval.isOngoing && !model.catchUp.timeline.isReviewed(interval) {
                                         Button(L("Mark reviewed")) { model.catchUp.markReviewed(interval.id) }.font(.caption)
@@ -839,8 +849,24 @@ struct NativeDesktopConversationView: View {
                             }
                             if model.guestFeatures.transcriptHasMore { Button(L("Earlier transcript")) { model.loadMoreTranscript() } }
                             if model.transcript.isEmpty { Text(L("Transcript appears here when the meeting service provides it.")).foregroundStyle(.secondary) }
-                            ForEach(model.transcript.suffix(tab == 2 ? 40 : 1000)) { line in
-                                VStack(alignment: .leading, spacing: 4) { Text(line.participantName).font(.caption.bold()); Text(line.text).textSelection(.enabled) }
+                            ForEach(model.liveTextRows()) { row in
+                                switch row {
+                                case .line(let line, let time):
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack {
+                                            Text(line.participantName).font(.caption.bold()); Spacer()
+                                            if let time { Text(time, style: .time).font(.caption2).foregroundStyle(.secondary) }
+                                        }
+                                        Text(line.text).textSelection(.enabled)
+                                    }
+                                case .reaction(let event):
+                                    HStack(spacing: 6) {
+                                        Text(event.kind.emoji)
+                                        Text(event.displayName ?? L("Participant")).font(.caption).foregroundStyle(.secondary)
+                                        Spacer()
+                                        Text(event.timestamp, style: .time).font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
                             }
                             if model.guestFeatures.permissions.canManageTranscript {
                                 Button(model.guestFeatures.transcriptionStatus == .active ? L("Stop transcription") : L("Start transcription")) { model.setTranscription(model.guestFeatures.transcriptionStatus != .active) }

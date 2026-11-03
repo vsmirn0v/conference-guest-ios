@@ -96,6 +96,13 @@ import LiveKitWebRTC
         features.receive(event("transcription-started"))
         features.receive(event("transcription-message", ["message": message("t1")]))
         precondition(features.snapshot.transcriptionStatus == .active && features.snapshot.transcript.count == 1)
+        precondition(features.snapshot.transcript[0].receivedAt != nil, "Live text records when it arrived")
+        features.receive(event("transcription-message", ["message": ["id": "t2", "participantId": "remote", "text": "Seconds", "timestamp": 1_700_000_100]]))
+        precondition(features.snapshot.transcript.first { $0.id == "t2" }?.sentAt == Date(timeIntervalSince1970: 1_700_000_100),
+                     "A seconds timestamp under another key still dates the line")
+        features.receive(event("transcription-message", ["message": ["id": "t3", "participantId": "remote", "text": "Undated"]]))
+        let undated = features.snapshot.transcript.first { $0.id == "t3" }
+        precondition(undated?.sentAt == nil && undated?.receivedAt != nil, "An undated line keeps its arrival time")
         let epoch = features.epoch
         try features.acceptHistory(["messages": [message("history", at: 1_600_000_000_000)], "nextPageKey": 25], transcript: false, epoch: epoch)
         precondition(features.snapshot.messages.map(\.id) == ["history", "m1"] && features.snapshot.chatHasMore)
