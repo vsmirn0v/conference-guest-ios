@@ -1043,30 +1043,37 @@ private struct NativeDesktopMeetingRow: View {
     let index: Int
     let current: Bool
     let close: () -> Void
+    @State private var hovering = false
     private var speaking: Bool { model.participants.contains { !$0.isLocal && $0.speaking == true } }
     var body: some View {
         HStack(spacing: 10) {
-            Circle().fill(model.ownsMicrophone && model.snapshot.microphoneOn ? Color.red : speaking ? Color.green : Color.secondary.opacity(0.5))
-                .frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.title).font(.body.weight(current ? .semibold : .regular)).lineLimit(1)
-                Text(NativeDesktopWorkspace.statusText(model) + " · " + L("%ld participants", model.participants.count) +
-                     (speaking && !model.snapshot.playoutOn ? " · " + L("Someone is speaking") : ""))
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 6)
+            // The row itself shows the meeting; its trailing buttons act without switching.
+            Button { close(); workspace.showMeeting(model) } label: {
+                HStack(spacing: 10) {
+                    Circle().fill(model.ownsMicrophone && model.snapshot.microphoneOn ? Color.red : speaking ? Color.green : Color.secondary.opacity(0.5))
+                        .frame(width: 8, height: 8)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.title).font(.body.weight(current ? .semibold : .regular)).lineLimit(1)
+                        Text(NativeDesktopWorkspace.statusText(model) + " · " + L("%ld participants", model.participants.count) +
+                             (speaking && !model.snapshot.playoutOn ? " · " + L("Someone is speaking") : ""))
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain).help(L("Show meeting") + (index < 9 ? " (⌃⌘\(index + 1))" : ""))
+                .accessibilityLabel(L("Show meeting") + ", " + model.title)
             Button { model.toggleMicrophone() } label: {
                 Image(systemName: model.ownsMicrophone && model.snapshot.microphoneOn ? "mic.fill" : "mic.slash")
                     .foregroundStyle(model.ownsMicrophone && model.snapshot.microphoneOn ? Color.red : Color.primary)
             }.buttonStyle(.plain).help(model.ownsMicrophone ? L("Mute or unmute") : L("Unmute here"))
             Button { model.togglePlayout() } label: { Image(systemName: model.soundSymbol) }
                 .buttonStyle(.plain).help(L("Silence or restore this meeting (⇧⌘S)"))
-            Button { close(); workspace.showMeeting(model) } label: { Image(systemName: "macwindow") }
-                .buttonStyle(.plain).help(L("Show meeting") + (index < 9 ? " (⌃⌘\(index + 1))" : ""))
             Button { Task { _ = await workspace.leave(model) } } label: { Image(systemName: "phone.down.fill").foregroundStyle(.red) }
                 .buttonStyle(.plain).help(L("Leave"))
         }.padding(.vertical, 6).padding(.horizontal, 8)
-            .background(current ? Color.accentColor.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(current ? Color.accentColor.opacity(0.12) : hovering ? Color.primary.opacity(0.06) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 8))
+            .onHover { hovering = $0 }
     }
 }
 
