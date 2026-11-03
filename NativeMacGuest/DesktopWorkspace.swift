@@ -492,6 +492,7 @@ import UserNotifications
             let keyMeeting = meetings.first { self.meetingWindows[$0.sessionID]?.isKeyWindow == true }
                 ?? (self.window?.isKeyWindow == true ? self.selectedMeeting.flatMap { self.isDetached($0) ? nil : $0 } : nil)
             let typing = NSApp.keyWindow?.firstResponder is NSTextView || NSApp.keyWindow?.firstResponder is NSTextField
+            if event.keyCode == 53 && modifiers.isEmpty, let keyMeeting, keyMeeting.immersive { keyMeeting.immersive = false; return nil }
             if key == "m" && modifiers == [.command, .shift] { (keyMeeting ?? fallback).toggleMicrophone(); return nil }
             if key == "s" && modifiers == [.command, .shift], let keyMeeting { keyMeeting.togglePlayout(); return nil }
             if modifiers == [.command] || modifiers == [.command, .control], let digit = key.flatMap(Int.init) {

@@ -1416,3 +1416,14 @@
 "Moving microphone…" = "Переключаем микрофон…";
 "Starting microphone…" = "Включаем микрофон…";
 "Moves your microphone from “%@” and unmutes it here." = "Переносит микрофон из «%@» и включает его здесь.";
+"Move the pointer to show controls · Esc to leave immersive view" = "Подвиньте указатель, чтобы показать кнопки · Esc — выйти из режима погружения";
+"Immersive view" = "Режим погружения";
+"Leave immersive view" = "Выйти из режима погружения";
+"Hide speakers" = "Скрыть участников";
+"Show speakers" = "Показать участников";
+"%@ is speaking" = "Говорит %@";
+"%@ is presenting" = "%@ показывает экран";
+"Speaking now" = "Говорят сейчас";
+"Presenting" = "Показывает экран";
+"Spoke %@" = "Говорил(а) %@";
+"%@ (you)" = "%@ (вы)";

@@ -1418,3 +1418,14 @@
 "Moving microphone…" = "Moving microphone…";
 "Starting microphone…" = "Starting microphone…";
 "Moves your microphone from “%@” and unmutes it here." = "Moves your microphone from “%@” and unmutes it here.";
+"Move the pointer to show controls · Esc to leave immersive view" = "Move the pointer to show controls · Esc to leave immersive view";
+"Immersive view" = "Immersive view";
+"Leave immersive view" = "Leave immersive view";
+"Hide speakers" = "Hide speakers";
+"Show speakers" = "Show speakers";
+"%@ is speaking" = "%@ is speaking";
+"%@ is presenting" = "%@ is presenting";
+"Speaking now" = "Speaking now";
+"Presenting" = "Presenting";
+"Spoke %@" = "Spoke %@";
+"%@ (you)" = "%@ (you)";

@@ -94,6 +94,10 @@ import UniformTypeIdentifiers
     var onLeave: (() async -> Void)?
     /// Conversation panel tab: 0 Chat, 1 Live text, 2 Catch up.
     @Published var conversationTab = 0
+    /// Content first: stage chrome fades until the pointer moves; Esc leaves.
+    @Published var immersive = false
+    /// When each participant was last heard, for the participant list.
+    @Published private(set) var lastSpokeAt: [String: Date] = [:]
     /// When this app saw transcription turn on; the service does not say who started it.
     @Published private(set) var transcriptionSince: Date?
     /// The one-time notice that speech is now being turned into text.
@@ -299,11 +303,31 @@ import UniformTypeIdentifiers
             if pinnedSource != .screen, let localCamera { return .init(id: "local-camera", participantID: pinnedID, source: .camera, track: localCamera) }
         }
         let videos = visibleVideos
-        if let affinity = focusAffinity,
-           let match = videos.first(where: { $0.participantID == affinity.participant && $0.source == affinity.source }) { return match }
-        if focusAffinity != nil { return nil }
+        if let affinity = focusAffinity {
+            if let match = videos.first(where: { $0.participantID == affinity.participant && $0.source == affinity.source }) { return match }
+            // A focused camera that is off shows the same person's live screen instead.
+            if affinity.source == .camera, participants.first(where: { $0.id == affinity.participant })?.cameraOn != true,
+               let screen = videos.first(where: { $0.participantID == affinity.participant && $0.source == .screen }) { return screen }
+            return nil
+        }
         if let pinnedID, let pinned = videos.first(where: { $0.id == pinnedID || $0.participantID == pinnedID }) { return pinned }
         return videos.first { $0.source == .screen } ?? videos.first { item in participants.first { $0.id == item.participantID }?.speaking == true } ?? videos.first
+    }
+    /// Whether the focused person has video this mode should be receiving; when
+    /// not, the stage shows their tile instead of waiting for a stream.
+    var focusedVideoExpected: Bool {
+        guard display != .audioOnly, let id = focusedParticipantID,
+              let person = participants.first(where: { $0.id == id }) else { return false }
+        if focusAffinity?.participant == id, focusAffinity?.source == .screen { return person.sharing == true }
+        return display == .all && (person.cameraOn == true || person.sharing == true)
+    }
+    /// The person whose voice is live: a remote speaker first, else this Mac.
+    var activeSpeaker: NativeDesktopParticipant? {
+        participants.first { $0.speaking == true && !$0.isLocal } ?? participants.first { $0.speaking == true }
+    }
+    /// Beside a focused share: whoever is speaking first, then the roster order.
+    var railParticipants: [NativeDesktopParticipant] {
+        participants.filter { $0.speaking == true } + participants.filter { $0.speaking != true }
     }
     /// Automatic focuses a share only when it is received; Focus works in every mode.
     var showsFocus: Bool {
@@ -462,6 +486,10 @@ import UniformTypeIdentifiers
     private func update(_ value: NativeDesktopExternalSnapshot) {
         guard !closed else { return }
         let previous = snapshot; snapshot = value
+        let now = Date()
+        for person in value.participants where person.speaking == true {
+            if lastSpokeAt[person.id].map({ now.timeIntervalSince($0) > 5 }) ?? true { lastSpokeAt[person.id] = now }
+        }
         noteShareState()
         if value.phase == .reconnecting || value.phase == .failed { cancelJoinCameraPrime() }
         if previous.phase != .reconnecting, value.phase == .reconnecting { updateMicrophoneRecoveryReadiness() }

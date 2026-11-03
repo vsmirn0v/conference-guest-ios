@@ -191,6 +191,20 @@ struct NativeDesktopMeetingView: View {
     /// One window shows one alert: an embedded meeting defers to the window's own.
     var presentsErrors = true
     @State private var reactionsOpen = false
+    @State private var railCollapsed = false
+    @State private var chromeVisible = true
+    @State private var chromeTask: Task<Void, Never>?
+    @State private var immersiveHint = false
+    /// Immersive view keeps only the content until the pointer moves.
+    private var chromeShown: Bool { !model.immersive || chromeVisible }
+    private func revealChrome() {
+        guard model.immersive else { return }
+        chromeVisible = true; chromeTask?.cancel()
+        chromeTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            if !Task.isCancelled { chromeVisible = false }
+        }
+    }
     @State private var shareOpen = false
     @State private var soundOpen = false
     @StateObject private var focusedViewport = NativeDesktopVideoViewport()
@@ -211,25 +225,31 @@ struct NativeDesktopMeetingView: View {
         ZStack(alignment: .topTrailing) {
             ZStack {
                 Color.black
-                if model.mediaPresentation == .meeting { media.padding(.leading, 14).padding(.trailing, 14 + reserved)
-                    .padding(.top, (model.controlsHidden || embedded ? 12 : 70) + (model.isSharingLive ? 48 : 0))
-                    .padding(.bottom, model.controlsHidden ? 12 : singleControlRow ? 96 : (model.showsFocus ? 90 : 160))
+                if model.mediaPresentation == .meeting {
+                    let edge: CGFloat = model.immersive ? 0 : 14
+                    media.padding(.leading, edge).padding(.trailing, edge + reserved)
+                        .padding(.top, model.immersive ? 0 : (model.controlsHidden || embedded ? 12 : 70) + (model.isSharingLive ? 48 : 0))
+                        .padding(.bottom, model.immersive ? 0 : model.controlsHidden ? 12 : singleControlRow ? 96 : (model.showsFocus ? 90 : 160))
                 }
                 if textSelection.isOpen { NativeDesktopSharedTextView(model: textSelection, meetingTools: AnyView(viewAndMoreMenus)) }
                 VStack(spacing: 0) {
                     // In the main window the toolbar holds the title, status and meeting buttons.
-                    if !model.controlsHidden && !textSelection.isOpen && !embedded { header.padding(.horizontal, 18).padding(.top, 10) }
+                    if !model.controlsHidden && !textSelection.isOpen && !embedded && chromeShown { header.padding(.horizontal, 18).padding(.top, 10) }
                     if let workspace, !textSelection.isOpen { NativeDesktopListeningBanner(workspace: workspace, model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen && !embedded { NativeDesktopTranscriptionBanner(model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if model.isSharingLive && !textSelection.isOpen { shareBanner.padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { HStack { reactionOverlay; Spacer() }.padding(.leading, 22).padding(.top, 12) }
                     Spacer(minLength: 0)
-                    if !model.controlsHidden { controls.padding(.bottom, 18) }
+                    if model.immersive && immersiveHint {
+                        Text(L("Move the pointer to show controls · Esc to leave immersive view")).font(.callout)
+                            .padding(.horizontal, 14).padding(.vertical, 8).background(.black.opacity(0.7), in: Capsule()).padding(.bottom, 22)
+                    } else if !model.controlsHidden && chromeShown { controls.padding(.bottom, 18) }
                 }
                 if model.controlsHidden {
                     VStack { Spacer(); Button(L("Show controls")) { model.controlsHidden = false }.buttonStyle(.bordered).padding() }
                 }
             }.foregroundStyle(.white)
+            .onContinuousHover { phase in if case .active = phase { revealChrome() } }
             if let docked {
                 inspector(docked).frame(width: Self.panelWidth)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
@@ -246,6 +266,11 @@ struct NativeDesktopMeetingView: View {
         }
         }
         .onChange(of: textSourceID) { _ in updateTextSource() }
+        .onChange(of: model.immersive) { on in
+            chromeTask?.cancel(); chromeVisible = !on; immersiveHint = on
+            if on { Task { @MainActor in try? await Task.sleep(for: .seconds(3)); immersiveHint = false } }
+        }
+        .onChange(of: model.showsFocus) { focused in if !focused { model.immersive = false } }
         .onChange(of: model.snapshot.phase) { phase in if phase == .left || phase == .leaving || phase == .failed { textSelection.close() } }
         .onDisappear { textSelection.close() }
         .alert(L("Meeting"), isPresented: Binding(get: { presentsErrors && model.error != nil }, set: { if !$0 && presentsErrors && model.error != nil { model.error = nil } })) {
@@ -413,6 +438,7 @@ struct NativeDesktopMeetingView: View {
         Button(L("Reconnect")) { model.reconnect() }
         Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
         Button(L("Hide controls")) { model.controlsHidden = true }
+        if model.showsFocus { Button(model.immersive ? L("Leave immersive view") : L("Immersive view")) { model.immersive.toggle() } }
     }
     private var viewAndMoreMenus: some View {
         Group {
@@ -460,29 +486,72 @@ struct NativeDesktopMeetingView: View {
         case .screenShares: model.videoParticipants.isEmpty ? L("No screen share is live. Audio continues.") : nil
         }
     }
-    private var focusFilmstrip: some View {
-        HStack(spacing: 8) {
-            ForEach(model.participants.prefix(6)) { person in
-                Button { model.focus(participantID: person.id, source: .camera) } label: {
-                    HStack(spacing: 6) { Image(systemName: person.microphoneOn == true ? "mic.fill" : "mic.slash"); Text(person.name).lineLimit(1) }.font(.caption).padding(9)
-                }.buttonStyle(.bordered).frame(maxWidth: 170)
-            }
+    /// The participants panel already lists everyone; the rail would repeat it.
+    private var showsRail: Bool { !model.immersive && !railCollapsed && model.panel != .participants && model.participants.count > 1 }
+    /// Beside a focused share or person: who is here, who is talking, one click to focus them.
+    @ViewBuilder private var speakerRail: some View {
+        if showsRail {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(L("%ld participants", model.participants.count)).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { railCollapsed = true } label: { Image(systemName: "sidebar.right") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary).help(L("Hide speakers")).accessibilityLabel(L("Hide speakers"))
+                }
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(model.railParticipants) { person in
+                            Button { model.focus(participantID: person.id, source: person.sharing == true && person.cameraOn != true ? .screen : .camera) } label: {
+                                participantTile(person, compact: true).frame(height: 112)
+                            }.buttonStyle(.plain).help(L("Focus %@", person.name))
+                        }
+                    }
+                }
+            }.frame(width: 200)
+        }
+    }
+    @ViewBuilder private var railRestoreButton: some View {
+        if railCollapsed && !model.immersive && model.panel != .participants && model.participants.count > 1 {
+            Button { railCollapsed = false } label: { Image(systemName: "person.2").frame(width: 30, height: 28) }
+                .buttonStyle(.plain).background(.black.opacity(0.6), in: Capsule()).padding(12)
+                .help(L("Show speakers")).accessibilityLabel(L("Show speakers"))
+        }
+    }
+    /// Who is talking, on top of the content, so nobody looks away from the share to find out.
+    @ViewBuilder private var speakerChip: some View {
+        if let speaker = model.activeSpeaker {
+            let title = speaker.isLocal ? L("You") : speaker.name
+            HStack(spacing: 8) {
+                Text(initials(speaker.name)).font(.caption2.bold()).frame(width: 24, height: 24)
+                    .background(.white.opacity(0.12), in: Circle()).overlay(Circle().stroke(Color.green, lineWidth: 2))
+                Text(title).font(.callout.weight(.semibold)).lineLimit(1)
+                NativeDesktopLevelMeter(level: speaker.isLocal ? model.snapshot.microphoneLevel ?? 0.5 : 0.7)
+            }.padding(.leading, 6).padding(.trailing, 12).padding(.vertical, 6)
+                .background(.black.opacity(0.7), in: Capsule()).overlay(Capsule().stroke(Color.green.opacity(0.6)))
+                .padding(12).accessibilityElement(children: .ignore).accessibilityLabel(L("%@ is speaking", title))
+                .animation(.easeOut(duration: 0.15), value: speaker.id)
         }
     }
     @ViewBuilder private var mediaContent: some View {
         if model.showsFocus, let focused = model.focusedVideo {
-            VStack(spacing: 10) {
+            HStack(spacing: 10) {
                 NativeDesktopZoomVideo(video: focused, name: name(focused.participantID), viewport: focusedViewport,
-                    textFrame: textFrame, selectText: { model.controlsHidden = false; updateTextSource(); textSelection.open(zoom: focusedViewport.zoom, pan: focusedViewport.pan, viewportSize: focusedViewport.size) })
-                focusFilmstrip
+                    textFrame: textFrame, selectText: { model.controlsHidden = false; updateTextSource(); textSelection.open(zoom: focusedViewport.zoom, pan: focusedViewport.pan, viewportSize: focusedViewport.size) },
+                    immersive: model.immersive, onImmersive: { model.immersive.toggle() })
+                    .overlay(alignment: .topLeading) { speakerChip }
+                    .overlay(alignment: .topTrailing) { railRestoreButton }
+                speakerRail
             }
         } else if model.showsFocus, let focusedID = model.focusedParticipantID,
-                  let person = model.participants.first(where: { $0.id == focusedID }),
-                  model.display != .all || (person.cameraOn != true && person.sharing != true) {
+                  let person = model.participants.first(where: { $0.id == focusedID }), !model.focusedVideoExpected {
             // No video is expected here: keep the person, mic and speaking state in focus.
-            VStack(spacing: 10) { participantTile(person, compact: false); focusFilmstrip }
+            HStack(spacing: 10) { participantTile(person, compact: false); speakerRail }
         } else if model.showsFocus, let focusedID = model.focusedParticipantID {
-            VStack(spacing: 16) { ProgressView(); Text(L("Waiting for stream…")); Text(name(focusedID)).foregroundStyle(.secondary) }
+            HStack(spacing: 10) {
+                VStack(spacing: 16) { ProgressView(); Text(L("Waiting for stream…")); Text(name(focusedID)).foregroundStyle(.secondary) }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                speakerRail
+            }
         } else if !model.participants.isEmpty {
             GeometryReader { geometry in
                 let columns = geometry.size.width < 850 ? 2 : 3
@@ -563,15 +632,7 @@ struct NativeDesktopMeetingView: View {
             HStack { Text(panel == .presenter ? L("Presenter studio") : L(panel.rawValue)).font(.headline); Spacer(); Button { model.panel = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain).help(L("Close")) }.padding(18)
             Divider()
             switch panel {
-            case .participants:
-                List(model.participants) { person in
-                    HStack {
-                        Text(person.name).lineLimit(2); Spacer()
-                        if person.microphoneOn == false { Image(systemName: "mic.slash") }
-                        if person.sharing == true { Image(systemName: "rectangle.on.rectangle") }
-                        if !person.isLocal && model.supportsParticipantVolume { NativeDesktopParticipantVolumeButton(model: model, person: person) }
-                    }
-                }.listStyle(.plain)
+            case .participants: NativeDesktopParticipantsList(model: model)
             case .conversation: NativeDesktopConversationView(model: model, chat: model.chat)
             case .studio: NativeDesktopDeviceSettings(liveTrack: model.localCamera,
                 liveAudioAvailable: true,
@@ -645,7 +706,13 @@ struct NativeDesktopZoomVideo: View {
     @ObservedObject var viewport: NativeDesktopVideoViewport
     var textFrame: NativeDesktopTextFrame? = nil
     var selectText: (() -> Void)? = nil
+    var immersive = false
+    var onImmersive: (() -> Void)? = nil
     private var zoom: CGFloat { get { viewport.zoom } nonmutating set { viewport.zoom = newValue } }
+    private func setZoom(_ value: CGFloat) {
+        zoom = min(8, max(1, value)); savedZoom = zoom
+        if zoom == 1 { pan = .zero; savedPan = .zero }
+    }
     private var savedZoom: CGFloat { get { viewport.savedZoom } nonmutating set { viewport.savedZoom = newValue } }
     private var pan: CGSize { get { viewport.pan } nonmutating set { viewport.pan = newValue } }
     private var savedPan: CGSize { get { viewport.savedPan } nonmutating set { viewport.savedPan = newValue } }
@@ -661,14 +728,33 @@ struct NativeDesktopZoomVideo: View {
                     pan = CGSize(width: min(1, max(-1, savedPan.width + value.translation.width / max(1, geometry.size.width / 2))),
                                  height: min(1, max(-1, savedPan.height + value.translation.height / max(1, geometry.size.height / 2))))
                 }.onEnded { _ in savedPan = pan })
-                .overlay(alignment: .bottomLeading) { Text(name + (video.source == .screen ? " · " + L("Screen") : "")).font(.caption).lineLimit(1).frame(maxWidth: max(80, min(400, geometry.size.width - 140)), alignment: .leading).padding(8).background(.black.opacity(0.5), in: Capsule()).padding(10) }
-                .overlay(alignment: .bottomTrailing) {
-                    HStack(spacing: 12) {
-                        Button { zoom = 1; savedZoom = 1; pan = .zero; savedPan = .zero } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }.help(L("Fit to screen"))
-                        Button { zoom = min(8, zoom + 0.5); savedZoom = zoom } label: { Image(systemName: "plus.magnifyingglass") }.help(L("Zoom in"))
-                    }.buttonStyle(.plain).padding(12).nativeMeetingChrome().padding(10)
+                .onTapGesture(count: 2) { setZoom(zoom > 1 ? 1 : 2) }
+                .overlay(alignment: .bottomLeading) {
+                    Label(video.source == .screen ? L("%@ is presenting", name) : name, systemImage: video.source == .screen ? "rectangle.on.rectangle" : "video")
+                        .font(.caption).lineLimit(1).frame(maxWidth: max(80, min(400, geometry.size.width - 260)), alignment: .leading)
+                        .padding(8).background(.black.opacity(0.55), in: Capsule()).padding(10)
                 }
-        }.clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(alignment: .bottomTrailing) {
+                    VStack(alignment: .trailing, spacing: 6) {
+                        if zoom > 1 { NativeDesktopZoomIndicator(zoom: zoom, pan: pan, aspect: geometry.size) }
+                        HStack(spacing: 4) {
+                            Button { setZoom(zoom - 0.5) } label: { Image(systemName: "minus").frame(width: 26, height: 24) }
+                                .keyboardShortcut("-", modifiers: .command).disabled(zoom <= 1).help(L("Zoom out")).accessibilityLabel(L("Zoom out"))
+                            Button { setZoom(1) } label: { Text(zoom > 1 ? "\(Int((zoom * 100).rounded()))%" : L("Fit")).font(.caption.monospacedDigit()).frame(minWidth: 40) }
+                                .help(L("Fit to screen")).accessibilityLabel(L("Fit to screen"))
+                            Button { setZoom(zoom + 0.5) } label: { Image(systemName: "plus").frame(width: 26, height: 24) }
+                                .keyboardShortcut("=", modifiers: .command).help(L("Zoom in")).accessibilityLabel(L("Zoom in"))
+                            if let onImmersive {
+                                Divider().frame(height: 16)
+                                Button(action: onImmersive) {
+                                    Image(systemName: immersive ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right").frame(width: 26, height: 24)
+                                }.help(immersive ? L("Leave immersive view") : L("Immersive view"))
+                                    .accessibilityLabel(immersive ? L("Leave immersive view") : L("Immersive view"))
+                            }
+                        }.buttonStyle(.plain).padding(.horizontal, 6).padding(.vertical, 4).nativeMeetingChrome()
+                    }.padding(10)
+                }
+        }.clipShape(RoundedRectangle(cornerRadius: immersive ? 0 : 14))
             .contextMenu { if video.source == .screen, let selectText { Button(L("Select text"), action: selectText) } }
             .onAppear { viewport.select(participant: video.participantID, source: video.source) }
             .onChange(of: video.participantID) { _ in viewport.select(participant: video.participantID, source: video.source) }
@@ -1089,5 +1175,66 @@ struct NativeDesktopTranscriptionStrip: View {
                 .background(Color.orange.opacity(0.16)).overlay(alignment: .bottom) { Color.orange.opacity(0.35).frame(height: 1) }
                 .accessibilityElement(children: .contain).accessibilityIdentifier("transcription.announcement")
         }
+    }
+}
+
+/// Where a zoomed view sits in the whole picture. Pan moves the image, so the
+/// visible region moves the other way.
+private struct NativeDesktopZoomIndicator: View {
+    let zoom: CGFloat
+    let pan: CGSize
+    let aspect: CGSize
+    var body: some View {
+        let width: CGFloat = 120, height = width * max(0.4, min(1.2, aspect.height / max(1, aspect.width)))
+        let visible = 1 / max(1, zoom)
+        let centerX = 0.5 - pan.width * (1 - visible) / 2, centerY = 0.5 - pan.height * (1 - visible) / 2
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 4).fill(.white.opacity(0.12))
+            RoundedRectangle(cornerRadius: 3).stroke(Color.orange, lineWidth: 2)
+                .frame(width: width * visible, height: height * visible)
+                .offset(x: width * (centerX - visible / 2), y: height * (centerY - visible / 2))
+        }.frame(width: width, height: height).padding(6).background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+            .accessibilityHidden(true)
+    }
+}
+
+/// Speaking now first with live levels, then everyone else with when they last spoke.
+struct NativeDesktopParticipantsList: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    private static let relative: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter(); formatter.unitsStyle = .short; return formatter
+    }()
+    var body: some View {
+        let speaking = model.participants.filter { $0.speaking == true }
+        let others = model.participants.filter { $0.speaking != true }
+        List {
+            if !speaking.isEmpty { Section(L("Speaking now")) { ForEach(speaking) { row($0) } } }
+            Section(L("In meeting")) { ForEach(others) { row($0) } }
+        }.listStyle(.plain)
+    }
+    private func status(_ person: NativeDesktopParticipant) -> String {
+        if person.speaking == true { return L("Speaking") }
+        var parts: [String] = []
+        if person.sharing == true { parts.append(L("Presenting")) }
+        if let last = model.lastSpokeAt[person.id] { parts.append(L("Spoke %@", Self.relative.localizedString(for: last, relativeTo: Date()))) }
+        else if person.microphoneOn == false { parts.append(L("Muted")) }
+        return parts.joined(separator: " · ")
+    }
+    private func row(_ person: NativeDesktopParticipant) -> some View {
+        let speaking = person.speaking == true
+        return HStack(spacing: 10) {
+            Text(person.name.split(whereSeparator: \.isWhitespace).prefix(2).compactMap(\.first).map(String.init).joined().uppercased())
+                .font(.caption.bold()).frame(width: 30, height: 30).background(.quaternary, in: Circle())
+                .overlay(Circle().stroke(speaking ? Color.green : .clear, lineWidth: 2))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(person.isLocal ? L("%@ (you)", person.name) : person.name).lineLimit(1)
+                let line = status(person)
+                if !line.isEmpty { Text(line).font(.caption).foregroundStyle(speaking ? Color.green : person.sharing == true ? Color.cyan : .secondary).lineLimit(1) }
+            }
+            Spacer(minLength: 4)
+            if speaking { NativeDesktopLevelMeter(level: person.isLocal ? model.snapshot.microphoneLevel ?? 0.5 : 0.7) }
+            else if person.microphoneOn == false { Image(systemName: "mic.slash").foregroundStyle(.secondary).accessibilityLabel(L("Microphone off")) }
+            if !person.isLocal && model.supportsParticipantVolume { NativeDesktopParticipantVolumeButton(model: model, person: person) }
+        }.padding(.vertical, 2).accessibilityElement(children: .combine)
     }
 }

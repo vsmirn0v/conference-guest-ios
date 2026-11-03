@@ -1262,6 +1262,27 @@ private final class DesktopActivitySpy: NSUserActivity {
         model.receiveFeaturesForTesting(features)
         XCTAssertEqual(model.transcriptionIndicator, .failed, "Organizers see the failure and can restart")
     }
+    /// Clicking a presenter whose camera is off must not leave the stage waiting forever.
+    func testFocusedCameraThatIsOffShowsTheSamePersonsScreen() async throws {
+        let engine = DesktopTestEngine(), model = try model(engine)
+        try await model.connect()
+        let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory())
+        let screen = NativeDesktopExternalVideo(id: "presenter-screen", participantID: "presenter", source: .screen,
+            track: factory.videoTrack(with: factory.videoSource(), trackId: UUID().uuidString))
+        engine.snapshot.participants = [.init(id: "presenter", name: "Presenter", cameraOn: false, sharing: true, speaking: true),
+                                        .init(id: "listener", name: "Listener", cameraOn: false, sharing: false)]
+        engine.onState?(engine.snapshot); engine.onVideo?([screen])
+        model.display = .all
+        model.focus(participantID: "presenter", source: .camera)
+        XCTAssertEqual(model.focusedVideo?.source, .screen, "The presenter's screen replaces their camera that is off")
+        XCTAssertEqual(model.activeSpeaker?.id, "presenter")
+        XCTAssertEqual(model.railParticipants.first?.id, "presenter", "Whoever is speaking leads the speaker rail")
+        model.focus(participantID: "listener", source: .camera)
+        XCTAssertNil(model.focusedVideo)
+        XCTAssertFalse(model.focusedVideoExpected, "No live video for this person: show their tile, not Waiting for stream")
+        XCTAssertNotNil(model.lastSpokeAt["presenter"])
+        _ = await model.leave()
+    }
     func testDockReopenReturnsToTheMeetingOnlyWhenTheWindowIsAway() async throws {
         let workspace = multiWorkspace([DesktopTestEngine()])
         try await join(workspace, 1)
