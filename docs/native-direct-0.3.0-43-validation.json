@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "43",
+  "channel": "beta",
+  "sourceCommit": "6983b9a",
+  "changes": [
+    "A startup audio timeout reconnects the meeting instead of ending it with a GuestStartupAudioError alert; timeouts log which readiness condition held (6983b9a)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-43-arm64.dmg",
+    "sha256": "124e2bcfedcc9458bf498bb7f1aff4cb411605dab158a1e3014bc79f3ef57685",
+    "length": 15749827
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-43-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 43",
+    "fix not reproduced on macOS 26.2",
+    "live multi-meeting checks carried over from 41"
+  ]
+}
