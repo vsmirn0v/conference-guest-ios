@@ -219,6 +219,7 @@ struct NativeDesktopMeetingView: View {
                 VStack(spacing: 0) {
                     if !model.controlsHidden && !textSelection.isOpen { header.padding(.horizontal, 18).padding(.top, 10) }
                     if let workspace, !textSelection.isOpen { NativeDesktopListeningBanner(workspace: workspace, model: model).padding(.top, 8).padding(.trailing, reserved) }
+                    if !textSelection.isOpen { NativeDesktopTranscriptionBanner(model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if model.isSharingLive && !textSelection.isOpen { shareBanner.padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { HStack { reactionOverlay; Spacer() }.padding(.leading, 22).padding(.top, 12) }
                     Spacer(minLength: 0)
@@ -287,15 +288,15 @@ struct NativeDesktopMeetingView: View {
     private var header: some View {
         HStack(spacing: 12) {
             HStack(spacing: 10) {
-                if model.guestFeatures.transcriptionStatus == .active { Image(systemName: "text.bubble.fill").foregroundStyle(.orange).help(L("Meeting transcription is on")) }
+                // In the main window the toolbar carries the title and count.
                 if !embedded {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.title).font(.headline).lineLimit(1)
-                        Text(model.connected ? L("%d participants", model.participants.count) : L(model.snapshot.phase.rawValue.capitalized)).font(.caption).foregroundStyle(.secondary)
-                    }
+                        Text(model.connected ? L("%ld participants", model.participants.count) : L(model.snapshot.phase.rawValue.capitalized)).font(.caption).foregroundStyle(.secondary)
+                    }.padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome()
                 }
-            }.padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome()
-            .opacity(embedded && model.guestFeatures.transcriptionStatus != .active ? 0 : 1)
+                NativeDesktopTranscriptionPill(model: model)
+            }
             Spacer(minLength: 8)
             HStack(spacing: 6) {
                 if let workspace { NativeDesktopMeetingsButton(workspace: workspace, current: model) }
@@ -649,10 +650,10 @@ struct NativeDesktopConversationView: View {
             $0.date == $1.date ? $0.id < $1.id : $0.date < $1.date
         }
     }
-    @State private var tab = 0
+    private var tab: Int { model.conversationTab }
     var body: some View {
         VStack(spacing: 0) {
-            Picker(L("Conversation"), selection: $tab) { Text(L("Chat")).tag(0); Text(L("Live text")).tag(1); Text(L("Catch up")).tag(2) }.pickerStyle(.segmented).labelsHidden().padding(12)
+            Picker(L("Conversation"), selection: $model.conversationTab) { Text(L("Chat")).tag(0); Text(L("Live text")).tag(1); Text(L("Catch up")).tag(2) }.pickerStyle(.segmented).labelsHidden().padding(12)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
@@ -687,6 +688,14 @@ struct NativeDesktopConversationView: View {
                                 }.padding(12).background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                             }
                         } else {
+                            if model.guestFeatures.transcriptionStatus == .active {
+                                HStack(spacing: 8) {
+                                    Circle().fill(Color.orange).frame(width: 7, height: 7)
+                                    Text(model.transcriptionSince.map { L("Transcription is on since %@", $0.formatted(date: .omitted, time: .shortened)) } ?? L("Meeting transcription is on"))
+                                }.font(.caption).foregroundStyle(.orange).padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                            }
                             if model.guestFeatures.transcriptHasMore { Button(L("Earlier transcript")) { model.loadMoreTranscript() } }
                             if model.transcript.isEmpty { Text(L("Transcript appears here when the meeting service provides it.")).foregroundStyle(.secondary) }
                             ForEach(model.transcript.suffix(tab == 2 ? 40 : 1000)) { line in
@@ -898,7 +907,7 @@ private struct NativeDesktopMeetingRow: View {
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.title).font(.body.weight(current ? .semibold : .regular)).lineLimit(1)
-                Text(NativeDesktopWorkspace.statusText(model) + " · " + L("%d participants", model.participants.count) +
+                Text(NativeDesktopWorkspace.statusText(model) + " · " + L("%ld participants", model.participants.count) +
                      (speaking && !model.snapshot.playoutOn ? " · " + L("Someone is speaking") : ""))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
@@ -915,5 +924,91 @@ private struct NativeDesktopMeetingRow: View {
                 .buttonStyle(.plain).help(L("Leave"))
         }.padding(.vertical, 6).padding(.horizontal, 8)
             .background(current ? Color.accentColor.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// Transcription is a status people must notice and understand: a labelled
+/// pill that explains itself, instead of an unlabelled glyph.
+struct NativeDesktopTranscriptionPill: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    @State private var open = false
+    var body: some View {
+        if let state = model.transcriptionIndicator {
+            let tint: Color = state == .on ? .orange : .red
+            let title = state == .on ? L("Transcribing") : L("Transcription stopped")
+            Button { open.toggle() } label: {
+                HStack(spacing: 7) {
+                    if state == .on { Circle().fill(tint).frame(width: 7, height: 7) }
+                    Image(systemName: state == .on ? "text.bubble.fill" : "exclamationmark.triangle.fill")
+                    Text(title).font(.callout.weight(.semibold))
+                    Image(systemName: open ? "chevron.up" : "chevron.down").font(.caption2.weight(.bold))
+                }.foregroundStyle(tint).padding(.horizontal, 12).frame(height: 32)
+                    .background(tint.opacity(open ? 0.28 : 0.16), in: Capsule())
+                    .overlay(Capsule().strokeBorder(tint.opacity(open ? 0.9 : 0.5)))
+                    .contentShape(Capsule())
+            }.buttonStyle(.plain).help(L("What transcription means for this meeting"))
+                .accessibilityLabel(title).accessibilityHint(L("What transcription means for this meeting"))
+                .accessibilityIdentifier("transcription.indicator")
+                .popover(isPresented: $open, arrowEdge: .bottom) {
+                    NativeDesktopTranscriptionDetails(model: model, close: { open = false })
+                }
+        }
+    }
+}
+
+private struct NativeDesktopTranscriptionDetails: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    let close: () -> Void
+    var body: some View {
+        let failed = model.transcriptionIndicator == .failed, manages = model.guestFeatures.permissions.canManageTranscript
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: failed ? "exclamationmark.triangle.fill" : "text.bubble.fill").font(.title2)
+                    .foregroundStyle(failed ? Color.red : Color.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(failed ? L("Transcription stopped unexpectedly") : L("This meeting is being transcribed")).font(.headline)
+                    if !failed, let since = model.transcriptionSince {
+                        Text(L("On since %@", since.formatted(date: .omitted, time: .shortened))).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if failed {
+                Text(L("The meeting service reported an error, so new speech is not being turned into text. Text captured so far stays in Live text."))
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Label(L("What people say, including you when you unmute, is turned into text by the meeting service."), systemImage: "mic")
+                    .fixedSize(horizontal: false, vertical: true)
+                Label(L("The meeting service may keep the transcript after the meeting."), systemImage: "doc.text")
+                    .fixedSize(horizontal: false, vertical: true)
+                if !manages { Text(L("Only the organizer can stop transcription.")).foregroundStyle(.secondary) }
+            }
+            HStack(spacing: 8) {
+                Button(L("Show live text")) { close(); model.showLiveText() }.buttonStyle(.borderedProminent)
+                if manages {
+                    Button(failed ? L("Restart transcription") : L("Stop transcription"), role: failed ? nil : .destructive) {
+                        close(); model.setTranscription(failed)
+                    }
+                }
+            }.padding(.top, 2)
+        }.font(.callout).padding(16).frame(width: 340, alignment: .leading)
+    }
+}
+
+/// Shown once when transcription starts or is found running on join.
+struct NativeDesktopTranscriptionBanner: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    var body: some View {
+        if model.transcriptionAnnouncement {
+            HStack(spacing: 10) {
+                Image(systemName: "text.bubble.fill").foregroundStyle(.orange)
+                (Text(L("Transcription started.")).bold() + Text(" ") +
+                 Text(L("What people say, including you, is turned into text.")).foregroundColor(.secondary))
+                    .font(.callout).lineLimit(2)
+                Button(L("Show live text")) { model.showLiveText() }.controlSize(.small)
+                Button { model.dismissTranscriptionAnnouncement() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel(L("Dismiss"))
+            }.padding(.horizontal, 14).padding(.vertical, 8).nativeMeetingChrome()
+                .accessibilityElement(children: .contain).accessibilityIdentifier("transcription.announcement")
+        }
     }
 }

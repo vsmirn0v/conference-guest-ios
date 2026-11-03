@@ -1243,6 +1243,25 @@ private final class DesktopActivitySpy: NSUserActivity {
         do { try await engine.setMicrophone(true); XCTFail("Unmuting still needs a meeting") }
         catch NativeDesktopGuestError.notConnected {}
     }
+    func testTranscriptionIndicatorAnnouncesOnceAndExplainsItself() async throws {
+        let model = try model(DesktopTestEngine())
+        var features = GuestMeetingSnapshot(); features.transcriptionStatus = .active
+        model.receiveFeaturesForTesting(features)
+        XCTAssertEqual(model.transcriptionIndicator, .on); XCTAssertNotNil(model.transcriptionSince)
+        XCTAssertTrue(model.transcriptionAnnouncement, "Joining a transcribed meeting announces it once")
+        model.showLiveText()
+        XCTAssertEqual(model.conversationTab, 1); XCTAssertEqual(model.panel, .conversation)
+        XCTAssertFalse(model.transcriptionAnnouncement)
+        model.receiveFeaturesForTesting(features)
+        XCTAssertFalse(model.transcriptionAnnouncement, "An unchanged status never re-announces")
+        features.transcriptionStatus = .failed
+        model.receiveFeaturesForTesting(features)
+        XCTAssertNil(model.transcriptionIndicator, "Attendees are not shown an error they cannot fix")
+        XCTAssertNil(model.transcriptionSince)
+        features.permissions.canManageTranscript = true
+        model.receiveFeaturesForTesting(features)
+        XCTAssertEqual(model.transcriptionIndicator, .failed, "Organizers see the failure and can restart")
+    }
     func testDockReopenReturnsToTheMeetingOnlyWhenTheWindowIsAway() async throws {
         let workspace = multiWorkspace([DesktopTestEngine()])
         try await join(workspace, 1)

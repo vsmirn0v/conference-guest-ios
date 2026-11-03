@@ -92,6 +92,41 @@ import UniformTypeIdentifiers
     }
     var onConnected: (() -> Void)?
     var onLeave: (() async -> Void)?
+    /// Conversation panel tab: 0 Chat, 1 Live text, 2 Catch up.
+    @Published var conversationTab = 0
+    /// When this app saw transcription turn on; the service does not say who started it.
+    @Published private(set) var transcriptionSince: Date?
+    /// The one-time notice that speech is now being turned into text.
+    @Published private(set) var transcriptionAnnouncement = false
+    private var transcriptionAnnouncementTask: Task<Void, Never>?
+    enum TranscriptionIndicator { case on, failed }
+    /// A failure is shown only to people who can restart transcription.
+    var transcriptionIndicator: TranscriptionIndicator? {
+        switch guestFeatures.transcriptionStatus {
+        case .active: .on
+        case .failed where guestFeatures.permissions.canManageTranscript: .failed
+        default: nil
+        }
+    }
+    func showLiveText() { conversationTab = 1; panel = .conversation; dismissTranscriptionAnnouncement() }
+    func dismissTranscriptionAnnouncement() {
+        transcriptionAnnouncementTask?.cancel(); transcriptionAnnouncementTask = nil
+        if transcriptionAnnouncement { transcriptionAnnouncement = false }
+    }
+    private func noteTranscription(from previous: GuestMeetingSnapshot.TranscriptionStatus, to status: GuestMeetingSnapshot.TranscriptionStatus) {
+        guard previous != status else { return }
+        if status == .active {
+            transcriptionSince = Date(); transcriptionAnnouncement = true
+            transcriptionAnnouncementTask?.cancel()
+            transcriptionAnnouncementTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(8))
+                guard !Task.isCancelled else { return }
+                self?.dismissTranscriptionAnnouncement()
+            }
+        } else if previous == .active {
+            transcriptionSince = nil; dismissTranscriptionAnnouncement()
+        }
+    }
     /// The organizer ended the meeting: the shell leaves it and says so instead of reporting an error.
     var onEndedByOrganizer: (() -> Void)?
     private var endedByOrganizer = false
@@ -672,6 +707,9 @@ import UniformTypeIdentifiers
     }
     #if DEBUG
     func waitForMediaActionsForTesting() async { await controlTail?.value }
+#if DEBUG
+    func receiveFeaturesForTesting(_ features: GuestMeetingSnapshot) { updateFeatures(features) }
+#endif
     func waitForJoinReadinessForTesting() async {
         await joinCameraPrimeTask?.value
     }
@@ -856,7 +894,10 @@ import UniformTypeIdentifiers
         return clean
     }
     private func updateFeatures(_ features: GuestMeetingSnapshot) {
-        guard !closed else { return }; guestFeatures = features
+        guard !closed else { return }
+        let previousTranscription = guestFeatures.transcriptionStatus
+        guestFeatures = features
+        noteTranscription(from: previousTranscription, to: features.transcriptionStatus)
         catchUp.observe(messages: features.transcript.map { TranscriptSegment(id: $0.id, speaker: $0.participantName, text: $0.text, spokenAt: $0.sentAt) }, canView: features.permissions.canViewTranscript, enabled: features.transcriptionStatus == .active)
         chat.reactionHistoryAvailable = features.permissions.canSendReaction
         chat.canSend = features.permissions.canSendChat && features.connected

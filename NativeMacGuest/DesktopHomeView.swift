@@ -105,7 +105,7 @@ struct NativeDesktopHomeView: View {
                     if workspace.isDetached(selected) { detachedMeeting(selected) }
                     Color.clear.allowsHitTesting(false)
                         .navigationTitle(selected.title)
-                        .navigationSubtitle(selected.connected ? L("%d participants", selected.participants.count) : L(selected.snapshot.phase.rawValue.capitalized))
+                        .navigationSubtitle(meetingSubtitle(selected))
                 }
             }
             .overlay(alignment: .bottomTrailing) {
@@ -192,6 +192,11 @@ struct NativeDesktopHomeView: View {
         .alert(alertTitle, isPresented: alertShown) {
             Button(L("OK")) { dismissAlert() }
         } message: { Text(alertMessage) }
+    }
+    private func meetingSubtitle(_ model: NativeDesktopMeetingModel) -> String {
+        guard model.connected else { return L(model.snapshot.phase.rawValue.capitalized) }
+        let count = L("%ld participants", model.participants.count)
+        return model.transcriptionIndicator == .on ? L("Transcribing") + " · " + count : count
     }
     /// One window alert: an error first, else a notice such as an ended meeting.
     private var alertTitle: String {
@@ -503,7 +508,7 @@ struct NativeDesktopSidebarMeetingRow: View {
     private var speaking: Bool { model.participants.contains { !$0.isLocal && $0.speaking == true } }
     private var live: Bool { model.ownsMicrophone && model.snapshot.microphoneOn }
     private var subtitle: String {
-        model.connected ? NativeDesktopWorkspace.statusText(model) + " · " + L("%d participants", model.participants.count)
+        model.connected ? NativeDesktopWorkspace.statusText(model) + " · " + L("%ld participants", model.participants.count)
             : L(model.snapshot.phase.rawValue.capitalized)
     }
     var body: some View {
@@ -511,7 +516,13 @@ struct NativeDesktopSidebarMeetingRow: View {
             Image(systemName: NativeDesktopWorkspace.statusSymbol(model))
                 .foregroundStyle(live ? Color.red : model.snapshot.playoutOn ? Color.accentColor : Color.secondary).frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {
-                Text(model.title).lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(model.title).lineLimit(1)
+                    if model.transcriptionIndicator == .on {
+                        Image(systemName: "text.bubble.fill").font(.caption2).foregroundStyle(.orange)
+                            .help(L("Transcribing")).accessibilityLabel(L("Transcribing"))
+                    }
+                }
                 Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 4)
