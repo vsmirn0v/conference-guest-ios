@@ -1,0 +1,29 @@
+{
+  "version": "0.3.0",
+  "build": "50",
+  "channel": "beta",
+  "sourceCommit": "d85b543",
+  "changes": [
+    "No 'Join a guest meeting before changing media' alert when a media change races the join (notConnected now decides, not the phase after cleanup); meeting alerts logged; display names kept out of release diagnostics (d85b543)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-50-arm64.dmg",
+    "sha256": "7a925928492317e2cda5095645d7c8efc0e5a038d57df4020be56b86cf491690",
+    "length": 15912347
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-50-arm64.dmg",
+  "httpsVerified": true,
+  "packagingNote": "first package attempt validated the mounted DMG but hdiutil detach reported Resource busy; the image was detached and packaging rerun from the same export (failed attempt kept in package-failed-detach)",
+  "notVerified": [
+    "Sparkle update of an installed app to 50",
+    "join alert fix observed only in the regression test, not yet in a live join",
+    "Export Diagnostics save panel in the running app",
+    "screen share stage not yet seen in a live meeting"
+  ]
+}
