@@ -1414,3 +1414,7 @@
 "What people say, including you, is turned into text." = "What people say, including you, is turned into text.";
 "Dismiss" = "Dismiss";
 "Transcription is on since %@" = "Transcription is on since %@";
+"Talk here" = "Talk here";
+"Moving microphone…" = "Moving microphone…";
+"Starting microphone…" = "Starting microphone…";
+"Moves your microphone from “%@” and unmutes it here." = "Moves your microphone from “%@” and unmutes it here.";

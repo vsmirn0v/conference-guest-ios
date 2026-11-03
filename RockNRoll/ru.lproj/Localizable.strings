@@ -1412,3 +1412,7 @@
 "What people say, including you, is turned into text." = "Речь участников, включая вашу, превращается в текст.";
 "Dismiss" = "Закрыть";
 "Transcription is on since %@" = "Расшифровка включена с %@";
+"Talk here" = "Говорить здесь";
+"Moving microphone…" = "Переключаем микрофон…";
+"Starting microphone…" = "Включаем микрофон…";
+"Moves your microphone from “%@” and unmutes it here." = "Переносит микрофон из «%@» и включает его здесь.";

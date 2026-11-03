@@ -13,6 +13,12 @@ struct NativeDesktopHomeView: View {
     @State private var renamed = ""
     @State private var homeSnapshot = HomeMeetingSnapshot()
     @State private var hoveringHomeMeetings = false
+    @State private var detailWidth: CGFloat = 0
+    /// Below this width the transcription announcement leaves the toolbar for a strip.
+    private static let inlineAnnouncementWidth: CGFloat = 1050
+    private var embeddedMeeting: NativeDesktopMeetingModel? {
+        workspace.selectedMeeting.flatMap { workspace.isDetached($0) ? nil : $0 }
+    }
     @State private var bindingLink = ""
     @State private var bindingSeries = true
     @FocusState private var editingName: Bool
@@ -108,6 +114,13 @@ struct NativeDesktopHomeView: View {
                         .navigationSubtitle(meetingSubtitle(selected))
                 }
             }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let meeting = embeddedMeeting, detailWidth < Self.inlineAnnouncementWidth { NativeDesktopTranscriptionStrip(model: meeting) }
+            }
+            .background(GeometryReader { proxy in
+                Color.clear.onAppear { detailWidth = proxy.size.width }
+                    .onChange(of: proxy.size.width) { detailWidth = $0 }
+            })
             .overlay(alignment: .bottomTrailing) {
                 if let preview = workspace.previewMeeting {
                     NativeDesktopMiniMeeting(model: preview, onRestore: { workspace.showMeeting(preview) })
@@ -151,14 +164,7 @@ struct NativeDesktopHomeView: View {
             }.padding(24).frame(width: 460)
         }
         .onChange(of: workspace.selection) { value in library.calendar.showingMacSettings = value == .settings }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                if workspace.selectedMeeting == nil {
-                    Button { addingFavorite = true } label: { Label(L("Add favorite"), systemImage: "plus") }
-                        .help(L("Save a meeting invitation"))
-                }
-            }
-        }
+        .toolbar { mainToolbar }
         .sheet(isPresented: $addingFavorite) {
             VStack(alignment: .leading, spacing: 16) {
                 Text(L("Add favorite")).font(.title2.bold())
@@ -193,10 +199,30 @@ struct NativeDesktopHomeView: View {
             Button(L("OK")) { dismissAlert() }
         } message: { Text(alertMessage) }
     }
+    /// A meeting shown here puts its status and tools in the window toolbar, beside its title.
+    @ToolbarContentBuilder private var mainToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            if let meeting = embeddedMeeting {
+                NativeDesktopTranscriptionPill(model: meeting, compact: true, announcesInline: detailWidth >= Self.inlineAnnouncementWidth)
+                NativeDesktopMeetingsButton(workspace: workspace, current: meeting)
+                Button { meeting.panel = meeting.panel == .participants ? nil : .participants } label: { Label(L("Participants"), systemImage: "person.2") }
+                    .help(L("Participants"))
+                Button { meeting.panel = meeting.panel == .conversation ? nil : .conversation } label: { Label(L("Conversation"), systemImage: "bubble.left") }
+                    .help(L("Conversation"))
+                Button { workspace.showMini(meeting) } label: { Label(L("Mini meeting"), systemImage: "pip.enter") }
+                    .help(L("Mini meeting"))
+                Button { workspace.toggleWindow(meeting) } label: { Label(L("Open in New Window"), systemImage: "macwindow.on.rectangle") }
+                    .help(L("Open in New Window"))
+            } else if workspace.selectedMeeting == nil {
+                Button { addingFavorite = true } label: { Label(L("Add favorite"), systemImage: "plus") }
+                    .help(L("Save a meeting invitation"))
+            }
+        }
+    }
     private func meetingSubtitle(_ model: NativeDesktopMeetingModel) -> String {
         guard model.connected else { return L(model.snapshot.phase.rawValue.capitalized) }
-        let count = L("%ld participants", model.participants.count)
-        return model.transcriptionIndicator == .on ? L("Transcribing") + " · " + count : count
+        // The toolbar's transcription pill carries the status.
+        return L("%ld participants", model.participants.count)
     }
     /// One window alert: an error first, else a notice such as an ended meeting.
     private var alertTitle: String {
@@ -507,14 +533,30 @@ struct NativeDesktopSidebarMeetingRow: View {
     @ObservedObject var model: NativeDesktopMeetingModel
     private var speaking: Bool { model.participants.contains { !$0.isLocal && $0.speaking == true } }
     private var live: Bool { model.ownsMicrophone && model.snapshot.microphoneOn }
+    /// A move between meetings, or a start, shows at once: the device and server steps take time.
+    private var moving: Bool { model.microphoneStarting }
     private var subtitle: String {
-        model.connected ? NativeDesktopWorkspace.statusText(model) + " · " + L("%ld participants", model.participants.count)
+        if moving { return workspace.meetings.count > 1 ? L("Moving microphone…") : L("Starting microphone…") }
+        return model.connected ? NativeDesktopWorkspace.statusText(model) + " · " + L("%ld participants", model.participants.count)
             : L(model.snapshot.phase.rawValue.capitalized)
+    }
+    private var micSymbol: String { moving ? "xmark" : live ? "mic.fill" : model.ownsMicrophone ? "mic.slash" : "mic" }
+    private var micLabel: String { moving ? L("Cancel") : live ? L("Mute") : model.ownsMicrophone ? L("Unmute") : L("Talk here") }
+    private var micHelp: String {
+        if moving { return L("Starting microphone. Click to cancel.") }
+        if model.ownsMicrophone { return L("Mute or unmute") }
+        if let talk = workspace.talkMeeting, talk !== model { return L("Moves your microphone from “%@” and unmutes it here.", talk.title) }
+        return L("Talk here")
     }
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: NativeDesktopWorkspace.statusSymbol(model))
-                .foregroundStyle(live ? Color.red : model.snapshot.playoutOn ? Color.accentColor : Color.secondary).frame(width: 18)
+            Group {
+                if moving { ProgressView().controlSize(.small) }
+                else {
+                    Image(systemName: NativeDesktopWorkspace.statusSymbol(model))
+                        .foregroundStyle(live ? Color.red : model.snapshot.playoutOn ? Color.accentColor : Color.secondary)
+                }
+            }.frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Text(model.title).lineLimit(1)
@@ -523,18 +565,20 @@ struct NativeDesktopSidebarMeetingRow: View {
                             .help(L("Transcribing")).accessibilityLabel(L("Transcribing"))
                     }
                 }
-                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(subtitle).font(.caption).foregroundStyle(moving ? Color.orange : live ? Color.red : Color.secondary).lineLimit(1)
             }
             Spacer(minLength: 4)
             if speaking { Image(systemName: "waveform").font(.caption).foregroundStyle(.secondary).help(L("Someone is speaking")) }
             if workspace.isDetached(model) {
                 Image(systemName: "macwindow").font(.caption).foregroundStyle(.secondary).help(L("This meeting is open in its own window."))
             }
-            if model.ownsMicrophone {
-                Button { model.toggleMicrophone() } label: { Image(systemName: live ? "mic.fill" : "mic.slash") }
-                    .buttonStyle(.borderless).foregroundStyle(live ? Color.red : Color.secondary)
-                    .help(L("Mute or unmute")).accessibilityLabel(live ? L("Mute") : L("Unmute"))
-            }
+            Button { model.toggleMicrophone() } label: { Image(systemName: micSymbol).frame(width: 20, height: 20) }
+                .buttonStyle(.borderless).foregroundStyle(live ? Color.red : Color.secondary)
+                .help(micHelp).accessibilityLabel(micLabel)
+            Button { model.togglePlayout() } label: { Image(systemName: model.soundSymbol).frame(width: 20, height: 20) }
+                .buttonStyle(.borderless).foregroundStyle(model.snapshot.playoutOn ? Color.secondary : Color.orange)
+                .help(model.snapshot.playoutOn ? L("Silence") : L("Sound on"))
+                .accessibilityLabel(model.snapshot.playoutOn ? L("Silence") : L("Sound on"))
         }.padding(.vertical, 2)
         .contextMenu {
             Button(L("Show meeting")) { workspace.showMeeting(model) }

@@ -22,7 +22,9 @@ import UserNotifications
     /// A library section is shown unless a meeting is selected in the sidebar.
     @Published var selection: Section = .home { didSet { if selectedMeetingID != nil { selectedMeetingID = nil } } }
     /// The meeting shown in the main window's detail column.
-    @Published private(set) var selectedMeetingID: UUID? { didSet { if oldValue != selectedMeetingID { synchronizeMeetingPresentation() } } }
+    @Published private(set) var selectedMeetingID: UUID? {
+        didSet { if oldValue != selectedMeetingID { synchronizeMeetingPresentation() } }
+    }
     @Published var invitation = ""
     @Published var settingsTab = 0
     @Published var error: String?
@@ -322,7 +324,14 @@ import UserNotifications
         let task = Task { @MainActor [weak self] () -> Bool in
             _ = await previous?.value
             guard let self, !target.isClosed, meetings.contains(where: { $0 === target }) else { return false }
+            let began = ProcessInfo.processInfo.systemUptime
+            var released = began
+            defer {
+                let now = ProcessInfo.processInfo.systemUptime
+                NSLog("talk-handover release=%.0fms assume=%.0fms", (released - began) * 1000, (now - released) * 1000)
+            }
             if let current = talkMeeting, current !== target {
+                defer { released = ProcessInfo.processInfo.systemUptime }
                 guard await current.relinquishMicrophone() else {
                     target.error = L("Couldn’t move your microphone from “%@”. Try again, or leave that meeting.", current.title)
                     return false

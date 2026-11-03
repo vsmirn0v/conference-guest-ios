@@ -212,14 +212,15 @@ struct NativeDesktopMeetingView: View {
             ZStack {
                 Color.black
                 if model.mediaPresentation == .meeting { media.padding(.leading, 14).padding(.trailing, 14 + reserved)
-                    .padding(.top, (model.controlsHidden ? 12 : 70) + (model.isSharingLive ? 48 : 0))
-                    .padding(.bottom, model.controlsHidden ? 12 : (model.showsFocus ? 90 : 160))
+                    .padding(.top, (model.controlsHidden || embedded ? 12 : 70) + (model.isSharingLive ? 48 : 0))
+                    .padding(.bottom, model.controlsHidden ? 12 : singleControlRow ? 96 : (model.showsFocus ? 90 : 160))
                 }
                 if textSelection.isOpen { NativeDesktopSharedTextView(model: textSelection, meetingTools: AnyView(viewAndMoreMenus)) }
                 VStack(spacing: 0) {
-                    if !model.controlsHidden && !textSelection.isOpen { header.padding(.horizontal, 18).padding(.top, 10) }
+                    // In the main window the toolbar holds the title, status and meeting buttons.
+                    if !model.controlsHidden && !textSelection.isOpen && !embedded { header.padding(.horizontal, 18).padding(.top, 10) }
                     if let workspace, !textSelection.isOpen { NativeDesktopListeningBanner(workspace: workspace, model: model).padding(.top, 8).padding(.trailing, reserved) }
-                    if !textSelection.isOpen { NativeDesktopTranscriptionBanner(model: model).padding(.top, 8).padding(.trailing, reserved) }
+                    if !textSelection.isOpen && !embedded { NativeDesktopTranscriptionBanner(model: model).padding(.top, 8).padding(.trailing, reserved) }
                     if model.isSharingLive && !textSelection.isOpen { shareBanner.padding(.top, 8).padding(.trailing, reserved) }
                     if !textSelection.isOpen { HStack { reactionOverlay; Spacer() }.padding(.leading, 22).padding(.top, 12) }
                     Spacer(minLength: 0)
@@ -234,7 +235,7 @@ struct NativeDesktopMeetingView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
                     .clipShape(RoundedRectangle(cornerRadius: 16))
                     .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
-                    .padding(.trailing, 14).padding(.top, model.controlsHidden ? 12 : 64)
+                    .padding(.trailing, 14).padding(.top, model.controlsHidden || embedded ? 12 : 64)
                     .padding(.bottom, model.controlsHidden ? 12 : 150)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
@@ -310,9 +311,13 @@ struct NativeDesktopMeetingView: View {
             }.padding(6).nativeMeetingChrome()
         }
     }
+    /// View and More join the control bar unless text selection or paging needs the upper row.
+    private var singleControlRow: Bool {
+        textSourceID == nil && !(model.galleryPages > 1 && !model.showsFocus)
+    }
     private var controls: some View {
         VStack(spacing: 10) {
-            if !textSelection.isOpen { HStack(spacing: 8) {
+            if !textSelection.isOpen && !singleControlRow { HStack(spacing: 8) {
                 if textSourceID != nil {
                     iconButton("text.viewfinder", L("Select text")) { model.controlsHidden = false; updateTextSource(); textSelection.open(zoom: focusedViewport.zoom, pan: focusedViewport.pan, viewportSize: focusedViewport.size) }
                         .accessibilityIdentifier("Select shared text")
@@ -361,6 +366,12 @@ struct NativeDesktopMeetingView: View {
                     .contextMenu { Button(L("Meeting volume")) { soundOpen = true } }
                 controlButton("face.smiling", L("Reactions"), selected: reactionsOpen) { reactionsOpen.toggle() }
                     .disabled(!model.canReact).popover(isPresented: $reactionsOpen, arrowEdge: .bottom) { reactionPicker }
+                if singleControlRow && !textSelection.isOpen {
+                    Menu { viewMenuItems } label: { controlLabel(viewMenuSymbol, L("View")) }
+                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().help(viewMenuTitle)
+                    Menu { moreMenuItems } label: { controlLabel("ellipsis", L("More")) }
+                        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                }
                 Divider().frame(height: 34).padding(.horizontal, 6)
                 controlButton("phone.down.fill", L("Leave"), selected: false, destructive: true) { Task { await model.onLeave?() } }
             }.padding(8).nativeMeetingChrome()
@@ -374,6 +385,34 @@ struct NativeDesktopMeetingView: View {
     }
     private var viewMenuSymbol: String {
         model.display != .all ? model.display.symbol : model.showsFocus ? "rectangle.inset.filled" : "square.grid.2x2"
+    }
+    private func controlLabel(_ symbol: String, _ title: String) -> some View {
+        VStack(spacing: 5) { Image(systemName: symbol).font(.title3); Text(title).font(.caption) }
+            .foregroundStyle(.primary).frame(width: 66, height: 48).contentShape(Rectangle())
+    }
+    @ViewBuilder private var viewMenuItems: some View {
+        Picker(L("Show"), selection: $model.display) {
+            ForEach(model.availableDisplays, id: \.self) { Label($0.title, systemImage: $0.symbol).tag($0) }
+        }.pickerStyle(.inline)
+        Picker(L("Layout"), selection: $model.viewMode) {
+            ForEach(NativeDesktopMeetingModel.ViewMode.allCases, id: \.self) { Text(L($0.rawValue)).tag($0) }
+        }.pickerStyle(.inline)
+        if model.display != .audioOnly {
+            ForEach(model.participants.filter { $0.sharing == true }) { person in
+                Button(L("Screen · %@", person.name)) { model.focus(participantID: person.id, source: .screen) }
+            }
+        }
+        if model.pinnedID != nil { Button(L("Unpin")) { model.unpin() } }
+    }
+    @ViewBuilder private var moreMenuItems: some View {
+        Button(L("Participants")) { togglePanel(.participants) }
+        Button(L("Conversation")) { togglePanel(.conversation) }
+        Button(L("Mini meeting"), action: onMini)
+        Button(L("Camera & sound")) { togglePanel(.studio) }
+        Button(L("Presenter studio")) { togglePanel(.presenter) }
+        Button(L("Reconnect")) { model.reconnect() }
+        Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
+        Button(L("Hide controls")) { model.controlsHidden = true }
     }
     private var viewAndMoreMenus: some View {
         Group {
@@ -931,18 +970,37 @@ private struct NativeDesktopMeetingRow: View {
 /// pill that explains itself, instead of an unlabelled glyph.
 struct NativeDesktopTranscriptionPill: View {
     @ObservedObject var model: NativeDesktopMeetingModel
+    /// Toolbar size; the stage header uses the regular size.
+    var compact = false
+    /// When the toolbar has room, the one-time announcement grows out of the pill.
+    var announcesInline = false
     @State private var open = false
     var body: some View {
-        if let state = model.transcriptionIndicator {
+        if announcesInline, model.transcriptionAnnouncement, model.transcriptionIndicator == .on {
+            HStack(spacing: 8) {
+                Circle().fill(Color.orange).frame(width: 7, height: 7)
+                Image(systemName: "text.bubble.fill")
+                (Text(L("Transcription started.")).bold() + Text(" ") +
+                 Text(L("What people say, including you, is turned into text.")).foregroundColor(.orange.opacity(0.8)))
+                    .lineLimit(1).truncationMode(.tail)
+                Button(L("Show live text")) { model.showLiveText() }
+                    .buttonStyle(.borderedProminent).tint(.orange).controlSize(.small)
+                Button { model.dismissTranscriptionAnnouncement() } label: { Image(systemName: "xmark").font(.caption.weight(.bold)) }
+                    .buttonStyle(.plain).accessibilityLabel(L("Dismiss"))
+            }.font(.callout).foregroundStyle(.orange).padding(.leading, 12).padding(.trailing, 8).frame(height: 30)
+                .fixedSize()
+                .background(Color.orange.opacity(0.18), in: Capsule()).overlay(Capsule().strokeBorder(Color.orange.opacity(0.6)))
+                .accessibilityElement(children: .contain).accessibilityIdentifier("transcription.announcement")
+        } else if let state = model.transcriptionIndicator {
             let tint: Color = state == .on ? .orange : .red
             let title = state == .on ? L("Transcribing") : L("Transcription stopped")
             Button { open.toggle() } label: {
                 HStack(spacing: 7) {
                     if state == .on { Circle().fill(tint).frame(width: 7, height: 7) }
                     Image(systemName: state == .on ? "text.bubble.fill" : "exclamationmark.triangle.fill")
-                    Text(title).font(.callout.weight(.semibold))
+                    Text(title).font((compact ? Font.subheadline : .callout).weight(.semibold))
                     Image(systemName: open ? "chevron.up" : "chevron.down").font(.caption2.weight(.bold))
-                }.foregroundStyle(tint).padding(.horizontal, 12).frame(height: 32)
+                }.foregroundStyle(tint).padding(.horizontal, compact ? 10 : 12).frame(height: compact ? 26 : 32)
                     .background(tint.opacity(open ? 0.28 : 0.16), in: Capsule())
                     .overlay(Capsule().strokeBorder(tint.opacity(open ? 0.9 : 0.5)))
                     .contentShape(Capsule())
@@ -1008,6 +1066,27 @@ struct NativeDesktopTranscriptionBanner: View {
                 Button { model.dismissTranscriptionAnnouncement() } label: { Image(systemName: "xmark") }
                     .buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel(L("Dismiss"))
             }.padding(.horizontal, 14).padding(.vertical, 8).nativeMeetingChrome()
+                .accessibilityElement(children: .contain).accessibilityIdentifier("transcription.announcement")
+        }
+    }
+}
+
+/// A narrow main window shows the announcement as a strip that moves the stage down.
+struct NativeDesktopTranscriptionStrip: View {
+    @ObservedObject var model: NativeDesktopMeetingModel
+    var body: some View {
+        if model.transcriptionAnnouncement, model.transcriptionIndicator == .on {
+            HStack(spacing: 10) {
+                Image(systemName: "text.bubble.fill")
+                (Text(L("Transcription started.")).bold() + Text(" ") +
+                 Text(L("What people say, including you, is turned into text.")).foregroundColor(.orange.opacity(0.8)))
+                    .lineLimit(1).truncationMode(.tail)
+                Spacer(minLength: 8)
+                Button(L("Show live text")) { model.showLiveText() }.buttonStyle(.borderedProminent).tint(.orange).controlSize(.small)
+                Button { model.dismissTranscriptionAnnouncement() } label: { Image(systemName: "xmark").font(.caption.weight(.bold)) }
+                    .buttonStyle(.plain).accessibilityLabel(L("Dismiss"))
+            }.font(.callout).foregroundStyle(.orange).padding(.horizontal, 14).frame(height: 40)
+                .background(Color.orange.opacity(0.16)).overlay(alignment: .bottom) { Color.orange.opacity(0.35).frame(height: 1) }
                 .accessibilityElement(children: .contain).accessibilityIdentifier("transcription.announcement")
         }
     }

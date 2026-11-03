@@ -130,6 +130,8 @@ import UniformTypeIdentifiers
     /// The organizer ended the meeting: the shell leaves it and says so instead of reporting an error.
     var onEndedByOrganizer: (() -> Void)?
     private var endedByOrganizer = false
+    /// Click-to-live time of a microphone move between meetings, for diagnostics.
+    private var handoverStartedAt: TimeInterval?
     private(set) var engine: any NativeDesktopMeetingEngine
     private var capture: NativeDesktopShareCapture?
     private var sharingTask: Task<Void, Never>?
@@ -469,6 +471,15 @@ import UniformTypeIdentifiers
         }
         if value.phase == .connected { connection?.finish(.success(())) }
         if value.phase == .failed { connection?.finish(.failure(NativeDesktopError.unavailable(value.lastError ?? L("Could not connect to meeting.")))) }
+        if let started = handoverStartedAt, value.microphoneOn || !microphoneStarting {
+            if value.microphoneOn {
+                let steps = (engine as? NativeDesktopGuestEngine)?.microphoneStartupMilliseconds ?? [:]
+                NSLog("talk-handover total=%.0fms permission=%.0fms activation=%.0fms unmute=%.0fms",
+                      (ProcessInfo.processInfo.systemUptime - started) * 1000,
+                      steps["permission"] ?? -1, steps["activation"] ?? -1, steps["unmuteConfirmation"] ?? -1)
+            }
+            handoverStartedAt = nil
+        }
         if !value.microphoneOn { headset.confirm(muted: true) }
         else if value.phase == .connected, let request = authorizedMicrophoneRequest {
             headset.confirm(muted: false, request: request)
@@ -519,7 +530,7 @@ import UniformTypeIdentifiers
     /// role here. Nothing is enabled unless the previous meeting confirmed its release.
     private func claimTalkRole(microphone: Bool, then action: @escaping @MainActor () -> Void) {
         guard !closed, !transferHeld, let arbiter = microphoneArbiter else { return }
-        if microphone { requestedMicrophone = true } else { requestedCamera = true }
+        if microphone { requestedMicrophone = true; handoverStartedAt = ProcessInfo.processInfo.systemUptime } else { requestedCamera = true }
         let token = generation
         Task { @MainActor [weak self] in
             guard let self else { return }
