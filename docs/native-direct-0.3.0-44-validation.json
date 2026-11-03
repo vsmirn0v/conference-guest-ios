@@ -1,0 +1,28 @@
+{
+  "version": "0.3.0",
+  "build": "44",
+  "channel": "beta",
+  "sourceCommit": "d151fd8",
+  "changes": [
+    "Meetings live in the main window: sidebar meeting rows, embedded stage, in-window preview while browsing, Open in New Window, Dock reopen returns to the talk meeting, Window and Dock menus with Cmd-0..4 (d151fd8)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-44-arm64.dmg",
+    "sha256": "0942d017cd274345ca26f06756bb8b25a64b559dd3dc06cf95ea68a843e1c7af",
+    "length": 15782334
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-44-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 44",
+    "sidebar and toolbar not seen in a running app (offscreen render only)",
+    "live multi-meeting checks carried over from 41",
+    "startup audio timeout fix not reproduced on macOS 26.2 (from 43)"
+  ]
+}
