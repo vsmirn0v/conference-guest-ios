@@ -1,0 +1,31 @@
+{
+  "version": "0.3.0",
+  "build": "45",
+  "channel": "beta",
+  "sourceCommit": "51e732a",
+  "changes": [
+    "A meeting the organizer ends closes with a Meeting ended notice instead of GuestEngineError error 2 (34d7069)",
+    "A headset/system mute during connect no longer shows 'Join a guest meeting before changing media' (b6b5a05)",
+    "Labelled, explained transcription indicator: Transcribing pill with popover, one-time banner, toolbar subtitle, sidebar mark; plural participant counts (51e732a)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-45-arm64.dmg",
+    "sha256": "47941324fd0d80131cdc7bca29bca8700f5fee6aa98d29a7446a6037a0ef1931",
+    "length": 15812973
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-45-arm64.dmg",
+  "httpsVerified": true,
+  "publishRetries": 1,
+  "notVerified": [
+    "Sparkle update of an installed app to 45",
+    "organizer-ended meeting not reproduced live (needs an organizer account)",
+    "transcription popover not seen on screen",
+    "sidebar/toolbar from 44 not seen in a running app"
+  ]
+}
