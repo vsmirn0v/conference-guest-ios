@@ -1283,6 +1283,40 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertNotNil(model.lastSpokeAt["presenter"])
         _ = await model.leave()
     }
+    func testDiagnosticsReportCarriesVersionsRouteAndRecentEventsWithoutHomePaths() {
+        probeLog("diagnostics-test", ["marker": 7])
+        let report = NativeDesktopDiagnostics.report()
+        XCTAssertTrue(report.hasPrefix("Rock'N'Roll for Mac diagnostics"))
+        XCTAssertTrue(report.contains("macOS: "))
+        XCTAssertTrue(report.contains("Audio devices: {"))
+        XCTAssertTrue(report.contains("Installed copies:"))
+        XCTAssertTrue(report.contains("\"event\":\"diagnostics-test\""))
+        XCTAssertFalse(report.contains(NativeDesktopDiagnostics.homeDirectory + "/"), "home paths are abbreviated")
+    }
+
+    func testProbeHistoryIsBoundedSkipsKeepAlivesAndDropsInvalidValues() {
+        for index in 0..<450 { probeLog("history-fill", ["index": index]) }
+        probeLog("rtc-pong")
+        probeLog("invalid-value", ["value": Double.nan])
+        let history = probeLogHistory()
+        XCTAssertEqual(history.count, 400)
+        XCTAssertTrue(history.last?.contains("\"index\":449") == true)
+        XCTAssertFalse(history.contains { $0.contains("rtc-pong") || $0.contains("invalid-value") })
+    }
+
+    func testStartupAudioSummaryNamesEachReadinessCondition() {
+        let observation = GuestStartupAudioObservation(snapshot: ["engineRunning": true, "outputAvailable": true,
+            "outputASBD": [48000, 1819304813, 41, 4, 1, 4, 1, 32, 0] as [Double], "inputASBD": [Double.nan]],
+            inputCallbacks: 0, outputCallbacks: 12)
+        let summary = observation.summary
+        XCTAssertTrue(JSONSerialization.isValidJSONObject(summary))
+        XCTAssertEqual(summary["engineRunning"] as? Bool, true)
+        XCTAssertEqual(summary["outputFormatValid"] as? Bool, true)
+        XCTAssertEqual(summary["inputFormatValid"] as? Bool, false)
+        XCTAssertEqual(summary["inputRunning"] as? Bool, false)
+        XCTAssertEqual((summary["output"] as? [String: Any])?["callbacks"] as? UInt64, 12)
+    }
+
     func testDockReopenReturnsToTheMeetingOnlyWhenTheWindowIsAway() async throws {
         let workspace = multiWorkspace([DesktopTestEngine()])
         try await join(workspace, 1)

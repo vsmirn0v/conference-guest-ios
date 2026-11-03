@@ -1429,3 +1429,8 @@
 "Presenting" = "Presenting";
 "Spoke %@" = "Spoke %@";
 "%@ (you)" = "%@ (you)";
+
+"Help" = "Help";
+"Copy Diagnostics" = "Copy Diagnostics";
+"Diagnostics copied" = "Diagnostics copied";
+"Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content." = "Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content.";

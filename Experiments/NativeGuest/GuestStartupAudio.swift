@@ -253,6 +253,21 @@ struct GuestStartupAudioObservation {
         return t.running && (!output || (t.outputAvailable && Self.valid(t.outputFormat) && outputCallback.supportedCadence)) &&
             (!input || (t.inputAvailable && t.inputEnabled && t.inputRunning && Self.valid(t.inputFormat) && inputCallback.supportedCadence))
     }
+    /// Release-safe: each condition `supports` checks, so a timeout names the one that failed.
+    var summary: [String: Any] {
+        let t = topology
+        func finite(_ values: [Double]) -> [Double] { values.map { $0.isFinite ? $0 : -1 } }
+        func tap(_ callback: GuestStartupAudioCallback, count: UInt64) -> [String: Any] {
+            ["callbacks": count, "frames": callback.frames, "rate": finite([callback.format?.rate ?? 0])[0],
+                "channels": callback.format?.channels ?? 0, "cadenceSupported": callback.supportedCadence,
+                "age": callback.uptime > 0 ? max(0, ProcessInfo.processInfo.systemUptime - callback.uptime) : -1]
+        }
+        return ["engineRunning": t.running, "inputAvailable": t.inputAvailable, "inputEnabled": t.inputEnabled,
+            "inputRunning": t.inputRunning, "outputAvailable": t.outputAvailable, "outputEnabled": t.outputEnabled,
+            "inputFormatValid": Self.valid(t.inputFormat), "outputFormatValid": Self.valid(t.outputFormat),
+            "inputFormat": finite(t.inputFormat), "outputFormat": finite(t.outputFormat), "counters": t.counters,
+            "input": tap(inputCallback, count: inputCallbacks), "output": tap(outputCallback, count: outputCallbacks)]
+    }
 #if DEBUG
     var evidence: [String: Any] {
         let t = topology

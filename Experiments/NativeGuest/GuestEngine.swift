@@ -789,10 +789,18 @@ final class NativeGuestEngine {
             } catch {
                 if error is GuestStartupAudioError {
                     let receive = startupReceiveReadiness(gain.sourceSnapshot)
+                    let observation = owner.startupAudioObservation
                     probeLog("startup-audio-timeout", ["client": label, "inputRequired": startupRequiresInput,
-                        "supports": owner.startupAudioObservation.supports(input: startupRequiresInput),
+                        "supports": observation.supports(input: startupRequiresInput),
+                        "outputSupported": observation.supports(input: false),
                         "receiveTransportRequired": receive.requiresTransport,
-                        "receiveTransportConnected": receive.transportConnected])
+                        "receiveTransportConnected": receive.transportConnected,
+                        "soundEnabled": gain.soundEnabled, "hasSources": gain.hasSources,
+                        "microphoneAuthorization": AVCaptureDevice.authorizationStatus(for: .audio).rawValue,
+                        "graph": observation.summary, "route": GuestAcousticEnvironment.route(),
+                        "report": startupReport?.dictionary ?? [:]])
+                    // Separate so an unexpected value cannot suppress the event above.
+                    probeLog("startup-audio-owner", ["client": label, "owner": owner.snapshot])
                 }
 #if DEBUG
                 record("failed")

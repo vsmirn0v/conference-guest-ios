@@ -85,6 +85,8 @@ struct NativeGuestApplication {
     init(mode: NativeGuestLaunchMode) { self.mode = mode }
     func applicationDidFinishLaunching(_ notification: Notification) {
         let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Rock'N'Roll for Mac"
+        probeLog("app-launch", ["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
+            "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"])
         let menu = NSMenu(), appMenu = NSMenu(title: appName)
         let item = NSMenuItem(title: appName, action: nil, keyEquivalent: "")
         appMenu.addItem(withTitle: L("Quit Rock'N'Roll for Mac"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -101,7 +103,11 @@ struct NativeGuestApplication {
         editItem.submenu = editMenu; menu.addItem(editItem)
         let windowMenu = NSMenu(title: L("Window")), windowItem = NSMenuItem()
         windowMenu.delegate = self; NativeDesktopWorkspace.addStandardWindowItems(windowMenu)
-        windowItem.submenu = windowMenu; menu.addItem(windowItem); NSApp.mainMenu = menu
+        windowItem.submenu = windowMenu; menu.addItem(windowItem)
+        let helpMenu = NSMenu(title: L("Help")), helpItem = NSMenuItem()
+        let diagnostics = NSMenuItem(title: L("Copy Diagnostics"), action: #selector(copyDiagnostics), keyEquivalent: "")
+        diagnostics.target = self; helpMenu.addItem(diagnostics)
+        helpItem.submenu = helpMenu; menu.addItem(helpItem); NSApp.helpMenu = helpMenu; NSApp.mainMenu = menu
         let settings = NSMenuItem(title: L("Settings…"), action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self; appMenu.insertItem(settings, at: 0)
         #if NATIVE_DIRECT_UPDATES
@@ -239,4 +245,60 @@ struct NativeGuestApplication {
     @objc private func checkForUpdates() { updates?.check() }
     #endif
     @objc private func openHome() { showJoin() }
+    @objc private func copyDiagnostics() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(NativeDesktopDiagnostics.report(), forType: .string)
+        let alert = NSAlert(); alert.messageText = L("Diagnostics copied")
+        alert.informativeText = L("Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content.")
+        alert.runModal()
+    }
+}
+
+/// Text a person pastes into a support message: versions, permissions, audio route,
+/// installed copies and recent diagnostic events. No meeting links, titles or content;
+/// audio device names are included because the person sees the text before sending it.
+@MainActor enum NativeDesktopDiagnostics {
+    /// The account's real home: a sandboxed NSHomeDirectory() is the container.
+    static var homeDirectory: String {
+        getpwuid(getuid()).flatMap { $0.pointee.pw_dir.map { String(cString: $0) } } ?? NSHomeDirectory()
+    }
+    static func report(now: Date = Date()) -> String {
+        func string(_ key: String, _ bundle: Bundle) -> String { bundle.object(forInfoDictionaryKey: key) as? String ?? "?" }
+        func version(_ bundle: Bundle) -> String { "\(string("CFBundleShortVersionString", bundle)) (\(string("CFBundleVersion", bundle)))" }
+        func path(_ value: String) -> String {
+            value.hasPrefix(homeDirectory + "/") ? "~" + value.dropFirst(homeDirectory.count) : value
+        }
+        func json(_ value: Any) -> String {
+            guard JSONSerialization.isValidJSONObject(value),
+                  let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) else { return "unavailable" }
+            return String(decoding: data, as: UTF8.self)
+        }
+        func access(_ type: AVMediaType) -> String {
+            switch AVCaptureDevice.authorizationStatus(for: type) {
+            case .authorized: "allowed"
+            case .denied: "denied"
+            case .restricted: "restricted"
+            case .notDetermined: "not asked"
+            @unknown default: "unknown"
+            }
+        }
+        var model = [CChar](repeating: 0, count: 64), size = model.count
+        let hardware = sysctlbyname("hw.model", &model, &size, nil, 0) == 0 ? String(cString: model) : "?"
+        var lines = ["Rock'N'Roll for Mac diagnostics",
+            "Created: \(ISO8601DateFormatter().string(from: now)) (uptime \(Int(ProcessInfo.processInfo.systemUptime)))",
+            "App: \(version(.main)) at \(path(Bundle.main.bundlePath))",
+            "Updates: \(UserDefaults.standard.bool(forKey: "native.updates.beta") ? "beta" : "stable")",
+            "macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
+            "Mac: \(hardware)", "Language: \(Locale.preferredLanguages.first ?? "?")",
+            "Microphone: \(access(.audio)); camera: \(access(.video)); screen recording: \(CGPreflightScreenCaptureAccess() ? "allowed" : "not allowed")",
+            "Audio devices: \(json(GuestAcousticEnvironment.route(names: true)))",
+            "Installed copies:"]
+        let copies = Bundle.main.bundleIdentifier.map { NSWorkspace.shared.urlsForApplications(withBundleIdentifier: $0) } ?? []
+        lines += copies.prefix(8).map { url in "  \(path(url.path)) \(Bundle(url: url).map(version) ?? "?")" }
+        if copies.count > 8 { lines.append("  and \(copies.count - 8) more") }
+        let events = probeLogHistory()
+        lines.append("Recent events (\(events.count), oldest first):")
+        lines += events
+        return lines.joined(separator: "\n")
+    }
 }
