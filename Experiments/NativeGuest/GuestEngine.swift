@@ -41,6 +41,14 @@ final class NativeGuestEngine {
     /// Official next-room feature key registered by the transcription plugin.
     static let supportedFeatures: [String: Any] = ["transcription": true]
     let label: String
+    /// Display names stay out of release diagnostics; test harnesses tell clients apart by name.
+    nonisolated var probeClient: String {
+#if DEBUG
+        label
+#else
+        "participant-\(UInt(bitPattern: label.hashValue) % 10_000)"
+#endif
+    }
     let audio: GuestSyntheticAudio?
     let systemAudio: GuestSystemAudio?
     var releaseSystemAudio: ((Bool) async -> Bool)?
@@ -234,7 +242,7 @@ final class NativeGuestEngine {
         }
         try await transport.connect()
         try checkActive()
-        probeLog("transport-open", ["client": label, "nativeMacOS": true, "resumingSession": sessionID != nil])
+        probeLog("transport-open", ["client": probeClient, "nativeMacOS": true, "resumingSession": sessionID != nil])
         joinAttempted = true
         let response = try await transport.request(event: "join", payload: prepared.joinPayload)
         try checkActive()
@@ -244,7 +252,7 @@ final class NativeGuestEngine {
         for _ in 0..<200 {
             try checkActive()
             if let failure { throw failure }
-            if joined && rtcJoined { probeLog("guest-connected", ["client": label]); return }
+            if joined && rtcJoined { probeLog("guest-connected", ["client": probeClient]); return }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         throw GuestTransportError.timedOut
@@ -253,7 +261,7 @@ final class NativeGuestEngine {
     private func makePeer(_ target: GuestPeerTarget) throws -> GuestPeer {
         let peer = try GuestPeer(target: target, factory: factory, physicalAudio: systemAudio != nil, icePolicy: icePolicy, verifyReceivedPixels: verifyReceivedPixels,
             startupPlaybackGain: startupPlaybackGain)
-        if GuestPeer.diagnosticEventLogDirectory != nil { probeLog("rtc-event-log", ["client": label, "target": target.rawValue, "id": peer.diagnosticID]) }
+        if GuestPeer.diagnosticEventLogDirectory != nil { probeLog("rtc-event-log", ["client": probeClient, "target": target.rawValue, "id": peer.diagnosticID]) }
         peer.sendCandidate = { [weak self] value in
             guard let self, !closing else { throw GuestPeerError.closed }
             try await media(["method": "rtc:ice", "rtcIceCandidates": [value]])
@@ -279,7 +287,7 @@ final class NativeGuestEngine {
         if kind != "joined", meetingFeatures.roomID != nil, !meetingFeatures.acceptsScope(event) { return }
         let payload = event["payload"] as? [String: Any] ?? [:]
         if !["media-out", "media-in"].contains(kind) {
-            probeLog("signal-event", ["client": label, "kind": kind, "payloadKeys": payload.keys.sorted()])
+            probeLog("signal-event", ["client": probeClient, "kind": kind, "payloadKeys": payload.keys.sorted()])
         }
         switch kind {
         case "joined":
@@ -294,7 +302,7 @@ final class NativeGuestEngine {
             joined = true
             meetingFeatures.receive(event); meetingFeatures.setConnected(rtcJoined); emitMeetingChange()
             admittedParticipants = (group["participants"] as? [Any])?.count ?? 0
-            probeLog("room-joined", ["client": label, "participants": (group["participants"] as? [Any])?.count ?? 0])
+            probeLog("room-joined", ["client": probeClient, "participants": (group["participants"] as? [Any])?.count ?? 0])
         case "media-out": try await receiveMedia(payload)
         case "permissions-updated":
             permissions.merge(payload as? [String: Bool] ?? [:]) { _, new in new }
@@ -324,12 +332,12 @@ final class NativeGuestEngine {
             }
         case "error":
             // Correlated errors are delivered to their request. Unsolicited errors fail closed.
-            probeLog("server-error", ["client": label, "correlated": event["requestId"] != nil])
+            probeLog("server-error", ["client": probeClient, "correlated": event["requestId"] != nil])
             if event["requestId"] == nil { throw GuestEngineError.admissionDenied }
         default:
             meetingFeatures.receive(event); emitMeetingChange()
             if ["participant-joined", "participant-left"].contains(kind) {
-                probeLog(kind, ["client": label, "participantToken": (payload["participantId"] as? String).map { String($0.hashValue) } ?? "absent"])
+                probeLog(kind, ["client": probeClient, "participantToken": (payload["participantId"] as? String).map { String($0.hashValue) } ?? "absent"])
             }
         }
     }
@@ -337,12 +345,12 @@ final class NativeGuestEngine {
     private func receiveMedia(_ payload: [String: Any]) async throws {
         lastMediaEvent = ProcessInfo.processInfo.systemUptime
         guard let method = payload["method"] as? String else { throw GuestEngineError.malformed }
-        if method != "rtc:ice" && method != "rtc:pong" { probeLog("media-event", ["client": label, "method": method]) }
+        if method != "rtc:ice" && method != "rtc:pong" { probeLog("media-event", ["client": probeClient, "method": method]) }
         switch method {
         case "rtc:config":
             guard let config = payload["configuration"] as? [String: Any] else { throw GuestEngineError.malformed }
             try subscriber?.configure(config); try publisher?.configure(config)
-            probeLog("rtc-config", ["client": label, "iceServers": (config["iceServers"] as? [Any])?.count ?? 0])
+            probeLog("rtc-config", ["client": probeClient, "iceServers": (config["iceServers"] as? [Any])?.count ?? 0])
         case "rtc:join":
             guard let join = payload["join"] as? [String: Any], let participant = join["participant"] as? [String: Any],
                   let identity = participant["identity"] as? String else { throw GuestEngineError.malformed }
@@ -367,7 +375,7 @@ final class NativeGuestEngine {
         case "rtc:answer":
             guard let description = payload["description"] as? [String: Any] else { throw GuestEngineError.malformed }
             try await publisher?.acceptAnswer(description)
-            probeLog("publisher-answer", ["client": label])
+            probeLog("publisher-answer", ["client": probeClient])
         case "rtc:ice":
             guard let values = payload["rtcIceCandidates"] as? [[String: Any]] else { throw GuestEngineError.malformed }
             try await subscriber?.addCandidates(values); try await publisher?.addCandidates(values)
@@ -392,8 +400,8 @@ final class NativeGuestEngine {
                       let enabled = value["enabled"] as? Bool else { return nil }
                 return ["quality": quality, "enabled": enabled]
             }
-            probeLog("publishing-quality-request", ["client": label, "matchesLocalVideo": (update["trackSid"] as? String).map { $0 == published["video"] } ?? false, "qualities": qualities])
-        case "rtc:pong": probeLog("rtc-pong", ["client": label])
+            probeLog("publishing-quality-request", ["client": probeClient, "matchesLocalVideo": (update["trackSid"] as? String).map { $0 == published["video"] } ?? false, "qualities": qualities])
+        case "rtc:pong": probeLog("rtc-pong", ["client": probeClient])
         case "rtc:track:muted":
             if let mute = payload["mute"] as? [String: Any], let sid = mute["sid"] as? String, mute["muted"] as? Bool == true {
                 guard forcedMuteSIDs.count < 256 || forcedMuteSIDs.contains(sid) else { throw GuestEngineError.malformed }
@@ -415,7 +423,7 @@ final class NativeGuestEngine {
             #if DEBUG
             if participant["identity"] as? String != localIdentity {
                 let sid = participant["sid"] as? String
-                probeLog("remote-snapshot", ["client": label,
+                probeLog("remote-snapshot", ["client": probeClient,
                     "participantToken": sid.map { String($0.hashValue) } ?? "absent",
                     "identityToken": (participant["identity"] as? String).map { String($0.hashValue) } ?? "absent",
                     "hasIdentity": participant["identity"] is String, "hasSID": sid != nil,
@@ -429,7 +437,7 @@ final class NativeGuestEngine {
                   let sid = participant["sid"] as? String else { continue }
             let version = participant["version"] as? Int ?? 0
             if identity == localIdentity {
-                probeLog("local-snapshot", ["client": label, "version": version,
+                probeLog("local-snapshot", ["client": probeClient, "version": version,
                     "previous": participantVersions[sid] ?? -1,
                     "tracks": (participant["tracks"] as? [[String: Any]] ?? []).map { ["type": $0["type"] as? String ?? "unknown", "muted": $0["muted"] as? Bool ?? true] }])
             }
@@ -540,13 +548,13 @@ final class NativeGuestEngine {
             }]
         if !NSDictionary(dictionary: traceState).isEqual(to: videoTraceSubscriptionState) {
             videoTraceSubscriptionState = traceState; videoTraceSubscriptionRevision += 1
-            probeLog("video-subscription-intent", traceState.merging(["client": label,
+            probeLog("video-subscription-intent", traceState.merging(["client": probeClient,
                 "peerID": subscriber?.diagnosticID ?? "", "revision": videoTraceSubscriptionRevision]) { _, value in value })
         }
 #endif
         if !removed.isEmpty {
 #if DEBUG
-            probeLog("video-subscription-request", ["client": label, "peerID": subscriber?.diagnosticID ?? "",
+            probeLog("video-subscription-request", ["client": probeClient, "peerID": subscriber?.diagnosticID ?? "",
                 "subscribe": false, "trackIDs": Array(removed.prefix(64)), "count": removed.count])
 #endif
             try await media(["method": "rtc:track:subscription:change",
@@ -556,7 +564,7 @@ final class NativeGuestEngine {
         let added = desired.subtracting(subscriptions).sorted()
         if !added.isEmpty {
 #if DEBUG
-            probeLog("video-subscription-request", ["client": label, "peerID": subscriber?.diagnosticID ?? "",
+            probeLog("video-subscription-request", ["client": probeClient, "peerID": subscriber?.diagnosticID ?? "",
                 "subscribe": true, "trackIDs": Array(added.prefix(64)), "count": added.count])
 #endif
             try await media(["method": "rtc:track:subscription:change",
@@ -575,7 +583,7 @@ final class NativeGuestEngine {
                 try await media(["method": "rtc:track:settings:update", "trackSetting": [
                     "trackSids": [trackSID], "disabled": false, "width": width, "height": height, "quality": "HIGH"]])
             }
-            probeLog("subscribe", ["client": label, "kind": track.type])
+            probeLog("subscribe", ["client": probeClient, "kind": track.type])
         }
     }
 
@@ -640,7 +648,7 @@ final class NativeGuestEngine {
         // synthetic generator or physical camera after permission checks.
         if published["audio"] != nil { try await mute(localMuteIntent[false] ?? true, video: false) }
         if published["video"] != nil { try await mute(localMuteIntent[true] ?? true, video: true) }
-        probeLog("publishing", ["client": label, "codecRequested": codec, "synthetic": !useCamera])
+        probeLog("publishing", ["client": probeClient, "codecRequested": codec, "synthetic": !useCamera])
     }
 
     func activateMicrophone() async throws {
@@ -790,7 +798,7 @@ final class NativeGuestEngine {
                 if error is GuestStartupAudioError {
                     let receive = startupReceiveReadiness(gain.sourceSnapshot)
                     let observation = owner.startupAudioObservation
-                    probeLog("startup-audio-timeout", ["client": label, "inputRequired": startupRequiresInput,
+                    probeLog("startup-audio-timeout", ["client": probeClient, "inputRequired": startupRequiresInput,
                         "supports": observation.supports(input: startupRequiresInput),
                         "outputSupported": observation.supports(input: false),
                         "receiveTransportRequired": receive.requiresTransport,
@@ -800,7 +808,7 @@ final class NativeGuestEngine {
                         "graph": observation.summary, "route": GuestAcousticEnvironment.route(),
                         "report": startupReport?.dictionary ?? [:]])
                     // Separate so an unexpected value cannot suppress the event above.
-                    probeLog("startup-audio-owner", ["client": label, "owner": owner.snapshot])
+                    probeLog("startup-audio-owner", ["client": probeClient, "owner": owner.snapshot])
                 }
 #if DEBUG
                 record("failed")
@@ -1036,7 +1044,7 @@ final class NativeGuestEngine {
                 }
             }, onCancel: { completion.finish(.failure(CancellationError())) })
             } catch {
-                probeLog("local-mute-unconfirmed", ["client": label, "video": video, "muted": muted,
+                probeLog("local-mute-unconfirmed", ["client": probeClient, "video": video, "muted": muted,
                     "causeType": String(describing: type(of: error)),
                     "participantVersion": localParticipantVersion, "trackAdvertised": serverMute[sid] != nil,
                     "physicalAudio": systemAudio?.snapshot ?? [:]])
@@ -1058,7 +1066,7 @@ final class NativeGuestEngine {
             if video { try publisher.setMuted(true, video: true) }
             try publisher.setMuted(false, video: video)
         }
-        probeLog("local-mute", ["client": label, "video": video, "muted": muted, "serverConfirmed": true])
+        probeLog("local-mute", ["client": probeClient, "video": video, "muted": muted, "serverConfirmed": true])
     }
 
     private func startPing(interval: Double, timeout: Double) {
@@ -1101,7 +1109,7 @@ final class NativeGuestEngine {
         for waiter in pendingPublications.values { waiter.finish(.failure(error)) }
         for waiter in muteWaiters.values { waiter.1.finish(.failure(error)) }
         onFailure?(error)
-        probeLog("engine-failure", ["client": label, "errorType": String(describing: type(of: error))])
+        probeLog("engine-failure", ["client": probeClient, "errorType": String(describing: type(of: error))])
     }
 
 #if DEBUG
@@ -1137,7 +1145,7 @@ final class NativeGuestEngine {
         }
         return ["statisticsStartedUptime": statisticsStartedUptime,
             "statisticsCompletedUptime": ProcessInfo.processInfo.systemUptime,
-            "client": label, "icePolicy": icePolicy.rawValue, "joined": joined, "rtcJoined": rtcJoined, "failed": failure != nil,
+            "client": probeClient, "icePolicy": icePolicy.rawValue, "joined": joined, "rtcJoined": rtcJoined, "failed": failure != nil,
             "render": subscriber?.renderer.evidence ?? [:], "subscriberConnected": subscriber?.iceConnected ?? false,
             "decodedAudioRMS": (audio?.snapshot ?? subscriber?.pcmMeter.snapshot ?? .init()).rms,
             "physicalAudio": systemAudio?.snapshot ?? [:],
@@ -1181,8 +1189,8 @@ final class NativeGuestEngine {
         for waiter in pendingPublications.values { waiter.finish(.failure(CancellationError())) }
         pendingPublications.removeAll()
         if sendLeave, joinAttempted, let transport {
-            do { _ = try await transport.request(event: "leave", timeout: 3); probeLog("leave-ack", ["client": label]) }
-            catch { probeLog("leave-unacknowledged", ["client": label]) }
+            do { _ = try await transport.request(event: "leave", timeout: 3); probeLog("leave-ack", ["client": probeClient]) }
+            catch { probeLog("leave-unacknowledged", ["client": probeClient]) }
         }
         var cameraStopped = true
         suppressCamera()
@@ -1207,7 +1215,7 @@ final class NativeGuestEngine {
         else { audioStopped = audio?.terminateDevice() ?? true }
         cleanupSucceeded = audioStopped && cameraStopped && screenStopped
         joined = false; rtcJoined = false
-        probeLog("engine-stopped", ["client": label, "physicalAudioUsed": systemAudio != nil,
+        probeLog("engine-stopped", ["client": probeClient, "physicalAudioUsed": systemAudio != nil,
             "cameraStopped": cameraStopped, "screenStopped": screenStopped, "audioWorkerStopped": audioStopped])
         return cleanupSucceeded
     }

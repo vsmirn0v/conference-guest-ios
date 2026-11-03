@@ -37,7 +37,9 @@ import UniformTypeIdentifiers
     @Published var pinnedID: String? { didSet { focusAffinity = nil; updateDemand() } }
     @Published private(set) var pinnedSource: NativeDesktopVideoSource?
     @Published var galleryPage = 0 { didSet { updateDemand() } }
-    @Published var error: String?
+    @Published var error: String? {
+        didSet { if let error, error != oldValue { probeLog("meeting-alert", ["message": error, "phase": String(describing: snapshot.phase)]) } }
+    }
     @Published private(set) var sharingPending = false
     @Published var controlsHidden = false
     @Published var floatingReactions: [MeetingReactionEvent] = []
@@ -721,6 +723,9 @@ import UniformTypeIdentifiers
             try await engine.reconnect()
         }
     }
+    private static func isNotConnected(_ error: Error) -> Bool {
+        (error as? NativeDesktopGuestError) == .notConnected || (error as? NativeDesktopRockError) == .notConnected
+    }
     @discardableResult private func perform(priorityOff: Bool = false, _ action: @escaping (any NativeDesktopMeetingEngine) async throws -> Void) -> Task<Void, Never>? {
         guard !closed, !transferHeld else { return nil }
         let token = generation, id = UUID(), previous = controlTail
@@ -731,9 +736,13 @@ import UniformTypeIdentifiers
             guard token == generation, !closed, !Task.isCancelled else { return }
             do { try await action(engine) }
             catch {
-                // A device event before the meeting connects is not the user's mistake.
-                let preJoin = (error as? NativeDesktopGuestError) == .notConnected && snapshot.phase != .connected
-                if token == generation, !closed, !(error is CancellationError), !preJoin { self.error = error.localizedDescription }
+                // A media change that raced joining or leaving (a headset or device event,
+                // or a click while connecting) is not the user's mistake. The meeting can
+                // connect while the action unwinds, so the error decides, not the phase.
+                if Self.isNotConnected(error) {
+                    probeLog("media-action-not-connected", ["phase": String(describing: snapshot.phase)]); return
+                }
+                if token == generation, !closed, !(error is CancellationError) { self.error = error.localizedDescription }
             }
         }
         controlTasks[id] = task

@@ -1243,6 +1243,21 @@ private final class DesktopActivitySpy: NSUserActivity {
         do { try await engine.setMicrophone(true); XCTFail("Unmuting still needs a meeting") }
         catch NativeDesktopGuestError.notConnected {}
     }
+    /// The meeting can connect while a failed pre-join unmute unwinds; that used to
+    /// turn a headset or device event into a "Join a guest meeting" alert.
+    func testNotConnectedMediaFailureNeverAlertsEvenWhenTheMeetingConnectsMeanwhile() async throws {
+        let engine = DesktopTestEngine()
+        let model = try model(engine)
+        engine.onMicrophoneEnable = { throw NativeDesktopGuestError.notConnected }
+        engine.onMicrophoneDisable = { [weak engine] in
+            guard let engine else { return }
+            engine.snapshot = .init(phase: .connected, playoutOn: true); engine.onState?(engine.snapshot)
+        }
+        model.toggleMicrophone(); await model.waitForMediaActionsForTesting()
+        XCTAssertEqual(engine.microphoneCommands.first, true, "The unmute reached the engine")
+        XCTAssertEqual(model.snapshot.phase, .connected)
+        XCTAssertNil(model.error)
+    }
     func testTranscriptionIndicatorAnnouncesOnceAndExplainsItself() async throws {
         let model = try model(DesktopTestEngine())
         var features = GuestMeetingSnapshot(); features.transcriptionStatus = .active
