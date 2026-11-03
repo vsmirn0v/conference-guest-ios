@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "46",
+  "channel": "beta",
+  "sourceCommit": "56fbac1",
+  "changes": [
+    "One toolbar for the shown meeting: transcription pill and meeting buttons beside the system title; announcement inline in the pill or as a strip in narrow windows; View/More in the control bar; sidebar mic and sound buttons with Moving microphone state; talk-handover timing logs (56fbac1)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-46-arm64.dmg",
+    "sha256": "464ad2ab24f20ab2ae54708aa48d67032b3896129b3200d7ecc18f3dae2c90fe",
+    "length": 15848561
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-46-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 46",
+    "sidebar rows not seen in a running app (offscreen capture omits the list)",
+    "mic handover timings not yet collected"
+  ]
+}
