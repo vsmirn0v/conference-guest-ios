@@ -1,0 +1,28 @@
+{
+  "version": "0.3.0",
+  "build": "53",
+  "channel": "beta",
+  "sourceCommit": "cd65c62",
+  "changes": [
+    "Catch-up places undated live text by arrival time; provider times from several keys in s or ms; live text shows times and reactions; catch-up shows line times and reactions (678cb5c)",
+    "Leave all meetings acts immediately without a confirmation alert; camera readiness defaults to Off (cd65c62)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-53-arm64.dmg",
+    "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+    "length": 15947096
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 53",
+    "catch-up with the real provider's transcript timestamps not yet confirmed (transcript-message-shape log will show the fields)",
+    "reactions in live text not yet seen in a live meeting"
+  ]
+}
