@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 import LiveKitWebRTC
 
-private enum NativeDesktopGuestError: LocalizedError {
+enum NativeDesktopGuestError: LocalizedError {
     case notConnected, staleOperation, permissionDenied, cleanupFailed, useScreenCapturePublication
     var errorDescription: String? {
         switch self {
@@ -181,6 +181,8 @@ private enum NativeDesktopGuestError: LocalizedError {
     }
 
     func setMicrophone(_ enabled: Bool) async throws {
+        // Nothing captures before the session exists, and every join starts muted.
+        if !enabled, session == nil { return }
         let session = try activeSession(), token = revision
         microphoneRevision &+= 1; let command = microphoneRevision
         if !enabled {
@@ -213,6 +215,7 @@ private enum NativeDesktopGuestError: LocalizedError {
 
     func setCamera(_ enabled: Bool) async throws {
         if enabled { try Task.checkCancellation() }
+        if !enabled, session == nil { return }
         let session = try activeSession(), token = revision
         cameraRevision &+= 1; let command = cameraRevision
         session.setLocalMuteIntent(!enabled, video: true)
@@ -235,6 +238,8 @@ private enum NativeDesktopGuestError: LocalizedError {
     }
 
     func setPlayout(_ enabled: Bool) async throws {
+        // While the room is still being reserved, the intent applies at join.
+        if session == nil, snapshot.phase == .connecting, !leaving { outputIntent = enabled; snapshot.playoutOn = enabled; emit(); return }
         let session = try activeSession(), token = revision
         outputIntent = enabled
         currentNativeEngine?.setStartupPlaybackIntent(enabled)

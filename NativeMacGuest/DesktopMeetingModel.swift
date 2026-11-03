@@ -656,7 +656,11 @@ import UniformTypeIdentifiers
             defer { self.controlTasks[id] = nil }
             guard token == generation, !closed, !Task.isCancelled else { return }
             do { try await action(engine) }
-            catch { if token == generation, !closed, !(error is CancellationError) { self.error = error.localizedDescription } }
+            catch {
+                // A device event before the meeting connects is not the user's mistake.
+                let preJoin = (error as? NativeDesktopGuestError) == .notConnected && snapshot.phase != .connected
+                if token == generation, !closed, !(error is CancellationError), !preJoin { self.error = error.localizedDescription }
+            }
         }
         controlTasks[id] = task
         if priorityOff {

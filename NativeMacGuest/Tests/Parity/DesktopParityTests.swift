@@ -1234,6 +1234,15 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertEqual(workspace.notice?.title, L("Meeting ended"))
         XCTAssertFalse(GuestEngineError.evicted.localizedDescription.contains("error 2"))
     }
+    /// A headset or system mute event can arrive while the room is still being reserved.
+    func testMutingBeforeTheGuestSessionExistsSucceedsWithoutAnError() async throws {
+        let engine = NativeDesktopGuestEngine()
+        try await engine.setMicrophone(false)
+        try await engine.setCamera(false)
+        XCTAssertFalse(engine.snapshot.microphoneOn); XCTAssertFalse(engine.snapshot.cameraOn)
+        do { try await engine.setMicrophone(true); XCTFail("Unmuting still needs a meeting") }
+        catch NativeDesktopGuestError.notConnected {}
+    }
     func testDockReopenReturnsToTheMeetingOnlyWhenTheWindowIsAway() async throws {
         let workspace = multiWorkspace([DesktopTestEngine()])
         try await join(workspace, 1)
