@@ -135,9 +135,9 @@ private final class DesktopActivitySpy: NSUserActivity {
         NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Parity Test", title: "Fixture",
             engine: engine, joinReadiness: .init(microphone: .off, camera: .off), power: joinTestPower())
     }
-    private func spin(_ predicate: () -> Bool) async throws {
+    private func spin(file: StaticString = #filePath, line: UInt = #line, _ predicate: () -> Bool) async throws {
         for _ in 0..<100 { if predicate() { return }; try await Task.sleep(for: .milliseconds(10)) }
-        XCTFail("The asynchronous operation did not complete")
+        XCTFail("The asynchronous operation did not complete", file: file, line: line)
     }
     func testJoinMicReadinessUsesMutedAccessoryPathOnlyWhenAllowed() async throws {
         for enabled in [false, true] {
@@ -241,10 +241,12 @@ private final class DesktopActivitySpy: NSUserActivity {
                     created += 1
                     return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet,
                         engine: created == 1 ? engine : DesktopTestEngine(), joinReadiness: .init(microphone: .off, camera: .off),
-                        joinTimeout: created == 1 ? 0.05 : 45, power: joinTestPower())
+                        joinTimeout: created == 1 ? 0.5 : 45, power: joinTestPower())
                 })
             workspace.join(url, engine: .guest)
-            try await spin { startupReply != nil && cleanupReply != nil }
+            // The deadline leaves room for the main window to render the joining meeting.
+            let timedOut = try await waitUpTo(5) { startupReply != nil && cleanupReply != nil }
+            XCTAssertTrue(timedOut, "The join deadline expires and cleanup starts")
             XCTAssertTrue(workspace.preparing); XCTAssertNotNil(workspace.error)
             workspace.join(URL(string: "https://example.test/calls/replacement")!, engine: .guest)
             XCTAssertEqual(created, 1)
@@ -1176,6 +1178,58 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertEqual(engines[3].permits, [false, true])
         _ = await workspace.leave()
         XCTAssertTrue(workspace.meetings.isEmpty); XCTAssertFalse(workspace.busyForUpdate)
+    }
+    func testMeetingsLiveInMainWindowAndSelectionFollowsLeave() async throws {
+        let workspace = multiWorkspace([DesktopTestEngine(), DesktopTestEngine()])
+        try await join(workspace, 1)
+        let a = workspace.meetings[0]
+        XCTAssertEqual(workspace.sidebarSelection, .meeting(a.sessionID), "Joining selects the meeting in the main window")
+        XCTAssertEqual(workspace.embeddedMeetings.map(\.sessionID), [a.sessionID])
+        XCTAssertNil(workspace.previewMeeting, "No preview while the meeting itself is shown")
+        workspace.sidebarSelection = .section(.favorites)
+        XCTAssertNil(workspace.selectedMeetingID); XCTAssertEqual(workspace.selection, .favorites)
+        XCTAssertTrue(workspace.previewMeeting === a, "Browsing the library keeps the meeting in a floating preview")
+        try await join(workspace, 2)
+        let b = workspace.meetings[1]
+        XCTAssertEqual(workspace.selectedMeetingID, b.sessionID)
+        XCTAssertEqual(a.mediaPresentation, .hidden, "Only the selected meeting renders video")
+        let menu = NSMenu(); workspace.populateWindowMenu(menu)
+        XCTAssertEqual(menu.items.first { $0.representedObject as? UUID == a.sessionID && $0.keyEquivalent == "1" }?.title, a.title)
+        XCTAssertEqual(menu.items.first { $0.keyEquivalent == "2" }?.state, .on, "The Window menu marks the shown meeting")
+        XCTAssertTrue(workspace.dockMenu().items.contains { $0.title == L("Unmute Microphone") }, "The Dock menu controls the talk meeting")
+        workspace.sidebarSelection = .meeting(a.sessionID)
+        XCTAssertEqual(b.mediaPresentation, .hidden)
+        _ = await workspace.leave(a)
+        XCTAssertEqual(workspace.selectedMeetingID, b.sessionID, "Leaving the shown meeting selects the next one")
+        _ = await workspace.leave(b)
+        XCTAssertNil(workspace.selectedMeetingID); XCTAssertNil(workspace.previewMeeting)
+    }
+    func testOpenInNewWindowDetachesAndClosingReturnsToMainWindow() async throws {
+        let workspace = multiWorkspace([DesktopTestEngine()])
+        try await join(workspace, 1)
+        let a = workspace.meetings[0]
+        workspace.toggleWindow(a)
+        XCTAssertTrue(workspace.isDetached(a)); XCTAssertTrue(workspace.embeddedMeetings.isEmpty)
+        let detached = try XCTUnwrap(NSApp.windows.first {
+            $0.delegate is NativeDesktopMeetingWindow && $0.isVisible && $0.contentView is NSHostingView<NativeDesktopMeetingView>
+        })
+        detached.performClose(nil)
+        try await spin { !workspace.isDetached(a) }
+        XCTAssertFalse(detached.isVisible); XCTAssertNil(detached.contentView, "The detached renderer is released")
+        XCTAssertEqual(workspace.embeddedMeetings.map(\.sessionID), [a.sessionID])
+        XCTAssertEqual(workspace.selectedMeetingID, a.sessionID)
+        _ = await workspace.leave()
+    }
+    func testDockReopenReturnsToTheMeetingOnlyWhenTheWindowIsAway() async throws {
+        let workspace = multiWorkspace([DesktopTestEngine()])
+        try await join(workspace, 1)
+        let a = workspace.meetings[0]
+        workspace.show(section: .favorites)
+        workspace.reopen(hasVisibleWindows: true)
+        XCTAssertNil(workspace.selectedMeetingID, "A visible main window comes forward as the user left it")
+        workspace.reopen(hasVisibleWindows: false)
+        XCTAssertEqual(workspace.selectedMeetingID, a.sessionID, "Without visible windows the meeting returns, not Home")
+        _ = await workspace.leave()
     }
     private func waitUpTo(_ seconds: Double, _ predicate: () -> Bool) async throws -> Bool {
         let deadline = ProcessInfo.processInfo.systemUptime + seconds

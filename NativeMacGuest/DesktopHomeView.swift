@@ -41,10 +41,19 @@ struct NativeDesktopHomeView: View {
     }
     var body: some View {
         NavigationSplitView {
-            List(selection: $workspace.selection) {
+            List(selection: Binding(get: { workspace.sidebarSelection }, set: { workspace.sidebarSelection = $0 })) {
+                // Live meetings come first: each one is a destination in this window.
+                if !workspace.meetings.isEmpty {
+                    Section(workspace.meetings.count > 1 ? L("Meetings") : L("In meeting")) {
+                        ForEach(workspace.meetings, id: \.sessionID) { model in
+                            NativeDesktopSidebarMeetingRow(workspace: workspace, model: model)
+                                .tag(NativeDesktopSidebarItem.meeting(model.sessionID))
+                        }
+                    }
+                }
                 Section {
                     ForEach(NativeDesktopWorkspace.Section.allCases) { item in
-                        Label(L(item.rawValue), systemImage: item.symbol).tag(item)
+                        Label(L(item.rawValue), systemImage: item.symbol).tag(NativeDesktopSidebarItem.section(item))
                     }
                 }
                 if !library.favorites.isEmpty {
@@ -54,15 +63,6 @@ struct NativeDesktopHomeView: View {
                                 Label(room.displayTitle, systemImage: "star.fill").lineLimit(1)
                             }.buttonStyle(.plain).contextMenu { roomMenu(room) }
                         }.onMove { library.moveFavorites(from: $0, to: $1) }
-                    }
-                }
-                if !workspace.meetings.isEmpty {
-                    Section(workspace.meetings.count > 1 ? L("Meetings") : "") {
-                        ForEach(workspace.meetings, id: \.sessionID) { model in
-                            Button { workspace.showMeeting(model) } label: {
-                                Label(workspace.meetings.count > 1 ? model.title : L("Show meeting"), systemImage: "video.fill").lineLimit(1)
-                            }.buttonStyle(.plain)
-                        }
                     }
                 }
             }
@@ -75,20 +75,47 @@ struct NativeDesktopHomeView: View {
                 }.foregroundStyle(.secondary).padding(12)
             }
         } detail: {
-            Group {
-                switch workspace.selection {
-                case .settings: settingsView
-                case .favorites: roomList(library.favorites, title: L("Favorites"), reorder: true)
-                case .recent: roomList(library.recent, title: L("Recent meetings"))
-                case .calendar: agenda
-                case .home: home
+            ZStack {
+                if workspace.selectedMeeting == nil {
+                    Group {
+                        switch workspace.selection {
+                        case .settings: settingsView
+                        case .favorites: roomList(library.favorites, title: L("Favorites"), reorder: true)
+                        case .recent: roomList(library.recent, title: L("Recent meetings"))
+                        case .calendar: agenda
+                        case .home: home
+                        }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    #if NATIVE_DIRECT_UPDATES
+                    .safeAreaInset(edge: .top) {
+                        if let updates = workspace.updates { NativeDesktopUpdateBanner(updates: updates) }
+                    }
+                    #endif
                 }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            #if NATIVE_DIRECT_UPDATES
-            .safeAreaInset(edge: .top) {
-                if let updates = workspace.updates { NativeDesktopUpdateBanner(updates: updates) }
+                // Every embedded meeting stays mounted so switching keeps its panels,
+                // zoom and Presenter draft; only the selected one renders media.
+                ForEach(workspace.embeddedMeetings, id: \.sessionID) { model in
+                    let shown = workspace.selectedMeetingID == model.sessionID
+                    NativeDesktopMeetingView(model: model, onMini: { workspace.showMini(model) }, continuation: library.continuation,
+                                             workspace: workspace, onWindowToggle: { workspace.toggleWindow(model) }, embedded: true,
+                                             presentsErrors: shown && workspace.error == nil)
+                        .opacity(shown ? 1 : 0).allowsHitTesting(shown).accessibilityHidden(!shown)
+                }
+                if let selected = workspace.selectedMeeting {
+                    if workspace.isDetached(selected) { detachedMeeting(selected) }
+                    Color.clear.allowsHitTesting(false)
+                        .navigationTitle(selected.title)
+                        .navigationSubtitle(selected.connected ? L("%d participants", selected.participants.count) : L(selected.snapshot.phase.rawValue.capitalized))
+                }
             }
-            #endif
+            .overlay(alignment: .bottomTrailing) {
+                if let preview = workspace.previewMeeting {
+                    NativeDesktopMiniMeeting(model: preview, onRestore: { workspace.showMeeting(preview) })
+                        .frame(width: 400, height: 250).clipShape(RoundedRectangle(cornerRadius: 12))
+                        .shadow(color: .black.opacity(0.3), radius: 16, y: 6).padding(20)
+                        .accessibilityElement(children: .contain).accessibilityLabel(L("Meeting preview"))
+                }
+            }
         }
         .tint(.orange)
         .onAppear { refreshHome(); library.calendar.setScheduledUIBlocked(blocksScheduledJoining) }
@@ -126,8 +153,10 @@ struct NativeDesktopHomeView: View {
         .onChange(of: workspace.selection) { value in library.calendar.showingMacSettings = value == .settings }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { addingFavorite = true } label: { Label(L("Add favorite"), systemImage: "plus") }
-                    .help(L("Save a meeting invitation"))
+                if workspace.selectedMeeting == nil {
+                    Button { addingFavorite = true } label: { Label(L("Add favorite"), systemImage: "plus") }
+                        .help(L("Save a meeting invitation"))
+                }
             }
         }
         .sheet(isPresented: $addingFavorite) {
@@ -160,9 +189,19 @@ struct NativeDesktopHomeView: View {
         .sheet(isPresented: Binding(get: { library.setup.isPresented }, set: { if !$0 { library.setup.finishLater() } }), onDismiss: { library.setup.presentationDidDismiss() }) {
             NativeDesktopSetupView(library: library)
         }
-        .alert(L("Could not complete the action"), isPresented: Binding(get: { workspace.error != nil }, set: { if !$0 { workspace.error = nil } })) {
+        .alert(L("Could not complete the action"), isPresented: Binding(get: { workspace.error != nil }, set: { if !$0 && workspace.error != nil { workspace.error = nil } })) {
             Button(L("OK")) { workspace.error = nil }
         } message: { Text(workspace.error ?? "") }
+    }
+    private func detachedMeeting(_ model: NativeDesktopMeetingModel) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: "macwindow.on.rectangle").font(.system(size: 40)).foregroundStyle(.secondary)
+            Text(L("This meeting is open in its own window.")).font(.title3)
+            HStack(spacing: 12) {
+                Button(L("Show Window")) { workspace.showMeeting(model) }.buttonStyle(.borderedProminent)
+                Button(L("Move to Main Window")) { workspace.toggleWindow(model) }
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).background(.background)
     }
     private var home: some View {
         ScrollView {
@@ -440,5 +479,52 @@ struct NativeDesktopSetupView: View {
                 Spacer(); Button(library.setup.step == .devices ? L("Done") : L("Continue")) { library.setup.next() }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
             }
         }.padding(24).frame(width: 500, height: 380).onAppear { library.setup.presentationDidMount() }
+    }
+}
+
+/// A live meeting in the sidebar: its role (talking, listening, silenced), who is
+/// speaking, and the actions the menu bar offers, without leaving the window.
+struct NativeDesktopSidebarMeetingRow: View {
+    @ObservedObject var workspace: NativeDesktopWorkspace
+    @ObservedObject var model: NativeDesktopMeetingModel
+    private var speaking: Bool { model.participants.contains { !$0.isLocal && $0.speaking == true } }
+    private var live: Bool { model.ownsMicrophone && model.snapshot.microphoneOn }
+    private var subtitle: String {
+        model.connected ? NativeDesktopWorkspace.statusText(model) + " · " + L("%d participants", model.participants.count)
+            : L(model.snapshot.phase.rawValue.capitalized)
+    }
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: NativeDesktopWorkspace.statusSymbol(model))
+                .foregroundStyle(live ? Color.red : model.snapshot.playoutOn ? Color.accentColor : Color.secondary).frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(model.title).lineLimit(1)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if speaking { Image(systemName: "waveform").font(.caption).foregroundStyle(.secondary).help(L("Someone is speaking")) }
+            if workspace.isDetached(model) {
+                Image(systemName: "macwindow").font(.caption).foregroundStyle(.secondary).help(L("This meeting is open in its own window."))
+            }
+            if model.ownsMicrophone {
+                Button { model.toggleMicrophone() } label: { Image(systemName: live ? "mic.fill" : "mic.slash") }
+                    .buttonStyle(.borderless).foregroundStyle(live ? Color.red : Color.secondary)
+                    .help(L("Mute or unmute")).accessibilityLabel(live ? L("Mute") : L("Unmute"))
+            }
+        }.padding(.vertical, 2)
+        .contextMenu {
+            Button(L("Show meeting")) { workspace.showMeeting(model) }
+            if model.ownsMicrophone { Button(model.snapshot.microphoneOn ? L("Mute") : L("Unmute")) { model.toggleMicrophone() } }
+            else { Button(L("Unmute here")) { model.toggleMicrophone() } }
+            Button(model.snapshot.playoutOn ? L("Silence") : L("Sound on")) { model.togglePlayout() }
+            Divider()
+            Button(workspace.isDetached(model) ? L("Move to Main Window") : L("Open in New Window")) { workspace.toggleWindow(model) }
+            Button(L("Mini meeting")) { workspace.showMini(model) }
+            Button(L("Copy Invitation Link")) {
+                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string)
+            }
+            Divider()
+            Button(L("Leave")) { Task { _ = await workspace.leave(model) } }
+        }
     }
 }

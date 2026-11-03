@@ -400,7 +400,8 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
         DispatchQueue.main.async { [weak self] in self?.refresh() }
     }
     func refresh() {
-        guard !stopped else { return }
+        // Nothing is prepared before launch starts the service (never in tests).
+        guard started, !stopped else { return }
         let foreground = foregroundWindowVisible
         let policy = NativeDesktopJoinReadinessPolicy.current(), state = power.snapshot
         NativeDesktopMediaService.shared.setForeground(foreground, microphone: policy.microphone.allows(state), profile: .saved)

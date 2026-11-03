@@ -56,7 +56,7 @@ struct NativeGuestApplication {
     }
 }
 
-@MainActor final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class CompanionAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let mode: NativeGuestLaunchMode
     private var workspace: NativeDesktopWorkspace?
     private var controller: CompanionMeetingController?
@@ -98,7 +98,10 @@ struct NativeGuestApplication {
         editMenu.addItem(withTitle: L("Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: L("Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: L("Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-        editItem.submenu = editMenu; menu.addItem(editItem); NSApp.mainMenu = menu
+        editItem.submenu = editMenu; menu.addItem(editItem)
+        let windowMenu = NSMenu(title: L("Window")), windowItem = NSMenuItem()
+        windowMenu.delegate = self; NativeDesktopWorkspace.addStandardWindowItems(windowMenu)
+        windowItem.submenu = windowMenu; menu.addItem(windowItem); NSApp.mainMenu = menu
         let settings = NSMenuItem(title: L("Settings…"), action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self; appMenu.insertItem(settings, at: 0)
         #if NATIVE_DIRECT_UPDATES
@@ -201,10 +204,16 @@ struct NativeGuestApplication {
         #endif
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard launched else { return true }
+        guard launched, !terminating else { return true }
         if let controller, !controller.finished { controller.show() }
+        else if let workspace { workspace.reopen(hasVisibleWindows: flag) }
         else { showJoin() }
         return true
+    }
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? { workspace?.dockMenu() }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        if let workspace { workspace.populateWindowMenu(menu) } else { NativeDesktopWorkspace.addStandardWindowItems(menu) }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationDidBecomeActive(_ notification: Notification) { workspace?.library.foregrounded() }

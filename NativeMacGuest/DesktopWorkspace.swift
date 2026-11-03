@@ -19,7 +19,10 @@ import UserNotifications
     #if NATIVE_DIRECT_UPDATES
     var updates: NativeDesktopUpdates?
     #endif
-    @Published var selection: Section = .home
+    /// A library section is shown unless a meeting is selected in the sidebar.
+    @Published var selection: Section = .home { didSet { if selectedMeetingID != nil { selectedMeetingID = nil } } }
+    /// The meeting shown in the main window's detail column.
+    @Published private(set) var selectedMeetingID: UUID? { didSet { if oldValue != selectedMeetingID { synchronizeMeetingPresentation() } } }
     @Published var invitation = ""
     @Published var settingsTab = 0
     @Published var error: String?
@@ -33,6 +36,7 @@ import UserNotifications
     static let meetingLimit = 4
     private let multipleMeetings: () -> Bool
     private var window: NSWindow?
+    private let mainHider = NativeDesktopWindowHider()
     private var meetingWindows: [UUID: NativeDesktopMeetingWindow] = [:]
     private var meetingSubscriptions: [UUID: AnyCancellable] = [:]
     private var renderedMeetingStates: [UUID: String] = [:]
@@ -120,21 +124,26 @@ import UserNotifications
 
     func show(section: Section? = nil) {
         if let section { selection = section }
+        presentMainWindow()
+        library.calendar.showingMacSettings = selection == .settings
+        library.setup.finishLaunch(hasMeetingIntent: preparing || !meetings.isEmpty)
+        library.foregrounded(allowAutomaticJoin: selection == .home)
+        library.setup.offerIfAppropriate(selection == .home && meetings.isEmpty)
+    }
+    /// The one main window holds the library and every embedded meeting.
+    private func presentMainWindow() {
         if window == nil {
-            let value = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
+            let value = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1240, height: 800),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
-            value.delegate = self; value.title = "Rock'N'Roll for Mac"; value.minSize = NSSize(width: 760, height: 540)
+            value.delegate = self; value.title = "Rock'N'Roll for Mac"; value.minSize = NSSize(width: 900, height: 560)
             value.isReleasedWhenClosed = false; value.titlebarAppearsTransparent = true
             value.contentView = NSHostingView(rootView: NativeDesktopHomeView(workspace: self, library: library))
             value.setFrameAutosaveName("nativeDesktop.library"); value.center(); window = value
             NativeDesktopForegroundMedia.shared.setHomeWindow(value)
         }
+        if window?.isMiniaturized == true { window?.deminiaturize(nil) }
         window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-        library.calendar.showingMacSettings = selection == .settings
-        library.setup.finishLaunch(hasMeetingIntent: preparing || !meetings.isEmpty)
-        library.foregrounded(allowAutomaticJoin: selection == .home)
-        library.setup.offerIfAppropriate(selection == .home && meetings.isEmpty)
-        installMenuBar(); installKeyboard()
+        installMenuBar(); installKeyboard(); synchronizeMeetingPresentation()
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
@@ -142,8 +151,22 @@ import UserNotifications
         if library.setup.isPresented { library.setup.finishLater() }
         return true
     }
-    func windowDidMiniaturize(_ notification: Notification) { library.calendar.showingMacSettings = false }
-    func windowDidDeminiaturize(_ notification: Notification) { library.calendar.showingMacSettings = selection == .settings }
+    func windowDidMiniaturize(_ notification: Notification) { library.calendar.showingMacSettings = false; synchronizeMeetingPresentationSoon() }
+    func windowDidDeminiaturize(_ notification: Notification) {
+        library.calendar.showingMacSettings = selection == .settings; synchronizeMeetingPresentationSoon()
+    }
+    func windowDidChangeOcclusionState(_ notification: Notification) { synchronizeMeetingPresentationSoon() }
+    func windowWillClose(_ notification: Notification) { synchronizeMeetingPresentationSoon() }
+    /// Window callbacks can arrive inside a SwiftUI update; media state changes after it.
+    private func synchronizeMeetingPresentationSoon() {
+        DispatchQueue.main.async { [weak self] in self?.synchronizeMeetingPresentation() }
+    }
+    func windowWillEnterFullScreen(_ notification: Notification) { mainHider.willEnter() }
+    func windowDidEnterFullScreen(_ notification: Notification) { if let window { mainHider.didEnter(window) } }
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) { mainHider.failEnter() }
+    func windowWillExitFullScreen(_ notification: Notification) { mainHider.willExit() }
+    func windowDidExitFullScreen(_ notification: Notification) { mainHider.didExit() }
+    func windowDidFailToExitFullScreen(_ window: NSWindow) { mainHider.failExit() }
     func joinInput() {
         do { let destination = try library.normalizedDestination(invitation); join(destination.invitationURL) }
         catch { self.error = error.localizedDescription }
@@ -273,6 +296,8 @@ import UserNotifications
                 if self.talkID == nil, self.meetings.count == 1, let survivor = self.meetings.first {
                     _ = await self.claimTalk(for: survivor)
                 }
+                if self.selectedMeetingID == id { self.selectedMeetingID = (self.talkMeeting ?? self.meetings.last)?.sessionID }
+                self.synchronizeMeetingPresentation()
                 self.updateContinuation()
             } else {
                 self.shutdownBlocked = true; self.error = NativeDesktopError.cleanupFailed.localizedDescription
@@ -307,9 +332,74 @@ import UserNotifications
         return await task.value
     }
     func showMeeting() { if let meeting { showMeeting(meeting) } }
+    /// Selects an embedded meeting in the main window, or fronts a detached one.
     func showMeeting(_ model: NativeDesktopMeetingModel) {
-        let visible = meetingWindows.first { $0.key != model.sessionID && $0.value.isVisible }?.value
-        meetingWindows[model.sessionID]?.show(tabbedWith: visible); refreshMenu()
+        guard let host = meetingWindows[model.sessionID] else { return }
+        if host.isEmbedded { host.show() }
+        else { host.show(tabbedWith: meetingWindows.first { $0.key != model.sessionID && !$0.value.isEmbedded && $0.value.isVisible }?.value) }
+        refreshMenu()
+    }
+    var selectedMeeting: NativeDesktopMeetingModel? { meetings.first { $0.sessionID == selectedMeetingID } }
+    var embeddedMeetings: [NativeDesktopMeetingModel] { meetings.filter { meetingWindows[$0.sessionID]?.isEmbedded == true } }
+    func isDetached(_ model: NativeDesktopMeetingModel) -> Bool { meetingWindows[model.sessionID]?.detached == true }
+    /// While the library is shown, the talk meeting (else the latest) stays in
+    /// view as a small floating preview unless Mini meeting already shows it.
+    var previewMeeting: NativeDesktopMeetingModel? {
+        guard selectedMeeting == nil else { return nil }
+        let candidates = meetings.filter { meetingWindows[$0.sessionID].map { $0.isEmbedded && !$0.isMiniVisible } ?? false }
+        return candidates.first { $0.sessionID == talkID } ?? candidates.last
+    }
+    var sidebarSelection: NativeDesktopSidebarItem? {
+        get { selectedMeetingID.map(NativeDesktopSidebarItem.meeting) ?? .section(selection) }
+        set {
+            // The sidebar List writes its selection back during view updates;
+            // republishing an unchanged value would re-render it in a loop.
+            guard newValue != sidebarSelection else { return }
+            switch newValue {
+            case .section(let section)?: selection = section
+            case .meeting(let id)?:
+                guard let model = meetings.first(where: { $0.sessionID == id }) else { return }
+                selectedMeetingID = id
+                if isDetached(model) { showMeeting(model) }
+            case nil: break
+            }
+        }
+    }
+    func presentEmbedded(_ model: NativeDesktopMeetingModel) {
+        guard meetings.contains(where: { $0 === model }) else { return }
+        objectWillChange.send()
+        if selectedMeetingID != model.sessionID { selectedMeetingID = model.sessionID }
+        presentMainWindow()
+    }
+    /// A meeting moved between the main window, its own window and Mini meeting.
+    func meetingDidMove(_ model: NativeDesktopMeetingModel) {
+        objectWillChange.send(); synchronizeMeetingPresentation(); refreshMenu()
+    }
+    /// Mini meeting replaces the main window while it shows that meeting.
+    func meetingDidEnterMini(_ model: NativeDesktopMeetingModel) {
+        objectWillChange.send()
+        guard selectedMeetingID == model.sessionID, let window, window.isVisible else { synchronizeMeetingPresentation(); return }
+        mainHider.hide(window) { [weak self] in self?.synchronizeMeetingPresentation() }
+    }
+    func toggleWindow(_ model: NativeDesktopMeetingModel) {
+        guard let host = meetingWindows[model.sessionID] else { return }
+        if host.detached { host.moveToMainWindow() } else { host.detach() }
+    }
+    func showMini(_ model: NativeDesktopMeetingModel) { meetingWindows[model.sessionID]?.showMini() }
+    /// Only the selected meeting in a visible main window renders full video.
+    func synchronizeMeetingPresentation() {
+        let visible = window.map { $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible) } ?? false
+        let shown = visible ? selectedMeeting : nil, preview = visible ? previewMeeting : nil
+        for model in meetings {
+            meetingWindows[model.sessionID]?.synchronizeEmbedded(shown: model === shown, preview: model === preview)
+        }
+    }
+    /// Dock click: an open main window comes forward as it is; otherwise the
+    /// talk meeting returns instead of Home.
+    func reopen(hasVisibleWindows: Bool) {
+        guard let current = meeting, let host = meetingWindows[current.sessionID] else { show(); return }
+        let mainShown = window.map { $0.isVisible && !$0.isMiniaturized } ?? false
+        if !host.isEmbedded || !hasVisibleWindows || !mainShown { showMeeting(current) } else { presentMainWindow() }
     }
     func leaveAllConfirmed() {
         let alert = NSAlert(); alert.messageText = L("Leave all meetings?")
@@ -385,11 +475,13 @@ import UserNotifications
             let key = event.charactersIgnoringModifiers?.lowercased()
             // Shortcuts act on the meeting whose window is key; unmuting there moves the mic.
             let keyMeeting = meetings.first { self.meetingWindows[$0.sessionID]?.isKeyWindow == true }
+                ?? (self.window?.isKeyWindow == true ? self.selectedMeeting.flatMap { self.isDetached($0) ? nil : $0 } : nil)
             let typing = NSApp.keyWindow?.firstResponder is NSTextView || NSApp.keyWindow?.firstResponder is NSTextField
             if key == "m" && modifiers == [.command, .shift] { (keyMeeting ?? fallback).toggleMicrophone(); return nil }
             if key == "s" && modifiers == [.command, .shift], let keyMeeting { keyMeeting.togglePlayout(); return nil }
-            if modifiers == [.command, .control], let digit = key.flatMap(Int.init), digit >= 1, digit <= meetings.count {
-                showMeeting(meetings[digit - 1]); return nil
+            if modifiers == [.command] || modifiers == [.command, .control], let digit = key.flatMap(Int.init) {
+                if digit == 0 && modifiers == [.command] { show(section: .home); return nil }
+                if digit >= 1 && digit <= meetings.count { showMeeting(meetings[digit - 1]); return nil }
             }
             if event.keyCode == 49 && modifiers.isEmpty && !typing, let keyMeeting { keyMeeting.toggleMicrophone(); return nil }
             return event
@@ -453,6 +545,61 @@ import UserNotifications
         menu.addItem(quit); statusItem?.menu = menu
     }
     @objc private func openHome() { show() }
+    @objc private func showHomeItem() { show(section: .home) }
+    @objc private func toggleWindowItem(_ sender: NSMenuItem) { if let model = menuMeeting(sender) { toggleWindow(model) } }
+    @objc private func miniItem(_ sender: NSMenuItem) { if let model = menuMeeting(sender) { showMini(model) } }
+    /// Window menu: standard window commands, Home and every meeting (⌘0–⌘4).
+    func populateWindowMenu(_ menu: NSMenu) {
+        Self.addStandardWindowItems(menu)
+        menu.addItem(.separator())
+        let home = NSMenuItem(title: L("Home"), action: #selector(showHomeItem), keyEquivalent: "0")
+        home.target = self; menu.addItem(home)
+        for (index, model) in meetings.enumerated() {
+            let row = NSMenuItem(title: model.title, action: #selector(showMeetingItem(_:)), keyEquivalent: index < 9 ? "\(index + 1)" : "")
+            row.target = self; row.representedObject = model.sessionID
+            row.image = NSImage(systemSymbolName: Self.statusSymbol(model), accessibilityDescription: Self.statusText(model))
+            row.state = model.sessionID == selectedMeetingID ? .on : .off
+            menu.addItem(row)
+        }
+        if let current = selectedMeeting ?? meeting {
+            menu.addItem(.separator())
+            for (title, selector) in [(isDetached(current) ? L("Move Meeting to Main Window") : L("Open Meeting in New Window"), #selector(toggleWindowItem(_:))),
+                                      (L("Mini meeting"), #selector(miniItem(_:)))] {
+                let row = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+                row.target = self; row.representedObject = current.sessionID; menu.addItem(row)
+            }
+        }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: L("Bring All to Front"), action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+    }
+    static func addStandardWindowItems(_ menu: NSMenu) {
+        menu.addItem(withTitle: L("Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        menu.addItem(withTitle: L("Zoom"), action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: L("Enter Full Screen"), action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
+            .keyEquivalentModifierMask = [.command, .control]
+        menu.addItem(withTitle: L("Show Sidebar"), action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "s")
+            .keyEquivalentModifierMask = [.command, .control]
+    }
+    /// Dock menu: every meeting with its state, then the talk meeting's mic and Leave.
+    func dockMenu() -> NSMenu {
+        let menu = NSMenu()
+        func add(_ title: String, _ selector: Selector, _ model: NativeDesktopMeetingModel? = nil) -> NSMenuItem {
+            let row = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+            row.target = self; row.representedObject = model?.sessionID; menu.addItem(row); return row
+        }
+        for model in meetings {
+            add(model.title + " · " + Self.statusText(model), #selector(showMeetingItem(_:)), model)
+                .image = NSImage(systemSymbolName: Self.statusSymbol(model), accessibilityDescription: nil)
+        }
+        if let talk = talkMeeting {
+            menu.addItem(.separator())
+            _ = add(talk.snapshot.microphoneOn ? L("Mute Microphone") : L("Unmute Microphone"), #selector(toggleMicItem(_:)), talk)
+            _ = add(L("Leave “%@”", talk.title), #selector(leaveItem(_:)), talk)
+            menu.addItem(.separator())
+        }
+        _ = add(L("Home"), #selector(showHomeItem))
+        return menu
+    }
     @objc private func openSettings() { show(section: .settings) }
     @objc private func openMeeting() { showMeeting() }
     @objc private func toggleMic() { meeting?.toggleMicrophone() }
@@ -467,6 +614,11 @@ import UserNotifications
     @objc private func leaveItem(_ sender: NSMenuItem) {
         guard let model = menuMeeting(sender) else { return }; Task { _ = await leave(model) }
     }
+    static func statusSymbol(_ model: NativeDesktopMeetingModel) -> String {
+        if !model.snapshot.playoutOn { return "speaker.slash" }
+        if !model.ownsMicrophone { return "ear" }
+        return model.snapshot.microphoneOn ? "mic.fill" : "mic.slash"
+    }
     /// Talking, Muted, Listening or Silenced, shared by the menu and the Meetings popover.
     static func statusText(_ model: NativeDesktopMeetingModel) -> String {
         if !model.snapshot.playoutOn { return L("Silenced") }
@@ -477,6 +629,10 @@ import UserNotifications
     @objc private func pauseSchedule() { library.calendar.pauseScheduledJoiningToday() }
     @objc private func resumeSchedule() { library.calendar.resumeScheduledJoining() }
     @objc private func joinSuggested() { if let next = library.calendar.suggestedMenuMeeting { library.open(next) } }
+}
+
+enum NativeDesktopSidebarItem: Hashable {
+    case section(NativeDesktopWorkspace.Section), meeting(UUID)
 }
 
 enum NativeDesktopError: LocalizedError {

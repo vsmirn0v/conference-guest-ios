@@ -3,6 +3,47 @@ import Combine
 import ConferenceCore
 import SwiftUI
 
+/// Hides a window without leaving an empty full-screen Space behind. A
+/// full-screen window leaves full screen first; AppKit ignores a toggle during a
+/// running transition, so a pending hide waits for it.
+@MainActor final class NativeDesktopWindowHider {
+#if DEBUG
+    private(set) var events: [String] = []
+#endif
+    private var afterExit: (() -> Void)?
+    private var transitioning = false
+    private func note(_ event: String) {
+#if DEBUG
+        events.append(event)
+#endif
+    }
+    func hide(_ window: NSWindow, then action: @escaping () -> Void = {}) {
+        note("hide transition=\(transitioning)")
+        guard window.styleMask.contains(.fullScreen) else { window.orderOut(nil); action(); return }
+        afterExit = { [weak window] in window?.orderOut(nil); action() }
+        if !transitioning { window.toggleFullScreen(nil) }
+    }
+    private func finish() { let action = afterExit; afterExit = nil; action?() }
+    func willEnter() { note("willEnter"); transitioning = true }
+    func didEnter(_ window: NSWindow) {
+        note("didEnter"); transitioning = false
+        // A toggle inside this callback is ignored; AppKit finishes the transition first.
+        guard afterExit != nil else { return }
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, afterExit != nil, !transitioning, window.styleMask.contains(.fullScreen) else { return }
+            window.toggleFullScreen(nil)
+        }
+    }
+    func failEnter() { note("failEnter"); transitioning = false; finish() }
+    func willExit() { note("willExit"); transitioning = true }
+    func didExit() { note("didExit"); transitioning = false; finish() }
+    func failExit() { note("failExit"); transitioning = false; finish() }
+}
+
+/// A meeting's presentation outside the main window. With a workspace the
+/// meeting lives in the main window's detail column until Open in New Window
+/// detaches it here; closing that window moves it back. A standalone meeting
+/// (no workspace) always uses this window.
 @MainActor final class NativeDesktopMeetingWindow: NSObject, NSWindowDelegate {
     private let model: NativeDesktopMeetingModel
     private let continuation: MeetingContinuationCoordinator?
@@ -10,6 +51,8 @@ import SwiftUI
     private var mini: NSPanel?
     private weak var workspace: NativeDesktopWorkspace?
     private var titleSubscription: AnyCancellable?
+    private let hider = NativeDesktopWindowHider()
+    private(set) var detached = false
     init(model: NativeDesktopMeetingModel, continuation: MeetingContinuationCoordinator? = nil, workspace: NativeDesktopWorkspace? = nil) {
         self.model = model
         self.continuation = continuation
@@ -20,29 +63,51 @@ import SwiftUI
         window.title = model.title; window.minSize = NSSize(width: 740, height: 520)
         window.isReleasedWhenClosed = false; window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden; window.delegate = self
-        // Simultaneous meetings group as native tabs and can be dragged apart.
+        // Detached meetings group as native tabs and can be dragged apart.
         window.tabbingIdentifier = "nativeDesktop.meeting"; window.tabbingMode = .preferred
         if !window.setFrameAutosaveName("nativeDesktop.meeting") { window.center() } else { window.center() }
         titleSubscription = model.$title.sink { [weak window = window] in window?.title = $0 }
     }
+    /// Shown in the main window rather than in its own window.
+    var isEmbedded: Bool { workspace != nil && !detached }
     var isVisible: Bool { window.isVisible || mini?.isVisible == true }
-    /// Re-shown meetings join a visible meeting's tab group explicitly.
+    var isMiniVisible: Bool { mini?.isVisible == true }
+    /// Re-shown detached meetings join a visible meeting's tab group explicitly.
     func show(tabbedWith other: NativeDesktopMeetingWindow?) {
-        if let other, other !== self, !window.isVisible, other.window.isVisible, other.window.tabbingIdentifier == window.tabbingIdentifier,
-           other.window.tabbedWindows?.contains(window) != true {
+        if !isEmbedded, let other, other !== self, !other.isEmbedded, !window.isVisible, other.window.isVisible,
+           other.window.tabbingIdentifier == window.tabbingIdentifier, other.window.tabbedWindows?.contains(window) != true {
             other.window.addTabbedWindow(window, ordered: .above)
         }
         show()
     }
-    var isKeyWindow: Bool { window.isKeyWindow || mini?.isKeyWindow == true }
+    var isKeyWindow: Bool { (!isEmbedded && window.isKeyWindow) || mini?.isKeyWindow == true }
     private func mountMeeting() {
-        if !(window.contentView is NSHostingView<NativeDesktopMeetingView>) { window.contentView = NSHostingView(rootView: NativeDesktopMeetingView(model: model, onMini: { [weak self] in self?.showMini() }, continuation: continuation, workspace: workspace)) }
+        if !(window.contentView is NSHostingView<NativeDesktopMeetingView>) {
+            window.contentView = NSHostingView(rootView: NativeDesktopMeetingView(model: model, onMini: { [weak self] in self?.showMini() },
+                continuation: continuation, workspace: workspace,
+                onWindowToggle: workspace == nil ? nil : { [weak self] in self?.moveToMainWindow() }))
+        }
     }
     func show() {
         mini?.orderOut(nil); mini?.contentView = nil
+        if isEmbedded { workspace?.presentEmbedded(model); return }
         if window.isMiniaturized { window.deminiaturize(nil) }
         mountMeeting(); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         synchronizePresentation()
+    }
+    /// Open in New Window: the meeting leaves the main window's detail.
+    func detach() {
+        guard isEmbedded else { show(); return }
+        detached = true; show(); workspace?.meetingDidMove(model)
+    }
+    /// Closing a detached window returns its meeting to the main window.
+    func moveToMainWindow() {
+        guard detached, workspace != nil else { return }
+        hider.hide(window) { [weak self] in
+            guard let self, detached else { return }
+            window.contentView = nil; detached = false
+            workspace?.presentEmbedded(model)
+        }
     }
     func close() {
         model.setMediaVisible(false); mini?.close(); mini = nil
@@ -51,62 +116,52 @@ import SwiftUI
         window.contentView = nil
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        hideWindow { [weak self] in self?.window.contentView = nil; self?.synchronizePresentation() }
+        if sender === mini {
+            mini?.orderOut(nil); mini?.contentView = nil; synchronizePresentation(); workspace?.meetingDidMove(model)
+            return false
+        }
+        if detached && workspace != nil { moveToMainWindow(); return false }
+        hider.hide(window) { [weak self] in self?.window.contentView = nil; self?.synchronizePresentation() }
         return false
     }
-    private var afterFullScreenExit: (() -> Void)?
-    private var fullScreenTransition = false
-    /// Hides without ending the meeting. A full-screen window leaves full screen
-    /// first; ordering it out directly would leave its Space behind. AppKit ignores
-    /// a toggle during a running transition, so a pending hide waits for it.
 #if DEBUG
-    private(set) var fullScreenEventsForTesting: [String] = []
+    var fullScreenEventsForTesting: [String] { hider.events }
 #endif
-    private func note(_ event: String) {
-#if DEBUG
-        fullScreenEventsForTesting.append(event)
-#endif
-    }
-    private func hideWindow(then action: @escaping () -> Void = {}) {
-        note("hide transition=\(fullScreenTransition)")
-        guard window.styleMask.contains(.fullScreen) else { window.orderOut(nil); action(); return }
-        afterFullScreenExit = { [weak self] in self?.window.orderOut(nil); action() }
-        if !fullScreenTransition { window.toggleFullScreen(nil) }
-    }
-    private func finishPendingHide() { let action = afterFullScreenExit; afterFullScreenExit = nil; action?() }
-    func windowWillEnterFullScreen(_ notification: Notification) { note("willEnter"); fullScreenTransition = true }
-    func windowDidEnterFullScreen(_ notification: Notification) {
-        note("didEnter"); fullScreenTransition = false
-        // A toggle inside this callback is ignored; AppKit finishes the transition first.
-        guard afterFullScreenExit != nil else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, afterFullScreenExit != nil, !fullScreenTransition,
-                  window.styleMask.contains(.fullScreen) else { return }
-            window.toggleFullScreen(nil)
-        }
-    }
-    func windowDidFailToEnterFullScreen(_ window: NSWindow) { note("failEnter"); fullScreenTransition = false; finishPendingHide() }
-    func windowWillExitFullScreen(_ notification: Notification) { note("willExit"); fullScreenTransition = true }
-    func windowDidExitFullScreen(_ notification: Notification) { note("didExit"); fullScreenTransition = false; finishPendingHide() }
-    func windowDidFailToExitFullScreen(_ window: NSWindow) { note("failExit"); fullScreenTransition = false; finishPendingHide() }
+    func windowWillEnterFullScreen(_ notification: Notification) { hider.willEnter() }
+    func windowDidEnterFullScreen(_ notification: Notification) { hider.didEnter(window) }
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) { hider.failEnter() }
+    func windowWillExitFullScreen(_ notification: Notification) { hider.willExit() }
+    func windowDidExitFullScreen(_ notification: Notification) { hider.didExit() }
+    func windowDidFailToExitFullScreen(_ window: NSWindow) { hider.failExit() }
     func windowWillMiniaturize(_ notification: Notification) {
-        model.setMediaPresentation(.hidden)
+        if !isEmbedded { model.setMediaPresentation(.hidden) }
     }
     func windowDidMiniaturize(_ notification: Notification) { synchronizePresentation() }
     func windowDidDeminiaturize(_ notification: Notification) { synchronizePresentation() }
     func windowDidChangeOcclusionState(_ notification: Notification) { synchronizePresentation() }
+    private func mountMini() {
+        if !(mini?.contentView is NSHostingView<NativeDesktopMiniMeeting>) {
+            mini?.contentView = NSHostingView(rootView: NativeDesktopMiniMeeting(model: model, onRestore: { [weak self] in self?.show() }))
+        }
+    }
     private func synchronizePresentation() {
+        if isEmbedded { workspace?.synchronizeMeetingPresentation(); return }
         let mainVisible = window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
         let miniVisible = mini.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false
-        if miniVisible {
-            if !(mini?.contentView is NSHostingView<NativeDesktopMiniMeeting>) {
-                mini?.contentView = NSHostingView(rootView: NativeDesktopMiniMeeting(model: model, onRestore: { [weak self] in self?.show() }))
-            }
-        }
+        if miniVisible { mountMini() }
         // Keep editor/zoom state through occlusion. Only the media subtree is
         // unmounted; destroying the shell would close a private Presenter draft.
         if mainVisible { mountMeeting() }
         model.setMediaPresentation(mainVisible ? .meeting : miniVisible ? .floating : .hidden)
+    }
+    /// The workspace decides an embedded meeting's presentation: the selected
+    /// meeting in a visible main window renders in full, the browsing preview
+    /// and Mini meeting render one floating video, every other meeting is audio only.
+    func synchronizeEmbedded(shown: Bool, preview: Bool) {
+        guard isEmbedded else { return }
+        let miniVisible = mini.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false
+        if miniVisible { mountMini() }
+        model.setMediaPresentation(shown ? .meeting : miniVisible || preview ? .floating : .hidden)
     }
     func showMini() {
         if mini == nil {
@@ -115,12 +170,12 @@ import SwiftUI
             panel.delegate = self; panel.level = .floating; panel.isFloatingPanel = true; panel.hidesOnDeactivate = false
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]; panel.isReleasedWhenClosed = false
             panel.title = model.title; panel.minSize = NSSize(width: 280, height: 210)
-            panel.contentView = NSHostingView(rootView: NativeDesktopMiniMeeting(model: model, onRestore: { [weak self] in self?.show() }))
             panel.center(); mini = panel
         }
-        if !(mini?.contentView is NSHostingView<NativeDesktopMiniMeeting>) { mini?.contentView = NSHostingView(rootView: NativeDesktopMiniMeeting(model: model, onRestore: { [weak self] in self?.show() })) }
+        mountMini()
         mini?.orderFrontRegardless()
-        hideWindow { [weak self] in self?.synchronizePresentation() }
+        if isEmbedded { workspace?.meetingDidEnterMini(model); return }
+        hider.hide(window) { [weak self] in self?.synchronizePresentation() }
     }
 }
 
@@ -129,6 +184,12 @@ struct NativeDesktopMeetingView: View {
     let onMini: () -> Void
     var continuation: MeetingContinuationCoordinator? = nil
     var workspace: NativeDesktopWorkspace? = nil
+    /// Open in New Window from the main window, or back to it from a detached window.
+    var onWindowToggle: (() -> Void)? = nil
+    /// In the main window the toolbar carries the title.
+    var embedded = false
+    /// One window shows one alert: an embedded meeting defers to the window's own.
+    var presentsErrors = true
     @State private var reactionsOpen = false
     @State private var shareOpen = false
     @State private var soundOpen = false
@@ -177,7 +238,7 @@ struct NativeDesktopMeetingView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }.animation(.easeOut(duration: 0.18), value: docked)
-        .sheet(isPresented: Binding(get: { geometry.size.width < 1040 && model.panel != nil }, set: { if !$0 { model.panel = nil } })) {
+        .sheet(isPresented: Binding(get: { geometry.size.width < 1040 && model.panel != nil }, set: { if !$0 && model.panel != nil { model.panel = nil } })) {
             if let panel = model.panel { inspector(panel).frame(width: 380, height: 560) }
         }
         }
@@ -185,7 +246,7 @@ struct NativeDesktopMeetingView: View {
         .onChange(of: textSourceID) { _ in updateTextSource() }
         .onChange(of: model.snapshot.phase) { phase in if phase == .left || phase == .leaving || phase == .failed { textSelection.close() } }
         .onDisappear { textSelection.close() }
-        .alert(L("Meeting"), isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
+        .alert(L("Meeting"), isPresented: Binding(get: { presentsErrors && model.error != nil }, set: { if !$0 && presentsErrors && model.error != nil { model.error = nil } })) {
             Button(L("OK")) { model.error = nil }
         } message: { Text(model.error ?? "") }
     }
@@ -227,17 +288,24 @@ struct NativeDesktopMeetingView: View {
         HStack(spacing: 12) {
             HStack(spacing: 10) {
                 if model.guestFeatures.transcriptionStatus == .active { Image(systemName: "text.bubble.fill").foregroundStyle(.orange).help(L("Meeting transcription is on")) }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.title).font(.headline).lineLimit(1)
-                    Text(model.connected ? L("%d participants", model.participants.count) : L(model.snapshot.phase.rawValue.capitalized)).font(.caption).foregroundStyle(.secondary)
+                if !embedded {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.title).font(.headline).lineLimit(1)
+                        Text(model.connected ? L("%d participants", model.participants.count) : L(model.snapshot.phase.rawValue.capitalized)).font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }.padding(.horizontal, 16).padding(.vertical, 10).nativeMeetingChrome()
+            .opacity(embedded && model.guestFeatures.transcriptionStatus != .active ? 0 : 1)
             Spacer(minLength: 8)
             HStack(spacing: 6) {
                 if let workspace { NativeDesktopMeetingsButton(workspace: workspace, current: model) }
                 iconButton("person.2", L("Participants")) { togglePanel(.participants) }
                 iconButton("bubble.left", L("Conversation")) { togglePanel(.conversation) }
                 iconButton("pip.enter", L("Mini meeting"), action: onMini)
+                if let onWindowToggle {
+                    iconButton(embedded ? "macwindow.on.rectangle" : "sidebar.left",
+                               embedded ? L("Open in New Window") : L("Move to Main Window"), action: onWindowToggle)
+                }
             }.padding(6).nativeMeetingChrome()
         }
     }
