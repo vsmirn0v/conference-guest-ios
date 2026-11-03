@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "47",
+  "channel": "beta",
+  "sourceCommit": "d38f2e4",
+  "changes": [
+    "Screen share stage: speaker chip and speaking-first speaker rail, immersive view with zoom bar and viewport indicator, participants panel with Speaking now / In meeting and last-spoke status; focused camera that is off falls back to the same person's screen (fixes Waiting for stream in All video mode) (d38f2e4)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-47-arm64.dmg",
+    "sha256": "a917b99467db9b62f22fa5410eb63c22f23a82f848a5369c4b4bbf30aa339f3c",
+    "length": 15887047
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-47-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 47",
+    "screen share stage, immersive view and participants panel not yet seen in a live meeting (offscreen renders only)",
+    "mic handover timings not yet collected"
+  ]
+}
