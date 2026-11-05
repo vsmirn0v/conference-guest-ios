@@ -1477,3 +1477,8 @@
 "This model is not verified for this app version." = "This model is not verified for this app version.";
 "The model server answered %ld. Try again later." = "The model server answered %ld. Try again later.";
 "%@ did not match its expected checksum and was discarded." = "%@ did not match its expected checksum and was discarded.";
+"Diagnostics" = "Diagnostics";
+"Export diagnostics" = "Export diagnostics";
+"Copy diagnostics" = "Copy diagnostics";
+"If a meeting loses sound or disconnects, send diagnostics to support soon after. They help find the cause." = "If a meeting loses sound or disconnects, send diagnostics to support soon after. They help find the cause.";
+"Diagnostics include the app and system versions, audio route, network type and connection events from the last 7 days. They include no meeting links, names, chat or audio. Nothing is sent until you share it." = "Diagnostics include the app and system versions, audio route, network type and connection events from the last 7 days. They include no meeting links, names, chat or audio. Nothing is sent until you share it.";

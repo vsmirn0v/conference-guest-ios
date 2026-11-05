@@ -62,6 +62,11 @@ enum GuestPeerRegistry {
     static func snapshot() -> [RTCPeerConnection] {
         lock.lock(); defer { lock.unlock() }; return peers.allObjects
     }
+    /// Open peer connections created for one media attempt.
+    static func peers(in scope: Scope) -> [RTCPeerConnection] {
+        lock.lock(); defer { lock.unlock() }
+        return peers.allObjects.filter { scopes.object(forKey: $0)?.value == scope && $0.connectionState != .closed }
+    }
     @MainActor static func receiverCandidates() -> [GuestPresenterCameraReceiver.Candidate] {
         lock.lock()
         let scoped = peers.allObjects.map { ($0, scopes.object(forKey: $0)?.value) }

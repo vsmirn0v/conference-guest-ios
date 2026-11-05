@@ -88,6 +88,7 @@ struct NativeGuestApplication {
         let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Rock'N'Roll for Mac"
         NativeDiagnosticsLog.shared.start()
         setProbeLogSink { NativeDiagnosticsLog.shared.append($0) }
+        NativeDiagnosticReports.shared.onSaved = { probeLog("diagnostic-reports-saved", ["count": $0]) }
         NativeDiagnosticReports.shared.start()
         probeLog("app-launch", ["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
             "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?",

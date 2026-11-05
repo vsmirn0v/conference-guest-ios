@@ -36,6 +36,7 @@ targets:
       - path: Shared/SharedTextSnapshot.swift
       - path: Shared/MeetingActivityState.swift
       - path: Shared/MeetingActivityViews.swift
+      - path: Shared/DiagnosticsStore.swift
       - path: GuestBroadcast/VendorSDK/JazzScreenShareResources.bundle
     dependencies:
       - package: JazzSDK

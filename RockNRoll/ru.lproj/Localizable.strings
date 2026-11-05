@@ -1475,3 +1475,8 @@
 "This model is not verified for this app version." = "Эта модель не проверена для этой версии приложения.";
 "The model server answered %ld. Try again later." = "Сервер модели ответил %ld. Повторите попытку позже.";
 "%@ did not match its expected checksum and was discarded." = "%@ не совпал с ожидаемой контрольной суммой и был удалён.";
+"Diagnostics" = "Диагностика";
+"Export diagnostics" = "Экспортировать диагностику";
+"Copy diagnostics" = "Скопировать диагностику";
+"If a meeting loses sound or disconnects, send diagnostics to support soon after. They help find the cause." = "Если во встрече пропал звук или связь, вскоре после этого отправьте диагностику в поддержку. Она поможет найти причину.";
+"Diagnostics include the app and system versions, audio route, network type and connection events from the last 7 days. They include no meeting links, names, chat or audio. Nothing is sent until you share it." = "Диагностика содержит версии приложения и системы, аудиовыход, тип сети и события подключения за последние 7 дней. В ней нет ссылок на встречи, имён, чата и звука. Ничего не отправляется, пока вы не поделитесь файлом.";

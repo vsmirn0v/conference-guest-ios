@@ -30,6 +30,7 @@ targets:
       - path: ../Shared/GuestAudioOwnerLease.swift
       - path: ../Shared/GuestAudioProfile.swift
       - path: ../Shared/Localization.swift
+      - path: ../Shared/DiagnosticsStore.swift
       - path: ../RockNRoll/RoomHistoryStore.swift
       - path: ../RockNRoll/RoomSyncCoordinator.swift
       - path: ../RockNRoll/RoomSyncSettingsView.swift

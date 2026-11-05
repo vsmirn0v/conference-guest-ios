@@ -34,6 +34,14 @@ public struct CallNetworkRecovery {
         due = now + 8 // Give the SDK's own reconnection a chance first.
     }
 
+    /// The media transport stopped while signalling still looked active. The SDK has
+    /// already had its chance (the stall limits), so the rebuild is due immediately.
+    public mutating func mediaStalled(at now: TimeInterval) {
+        guard hasConnected, reason == nil else { return }
+        reason = .sdk
+        due = now
+    }
+
     public mutating func sdkMediaRestored() {
         guard !hasAttemptInFlight, reason == .sdk else { return }
         reason = nil; due = nil; attempts = 0

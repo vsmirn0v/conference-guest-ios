@@ -635,6 +635,9 @@ struct JoinView: View {
                     NavigationLink { Form { websiteSettings }.navigationTitle(L("Meeting websites")) } label: {
                         Label(L("Meeting websites"), systemImage: "globe")
                     }.accessibilityIdentifier("settings.websites")
+                    NavigationLink { DiagnosticsSettingsView() } label: {
+                        Label(L("Diagnostics"), systemImage: "stethoscope")
+                    }.accessibilityIdentifier("settings.diagnostics")
                     NavigationLink { Form { aboutSettings }.navigationTitle(L("About")) } label: {
                         Label(L("About"), systemImage: "info.circle")
                     }.accessibilityIdentifier("settings.about")

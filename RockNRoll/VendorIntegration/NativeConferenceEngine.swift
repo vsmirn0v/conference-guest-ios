@@ -39,6 +39,8 @@ final class NativeConferenceEngine: CallEngine {
     private let networkQueue = DispatchQueue(label: "dev.vsmirn0v.conferenceguest.network")
     private var networkRecovery = CallNetworkRecovery()
     private var networkRecoveryTask: Task<Void, Never>?
+    private var transportWatchTask: Task<Void, Never>?
+    private var transportWatchdog = MediaTransportWatchdog()
     private var lastNetworkPath: NWPath?
     private var reconnectingForNetwork = false
     private var mediaConnectionConfirmed = false
@@ -991,6 +993,8 @@ final class NativeConferenceEngine: CallEngine {
         reconnectingForNetwork = false
         mediaConnectionConfirmed = false
         startNetworkMonitor()
+        AppDiagnostics.log("guest-join", ["backgroundJoin": backgroundJoin])
+        startTransportWatch()
         hasJoinStarted = true
         #if DEBUG
         audioIOTrace.start()
@@ -1315,6 +1319,45 @@ final class NativeConferenceEngine: CallEngine {
         }
     }
 
+    /// The transport should be carrying media: signalling active, media confirmed and no
+    /// recovery, hold or audio interruption already in charge of the meeting.
+    private var isTransportWatchEligible: Bool {
+        hasJoinStarted && hasBecomeActive && isSDKActive && mediaConnectionConfirmed && !isMediaReconnecting &&
+            !networkRecovery.requiresRecovery && !isSystemHeld && !isAudioInterrupted && !needsMediaReconnect &&
+            isNetworkAvailable && !leaveRequested && finishing == nil
+    }
+
+    /// A cell handover can stop the media transport while the path looks unchanged and
+    /// signalling still reports the meeting active. Rebuild media when it stalls.
+    private func startTransportWatch() {
+        transportWatchTask?.cancel()
+        transportWatchdog.reset()
+        let epoch = sessionEpoch
+        transportWatchTask = Task { @MainActor [weak self] in
+            var samples = 0
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+                guard let self, self.sessionEpoch == epoch, self.hasJoinStarted else { return }
+                guard self.isTransportWatchEligible else { self.transportWatchdog.reset(); continue }
+                let scope = GuestPeerRegistry.Scope(generation: epoch, attempt: self.mediaAttemptEpoch)
+                let health = await GuestTransportHealth.sample(scope: scope)
+                guard !Task.isCancelled, self.sessionEpoch == epoch else { return }
+                guard self.isTransportWatchEligible, self.mediaAttemptEpoch == scope.attempt else {
+                    self.transportWatchdog.reset(); continue
+                }
+                if samples % 15 == 0 {
+                    AppDiagnostics.log("guest-transport", ["peers": health.summary, "ice": "\(health.sample.ice)"])
+                }
+                samples += 1
+                guard let stall = self.transportWatchdog.observe(health.sample, at: ProcessInfo.processInfo.systemUptime) else { continue }
+                self.traceMediaRecovery("media-transport-stalled", details: ["stall": stall.rawValue, "peers": health.summary])
+                self.networkRecovery.mediaStalled(at: ProcessInfo.processInfo.systemUptime)
+                self.updateConnectionGap()
+                self.startNetworkRecoveryIfNeeded()
+            }
+        }
+    }
+
     private var isNetworkRecoveryBlocked: Bool {
         isSystemHeld || isMediaReconnecting || !isCallAudioReady
     }
@@ -1337,6 +1380,17 @@ final class NativeConferenceEngine: CallEngine {
     private var remoteAudioEvidence: [String: Int] = [:]
     #endif
     private func traceMediaRecovery(_ event: String, details: [String: Any] = [:]) {
+        if event != "sample" && event != "rtp-sample" {
+            // Saved in every build: flags and reason codes only, for exported diagnostics.
+            var fields: [String: Any] = ["attempt": mediaReconnectGeneration, "audioReady": isCallAudioReady,
+                "audioGateReady": audioGate.canUseMedia, "held": isSystemHeld, "interrupted": isAudioInterrupted,
+                "reconnecting": isMediaReconnecting, "signalingActive": isSDKActive, "mediaConnected": mediaConnectionConfirmed,
+                "networkAvailable": isNetworkAvailable, "networkRecovery": networkRecovery.requiresRecovery,
+                "reconnectingForNetwork": reconnectingForNetwork, "appState": UIApplication.shared.applicationState.rawValue,
+                "outputs": AVAudioSession.sharedInstance().currentRoute.outputs.map(\.portType.rawValue)]
+            fields.merge(details) { _, value in value }
+            AppDiagnostics.log("guest-" + event, fields)
+        }
         #if DEBUG
         guard ProcessInfo.processInfo.environment["CONFERENCE_TEST_MEDIA_TRACE"] == "1",
               let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
@@ -2072,6 +2126,7 @@ final class NativeConferenceEngine: CallEngine {
         events.onMediaConnected = nil
         audioRecoveryTask?.cancel(); audioRecoveryTask = nil
         networkRecoveryTask?.cancel(); networkRecoveryTask = nil
+        transportWatchTask?.cancel(); transportWatchTask = nil
         pendingRoom = nil
         activeControls?.retireMeetingPanels()
         activeControls?.isHidden = true
