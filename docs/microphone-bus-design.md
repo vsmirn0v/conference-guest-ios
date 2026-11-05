@@ -1,7 +1,47 @@
 # Shared microphone bus — design
 
-Status: proposal, 5 Nov 2026. Nothing here is implemented. It serves two requests:
-voice replies in every meeting type, and faster microphone moves between meetings.
+Status: proposal, 5 Nov 2026, **revised after review** (see the next section, which
+supersedes the plan below where they differ). Nothing here is implemented. It serves two
+requests: voice replies in every meeting type, and faster microphone moves between meetings.
+
+## Review outcome and revised plan
+
+An independent review (Fable 5.1, high effort) checked this design against the code and
+returned "rework before B0". The three claims that change the plan were confirmed in code:
+
+1. **Moves wait on the meeting service, not only on the device.** Guest unmute sends
+   `rtc:track:muted` and waits up to 5 s for the server's confirmation before the
+   microphone opens (`Experiments/NativeGuest/GuestEngine.swift`, `setMuted`). Telemost and
+   TrueConf unmute renegotiates the publisher (`applyMedia`: `publisher.offer()` and the
+   provider's answer). A shared engine does not remove these round trips, so the 150 ms
+   target cannot hold for those services.
+2. **Voice injection is already one implementation.** Telemost and TrueConf use the same
+   `GuestSystemAudio` as Guest, so a mic gate and player node in its
+   `configureInputFromSource` covers all three without sharing an engine.
+3. **Input-mixer mute silences the player too** (it zeroes the module's input mixer), so a
+   voice reply needs its own app-level mic gate; module mute cannot be the privacy proof
+   during a reply.
+
+The review also found that sharing one module makes about fifteen per-meeting module
+calls (mute on join, suppress on recovery and leave, shutdown, playout-failure shutdown,
+availability) act on every meeting, that new WebRTC tracks start enabled (a recovering
+background meeting could leak talk audio unless tracks are disabled before attaching), and
+that the existing one-room shared-media invariants and tests would mostly be rewritten.
+
+**Revised plan.**
+
+| Step | Scope | Effort | Done when |
+|---|---|---:|---|
+| R0 | Measure | 2 days | 20 moves per pair (Guest↔Guest, Guest↔Telemost, Telemost↔TrueConf) split into permission, device activation, service confirmation and renegotiation, from the existing `microphoneStartupMilliseconds` and new external timings. Decides which part to attack. |
+| R1 | Keep the device warm between moves | 1 week | Moving the talk role no longer releases input in the previous meeting (today `setInputPermitted(false)` turns input off and tears down voice processing). It mutes the module and disables the sender, the same per-meeting proof as now. Checked: macOS accepts two voice-processing inputs at once, CPU cost, the menu-bar microphone indicator behaviour, and every existing shared-media and parity test. |
+| R2 | Voice-reply path, one implementation | 3–4 days | `GuestSystemAudio` builds mic gate + player node in `configureInputFromSource`, recreated closed after every route change. During a reply the gate is closed, the module is unmuted only for that reply, the sender of the answered meeting is the only one enabled, and the indicator shows. Headset (process-wide) mute blocks replies. Tested with a recorded clip. |
+| R3 | Rock voice path | 2–3 days | Same API through LiveKit's capture processing hook. |
+| R4 | Optional: shared engine | after R0–R2 | Only if R0 shows the device step dominates and cross-meeting echo is measured as a real problem (with an AEC dump, not by ear). Then the original design below applies, with the review's preconditions: one module arbiter replaces every per-meeting module call, tracks are disabled before attach, module unmute is compare-and-set on a talk epoch, multiple transcription sinks. |
+
+Also corrected from the original text: echo cancellation would never cover Rock with
+WebRTC meetings, since Rock keeps its own engine; TrueConf does signal mute (`DeviceStatus`);
+per-participant volume stays impossible for TrueConf's single composite track; and sound
+off as volume zero keeps Telemost audio decoding and its bandwidth on.
 
 ## Why no sandbox workaround is needed
 
@@ -132,8 +172,9 @@ B0 decides whether to continue: if the fork cannot share a running module across
 connections, the fallback keeps one engine per meeting but pre-warms VPIO in the target on
 hover/"Talk here" intent, and injects voice per engine type.
 
-## Decisions for you
+## Decisions (5 Nov 2026)
 
-1. Accept that one engine failure interrupts audio in every meeting until it recovers
+1. Accepted: one engine failure interrupts audio in every meeting until it recovers
    (the cost of shared echo cancellation and instant moves).
-2. Rock stays on its own engine (moves into Rock keep today's speed).
+2. Accepted: Rock stays on its own engine (moves into Rock keep today's speed).
+3. Before B0 starts, the design gets an independent review.
