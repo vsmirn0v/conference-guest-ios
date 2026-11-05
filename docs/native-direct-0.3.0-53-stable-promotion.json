@@ -1,0 +1,20 @@
+{
+  "version": "0.3.0",
+  "build": "53",
+  "channel": "stable",
+  "promotedFrom": "beta",
+  "previousStable": "40",
+  "artifact": {
+    "file": "RockNRoll-0.3.0-53-arm64.dmg",
+    "sha256": "0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009",
+    "length": 15947096
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-54-arm64.dmg",
+  "httpsVerified": true,
+  "validation": "docs/native-direct-0.3.0-53-validation.json",
+  "stableAlias": "https://rock.glowsoft.ru/mac/stable/latest.dmg",
+  "notVerified": [
+    "Sparkle update of an installed stable app from 40 to 53"
+  ]
+}

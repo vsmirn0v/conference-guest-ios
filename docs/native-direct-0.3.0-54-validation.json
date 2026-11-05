@@ -1,0 +1,28 @@
+{
+  "version": "0.3.0",
+  "build": "54",
+  "channel": "beta",
+  "sourceCommit": "0cbba16",
+  "changes": [
+    "Attention phase 0-1: optional local Russian transcription of Guest meetings on this Mac (sherpa-onnx, GigaAM v3), Settings Transcription tab, teal indicator, transcript continues while a meeting's sound is off (0cbba16)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-54-arm64.dmg",
+    "sha256": "e4e7625188e98218bd76877ff64c3b74330728ec32e361bec93f1e163319b1a1",
+    "length": 25629135
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-40-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-54-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 54",
+    "live meeting with sound off producing local transcript through the silent output path",
+    "CPU use with several simultaneous transcribed meetings",
+    "transcription quality on conversational Russian meeting audio"
+  ]
+}
