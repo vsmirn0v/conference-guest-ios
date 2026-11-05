@@ -1,0 +1,31 @@
+{
+  "version": "0.3.0",
+  "build": "55",
+  "channel": "beta",
+  "sourceCommit": "4b389a2",
+  "changes": [
+    "Attention phase 2a: your own microphone joins the local transcript while you are unmuted in the meeting that holds it; Settings > Transcription > Include my microphone (0ee7132)",
+    "Attention phase 3: meeting instructions, a judge on an OpenAI-compatible endpoint, attention cards with Open/Decline feedback, sidebar badges, inspector, Settings > Intelligence, local decision log and replay script (4b389a2)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-55-arm64.dmg",
+    "sha256": "a01dafd02d564452704a4dcda0809ab8f644163a1edf1380477fd84675f7a8ec",
+    "length": 25839554
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-55-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 55",
+    "a live judge call to OpenAI",
+    "attention cards during real simultaneous meetings",
+    "notification delivery for 'now' cards",
+    "verdict quality on real meetings",
+    "microphone transcription in a live meeting"
+  ]
+}
