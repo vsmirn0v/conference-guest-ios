@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "60",
+  "channel": "beta",
+  "sourceCommit": "914c39b",
+  "changes": [
+    "With the experimental warm microphone, a meeting joined without the talk role starts its microphone muted once connected, so the first move into it skips the ~1.65 s device and voice-processing start; logged as microphone-prewarm (914c39b)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-60-arm64.dmg",
+    "sha256": "c8110ab151fbd8f489ca95f94e0dd2750c9a9df88be56b9a239473755e63a2fd",
+    "length": 25922172
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-60-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 60",
+    "first-move timing with prewarm not yet measured in live meetings",
+    "Telemost/TrueConf listeners may have no recording demand before their first unmute, so prewarm may not shorten their first move"
+  ]
+}
