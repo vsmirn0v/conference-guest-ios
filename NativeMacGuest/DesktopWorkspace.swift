@@ -32,7 +32,11 @@ import UserNotifications
     @Published var error: String?
     /// An informational alert, such as a meeting the organizer ended.
     @Published var notice: (title: String, message: String)?
+    /// A join is in flight (setting up or connecting), or every meeting is being left.
     @Published private(set) var preparing = false { didSet { onUpdateActivityChanged() } }
+    /// A join is detecting its service or asking about it; the next join waits for
+    /// this short step only. Connecting does not hold up another join.
+    @Published private(set) var joinSettingUp = false
     /// Simultaneous meetings in join order. One talk meeting holds mic and camera.
     @Published private(set) var meetings: [NativeDesktopMeetingModel] = [] { didSet { onUpdateActivityChanged() } }
     @Published private(set) var talkID: UUID?
@@ -49,12 +53,18 @@ import UserNotifications
     private var continuationSessions: [UUID: UUID] = [:]
     private var meetingLeaves: [UUID: Task<Bool, Never>] = [:] { didSet { onUpdateActivityChanged() } }
     private var handover: Task<Bool, Never>?
-    private weak var joiningModel: NativeDesktopMeetingModel?
+    /// In-flight joins and the meeting each created.
+    private var joinTasks: [UUID: Task<Void, Never>] = [:] { didSet { refreshPreparing() } }
+    private var joinModels: [UUID: ObjectIdentifier] = [:]
+    private var leavingAll = false { didSet { refreshPreparing() } }
+    /// A join asked for while another was setting up; it starts right after.
+    private var queuedJoin: (@MainActor () -> Void)?
+    private var scheduledJoinID: UUID?
     private var statusItem: NSStatusItem?
     private var statusIconLive: Bool?
     private var menuSubscriptionInstalled = false
     private var leaveTask: Task<Bool, Never>?
-    private var joinTask: Task<Void, Never>?
+    /// Changes when every meeting is left; joins started before then stop.
     private var joinGeneration = UUID()
     private var subscriptions = Set<AnyCancellable>()
     private var keyMonitor: Any?
@@ -88,8 +98,8 @@ import UserNotifications
                  eventID: request.meeting.id, scheduled: request)
         }
         library.onScheduledInvalidation = { [weak self] in
-            guard let self, pendingScheduled != nil else { return }
-            joinTask?.cancel()
+            guard let self, pendingScheduled != nil, let id = scheduledJoinID else { return }
+            joinTasks[id]?.cancel()
         }
         library.canAutomaticallyJoin = { [weak self] in self?.meetings.isEmpty == true && self?.preparing == false && self?.mayAdmitMeeting() == true }
         library.continuation.onSnapshot = { [weak self] in self?.continuationSnapshot() }
@@ -214,9 +224,17 @@ import UserNotifications
         guard mayAdmitMeeting() else {
             scheduled?.finish(); error = L("An update is being installed. Please try again after Rock'N'Roll for Mac restarts."); return
         }
-        guard !preparing, leaveTask == nil, meetingLeaves.isEmpty, !shutdownBlocked else { scheduled?.finish(); return }
+        guard leaveTask == nil, meetingLeaves.isEmpty, !shutdownBlocked else { scheduled?.finish(); return }
         // Calendar automation never adds a second meeting; a reminder's Join does.
-        if scheduled != nil, !meetings.isEmpty { scheduled?.finish(); return }
+        if scheduled != nil, preparing || !meetings.isEmpty { scheduled?.finish(); return }
+        if joinSettingUp {
+            // Asked for while another join is still finding its service: it starts
+            // right after that step, without waiting for the other to connect.
+            queuedJoin = { [weak self] in
+                self?.join(url, engine: known, title: title, eventID: eventID, quiet: quiet, nameOverride: nameOverride)
+            }
+            return
+        }
         let room = MeetingRoomIdentity(url, engine: known)
         if let existing = meetings.first(where: { MeetingRoomIdentity($0.invitation, engine: $0.kind) == room }) {
             showMeeting(existing); return
@@ -231,16 +249,20 @@ import UserNotifications
             error = L("You can be in up to %d meetings at once.", Self.meetingLimit); return
         }
         if scheduled == nil { library.setup.suspendForMeeting() }
-        preparing = true; error = nil; sessionID = UUID(); joinGeneration = UUID(); pendingScheduled = scheduled
+        error = nil; sessionID = UUID(); joinSettingUp = true
+        let joinID = UUID()
+        if scheduled != nil { pendingScheduled = scheduled; scheduledJoinID = joinID }
         let token = joinGeneration, requestedSession = sessionID
-        joinTask = Task { @MainActor [weak self] in
+        joinTasks[joinID] = Task { @MainActor [weak self] in
             guard let self else { return }
+            var settingUp = true
             defer {
                 scheduled?.finish()
-                if joinGeneration == token { preparing = false; joinTask = nil; pendingScheduled = nil }
+                joinTasks[joinID] = nil; joinModels[joinID] = nil
+                if scheduledJoinID == joinID { scheduledJoinID = nil; pendingScheduled = nil }
+                if settingUp { endJoinSetup() }
             }
             var ownedModel: NativeDesktopMeetingModel?
-            defer { if let ownedModel, joiningModel === ownedModel { joiningModel = nil } }
             do {
                 if replacing, !(await leaveAllMeetings()) { throw NativeDesktopError.cleanupFailed }
                 try Task.checkCancellation(); guard token == joinGeneration else { return }
@@ -257,7 +279,7 @@ import UserNotifications
                 let name = (nameOverride ?? library.displayName).trimmingCharacters(in: .whitespacesAndNewlines)
                 guard destination.engineKind.inputPolicy.accepts(name: name) else { throw NativeGuestEntryError.invalidName }
                 let model = makeMeeting(destination, name, title, quiet)
-                ownedModel = model; joiningModel = model
+                ownedModel = model; joinModels[joinID] = ObjectIdentifier(model)
                 model.calendarSeriesID = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id }?.seriesID }
                 let concurrent = !meetings.isEmpty, owns = talkMeeting == nil
                 if concurrent { model.configureForConcurrentJoin(ownsMicrophone: owns) }
@@ -277,12 +299,14 @@ import UserNotifications
                 meetingWindows[model.sessionID] = NativeDesktopMeetingWindow(model: model, continuation: library.continuation, workspace: self)
                 if scheduled != nil && !NSApp.isActive { model.setMediaVisible(false); refreshMenu() }
                 else { showMeeting(model) }
+                // The meeting is listed and shown: another join may start while this one connects.
+                settingUp = false; endJoinSetup()
                 guard scheduled?.admission() != false else { throw CancellationError() }
                 try await model.connect()
                 try Task.checkCancellation()
                 guard token == joinGeneration, meetings.contains(where: { $0 === model }), scheduled?.admission() != false else { throw CancellationError() }
                 // Commit only after final admission, including same-turn revocation.
-                pendingScheduled = nil
+                if scheduledJoinID == joinID { scheduledJoinID = nil; pendingScheduled = nil }
                 library.recordJoin(invitation: model.invitation, title: model.title,
                     identifier: destination.roomIdentifier, engine: model.kind, eventID: eventID)
                 library.continuation.targetDidConnect(invitation: model.invitation, sessionID: requestedSession)
@@ -307,16 +331,27 @@ import UserNotifications
     /// Leaves every meeting (Quit, update, "Leave all meetings").
     @discardableResult func leave() async -> Bool {
         if let leaveTask { return await leaveTask.value }
-        let pending = joinTask
-        joinTask = nil; joinGeneration = UUID(); preparing = true
+        let pending = Array(joinTasks.values)
+        queuedJoin = nil; joinGeneration = UUID(); leavingAll = true
         let cleanup = Task { @MainActor in
-            pending?.cancel(); await pending?.value
+            for task in pending { task.cancel() }
+            for task in pending { await task.value }
             return await self.leaveAllMeetings()
         }
         leaveTask = cleanup
         let clean = await cleanup.value
-        leaveTask = nil; preparing = false
+        leaveTask = nil; leavingAll = false
         return clean
+    }
+    private func refreshPreparing() {
+        let busy = !joinTasks.isEmpty || leavingAll
+        if preparing != busy { preparing = busy }
+    }
+    private func endJoinSetup() {
+        joinSettingUp = false
+        guard let next = queuedJoin else { return }
+        queuedJoin = nil
+        Task { @MainActor in next() }
     }
     private func leaveAllMeetings() async -> Bool {
         var clean = true
@@ -327,7 +362,7 @@ import UserNotifications
     @discardableResult func leave(_ model: NativeDesktopMeetingModel) async -> Bool {
         let id = model.sessionID
         if let task = meetingLeaves[id] { return await task.value }
-        if joiningModel === model { joinTask?.cancel() }
+        for (joinID, owner) in joinModels where owner == ObjectIdentifier(model) { joinTasks[joinID]?.cancel() }
         let task = Task { @MainActor () -> Bool in
             let clean = await model.leave()
             guard self.meetings.contains(where: { $0 === model }) else { return clean }

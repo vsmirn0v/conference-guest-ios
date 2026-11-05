@@ -341,8 +341,8 @@ struct NativeDesktopHomeView: View {
             HStack {
                 TextField(L("Invitation link"), text: $workspace.invitation).textFieldStyle(.roundedBorder).onSubmit { workspace.joinInput() }.accessibilityIdentifier("nativeGuest.invitation")
                 Button(L("Paste")) { workspace.invitation = NSPasteboard.general.string(forType: .string) ?? "" }
-                Button(workspace.preparing ? L("Connecting…") : L("Join")) { workspace.joinInput() }
-                    .buttonStyle(.borderedProminent).disabled(workspace.preparing || workspace.invitation.isEmpty)
+                Button(workspace.joinSettingUp ? L("Connecting…") : L("Join")) { workspace.joinInput() }
+                    .buttonStyle(.borderedProminent).disabled(workspace.joinSettingUp || workspace.invitation.isEmpty)
             }
             HStack {
                 Image(systemName: "person.crop.circle").foregroundStyle(.secondary)

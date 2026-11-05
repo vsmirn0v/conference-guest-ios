@@ -1082,6 +1082,57 @@ private final class DesktopActivitySpy: NSUserActivity {
         workspace.join(room(index), engine: .guest)
         try await spin { workspace.meetings.count == count + 1 && workspace.meetings.last?.connected == true && !workspace.preparing }
     }
+    /// A second meeting starts joining while the first is still connecting; the
+    /// first keeps the talk role and both connect.
+    func testSecondJoinStartsWhileFirstIsStillConnecting() async throws {
+        let first = DesktopTestEngine(), second = DesktopTestEngine()
+        var release: CheckedContinuation<Void, Never>?
+        first.onConnect = { await withCheckedContinuation { release = $0 } }
+        let workspace = multiWorkspace([first, second])
+        workspace.join(room(1), engine: .guest)
+        try await spin { release != nil && !workspace.joinSettingUp }
+        XCTAssertTrue(workspace.preparing, "The first meeting is still connecting")
+        workspace.join(room(2), engine: .guest)
+        try await spin { workspace.meetings.count == 2 && workspace.meetings[1].connected }
+        XCTAssertFalse(workspace.meetings[0].connected, "The second connected without waiting for the first")
+        XCTAssertTrue(second.concurrent, "The second joins as a listener")
+        release?.resume(); release = nil
+        try await spin { workspace.meetings.allSatisfy(\.connected) && !workspace.preparing }
+        XCTAssertEqual(workspace.talkMeeting === workspace.meetings[0], true)
+        XCTAssertEqual(first.leaves + second.leaves, 0)
+        let clean = await workspace.leave(); XCTAssertTrue(clean)
+    }
+    /// A join asked for while another is still finding its service starts right after.
+    func testJoinDuringServiceDetectionStartsAfterIt() async throws {
+        let first = DesktopTestEngine(), second = DesktopTestEngine()
+        let preferences = UserDefaults(suiteName: "native-multi-\(UUID())")!
+        let library = NativeDesktopLibrary(preferences: preferences, history: RoomHistoryStore(storage: DesktopMemoryStorage()),
+                                           syncStorage: DesktopMemoryStorage())
+        library.displayName = "Multi meeting"
+        let media = NativeDesktopSharedMedia<GuestSystemAudio>(authorized: { false }, create: { _ in
+            throw GuestSystemAudioError.setupFailedOrTimedOut
+        })
+        var detecting: CheckedContinuation<Void, Never>?, detections = 0, created = 0
+        let engines = [first, second]
+        let workspace = NativeDesktopWorkspace(library: library, detect: { url in
+            detections += 1
+            if detections == 1 { await withCheckedContinuation { detecting = $0 } }
+            return .verified(.guest(endpoint: url))
+        }, makeMeeting: { destination, name, title, quiet in
+            let engine = engines[created]; created += 1
+            return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: engine,
+                joinReadiness: .init(microphone: .off, camera: .off), power: joinTestPower(), sharedMedia: media)
+        }, multipleMeetings: { true })
+        workspace.join(room(1))
+        try await spin { detecting != nil }
+        workspace.join(room(2))
+        XCTAssertEqual(detections, 1, "The second waits for the first service to be found")
+        detecting?.resume(); detecting = nil
+        try await spin { workspace.meetings.count == 2 && workspace.meetings.allSatisfy(\.connected) && !workspace.preparing }
+        XCTAssertEqual(detections, 2); XCTAssertEqual(created, 2)
+        XCTAssertTrue(workspace.talkMeeting === workspace.meetings[0])
+        let clean = await workspace.leave(); XCTAssertTrue(clean)
+    }
     func testSecondJoinAddsListeningMeetingWithoutLeavingFirst() async throws {
         let first = DesktopTestEngine(), second = DesktopTestEngine()
         let workspace = multiWorkspace([first, second])
