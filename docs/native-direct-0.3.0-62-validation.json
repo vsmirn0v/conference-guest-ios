@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "62",
+  "channel": "beta",
+  "sourceCommit": "0e95a1a",
+  "changes": [
+    "Attention Phase 5: cards draft a chat reply (Guest, Telemost, Rock) or reaction (Guest) that you edit and send; nothing is sent by itself; Intelligence > Replies with writing style and a per-meeting toggle; drafts and sends logged for model comparison (0e95a1a)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-62-arm64.dmg",
+    "sha256": "b1d9cac89a82b3527df49c7f394000ed699facdcc1353292881c5547efbb22f2",
+    "length": 25957289
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-62-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 62",
+    "draft quality with a real provider",
+    "chat sent from a card arriving in Telemost and Rock meetings"
+  ]
+}
