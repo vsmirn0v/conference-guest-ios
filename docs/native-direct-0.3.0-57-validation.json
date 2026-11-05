@@ -1,0 +1,29 @@
+{
+  "version": "0.3.0",
+  "build": "57",
+  "channel": "beta",
+  "sourceCommit": "e968a32",
+  "changes": [
+    "Attention phase 2b: local transcription of Telemost and TrueConf (mixed stream, decoded silently with sound off, Telemost requests audio on silent joins when transcription is on), speakers attributed from the service's speaking signal (e968a32)",
+    "Attention phase 2c: optional per-musician transcription of Rock jam sessions; Settings > Transcription > Meetings to transcribe (e968a32)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-57-arm64.dmg",
+    "sha256": "356c94914845a5cd4238ff78c0de5962b18d36c7340a3cbcfe5626d7eaa20080",
+    "length": 25893798
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-57-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update to 57",
+    "Telemost/TrueConf/Rock transcription in live meetings",
+    "Telemost speaker attribution quality",
+    "transcription switched on after a silent Telemost join before reconnect"
+  ]
+}
