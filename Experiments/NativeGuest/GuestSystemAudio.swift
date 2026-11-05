@@ -459,18 +459,29 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                   "microphoneAvailabilityPolicy": "explicit-authorized-activation-until-shutdown",
                   "pcmEvidence": "track-renderer-energy-separate-from-hardware-state"]
         super.init()
+        GuestAudioEngineGate.shared.register(ObjectIdentifier(self)) { [weak self] in self?.drainNativeWorker() }
+    }
+
+    /// Blocks until this owner's native audio worker has run what was queued
+    /// before the call (module reads are blocking calls on that worker).
+    private func drainNativeWorker() {
+        guard let module = currentModule else { return }
+        _ = module.engineState; _ = module.isEngineRunning
     }
 
     deinit {
-        // Even an incompletely constructed/failed owner releases its native factory off the UI thread.
-        let remaining = ownedFactory
-        let lease = ownerLease
-        let context = mediaContext
+        let id = ObjectIdentifier(self)
+        GuestAudioEngineGate.shared.unregister(id)
+        // Even an incompletely constructed/failed owner releases its native factory off the UI thread,
+        // and inside the gate, since releasing it tears down its audio engine.
+        var remaining: (LKRTCPeerConnectionFactory, GuestAudioOwnerLease?, LKRTCPeerConnection?)? =
+            ownedFactory.map { ($0, ownerLease, mediaContext) }
         ownedFactory = nil
         ownerLease = nil
         mediaContext = nil
-        if let remaining {
-            audioQueue.async { context?.close(); withExtendedLifetime((remaining, lease, context)) {} }
+        if remaining != nil {
+            let release = { () -> Void in remaining?.2?.close(); remaining = nil }
+            audioQueue.async { GuestAudioEngineGate.shared.run(for: id, release) }
         }
     }
 
@@ -895,7 +906,8 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             }
             audioQueue.async {
                 self.operationTrace.start(operationID)
-                let result = body()
+                // One owner's native audio work at a time, after others' queued work.
+                let result = GuestAudioEngineGate.shared.run(for: ObjectIdentifier(self), body)
                 self.operationTrace.finish(operationID, succeeded: result)
                 self.update(["lastCompletedOperation": name, "lastOperationSucceeded": result])
                 if !result { probeLog("physical-audio-operation-failed", self.snapshot) }

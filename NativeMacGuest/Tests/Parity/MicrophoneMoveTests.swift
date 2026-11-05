@@ -57,6 +57,60 @@ import XCTest
         XCTAssertTrue(owner.setMicrophoneGate(open: true))
     }
 
+    // MARK: Beta 58 hang — one owner's native audio work at a time
+
+    /// The gate admits one owner at a time and drains every other owner first.
+    func testEngineGateRunsOwnersOneAtATimeAfterDrainingOthers() {
+        let gate = GuestAudioEngineGate()
+        final class Log: @unchecked Sendable { let lock = NSLock(); var items: [String] = []
+            func add(_ s: String) { lock.lock(); items.append(s); lock.unlock() } }
+        let log = Log()
+        let a = NSObject(), b = NSObject(), c = NSObject()
+        for (name, owner) in [("a", a), ("b", b), ("c", c)] {
+            gate.register(ObjectIdentifier(owner)) { log.add("drain-\(name)") }
+        }
+        DispatchQueue.concurrentPerform(iterations: 30) { index in
+            let owner = [a, b, c][index % 3]
+            gate.run(for: ObjectIdentifier(owner)) { usleep(1_000) }
+        }
+        XCTAssertEqual(gate.maximumConcurrent, 1, "Never two owners at once")
+        XCTAssertEqual(gate.passes, 30)
+        log.items = []
+        gate.run(for: ObjectIdentifier(a)) { log.add("body-a") }
+        XCTAssertEqual(Array(log.items.prefix(2)).sorted(), ["drain-b", "drain-c"], "Others' queued work finishes first")
+        XCTAssertEqual(log.items.dropFirst(2).first, "body-a")
+        XCTAssertEqual(log.items.last, "drain-a", "Its own queued work finishes before the next owner")
+        gate.unregister(ObjectIdentifier(b))
+        log.items = []
+        gate.run(for: ObjectIdentifier(a)) {}
+        XCTAssertFalse(log.items.contains("drain-b"), "A finished owner is not drained")
+    }
+
+    /// Two real audio owners changing availability in parallel (as two meetings
+    /// do when the microphone moves) go through the gate strictly one at a time.
+    func testTwoAudioOwnersChangeAvailabilityOneAtATime() async throws {
+        let first = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, concurrent: true)
+        let second = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, concurrent: true)
+        XCTAssertGreaterThanOrEqual(GuestAudioEngineGate.shared.registeredOwners, 2)
+        GuestAudioEngineGate.shared.resetEvidenceForTesting()
+        let results = await withTaskGroup(of: Bool.self) { group in
+            for round in 0..<6 {
+                group.addTask { await first.setInputPermitted(round % 2 == 1) }
+                group.addTask { await second.setInputPermitted(round % 2 == 0) }
+                group.addTask { await first.setTranscriptionOutput(round % 2 == 0) }
+                group.addTask { await second.setTranscriptionOutput(round % 2 == 1) }
+            }
+            var all: [Bool] = []
+            for await result in group { all.append(result) }
+            return all
+        }
+        XCTAssertEqual(results.count, 24); XCTAssertTrue(results.allSatisfy { $0 }, "No operation failed or timed out")
+        XCTAssertEqual(GuestAudioEngineGate.shared.maximumConcurrent, 1)
+        XCTAssertGreaterThanOrEqual(GuestAudioEngineGate.shared.passes, 24)
+        let stoppedFirst = await first.shutdown(), stoppedSecond = await second.shutdown()
+        XCTAssertTrue(stoppedFirst && stoppedSecond)
+    }
+
     // MARK: R2 — the gate and the player in a real audio graph
 
     func testGateRemovesTheMicrophoneButNotTheReply() throws {
