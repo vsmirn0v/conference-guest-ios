@@ -50,7 +50,12 @@ final class MeetingTranscriber: @unchecked Sendable {
         let start: Date
         let end: Date
     }
-    struct Summary: Equatable { var utterances = 0, lines = 0; var audioSeconds = 0.0, decodeSeconds = 0.0, droppedSeconds = 0.0 }
+    struct Summary: Equatable {
+        var utterances = 0, lines = 0; var audioSeconds = 0.0, decodeSeconds = 0.0, droppedSeconds = 0.0
+        var microphoneUtterances = 0; var microphoneSeconds = 0.0
+    }
+    /// The speaker key of your own microphone.
+    static let localTrackID = "local-microphone"
 
     private let queue = DispatchQueue(label: "attention.listen.meeting", qos: .utility)
     private let recognizer: LocalSpeechRecognizer
@@ -62,6 +67,7 @@ final class MeetingTranscriber: @unchecked Sendable {
     // Queue: per-speaker conversion and detection state.
     private var speakers: [String: Speaker] = [:]
     private var stopped = false
+    private var localCapture = false
     private(set) var summary = Summary()
 
     private final class Speaker {
@@ -99,6 +105,25 @@ final class MeetingTranscriber: @unchecked Sendable {
     @MainActor var trackCount: Int { taps.count }
     var currentSummary: Summary { queue.sync { summary } }
 
+    /// Your microphone is transcribed only while this is on (the meeting confirmed
+    /// it unmuted and holds physical input). Turning it off ends the utterance, so
+    /// nothing said after muting is transcribed; buffers meanwhile are dropped.
+    func setLocalCapture(_ enabled: Bool) {
+        queue.async { [self] in
+            guard localCapture != enabled else { return }
+            localCapture = enabled
+            if !enabled { finish(Self.localTrackID) }
+        }
+    }
+    /// Your microphone's buffer, from the engine's input tap. Copies at once.
+    func feedLocal(_ buffer: AVAudioPCMBuffer) {
+        guard let copy = SpeakerTap.copy(buffer) else { return }
+        queue.async { [self] in
+            guard localCapture else { return }
+            receiveOnQueue(Self.localTrackID, copy)
+        }
+    }
+
     /// Test entry: 16 kHz mono samples for one speaker, as a track would deliver them.
     func feedForTesting(trackID: String, samples: [Float], end: Bool = false) {
         queue.async { [self] in
@@ -113,12 +138,15 @@ final class MeetingTranscriber: @unchecked Sendable {
     // MARK: Queue
 
     private func receive(_ trackID: String, _ buffer: AVAudioPCMBuffer) {
-        queue.async { [self] in
-            guard !stopped, let speaker = speaker(trackID), let samples = convert(buffer, speaker) else { return }
-            if speaker.origin == nil { speaker.origin = Date().addingTimeInterval(-Double(buffer.frameLength) / buffer.format.sampleRate) }
-            summary.audioSeconds += Double(samples.count) / 16_000
-            handle(trackID, speaker, speaker.detector.accept(samples))
-        }
+        queue.async { [self] in receiveOnQueue(trackID, buffer) }
+    }
+    private func receiveOnQueue(_ trackID: String, _ buffer: AVAudioPCMBuffer) {
+        guard !stopped, let speaker = speaker(trackID), let samples = convert(buffer, speaker) else { return }
+        if speaker.origin == nil { speaker.origin = Date().addingTimeInterval(-Double(buffer.frameLength) / buffer.format.sampleRate) }
+        let seconds = Double(samples.count) / 16_000
+        summary.audioSeconds += seconds
+        if trackID == Self.localTrackID { summary.microphoneSeconds += seconds }
+        handle(trackID, speaker, speaker.detector.accept(samples))
     }
 
     private func speaker(_ trackID: String) -> Speaker? {
@@ -139,6 +167,7 @@ final class MeetingTranscriber: @unchecked Sendable {
             let start = origin.addingTimeInterval(Double(segment.start) / 16_000)
             let end = start.addingTimeInterval(Double(segment.samples.count) / 16_000)
             summary.utterances += 1
+            if trackID == Self.localTrackID { summary.microphoneUtterances += 1 }
             recognizer.transcribe(segment.samples, model: model) { [weak self] text, decode in
                 self?.queue.async { [weak self] in
                     guard let self, !self.stopped else { return }
@@ -182,8 +211,12 @@ private final class SpeakerTap: NSObject, LKRTCAudioRenderer, @unchecked Sendabl
     let deliver: (String, AVAudioPCMBuffer) -> Void
     init(trackID: String, deliver: @escaping (String, AVAudioPCMBuffer) -> Void) { self.trackID = trackID; self.deliver = deliver }
     func render(pcmBuffer: AVAudioPCMBuffer) {
+        guard let copy = Self.copy(pcmBuffer) else { return }
+        deliver(trackID, copy)
+    }
+    static func copy(_ pcmBuffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         guard pcmBuffer.frameLength > 0,
-              let copy = AVAudioPCMBuffer(pcmFormat: pcmBuffer.format, frameCapacity: pcmBuffer.frameLength) else { return }
+              let copy = AVAudioPCMBuffer(pcmFormat: pcmBuffer.format, frameCapacity: pcmBuffer.frameLength) else { return nil }
         copy.frameLength = pcmBuffer.frameLength
         let source = UnsafeMutableAudioBufferListPointer(pcmBuffer.mutableAudioBufferList)
         let target = UnsafeMutableAudioBufferListPointer(copy.mutableAudioBufferList)
@@ -191,6 +224,6 @@ private final class SpeakerTap: NSObject, LKRTCAudioRenderer, @unchecked Sendabl
             guard let input = from.mData, let output = to.mData else { continue }
             memcpy(output, input, Int(min(from.mDataByteSize, to.mDataByteSize)))
         }
-        deliver(trackID, copy)
+        return copy
     }
 }

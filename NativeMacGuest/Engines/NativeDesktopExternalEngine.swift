@@ -76,6 +76,9 @@ protocol NativeDesktopMeetingEngine: AnyObject {
     func cameraCaptureDevice() async -> AVCaptureDevice?
     func startPrivateAudioCheck() async throws
     func stopPrivateAudioCheck() async throws
+    /// Your microphone's buffers for local transcription, delivered on the audio
+    /// thread whenever this engine holds physical input; nil stops delivery.
+    func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?)
     func leave() async -> Bool
 }
 extension NativeDesktopMeetingEngine {
@@ -96,6 +99,7 @@ extension NativeDesktopMeetingEngine {
     var microphoneReadinessPolicy: (() -> Bool)? { get { nil } set {} }
     func startPrivateAudioCheck() async throws { throw NativeDesktopPrivateAudioError.unavailable }
     func stopPrivateAudioCheck() async throws {}
+    func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {}
 }
 enum NativeDesktopPrivateAudioError: LocalizedError {
     case unavailable

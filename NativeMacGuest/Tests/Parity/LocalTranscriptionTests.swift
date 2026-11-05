@@ -90,9 +90,51 @@ import XCTest
         _ = await model.leave()
     }
 
-    /// Real models (downloaded by Experiments/ASRBench/asr_bench.py): speech fed
-    /// in 10 ms pieces becomes one line with the right text and times.
-    func testMeetingTranscriberTurnsSpeechIntoALine() async throws {
+    /// Your own lines carry your name and are marked as yours, so Live text and
+    /// the judge can tell what you already said.
+    func testMicrophoneLinesAreYours() async throws {
+        let model = NativeDesktopMeetingModel(destination: try .verified(URL(string: "https://example.test/calls/mic")!, engine: .guest),
+            name: "Vitalii", title: "Fixture", engine: nil)
+        let now = Date()
+        model.receiveLocalLineForTesting(.init(id: "local-2", trackID: MeetingTranscriber.localTrackID, text: "Я подключусь через минуту.",
+            start: now.addingTimeInterval(-2), end: now))
+        let line = try XCTUnwrap(model.localTranscript.first)
+        XCTAssertEqual(line.participantName, "Vitalii"); XCTAssertTrue(line.isOwn)
+        XCTAssertFalse(model.transcribesMicrophone, "Nothing is transcribed before the meeting confirms an unmuted microphone")
+        _ = await model.leave()
+    }
+
+    /// Microphone capture is a gate: audio fed while it is off is dropped, and
+    /// turning it off ends the open utterance instead of waiting for silence.
+    func testMicrophoneCaptureGate() async throws {
+        let (speech, transcriber, lines) = try await speechFixture()
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+        func feed(_ samples: ArraySlice<Float>) {
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))!
+            buffer.frameLength = AVAudioFrameCount(samples.count)
+            for (i, s) in samples.enumerated() { buffer.floatChannelData![0][i] = s }
+            transcriber.feedLocal(buffer)
+        }
+        for offset in stride(from: 0, to: speech.count, by: 160) { feed(speech[offset..<min(speech.count, offset + 160)]) }
+        transcriber.waitForTesting()
+        XCTAssertEqual(transcriber.currentSummary.microphoneSeconds, 0, "Audio while capture is off is dropped")
+        transcriber.setLocalCapture(true)
+        for offset in stride(from: 0, to: speech.count, by: 160) { feed(speech[offset..<min(speech.count, offset + 160)]) }
+        transcriber.setLocalCapture(false)
+        for _ in 0..<300 where lines.value.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        let line = try XCTUnwrap(lines.value.first)
+        XCTAssertEqual(line.trackID, MeetingTranscriber.localTrackID)
+        XCTAssertTrue(line.text.contains("Молдавии"), line.text)
+        transcriber.waitForTesting(); try await Task.sleep(for: .milliseconds(300)); transcriber.waitForTesting()
+        XCTAssertEqual(lines.value.count, 1, "One spoken sentence is one line")
+        XCTAssertGreaterThanOrEqual(transcriber.currentSummary.microphoneUtterances, 1)
+        XCTAssertGreaterThan(transcriber.currentSummary.microphoneSeconds, 1)
+        transcriber.stop()
+    }
+
+    private final class Lines: @unchecked Sendable { var value: [MeetingTranscriber.Line] = [] }
+    /// Real models (downloaded by Experiments/ASRBench/asr_bench.py) and the FLEURS sample.
+    private func speechFixture() async throws -> ([Float], MeetingTranscriber, Lines) {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("../../../.build/asr-bench").standardizedFileURL
         let folder = root.appendingPathComponent("models/gigaam-v3-rnnt-punct")
@@ -105,12 +147,18 @@ import XCTest
         }
         try file.read(into: buffer)
         let speech = Array(UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength)))
-        var lines: [MeetingTranscriber.Line] = []
+        let lines = Lines()
         let transcriber = MeetingTranscriber(model: .init(kind: .nemoTransducer(
             encoder: folder.appendingPathComponent("encoder.int8.onnx"), decoder: folder.appendingPathComponent("decoder.onnx"),
             joiner: folder.appendingPathComponent("joiner.onnx")), tokens: folder.appendingPathComponent("tokens.txt"), featureDimension: 64),
-            vadModel: vad, recognizer: LocalSpeechRecognizer()) { lines.append($0) }
-        let audio = [Float](repeating: 0, count: 16_000) + speech + [Float](repeating: 0, count: 16_000)
+            vadModel: vad, recognizer: LocalSpeechRecognizer()) { lines.value.append($0) }
+        return ([Float](repeating: 0, count: 16_000) + speech + [Float](repeating: 0, count: 16_000), transcriber, lines)
+    }
+
+    /// Speech fed in 10 ms pieces becomes one line with the right text and times.
+    func testMeetingTranscriberTurnsSpeechIntoALine() async throws {
+        let (audio, transcriber, box) = try await speechFixture()
+        var lines: [MeetingTranscriber.Line] { box.value }
         for offset in stride(from: 0, to: audio.count, by: 160) {
             transcriber.feedForTesting(trackID: "TR_a", samples: Array(audio[offset..<min(audio.count, offset + 160)]))
         }

@@ -32,6 +32,10 @@ enum NativeDesktopGuestError: LocalizedError {
     var onRemoteAudio: (([GuestRemoteAudio]) -> Void)? { didSet { onRemoteAudio?(currentNativeEngine?.remoteAudio ?? []) } }
     /// Local transcription keeps output running (silently) while sound is off.
     private var transcriptionOutputDemand = false
+    private var localAudioSink: ((AVAudioPCMBuffer) -> Void)?
+    func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {
+        localAudioSink = sink; systemAudio?.setInputTranscriptionSink(sink)
+    }
     private(set) var guestSnapshot = GuestMeetingSnapshot()
     private(set) var currentNativeEngine: NativeGuestEngine?
     private(set) var microphoneStartupMilliseconds: [String: Double] = [:]
@@ -117,6 +121,7 @@ enum NativeDesktopGuestError: LocalizedError {
             }
             systemAudio = owner
             _ = owner.setMeetingVolume(meetingVolume)
+            owner.setInputTranscriptionSink(localAudioSink)
             if transcriptionOutputDemand { _ = await owner.setTranscriptionOutput(true) }
             if !inputPermitted, !(await owner.setInputPermitted(false)) {
                 _ = await media.detach(room, attempt: attempt, clean: false); throw NativeDesktopGuestError.cleanupFailed

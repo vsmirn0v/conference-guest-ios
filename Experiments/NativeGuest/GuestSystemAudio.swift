@@ -322,6 +322,8 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private let playoutMeter = GuestPCMMeter()
     private var inputCallback = GuestStartupAudioCallback()
     private var inputMeterEnabled = false
+    /// Local transcription of your own microphone: a copy of each input buffer.
+    private var inputTranscriptionSink: ((AVAudioPCMBuffer) -> Void)?
     private var ownedFactory: LKRTCPeerConnectionFactory?
     private var cached: [String: Any]
     // The following fields are confined to audioQueue.
@@ -416,6 +418,11 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     }
     func setPrivateInputMeterEnabled(_ enabled: Bool) {
         locked { inputMeterEnabled = enabled }; inputMeter.reset()
+    }
+    /// Receives your microphone's buffers on the audio thread; the sink must copy
+    /// and return at once. Whether the meeting is unmuted is the caller's gate.
+    func setInputTranscriptionSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {
+        locked { inputTranscriptionSink = sink }
     }
 
     private init(microphoneEnabled: Bool, playoutEnabled: Bool, profile: GuestAudioProfile,
@@ -915,7 +922,9 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                         format: signature, uptime: receivedUptime)
                     self.cached["inputCallbacks"] = self.inputCallback.count
                 }
-                guard self.locked({ self.inputMeterEnabled }) else { return }
+                let (metering, sink) = self.locked { (self.inputMeterEnabled, self.inputTranscriptionSink) }
+                sink?(buffer)
+                guard metering else { return }
                 self.inputMeter.render(pcmBuffer: buffer)
             }
         }

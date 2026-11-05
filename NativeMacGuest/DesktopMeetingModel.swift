@@ -133,24 +133,44 @@ import UniformTypeIdentifiers
             let transcriber = MeetingTranscriber(model: model, vadModel: vad) { [weak self] line in self?.receiveLocalLine(line) }
             localTranscriber = transcriber
             guest.onRemoteAudio = { [weak transcriber] in transcriber?.update($0) }
+            engine.setLocalAudioSink { [weak transcriber] in transcriber?.feedLocal($0) }
+            updateLocalMicrophoneCapture()
             Task { _ = await guest.setTranscriptionOutput(true) }
-            probeLog("local-transcription-start", ["model": listenStore.selectedID, "soundOn": snapshot.playoutOn])
+            probeLog("local-transcription-start", ["model": listenStore.selectedID, "soundOn": snapshot.playoutOn,
+                "microphone": listenStore.includesMicrophone])
             objectWillChange.send()
         } else if !wanted, let transcriber = localTranscriber {
             localTranscriber = nil
             guest?.onRemoteAudio = nil
+            engine.setLocalAudioSink(nil)
             transcriber.stop()
             let summary = transcriber.currentSummary
             probeLog("local-transcription-stop", ["utterances": summary.utterances, "lines": summary.lines,
                 "audioSeconds": summary.audioSeconds.rounded(), "decodeSeconds": summary.decodeSeconds.rounded(),
-                "droppedSeconds": summary.droppedSeconds.rounded()])
+                "droppedSeconds": summary.droppedSeconds.rounded(), "micUtterances": summary.microphoneUtterances,
+                "micSeconds": summary.microphoneSeconds.rounded()])
             if let guest, !closed { Task { _ = await guest.setTranscriptionOutput(false) } }
             if !closed { observeTranscript() }
             objectWillChange.send()
+        } else if wanted, localTranscriber != nil {
+            updateLocalMicrophoneCapture()
         }
     }
+    /// Your microphone is transcribed only on confirmed state: the setting is on,
+    /// this meeting holds the microphone and the engine confirmed it unmuted.
+    var transcribesMicrophone: Bool {
+        localTranscriber != nil && listenStore.includesMicrophone && ownsMicrophone && snapshot.microphoneOn
+    }
+    private func updateLocalMicrophoneCapture() { localTranscriber?.setLocalCapture(transcribesMicrophone) }
     private func receiveLocalLine(_ line: MeetingTranscriber.Line) {
         guard !closed else { return }
+        if line.trackID == MeetingTranscriber.localTrackID {
+            let own = participants.first { $0.isLocal }?.id ?? line.trackID
+            localTranscript.append(GuestMeetingMessage(id: line.id, participantID: own, participantName: displayName,
+                text: line.text, sentAt: line.start, isOwn: true, receivedAt: line.end))
+            if localTranscript.count > 1000 { localTranscript.removeFirst(localTranscript.count - 1000) }
+            observeTranscript(); return
+        }
         let identity = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine?.remoteAudio
             .first { $0.track.trackId == line.trackID }?.participantIdentity
         let name = participants.first { $0.id == identity }?.name ?? L("Participant")
@@ -309,7 +329,7 @@ import UniformTypeIdentifiers
     private let sharedMedia: NativeDesktopSharedMedia<GuestSystemAudio>
     /// Simultaneous meetings: only the talk meeting holds the microphone, camera and
     /// headset hook. Others keep listening with their physical input released.
-    @Published private(set) var ownsMicrophone = true
+    @Published private(set) var ownsMicrophone = true { didSet { if ownsMicrophone != oldValue { updateLocalMicrophoneCapture() } } }
     private(set) var concurrentAudio = false
     /// Moves the talk role here; true only after any previous talk meeting confirmed release.
     var microphoneArbiter: ((NativeDesktopMeetingModel) async -> Bool)?
@@ -606,6 +626,7 @@ import UniformTypeIdentifiers
         guard !closed else { return }
         let previous = snapshot; snapshot = value
         if previous.phase != value.phase { updateLocalTranscription() }
+        else if previous.microphoneOn != value.microphoneOn { updateLocalMicrophoneCapture() }
         let now = Date()
         for person in value.participants where person.speaking == true {
             if lastSpokeAt[person.id].map({ now.timeIntervalSince($0) > 5 }) ?? true { lastSpokeAt[person.id] = now }

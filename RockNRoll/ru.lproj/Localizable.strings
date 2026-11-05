@@ -1465,6 +1465,9 @@
 "Audio is processed in memory and never recorded or sent anywhere." = "Звук обрабатывается в памяти и никогда не записывается и не отправляется.";
 "The app does not tell other participants. Let them know if your organisation requires it." = "Приложение не сообщает другим участникам. Предупредите их, если этого требует ваша организация.";
 "Your own microphone is not transcribed yet." = "Ваш микрофон пока не расшифровывается.";
+"Include my microphone" = "Включая мой микрофон";
+"What you say joins the transcript of the meeting that holds your microphone, while it is unmuted. Nothing is transcribed while you are muted." = "Ваши слова попадают в текст той встречи, где включён ваш микрофон. Пока микрофон выключен, ничего не расшифровывается.";
+"Your microphone is transcribed only while you are unmuted in a meeting." = "Ваш микрофон расшифровывается только пока он включён во встрече.";
 "Use %@" = "Использовать %@";
 "Recommended" = "Рекомендуется";
 "Download" = "Загрузить";

@@ -16,6 +16,10 @@ struct NativeDesktopTranscriptionSettings: View {
                           ? L("Downloading the voice detector…") : L("Download a speech model below to start."), systemImage: "arrow.down.circle")
                         .font(.caption).foregroundStyle(.orange)
                 }
+                Toggle(L("Include my microphone"), isOn: $store.includesMicrophone).disabled(!store.enabled)
+                    .accessibilityIdentifier("transcription.local.microphone")
+                Text(L("What you say joins the transcript of the meeting that holds your microphone, while it is unmuted. Nothing is transcribed while you are muted."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section(L("Speech model")) {
                 ForEach(store.catalog.listen) { model in row(model) }
@@ -25,7 +29,7 @@ struct NativeDesktopTranscriptionSettings: View {
             Section(L("Privacy")) {
                 Label(L("Audio is processed in memory and never recorded or sent anywhere."), systemImage: "lock")
                 Label(L("The app does not tell other participants. Let them know if your organisation requires it."), systemImage: "person.2")
-                Label(L("Your own microphone is not transcribed yet."), systemImage: "mic.slash")
+                Label(L("Your microphone is transcribed only while you are unmuted in a meeting."), systemImage: "mic")
             }.font(.callout)
         }.formStyle(.grouped)
             .onAppear { store.refresh() }

@@ -1467,6 +1467,9 @@
 "Audio is processed in memory and never recorded or sent anywhere." = "Audio is processed in memory and never recorded or sent anywhere.";
 "The app does not tell other participants. Let them know if your organisation requires it." = "The app does not tell other participants. Let them know if your organisation requires it.";
 "Your own microphone is not transcribed yet." = "Your own microphone is not transcribed yet.";
+"Include my microphone" = "Include my microphone";
+"What you say joins the transcript of the meeting that holds your microphone, while it is unmuted. Nothing is transcribed while you are muted." = "What you say joins the transcript of the meeting that holds your microphone, while it is unmuted. Nothing is transcribed while you are muted.";
+"Your microphone is transcribed only while you are unmuted in a meeting." = "Your microphone is transcribed only while you are unmuted in a meeting.";
 "Use %@" = "Use %@";
 "Recommended" = "Recommended";
 "Download" = "Download";

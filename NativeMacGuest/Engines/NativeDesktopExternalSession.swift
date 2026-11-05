@@ -29,6 +29,10 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         return audio?.factory
     }
     var audio: GuestSystemAudio?
+    private var localAudioSink: ((AVAudioPCMBuffer) -> Void)?
+    func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {
+        localAudioSink = sink; audio?.setInputTranscriptionSink(sink)
+    }
     private var meetingVolume = 1.0
     var publisher: NativeDesktopRTCPeer?
     var subscriber: NativeDesktopRTCPeer?
@@ -107,6 +111,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
             guard epoch == attempt, snapshot.phase == .connecting else { _ = await owner.shutdown(); throw CancellationError() }
             audio = owner; admittedAudio = owner
             _ = owner.setMeetingVolume(meetingVolume)
+            owner.setInputTranscriptionSink(localAudioSink)
             if !inputPermitted, !(await owner.setInputPermitted(false)) { throw NativeDesktopRTCError.cleanupFailed }
             try await startConnection(attempt)
             try check(attempt)
