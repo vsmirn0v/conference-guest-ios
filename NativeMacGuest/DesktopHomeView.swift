@@ -480,6 +480,7 @@ struct NativeDesktopSettingsView: View {
                 startLiveAudioCheck: { try await meeting?.engine.startPrivateAudioCheck() },
                 stopLiveAudioCheck: { try await meeting?.engine.stopPrivateAudioCheck() },
                 liveAudioLevel: { meeting?.engine.privateAudioLevel }).tabItem { Label(L("Camera & sound"), systemImage: "slider.horizontal.3") }.tag(3)
+            NativeDesktopTranscriptionSettings(store: .shared).tabItem { Label(L("Transcription"), systemImage: "text.bubble") }.tag(5)
             #if NATIVE_DIRECT_UPDATES
             if let updates { NativeDesktopUpdatesView(updates: updates).tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag(4) }
             #endif

@@ -1,0 +1,126 @@
+import AVFoundation
+import CryptoKit
+import XCTest
+@testable import RockNativeDesktop
+
+/// Local transcription: catalog pins, model downloads, the audio-path rule that
+/// keeps remote audio decoded while sound is off, and meeting integration.
+@MainActor final class LocalTranscriptionTests: XCTestCase {
+    private func temporaryFolder() -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("listen-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    func testBundledCatalogPinsEveryFileToARevisionAndChecksum() throws {
+        let catalog = ListenModelCatalog.bundled
+        XCTAssertNotNil(catalog.vad)
+        XCTAssertNotNil(catalog.model(ListenModelStore.defaultModel), "The recommended model is in the catalog")
+        for model in catalog.models {
+            XCTAssertTrue(model.pinned, "\(model.id) has an unpinned file")
+            for file in model.files {
+                let url = file.url.absoluteString
+                XCTAssertTrue(url.range(of: #"/resolve/[0-9a-f]{40}/"#, options: .regularExpression) != nil
+                              || url.contains("/releases/download/"), "\(file.name) is not pinned to a revision")
+            }
+            let keys: [String: [String]] = ["nemo_transducer": ["encoder", "decoder", "joiner", "tokens"],
+                "nemo_ctc": ["model", "tokens"], "whisper": ["encoder", "decoder", "tokens"], "silero_vad": ["model"]]
+            for key in try XCTUnwrap(keys[model.kind], model.kind) {
+                let name = try XCTUnwrap(model.config[key], "\(model.id) misses \(key)")
+                XCTAssertTrue(model.files.contains { $0.name == name }, "\(model.id): \(key) names a file it does not download")
+            }
+        }
+    }
+
+    /// Downloads from local files: verified, marked installed, ready only with the VAD.
+    func testStoreDownloadsVerifiesAndDeletesModels() async throws {
+        let source = temporaryFolder()
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        func file(_ name: String, _ text: String) throws -> ListenModelCatalog.File {
+            let url = source.appendingPathComponent(name); try Data(text.utf8).write(to: url)
+            return .init(name: name, size: Int64(text.utf8.count), url: url, sha256: try ListenModelStore.sha256(of: url))
+        }
+        let vad = ListenModelCatalog.Model(id: "vad", role: "vad", title: "VAD", kind: "silero_vad", featureDim: nil, languages: [],
+            licence: "MIT", source: source, files: [try file("vad.onnx", "vad")], config: ["model": "vad.onnx"])
+        let listen = ListenModelCatalog.Model(id: "giga", role: "listen", title: "Giga", kind: "nemo_ctc", featureDim: 64,
+            languages: ["ru"], licence: "MIT", source: source,
+            files: [try file("model.onnx", "weights"), try file("tokens.txt", "a 0")], config: ["model": "model.onnx", "tokens": "tokens.txt"])
+        var tampered = listen.files[1]; tampered = .init(name: tampered.name, size: tampered.size, url: tampered.url, sha256: String(repeating: "0", count: 64))
+        let bad = ListenModelCatalog.Model(id: "bad", role: "listen", title: "Bad", kind: "nemo_ctc", featureDim: 64, languages: ["ru"],
+            licence: "MIT", source: source, files: [tampered], config: ["model": "tokens.txt", "tokens": "tokens.txt"])
+        let defaults = UserDefaults(suiteName: "listen-\(UUID())")!
+        let store = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "test", models: [vad, listen, bad]),
+                                     root: temporaryFolder(), defaults: defaults)
+        store.selectedID = "giga"; store.enabled = true
+        XCTAssertFalse(store.ready)
+        store.download(listen)
+        for _ in 0..<200 where !(store.state(listen).installed && store.state(vad).installed) { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(store.state(listen), .installed); XCTAssertEqual(store.state(vad), .installed, "The VAD comes with a listen model")
+        XCTAssertTrue(store.ready)
+        guard case .nemoCTC = try XCTUnwrap(store.recognizerModel()).kind else { return XCTFail("CTC configuration") }
+        XCTAssertNotNil(store.vadURL)
+        let reloaded = ListenModelStore(catalog: store.catalog, root: store.root, defaults: defaults)
+        XCTAssertTrue(reloaded.ready, "Installed state and choice survive a restart")
+        store.download(bad)
+        for _ in 0..<200 { if case .failed = store.state(bad) { break }; try await Task.sleep(for: .milliseconds(20)) }
+        guard case .failed = store.state(bad) else { return XCTFail("A checksum mismatch fails") }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.folder(bad).appendingPathComponent("tokens.txt").path))
+        store.delete(listen)
+        XCTAssertEqual(store.state(listen), .absent); XCTAssertFalse(store.ready)
+    }
+
+    /// Sound off normally stops output; local transcription keeps it running so
+    /// WebRTC still decodes remote audio, and the mixer stays at zero.
+    func testTranscriptionKeepsOutputAvailableWhileSoundIsOff() {
+        XCTAssertFalse(GuestPhysicalAudioAvailability(input: false, playoutRequested: false, sharedNativeOwner: false).output)
+        XCTAssertTrue(GuestPhysicalAudioAvailability(input: false, playoutRequested: false, sharedNativeOwner: false, transcription: true).output)
+        XCTAssertTrue(GuestPhysicalAudioAvailability(input: false, playoutRequested: false, sharedNativeOwner: true, transcription: true).output)
+    }
+
+    func testLocalLinesJoinLiveTextAndCatchUp() async throws {
+        let model = NativeDesktopMeetingModel(destination: try .verified(URL(string: "https://example.test/calls/local")!, engine: .guest),
+            name: "Local", title: "Fixture", engine: nil)
+        let now = Date()
+        model.receiveLocalLineForTesting(.init(id: "local-1", trackID: "TR_a", text: "Бюджет утверждён.", start: now.addingTimeInterval(-3), end: now))
+        XCTAssertEqual(model.transcript.map(\.text), ["Бюджет утверждён."])
+        XCTAssertEqual(model.localTranscript.first?.participantName, L("Participant"), "Unknown speakers get a neutral name")
+        guard case .line(_, let time) = try XCTUnwrap(model.liveTextRows().first) else { return XCTFail("line") }
+        XCTAssertEqual(time, now.addingTimeInterval(-3), "Live text shows when it was spoken")
+        XCTAssertTrue(model.catchUp.timeline.segments.contains { $0.text == "Бюджет утверждён." }, "Catch up keeps local text")
+        _ = await model.leave()
+    }
+
+    /// Real models (downloaded by Experiments/ASRBench/asr_bench.py): speech fed
+    /// in 10 ms pieces becomes one line with the right text and times.
+    func testMeetingTranscriberTurnsSpeechIntoALine() async throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../.build/asr-bench").standardizedFileURL
+        let folder = root.appendingPathComponent("models/gigaam-v3-rnnt-punct")
+        let vad = root.appendingPathComponent("models/silero-vad/silero_vad.onnx")
+        guard FileManager.default.fileExists(atPath: folder.appendingPathComponent("encoder.int8.onnx").path),
+              FileManager.default.fileExists(atPath: vad.path),
+              let file = try? AVAudioFile(forReading: root.appendingPathComponent("sample-ru.wav")),
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) else {
+            throw XCTSkip("Run Experiments/ASRBench/asr_bench.py --fleurs 1 first")
+        }
+        try file.read(into: buffer)
+        let speech = Array(UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength)))
+        var lines: [MeetingTranscriber.Line] = []
+        let transcriber = MeetingTranscriber(model: .init(kind: .nemoTransducer(
+            encoder: folder.appendingPathComponent("encoder.int8.onnx"), decoder: folder.appendingPathComponent("decoder.onnx"),
+            joiner: folder.appendingPathComponent("joiner.onnx")), tokens: folder.appendingPathComponent("tokens.txt"), featureDimension: 64),
+            vadModel: vad, recognizer: LocalSpeechRecognizer()) { lines.append($0) }
+        let audio = [Float](repeating: 0, count: 16_000) + speech + [Float](repeating: 0, count: 16_000)
+        for offset in stride(from: 0, to: audio.count, by: 160) {
+            transcriber.feedForTesting(trackID: "TR_a", samples: Array(audio[offset..<min(audio.count, offset + 160)]))
+        }
+        transcriber.feedForTesting(trackID: "TR_a", samples: [], end: true)
+        for _ in 0..<300 where lines.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        let line = try XCTUnwrap(lines.first)
+        XCTAssertTrue(line.text.contains("Молдавии"), line.text)
+        XCTAssertEqual(line.trackID, "TR_a"); XCTAssertLessThan(line.start, line.end)
+        XCTAssertEqual(lines.count, 1, "Silence produces no extra lines")
+        XCTAssertEqual(transcriber.currentSummary.droppedSeconds, 0)
+        transcriber.stop()
+    }
+}

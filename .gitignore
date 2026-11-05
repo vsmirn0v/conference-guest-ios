@@ -11,3 +11,5 @@ __pycache__/
 RockServer/site-src/node_modules/
 /Marketing/
 /Dependencies/guest-sdk/VendorSources
+/Dependencies/SherpaOnnxKit/Artifacts/
+/Dependencies/SherpaOnnxKit/.build/

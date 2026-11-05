@@ -847,8 +847,24 @@ struct NativeDesktopConversationView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
                             }
+                            if model.transcribingLocally || model.localTranscriptionPaused {
+                                HStack(spacing: 8) {
+                                    Circle().fill(model.localTranscriptionPaused ? Color.secondary : Color.teal).frame(width: 7, height: 7)
+                                    Text(model.localTranscriptionPaused ? L("Transcription on this Mac is paused for this meeting") : L("Transcribed on this Mac"))
+                                    Spacer()
+                                    Button(model.localTranscriptionPaused ? L("Resume") : L("Pause")) { model.localTranscriptionPaused.toggle() }
+                                        .buttonStyle(.borderless)
+                                }.font(.caption).foregroundStyle(model.localTranscriptionPaused ? Color.secondary : Color.teal).padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                            }
                             if model.guestFeatures.transcriptHasMore { Button(L("Earlier transcript")) { model.loadMoreTranscript() } }
-                            if model.transcript.isEmpty { Text(L("Transcript appears here when the meeting service provides it.")).foregroundStyle(.secondary) }
+                            if model.transcript.isEmpty {
+                                Text(model.transcribingLocally ? L("Text appears here as people speak.")
+                                     : model.kind == .guest && !model.listenStore.enabled
+                                        ? L("Transcript appears here when the meeting service provides it. To transcribe on this Mac, turn it on in Settings → Transcription.")
+                                        : L("Transcript appears here when the meeting service provides it.")).foregroundStyle(.secondary)
+                            }
                             ForEach(model.liveTextRows()) { row in
                                 switch row {
                                 case .line(let line, let time):
@@ -1144,12 +1160,12 @@ struct NativeDesktopTranscriptionPill: View {
             }.font(.callout).padding(.horizontal, 6).fixedSize()
                 .accessibilityElement(children: .contain).accessibilityIdentifier("transcription.announcement")
         } else if let state = model.transcriptionIndicator {
-            let tint: Color = state == .on ? .orange : .red
-            let title = state == .on ? L("Transcribing") : L("Transcription stopped")
+            let tint: Color = state == .failed ? .red : state == .local ? .teal : .orange
+            let title = state == .on ? L("Transcribing") : state == .local ? L("Transcribing on this Mac") : L("Transcription stopped")
             Button { open.toggle() } label: {
                 HStack(spacing: 7) {
-                    if state == .on { Circle().fill(tint).frame(width: 7, height: 7) }
-                    Image(systemName: state == .on ? "text.bubble.fill" : "exclamationmark.triangle.fill")
+                    if state != .failed { Circle().fill(tint).frame(width: 7, height: 7) }
+                    Image(systemName: state == .failed ? "exclamationmark.triangle.fill" : state == .local ? "laptopcomputer" : "text.bubble.fill")
                     Text(title).font((compact ? Font.subheadline : .callout).weight(.semibold))
                     Image(systemName: open ? "chevron.up" : "chevron.down").font(.caption2.weight(.bold))
                 }.foregroundStyle(tint).padding(.horizontal, compact ? 6 : 12).frame(height: compact ? 26 : 32)
@@ -1171,8 +1187,31 @@ private struct NativeDesktopTranscriptionDetails: View {
     @ObservedObject var model: NativeDesktopMeetingModel
     let close: () -> Void
     var body: some View {
-        let failed = model.transcriptionIndicator == .failed, manages = model.guestFeatures.permissions.canManageTranscript
+        if model.transcriptionIndicator == .local { localDetails } else { serviceDetails }
+    }
+    /// Local transcription: what happens on this Mac, and a pause for this meeting.
+    private var localDetails: some View {
         VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: "laptopcomputer").font(.title2).foregroundStyle(Color.teal)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("Transcribing on this Mac")).font(.headline)
+                    if let title = model.listenStore.selected?.title { Text(title).font(.caption).foregroundStyle(.secondary) }
+                }
+            }
+            Label(L("Other participants' speech is turned into text by a model on this Mac. Audio is not recorded, saved or sent anywhere."), systemImage: "waveform")
+                .fixedSize(horizontal: false, vertical: true)
+            Label(L("Participants are not notified by the app. Tell them if your organisation requires it."), systemImage: "person.2")
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button(L("Show live text")) { close(); model.showLiveText() }.buttonStyle(.borderedProminent)
+                Button(L("Pause for this meeting")) { close(); model.localTranscriptionPaused = true }
+            }.padding(.top, 2)
+        }.font(.callout).padding(16).frame(width: 340, alignment: .leading)
+    }
+    private var serviceDetails: some View {
+        let failed = model.transcriptionIndicator == .failed, manages = model.guestFeatures.permissions.canManageTranscript
+        return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: failed ? "exclamationmark.triangle.fill" : "text.bubble.fill").font(.title2)
                     .foregroundStyle(failed ? Color.red : Color.orange)

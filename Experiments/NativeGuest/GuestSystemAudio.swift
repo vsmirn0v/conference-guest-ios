@@ -90,9 +90,12 @@ enum GuestMutedInputPreparation {
 /// running. Sound remains a separate intent, enforced by the output gain gate.
 struct GuestPhysicalAudioAvailability: Equatable {
     let input, output: Bool
-    init(input: Bool, playoutRequested: Bool, sharedNativeOwner: Bool) {
+    /// Local transcription keeps output running while sound is off: WebRTC decodes
+    /// remote audio only when playout pulls it. The mixer is then silenced (or the
+    /// shared gate is closed), so nothing is heard.
+    init(input: Bool, playoutRequested: Bool, sharedNativeOwner: Bool, transcription: Bool = false) {
         self.input = input
-        output = playoutRequested || (sharedNativeOwner && input)
+        output = playoutRequested || (sharedNativeOwner && input) || transcription
     }
 }
 
@@ -337,15 +340,31 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     // Meeting volume for owners without the shared gate; read under the state lock.
     private var meetingVolume: Double = 1
     private weak var volumeMixer: AVAudioMixerNode?
+    /// Sound is off: the mixer stays at exactly zero even while output runs for transcription.
+    private var outputSilenced = false
+    // Confined to audioQueue: output runs while sound is off for local transcription.
+    private var transcriptionOutput = false
 
     /// App-only meeting level (0...1). macOS output volume is never changed;
     /// mute and sound-on intent remain separate.
     @MainActor func setMeetingVolume(_ volume: Double) -> Bool {
         let value = volume.isFinite ? min(1, max(0, volume)) : 1
         if sharedNativeOwner { return sharedPlayoutGate.setVolume(value) }
-        let mixer = locked { () -> AVAudioMixerNode? in meetingVolume = value; return volumeMixer }
-        mixer?.outputVolume = Float(value)
+        let (mixer, silenced) = locked { () -> (AVAudioMixerNode?, Bool) in meetingVolume = value; return (volumeMixer, outputSilenced) }
+        mixer?.outputVolume = silenced ? 0 : Float(value)
         return true
+    }
+    /// Keeps output running while sound is off so remote audio is decoded for
+    /// local transcription. Sound stays off: the mixer or shared gate is at zero.
+    func setTranscriptionOutput(_ keep: Bool, timeout: TimeInterval = 2) async -> Bool {
+        await perform("transcription-output", timeout: timeout) {
+            guard !self.closed, let module = self.currentModule else { return false }
+            self.transcriptionOutput = keep
+            self.update(["transcriptionOutput": keep])
+            let success = self.applyAvailability(module)
+            self.readSnapshot(module)
+            return success
+        }
     }
 
     var factory: LKRTCPeerConnectionFactory {
@@ -773,8 +792,15 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private func update(_ values: [String: Any]) { locked { cached.merge(values) { _, value in value } } }
 
     private func applyAvailability(_ module: LKRTCAudioDeviceModule) -> Bool {
+        // Silence before output can become available; unsilence only with sound on.
+        if !sharedNativeOwner {
+            let (mixer, volume) = locked { () -> (AVAudioMixerNode?, Double) in
+                outputSilenced = !playoutEnabled; return (volumeMixer, playoutEnabled ? meetingVolume : 0)
+            }
+            mixer?.outputVolume = Float(volume)
+        }
         let physical = GuestPhysicalAudioAvailability(input: microphoneOptIn,
-            playoutRequested: playoutEnabled, sharedNativeOwner: sharedNativeOwner)
+            playoutRequested: playoutEnabled, sharedNativeOwner: sharedNativeOwner, transcription: transcriptionOutput)
         var availability = LKRTCAudioEngineAvailability()
         availability.isInputAvailable = ObjCBool(physical.input)
         availability.isOutputAvailable = ObjCBool(physical.output)
@@ -906,7 +932,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                       return mixer.outputVolume == Float(value)
                   }) else { return -1 }
         } else if let mixer = source as? AVAudioMixerNode {
-            let volume = locked { () -> Double in volumeMixer = mixer; return meetingVolume }
+            let volume = locked { () -> Double in volumeMixer = mixer; return outputSilenced ? 0 : meetingVolume }
             mixer.outputVolume = Float(volume)
         }
         update(["outputSampleRate": format.sampleRate, "outputChannels": Int(format.channelCount), "outputASBD": Self.signature(format)])

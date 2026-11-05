@@ -11,6 +11,8 @@ packages:
     path: ../.build/native-desktop-dependencies/client-sdk-swift
   NativeWebRTC:
     path: ../.build/native-desktop-dependencies/webrtc-xcframework
+  SherpaOnnxKit:
+    path: ../Dependencies/SherpaOnnxKit
 targets:
   RockNRollNativeGuest:
     type: application
@@ -79,6 +81,7 @@ targets:
       - package: LiveKit
       - package: NativeWebRTC
         product: LiveKitWebRTC
+      - package: SherpaOnnxKit
     settings:
       configs:
         Debug:

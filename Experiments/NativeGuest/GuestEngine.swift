@@ -28,6 +28,12 @@ private struct GuestRemotePublication: Hashable {
     }
 }
 
+/// One remote participant's audio track; identity is nil until metadata arrives.
+struct GuestRemoteAudio {
+    let track: LKRTCAudioTrack
+    let participantIdentity: String?
+}
+
 private struct GuestRemoteTrackState {
     let participant: String
     let type: String
@@ -271,6 +277,7 @@ final class NativeGuestEngine {
             peer.onIncomingAudioChange = { [weak self, weak peer] in
                 guard let self, let peer, self.subscriber === peer, !self.closing else { return }
                 self.refreshSubscriberDemand(); self.continueArmedStartupAudio()
+                self.onRemoteAudioChange?()
             }
             peer.onIncomingVideoChange = { [weak self, weak peer] _ in
                 guard let self, let peer, self.subscriber === peer, !self.closing, !self.outputSuppressed else { return }
@@ -713,6 +720,15 @@ final class NativeGuestEngine {
 
     private var startupRequiresInput: Bool {
         published["audio"] != nil && systemAudio?.snapshot["inputAvailable"] as? Bool == true
+    }
+
+    var onRemoteAudioChange: (() -> Void)?
+    /// Each remote audio track with the participant identity the roster uses.
+    var remoteAudio: [GuestRemoteAudio] {
+        (subscriber?.incomingAudioTracks ?? []).map { item in
+            .init(track: item.track, participantIdentity: knownPublication(item.source, type: "AUDIO")
+                .flatMap { remoteParticipantIdentities[$0.participant] })
+        }
     }
 
     private func knownPublication(_ source: GuestStartupPlaybackGain.Source, type: String) -> GuestRemoteTrackState? {

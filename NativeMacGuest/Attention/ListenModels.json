@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "runtime": "sherpa-onnx 2.0.1",
+  "models": [
+    {
+      "id": "silero-vad",
+      "role": "vad",
+      "title": "Silero VAD",
+      "kind": "silero_vad",
+      "languages": [],
+      "licence": "MIT",
+      "source": "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+      "files": [
+        {
+          "name": "silero_vad.onnx",
+          "size": 643854,
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+          "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"
+        }
+      ],
+      "config": {
+        "model": "silero_vad.onnx"
+      }
+    },
+    {
+      "id": "gigaam-v3-rnnt-punct",
+      "role": "listen",
+      "title": "GigaAM v3 RNN-T with punctuation",
+      "kind": "nemo_transducer",
+      "featureDim": 64,
+      "languages": [
+        "ru"
+      ],
+      "licence": "MIT",
+      "source": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16",
+      "files": [
+        {
+          "name": "encoder.int8.onnx",
+          "size": 224570820,
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/a6039be7cee829a9044a69ac0ebaf1c191217c97/encoder.int8.onnx",
+          "sha256": "369f35a71bf288d3b8e0391fabd8dba5f2314088d440bca474056b7b4b6e66bf"
+        },
+        {
+          "name": "decoder.onnx",
+          "size": 4600132,
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/a6039be7cee829a9044a69ac0ebaf1c191217c97/decoder.onnx",
+          "sha256": "38fc7475443ea2a26f63211ca350f73ac50fff824ab7a3876ee2bd610c53bbc4"
+        },
+        {
+          "name": "joiner.onnx",
+          "size": 2712896,
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/a6039be7cee829a9044a69ac0ebaf1c191217c97/joiner.onnx",
+          "sha256": "602ff7017a93311aad34df1437c8d7f49911353c13d6eae7a6ee7b041339465c"
+        },
+        {
+          "name": "tokens.txt",
+          "size": 13354,
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-transducer-punct-giga-am-v3-russian-2025-12-16/resolve/a6039be7cee829a9044a69ac0ebaf1c191217c97/tokens.txt",
+          "sha256": "39abae20e692998290c574e606f11a9edef2902a1995463fcff63d1490cf22b7"
+        }
+      ],
+      "config": {
+        "encoder": "encoder.int8.onnx",
+        "decoder": "decoder.onnx",
+        "joiner": "joiner.onnx",
+        "tokens": "tokens.txt"
+      }
+    },
+    {
+      "id": "gigaam-v3-e2e-ctc",
+      "role": "listen",
+      "title": "GigaAM v3 E2E CTC",
+      "kind": "nemo_ctc",
+      "featureDim": 64,
+      "languages": [
+        "ru"
+      ],
+      "licence": "MIT",
+      "source": "https://huggingface.co/nocmt/GigaAM-v3-E2E-CTC-int8-ONNX",
+      "files": [
+        {
+          "name": "model.int8.onnx",
+          "size": 224893668,
+          "url": "https://huggingface.co/nocmt/GigaAM-v3-E2E-CTC-int8-ONNX/resolve/0928919f7df949871b507e16497b9e8cff7d0c6b/model.int8.onnx",
+          "sha256": "784d77aaa7a0899a247e72c71d667792087ee4dec985db1f57961767a5f6014f"
+        },
+        {
+          "name": "tokens.txt",
+          "size": 2007,
+          "url": "https://huggingface.co/nocmt/GigaAM-v3-E2E-CTC-int8-ONNX/resolve/0928919f7df949871b507e16497b9e8cff7d0c6b/tokens.txt",
+          "sha256": "142de7570b3de5b3035ce111a89c228e80e6085273731d944093ddf24fa539cd"
+        }
+      ],
+      "config": {
+        "model": "model.int8.onnx",
+        "tokens": "tokens.txt"
+      }
+    },
+    {
+      "id": "whisper-large-v3-turbo",
+      "role": "listen",
+      "title": "Whisper large-v3-turbo",
+      "kind": "whisper",
+      "featureDim": 128,
+      "languages": [
+        "*"
+      ],
+      "licence": "MIT",
+      "source": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-turbo",
+      "files": [
+        {
+          "name": "turbo-encoder.int8.onnx",
+          "size": 674716297,
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-turbo/resolve/2ca6ff69fc878651b770880507669577ac41c2ff/turbo-encoder.int8.onnx",
+          "sha256": "b02dcdf54f348741e93fe732b67d933c8dcb6735655f710640143081db38878b"
+        },
+        {
+          "name": "turbo-decoder.int8.onnx",
+          "size": 361080764,
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-turbo/resolve/2ca6ff69fc878651b770880507669577ac41c2ff/turbo-decoder.int8.onnx",
+          "sha256": "20accd02388482eb3a46bd615631adfdc85e1eb2c7db9ea3f02a40ffe6b81547"
+        },
+        {
+          "name": "turbo-tokens.txt",
+          "size": 816730,
+          "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-turbo/resolve/2ca6ff69fc878651b770880507669577ac41c2ff/turbo-tokens.txt",
+          "sha256": "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126"
+        }
+      ],
+      "config": {
+        "encoder": "turbo-encoder.int8.onnx",
+        "decoder": "turbo-decoder.int8.onnx",
+        "tokens": "turbo-tokens.txt"
+      }
+    }
+  ]
+}

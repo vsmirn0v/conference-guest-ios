@@ -28,6 +28,10 @@ enum NativeDesktopGuestError: LocalizedError {
     private(set) var featureError: String?
     private(set) var snapshot = NativeDesktopExternalSnapshot()
     private(set) var incomingVideo: [NativeDesktopExternalVideo] = []
+    /// Remote audio tracks for local transcription, replaced on every change.
+    var onRemoteAudio: (([GuestRemoteAudio]) -> Void)? { didSet { onRemoteAudio?(currentNativeEngine?.remoteAudio ?? []) } }
+    /// Local transcription keeps output running (silently) while sound is off.
+    private var transcriptionOutputDemand = false
     private(set) var guestSnapshot = GuestMeetingSnapshot()
     private(set) var currentNativeEngine: NativeGuestEngine?
     private(set) var microphoneStartupMilliseconds: [String: Double] = [:]
@@ -113,6 +117,7 @@ enum NativeDesktopGuestError: LocalizedError {
             }
             systemAudio = owner
             _ = owner.setMeetingVolume(meetingVolume)
+            if transcriptionOutputDemand { _ = await owner.setTranscriptionOutput(true) }
             if !inputPermitted, !(await owner.setInputPermitted(false)) {
                 _ = await media.detach(room, attempt: attempt, clean: false); throw NativeDesktopGuestError.cleanupFailed
             }
@@ -345,6 +350,10 @@ enum NativeDesktopGuestError: LocalizedError {
         snapshot.microphoneLevel = nil; emit()
         let old = session
         let engineStopped = await old?.leave() ?? cleanupSucceeded
+        // The owner may serve the next room; it never inherits this meeting's demand.
+        if transcriptionOutputDemand, let systemAudio {
+            transcriptionOutputDemand = false; _ = await systemAudio.setTranscriptionOutput(false)
+        }
         // The shared owner may outlive this room; never hand it on without input.
         if !inputPermitted, let systemAudio { _ = await systemAudio.setInputPermitted(true) }
         let stopped: Bool
@@ -375,7 +384,13 @@ enum NativeDesktopGuestError: LocalizedError {
         transcriptHistoryTask?.cancel(); transcriptHistoryTask = nil
         chatHistoryRequested = false; transcriptHistoryRequested = false
     }
+    func setTranscriptionOutput(_ keep: Bool) async -> Bool {
+        transcriptionOutputDemand = keep
+        return await systemAudio?.setTranscriptionOutput(keep) ?? !keep
+    }
     private func detachEngine() {
+        currentNativeEngine?.onRemoteAudioChange = nil
+        if currentNativeEngine != nil { onRemoteAudio?([]) }
         currentNativeEngine?.onMeetingChange = nil
         currentNativeEngine?.onIncomingVideoChange = nil
         currentNativeEngine?.onLocalCameraTrackChange = nil
@@ -413,6 +428,11 @@ enum NativeDesktopGuestError: LocalizedError {
             }
             onVideo?(incomingVideo)
         }
+        engine.onRemoteAudioChange = { [weak self, weak engine] in
+            guard let self, let engine, revision == token, currentNativeEngine === engine else { return }
+            onRemoteAudio?(engine.remoteAudio)
+        }
+        onRemoteAudio?(engine.remoteAudio)
         engine.onLocalCameraTrackChange = { [weak self, weak engine] track in
             guard let self, let engine, revision == token, currentNativeEngine === engine else { return }
             onLocalCamera?(track)

@@ -105,22 +105,76 @@ import UniformTypeIdentifiers
     /// The one-time notice that speech is now being turned into text.
     @Published private(set) var transcriptionAnnouncement = false
     private var transcriptionAnnouncementTask: Task<Void, Never>?
-    enum TranscriptionIndicator { case on, failed }
-    /// A failure is shown only to people who can restart transcription.
+    enum TranscriptionIndicator { case on, local, failed }
+    /// A failure is shown only to people who can restart transcription. Local
+    /// transcription is shown when the service does not transcribe.
     var transcriptionIndicator: TranscriptionIndicator? {
         switch guestFeatures.transcriptionStatus {
         case .active: .on
         case .failed where guestFeatures.permissions.canManageTranscript: .failed
-        default: nil
+        default: localTranscriber != nil ? .local : nil
         }
     }
+    /// Speech transcribed on this Mac while the meeting service does not transcribe.
+    @Published private(set) var localTranscript: [GuestMeetingMessage] = []
+    /// This meeting only: the person paused transcription on this Mac.
+    @Published var localTranscriptionPaused = false { didSet { updateLocalTranscription() } }
+    private var localTranscriber: MeetingTranscriber?
+    let listenStore: ListenModelStore
+    var transcribingLocally: Bool { localTranscriber != nil }
+
+    /// Runs local transcription for a connected Guest meeting when it is switched
+    /// on and installed, the service does not transcribe, and this meeting is not paused.
+    func updateLocalTranscription() {
+        let guest = engine as? NativeDesktopGuestEngine
+        let wanted = !closed && connected && guest != nil && !localTranscriptionPaused &&
+            guestFeatures.transcriptionStatus != .active && listenStore.ready
+        if wanted, localTranscriber == nil, let guest, let model = listenStore.recognizerModel(), let vad = listenStore.vadURL {
+            let transcriber = MeetingTranscriber(model: model, vadModel: vad) { [weak self] line in self?.receiveLocalLine(line) }
+            localTranscriber = transcriber
+            guest.onRemoteAudio = { [weak transcriber] in transcriber?.update($0) }
+            Task { _ = await guest.setTranscriptionOutput(true) }
+            probeLog("local-transcription-start", ["model": listenStore.selectedID, "soundOn": snapshot.playoutOn])
+            objectWillChange.send()
+        } else if !wanted, let transcriber = localTranscriber {
+            localTranscriber = nil
+            guest?.onRemoteAudio = nil
+            transcriber.stop()
+            let summary = transcriber.currentSummary
+            probeLog("local-transcription-stop", ["utterances": summary.utterances, "lines": summary.lines,
+                "audioSeconds": summary.audioSeconds.rounded(), "decodeSeconds": summary.decodeSeconds.rounded(),
+                "droppedSeconds": summary.droppedSeconds.rounded()])
+            if let guest, !closed { Task { _ = await guest.setTranscriptionOutput(false) } }
+            if !closed { observeTranscript() }
+            objectWillChange.send()
+        }
+    }
+    private func receiveLocalLine(_ line: MeetingTranscriber.Line) {
+        guard !closed else { return }
+        let identity = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine?.remoteAudio
+            .first { $0.track.trackId == line.trackID }?.participantIdentity
+        let name = participants.first { $0.id == identity }?.name ?? L("Participant")
+        localTranscript.append(GuestMeetingMessage(id: line.id, participantID: identity ?? line.trackID, participantName: name,
+            text: line.text, sentAt: line.start, isOwn: false, receivedAt: line.end))
+        if localTranscript.count > 1000 { localTranscript.removeFirst(localTranscript.count - 1000) }
+        observeTranscript()
+    }
+    /// Service and local text form one timeline for Live text and Catch up.
+    private func observeTranscript() {
+        catchUp.observe(messages: transcript.map { TranscriptSegment(id: $0.id, speaker: $0.participantName, text: $0.text, spokenAt: Self.spokenAt($0)) },
+            canView: guestFeatures.permissions.canViewTranscript || !localTranscript.isEmpty || transcribingLocally,
+            enabled: guestFeatures.transcriptionStatus == .active || transcribingLocally)
+    }
+#if DEBUG
+    func receiveLocalLineForTesting(_ line: MeetingTranscriber.Line) { receiveLocalLine(line) }
+#endif
     func showLiveText() { conversationTab = 1; panel = .conversation; dismissTranscriptionAnnouncement() }
     /// The sound-off period offered for catch-up after sound returns.
     @Published private(set) var catchUpOffer: UUID?
     /// The Catch up tab scrolls to this period once.
     @Published var catchUpFocus: UUID?
     /// Sound is off while the service transcribes: what is said is kept for catch-up.
-    var soundOffSavingText: Bool { connected && !snapshot.playoutOn && transcriptionIndicator == .on }
+    var soundOffSavingText: Bool { connected && !snapshot.playoutOn && (transcriptionIndicator == .on || transcriptionIndicator == .local) }
     /// When a line of live text was spoken: the provider's time when it agrees with
     /// when the line arrived here (within 10 minutes), else the arrival time.
     static func spokenAt(_ message: GuestMeetingMessage) -> Date? {
@@ -271,8 +325,10 @@ import UniformTypeIdentifiers
          joinTimeout: TimeInterval = 45,
          power: NativeDesktopPowerMonitor? = nil,
          readinessPolicy: (() -> NativeDesktopJoinReadinessPolicy)? = nil,
-         sharedMedia: NativeDesktopSharedMedia<GuestSystemAudio>? = nil) {
+         sharedMedia: NativeDesktopSharedMedia<GuestSystemAudio>? = nil,
+         listenStore: ListenModelStore? = nil) {
         self.sharedMedia = sharedMedia ?? NativeDesktopMediaService.shared
+        self.listenStore = listenStore ?? .shared
         invitation = destination.invitationURL; kind = destination.engineKind; displayName = name; self.quiet = quiet
         self.readinessPolicy = readinessPolicy ?? { joinReadiness ?? .current() }
         self.power = power ?? NativeDesktopPowerMonitor(); self.joinCameraPrime = joinCameraPrime
@@ -293,6 +349,9 @@ import UniformTypeIdentifiers
         chat.reactionHistory.beginMeeting(id: sessionID)
         catchUp.enter(roomKey: invitation.absoluteString)
         catchUp.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+        self.listenStore.objectWillChange.sink { [weak self] in
+            DispatchQueue.main.async { self?.updateLocalTranscription() }
+        }.store(in: &subscriptions)
         chat.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         chat.reactionHistory.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         if let saved = UserDefaults.standard.object(forKey: meetingVolumeKey) as? Double { meetingVolume = Self.clampedVolume(saved) }
@@ -332,7 +391,10 @@ import UniformTypeIdentifiers
     }
     var connected: Bool { snapshot.phase == .connected }
     var canReact: Bool { connected && guestFeatures.permissions.canSendReaction }
-    var transcript: [GuestMeetingMessage] { guestFeatures.transcript }
+    var transcript: [GuestMeetingMessage] {
+        guard !localTranscript.isEmpty else { return guestFeatures.transcript }
+        return (guestFeatures.transcript + localTranscript).sorted { (Self.spokenAt($0) ?? .distantPast) < (Self.spokenAt($1) ?? .distantPast) }
+    }
     var participants: [NativeDesktopParticipant] { snapshot.participants }
     /// Participants whose video the display mode receives. Tiles, speaking state
     /// and layouts always cover every participant; only media is reduced.
@@ -543,6 +605,7 @@ import UniformTypeIdentifiers
     private func update(_ value: NativeDesktopExternalSnapshot) {
         guard !closed else { return }
         let previous = snapshot; snapshot = value
+        if previous.phase != value.phase { updateLocalTranscription() }
         let now = Date()
         for person in value.participants where person.speaking == true {
             if lastSpokeAt[person.id].map({ now.timeIntervalSince($0) > 5 }) ?? true { lastSpokeAt[person.id] = now }
@@ -1001,7 +1064,8 @@ import UniformTypeIdentifiers
         let previousTranscription = guestFeatures.transcriptionStatus
         guestFeatures = features
         noteTranscription(from: previousTranscription, to: features.transcriptionStatus)
-        catchUp.observe(messages: features.transcript.map { TranscriptSegment(id: $0.id, speaker: $0.participantName, text: $0.text, spokenAt: Self.spokenAt($0)) }, canView: features.permissions.canViewTranscript, enabled: features.transcriptionStatus == .active)
+        updateLocalTranscription()
+        observeTranscript()
         chat.reactionHistoryAvailable = features.permissions.canSendReaction
         chat.canSend = features.permissions.canSendChat && features.connected
         chat.unavailableReason = features.permissions.canViewChat ? nil : L("Chat is unavailable in this meeting.")
@@ -1129,6 +1193,7 @@ import UniformTypeIdentifiers
         cancelJoinCameraPrime(); power.stop()
         cameraMetadataTask?.cancel()
         closed = true; generation = UUID(); snapshot.phase = .leaving; headset.end()
+        updateLocalTranscription()
         let startup = connectionTask; connectionTask = nil; startup?.cancel()
         (engine as? NativeDesktopGuestEngine)?.cancelPendingConnection()
         requestedMicrophone = nil; requestedCamera = nil; requestedPlayout = nil; authorizedMicrophoneRequest = nil

@@ -1,0 +1,25 @@
+{
+  "version": "2.0.1",
+  "archive": {
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-osx-arm64-static-no-tts-lib.tar.bz2",
+    "sha256": "69413605e7d0d1286d40fbf66e898f7abb53f350d6057cbd154ea2e3f1437d2a"
+  },
+  "header": {
+    "url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v2.0.1/sherpa-onnx/c-api/c-api.h",
+    "sha256": "5698f38ba09ad2bdf085c56a6cbbd7741acf15e25f4ce5c7097b9702cadf437f"
+  },
+  "libraries": [
+    "libsherpa-onnx-c-api.a",
+    "libsherpa-onnx-core.a",
+    "libsherpa-onnx-fstfar.a",
+    "libsherpa-onnx-fst.a",
+    "libsherpa-onnx-kaldifst-core.a",
+    "libkaldi-decoder-core.a",
+    "libkaldi-native-fbank-core.a",
+    "libkissfft-float.a",
+    "libssentencepiece_core.a",
+    "libutf8proc.a",
+    "libonnxruntime.a"
+  ],
+  "destination": "Dependencies/SherpaOnnxKit/Artifacts/CSherpaOnnx.xcframework"
+}

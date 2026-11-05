@@ -33,6 +33,8 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     private var incomingAudio: [(track: LKRTCAudioTrack, source: GuestStartupPlaybackGain.Source)] = []
     nonisolated private let startupPlaybackGain: GuestStartupPlaybackGain?
     var onIncomingAudioChange: (() -> Void)?
+    /// Remote audio tracks with their stream metadata (local transcription taps them).
+    var incomingAudioTracks: [(track: LKRTCAudioTrack, source: GuestStartupPlaybackGain.Source)] { incomingAudio }
     private var iceTimeout: Task<Void, Never>?
     private var lastICEState: LKRTCIceConnectionState = .new
     private var activeIncomingMediaDemand = false

@@ -47,6 +47,8 @@ spec_source = (ROOT/'NativeMacGuest/project.yml').read_text()
 spec_source = re.sub(r'(?m)^(\s*MARKETING_VERSION: ).*$', lambda m: m[1]+json.dumps(a.version), spec_source)
 spec_source = re.sub(r'(?m)^(\s*CURRENT_PROJECT_VERSION: ).*$', lambda m: m[1]+json.dumps(a.build_number), spec_source)
 dependency_root = build/'Dependencies'
+# The local speech runtime is a pinned static library; it must exist before xcodegen.
+subprocess.run(['python3',str(ROOT/'NativeMacGuest/prepare-sherpa.py')],check=True,env=env)
 subprocess.run(['python3',str(ROOT/'NativeMacGuest/prepare-livekit.py'),
                 '--framework',str(framework_root/'LiveKitWebRTC.xcframework'),
                 '--destination',str(dependency_root)],check=True,env=env)
@@ -103,6 +105,9 @@ sources = sorted(set(sources))
 sources += [ROOT/'NativeMacGuest/Info.plist',ROOT/'NativeMacGuest/NativeGuest.entitlements',ROOT/'NativeMacGuest/project.yml',ROOT/'NativeMacGuest/build.py']
 sources += [ROOT/'NativeMacGuest/prepare-livekit.py',dependency_root/'native-livekit.json']
 sources += [ROOT/'NativeMacGuest/native_dependencies.py', ROOT/'Dependencies/native-macos/sdk.lock.json']
+sources += [ROOT/'NativeMacGuest/prepare-sherpa.py', ROOT/'Dependencies/native-macos/sherpa-onnx.lock.json']
+sources += sorted(x for x in (ROOT/'Dependencies/SherpaOnnxKit').rglob('*') if x.is_file() and x.suffix in {'.swift'} and '.build' not in x.parts)
+sources += [ROOT/'Dependencies/SherpaOnnxKit/Artifacts/evidence.json']
 sources += sorted(x for x in (ROOT/'NativeMacGuest/distribution').rglob('*')
                   if x.is_file() and x.suffix in {'.py', '.txt'} and '__pycache__' not in x.parts) + distribution_inputs
 sources += sorted(x for x in (ROOT/'NativeMacGuest/Assets.xcassets').rglob('*') if x.is_file())
