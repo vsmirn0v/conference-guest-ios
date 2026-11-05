@@ -1,0 +1,88 @@
+{
+  "sourceCommit": "e1dd4a0edf85feb805ac210436723d68c03701e3",
+  "featureCommit": "639a4d7",
+  "change": "Guest meetings rebuild their media when the transport stalls while signalling still reports the meeting active (cell handover); Settings > Diagnostics exports 7 days of saved connection events.",
+  "shippingSourceHashesUnchangedSinceArchive": true,
+  "version": "0.2.0",
+  "build": "115",
+  "buildID": "eaf1eff3-c087-403e-9922-06a884ab938b",
+  "processingState": "VALID",
+  "betaReview": "APPROVED",
+  "internalGroup": {
+    "id": "08bd4885-fb6d-475d-a699-44829380dcd3",
+    "name": "Rock\u2019n\u2019Roll Internal",
+    "testers": 1,
+    "status": "IN_BETA_TESTING",
+    "hasBuild": true
+  },
+  "publicGroup": {
+    "id": "d89117ad-e667-4553-a58c-2a2356b11390",
+    "name": "Rock\u2019n\u2019Roll Public Beta",
+    "testers": 7,
+    "status": "IN_BETA_TESTING",
+    "hasBuild": true,
+    "url": "https://testflight.apple.com/join/Hd13C9U3"
+  },
+  "automaticallyNotifyTesters": true,
+  "whatToTestSaved": true,
+  "verifiedAtUTC": "2026-11-05T09:19:28.795Z",
+  "uploadWarnings": "Missing dSYMs for third-party frameworks only (JazzScreenShareImpl, LiveKitWebRTC, RustLiveKitUniFFI, SDSoup, Spench, WebRTC); owned app/extension dSYMs match.",
+  "notVerified": [
+    "Install from TestFlight on a device",
+    "Automatic recovery on a real cell handover",
+    "Diagnostics export on a device",
+    "iOS unit/UI tests: CoreSimulator on the build Mac is older than Xcode requires"
+  ],
+  "artifact": {
+    "source": "e1dd4a0edf85feb805ac210436723d68c03701e3",
+    "archive": "/Users/v.smirnov/Library/Developer/Xcode/Archives/2026-11-05/RockNRoll-0.2.0-b115.xcarchive",
+    "bundles": [
+      {
+        "bundle": "RockNRoll.app",
+        "version": "0.2.0",
+        "build": "115",
+        "minimumOS": "16.0",
+        "team": "5V64BP2H3P",
+        "debugger": false,
+        "iCloudEnvironment": "Production",
+        "dSYMsMatch": true
+      },
+      {
+        "bundle": "GuestBroadcast.appex",
+        "version": "0.2.0",
+        "build": "115",
+        "minimumOS": "16.0",
+        "team": "5V64BP2H3P",
+        "debugger": false,
+        "iCloudEnvironment": null,
+        "dSYMsMatch": true
+      },
+      {
+        "bundle": "MeetingActivity.appex",
+        "version": "0.2.0",
+        "build": "115",
+        "minimumOS": "16.2",
+        "team": "5V64BP2H3P",
+        "debugger": false,
+        "iCloudEnvironment": null,
+        "dSYMsMatch": true
+      },
+      {
+        "bundle": "RockBroadcast.appex",
+        "version": "0.2.0",
+        "build": "115",
+        "minimumOS": "16.0",
+        "team": "5V64BP2H3P",
+        "debugger": false,
+        "iCloudEnvironment": null,
+        "dSYMsMatch": true
+      }
+    ],
+    "debugFixturesAbsent": true,
+    "transportWatchdogAndDiagnosticsPresent": true,
+    "diagnosticsLocalized": true,
+    "activityHasNoMediaFramework": true,
+    "shippingSourceUnchangedSinceArchive": true,
+    "sha256": "4d3197cd77f05887cc168cfe1480f263451eb0bb232b0ed379543d39e06e1570"
+  }
+}
