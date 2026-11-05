@@ -1,0 +1,31 @@
+{
+  "version": "0.3.0",
+  "build": "58",
+  "channel": "beta",
+  "sourceCommit": "7b2ef65",
+  "changes": [
+    "Microphone moves log a talk-handover diagnostics event with per-step timings (Telemost/TrueConf now time permission, activation, renegotiation); Experiments/AudioBench/handover_report.py summarises them (7b2ef65)",
+    "Experimental, off by default: keep the microphone ready in every meeting (released meetings stay muted with input running) (7b2ef65)",
+    "Experimental, off by default: voice replies through a microphone gate and player in the input graph for Guest, Telemost, TrueConf, and LiveKit app audio for Rock; More > Play test voice reply uses the system voice (7b2ef65)",
+    "Guest microphone tracks are created disabled inside prepareAudio (7b2ef65)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-58-arm64.dmg",
+    "sha256": "2774cda0e3246a5f07e576022056186a2f2e18dee2ae4f14755c98ac51105f3f",
+    "length": 25562652
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-58-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update to 58",
+    "talk-handover timings from real moves",
+    "warm input with two meetings on real hardware (concurrent voice processing, CPU, microphone indicator)",
+    "voice replies in live Guest, Telemost, TrueConf and Rock meetings"
+  ]
+}
