@@ -287,3 +287,22 @@ on after a silent join takes effect on the next reconnect).
   reply or reaction as "needed", like Open.
 
 Not verified live: draft quality on real meetings, Telemost and Rock chat delivery from a card.
+
+## Status (5 Nov 2026): model comparison (from Phase 6)
+
+Settings → Intelligence → Judge → "Compare models…" (`AttentionComparison.swift`,
+`AttentionComparisonView.swift`).
+
+- **Input.** The decision log of the last 30 days: every verdict with its exact prompt and window,
+  your choice on its card (Open, a reply or a reaction = needed; Decline = not needed; otherwise
+  unlabelled), and every reply draft with what you then sent. Decisions you chose on come first.
+- **Run.** The same prompts go, one at a time, to another model at the configured provider and
+  key (choose it from the provider's catalog). Nothing is sent into any meeting.
+- **Score.** For the saved verdicts and the other model on the same decisions: agreement with your
+  choices, precision, recall, cards shown, median time and failures, using each decision's saved
+  threshold. Decisions whose card outcome changes are listed with the other model's reason.
+  Drafts are shown side by side: the saved draft, the other model's draft and what you sent.
+- **Use it.** "Use … for the judge" switches the judge (and writer) to the compared model.
+
+Cross-provider comparison (another provider and key) is not built; switch the provider to compare
+there. Not verified live: a comparison run against a real provider.

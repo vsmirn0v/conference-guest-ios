@@ -317,6 +317,9 @@ struct MeetingPresetEditor: View {
 /// The provider's model list, searchable. Models that list structured output come first.
 struct AttentionModelPicker: View {
     @ObservedObject var store: AttentionStore
+    /// The model shown as chosen and what a pick does; by default it becomes the judge's model.
+    var chosen: String? = nil
+    var onSelect: ((String) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var models: [AttentionModelInfo] = []
     @State private var query = ""
@@ -338,7 +341,10 @@ struct AttentionModelPicker: View {
                 } else {
                     let shown = AttentionModelCatalog.filter(models, query: query)
                     List(shown) { model in
-                        Button { store.provider.model = model.id; dismiss() } label: { row(model) }.buttonStyle(.plain)
+                        Button {
+                            if let onSelect { onSelect(model.id) } else { store.provider.model = model.id }
+                            dismiss()
+                        } label: { row(model) }.buttonStyle(.plain)
                     }.overlay { if shown.isEmpty { Text(L("No models match.")).foregroundStyle(.secondary) } }
                 }
             }.frame(minHeight: 360)
@@ -352,7 +358,7 @@ struct AttentionModelPicker: View {
     }
 
     private func row(_ model: AttentionModelInfo) -> some View {
-        let chosen = model.id == store.provider.model
+        let chosen = model.id == (self.chosen ?? store.provider.model)
         var details: [String] = []
         if let context = model.contextLength { details.append(L("%ld K context", context / 1000)) }
         if let price = model.promptPrice { details.append(price == 0 ? L("free") : L("$%.2f per million input tokens", price)) }
@@ -387,6 +393,7 @@ struct NativeDesktopIntelligenceSettings: View {
     @State private var testResult: String?
     @State private var testFailed = false
     @State private var choosingModel = false
+    @State private var comparing = false
 
     var body: some View {
         Form {
@@ -423,6 +430,9 @@ struct NativeDesktopIntelligenceSettings: View {
                     Text(L("The key is stored in this Mac's keychain and sent only to the address above.")).font(.caption).foregroundStyle(.secondary)
                 }
                 HStack {
+                    Button(L("Compare models…")) { comparing = true }
+                        .disabled(store.provider.endpoint == nil || store.provider.needsKey && !store.hasKey)
+                        .help(L("Run your saved decisions through another model and see how it agrees with your choices"))
                     Button(testing ? L("Testing…") : L("Test")) { runTest() }.disabled(testing || !store.ready && !(store.provider.endpoint != nil && (!store.provider.needsKey || store.hasKey)))
                     if let testResult { Text(testResult).font(.caption).foregroundStyle(testFailed ? Color.red : .secondary).lineLimit(3) }
                 }
@@ -466,6 +476,7 @@ struct NativeDesktopIntelligenceSettings: View {
         }.formStyle(.grouped)
             .onAppear { aliases = store.profile.aliases.joined(separator: ", ") }
             .sheet(isPresented: $choosingModel) { AttentionModelPicker(store: store) }
+            .sheet(isPresented: $comparing) { AttentionComparisonView(store: store) }
     }
 
     private func saveAliases() {

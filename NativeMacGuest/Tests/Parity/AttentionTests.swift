@@ -488,6 +488,60 @@ import XCTest
         XCTAssertEqual(writer.calls, 1, "Replies off for this meeting: nothing is drafted")
     }
 
+    // MARK: Model comparison
+
+    func testComparisonLoadsYourChoicesAndScoresAnotherModel() async throws {
+        let store = store()
+        let window = sampleWindow(), cited = window.lines.suffix(1).map(\.id)
+        let wanted = AttentionVerdict(level: .now, probability: 0.9, reason: "Asked.", evidence: cited, action: .open)
+        let quiet = AttentionVerdict(level: .no, probability: 0.1, reason: "Small talk.", evidence: [], action: .none)
+        let messages = [["role": "system", "content": "s"], ["role": "user", "content": "u"]]
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        func verdict(_ id: UUID, _ verdict: AttentionVerdict, at offset: TimeInterval) {
+            store.log(.init(id: id, at: base + offset, meetingTitle: "Infra", presetID: nil, window: window, verdict: verdict,
+                provider: "api.openai.com", model: "gpt-4.1-mini", outcome: verdict.level == .no ? .belowThreshold : .shown,
+                messages: messages, threshold: 0.55))
+        }
+        let opened = UUID(), declined = UUID(), unseen = UUID(), replied = UUID()
+        verdict(opened, wanted, at: 0); verdict(declined, wanted, at: 10); verdict(unseen, quiet, at: 20); verdict(replied, wanted, at: 30)
+        func outcome(_ id: UUID, _ outcome: AttentionDecisionRecord.Outcome, sent: String? = nil) {
+            store.log(.init(at: base + 40, meetingTitle: "Infra", presetID: nil, window: nil, verdict: nil, provider: "p", model: "m",
+                            outcome: outcome, decisionID: id, sent: sent))
+        }
+        outcome(opened, .opened); outcome(declined, .declined); outcome(replied, .replied, sent: "Да, готово.")
+        store.log(.init(at: base + 35, meetingTitle: "Infra", presetID: nil, window: nil, verdict: nil, provider: "p", model: "gpt-4.1-mini",
+            outcome: .drafted, decisionID: replied,
+            replyMessages: [["role": "system", "content": "s"], ["role": "user", "content": "The user can answer with a chat message."]],
+            draft: .init(chat: "Сейчас проверю.", reaction: nil)))
+
+        let loaded = ComparisonLoader.load(store.decisionFiles())
+        XCTAssertEqual(loaded.cases.count, 4)
+        XCTAssertEqual(loaded.cases.map(\.id), [replied, declined, opened, unseen], "Decisions you chose on come first, newest first")
+        XCTAssertEqual(loaded.cases.map(\.needed), [true, false, true, nil], "A reply counts as needed")
+        let draft = try XCTUnwrap(loaded.drafts.first)
+        XCTAssertEqual(draft.sent, "Да, готово."); XCTAssertEqual(draft.channels, .init(chat: true, reactions: []))
+
+        let comparison = ModelComparison()
+        comparison.load(from: store)
+        var judged: [String] = []
+        comparison.judge = { provider, _, _, window in
+            judged.append(provider.model)
+            // Shows a card for everything: right for opened and replied, wrong for declined.
+            return .init(verdict: .init(level: .soon, probability: 0.8, reason: "Maybe.", evidence: window.lines.suffix(1).map(\.id), action: .open), latency: 0.5)
+        }
+        comparison.write = { _, _, _, _ in .init(draft: .init(chat: "Посмотрю и отвечу.", reaction: nil), latency: 0.3) }
+        comparison.run(model: "other-model", provider: store.provider, key: nil, limit: 10, draftLimit: 5)
+        try await spin { !comparison.running }
+        XCTAssertEqual(judged, Array(repeating: "other-model", count: 4))
+        let original = comparison.originalScore, candidate = comparison.candidateScore
+        XCTAssertEqual(original.labelled, 3); XCTAssertEqual(original.agreed, 2, "The saved verdicts showed the declined card too")
+        XCTAssertEqual(candidate.agreed, 2); XCTAssertEqual(candidate.shown, 4)
+        XCTAssertEqual(candidate.precision ?? 0, 2.0 / 3.0, accuracy: 0.001); XCTAssertEqual(candidate.recall, 1)
+        XCTAssertEqual(candidate.medianLatency, 0.5)
+        XCTAssertEqual(comparison.rows.filter(\.changed).map(\.id), [unseen], "Only the quiet decision changes")
+        XCTAssertEqual(comparison.draftRows.first?.candidate?.chat, "Посмотрю и отвечу.")
+    }
+
     private func spin(_ predicate: () -> Bool) async throws {
         for _ in 0..<200 where !predicate() { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(predicate())

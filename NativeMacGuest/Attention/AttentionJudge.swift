@@ -71,15 +71,31 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter {
     var retryDelays: [TimeInterval] = [1, 3]
 
     func judge(_ request: JudgeRequest) async throws -> JudgeResult {
-        let (content, latency) = try await complete(Self.body(request, model: provider.model.trimmed))
-        do { return .init(verdict: try AttentionPrompt.verdict(from: content, window: request.window), latency: latency) }
+        try await judge(messages: AttentionPrompt.messages(request), window: request.window)
+    }
+
+    /// Judges saved messages again, as the model comparison does.
+    func judge(messages: [[String: String]], window: AttentionWindow) async throws -> JudgeResult {
+        let (content, latency) = try await complete(Self.body(messages: messages, model: provider.model.trimmed,
+                                                              name: AttentionPrompt.schemaName, schema: AttentionPrompt.schema))
+        do { return .init(verdict: try AttentionPrompt.verdict(from: content, window: window), latency: latency) }
         catch let error as AttentionVerdictError { throw AttentionJudgeError.verdict(error) }
     }
 
     func draft(_ request: ReplyRequest) async throws -> ReplyResult {
         guard !request.judge.replyChannels.isEmpty else { throw ReplyDraftError.unavailable }
-        let (content, latency) = try await complete(Self.replyBody(request, model: provider.model.trimmed))
-        return .init(draft: try ReplyPrompt.draft(from: content, channels: request.judge.replyChannels), latency: latency)
+        return try await draft(messages: ReplyPrompt.messages(request), channels: request.judge.replyChannels)
+    }
+
+    func draft(messages: [[String: String]], channels: ReplyChannels) async throws -> ReplyResult {
+        let (content, latency) = try await complete(Self.body(messages: messages, model: provider.model.trimmed,
+                                                              name: ReplyPrompt.schemaName, schema: ReplyPrompt.schema(channels)))
+        return .init(draft: try ReplyPrompt.draft(from: content, channels: channels), latency: latency)
+    }
+
+    static func body(messages: [[String: String]], model: String, name: String, schema: [String: Any]) -> [String: Any] {
+        ["model": model, "messages": messages,
+         "response_format": ["type": "json_schema", "json_schema": ["name": name, "strict": true, "schema": schema]]]
     }
 
     static func body(_ request: JudgeRequest, model: String) -> [String: Any] {
