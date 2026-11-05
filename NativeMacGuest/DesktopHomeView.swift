@@ -441,6 +441,8 @@ struct NativeDesktopSettingsView: View {
     #endif
     @FocusState private var editingName: Bool
     @AppStorage("nativeDesktop.multipleMeetings") private var multipleMeetings = true
+    @AppStorage(NativeDesktopMeetingModel.keepMicrophoneWarmKey) private var keepMicrophoneWarm = false
+    @AppStorage(GuestSystemAudio.voiceRepliesKey) private var voiceReplies = false
     var body: some View {
         TabView(selection: $tab) {
             Form {
@@ -453,6 +455,12 @@ struct NativeDesktopSettingsView: View {
                 Section(L("Meetings")) {
                     Toggle(L("Allow multiple meetings"), isOn: $multipleMeetings)
                     Text(L("Stay connected to several meetings. Your microphone and camera work in one meeting at a time; the others keep playing unless you silence them."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle(L("Keep the microphone ready in every meeting (experimental)"), isOn: $keepMicrophoneWarm)
+                    Text(L("Moving your microphone between meetings skips restarting the device. Meetings you leave the microphone in stay muted, but macOS keeps showing the microphone indicator while you are in any meeting."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle(L("Voice replies (experimental)"), isOn: $voiceReplies)
+                    Text(L("Lets the app play a spoken reply into a meeting while your own microphone is held back. Applies to meetings joined after turning it on. Try it from a meeting's More menu."))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }.tabItem { Label(L("General"), systemImage: "person.crop.circle") }.tag(0)
@@ -556,6 +564,7 @@ struct NativeDesktopSidebarMeetingRow: View {
     /// A move between meetings, or a start, shows at once: the device and server steps take time.
     private var moving: Bool { model.microphoneStarting }
     private var subtitle: String {
+        if model.voiceReplyActive { return L("Playing a voice reply…") }
         if moving { return workspace.meetings.count > 1 ? L("Moving microphone…") : L("Starting microphone…") }
         return model.connected ? NativeDesktopWorkspace.statusText(model) + " · " + L("%ld participants", model.participants.count)
             : L(model.snapshot.phase.rawValue.capitalized)

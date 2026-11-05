@@ -178,3 +178,35 @@ hover/"Talk here" intent, and injects voice per engine type.
    (the cost of shared echo cancellation and instant moves).
 2. Accepted: Rock stays on its own engine (moves into Rock keep today's speed).
 3. Before B0 starts, the design gets an independent review.
+
+## Status (5 Nov 2026): R0–R4
+
+Built with automated tests only; nothing here has run in a live meeting yet.
+
+- **R0 measure.** Every microphone move logs one `talk-handover` diagnostics event:
+  previous and target service, release and assume time, total (click to confirmed unmute),
+  and the target engine's steps. Guest already timed permission, activation and server
+  confirmation; Telemost and TrueConf now time permission, activation and renegotiation.
+  `Experiments/AudioBench/handover_report.py` turns exported diagnostics into a median/p90
+  table per pair. The numbers themselves need real moves: export diagnostics after a day of
+  multi-meeting use and run the script.
+- **R1 keep the device warm** (Settings → General → Meetings, experimental, off by default).
+  Releasing the talk role then mutes the module and withdraws the permit but keeps input and
+  voice processing running, so moving back skips their restart. Unmuting stays refused until
+  the permit returns (tested on a real audio owner). Off by default because whether macOS
+  handles two voice-processing inputs at once, the CPU cost and the persistent microphone
+  indicator can only be checked on real hardware.
+- **R2 voice replies** (Settings → General → Meetings, experimental, off by default; then
+  More → "Play test voice reply", which speaks a sentence in the macOS system voice).
+  `GuestVoiceReplyGraph` puts a gate after the microphone and a player beside it, both into
+  the module's input mixer, for Guest, Telemost and TrueConf. An offline-rendered test proves
+  the closed gate reaches exact silence (the mixer ramps volume; a reply waits 150 ms after
+  closing) while the reply plays. The meeting closes the gate before unmuting, plays, mutes,
+  and reopens only after the mute is confirmed; a failed mute keeps the gate closed until it is.
+  Built only when the setting is on, so the default microphone path is unchanged.
+- **R3 Rock.** The same API through LiveKit: its microphone volume is the gate and app audio
+  carries the reply. Not covered by an automated test (needs a LiveKit room).
+- **R4 shared engine.** Not built. Its gate (R0 shows device activation dominates, and
+  cross-meeting echo is measured with an AEC dump) needs real-use data. The one precondition
+  that applies today was made structural: Guest microphone tracks are now created disabled
+  inside `prepareAudio`, as Telemost and TrueConf tracks already were.

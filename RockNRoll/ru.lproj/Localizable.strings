@@ -1611,3 +1611,17 @@
 "These services send everyone's voice as one stream. Names come from who the service shows as speaking; TrueConf does not report it, so its lines show “Participant”." = "Эти сервисы передают голоса всех участников одним потоком. Имена берутся из того, кого сервис показывает говорящим; TrueConf этого не сообщает, поэтому его реплики подписаны «Участник».";
 "Rock jam sessions" = "Джем-сессии Rock";
 "Off by default: jam sessions are mostly music. Each musician is transcribed separately." = "По умолчанию выключено: в джем-сессиях в основном музыка. Каждый музыкант расшифровывается отдельно.";
+"Voice replies are not available in this meeting." = "Голосовые ответы недоступны в этой встрече.";
+"Your microphone could not move to this meeting for the reply." = "Не удалось перевести микрофон в эту встречу для ответа.";
+"Your microphone could not be held back for the reply. Nothing was sent." = "Не удалось отключить ваш микрофон на время ответа. Ничего не отправлено.";
+"The meeting did not accept the voice reply." = "Встреча не приняла голосовой ответ.";
+"The voice reply could not be played into the meeting." = "Не удалось воспроизвести голосовой ответ во встрече.";
+"The microphone could not be muted again after the reply. Mute it now." = "После ответа не удалось снова выключить микрофон. Выключите его сейчас.";
+"The system voice could not create the test reply." = "Системный голос не смог создать тестовый ответ.";
+"This is a test voice reply from Rock'N'Roll for Mac." = "Это тестовый голосовой ответ из Rock'N'Roll для Mac.";
+"Keep the microphone ready in every meeting (experimental)" = "Держать микрофон готовым во всех встречах (эксперимент)";
+"Moving your microphone between meetings skips restarting the device. Meetings you leave the microphone in stay muted, but macOS keeps showing the microphone indicator while you are in any meeting." = "Микрофон переходит между встречами без перезапуска устройства. Встречи, которые вы покинули с микрофоном, остаются без звука, но macOS показывает индикатор микрофона, пока вы в любой встрече.";
+"Voice replies (experimental)" = "Голосовые ответы (эксперимент)";
+"Lets the app play a spoken reply into a meeting while your own microphone is held back. Applies to meetings joined after turning it on. Try it from a meeting's More menu." = "Приложение может проигрывать во встречу голосовой ответ, пока ваш микрофон отключён. Действует для встреч, к которым вы подключитесь после включения. Попробуйте в меню «Ещё» встречи.";
+"Playing a voice reply…" = "Звучит голосовой ответ…";
+"Play test voice reply" = "Проиграть тестовый голосовой ответ";

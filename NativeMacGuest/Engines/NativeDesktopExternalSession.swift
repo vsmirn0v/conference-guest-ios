@@ -183,13 +183,33 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
             snapshot.microphoneOn = false; publish(); scheduleMedia(); return
         }
         guard inputPermitted else { throw NativeDesktopRTCError.permissionDenied }
+        let began = ProcessInfo.processInfo.systemUptime
         let authorized = try await GuestCaptureAuthorization.request(.audio)
+        let permissionFinished = ProcessInfo.processInfo.systemUptime
         try check(attempt); guard microphoneRevision == revision else { throw CancellationError() }
         guard authorized else { throw NativeDesktopRTCError.permissionDenied }
         guard let audio, await audio.activateMicrophone() else { throw NativeDesktopRTCError.invalidResponse }
+        let deviceFinished = ProcessInfo.processInfo.systemUptime
         try check(attempt); guard microphoneRevision == revision else { audio.suppressMicrophone(); throw CancellationError() }
         microphoneIntent = true; scheduleMedia(); await mediaTask?.value
+        if microphoneRevision == revision {
+            microphoneStartupMilliseconds = ["permission": (permissionFinished - began) * 1000,
+                "activation": (deviceFinished - permissionFinished) * 1000,
+                "renegotiation": (ProcessInfo.processInfo.systemUptime - deviceFinished) * 1000]
+        }
     }
+    private(set) var microphoneStartupMilliseconds: [String: Double] = [:]
+    func setPhysicalInputPermitted(_ permitted: Bool, keepDeviceWarm: Bool) async -> Bool {
+        inputPermitted = permitted
+        guard !permitted else { return await audio?.setInputPermitted(true) ?? true }
+        microphoneRevision &+= 1; microphoneIntent = false
+        if !keepDeviceWarm { accessoryCapturePrepared = false }
+        publisher?.setMicrophone(false); snapshot.microphoneOn = false; publish(); scheduleMedia()
+        return await audio?.setInputPermitted(false, keepWarm: keepDeviceWarm) ?? true
+    }
+    var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && audio != nil }
+    func setMicrophoneGate(open: Bool) async -> Bool { audio?.setMicrophoneGate(open: open) ?? open }
+    func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { await audio?.playVoiceReply(buffer) ?? false }
     /// Makes already-authorized hardware available for accessory mute gestures.
     /// This changes input availability, never publication intent or permission.
     func prepareMutedCaptureForAccessories() async throws {
@@ -260,11 +280,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
     }
     func configureConcurrentAudio(_ concurrent: Bool) { concurrentAudio = concurrent }
     func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool {
-        inputPermitted = permitted
-        guard !permitted else { return await audio?.setInputPermitted(true) ?? true }
-        microphoneRevision &+= 1; microphoneIntent = false; accessoryCapturePrepared = false
-        publisher?.setMicrophone(false); snapshot.microphoneOn = false; publish(); scheduleMedia()
-        return await audio?.setInputPermitted(false) ?? true
+        await setPhysicalInputPermitted(permitted, keepDeviceWarm: false)
     }
     func setPlayout(_ enabled: Bool) async throws {
         let attempt = epoch

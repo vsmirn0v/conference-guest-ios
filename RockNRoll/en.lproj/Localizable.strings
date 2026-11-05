@@ -1613,3 +1613,17 @@
 "These services send everyone's voice as one stream. Names come from who the service shows as speaking; TrueConf does not report it, so its lines show “Participant”." = "These services send everyone's voice as one stream. Names come from who the service shows as speaking; TrueConf does not report it, so its lines show “Participant”.";
 "Rock jam sessions" = "Rock jam sessions";
 "Off by default: jam sessions are mostly music. Each musician is transcribed separately." = "Off by default: jam sessions are mostly music. Each musician is transcribed separately.";
+"Voice replies are not available in this meeting." = "Voice replies are not available in this meeting.";
+"Your microphone could not move to this meeting for the reply." = "Your microphone could not move to this meeting for the reply.";
+"Your microphone could not be held back for the reply. Nothing was sent." = "Your microphone could not be held back for the reply. Nothing was sent.";
+"The meeting did not accept the voice reply." = "The meeting did not accept the voice reply.";
+"The voice reply could not be played into the meeting." = "The voice reply could not be played into the meeting.";
+"The microphone could not be muted again after the reply. Mute it now." = "The microphone could not be muted again after the reply. Mute it now.";
+"The system voice could not create the test reply." = "The system voice could not create the test reply.";
+"This is a test voice reply from Rock'N'Roll for Mac." = "This is a test voice reply from Rock'N'Roll for Mac.";
+"Keep the microphone ready in every meeting (experimental)" = "Keep the microphone ready in every meeting (experimental)";
+"Moving your microphone between meetings skips restarting the device. Meetings you leave the microphone in stay muted, but macOS keeps showing the microphone indicator while you are in any meeting." = "Moving your microphone between meetings skips restarting the device. Meetings you leave the microphone in stay muted, but macOS keeps showing the microphone indicator while you are in any meeting.";
+"Voice replies (experimental)" = "Voice replies (experimental)";
+"Lets the app play a spoken reply into a meeting while your own microphone is held back. Applies to meetings joined after turning it on. Try it from a meeting's More menu." = "Lets the app play a spoken reply into a meeting while your own microphone is held back. Applies to meetings joined after turning it on. Try it from a meeting's More menu.";
+"Playing a voice reply…" = "Playing a voice reply…";
+"Play test voice reply" = "Play test voice reply";

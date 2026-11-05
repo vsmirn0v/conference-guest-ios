@@ -238,6 +238,21 @@ struct NativeRockLiveMediaEvidence {
         }
     }
     func setTranscriptionOutput(_ keep: Bool) async -> Bool { setTranscriptionRequested(keep); return true }
+    // Voice replies go through LiveKit's own input mixer: its microphone volume
+    // is the gate, and app audio is mixed into what the room receives.
+    var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && room != nil }
+    func setMicrophoneGate(open: Bool) async -> Bool {
+        let mixer = AudioManager.shared.mixer
+        mixer.micVolume = open ? 1 : 0
+        return (mixer.micVolume != 0) == open
+    }
+    func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool {
+        guard let room, room.localParticipant.isMicrophoneEnabled() else { return false }
+        AudioManager.shared.mixer.capture(appAudio: buffer)
+        let seconds = Double(buffer.frameLength) / buffer.format.sampleRate
+        do { try await Task.sleep(for: .seconds(seconds + 0.2)) } catch { return false }
+        return true
+    }
     /// Each remote participant's audio track, reported when the set changes.
     private func publishAudioSources(_ room: Room) {
         guard let transcriptionHandler else { return }

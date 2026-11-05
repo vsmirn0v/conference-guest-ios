@@ -361,9 +361,11 @@ import UserNotifications
             guard let self, !target.isClosed, meetings.contains(where: { $0 === target }) else { return false }
             let began = ProcessInfo.processInfo.systemUptime
             var released = began
+            let from = talkMeeting.flatMap { $0 === target ? nil : $0.kind.rawValue }
             defer {
                 let now = ProcessInfo.processInfo.systemUptime
-                NSLog("talk-handover release=%.0fms assume=%.0fms", (released - began) * 1000, (now - released) * 1000)
+                target.noteHandoverPhases(from: from, releaseMilliseconds: (released - began) * 1000,
+                                          assumeMilliseconds: (now - released) * 1000)
             }
             if let current = talkMeeting, current !== target {
                 defer { released = ProcessInfo.processInfo.systemUptime }

@@ -182,7 +182,7 @@ import UniformTypeIdentifiers
     /// Your microphone is transcribed only on confirmed state: the setting is on,
     /// this meeting holds the microphone and the engine confirmed it unmuted.
     var transcribesMicrophone: Bool {
-        localTranscriber != nil && listenStore.includesMicrophone && ownsMicrophone && snapshot.microphoneOn
+        localTranscriber != nil && listenStore.includesMicrophone && ownsMicrophone && snapshot.microphoneOn && !voiceReplyActive
     }
     private func updateLocalMicrophoneCapture() { localTranscriber?.setLocalCapture(transcribesMicrophone) }
     private func receiveLocalLine(_ line: MeetingTranscriber.Line) {
@@ -291,6 +291,102 @@ import UniformTypeIdentifiers
     private var endedByOrganizer = false
     /// Click-to-live time of a microphone move between meetings, for diagnostics.
     private var handoverStartedAt: TimeInterval?
+    /// Release and assume times of the move into this meeting, from the workspace.
+    private var handoverPhases: (from: String?, release: Double?, assume: Double?)?
+    func noteHandoverPhases(from: String?, releaseMilliseconds: Double?, assumeMilliseconds: Double?) {
+        handoverPhases = (from, releaseMilliseconds, assumeMilliseconds)
+    }
+    private func logHandover(started: TimeInterval, live: Bool, steps: [String: Double]) {
+        let record = TalkHandoverRecord(from: handoverPhases?.from, to: kind.rawValue,
+            releaseMilliseconds: handoverPhases?.release, assumeMilliseconds: handoverPhases?.assume,
+            totalMilliseconds: (ProcessInfo.processInfo.systemUptime - started) * 1000, steps: steps,
+            keptWarm: keepMicrophoneWarm(), live: live)
+        lastHandover = record
+        probeLog("talk-handover", record.fields)
+    }
+    private(set) var lastHandover: TalkHandoverRecord?
+    static let keepMicrophoneWarmKey = "nativeDesktop.keepMicrophoneWarm"
+    /// Experimental: a meeting losing the talk role keeps its device running, muted.
+    var keepMicrophoneWarm: () -> Bool = { UserDefaults.standard.bool(forKey: NativeDesktopMeetingModel.keepMicrophoneWarmKey) }
+
+    // MARK: Voice replies
+
+    enum VoiceReplyError: LocalizedError, Equatable {
+        case unavailable, notTalkMeeting, gate, microphone, playback, mute, sample
+        var errorDescription: String? {
+            switch self {
+            case .unavailable: L("Voice replies are not available in this meeting.")
+            case .notTalkMeeting: L("Your microphone could not move to this meeting for the reply.")
+            case .gate: L("Your microphone could not be held back for the reply. Nothing was sent.")
+            case .microphone: L("The meeting did not accept the voice reply.")
+            case .playback: L("The voice reply could not be played into the meeting.")
+            case .mute: L("The microphone could not be muted again after the reply. Mute it now.")
+            case .sample: L("The system voice could not create the test reply.")
+            }
+        }
+    }
+    /// A reply is being played into this meeting; your own microphone is held back.
+    @Published private(set) var voiceReplyActive = false
+    /// The mute after a reply was not confirmed, so the gate stays closed until it is.
+    private var voiceReplyGateHeld = false
+    /// What you chose with the microphone button during a reply; it wins afterwards.
+    private var voiceReplyUserChoice: Bool?
+    var supportsVoiceReply: Bool { connected && engine.supportsVoiceReply }
+
+    /// Plays `buffer` into this meeting with your microphone held back:
+    /// the gate closes before anything unmutes, and reopens only once the
+    /// meeting is muted again (or was live before the reply).
+    func speak(_ buffer: AVAudioPCMBuffer) async throws {
+        guard supportsVoiceReply, !voiceReplyActive, !closed, !transferHeld else { throw VoiceReplyError.unavailable }
+        if !ownsMicrophone {
+            guard let arbiter = microphoneArbiter, await arbiter(self), ownsMicrophone else { throw VoiceReplyError.notTalkMeeting }
+        }
+        voiceReplyActive = true; voiceReplyUserChoice = nil; updateLocalMicrophoneCapture()
+        defer { voiceReplyActive = false; voiceReplyUserChoice = nil; updateLocalMicrophoneCapture() }
+        let wasLive = snapshot.microphoneOn
+        probeLog("voice-reply-start", ["service": kind.rawValue, "seconds": Double(buffer.frameLength) / buffer.format.sampleRate, "wasLive": wasLive])
+        guard await engine.setMicrophoneGate(open: false) else {
+            _ = await engine.setMicrophoneGate(open: true); throw VoiceReplyError.gate
+        }
+        // The gate's volume ramps down; let it reach silence before anything unmutes.
+        try? await Task.sleep(for: .milliseconds(GuestVoiceReplyGraph.gateSettleMilliseconds))
+        if !wasLive {
+            setMicrophoneEnabled(true); await microphoneControl?.value
+            guard snapshot.microphoneOn else { try await finishVoiceReply(wasLive: false); throw VoiceReplyError.microphone }
+        }
+        let played = await engine.playVoiceReply(buffer)
+        try await finishVoiceReply(wasLive: wasLive)
+        probeLog("voice-reply-end", ["service": kind.rawValue, "played": played])
+        guard played else { throw VoiceReplyError.playback }
+    }
+    private func finishVoiceReply(wasLive: Bool) async throws {
+        if let choice = voiceReplyUserChoice {
+            // You pressed the microphone button during the reply: keep that state.
+            if choice || !snapshot.microphoneOn { _ = await engine.setMicrophoneGate(open: true) }
+            else { voiceReplyGateHeld = true }
+            return
+        }
+        if !wasLive {
+            setMicrophoneEnabled(false); await microphoneControl?.value
+            guard !snapshot.microphoneOn else { voiceReplyGateHeld = true; throw VoiceReplyError.mute }
+        }
+        _ = await engine.setMicrophoneGate(open: true)
+    }
+    /// Speaks a short sentence in the macOS system voice into this meeting.
+    func playTestVoiceReply() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                guard let buffer = await VoiceReplySample.make(text: L("This is a test voice reply from Rock'N'Roll for Mac.")) else {
+                    throw VoiceReplyError.sample
+                }
+                try await speak(buffer)
+            } catch { self.error = error.localizedDescription }
+        }
+    }
+#if DEBUG
+    func setMicrophoneForTesting(_ enabled: Bool) async { setMicrophoneEnabled(enabled); await microphoneControl?.value }
+#endif
     private(set) var engine: any NativeDesktopMeetingEngine
     private var capture: NativeDesktopShareCapture?
     private var sharingTask: Task<Void, Never>?
@@ -667,14 +763,11 @@ import UniformTypeIdentifiers
         }
         if value.phase == .connected { connection?.finish(.success(())) }
         if value.phase == .failed { connection?.finish(.failure(NativeDesktopError.unavailable(value.lastError ?? L("Could not connect to meeting.")))) }
-        if let started = handoverStartedAt, value.microphoneOn || !microphoneStarting {
-            if value.microphoneOn {
-                let steps = (engine as? NativeDesktopGuestEngine)?.microphoneStartupMilliseconds ?? [:]
-                NSLog("talk-handover total=%.0fms permission=%.0fms activation=%.0fms unmute=%.0fms",
-                      (ProcessInfo.processInfo.systemUptime - started) * 1000,
-                      steps["permission"] ?? -1, steps["activation"] ?? -1, steps["unmuteConfirmation"] ?? -1)
-            }
-            handoverStartedAt = nil
+        // A reply held the gate closed because the mute after it was not confirmed:
+        // once the microphone is confirmed off, reopening is safe.
+        if voiceReplyGateHeld, !value.microphoneOn, !voiceReplyActive {
+            voiceReplyGateHeld = false
+            let engine = engine; Task { _ = await engine.setMicrophoneGate(open: true) }
         }
         if !value.microphoneOn { headset.confirm(muted: true) }
         else if value.phase == .connected, let request = authorizedMicrophoneRequest {
@@ -713,6 +806,11 @@ import UniformTypeIdentifiers
     }
     func toggleMicrophone() {
         let enabled = !(requestedMicrophone ?? snapshot.microphoneOn)
+        if voiceReplyActive { voiceReplyUserChoice = enabled }
+        else if enabled, voiceReplyGateHeld {
+            voiceReplyGateHeld = false
+            let engine = engine; Task { _ = await engine.setMicrophoneGate(open: true) }
+        }
         guard enabled, !ownsMicrophone else { setMicrophoneEnabled(enabled); return }
         claimTalkRole(microphone: true) { [weak self] in self?.setMicrophoneEnabled(true) }
     }
@@ -735,7 +833,10 @@ import UniformTypeIdentifiers
             let wanted = microphone ? requestedMicrophone == true : requestedCamera == true
             if microphone { if requestedMicrophone == true { requestedMicrophone = nil } }
             else if requestedCamera == true { requestedCamera = nil }
-            guard claimed, wanted, token == generation, !closed, ownsMicrophone else { return }
+            guard claimed, wanted, token == generation, !closed, ownsMicrophone else {
+                if microphone { handoverStartedAt = nil; handoverPhases = nil }
+                return
+            }
             action()
         }
     }
@@ -751,7 +852,7 @@ import UniformTypeIdentifiers
         // A leaving meeting may still send until its engine stops: wait for that.
         guard !closed else { return await leave() }
         engine.setMicrophoneReadinessForRecovery(false)
-        guard await engine.setPhysicalInputPermitted(false) else {
+        guard await engine.setPhysicalInputPermitted(false, keepDeviceWarm: keepMicrophoneWarm()) else {
             // Stay the (muted) talk meeting and keep the ability to unmute here.
             _ = await engine.setPhysicalInputPermitted(true)
             ownsMicrophone = true; registerHeadset(); return false
@@ -784,10 +885,16 @@ import UniformTypeIdentifiers
         microphoneControl = perform(priorityOff: !enabled) { engine in
             do {
                 try await engine.setMicrophone(enabled)
+                if let started = self.handoverStartedAt {
+                    self.handoverStartedAt = nil
+                    if enabled { self.logHandover(started: started, live: engine.snapshot.microphoneOn, steps: engine.microphoneStartupMilliseconds) }
+                    self.handoverPhases = nil
+                }
                 guard token == self.generation, command == self.microphoneCommand, !self.closed, !self.transferHeld else { return }
                 self.authorizedMicrophoneRequest = enabled && engine.snapshot.microphoneOn ? request : nil
                 self.headset.confirm(muted: !engine.snapshot.microphoneOn, request: request)
             } catch {
+                self.handoverStartedAt = nil; self.handoverPhases = nil
                 if command == self.microphoneCommand { self.requestedMicrophone = nil }
                 if token == self.generation, !self.closed {
                     try? await Task { @MainActor in try await engine.setMicrophone(false) }.value

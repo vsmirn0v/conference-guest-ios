@@ -324,6 +324,12 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private var inputMeterEnabled = false
     /// Local transcription of your own microphone: a copy of each input buffer.
     private var inputTranscriptionSink: ((AVAudioPCMBuffer) -> Void)?
+    /// Voice replies (experimental setting): the input graph's gate and player.
+    static let voiceRepliesKey = "nativeDesktop.voiceReplies"
+    static var voiceRepliesEnabled: Bool { UserDefaults.standard.bool(forKey: voiceRepliesKey) }
+    private var voiceReply: GuestVoiceReplyGraph?
+    /// Survives engine rebuilds: a graph built during a reply starts closed.
+    private var microphoneGateOpen = true
     private var ownedFactory: LKRTCPeerConnectionFactory?
     private var cached: [String: Any]
     // The following fields are confined to audioQueue.
@@ -423,6 +429,19 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     /// and return at once. Whether the meeting is unmuted is the caller's gate.
     func setInputTranscriptionSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {
         locked { inputTranscriptionSink = sink }
+    }
+    /// Opens or closes the microphone gate. True when the gate now matches, or
+    /// when no input graph exists yet (it will be built in that state).
+    func setMicrophoneGate(open: Bool) -> Bool {
+        let graph = locked { () -> GuestVoiceReplyGraph? in microphoneGateOpen = open; return voiceReply }
+        graph?.setGate(open: open)
+        update(["microphoneGateOpen": open])
+        return graph.map { $0.gateOpen == open } ?? true
+    }
+    /// Plays a reply into what the meeting receives. False without an input graph.
+    func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool {
+        guard let graph = locked({ voiceReply }) else { return false }
+        return await graph.play(buffer)
     }
 
     private init(microphoneEnabled: Bool, playoutEnabled: Bool, profile: GuestAudioProfile,
@@ -680,12 +699,23 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
 
     /// Withdrawing the permit mutes and makes physical input unavailable;
     /// granting it starts nothing. A later unmute re-activates input explicitly.
-    func setInputPermitted(_ permitted: Bool, timeout: TimeInterval = 8) async -> Bool {
+    /// With `keepWarm` the permit is withdrawn and the microphone muted, but the
+    /// device and voice processing keep running, so moving back skips their
+    /// restart. Unmuting is refused until the permit returns, as without it.
+    func setInputPermitted(_ permitted: Bool, keepWarm: Bool = false, timeout: TimeInterval = 8) async -> Bool {
         if !permitted { setPrivateInputMeterEnabled(false) }
-        return await perform(permitted ? "input-permit" : "input-release", timeout: timeout) {
+        return await perform(permitted ? "input-permit" : keepWarm ? "input-release-warm" : "input-release", timeout: timeout) {
             guard !self.closed, let module = self.currentModule else { return !permitted }
             guard !permitted else {
-                self.inputPermitted = true; self.update(["inputPermitted": true]); return true
+                self.inputPermitted = true; self.update(["inputPermitted": true, "inputKeptWarm": false]); return true
+            }
+            if keepWarm {
+                self.inputPermitted = false
+                self.update(["microphoneMutedRequested": true])
+                let muted = self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0
+                self.update(["inputPermitted": false, "inputKeptWarm": true])
+                self.readSnapshot(module)
+                return muted && module.isMicrophoneMuted
             }
             self.deferredActivation = self.deferredActivation || self.microphoneOptIn
             self.inputPermitted = false
@@ -904,6 +934,12 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             sharedPlayoutGate.remove(identity: ObjectIdentifier(tappedPlayout))
             tappedPlayout.removeTap(onBus: 0); self.tappedPlayout = nil; tappedPlayoutEngine = nil
         }
+        // A reply in progress ends with its engine; the gate state is kept for the next one.
+        let graph = locked { () -> GuestVoiceReplyGraph? in
+            guard let current = voiceReply, current.engine === engine else { return nil }
+            voiceReply = nil; return current
+        }
+        graph?.detach()
         locked { cached["enginesReleased"] = (cached["enginesReleased"] as? Int ?? 0) + 1 }; return 0
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, engine: AVAudioEngine,
@@ -927,6 +963,17 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                 guard metering else { return }
                 self.inputMeter.render(pcmBuffer: buffer)
             }
+        }
+        // Voice replies: microphone → gate → input mixer ← player. Built only
+        // when the experimental setting is on; otherwise the default wiring stays.
+        if Self.voiceRepliesEnabled, let inputMixer = context[kLKRTCAudioEngineInputMixerNodeKey] as? AVAudioMixerNode {
+            let graph: GuestVoiceReplyGraph = locked {
+                if let existing = voiceReply, existing.engine === engine { return existing }
+                let created = GuestVoiceReplyGraph(engine: engine, gateOpen: microphoneGateOpen)
+                voiceReply = created; return created
+            }
+            let connected = graph.connect(source: source, inputMixer: inputMixer, format: format)
+            update(["voiceReplyGraph": connected, "microphoneGateOpen": graph.gateOpen])
         }
         return 0
     }

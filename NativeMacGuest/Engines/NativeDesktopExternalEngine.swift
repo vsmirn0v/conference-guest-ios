@@ -88,6 +88,18 @@ protocol NativeDesktopMeetingEngine: AnyObject {
     /// Before connecting: receive audio even when joining with sound off, so a
     /// meeting joined silently can still be transcribed.
     func setTranscriptionRequested(_ requested: Bool)
+    /// The last unmute's steps in milliseconds (permission, activation, then the
+    /// service step: confirmation or renegotiation), for move diagnostics.
+    var microphoneStartupMilliseconds: [String: Double] { get }
+    /// Releasing input for another meeting. With `keepDeviceWarm` the device and
+    /// voice processing keep running muted, so moving back is faster.
+    func setPhysicalInputPermitted(_ permitted: Bool, keepDeviceWarm: Bool) async -> Bool
+    /// Voice replies: a microphone gate and a player in the input graph.
+    var supportsVoiceReply: Bool { get }
+    /// Closing the gate removes your microphone from what is sent; the player still plays.
+    func setMicrophoneGate(open: Bool) async -> Bool
+    /// Plays one buffer into what the meeting receives; true when it finished playing.
+    func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool
     func leave() async -> Bool
 }
 extension NativeDesktopMeetingEngine {
@@ -113,6 +125,13 @@ extension NativeDesktopMeetingEngine {
     func setTranscriptionAudioHandler(_ handler: (([MeetingAudioSource]) -> Void)?) {}
     func setTranscriptionOutput(_ keep: Bool) async -> Bool { !keep }
     func setTranscriptionRequested(_ requested: Bool) {}
+    var microphoneStartupMilliseconds: [String: Double] { [:] }
+    func setPhysicalInputPermitted(_ permitted: Bool, keepDeviceWarm: Bool) async -> Bool {
+        await setPhysicalInputPermitted(permitted)
+    }
+    var supportsVoiceReply: Bool { false }
+    func setMicrophoneGate(open: Bool) async -> Bool { open }
+    func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { false }
 }
 enum NativeDesktopPrivateAudioError: LocalizedError {
     case unavailable

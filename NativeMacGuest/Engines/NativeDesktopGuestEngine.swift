@@ -272,11 +272,17 @@ enum NativeDesktopGuestError: LocalizedError {
         media = NativeDesktopMediaService.makeConcurrentGuestMedia()
     }
     func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool {
+        await setPhysicalInputPermitted(permitted, keepDeviceWarm: false)
+    }
+    func setPhysicalInputPermitted(_ permitted: Bool, keepDeviceWarm: Bool) async -> Bool {
         inputPermitted = permitted
         if !permitted { session?.setMicrophonePreparationRequested(false) }
         guard let systemAudio else { return true }
-        return await systemAudio.setInputPermitted(permitted)
+        return await systemAudio.setInputPermitted(permitted, keepWarm: keepDeviceWarm)
     }
+    var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && systemAudio != nil }
+    func setMicrophoneGate(open: Bool) async -> Bool { systemAudio?.setMicrophoneGate(open: open) ?? open }
+    func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { await systemAudio?.playVoiceReply(buffer) ?? false }
     func setPlayoutVolume(_ volume: Double) async {
         meetingVolume = volume
         _ = systemAudio?.setMeetingVolume(volume)

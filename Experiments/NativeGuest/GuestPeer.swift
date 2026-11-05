@@ -218,7 +218,11 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         let constraints = physicalAudio ? profile.audioConstraints : [
             "googEchoCancellation": "false", "googNoiseSuppression": "false", "googAutoGainControl": "false"]
         let source = factory.audioSource(with: LKRTCMediaConstraints(mandatoryConstraints: constraints, optionalConstraints: nil))
-        return factory.audioTrack(with: source, trackId: cid)
+        // WebRTC creates tracks enabled. Disable before anyone can attach it, so a
+        // microphone track never sends until an unmute enables it.
+        let track = factory.audioTrack(with: source, trackId: cid)
+        track.isEnabled = false
+        return track
     }
 
     func prepareVideo(cid: String, profile: GuestVideoProfile = .pattern, screenCast: Bool = false) -> LKRTCVideoTrack {
