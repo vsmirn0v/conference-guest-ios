@@ -9,6 +9,16 @@ protocol AttentionJudge: Sendable {
     func judge(_ request: JudgeRequest) async throws -> JudgeResult
 }
 
+struct ReplyResult: Sendable {
+    var draft: ReplyDraft
+    var latency: TimeInterval
+}
+
+/// Drafts the chat reply or reaction a card offers; nothing is sent by it.
+protocol ReplyWriter: Sendable {
+    func draft(_ request: ReplyRequest) async throws -> ReplyResult
+}
+
 enum AttentionJudgeError: LocalizedError, Equatable {
     /// `message` is the provider's own explanation, when it sent one.
     case notConfigured, missingKey, unauthorized(String?), rateLimited(String?), quota(String?), http(Int, String?)
@@ -52,7 +62,8 @@ enum AttentionJudgeError: LocalizedError, Equatable {
 }
 
 /// Any OpenAI-compatible chat completions endpoint with JSON-schema output.
-struct OpenAIChatJudge: AttentionJudge {
+/// The same provider judges meetings and drafts replies.
+struct OpenAIChatJudge: AttentionJudge, ReplyWriter {
     let provider: AttentionProvider
     let key: String?
     var session: URLSession = .shared
@@ -60,19 +71,15 @@ struct OpenAIChatJudge: AttentionJudge {
     var retryDelays: [TimeInterval] = [1, 3]
 
     func judge(_ request: JudgeRequest) async throws -> JudgeResult {
-        guard let endpoint = provider.endpoint, !provider.model.trimmed.isEmpty else { throw AttentionJudgeError.notConfigured }
-        if provider.needsKey && (key ?? "").isEmpty { throw AttentionJudgeError.missingKey }
-        let body = try JSONSerialization.data(withJSONObject: Self.body(request, model: provider.model.trimmed))
-        var attempt = 0
-        while true {
-            let started = ProcessInfo.processInfo.systemUptime
-            do {
-                let verdict = try await send(body, to: endpoint, window: request.window)
-                return .init(verdict: verdict, latency: ProcessInfo.processInfo.systemUptime - started)
-            } catch let error as AttentionJudgeError where error.retryable && attempt < retryDelays.count {
-                try await Task.sleep(for: .seconds(retryDelays[attempt])); attempt += 1
-            }
-        }
+        let (content, latency) = try await complete(Self.body(request, model: provider.model.trimmed))
+        do { return .init(verdict: try AttentionPrompt.verdict(from: content, window: request.window), latency: latency) }
+        catch let error as AttentionVerdictError { throw AttentionJudgeError.verdict(error) }
+    }
+
+    func draft(_ request: ReplyRequest) async throws -> ReplyResult {
+        guard !request.judge.replyChannels.isEmpty else { throw ReplyDraftError.unavailable }
+        let (content, latency) = try await complete(Self.replyBody(request, model: provider.model.trimmed))
+        return .init(draft: try ReplyPrompt.draft(from: content, channels: request.judge.replyChannels), latency: latency)
     }
 
     static func body(_ request: JudgeRequest, model: String) -> [String: Any] {
@@ -81,7 +88,30 @@ struct OpenAIChatJudge: AttentionJudge {
                              "json_schema": ["name": AttentionPrompt.schemaName, "strict": true, "schema": AttentionPrompt.schema]]]
     }
 
-    private func send(_ body: Data, to endpoint: URL, window: AttentionWindow) async throws -> AttentionVerdict {
+    static func replyBody(_ request: ReplyRequest, model: String) -> [String: Any] {
+        ["model": model, "messages": ReplyPrompt.messages(request),
+         "response_format": ["type": "json_schema", "json_schema": ["name": ReplyPrompt.schemaName, "strict": true,
+                                                                   "schema": ReplyPrompt.schema(request.judge.replyChannels)]]]
+    }
+
+    /// The model's answer text and how long the successful attempt took.
+    private func complete(_ object: [String: Any]) async throws -> (String, TimeInterval) {
+        guard let endpoint = provider.endpoint, !provider.model.trimmed.isEmpty else { throw AttentionJudgeError.notConfigured }
+        if provider.needsKey && (key ?? "").isEmpty { throw AttentionJudgeError.missingKey }
+        let body = try JSONSerialization.data(withJSONObject: object)
+        var attempt = 0
+        while true {
+            let started = ProcessInfo.processInfo.systemUptime
+            do {
+                let content = try await send(body, to: endpoint)
+                return (content, ProcessInfo.processInfo.systemUptime - started)
+            } catch let error as AttentionJudgeError where error.retryable && attempt < retryDelays.count {
+                try await Task.sleep(for: .seconds(retryDelays[attempt])); attempt += 1
+            }
+        }
+    }
+
+    private func send(_ body: Data, to endpoint: URL) async throws -> String {
         var urlRequest = URLRequest(url: endpoint, timeoutInterval: timeout)
         urlRequest.httpMethod = "POST"; urlRequest.httpBody = body
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -98,8 +128,7 @@ struct OpenAIChatJudge: AttentionJudge {
               let message = choice["message"] as? [String: Any] else { throw AttentionJudgeError.emptyAnswer }
         if let refusal = message["refusal"] as? String, !refusal.isEmpty { throw AttentionJudgeError.refused }
         guard let content = message["content"] as? String, !content.trimmed.isEmpty else { throw AttentionJudgeError.emptyAnswer }
-        do { return try AttentionPrompt.verdict(from: content, window: window) }
-        catch let error as AttentionVerdictError { throw AttentionJudgeError.verdict(error) }
+        return content
     }
 }
 

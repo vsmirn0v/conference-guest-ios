@@ -1,4 +1,5 @@
 import AVFoundation
+import ConferenceCore
 import LiveKitWebRTC
 import XCTest
 @testable import RockNativeDesktop
@@ -395,6 +396,110 @@ import XCTest
         XCTAssertEqual(coordinator.lastError, AttentionJudgeError.transport.localizedDescription)
         XCTAssertTrue(coordinator.cards.isEmpty)
     }
+
+    // MARK: Phase 5 — replies
+
+    func testReplyDraftKeepsOnlyWhatTheMeetingAccepts() throws {
+        let both = ReplyChannels(chat: true, reactions: [.like, .thanks])
+        let draft = try ReplyPrompt.draft(from: #"{"chat":"«Да, через минуту подключусь.»","reaction":"like"}"#, channels: both)
+        XCTAssertEqual(draft, ReplyDraft(chat: "Да, через минуту подключусь.", reaction: .like), "Quotes around the reply are removed")
+        let unknown = try ReplyPrompt.draft(from: #"{"chat":"Ok","reaction":"fire"}"#, channels: both)
+        XCTAssertNil(unknown.reaction, "A reaction the meeting does not offer is dropped")
+        let noChat = try ReplyPrompt.draft(from: #"{"chat":"Ok","reaction":"thanks"}"#, channels: .init(chat: false, reactions: [.thanks]))
+        XCTAssertEqual(noChat, ReplyDraft(chat: "", reaction: .thanks), "Text is dropped where the meeting has no chat")
+        XCTAssertThrowsError(try ReplyPrompt.draft(from: #"{"chat":"  ","reaction":"none"}"#, channels: both)) {
+            XCTAssertEqual($0 as? ReplyDraftError, .empty)
+        }
+        XCTAssertThrowsError(try ReplyPrompt.draft(from: "Sure!", channels: both)) { XCTAssertEqual($0 as? ReplyDraftError, .malformed) }
+        let long = try ReplyPrompt.draft(from: "{\"chat\":\"\(String(repeating: "a", count: 900))\",\"reaction\":\"none\"}", channels: both)
+        XCTAssertEqual(long.chat.count, ReplyPrompt.chatLimit)
+        let reactions = (ReplyPrompt.schema(both)["properties"] as? [String: Any])?["reaction"] as? [String: Any]
+        XCTAssertEqual(reactions?["enum"] as? [String], ["none", "like", "thanks"], "Only the meeting's reactions are offered")
+    }
+
+    func testReplyPromptCarriesDecisionStyleAndChannels() {
+        var profile = AttentionProfile(name: "Vitalii"); profile.replyStyle = "Brief, informal"
+        let window = sampleWindow()
+        let judge = JudgeRequest(window: window, preset: nil, profile: profile, yourName: "Vitalii", language: "en",
+                                 replyChannels: .init(chat: true, reactions: [.like]))
+        let verdict = AttentionVerdict(level: .now, probability: 0.9, reason: "Anna asks whether DNS is ready.",
+                                       evidence: window.lines.suffix(1).map(\.id), action: .chat)
+        let messages = ReplyPrompt.messages(.init(judge: judge, verdict: verdict))
+        let system = messages[0]["content"] ?? "", user = messages[1]["content"] ?? ""
+        XCTAssertTrue(system.contains("Never invent facts")); XCTAssertTrue(system.contains("Brief, informal"))
+        XCTAssertTrue(user.contains("Anna asks whether DNS is ready.")); XCTAssertTrue(user.contains("Based on " + (window.lines.last?.ref ?? "")))
+        XCTAssertTrue(user.contains("a chat message or one reaction: like"))
+        XCTAssertTrue(AttentionPrompt.userContent(judge).contains("can answer here without joining: chat and reactions"))
+        var none = judge; none.replyChannels = .init()
+        XCTAssertTrue(AttentionPrompt.userContent(none).contains("cannot answer here without joining"))
+    }
+
+    func testCoordinatorDraftsAReplyAndSendsOnlyWhatYouApprove() async throws {
+        let store = store()
+        store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+        let (infra, _) = try await meeting("infra")
+        let judge = FakeJudge(), writer = FakeWriter()
+        var sent: [String] = [], reacted: [MeetingReaction] = [], clock = Date()
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [infra] }; coordinator.hasTranscript = { _ in true }
+        coordinator.makeJudge = { _, _ in judge }; coordinator.makeWriter = { _, _ in writer }
+        coordinator.now = { clock }
+        coordinator.replyChannels = { _ in .init(chat: true, reactions: [.like, .thanks]) }
+        coordinator.deliverChat = { _, text in sent.append(text); return true }
+        coordinator.deliverReaction = { _, reaction in reacted.append(reaction) }
+
+        infra.receiveLocalLineForTesting(.init(id: "i1", trackID: "a", text: "Виталий, DNS готов?", start: clock, end: clock))
+        judge.next = .init(level: .now, probability: 0.9, reason: "Anna waits.", evidence: ["L1"], action: .chat)
+        await coordinator.tick()
+        XCTAssertEqual(judge.lastChannels, .init(chat: true, reactions: [.like, .thanks]), "The judge knows how you could answer")
+        try await spin { coordinator.card(for: infra.sessionID)?.draft != nil }
+        let card = try XCTUnwrap(coordinator.card(for: infra.sessionID))
+        XCTAssertEqual(writer.calls, 1); XCTAssertEqual(card.draft?.chat, "Сейчас посмотрю и отвечу.")
+        XCTAssertTrue(sent.isEmpty, "A draft is never sent by itself")
+
+        clock += 30
+        infra.receiveLocalLineForTesting(.init(id: "i2", trackID: "a", text: "Виталий?", start: clock, end: clock))
+        judge.next = .init(level: .now, probability: 0.95, reason: "Asked again.", evidence: ["L2"], action: .open)
+        await coordinator.tick()
+        XCTAssertEqual(coordinator.card(for: infra.sessionID)?.id, card.id, "A card you are replying from is not replaced")
+
+        XCTAssertTrue(coordinator.sendReply(card, text: "Да, DNS готов."))
+        XCTAssertEqual(sent, ["Да, DNS готов."]); XCTAssertNil(coordinator.card(for: infra.sessionID))
+        XCTAssertEqual(store.preset(room: infra.invitation)?.examples.last?.decision, .approved, "Replying counts as approval")
+        let log = try store.decisionFiles().map { try String(contentsOf: $0, encoding: .utf8) }.joined()
+        for field in ["\"drafted\"", "\"replied\"", "\"replyMessages\"", "\"edited\":true"] { XCTAssertTrue(log.contains(field), field) }
+
+        // Reactions, and nothing at all when the meeting's instructions turn replies off.
+        clock += 30
+        infra.receiveLocalLineForTesting(.init(id: "i3", trackID: "a", text: "Спасибо всем!", start: clock, end: clock))
+        judge.next = .init(level: .soon, probability: 0.9, reason: "Thanks for the team.", evidence: ["L3"], action: .open)
+        await coordinator.tick()
+        let thanks = try XCTUnwrap(coordinator.card(for: infra.sessionID))
+        XCTAssertNil(thanks.draft, "Only a chat or reaction suggestion drafts by itself"); XCTAssertEqual(writer.calls, 1)
+        XCTAssertTrue(coordinator.sendReaction(thanks, .thanks)); XCTAssertEqual(reacted, [.thanks])
+        XCTAssertFalse(coordinator.sendReaction(thanks, .fire), "A reaction the meeting does not offer is refused")
+
+        var preset = try XCTUnwrap(store.preset(room: infra.invitation)); preset.suggestReplies = false; store.save(preset)
+        clock += 30
+        infra.receiveLocalLineForTesting(.init(id: "i4", trackID: "a", text: "Виталий, ещё вопрос.", start: clock, end: clock))
+        judge.next = .init(level: .now, probability: 0.95, reason: "Another question.", evidence: ["L4"], action: .chat)
+        await coordinator.tick()
+        XCTAssertEqual(judge.lastChannels, ReplyChannels()); XCTAssertEqual(coordinator.card(for: infra.sessionID)?.channels, ReplyChannels())
+        XCTAssertEqual(writer.calls, 1, "Replies off for this meeting: nothing is drafted")
+    }
+
+    private func spin(_ predicate: () -> Bool) async throws {
+        for _ in 0..<200 where !predicate() { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(predicate())
+    }
+}
+
+private final class FakeWriter: ReplyWriter, @unchecked Sendable {
+    var calls = 0
+    func draft(_ request: ReplyRequest) async throws -> ReplyResult {
+        calls += 1
+        return .init(draft: .init(chat: "Сейчас посмотрю и отвечу.", reaction: .like), latency: 0.1)
+    }
 }
 
 private final class FakeJudge: AttentionJudge, @unchecked Sendable {
@@ -402,8 +507,9 @@ private final class FakeJudge: AttentionJudge, @unchecked Sendable {
     var error: Error?
     var calls = 0
     var lastTitle: String?
+    var lastChannels: ReplyChannels?
     func judge(_ request: JudgeRequest) async throws -> JudgeResult {
-        calls += 1; lastTitle = request.window.meetingTitle
+        calls += 1; lastTitle = request.window.meetingTitle; lastChannels = request.replyChannels
         if let error { throw error }
         let evidence = next.evidence.compactMap { ref in request.window.line(ref: ref)?.id }
         var verdict = next; verdict.evidence = evidence

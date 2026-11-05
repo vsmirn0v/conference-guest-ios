@@ -1,4 +1,5 @@
 import AppKit
+import ConferenceCore
 import SwiftUI
 
 extension AttentionLevel {
@@ -40,6 +41,7 @@ struct AttentionCardView: View {
                     (Text(line.speaker).fontWeight(.semibold) + Text(" — " + line.text)).font(.callout).foregroundStyle(.secondary).lineLimit(3)
                 }.fixedSize(horizontal: false, vertical: true)
             }
+            if !card.channels.isEmpty && !declining { AttentionReplyView(attention: attention, card: card) }
             if declining {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(L("Why not?")).font(.caption).foregroundStyle(.secondary)
@@ -56,7 +58,8 @@ struct AttentionCardView: View {
                 }
             } else {
                 HStack(spacing: 8) {
-                    Button(L("Open meeting")) { attention.open(card) }.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    Button(L("Open meeting")) { attention.open(card) }.buttonStyle(.borderedProminent)
+                        .keyboardShortcut(card.draft == nil ? .defaultAction : nil)
                     Button(L("Why")) { attention.inspecting = card }
                     Spacer(minLength: 4)
                     if card.verdict.level == .soon { Button(L("Dismiss")) { attention.dismiss(card) }.buttonStyle(.borderless) }
@@ -70,6 +73,62 @@ struct AttentionCardView: View {
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08)))
         .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
         .accessibilityElement(children: .contain).accessibilityIdentifier("attention.card")
+    }
+}
+
+/// A drafted chat reply and reaction on a card. Nothing is sent until you press
+/// Send or a reaction; you can edit the text first.
+struct AttentionReplyView: View {
+    @ObservedObject var attention: AttentionCoordinator
+    let card: AttentionCoordinator.Card
+    @State private var text = ""
+    @State private var edited = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if card.drafting {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(L("Drafting a reply…")).font(.caption).foregroundStyle(.secondary)
+                }
+            } else if let draft = card.draft {
+                if card.channels.chat {
+                    TextField(L("Reply in the meeting chat"), text: $text, axis: .vertical)
+                        .lineLimit(1...4).textFieldStyle(.roundedBorder).accessibilityIdentifier("attention.reply")
+                        .onChange(of: text) { value in edited = value != draft.chat }
+                }
+                HStack(spacing: 6) {
+                    if card.channels.chat {
+                        Button(L("Send")) { attention.sendReply(card, text: text) }
+                            .buttonStyle(.borderedProminent).disabled(text.trimmed.isEmpty)
+                            .keyboardShortcut(.return, modifiers: .command).help(L("Send this message to the meeting chat (⌘↩)"))
+                    }
+                    if let reaction = draft.reaction {
+                        Button(reaction.emoji) { attention.sendReaction(card, reaction) }.help(L("Send this reaction"))
+                    }
+                    if card.channels.reactions.count > 1 { reactionMenu }
+                    Spacer(minLength: 4)
+                    Button(L("Redraft")) { edited = false; attention.draftReply(card.id) }.buttonStyle(.borderless).controlSize(.small)
+                }
+            } else {
+                HStack(spacing: 6) {
+                    Button(card.channels.chat ? L("Draft a reply") : L("Suggest a reaction")) { attention.draftReply(card.id) }.controlSize(.small)
+                    if card.channels.reactions.count > 1 { reactionMenu }
+                }
+            }
+            if let error = card.draftError { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
+        }
+        .onAppear { text = card.draft?.chat ?? "" }
+        .onChange(of: card.draft) { draft in if !edited { text = draft?.chat ?? "" } }
+    }
+
+    private var reactionMenu: some View {
+        Menu {
+            ForEach(card.channels.reactions, id: \.self) { reaction in
+                Button(reaction.emoji) { attention.sendReaction(card, reaction) }
+            }
+        } label: { Image(systemName: "face.smiling") }
+            .menuStyle(.borderlessButton).fixedSize().help(L("Send a reaction"))
     }
 }
 
@@ -201,6 +260,8 @@ struct MeetingPresetEditor: View {
                         Text(L("Quiet")).tag(AttentionUrgency.quiet); Text(L("Normal")).tag(AttentionUrgency.normal); Text(L("Eager")).tag(AttentionUrgency.eager)
                     }.pickerStyle(.segmented)
                     Text(L("Threshold %.2f. Your approvals lower it and declines raise it.", preset.threshold)).font(.caption).foregroundStyle(.secondary)
+                    Toggle(L("Draft chat replies and reactions for this meeting"),
+                           isOn: Binding(get: { preset.repliesAllowed }, set: { preset.suggestReplies = $0 }))
                     if target.seriesID != nil { Toggle(L("Use for every meeting in this calendar series"), isOn: $appliesToSeries) }
                 }
                 Section(L("Learned from you")) {
@@ -366,8 +427,20 @@ struct NativeDesktopIntelligenceSettings: View {
                     if let testResult { Text(testResult).font(.caption).foregroundStyle(testFailed ? Color.red : .secondary).lineLimit(3) }
                 }
             }
+            Section(L("Replies")) {
+                Toggle(L("Draft chat replies and reactions on cards"), isOn: $store.draftReplies).accessibilityIdentifier("attention.replies")
+                Text(L("When a meeting that needs you accepts chat or reactions, the card offers a short reply written by the same model. Nothing is sent until you press Send or a reaction, and you can edit the text first.")).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                TextField(L("How you write"), text: Binding(get: { store.profile.replyStyle ?? "" },
+                                                           set: { store.profile.replyStyle = $0.trimmed.isEmpty ? nil : $0 }),
+                          prompt: Text(L("For example: brief and informal, no emoji")))
+                    .disabled(!store.draftReplies)
+            }
             Section(L("What leaves this Mac")) {
                 Label(L("For each meeting you are not looking at: its last three minutes of text and chat, its instructions and your profile go to %@, at most six times a minute.", store.provider.host), systemImage: "arrow.up.forward")
+                if store.draftReplies {
+                    Label(L("Drafting a reply sends the same text and the judge's reason once more. What you send goes to the meeting, as if you typed it."), systemImage: "text.bubble")
+                }
                 Label(L("Audio never leaves this Mac."), systemImage: "lock")
                 Label(L("Decisions are kept on this Mac for 30 days so you can see why a card appeared."), systemImage: "clock")
             }.font(.callout)

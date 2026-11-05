@@ -1,3 +1,4 @@
+import ConferenceCore
 import Foundation
 import Security
 
@@ -59,7 +60,13 @@ struct AttentionKeychain: Sendable {
 
 /// One judged window and what you did with it; replayed to tune prompts.
 struct AttentionDecisionRecord: Codable, Equatable, Sendable {
-    enum Outcome: String, Codable, Sendable { case belowThreshold, shown, opened, dismissed, declined, failed }
+    enum Outcome: String, Codable, Sendable {
+        case belowThreshold, shown, opened, dismissed, declined, failed
+        /// A reply was drafted for the card (`decisionID`), or drafting failed.
+        case drafted, draftFailed
+        /// You sent the card's chat reply or a reaction from it.
+        case replied, reacted
+    }
     var id = UUID()
     var at: Date
     var meetingTitle: String
@@ -77,6 +84,13 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// The exact chat messages sent, so a replay can compare models on the same input.
     var messages: [[String: String]]? = nil
     var threshold: Double? = nil
+    /// The writer's exact prompt and its draft, so writers can be compared later.
+    var replyMessages: [[String: String]]? = nil
+    var draft: ReplyDraft? = nil
+    /// What you sent from the card, and whether you changed the draft first.
+    var sent: String? = nil
+    var reaction: MeetingReaction? = nil
+    var edited: Bool? = nil
 }
 
 /// Presets, your profile, the judge settings and the decision log. Everything is
@@ -86,12 +100,15 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     static let enabledKey = "attention.judge.enabled"
     static let batteryKey = "attention.judge.pauseOnBattery"
     static let providerKey = "attention.judge.provider"
+    static let repliesKey = "attention.replies.enabled"
     static let decisionRetention: TimeInterval = 30 * 24 * 3600
 
     private struct Document: Codable { var profile = AttentionProfile(); var presets: [MeetingPreset] = [] }
 
     @Published var enabled: Bool { didSet { defaults.set(enabled, forKey: Self.enabledKey) } }
     @Published var pauseOnBattery: Bool { didSet { defaults.set(pauseOnBattery, forKey: Self.batteryKey) } }
+    /// Cards offer a drafted chat reply or reaction where the meeting accepts one.
+    @Published var draftReplies: Bool { didSet { defaults.set(draftReplies, forKey: Self.repliesKey) } }
     @Published var provider: AttentionProvider {
         didSet { if let data = try? JSONEncoder().encode(provider) { defaults.set(data, forKey: Self.providerKey) } }
     }
@@ -110,6 +127,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         self.defaults = defaults; self.keychain = keychain
         enabled = defaults.bool(forKey: Self.enabledKey)
         pauseOnBattery = defaults.bool(forKey: Self.batteryKey)
+        draftReplies = defaults.object(forKey: Self.repliesKey) as? Bool ?? true
         provider = defaults.data(forKey: Self.providerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
             ?? AttentionProvider.defaults[.openAI]!
         hasKey = keychain.read()?.isEmpty == false

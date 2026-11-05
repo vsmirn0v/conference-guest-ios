@@ -1,3 +1,4 @@
+import ConferenceCore
 import Foundation
 
 /// Judges every meeting you are not looking at and raises a card when one needs
@@ -18,7 +19,14 @@ import Foundation
         let model: String
         let latency: TimeInterval
         let createdAt: Date
+        /// How you can answer from the card; empty when replies are off or the meeting accepts none.
+        var channels = ReplyChannels()
+        var draft: ReplyDraft?
+        var drafting = false
+        var draftError: String?
         var evidence: [AttentionWindow.Line] { verdict.evidence.compactMap { window.line(id: $0) } }
+        /// You are working on a reply: a newer verdict does not replace the card.
+        var engaged: Bool { draft != nil || drafting }
     }
     struct MeetingState: Equatable {
         var verdict: AttentionVerdict?
@@ -57,6 +65,14 @@ import Foundation
     var openMeeting: (UUID) -> Void = { _ in }
     var notify: (Card) -> Void = { _ in }
     var makeJudge: (AttentionProvider, String?) -> any AttentionJudge = { OpenAIChatJudge(provider: $0, key: $1) }
+    var makeWriter: (AttentionProvider, String?) -> any ReplyWriter = { OpenAIChatJudge(provider: $0, key: $1) }
+    /// What the meeting accepts from you right now.
+    var replyChannels: (NativeDesktopMeetingModel) -> ReplyChannels = { model in
+        ReplyChannels(chat: model.chat.canSend, reactions: model.canReact ? MeetingReaction.allCases : [])
+    }
+    /// Sends through the meeting's own chat; false when it did not accept the text.
+    var deliverChat: (NativeDesktopMeetingModel, String) -> Bool = { $0.chat.send($1) }
+    var deliverReaction: (NativeDesktopMeetingModel, MeetingReaction) -> Void = { $0.sendReaction($1) }
     var now: () -> Date = Date.init
     var language: String = Bundle.main.preferredLocalizations.first ?? "en"
 
@@ -180,7 +196,9 @@ import Foundation
         judging = id; calls.append(time)
         defer { judging = nil }
         let preset = store.preset(room: model.invitation, series: model.calendarSeriesID)
-        let request = JudgeRequest(window: window, preset: preset, profile: store.profile, yourName: model.displayName, language: language)
+        let channels = store.draftReplies && (preset?.repliesAllowed ?? true) ? replyChannels(model) : ReplyChannels()
+        let request = JudgeRequest(window: window, preset: preset, profile: store.profile, yourName: model.displayName,
+                                   language: language, replyChannels: channels)
         let provider = store.provider
         let decisionID = UUID()
         do {
@@ -193,8 +211,13 @@ import Foundation
             let threshold = preset?.threshold ?? AttentionUrgency.normal.baseThreshold
             let card = Card(id: decisionID, meetingID: id, meetingTitle: model.title, invitation: model.invitation,
                 seriesID: model.calendarSeriesID, verdict: result.verdict, window: window, presetID: preset?.id, threshold: threshold,
-                provider: provider.host, model: provider.model, latency: result.latency, createdAt: now())
+                provider: provider.host, model: provider.model, latency: result.latency, createdAt: now(), channels: channels)
             let shown = apply(card, state: &state)
+            // The judge suggests answering in writing: have a draft ready on the card.
+            if shown, [.chat, .reaction].contains(result.verdict.action), !channels.isEmpty,
+               calls.filter({ now().timeIntervalSince($0) <= 60 }).count < Self.callsPerMinute {
+                draftReply(decisionID)
+            }
             states[id] = state
             store.log(.init(id: decisionID, at: now(), meetingTitle: model.title, presetID: preset?.id, window: window, verdict: result.verdict,
                 provider: provider.host, model: provider.model, latencyMilliseconds: Int(result.latency * 1000),
@@ -218,6 +241,8 @@ import Foundation
     private func apply(_ card: Card, state: inout MeetingState) -> Bool {
         let verdict = card.verdict, current = card.createdAt
         let existing = cards.first { $0.meetingID == card.meetingID }
+        // A card you are replying from stays until you send, dismiss or decline it.
+        if existing?.engaged == true { return false }
         let held = existing?.verdict.level == .now && (state.heldUntil ?? .distantPast) > current
         let qualifies = verdict.level != .no && verdict.probability >= card.threshold
         let repeated = !verdict.evidence.isEmpty && Set(verdict.evidence).isSubset(of: state.shownEvidence)
@@ -250,23 +275,89 @@ import Foundation
         feedback(card, decision: .declined, reason: reason, note: note, outcome: .declined)
     }
 
+    // MARK: Replies
+
+    /// Drafts a chat reply or reaction for a card. Nothing is sent: you send,
+    /// edit or discard the draft on the card.
+    func draftReply(_ cardID: UUID) {
+        guard let index = cards.firstIndex(where: { $0.id == cardID }), !cards[index].drafting, !cards[index].channels.isEmpty,
+              let model = meetings().first(where: { $0.sessionID == cards[index].meetingID }), !model.isClosed else { return }
+        let card = cards[index]
+        cards[index].drafting = true; cards[index].draftError = nil
+        calls.append(now())
+        let preset = card.presetID.flatMap(store.preset(id:))
+        let request = ReplyRequest(judge: JudgeRequest(window: card.window, preset: preset, profile: store.profile,
+            yourName: model.displayName, language: language, replyChannels: card.channels), verdict: card.verdict)
+        let provider = store.provider, writer = makeWriter(provider, store.apiKey())
+        Task { @MainActor [weak self] in
+            do {
+                let result = try await writer.draft(request)
+                guard let self, let index = cards.firstIndex(where: { $0.id == cardID }) else { return }
+                cards[index].drafting = false; cards[index].draft = result.draft
+                store.log(.init(at: now(), meetingTitle: card.meetingTitle, presetID: card.presetID, window: nil, verdict: nil,
+                    provider: provider.host, model: provider.model, latencyMilliseconds: Int(result.latency * 1000), outcome: .drafted,
+                    decisionID: cardID, replyMessages: ReplyPrompt.messages(request), draft: result.draft))
+                probeLog("attention-draft", ["chat": !result.draft.chat.isEmpty, "reaction": result.draft.reaction != nil,
+                    "latencyMs": Int(result.latency * 1000)])
+            } catch {
+                guard let self, let index = cards.firstIndex(where: { $0.id == cardID }) else { return }
+                cards[index].drafting = false
+                if error is CancellationError { return }
+                cards[index].draftError = error.localizedDescription
+                store.log(.init(at: now(), meetingTitle: card.meetingTitle, presetID: card.presetID, window: nil, verdict: nil,
+                    provider: provider.host, model: provider.model, outcome: .draftFailed, error: String(describing: error), decisionID: cardID))
+                probeLog("attention-draft-failed", ["error": String(describing: error)])
+            }
+        }
+    }
+
+    /// Sends the text you approved into the meeting's chat and counts as an approval.
+    @discardableResult func sendReply(_ card: Card, text: String) -> Bool {
+        let clean = text.trimmed
+        guard !clean.isEmpty, card.channels.chat,
+              let model = meetings().first(where: { $0.sessionID == card.meetingID }), !model.isClosed, deliverChat(model, clean) else {
+            setDraftError(L("The meeting did not accept the message. Open the meeting to answer."), card: card); return false
+        }
+        feedback(card, decision: .approved, reason: nil, note: nil, outcome: .replied,
+                 sent: clean, reaction: nil, edited: clean != card.draft?.chat.trimmed)
+        return true
+    }
+
+    /// Sends one reaction into the meeting and counts as an approval.
+    @discardableResult func sendReaction(_ card: Card, _ reaction: MeetingReaction) -> Bool {
+        guard card.channels.reactions.contains(reaction),
+              let model = meetings().first(where: { $0.sessionID == card.meetingID }), !model.isClosed else {
+            setDraftError(L("The meeting did not accept the reaction. Open the meeting to answer."), card: card); return false
+        }
+        deliverReaction(model, reaction)
+        feedback(card, decision: .approved, reason: nil, note: nil, outcome: .reacted,
+                 sent: nil, reaction: reaction, edited: reaction != card.draft?.reaction)
+        return true
+    }
+
+    private func setDraftError(_ message: String, card: Card) {
+        if let index = cards.firstIndex(where: { $0.id == card.id }) { cards[index].draftError = message }
+    }
+
     private func feedback(_ card: Card, decision: PresetExample.Decision, reason: PresetExample.DeclineReason?, note: String?,
-                          outcome: AttentionDecisionRecord.Outcome) {
+                          outcome: AttentionDecisionRecord.Outcome, sent: String? = nil, reaction: MeetingReaction? = nil, edited: Bool? = nil) {
         remove(card)
         let preset = card.presetID.flatMap(store.preset(id:)) ??
             store.presetForFeedback(room: card.invitation, latest: nil, series: card.seriesID, title: card.meetingTitle)
         let excerpt = card.evidence.map { "\($0.speaker): \($0.text)" }.joined(separator: " / ")
         store.record(.init(at: now(), level: card.verdict.level, decision: decision, declineReason: reason, note: note,
             excerpt: excerpt.isEmpty ? card.verdict.reason : excerpt, reason: card.verdict.reason), in: preset)
-        log(card, outcome: outcome, reason: reason)
+        log(card, outcome: outcome, reason: reason, sent: sent, reaction: reaction, edited: edited)
     }
     private func remove(_ card: Card) {
         cards.removeAll { $0.id == card.id }
         states[card.meetingID]?.heldUntil = nil
     }
-    private func log(_ card: Card, outcome: AttentionDecisionRecord.Outcome, reason: PresetExample.DeclineReason?) {
+    private func log(_ card: Card, outcome: AttentionDecisionRecord.Outcome, reason: PresetExample.DeclineReason?,
+                     sent: String? = nil, reaction: MeetingReaction? = nil, edited: Bool? = nil) {
         store.log(.init(at: now(), meetingTitle: card.meetingTitle, presetID: card.presetID, window: nil, verdict: nil,
-            provider: card.provider, model: card.model, outcome: outcome, declineReason: reason, decisionID: card.id))
+            provider: card.provider, model: card.model, outcome: outcome, declineReason: reason, decisionID: card.id,
+            sent: sent, reaction: reaction, edited: edited))
     }
 
     // MARK: Settings test

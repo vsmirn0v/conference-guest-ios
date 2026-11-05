@@ -262,3 +262,28 @@ Phase 2b (Telemost/TrueConf audio) and 2c (Rock) are not started.
 Not verified live: Telemost/TrueConf/Rock transcription in real meetings, Telemost attribution
 quality, and whether Telemost honours the hello audio flag mid-meeting (transcription switched
 on after a silent join takes effect on the next reconnect).
+
+## Status (5 Nov 2026): Phase 5, chat and reaction replies
+
+- **What the card offers.** When a meeting that needs you accepts chat (Guest, Telemost, Rock) or
+  reactions (Guest), the card offers a reply. If the judge suggests answering in writing
+  (`action` chat or reaction), a draft is made at once; otherwise "Draft a reply" makes one on
+  request. You can edit the text, then Send (⌘↩), send the suggested reaction, pick another
+  from the reaction menu, or Redraft. TrueConf has no chat in the app, so it gets no reply.
+- **Nothing is sent by itself.** Only Send or a reaction button sends, through the meeting's own
+  chat or reaction path, exactly as if you typed it. Sending counts as an approval of the card.
+  A card you are replying from is not replaced by a newer verdict.
+- **The writer** is the same OpenAI-compatible provider and model as the judge
+  (`ReplyPrompt`, strict JSON schema `{chat, reaction}`). Its rules: write as you, in the
+  meeting's language, one or two sentences, never invent facts or commit you to anything; when
+  the answer needs information it does not have, write a holding reply. The reaction enum lists
+  only reactions the meeting accepts; text is dropped where there is no chat.
+- **The judge knows how you can answer**: its prompt says whether chat and reactions are
+  available, and its `action` rule says when to suggest them.
+- **Settings.** Intelligence → Replies (on by default) and "How you write"; each meeting's
+  instructions can turn replies off.
+- **Log.** `drafted`/`draftFailed` records keep the writer's exact prompt and draft;
+  `replied`/`reacted` record what you sent and whether you edited it. `replay.py` counts a
+  reply or reaction as "needed", like Open.
+
+Not verified live: draft quality on real meetings, Telemost and Rock chat delivery from a card.
