@@ -40,9 +40,9 @@ struct NativeDesktopHomeView: View {
     }
     @ViewBuilder private var settingsView: some View {
         #if NATIVE_DIRECT_UPDATES
-        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, updates: workspace.updates)
+        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, attention: workspace.attention, updates: workspace.updates)
         #else
-        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab)
+        NativeDesktopSettingsView(library: library, meeting: workspace.meeting, tab: $workspace.settingsTab, attention: workspace.attention)
         #endif
     }
     var body: some View {
@@ -113,6 +113,13 @@ struct NativeDesktopHomeView: View {
                         .navigationTitle(selected.title)
                         .navigationSubtitle(meetingSubtitle(selected))
                 }
+                AttentionCardStack(attention: workspace.attention)
+            }
+            .sheet(item: Binding(get: { workspace.attention.inspecting }, set: { workspace.attention.inspecting = $0 })) { card in
+                AttentionInspector(attention: workspace.attention, card: card)
+            }
+            .sheet(item: Binding(get: { workspace.attention.editingPreset }, set: { workspace.attention.editingPreset = $0 })) { target in
+                MeetingPresetEditor(store: workspace.attention.store, target: target)
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 if let meeting = embeddedMeeting, detailWidth < Self.inlineAnnouncementWidth { NativeDesktopTranscriptionStrip(model: meeting) }
@@ -413,6 +420,9 @@ struct NativeDesktopHomeView: View {
         Button(L("Rename")) { renamed = room.displayTitle; editRoom = room }
         Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(room.joinURL.absoluteString, forType: .string) }
         Button(room.isStarred ? L("Remove favorite") : L("Add favorite")) { library.toggleFavorite(room) }
+        Button(L("Attention instructions…")) {
+            workspace.attention.editingPreset = .init(invitation: room.invitationURL, latest: room.latestInvitationURL, title: room.displayTitle)
+        }
         Divider(); Button(L("Remove"), role: .destructive) { library.delete(room) }
     }
     private func roomDetail(_ url: URL, engine: MeetingEngineKind?) -> String {
@@ -425,6 +435,7 @@ struct NativeDesktopSettingsView: View {
     @ObservedObject var library: NativeDesktopLibrary
     var meeting: NativeDesktopMeetingModel?
     @Binding var tab: Int
+    var attention: AttentionCoordinator? = nil
     #if NATIVE_DIRECT_UPDATES
     var updates: NativeDesktopUpdates? = nil
     #endif
@@ -481,6 +492,10 @@ struct NativeDesktopSettingsView: View {
                 stopLiveAudioCheck: { try await meeting?.engine.stopPrivateAudioCheck() },
                 liveAudioLevel: { meeting?.engine.privateAudioLevel }).tabItem { Label(L("Camera & sound"), systemImage: "slider.horizontal.3") }.tag(3)
             NativeDesktopTranscriptionSettings(store: .shared).tabItem { Label(L("Transcription"), systemImage: "text.bubble") }.tag(5)
+            if let attention {
+                NativeDesktopIntelligenceSettings(store: attention.store, attention: attention)
+                    .tabItem { Label(L("Intelligence"), systemImage: "sparkles") }.tag(6)
+            }
             #if NATIVE_DIRECT_UPDATES
             if let updates { NativeDesktopUpdatesView(updates: updates).tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag(4) }
             #endif
@@ -573,6 +588,7 @@ struct NativeDesktopSidebarMeetingRow: View {
                 Text(subtitle).font(.caption).foregroundStyle(moving ? Color.orange : live ? Color.red : Color.secondary).lineLimit(1)
             }
             Spacer(minLength: 4)
+            AttentionBadge(attention: workspace.attention, meetingID: model.sessionID)
             if speaking { Image(systemName: "waveform").font(.caption).foregroundStyle(.secondary).help(L("Someone is speaking")) }
             if workspace.isDetached(model) {
                 Image(systemName: "macwindow").font(.caption).foregroundStyle(.secondary).help(L("This meeting is open in its own window."))
@@ -593,6 +609,10 @@ struct NativeDesktopSidebarMeetingRow: View {
             Divider()
             Button(workspace.isDetached(model) ? L("Move to Main Window") : L("Open in New Window")) { workspace.toggleWindow(model) }
             Button(L("Mini meeting")) { workspace.showMini(model) }
+            Divider()
+            Button(L("Attention instructions…")) { workspace.attention.editInstructions(for: model) }
+            let paused = workspace.attention.isPaused(model.sessionID)
+            Button(paused ? L("Resume attention") : L("Pause attention")) { workspace.attention.setPaused(!paused, meetingID: model.sessionID) }
             Button(L("Copy Invitation Link")) {
                 NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string)
             }

@@ -122,6 +122,8 @@ import UniformTypeIdentifiers
     private var localTranscriber: MeetingTranscriber?
     let listenStore: ListenModelStore
     var transcribingLocally: Bool { localTranscriber != nil }
+    /// The calendar series this meeting was joined from, for its Attention instructions.
+    var calendarSeriesID: String?
 
     /// Runs local transcription for a connected Guest meeting when it is switched
     /// on and installed, the service does not transcribe, and this meeting is not paused.
@@ -197,7 +199,7 @@ import UniformTypeIdentifiers
     var soundOffSavingText: Bool { connected && !snapshot.playoutOn && (transcriptionIndicator == .on || transcriptionIndicator == .local) }
     /// When a line of live text was spoken: the provider's time when it agrees with
     /// when the line arrived here (within 10 minutes), else the arrival time.
-    static func spokenAt(_ message: GuestMeetingMessage) -> Date? {
+    nonisolated static func spokenAt(_ message: GuestMeetingMessage) -> Date? {
         guard let received = message.receivedAt else { return message.sentAt }
         guard let sent = message.sentAt, abs(sent.timeIntervalSince(received)) <= 600 else { return received }
         return sent

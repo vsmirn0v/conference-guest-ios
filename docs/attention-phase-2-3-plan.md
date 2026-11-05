@@ -206,3 +206,37 @@ with the fake judge, card and badge state, settings round trip); provider client
 2. One recurring meeting to write the first preset for and tune on.
 3. Whether the on-screen meeting is ever judged (plan: only while the window is hidden).
 4. Microphone transcription default on (plan: on).
+
+## Status (5 Nov 2026)
+
+Decided: the first judge provider is an OpenAI-compatible endpoint with your key.
+
+Built:
+
+- **2a, your microphone** (0ee7132): the existing input tap feeds the meeting's transcriber
+  only while that meeting holds the microphone and the engine confirmed it unmuted. Lines
+  are yours (`isOwn`, your name). Settings → Transcription → "Include my microphone".
+- **3.1–3.7, presets and the judge**: `NativeMacGuest/Attention/Attention*.swift`.
+  - Presets bind to a room and optionally its calendar series; JSON in Application
+    Support/Attention. Your profile lives in the same file.
+  - The window builder, prompt and verdict validation are pure and unit-tested.
+  - `OpenAIChatJudge` sends a strict JSON schema, retries 5xx/429/timeouts twice, maps
+    401/403 to a key error. The key is stored in the Keychain and never logged.
+  - The coordinator judges one meeting at a time (six calls a minute at most), every 20 s
+    when the window changed, at once when your name appears or someone leaves. "Now"
+    holds two minutes; evidence already shown never repeats a card. A "now" card also
+    posts a notification while the app is in the background.
+  - UI: cards over the main window, sidebar badge, inspector, instructions editor (from a
+    favorite, the sidebar meeting menu, the meeting's More menu and the inspector),
+    Settings → Intelligence, per-meeting pause.
+  - Every verdict is logged with the exact prompt; `Experiments/AttentionBench/replay.py`
+    replays them against another model and reports agreement with your Open/Decline.
+
+Deviations from the plan above: the pure types live in the app target, not ConferenceCore
+(Mac-only feature, tested in `AttentionTests`). Replay uses the logged prompts instead of a
+second copy of the prompt code. The default OpenAI model is `gpt-4.1-mini`; it is editable
+in Settings.
+
+Not verified: a live call to OpenAI (no key was used in development), cards in a real
+multi-meeting session, notification delivery, and the quality of verdicts on real meetings.
+Phase 2b (Telemost/TrueConf audio) and 2c (Rock) are not started.

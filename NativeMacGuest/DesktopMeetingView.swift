@@ -438,6 +438,7 @@ struct NativeDesktopMeetingView: View {
         Button(L("Presenter studio")) { togglePanel(.presenter) }
         Button(L("Reconnect")) { model.reconnect() }
         Button(L("Copy invitation")) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string) }
+        if let workspace { Button(L("Attention instructions…")) { workspace.attention.editInstructions(for: model) } }
         Button(L("Hide controls")) { model.controlsHidden = true }
         if model.showsFocus { Button(model.immersive ? L("Leave immersive view") : L("Immersive view")) { model.immersive.toggle() } }
     }

@@ -13,6 +13,8 @@ import UserNotifications
         }
     }
     let library: NativeDesktopLibrary
+    /// Judges the meetings you are not looking at and raises attention cards.
+    let attention: AttentionCoordinator
     var mayAdmitMeeting: () -> Bool = { true }
     var onUpdateActivityChanged: () -> Void = {}
     var busyForUpdate: Bool { preparing || !meetings.isEmpty || leaveTask != nil || !meetingLeaves.isEmpty || shutdownBlocked }
@@ -70,8 +72,10 @@ import UserNotifications
          detect: @escaping @MainActor (URL) async throws -> MeetingEngineDetection = { try await VendorEndpointResolver.makeDetector().detect($0) },
          makeMeeting: (@MainActor (JoinDestination, String, String?, Bool) -> NativeDesktopMeetingModel)? = nil,
          makeHandoffActivity: @escaping @MainActor (ActiveJam) -> NSUserActivity = { NativeDesktopHandoff.activity(for: $0) },
-         multipleMeetings: @escaping () -> Bool = { UserDefaults.standard.object(forKey: "nativeDesktop.multipleMeetings") as? Bool ?? true }) {
+         multipleMeetings: @escaping () -> Bool = { UserDefaults.standard.object(forKey: "nativeDesktop.multipleMeetings") as? Bool ?? true },
+         attention: AttentionCoordinator? = nil) {
         let library = library ?? NativeDesktopLibrary()
+        self.attention = attention ?? AttentionCoordinator()
         self.multipleMeetings = multipleMeetings
         self.library = library; self.detect = detect; self.makeHandoffActivity = makeHandoffActivity
         self.makeMeeting = makeMeeting ?? { NativeDesktopMeetingModel(destination: $0, name: $1, title: $2, quiet: $3) }
@@ -124,6 +128,36 @@ import UserNotifications
         }
         library.calendar.reminders.onBackground = { [weak self] in self?.reminderPresenter.hide() }
         library.calendar.setSchedulingAvailable(true)
+        self.attention.meetings = { [weak self] in self?.meetings ?? [] }
+        self.attention.isOnScreen = { [weak self] in self?.isOnScreen($0) ?? false }
+        self.attention.openMeeting = { [weak self] id in self?.openFromAttention(id) }
+        self.attention.notify = { card in NativeDesktopWorkspace.postAttentionNotification(card) }
+        self.attention.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+        self.attention.start()
+    }
+
+    /// The meeting is in front of you: shown in a visible main window, its own
+    /// window or Mini meeting, while this app is active.
+    func isOnScreen(_ model: NativeDesktopMeetingModel) -> Bool {
+        guard NSApp.isActive, let host = meetingWindows[model.sessionID] else { return false }
+        if host.isMiniVisible || (!host.isEmbedded && host.isVisible) { return true }
+        guard host.isEmbedded, selectedMeetingID == model.sessionID, let window else { return false }
+        return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
+    }
+    private func openFromAttention(_ id: UUID) {
+        guard let model = meetings.first(where: { $0.sessionID == id }) else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        if isDetached(model) { showMeeting(model) } else { presentEmbedded(model) }
+    }
+    /// A "now" card while the app is in the background also reaches Notification Center.
+    private static func postAttentionNotification(_ card: AttentionCoordinator.Card) {
+        guard !NSApp.isActive else { return }
+        let content = UNMutableNotificationContent()
+        content.title = L("“%@” needs you", card.meetingTitle)
+        content.body = card.verdict.reason
+        content.threadIdentifier = "attention"
+        content.interruptionLevel = .timeSensitive
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "attention-" + card.id.uuidString, content: content, trigger: nil))
     }
 
     func show(section: Section? = nil) {
@@ -224,6 +258,7 @@ import UserNotifications
                 guard destination.engineKind.inputPolicy.accepts(name: name) else { throw NativeGuestEntryError.invalidName }
                 let model = makeMeeting(destination, name, title, quiet)
                 ownedModel = model; joiningModel = model
+                model.calendarSeriesID = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id }?.seriesID }
                 let concurrent = !meetings.isEmpty, owns = talkMeeting == nil
                 if concurrent { model.configureForConcurrentJoin(ownsMicrophone: owns) }
                 meetings.append(model); if owns { talkID = model.sessionID }
