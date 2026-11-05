@@ -1,0 +1,30 @@
+{
+  "version": "0.3.0",
+  "build": "56",
+  "channel": "beta",
+  "sourceCommit": "66a753f",
+  "changes": [
+    "Settings > Intelligence: Choose\u2026 lists the provider's models from GET /models with search; structured-output models first, prices and context shown when listed (66a753f)",
+    "Judge errors carry the provider's own message; OpenAI insufficient_quota and 402 are reported as quota problems and not retried (66a753f)",
+    "Updates: check again right after a new build launches; when Sparkle offers an earlier downloaded update, compare with latest.json and link the newer build (66a753f)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-56-arm64.dmg",
+    "sha256": "4ea8617531d5dfbcc020224dc957770e3c6eecc7e487a2bcdd68056a32a89689",
+    "length": 25875216
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-56-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 56, including the post-launch recheck",
+    "a live judge call to OpenAI",
+    "model list from a real provider",
+    "attention cards during real simultaneous meetings"
+  ]
+}
