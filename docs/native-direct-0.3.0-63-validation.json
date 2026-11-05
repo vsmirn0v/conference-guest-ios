@@ -1,0 +1,27 @@
+{
+  "version": "0.3.0",
+  "build": "63",
+  "channel": "beta",
+  "sourceCommit": "177d19a",
+  "changes": [
+    "Settings > Intelligence > Compare models: saved judge decisions and reply drafts run through another model and scored against your choices (agreement, precision, recall, cards, median time); decisions whose card outcome changes are listed; drafts side by side; switch the judge to the compared model (177d19a)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-63-arm64.dmg",
+    "sha256": "eba7420c4385a0b49d54ce9486162f2e32f323dea09250703b9f0ac23a61c7d2",
+    "length": 26030109
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-63-arm64.dmg",
+  "httpsVerified": true,
+  "testNote": "two LocalTranscriptionTests were skipped: the downloaded speech models in .build/asr-bench were removed by a disk cleanup during this work; re-download with Experiments/ASRBench/asr_bench.py --fleurs 1",
+  "notVerified": [
+    "Sparkle update of an installed app to 63",
+    "a comparison run against a real provider"
+  ]
+}
