@@ -1593,3 +1593,16 @@
 "Intelligence" = "Интеллект";
 "Resume attention" = "Возобновить внимание";
 "Pause attention" = "Приостановить внимание";
+"The provider account has no credit or quota left for this key." = "На аккаунте провайдера для этого ключа закончились средства или квота.";
+"Provider says: %@" = "Ответ провайдера: %@";
+"Choose…" = "Выбрать…";
+"Pick from the models this provider offers" = "Выбрать из моделей этого провайдера";
+"Models at %@" = "Модели на %@";
+"Search models" = "Поиск моделей";
+"Loading models…" = "Загрузка моделей…";
+"No models match." = "Подходящих моделей нет.";
+"%ld models" = "Моделей: %ld";
+"%ld K context" = "контекст %ld K";
+"free" = "бесплатно";
+"$%.2f per million input tokens" = "$%.2f за миллион входных токенов";
+"no structured output" = "нет структурированного ответа";

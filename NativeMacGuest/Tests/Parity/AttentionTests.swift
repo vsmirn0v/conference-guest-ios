@@ -157,13 +157,64 @@ import XCTest
         XCTAssertEqual(result.verdict.level, .no); XCTAssertEqual(calls, 3, "Two retries after server errors")
         let denied = StubProtocol.session { _ in (401, Data()) }
         do { _ = try await OpenAIChatJudge(provider: provider, key: "k", session: denied, retryDelays: [0, 0]).judge(request); XCTFail("401") }
-        catch { XCTAssertEqual(error as? AttentionJudgeError, .unauthorized) }
+        catch { XCTAssertEqual(error as? AttentionJudgeError, .unauthorized(nil)) }
+        var quotaCalls = 0
+        let quota = StubProtocol.session { _ in
+            quotaCalls += 1
+            return (429, Data(#"{"error":{"message":"You exceeded your current quota.","type":"insufficient_quota","code":"insufficient_quota"}}"#.utf8))
+        }
+        do { _ = try await OpenAIChatJudge(provider: provider, key: "k", session: quota, retryDelays: [0, 0]).judge(request); XCTFail("quota") }
+        catch {
+            XCTAssertEqual(error as? AttentionJudgeError, .quota("You exceeded your current quota."))
+            XCTAssertTrue(error.localizedDescription.contains("You exceeded your current quota."), "The provider's own reason is shown")
+        }
+        XCTAssertEqual(quotaCalls, 1, "A quota error is not retried")
+        XCTAssertEqual(AttentionJudgeError.from(status: 429, body: Data(#"{"error":{"message":"Slow down","code":"rate_limit_exceeded"}}"#.utf8)),
+                       .rateLimited("Slow down"))
+        XCTAssertEqual(AttentionJudgeError.from(status: 402, body: Data()), .quota(nil))
+        XCTAssertEqual(AttentionJudgeError.from(status: 500, body: Data("<html>".utf8)), .http(500, nil))
         do { _ = try await OpenAIChatJudge(provider: provider, key: nil, session: denied).judge(request); XCTFail("no key") }
         catch { XCTAssertEqual(error as? AttentionJudgeError, .missingKey) }
         let local = AttentionProvider(kind: .local, baseURL: "http://127.0.0.1:11434/v1", model: "m")
         XCTAssertFalse(local.needsKey)
         XCTAssertNil(AttentionProvider(kind: .custom, baseURL: "ftp://x", model: "m").endpoint)
     }
+
+    func testModelCatalogListsSearchesAndPutsStructuredOutputFirst() async throws {
+        let session = StubProtocol.session { request in
+            XCTAssertEqual(request.url?.absoluteString, "https://judge.example.test/api/v1/models")
+            return (200, try JSONSerialization.data(withJSONObject: ["data": [
+                ["id": "vendor/plain-model", "name": "Plain", "context_length": 8000, "supported_parameters": ["temperature"],
+                 "pricing": ["prompt": "0.0000001"]],
+                ["id": "openai/gpt-4.1-mini", "name": "OpenAI: GPT-4.1 Mini", "context_length": 1_047_576,
+                 "supported_parameters": ["response_format", "structured_outputs"], "pricing": ["prompt": "0.0000004"]],
+                ["id": "openai/gpt-4.1-mini"],
+                ["id": "qwen/qwen3-8b", "supported_parameters": ["structured_outputs"]],
+            ]]))
+        }
+        let provider = AttentionProvider(kind: .openRouter, baseURL: "https://judge.example.test/api/v1", model: "")
+        let models = try await AttentionModelCatalog.fetch(provider, key: nil, session: session)
+        XCTAssertEqual(models.map(\.id), ["openai/gpt-4.1-mini", "qwen/qwen3-8b", "vendor/plain-model"],
+                       "Duplicates dropped; models with structured output first")
+        XCTAssertEqual(models[0].promptPrice ?? 0, 0.4, accuracy: 0.0001)
+        XCTAssertEqual(models[2].structuredOutput, false)
+        XCTAssertEqual(AttentionModelCatalog.filter(models, query: "GPT mini").map(\.id), ["openai/gpt-4.1-mini"])
+        XCTAssertEqual(AttentionModelCatalog.filter(models, query: "  ").count, 3)
+        let openAI = AttentionModelCatalog.parse([["id": "gpt-4.1-mini", "object": "model", "owned_by": "openai"]])
+        XCTAssertNil(openAI[0].structuredOutput, "OpenAI does not list capabilities; nothing is guessed")
+        let denied = StubProtocol.session { _ in (401, Data(#"{"error":{"message":"Incorrect API key provided"}}"#.utf8)) }
+        do { _ = try await AttentionModelCatalog.fetch(provider, key: "k", session: denied); XCTFail("401") }
+        catch { XCTAssertEqual(error as? AttentionJudgeError, .unauthorized("Incorrect API key provided")) }
+    }
+
+#if NATIVE_DIRECT_UPDATES
+    func testPublishedInventoryNamesTheNewestBuildForTheChannel() {
+        let data = Data(#"{"schemaVersion":1,"stable":{"build":"53","downloadURL":"https://example.test/53.dmg"},"beta":{"build":"55","downloadURL":"https://example.test/55.dmg"}}"#.utf8)
+        XCTAssertEqual(NativeDesktopUpdates.latestBuild(in: data, beta: true)?.build, 55)
+        XCTAssertEqual(NativeDesktopUpdates.latestBuild(in: data, beta: false)?.build, 53)
+        XCTAssertNil(NativeDesktopUpdates.latestBuild(in: Data("{}".utf8), beta: true))
+    }
+#endif
 
     // MARK: Store
 

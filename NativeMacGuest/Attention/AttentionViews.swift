@@ -253,6 +253,69 @@ struct MeetingPresetEditor: View {
     }
 }
 
+/// The provider's model list, searchable. Models that list structured output come first.
+struct AttentionModelPicker: View {
+    @ObservedObject var store: AttentionStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var models: [AttentionModelInfo] = []
+    @State private var query = ""
+    @State private var loading = true
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(L("Models at %@", store.provider.host)).font(.title3.weight(.semibold))
+            TextField(L("Search models"), text: $query).textFieldStyle(.roundedBorder).accessibilityIdentifier("attention.models.search")
+            Group {
+                if loading {
+                    ProgressView(L("Loading models…")).frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let error {
+                    VStack(spacing: 10) {
+                        Text(error).foregroundStyle(.red).multilineTextAlignment(.center)
+                        Button(L("Try again")) { Task { await load() } }
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    let shown = AttentionModelCatalog.filter(models, query: query)
+                    List(shown) { model in
+                        Button { store.provider.model = model.id; dismiss() } label: { row(model) }.buttonStyle(.plain)
+                    }.overlay { if shown.isEmpty { Text(L("No models match.")).foregroundStyle(.secondary) } }
+                }
+            }.frame(minHeight: 360)
+            HStack {
+                if !loading, error == nil { Text(L("%ld models", models.count)).font(.caption).foregroundStyle(.secondary) }
+                Spacer()
+                Button(L("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+        }.padding(20).frame(width: 560, height: 520)
+            .task { await load() }
+    }
+
+    private func row(_ model: AttentionModelInfo) -> some View {
+        let chosen = model.id == store.provider.model
+        var details: [String] = []
+        if let context = model.contextLength { details.append(L("%ld K context", context / 1000)) }
+        if let price = model.promptPrice { details.append(price == 0 ? L("free") : L("$%.2f per million input tokens", price)) }
+        if model.structuredOutput == false { details.append(L("no structured output")) }
+        return HStack(alignment: .top) {
+            Image(systemName: chosen ? "checkmark.circle.fill" : "circle").foregroundStyle(chosen ? Color.accentColor : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.name ?? model.id).fontWeight(chosen ? .semibold : .regular)
+                Text(([model.name == nil ? nil : model.id] + details).compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }.contentShape(Rectangle()).padding(.vertical, 2)
+            .opacity(model.structuredOutput == false ? 0.6 : 1)
+    }
+
+    private func load() async {
+        loading = true; error = nil
+        do { models = try await AttentionModelCatalog.fetch(store.provider, key: store.apiKey()) }
+        catch { self.error = error.localizedDescription }
+        loading = false
+    }
+}
+
 /// Settings → Intelligence: the judge, your profile and what leaves this Mac.
 struct NativeDesktopIntelligenceSettings: View {
     @ObservedObject var store: AttentionStore
@@ -262,6 +325,7 @@ struct NativeDesktopIntelligenceSettings: View {
     @State private var testing = false
     @State private var testResult: String?
     @State private var testFailed = false
+    @State private var choosingModel = false
 
     var body: some View {
         Form {
@@ -284,7 +348,11 @@ struct NativeDesktopIntelligenceSettings: View {
                 })) { ForEach(AttentionProvider.Kind.allCases, id: \.self) { Text(AttentionProvider.defaults[$0]?.title ?? $0.rawValue).tag($0) } }
                 TextField(L("Address"), text: $store.provider.baseURL)
                 if store.provider.endpoint == nil { Text(L("Enter an http or https address.")).font(.caption).foregroundStyle(.red) }
-                TextField(L("Model"), text: $store.provider.model)
+                HStack {
+                    TextField(L("Model"), text: $store.provider.model)
+                    Button(L("Choose…")) { choosingModel = true }.disabled(store.provider.endpoint == nil)
+                        .help(L("Pick from the models this provider offers"))
+                }
                 if store.provider.needsKey {
                     HStack {
                         SecureField(store.hasKey ? L("Saved in the keychain") : L("API key"), text: $key).accessibilityIdentifier("attention.key")
@@ -324,6 +392,7 @@ struct NativeDesktopIntelligenceSettings: View {
             }
         }.formStyle(.grouped)
             .onAppear { aliases = store.profile.aliases.joined(separator: ", ") }
+            .sheet(isPresented: $choosingModel) { AttentionModelPicker(store: store) }
     }
 
     private func saveAliases() {

@@ -1595,3 +1595,16 @@
 "Intelligence" = "Intelligence";
 "Resume attention" = "Resume attention";
 "Pause attention" = "Pause attention";
+"The provider account has no credit or quota left for this key." = "The provider account has no credit or quota left for this key.";
+"Provider says: %@" = "Provider says: %@";
+"Choose…" = "Choose…";
+"Pick from the models this provider offers" = "Pick from the models this provider offers";
+"Models at %@" = "Models at %@";
+"Search models" = "Search models";
+"Loading models…" = "Loading models…";
+"No models match." = "No models match.";
+"%ld models" = "%ld models";
+"%ld K context" = "%ld K context";
+"free" = "free";
+"$%.2f per million input tokens" = "$%.2f per million input tokens";
+"no structured output" = "no structured output";

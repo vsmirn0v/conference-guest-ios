@@ -44,7 +44,43 @@ import SwiftUI
         updater.publisher(for: \.canCheckForUpdates).sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &subscriptions)
         if let target = safety.recoveryTargetBuild { status = "Finish updating to build \(target) before joining a meeting."; prepared = true }
     }
-    func start() { do { try updater.start() } catch { status = error.localizedDescription } }
+    /// A newer published build than the update Sparkle already downloaded.
+    @Published private(set) var newerThanDownloaded: (build: Int, url: URL)?
+    static let launchedBuildKey = "native.updates.lastLaunchedBuild"
+
+    func start() {
+        do { try updater.start() } catch { status = error.localizedDescription; return }
+        // Right after an update installs, look again: a newer build may have been
+        // published while the previous one waited to install on quit.
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        let previous = UserDefaults.standard.string(forKey: Self.launchedBuildKey)
+        UserDefaults.standard.set(build, forKey: Self.launchedBuildKey)
+        if let previous, previous != build, updater.canCheckForUpdates { updater.checkForUpdatesInBackground() }
+    }
+
+    /// Sparkle offers an update it downloaded earlier without reading the feed
+    /// again. Compares it with the published inventory and says when it is stale.
+    func compareWithPublished(_ item: SUAppcastItem) {
+        guard let staged = Int(item.versionString), let feed = updater.feedURL,
+              let inventory = URL(string: "latest.json", relativeTo: feed) else { return }
+        let beta = self.beta
+        Task { @MainActor [weak self] in
+            guard let (data, response) = try? await URLSession.shared.data(from: inventory),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let latest = Self.latestBuild(in: data, beta: beta), latest.build > staged else { return }
+            self?.newerThanDownloaded = latest
+            self?.status = "Build \(staged) was downloaded earlier. Build \(latest.build) is newer: install \(staged) now and the app checks again after it restarts, or download \(latest.build) directly."
+        }
+    }
+    nonisolated static func latestBuild(in data: Data, beta: Bool) -> (build: Int, url: URL)? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let channels = beta ? ["stable", "beta"] : ["stable"]
+        return channels.compactMap { name -> (build: Int, url: URL)? in
+            guard let entry = object[name] as? [String: Any], let build = (entry["build"] as? String).flatMap(Int.init),
+                  let url = (entry["downloadURL"] as? String).flatMap(URL.init(string:)) else { return nil }
+            return (build, url)
+        }.max { $0.build < $1.build }
+    }
     func check() {
         guard updater.canCheckForUpdates else { return }
         if busy() {
@@ -177,6 +213,7 @@ import SwiftUI
     func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) { present { self.standard.showUserInitiatedUpdateCheck(cancellation: cancellation) } }
     func showUpdateFound(with item: SUAppcastItem, state: SPUUserUpdateState, reply: @escaping (SPUUserUpdateChoice) -> Void) {
         let token = generation
+        if state.stage != .notDownloaded { owner?.compareWithPublished(item) }
         present { self.standard.showUpdateFound(with: item, state: state) { choice in
             guard self.generation == token else { return }
             guard choice != .install || self.owner?.prepareChoice(item) == true else { reply(.dismiss); return }
@@ -237,6 +274,9 @@ struct NativeDesktopUpdatesView: View {
                 Text("Beta updates include early changes. Turning this off waits for a newer stable release; it does not downgrade your app.").font(.caption).foregroundStyle(.secondary)
                 Button("Check for Updates…") { updates.check() }.disabled(!updates.updater.canCheckForUpdates)
                 Text(updates.status).font(.caption).foregroundStyle(.secondary)
+                if let newer = updates.newerThanDownloaded {
+                    Link("Download build \(newer.build)", destination: newer.url)
+                }
             }
         }
     }
