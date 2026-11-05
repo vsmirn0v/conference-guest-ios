@@ -1,0 +1,28 @@
+{
+  "version": "0.3.0",
+  "build": "59",
+  "channel": "beta",
+  "sourceCommit": "0db3bb8",
+  "changes": [
+    "Fix beta 58 hang when the microphone moved between meetings: one meeting's voice-processing teardown overlapped another's setup and deadlocked in AudioDSP. GuestAudioEngineGate runs native audio work one owner at a time, draining other owners' queued work first and its own last (0db3bb8)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-59-arm64.dmg",
+    "sha256": "93475c2b578a4be48db9881feba424e138e8eb492c80bbe45053fafe333462ac",
+    "length": 25914581
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-59-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update to 59",
+    "repeated microphone moves between two live Guest meetings without a hang",
+    "moves involving Rock (LiveKit engine not gated)",
+    "main thread still blocks if a native audio deadlock occurs by another path"
+  ]
+}
