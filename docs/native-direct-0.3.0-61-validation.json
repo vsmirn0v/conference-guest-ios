@@ -1,0 +1,26 @@
+{
+  "version": "0.3.0",
+  "build": "61",
+  "channel": "beta",
+  "sourceCommit": "a1f6492",
+  "changes": [
+    "A second meeting can be joined while the first is still connecting; only service detection runs one at a time, and a join asked for during it starts right after (a1f6492)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-61-arm64.dmg",
+    "sha256": "60fd4f0f533a680443ec4a404fe486d1f5b11140d6fa4e3f9f0bfe6f9cda5f40",
+    "length": 25928653
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-61-arm64.dmg",
+  "httpsVerified": true,
+  "notVerified": [
+    "Sparkle update of an installed app to 61",
+    "two real meetings connecting at the same time (tests use stand-in engines)"
+  ]
+}
