@@ -207,6 +207,12 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         publisher?.setMicrophone(false); snapshot.microphoneOn = false; publish(); scheduleMedia()
         return await audio?.setInputPermitted(false, keepWarm: keepDeviceWarm) ?? true
     }
+    func prewarmInput() async -> Bool {
+        guard !inputPermitted, snapshot.phase == .connected, let audio else { return false }
+        let warm = await audio.prewarmInput()
+        if warm { accessoryCapturePrepared = true }
+        return warm
+    }
     var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && audio != nil }
     func setMicrophoneGate(open: Bool) async -> Bool { audio?.setMicrophoneGate(open: open) ?? open }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { await audio?.playVoiceReply(buffer) ?? false }

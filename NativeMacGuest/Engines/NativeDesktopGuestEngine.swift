@@ -280,6 +280,10 @@ enum NativeDesktopGuestError: LocalizedError {
         guard let systemAudio else { return true }
         return await systemAudio.setInputPermitted(permitted, keepWarm: keepDeviceWarm)
     }
+    func prewarmInput() async -> Bool {
+        guard !inputPermitted, let systemAudio else { return false }
+        return await systemAudio.prewarmInput()
+    }
     var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && systemAudio != nil }
     func setMicrophoneGate(open: Bool) async -> Bool { systemAudio?.setMicrophoneGate(open: open) ?? open }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { await systemAudio?.playVoiceReply(buffer) ?? false }

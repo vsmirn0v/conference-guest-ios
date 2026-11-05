@@ -57,6 +57,40 @@ import XCTest
         XCTAssertTrue(owner.setMicrophoneGate(open: true))
     }
 
+    /// A listening meeting starts its device muted at join only when the warm
+    /// microphone is chosen; the talk meeting never takes this path.
+    func testListenerPrewarmsAtJoinOnlyWhenChosen() async throws {
+        for (warm, owns) in [(true, false), (false, false), (true, true)] {
+            let engine = VoiceTestEngine()
+            let model = NativeDesktopMeetingModel(destination: try .verified(URL(string: "https://example.test/calls/warm-\(UUID())")!, engine: .guest),
+                                                  name: "Vitalii", title: "Warm", engine: engine)
+            model.keepMicrophoneWarm = { warm }
+            model.configureForConcurrentJoin(ownsMicrophone: owns)
+            try await model.connect()
+            for _ in 0..<50 where !engine.events.contains("prewarm") { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertEqual(engine.events.contains("prewarm"), warm && !owns, "warm \(warm), owns \(owns)")
+            XCTAssertFalse(engine.events.contains("mic:true"), "Prewarming never unmutes")
+            _ = await model.leave()
+        }
+    }
+
+    /// A real audio owner: prewarming is refused while it holds the permit, and
+    /// otherwise leaves it muted, unpermitted and refusing to unmute.
+    func testPrewarmKeepsInputMutedAndUnpermitted() async throws {
+        let owner = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, concurrent: true)
+        defer { Task { _ = await owner.shutdown() } }
+        let whilePermitted = await owner.prewarmInput()
+        XCTAssertFalse(whilePermitted, "The talk meeting uses the ordinary activation")
+        let released = await owner.setInputPermitted(false); XCTAssertTrue(released)
+        let warm = await owner.prewarmInput()
+        XCTAssertEqual(warm, AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+                       "Without microphone access nothing starts")
+        XCTAssertEqual(owner.snapshot["inputPermitted"] as? Bool, false)
+        XCTAssertEqual(owner.snapshot["microphoneMuted"] as? Bool, true)
+        let unmuted = await owner.setMicrophoneMuted(false)
+        XCTAssertFalse(unmuted, "Unmuting is refused until the talk role moves here")
+    }
+
     // MARK: Beta 58 hang — one owner's native audio work at a time
 
     /// The gate admits one owner at a time and drains every other owner first.
@@ -292,6 +326,7 @@ import XCTest
     func setPhysicalInputPermitted(_ permitted: Bool, keepDeviceWarm: Bool) async -> Bool {
         events.append("permit:\(permitted) warm:\(keepDeviceWarm)"); return true
     }
+    func prewarmInput() async -> Bool { events.append("prewarm"); return true }
     var supportsVoiceReply: Bool { voiceReply }
     func setMicrophoneGate(open: Bool) async -> Bool { events.append("gate:\(open)"); return true }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { events.append("play"); return playResult }

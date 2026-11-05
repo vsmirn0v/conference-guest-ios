@@ -742,6 +742,31 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         }
     }
 
+    /// Experimental warm microphone for a meeting without the talk role: starts the
+    /// device and voice processing muted, the state a warm release leaves, so the
+    /// first move here skips that startup. The permit stays withdrawn, so nothing
+    /// can be unmuted or sent until the talk role moves here.
+    func prewarmInput(timeout: TimeInterval = 8) async -> Bool {
+        await perform("input-prewarm", timeout: timeout) {
+            guard !self.closed, let module = self.currentModule, !self.inputPermitted,
+                  AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
+            if self.microphoneOptIn { return module.isMicrophoneMuted }
+            self.update(["microphoneMutedRequested": true])
+            guard self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0,
+                  module.isMicrophoneMuted else { self.readSnapshot(module); return false }
+            let wasActivated = self.inputActivation
+            self.inputActivation.activate(); self.microphoneOptIn = self.inputActivation.inputAvailable
+            guard self.applyAvailability(module) else {
+                self.inputActivation = wasActivated; self.microphoneOptIn = self.inputActivation.inputAvailable
+                _ = self.applyAvailability(module); self.readSnapshot(module); return false
+            }
+            self.deferredActivation = false
+            self.update(["inputKeptWarm": true, "deferredActivation": false, "microphoneOptIn": self.microphoneOptIn])
+            self.readSnapshot(module)
+            return module.isMicrophoneMuted
+        }
+    }
+
     func setPlayoutEnabled(_ enabled: Bool, timeout: TimeInterval = 2, expectedEpoch: UUID? = nil) async -> Bool {
         if sharedNativeOwner {
             guard await sharedPlayoutGate.setSound(enabled, expected: expectedEpoch) else {

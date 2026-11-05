@@ -94,6 +94,9 @@ protocol NativeDesktopMeetingEngine: AnyObject {
     /// Releasing input for another meeting. With `keepDeviceWarm` the device and
     /// voice processing keep running muted, so moving back is faster.
     func setPhysicalInputPermitted(_ permitted: Bool, keepDeviceWarm: Bool) async -> Bool
+    /// A meeting without the talk role starts its device muted now, as a warm
+    /// release would leave it; true when it is running muted.
+    func prewarmInput() async -> Bool
     /// Voice replies: a microphone gate and a player in the input graph.
     var supportsVoiceReply: Bool { get }
     /// Closing the gate removes your microphone from what is sent; the player still plays.
@@ -129,6 +132,7 @@ extension NativeDesktopMeetingEngine {
     func setPhysicalInputPermitted(_ permitted: Bool, keepDeviceWarm: Bool) async -> Bool {
         await setPhysicalInputPermitted(permitted)
     }
+    func prewarmInput() async -> Bool { false }
     var supportsVoiceReply: Bool { false }
     func setMicrophoneGate(open: Bool) async -> Bool { open }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { false }

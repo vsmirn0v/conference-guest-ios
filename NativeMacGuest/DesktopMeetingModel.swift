@@ -308,6 +308,19 @@ import UniformTypeIdentifiers
     static let keepMicrophoneWarmKey = "nativeDesktop.keepMicrophoneWarm"
     /// Experimental: a meeting losing the talk role keeps its device running, muted.
     var keepMicrophoneWarm: () -> Bool = { UserDefaults.standard.bool(forKey: NativeDesktopMeetingModel.keepMicrophoneWarmKey) }
+    /// With the warm microphone chosen, a meeting joined without the talk role
+    /// starts its device muted once connected, so the first move here is as fast
+    /// as later ones. Nothing is sent: unmuting still needs the talk role.
+    private func prewarmMicrophoneIfChosen() {
+        guard keepMicrophoneWarm(), !ownsMicrophone, !closed, !transferHeld else { return }
+        let engine = engine, kind = kind.rawValue
+        Task { @MainActor in
+            let started = ProcessInfo.processInfo.systemUptime
+            let warm = await engine.prewarmInput()
+            probeLog("microphone-prewarm", ["meeting": kind, "warm": warm,
+                "ms": ((ProcessInfo.processInfo.systemUptime - started) * 10_000).rounded() / 10])
+        }
+    }
 
     // MARK: Voice replies
 
@@ -748,6 +761,7 @@ import UniformTypeIdentifiers
         guard !closed else { return }
         let previous = snapshot; snapshot = value
         if previous.phase != value.phase { updateLocalTranscription() }
+        if previous.phase != .connected, value.phase == .connected { prewarmMicrophoneIfChosen() }
         else if previous.microphoneOn != value.microphoneOn { updateLocalMicrophoneCapture() }
         let now = Date()
         speakingTimeline.observe(speaking: Set(value.participants.filter { !$0.isLocal && $0.speaking == true }.map(\.id)), at: now)
