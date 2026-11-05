@@ -124,26 +124,47 @@ import UniformTypeIdentifiers
     var transcribingLocally: Bool { localTranscriber != nil }
     /// The calendar series this meeting was joined from, for its Attention instructions.
     var calendarSeriesID: String?
+    /// Participant identity per transcribed audio source; nil for a mixed stream.
+    private var audioIdentities: [String: String?] = [:]
+    /// Who the service reported speaking, for lines from a mixed stream.
+    private var speakingTimeline = SpeakingTimeline()
+#if DEBUG
+    func observeSpeakingForTesting(_ ids: Set<String>, at time: Date) { speakingTimeline.observe(speaking: ids, at: time) }
+#endif
 
     /// Runs local transcription for a connected Guest meeting when it is switched
     /// on and installed, the service does not transcribe, and this meeting is not paused.
+    /// This meeting's service may be transcribed here: Guest whenever local
+    /// transcription is on; Telemost and TrueConf by default; Rock only when chosen.
+    var localTranscriptionAllowed: Bool {
+        guard engine.supportsLocalTranscription, listenStore.ready else { return false }
+        switch kind {
+        case .guest: return true
+        case .community: return listenStore.transcribesRock
+        case .telemost, .trueconf: return listenStore.transcribesExternal
+        }
+    }
     func updateLocalTranscription() {
-        let guest = engine as? NativeDesktopGuestEngine
-        let wanted = !closed && connected && guest != nil && !localTranscriptionPaused &&
-            guestFeatures.transcriptionStatus != .active && listenStore.ready
-        if wanted, localTranscriber == nil, let guest, let model = listenStore.recognizerModel(), let vad = listenStore.vadURL {
+        engine.setTranscriptionRequested(localTranscriptionAllowed)
+        let wanted = !closed && connected && localTranscriptionAllowed && !localTranscriptionPaused &&
+            guestFeatures.transcriptionStatus != .active
+        if wanted, localTranscriber == nil, let model = listenStore.recognizerModel(), let vad = listenStore.vadURL {
             let transcriber = MeetingTranscriber(model: model, vadModel: vad) { [weak self] line in self?.receiveLocalLine(line) }
             localTranscriber = transcriber
-            guest.onRemoteAudio = { [weak transcriber] in transcriber?.update($0) }
+            engine.setTranscriptionAudioHandler { [weak self, weak transcriber] sources in
+                self?.audioIdentities = Dictionary(sources.map { ($0.id, $0.participantIdentity) }, uniquingKeysWith: { first, _ in first })
+                transcriber?.update(sources)
+            }
             engine.setLocalAudioSink { [weak transcriber] in transcriber?.feedLocal($0) }
             updateLocalMicrophoneCapture()
-            Task { _ = await guest.setTranscriptionOutput(true) }
+            let engine = engine
+            Task { _ = await engine.setTranscriptionOutput(true) }
             probeLog("local-transcription-start", ["model": listenStore.selectedID, "soundOn": snapshot.playoutOn,
-                "microphone": listenStore.includesMicrophone])
+                "microphone": listenStore.includesMicrophone, "service": kind.rawValue])
             objectWillChange.send()
         } else if !wanted, let transcriber = localTranscriber {
             localTranscriber = nil
-            guest?.onRemoteAudio = nil
+            engine.setTranscriptionAudioHandler(nil)
             engine.setLocalAudioSink(nil)
             transcriber.stop()
             let summary = transcriber.currentSummary
@@ -151,7 +172,7 @@ import UniformTypeIdentifiers
                 "audioSeconds": summary.audioSeconds.rounded(), "decodeSeconds": summary.decodeSeconds.rounded(),
                 "droppedSeconds": summary.droppedSeconds.rounded(), "micUtterances": summary.microphoneUtterances,
                 "micSeconds": summary.microphoneSeconds.rounded()])
-            if let guest, !closed { Task { _ = await guest.setTranscriptionOutput(false) } }
+            if !closed { let engine = engine; Task { _ = await engine.setTranscriptionOutput(false) } }
             if !closed { observeTranscript() }
             objectWillChange.send()
         } else if wanted, localTranscriber != nil {
@@ -173,8 +194,9 @@ import UniformTypeIdentifiers
             if localTranscript.count > 1000 { localTranscript.removeFirst(localTranscript.count - 1000) }
             observeTranscript(); return
         }
-        let identity = (engine as? NativeDesktopGuestEngine)?.currentNativeEngine?.remoteAudio
-            .first { $0.track.trackId == line.trackID }?.participantIdentity
+        // A per-participant track names its speaker; a mixed one is matched to
+        // whoever the service said was speaking at the time.
+        let identity = audioIdentities[line.trackID].flatMap { $0 } ?? speakingTimeline.speaker(start: line.start, end: line.end)
         let name = participants.first { $0.id == identity }?.name ?? L("Participant")
         localTranscript.append(GuestMeetingMessage(id: line.id, participantID: identity ?? line.trackID, participantName: name,
             text: line.text, sentAt: line.start, isOwn: false, receivedAt: line.end))
@@ -380,6 +402,8 @@ import UniformTypeIdentifiers
         let initialVolume = meetingVolume
         Task { [engine] in await engine.setPlayoutVolume(initialVolume) }
         engine.onState = { [weak self] value in self?.update(value) }
+        // Before connecting: a meeting joined with sound off still receives audio to transcribe.
+        engine.setTranscriptionRequested(localTranscriptionAllowed)
         engine.onVideo = { [weak self] value in
             guard let self, !closed else { return }; videos = value; updateDemand()
         }
@@ -630,6 +654,7 @@ import UniformTypeIdentifiers
         if previous.phase != value.phase { updateLocalTranscription() }
         else if previous.microphoneOn != value.microphoneOn { updateLocalMicrophoneCapture() }
         let now = Date()
+        speakingTimeline.observe(speaking: Set(value.participants.filter { !$0.isLocal && $0.speaking == true }.map(\.id)), at: now)
         for person in value.participants where person.speaking == true {
             if lastSpokeAt[person.id].map({ now.timeIntervalSince($0) > 5 }) ?? true { lastSpokeAt[person.id] = now }
         }

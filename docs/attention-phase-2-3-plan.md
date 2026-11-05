@@ -240,3 +240,25 @@ in Settings.
 Not verified: a live call to OpenAI (no key was used in development), cards in a real
 multi-meeting session, notification delivery, and the quality of verdicts on real meetings.
 Phase 2b (Telemost/TrueConf audio) and 2c (Rock) are not started.
+
+## Status (5 Nov 2026, later): Phase 2b and 2c
+
+- **Audio sources are generic.** `MeetingAudioSource` wraps a WebRTC track (Guest, Telemost,
+  TrueConf) or a LiveKit track (Rock); the engine protocol gained
+  `supportsLocalTranscription`, `setTranscriptionAudioHandler`, `setTranscriptionOutput` and
+  `setTranscriptionRequested`. The meeting model no longer special-cases Guest.
+- **2b Telemost/TrueConf.** `NativeDesktopRTCPeer` reports received audio tracks. The session
+  keeps them per mid and keeps output decoded (silently) while sound is off. Telemost's hello
+  asks for audio when transcription is wanted even if the meeting is joined with sound off
+  (`disableSubscriberAudio` is false then). Lines from the mixed stream are attributed by
+  `SpeakingTimeline`: the participant whose reported speaking intervals (widened by 0.5 s) cover
+  at least half of the utterance and clearly more than anyone else; otherwise "Participant".
+  Telemost's speaking flag comes from its slot VAD, so it only covers participants with a
+  video slot. TrueConf reports no speaking signal, so its lines are unattributed.
+- **2c Rock.** One LiveKit renderer per participant track (exact names). While transcription is
+  on, audio stays subscribed with sound off at volume zero. Off by default.
+- Settings → Transcription → "Meetings to transcribe": Telemost and TrueConf (on), Rock (off).
+
+Not verified live: Telemost/TrueConf/Rock transcription in real meetings, Telemost attribution
+quality, and whether Telemost honours the hello audio flag mid-meeting (transcription switched
+on after a silent join takes effect on the next reconnect).

@@ -33,6 +33,25 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
     func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {
         localAudioSink = sink; audio?.setInputTranscriptionSink(sink)
     }
+    // Local transcription. The provider mixes everyone into its audio track(s),
+    // so sources carry no participant identity.
+    private var transcriptionHandler: (([MeetingAudioSource]) -> Void)?
+    private var remoteAudioTracks: [String: LKRTCAudioTrack] = [:]
+    private var transcriptionOutputDemand = false
+    /// Read by the Telemost hello: subscribe to audio even when joining with sound off.
+    var transcriptionRequested = false
+    var supportsLocalTranscription: Bool { true }
+    private var audioSources: [MeetingAudioSource] {
+        remoteAudioTracks.sorted { $0.key < $1.key }.map { .webRTC($0.value, identity: nil) }
+    }
+    func setTranscriptionAudioHandler(_ handler: (([MeetingAudioSource]) -> Void)?) {
+        transcriptionHandler = handler; handler?(audioSources)
+    }
+    func setTranscriptionOutput(_ keep: Bool) async -> Bool {
+        transcriptionOutputDemand = keep
+        return await audio?.setTranscriptionOutput(keep) ?? !keep
+    }
+    func setTranscriptionRequested(_ requested: Bool) { transcriptionRequested = requested }
     private var meetingVolume = 1.0
     var publisher: NativeDesktopRTCPeer?
     var subscriber: NativeDesktopRTCPeer?
@@ -112,6 +131,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
             audio = owner; admittedAudio = owner
             _ = owner.setMeetingVolume(meetingVolume)
             owner.setInputTranscriptionSink(localAudioSink)
+            if transcriptionOutputDemand { _ = await owner.setTranscriptionOutput(true) }
             if !inputPermitted, !(await owner.setInputPermitted(false)) { throw NativeDesktopRTCError.cleanupFailed }
             try await startConnection(attempt)
             try check(attempt)
@@ -375,6 +395,10 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         peer.onTrack = { [weak self] mid, track in
             guard let self, epoch == attempt else { return }; tracks[mid] = track; refresh()
         }
+        peer.onAudioTrack = { [weak self] mid, track in
+            guard let self, epoch == attempt, remoteAudioTracks[mid] !== track else { return }
+            remoteAudioTracks[mid] = track; transcriptionHandler?(audioSources)
+        }
         peer.onLocalCamera = { [weak self] track in
             guard let self, epoch == attempt else { return }; onLocalCamera?(track)
         }
@@ -458,6 +482,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         descriptions = [:]; slots = []; tracks = [:]; speaking = []; regions = [:]; roster = .init()
         localID = ""; cid = ""; streamID = ""; telemostBootstrap = nil
         incomingVideo = []; onVideo?([]); onLocalCamera?(nil)
+        if !remoteAudioTracks.isEmpty { remoteAudioTracks = [:]; transcriptionHandler?([]) }
         let retirement = UUID(); connectionRetirementID = retirement
         let task = Task { [self] in
             // Audio remains owned until both camera/peer stops and media work

@@ -24,7 +24,8 @@ extension NativeDesktopExternalSession {
             }
             transport.onFailure = { [weak self] error in guard let self, epoch == attempt else { return }; recover(error) }
             transport.start()
-            try await transport.request("hello", Self.telemostHello(bootstrap, name: name, quiet: !outputIntent))
+            // Local transcription needs the audio even while the meeting's sound is off.
+            try await transport.request("hello", Self.telemostHello(bootstrap, name: name, quiet: !outputIntent && !transcriptionRequested))
             try check(attempt); helloAccepted = true; mediaAccepted = true
             if bootstrap.chatAllowed { onTelemostChatContext?(invitation, bootstrap.roomID) }
             markConnected()

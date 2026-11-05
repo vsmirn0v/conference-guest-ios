@@ -21,6 +21,16 @@ struct NativeDesktopTranscriptionSettings: View {
                 Text(L("What you say joins the transcript of the meeting that holds your microphone, while it is unmuted. Nothing is transcribed while you are muted."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            Section(L("Meetings to transcribe")) {
+                Toggle(L("Telemost and TrueConf"), isOn: $store.transcribesExternal).disabled(!store.enabled)
+                    .accessibilityIdentifier("transcription.local.external")
+                Text(L("These services send everyone's voice as one stream. Names come from who the service shows as speaking; TrueConf does not report it, so its lines show “Participant”."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Toggle(L("Rock jam sessions"), isOn: $store.transcribesRock).disabled(!store.enabled)
+                    .accessibilityIdentifier("transcription.local.rock")
+                Text(L("Off by default: jam sessions are mostly music. Each musician is transcribed separately."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             Section(L("Speech model")) {
                 ForEach(store.catalog.listen) { model in row(model) }
                 Text(L("Models run on this Mac's processor. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder."))

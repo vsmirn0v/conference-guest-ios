@@ -33,6 +33,10 @@ enum NativeDesktopGuestError: LocalizedError {
     /// Local transcription keeps output running (silently) while sound is off.
     private var transcriptionOutputDemand = false
     private var localAudioSink: ((AVAudioPCMBuffer) -> Void)?
+    var supportsLocalTranscription: Bool { true }
+    func setTranscriptionAudioHandler(_ handler: (([MeetingAudioSource]) -> Void)?) {
+        onRemoteAudio = handler.map { handler in { handler($0.map(\.source)) } }
+    }
     func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {
         localAudioSink = sink; systemAudio?.setInputTranscriptionSink(sink)
     }

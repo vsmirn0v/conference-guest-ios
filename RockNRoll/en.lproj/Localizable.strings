@@ -1608,3 +1608,8 @@
 "free" = "free";
 "$%.2f per million input tokens" = "$%.2f per million input tokens";
 "no structured output" = "no structured output";
+"Meetings to transcribe" = "Meetings to transcribe";
+"Telemost and TrueConf" = "Telemost and TrueConf";
+"These services send everyone's voice as one stream. Names come from who the service shows as speaking; TrueConf does not report it, so its lines show “Participant”." = "These services send everyone's voice as one stream. Names come from who the service shows as speaking; TrueConf does not report it, so its lines show “Participant”.";
+"Rock jam sessions" = "Rock jam sessions";
+"Off by default: jam sessions are mostly music. Each musician is transcribed separately." = "Off by default: jam sessions are mostly music. Each musician is transcribed separately.";

@@ -1,7 +1,72 @@
 import AVFoundation
 import Foundation
+import LiveKit
 import LiveKitWebRTC
 import SherpaOnnxKit
+
+/// One remote audio stream a meeting can transcribe: a WebRTC track (Guest,
+/// Telemost, TrueConf) or a LiveKit track (Rock). A mixed stream has no identity.
+struct MeetingAudioSource {
+    let id: String
+    let participantIdentity: String?
+    let attach: (MeetingAudioSink) -> Void
+    let detach: (MeetingAudioSink) -> Void
+
+    static func webRTC(_ track: LKRTCAudioTrack, identity: String?) -> Self {
+        .init(id: track.trackId, participantIdentity: identity, attach: { track.add($0) }, detach: { track.remove($0) })
+    }
+    static func liveKit(_ track: RemoteAudioTrack, id: String, identity: String?) -> Self {
+        .init(id: id, participantIdentity: identity, attach: { track.add(audioRenderer: $0.liveKit) },
+              detach: { track.remove(audioRenderer: $0.liveKit) })
+    }
+}
+extension GuestRemoteAudio {
+    var source: MeetingAudioSource { .webRTC(track, identity: participantIdentity) }
+}
+
+/// Who the meeting service says is speaking, over time. A mixed audio stream
+/// has no speaker; an utterance is given to the participant whose speaking
+/// intervals cover most of it, when that covers at least `minimumShare`.
+struct SpeakingTimeline: Equatable {
+    static let retention: TimeInterval = 300
+    /// Speaking signals arrive late and coarse; intervals are widened by this much.
+    static let padding: TimeInterval = 0.5
+    static let minimumShare = 0.5
+    private(set) var closed: [String: [ClosedRange<Date>]] = [:]
+    private(set) var open: [String: Date] = [:]
+
+    mutating func observe(speaking: Set<String>, at time: Date) {
+        for id in speaking where open[id] == nil { open[id] = time }
+        for (id, start) in open where !speaking.contains(id) {
+            closed[id, default: []].append(start...max(start, time)); open[id] = nil
+        }
+        let cutoff = time.addingTimeInterval(-Self.retention)
+        for id in closed.keys { closed[id]?.removeAll { $0.upperBound < cutoff } }
+        closed = closed.filter { !$0.value.isEmpty }
+    }
+
+    /// The participant who most likely said `start...end`, or nil when no one
+    /// clearly did (no signal, or two people equally).
+    func speaker(start: Date, end: Date, now: Date = Date()) -> String? {
+        let length = end.timeIntervalSince(start)
+        guard length > 0 else { return nil }
+        var shares: [(String, Double)] = []
+        for id in Set(closed.keys).union(open.keys) {
+            var ranges = closed[id] ?? []
+            if let begun = open[id] { ranges.append(begun...max(begun, now)) }
+            let covered = ranges.reduce(0.0) { total, range in
+                let from = max(start, range.lowerBound.addingTimeInterval(-Self.padding))
+                let to = min(end, range.upperBound.addingTimeInterval(Self.padding))
+                return total + max(0, to.timeIntervalSince(from))
+            }
+            shares.append((id, min(1, covered / length)))
+        }
+        let ranked = shares.sorted { $0.1 > $1.1 }
+        guard let best = ranked.first, best.1 >= Self.minimumShare else { return nil }
+        if ranked.count > 1, ranked[1].1 >= best.1 - 0.05 { return nil }
+        return best.0
+    }
+}
 
 /// One recognizer for every meeting. Utterances run one at a time on a utility
 /// queue; when more than `maxPendingSeconds` of speech waits, new speech is
@@ -62,8 +127,8 @@ final class MeetingTranscriber: @unchecked Sendable {
     private let model: SherpaRecognizerModel
     private let vadModel: URL
     private let onLine: @MainActor (Line) -> Void
-    // Main actor: attached taps by track id.
-    private var taps: [String: (track: LKRTCAudioTrack, tap: SpeakerTap)] = [:]
+    // Main actor: attached sinks by source id.
+    private var taps: [String: (source: MeetingAudioSource, tap: MeetingAudioSink)] = [:]
     // Queue: per-speaker conversion and detection state.
     private var speakers: [String: Speaker] = [:]
     private var stopped = false
@@ -83,21 +148,21 @@ final class MeetingTranscriber: @unchecked Sendable {
         self.model = model; self.vadModel = vadModel; self.recognizer = recognizer; self.onLine = onLine
     }
 
-    /// Attaches to new tracks and detaches from tracks that ended.
-    @MainActor func update(_ audio: [GuestRemoteAudio]) {
-        let current = Set(audio.map { $0.track.trackId })
+    /// Attaches to new sources and detaches from sources that ended.
+    @MainActor func update(_ sources: [MeetingAudioSource]) {
+        let current = Set(sources.map(\.id))
         for (id, entry) in taps where !current.contains(id) {
-            entry.track.remove(entry.tap); taps[id] = nil
+            entry.source.detach(entry.tap); taps[id] = nil
             queue.async { [self] in finish(id) }
         }
-        for item in audio where taps[item.track.trackId] == nil {
-            let tap = SpeakerTap(trackID: item.track.trackId) { [weak self] id, buffer in self?.receive(id, buffer) }
-            item.track.add(tap); taps[item.track.trackId] = (item.track, tap)
+        for source in sources where taps[source.id] == nil {
+            let tap = MeetingAudioSink(trackID: source.id) { [weak self] id, buffer in self?.receive(id, buffer) }
+            source.attach(tap); taps[source.id] = (source, tap)
         }
     }
 
     @MainActor func stop() {
-        for entry in taps.values { entry.track.remove(entry.tap) }
+        for entry in taps.values { entry.source.detach(entry.tap) }
         taps = [:]
         queue.sync { stopped = true; speakers = [:] }
     }
@@ -117,7 +182,7 @@ final class MeetingTranscriber: @unchecked Sendable {
     }
     /// Your microphone's buffer, from the engine's input tap. Copies at once.
     func feedLocal(_ buffer: AVAudioPCMBuffer) {
-        guard let copy = SpeakerTap.copy(buffer) else { return }
+        guard let copy = MeetingAudioSink.copy(buffer) else { return }
         queue.async { [self] in
             guard localCapture else { return }
             receiveOnQueue(Self.localTrackID, copy)
@@ -204,9 +269,18 @@ final class MeetingTranscriber: @unchecked Sendable {
     }
 }
 
+/// LiveKit's renderer protocol has its own Objective-C selector; this forwards to the sink.
+final class LiveKitAudioSink: NSObject, AudioRenderer, @unchecked Sendable {
+    let sink: MeetingAudioSink
+    init(_ sink: MeetingAudioSink) { self.sink = sink }
+    func render(pcmBuffer: AVAudioPCMBuffer) { sink.render(pcmBuffer: pcmBuffer) }
+}
+
 /// A sink on one remote track. It copies each buffer and returns at once: the
-/// WebRTC audio thread never waits for conversion or recognition.
-private final class SpeakerTap: NSObject, LKRTCAudioRenderer, @unchecked Sendable {
+/// audio thread never waits for conversion or recognition.
+final class MeetingAudioSink: NSObject, LKRTCAudioRenderer, @unchecked Sendable {
+    /// The same sink as a LiveKit renderer, one object for add and remove.
+    lazy var liveKit = LiveKitAudioSink(self)
     let trackID: String
     let deliver: (String, AVAudioPCMBuffer) -> Void
     init(trackID: String, deliver: @escaping (String, AVAudioPCMBuffer) -> Void) { self.trackID = trackID; self.deliver = deliver }

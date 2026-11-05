@@ -257,6 +257,51 @@ import XCTest
         XCTAssertEqual(store.decisionFiles().count, 1, "The 40-day-old file is removed")
     }
 
+    // MARK: Mixed audio (Telemost, TrueConf)
+
+    func testSpeakingTimelineAttributesMixedSpeech() {
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        var timeline = SpeakingTimeline()
+        timeline.observe(speaking: ["anna"], at: t0)
+        timeline.observe(speaking: ["anna"], at: t0.addingTimeInterval(1))
+        timeline.observe(speaking: [], at: t0.addingTimeInterval(4))
+        timeline.observe(speaking: ["igor"], at: t0.addingTimeInterval(6))
+        let now = t0.addingTimeInterval(9)
+        XCTAssertEqual(timeline.speaker(start: t0.addingTimeInterval(0.5), end: t0.addingTimeInterval(3.5), now: now), "anna")
+        XCTAssertEqual(timeline.speaker(start: t0.addingTimeInterval(6.5), end: t0.addingTimeInterval(8.5), now: now), "igor",
+                       "Someone still speaking counts until now")
+        XCTAssertNil(timeline.speaker(start: t0.addingTimeInterval(4.6), end: t0.addingTimeInterval(5.4), now: now), "No one was speaking")
+        XCTAssertNil(timeline.speaker(start: t0.addingTimeInterval(2), end: t0.addingTimeInterval(8), now: now),
+                     "Neither covers half of a line spanning both")
+        var both = SpeakingTimeline()
+        both.observe(speaking: ["anna", "igor"], at: t0); both.observe(speaking: [], at: t0.addingTimeInterval(3))
+        XCTAssertNil(both.speaker(start: t0, end: t0.addingTimeInterval(3), now: now), "Two people equally: no guess")
+        var old = SpeakingTimeline()
+        old.observe(speaking: ["anna"], at: t0); old.observe(speaking: [], at: t0.addingTimeInterval(1))
+        old.observe(speaking: [], at: t0.addingTimeInterval(SpeakingTimeline.retention + 10))
+        XCTAssertTrue(old.closed.isEmpty, "Old intervals are dropped")
+    }
+
+    func testMixedStreamLinesGetTheSpeakerTheServiceReported() async throws {
+        let (infra, _) = try await meeting("telemost-like")
+        let t0 = Date()
+        infra.observeSpeakingForTesting(["anna"], at: t0)
+        infra.observeSpeakingForTesting([], at: t0.addingTimeInterval(3))
+        infra.receiveLocalLineForTesting(.init(id: "m1", trackID: "mixed", text: "Виталий, DNS готов?",
+            start: t0.addingTimeInterval(0.4), end: t0.addingTimeInterval(2.6)))
+        XCTAssertEqual(infra.localTranscript.last?.participantName, "Anna")
+        XCTAssertEqual(infra.localTranscript.last?.participantID, "anna")
+        infra.receiveLocalLineForTesting(.init(id: "m2", trackID: "mixed", text: "Кто это?",
+            start: t0.addingTimeInterval(10), end: t0.addingTimeInterval(11)))
+        XCTAssertEqual(infra.localTranscript.last?.participantName, L("Participant"))
+    }
+
+    func testTranscriptionSourcesDefaultToGuestExternalOnRockOff() {
+        let store = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "test", models: []), root: folder(),
+                                     defaults: UserDefaults(suiteName: "listen-\(UUID())")!)
+        XCTAssertTrue(store.transcribesExternal); XCTAssertFalse(store.transcribesRock); XCTAssertTrue(store.includesMicrophone)
+    }
+
     // MARK: Coordinator
 
     private func meeting(_ name: String) async throws -> (NativeDesktopMeetingModel, AttentionTestEngine) {
@@ -305,7 +350,7 @@ import XCTest
         coordinator.decline(card, reason: .alreadyKnown)
         XCTAssertNil(coordinator.card(for: infra.sessionID))
         let preset = try XCTUnwrap(store.preset(room: infra.invitation), "Declining creates the room's instructions")
-        XCTAssertEqual(preset.examples.last?.decision, .declined); XCTAssertEqual(preset.examples.last?.excerpt, "Participant: Виталий, DNS готов?")
+        XCTAssertEqual(preset.examples.last?.decision, .declined); XCTAssertEqual(preset.examples.last?.excerpt, L("Participant") + ": Виталий, DNS готов?")
         XCTAssertEqual(preset.threshold, 0.6, accuracy: 0.0001)
 
         clock += 30

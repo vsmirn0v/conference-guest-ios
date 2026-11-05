@@ -79,6 +79,15 @@ protocol NativeDesktopMeetingEngine: AnyObject {
     /// Your microphone's buffers for local transcription, delivered on the audio
     /// thread whenever this engine holds physical input; nil stops delivery.
     func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?)
+    /// The engine can hand remote audio to local transcription.
+    var supportsLocalTranscription: Bool { get }
+    /// Receives the current remote audio sources now and on every change; nil stops.
+    func setTranscriptionAudioHandler(_ handler: (([MeetingAudioSource]) -> Void)?)
+    /// Keeps remote audio decoded while sound is off; what is heard stays silent.
+    func setTranscriptionOutput(_ keep: Bool) async -> Bool
+    /// Before connecting: receive audio even when joining with sound off, so a
+    /// meeting joined silently can still be transcribed.
+    func setTranscriptionRequested(_ requested: Bool)
     func leave() async -> Bool
 }
 extension NativeDesktopMeetingEngine {
@@ -100,6 +109,10 @@ extension NativeDesktopMeetingEngine {
     func startPrivateAudioCheck() async throws { throw NativeDesktopPrivateAudioError.unavailable }
     func stopPrivateAudioCheck() async throws {}
     func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {}
+    var supportsLocalTranscription: Bool { false }
+    func setTranscriptionAudioHandler(_ handler: (([MeetingAudioSource]) -> Void)?) {}
+    func setTranscriptionOutput(_ keep: Bool) async -> Bool { !keep }
+    func setTranscriptionRequested(_ requested: Bool) {}
 }
 enum NativeDesktopPrivateAudioError: LocalizedError {
     case unavailable

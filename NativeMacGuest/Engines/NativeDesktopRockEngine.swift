@@ -45,6 +45,11 @@ struct NativeRockLiveMediaEvidence {
     private var displayName = ""
     private var revision = UUID()
     private var playoutIntent = true
+    // Local transcription (opt-in for Rock): audio stays subscribed while sound
+    // is off; its volume stays at zero, so nothing is heard.
+    private var transcriptionRequested = false
+    private var transcriptionHandler: (([MeetingAudioSource]) -> Void)?
+    private var transcriptionSourceIDs: [String]?
     private var meetingVolume = 1.0
     private var participantVolumes: [String: Double] = [:]
     private let subscriptions = MediaConfigurationCoordinator<ObjectIdentifier, NativeRockTrackDemand>()
@@ -217,6 +222,36 @@ struct NativeRockLiveMediaEvidence {
             refresh(room)
         } catch { if revision == token { playoutIntent = previous }; throw error }
     }
+    var supportsLocalTranscription: Bool { true }
+    func setTranscriptionAudioHandler(_ handler: (([MeetingAudioSource]) -> Void)?) {
+        transcriptionHandler = handler; transcriptionSourceIDs = nil
+        if let room { publishAudioSources(room) } else { handler?([]) }
+    }
+    func setTranscriptionRequested(_ requested: Bool) {
+        guard transcriptionRequested != requested else { return }
+        transcriptionRequested = requested
+        guard let room, room.connectionState == .connected else { return }
+        let token = revision
+        Task { @MainActor [weak self] in
+            guard let self, revision == token, self.room === room else { return }
+            try? await subscribe(room); refresh(room)
+        }
+    }
+    func setTranscriptionOutput(_ keep: Bool) async -> Bool { setTranscriptionRequested(keep); return true }
+    /// Each remote participant's audio track, reported when the set changes.
+    private func publishAudioSources(_ room: Room) {
+        guard let transcriptionHandler else { return }
+        var sources: [MeetingAudioSource] = []
+        for participant in room.remoteParticipants.values {
+            for publication in participant.audioTracks {
+                guard let track = publication.track as? RemoteAudioTrack else { continue }
+                sources.append(.liveKit(track, id: publication.sid.stringValue, identity: identifier(participant)))
+            }
+        }
+        let ids = sources.map(\.id).sorted()
+        guard ids != transcriptionSourceIDs else { return }
+        transcriptionSourceIDs = ids; transcriptionHandler(sources)
+    }
     var supportsParticipantVolume: Bool { true }
     func setParticipantVolume(_ volume: Double, participantID: String) async {
         participantVolumes[participantID] = volume == 1 ? nil : volume
@@ -313,6 +348,7 @@ struct NativeRockLiveMediaEvidence {
         subscriptions.reset(); subscriptionFailure = nil
         audioPreparation?.cancel(); _ = try? await audioPreparation?.value; audioPreparation = nil
         let room = room; self.room = nil
+        if transcriptionSourceIDs?.isEmpty == false { transcriptionSourceIDs = []; transcriptionHandler?([]) }
         let screen = screenBridge; screenBridge = nil; await screen?.detach()
         screenPublication = nil
         let old = Array(renderers.values) + [localRenderer].compactMap { $0 }
@@ -386,7 +422,7 @@ struct NativeRockLiveMediaEvidence {
             }
         }
         return NativeRockVideoPolicy.demand(for: tracks, visible: visibleParticipantIDs, focused: focusedParticipantID,
-                                            playout: playoutIntent, cameras: receivesCameras)
+                                            playout: playoutIntent || transcriptionRequested, cameras: receivesCameras)
     }
     private func refresh(_ room: Room) {
         guard self.room === room, let factory = renderFactory else { return }
@@ -396,6 +432,7 @@ struct NativeRockLiveMediaEvidence {
         snapshot.sharing = connected && screenPublication != nil
         snapshot.playoutOn = playoutIntent
         snapshot.microphoneLevel = connected ? room.localParticipant.audioLevel : nil
+        publishAudioSources(room)
         let people: [Participant] = [room.localParticipant] + room.remoteParticipants.values.sorted {
             identifier($0) < identifier($1)
         }

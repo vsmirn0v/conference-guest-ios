@@ -50,6 +50,8 @@ struct ListenModelCatalog: Decodable, Equatable {
     }
     static let enabledKey = "attention.localTranscription"
     static let microphoneKey = "attention.transcribeMicrophone"
+    static let externalKey = "attention.transcribeExternal"
+    static let rockKey = "attention.transcribeRock"
     static let modelKey = "attention.listenModel"
     static let defaultModel = "gigaam-v3-rnnt-punct"
     static let shared = ListenModelStore()
@@ -60,6 +62,10 @@ struct ListenModelCatalog: Decodable, Equatable {
     @Published var enabled: Bool { didSet { defaults.set(enabled, forKey: Self.enabledKey) } }
     /// Your own words join the transcript of the meeting that holds your microphone, while unmuted.
     @Published var includesMicrophone: Bool { didSet { defaults.set(includesMicrophone, forKey: Self.microphoneKey) } }
+    /// Telemost and TrueConf meetings (one mixed stream; names come from the service's speaking signal).
+    @Published var transcribesExternal: Bool { didSet { defaults.set(transcribesExternal, forKey: Self.externalKey) } }
+    /// Rock jam sessions are mostly music, so they are transcribed only when chosen.
+    @Published var transcribesRock: Bool { didSet { defaults.set(transcribesRock, forKey: Self.rockKey) } }
     @Published var selectedID: String { didSet { defaults.set(selectedID, forKey: Self.modelKey) } }
     private let defaults: UserDefaults
     private var downloads: [String: Task<Void, Never>] = [:]
@@ -71,6 +77,8 @@ struct ListenModelCatalog: Decodable, Equatable {
         self.defaults = defaults
         enabled = defaults.bool(forKey: Self.enabledKey)
         includesMicrophone = defaults.object(forKey: Self.microphoneKey) as? Bool ?? true
+        transcribesExternal = defaults.object(forKey: Self.externalKey) as? Bool ?? true
+        transcribesRock = defaults.bool(forKey: Self.rockKey)
         selectedID = defaults.string(forKey: Self.modelKey).flatMap { catalog.model($0)?.id } ?? Self.defaultModel
         refresh()
     }

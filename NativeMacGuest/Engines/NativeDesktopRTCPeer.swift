@@ -16,6 +16,8 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
     private(set) var connection: LKRTCPeerConnection!
     var onCandidate: (([String: Any]) -> Void)?
     var onTrack: ((String, LKRTCVideoTrack) -> Void)?
+    /// A received (not sent) audio track by transceiver mid, for local transcription.
+    var onAudioTrack: ((String, LKRTCAudioTrack) -> Void)?
     var onState: ((LKRTCIceConnectionState) -> Void)?
     var onLocalCamera: ((LKRTCVideoTrack?) -> Void)?
     private(set) var closed = false
@@ -238,15 +240,19 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
     private func check() throws { if closed || Task.isCancelled { throw CancellationError() } }
     func close() async -> Bool {
         closed = true; audioTrack?.isEnabled = false; shareTrack = nil; applyVideo()
-        onCandidate = nil; onTrack = nil; onState = nil
+        onCandidate = nil; onTrack = nil; onAudioTrack = nil; onState = nil
         var clean = true
         do { try await setCamera(false) } catch { clean = false }
         onLocalCamera = nil; connection.close(); localCandidates = []; remoteCandidates = []
         return clean && !captureCleanupFailed
     }
     private func reportTrack(_ transceiver: LKRTCRtpTransceiver) {
-        guard !closed, !transceiver.mid.isEmpty, let track = transceiver.receiver.track as? LKRTCVideoTrack else { return }
-        onTrack?(transceiver.mid, track)
+        guard !closed, !transceiver.mid.isEmpty else { return }
+        if let track = transceiver.receiver.track as? LKRTCVideoTrack { onTrack?(transceiver.mid, track) }
+        else if let track = transceiver.receiver.track as? LKRTCAudioTrack, transceiver.direction != .sendOnly,
+                transceiver.direction != .inactive {
+            onAudioTrack?(transceiver.mid, track)
+        }
     }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didChange stateChanged: LKRTCSignalingState) {}
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didAdd stream: LKRTCMediaStream) {}
