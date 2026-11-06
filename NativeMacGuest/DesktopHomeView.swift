@@ -616,6 +616,7 @@ struct NativeDesktopSidebarMeetingRow: View {
             }
             Spacer(minLength: 4)
             AttentionBadge(attention: workspace.attention, meetingID: model.sessionID)
+            if workspace.attention.store.enabled { AttentionModeChip(attention: workspace.attention, model: model) }
             if speaking { Image(systemName: "waveform").font(.caption).foregroundStyle(.secondary).help(L("Someone is speaking")) }
             if workspace.isDetached(model) {
                 Image(systemName: "macwindow").font(.caption).foregroundStyle(.secondary).help(L("This meeting is open in its own window."))
@@ -638,8 +639,10 @@ struct NativeDesktopSidebarMeetingRow: View {
             Button(L("Mini meeting")) { workspace.showMini(model) }
             Divider()
             Button(L("Attention instructions…")) { workspace.attention.editInstructions(for: model) }
-            let paused = workspace.attention.isPaused(model.sessionID)
-            Button(paused ? L("Resume attention") : L("Pause attention")) { workspace.attention.setPaused(!paused, meetingID: model.sessionID) }
+            let current = workspace.attention.resolvedMode(model).mode
+            Picker(L("Attention"), selection: Binding(get: { current }, set: { workspace.attention.setMode($0, for: model) })) {
+                ForEach(AttentionMode.allCases, id: \.self) { Label($0.title, systemImage: $0.symbol).tag($0) }
+            }
             Button(L("Copy Invitation Link")) {
                 NSPasteboard.general.clearContents(); NSPasteboard.general.setString(model.invitation.absoluteString, forType: .string)
             }

@@ -21,8 +21,9 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
 }
 
-/// Judges every meeting you are not looking at and raises a card when one needs
-/// you. One judge call runs at a time across meetings, at most six a minute.
+/// Judges each meeting as closely as its attention mode asks (by default: not the one
+/// you look at, closely in the background, only for your name when silenced) and raises
+/// a card when one needs you. One judge call runs at a time across meetings, at most six a minute.
 @MainActor final class AttentionCoordinator: ObservableObject {
     struct Card: Identifiable, Equatable {
         /// The decision this card shows.
@@ -52,6 +53,14 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         var evidence: [AttentionWindow.Line] { verdict.evidence.compactMap { window.line(id: $0) } }
         /// You are working on a reply: a newer verdict does not replace the card.
         var engaged: Bool { draft != nil || drafting || speaking }
+        /// The meeting's mode when judged, and whether the window named or asked you.
+        var mode: AttentionMode = .watch
+        var mentioned = false
+    }
+    /// A mode you chose for one meeting, until you leave it or until `until`.
+    struct ModeOverride: Equatable {
+        var mode: AttentionMode
+        var until: Date?
     }
     struct MeetingState: Equatable {
         var verdict: AttentionVerdict?
@@ -60,17 +69,38 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         var seenLines: Set<String> = []
         var shownEvidence: Set<String> = []
         var heldUntil: Date?
-        var paused = false
+        var override: ModeOverride?
         var error: String?
         var participants: Set<String>?
         var changes: [(name: String, joined: Bool, at: Date)] = []
         static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.verdict == rhs.verdict && lhs.judgedAt == rhs.judgedAt && lhs.fingerprint == rhs.fingerprint &&
-            lhs.paused == rhs.paused && lhs.error == rhs.error && lhs.heldUntil == rhs.heldUntil
+            lhs.override == rhs.override && lhs.error == rhs.error && lhs.heldUntil == rhs.heldUntil
         }
+    }
+    /// Where a meeting's current mode comes from, most specific first.
+    enum ModeSource: Equatable {
+        case meeting(until: Date?)
+        case series
+        case situation(AttentionSituation)
+    }
+    struct ResolvedMode: Equatable {
+        let mode: AttentionMode
+        let source: ModeSource
+    }
+    /// How long a mode you chose for one meeting lasts.
+    enum ModeScope: Equatable {
+        case untilLeave
+        case minutes(Int)
+        /// Every occurrence of this meeting: its room and calendar series.
+        case series
     }
 
     static let interval: TimeInterval = 20
+    /// In Mentions, a window nobody named you in is still checked this often for something urgent.
+    static let mentionsInterval: TimeInterval = 120
+    /// In Mentions, a card without your name needs a "now" verdict at least this sure.
+    static let mentionsUrgency = 0.8
     static let holdNow: TimeInterval = 120
     static let callsPerMinute = 6
     static let maxCards = 2
@@ -85,7 +115,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 
     let store: AttentionStore
     var meetings: () -> [NativeDesktopMeetingModel] = { [] }
-    /// The meeting is in front of you: the judge leaves it alone.
+    /// The meeting is in front of you; its mode then follows the on-screen default (Off unless changed).
     var isOnScreen: (NativeDesktopMeetingModel) -> Bool = { _ in false }
     var power: () -> NativeDesktopPowerSnapshot = NativeDesktopPowerSnapshot.current
     var thermalState: () -> ProcessInfo.ThermalState = { ProcessInfo.processInfo.thermalState }
@@ -155,17 +185,64 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 
     func card(for meetingID: UUID) -> Card? { cards.first { $0.meetingID == meetingID } }
     func state(for meetingID: UUID) -> MeetingState? { states[meetingID] }
-    func isPaused(_ meetingID: UUID) -> Bool { states[meetingID]?.paused == true }
-    func setPaused(_ paused: Bool, meetingID: UUID) {
-        states[meetingID, default: .init()].paused = paused
-        if paused { cards.removeAll { $0.meetingID == meetingID } }
+
+    // MARK: Modes
+
+    /// On screen beats silenced: a meeting you look at is one you follow yourself.
+    func situation(_ model: NativeDesktopMeetingModel) -> AttentionSituation {
+        isOnScreen(model) ? .onScreen : model.snapshot.playoutOn ? .background : .silenced
+    }
+    /// Your choice for this meeting, else its series' or room's mode, else the situation's.
+    func resolvedMode(_ model: NativeDesktopMeetingModel) -> ResolvedMode {
+        if let override = states[model.sessionID]?.override, (override.until ?? .distantFuture) > now() {
+            return .init(mode: override.mode, source: .meeting(until: override.until))
+        }
+        if let mode = store.preset(room: model.invitation, series: model.calendarSeriesID)?.mode {
+            return .init(mode: mode, source: .series)
+        }
+        let situation = situation(model)
+        return .init(mode: store.mode(for: situation), source: .situation(situation))
+    }
+    func setMode(_ mode: AttentionMode, for model: NativeDesktopMeetingModel, scope: ModeScope = .untilLeave) {
+        let id = model.sessionID
+        switch scope {
+        case .untilLeave: states[id, default: .init()].override = .init(mode: mode, until: nil)
+        case .minutes(let minutes): states[id, default: .init()].override = .init(mode: mode, until: now().addingTimeInterval(Double(minutes) * 60))
+        case .series:
+            store.setMeetingMode(mode, room: model.invitation, series: model.calendarSeriesID, title: model.title)
+            states[id]?.override = nil
+        }
+        if mode == .off { cards.removeAll { $0.meetingID == id } }
+        probeLog("attention-mode", ["mode": mode.rawValue, "scope": String(describing: scope)])
+    }
+    /// Drops your choice for this meeting (and its series' mode, when `series`), back to the defaults.
+    func resetMode(for model: NativeDesktopMeetingModel, series: Bool = false) {
+        states[model.sessionID]?.override = nil
+        if series, store.preset(room: model.invitation, series: model.calendarSeriesID)?.mode != nil {
+            store.setMeetingMode(nil, room: model.invitation, series: model.calendarSeriesID, title: model.title)
+        }
+        if resolvedMode(model).mode == .off { cards.removeAll { $0.meetingID == model.sessionID } }
+    }
+    /// Off → Mentions → Watch → Off, for this meeting until you leave.
+    func cycleMode(for model: NativeDesktopMeetingModel) {
+        let all = AttentionMode.allCases, current = resolvedMode(model).mode
+        setMode(all[((all.firstIndex(of: current) ?? 0) + 1) % all.count], for: model)
     }
 
     /// Why a meeting is not judged right now, or nil when it is.
     func waitingReason(_ model: NativeDesktopMeetingModel) -> String? {
         if !store.enabled { return L("Attention is off.") }
         if !store.ready { return L("Finish setting up the judge in Settings → Intelligence.") }
-        if isPaused(model.sessionID) { return L("Paused for this meeting.") }
+        let resolved = resolvedMode(model)
+        if resolved.mode == .off {
+            switch resolved.source {
+            case .meeting: return L("Off for this meeting.")
+            case .series: return L("Off for every occurrence of this meeting.")
+            case .situation(.onScreen): return L("You are looking at this meeting.")
+            case .situation(.background): return L("Off for meetings in the background.")
+            case .situation(.silenced): return L("Off for silenced meetings.")
+            }
+        }
         if !model.connected { return L("Not connected.") }
         if !hasTranscript(model) {
             return L("No transcript: turn on transcription on this Mac or in the meeting.")
@@ -177,7 +254,6 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             if power().lowPowerMode { return L("Paused in Low Power Mode.") }
             if memoryPressured() { return L("Paused while this Mac is low on memory.") }
         }
-        if isOnScreen(model) { return L("You are looking at this meeting.") }
         return nil
     }
     func eligible(_ model: NativeDesktopMeetingModel) -> Bool { !model.isClosed && waitingReason(model) == nil }
@@ -189,30 +265,43 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         let current = now(), list = meetings()
         let ids = Set(list.map(\.sessionID))
         states = states.filter { ids.contains($0.key) }
+        // A mode chosen for a while returns to the defaults when its time is up.
+        for (id, state) in states where (state.override?.until ?? .distantFuture) <= current { states[id]?.override = nil }
         cards.removeAll { card in
             guard let model = list.first(where: { $0.sessionID == card.meetingID }) else { return true }
-            return isOnScreen(model) || model.isClosed
+            return model.isClosed || resolvedMode(model).mode == .off
         }
         for model in list { observeParticipants(model, now: current) }
         guard judging == nil else { return }
         calls.removeAll { current.timeIntervalSince($0) > 60 }
         guard calls.count < callsPerMinuteLimit else { return }
-        var best: (model: NativeDesktopMeetingModel, window: AttentionWindow, trigger: Bool, last: Date)?
+        var best: (model: NativeDesktopMeetingModel, window: AttentionWindow, mode: AttentionMode, mentioned: Bool, trigger: Bool, last: Date)?
         for model in list where eligible(model) {
+            let mode = resolvedMode(model).mode
             let state = states[model.sessionID] ?? .init()
             let window = buildWindow(model, state: state, now: current)
             guard !window.isEmpty, window.fingerprint != state.fingerprint else { continue }
             let fresh = window.lines.filter { !state.seenLines.contains($0.id) }
-            let trigger = fresh.contains { $0.mentionsYou && !$0.isYou } ||
-                state.changes.contains { !$0.joined && $0.at > (state.judgedAt ?? .distantPast) } ||
-                window.unansweredQuestion(now: current, after: state.judgedAt) != nil
+            let question = window.unansweredQuestion(now: current, after: state.judgedAt)
+            // Named, or asked where the question can only be for you (just you and one other).
+            let mentioned = fresh.contains { $0.mentionsYou && !$0.isYou } ||
+                question.map { $0.mentionsYou || window.participantCount <= 2 } == true
+            let trigger: Bool, cadence: TimeInterval
+            switch mode {
+            case .off: continue
+            case .mentions:
+                trigger = mentioned; cadence = Self.mentionsInterval
+            case .watch:
+                trigger = mentioned || question != nil || state.changes.contains { !$0.joined && $0.at > (state.judgedAt ?? .distantPast) }
+                cadence = interval
+            }
             let last = state.judgedAt ?? .distantPast
-            guard trigger || current.timeIntervalSince(last) >= interval else { continue }
+            guard trigger || current.timeIntervalSince(last) >= cadence else { continue }
             if let chosen = best, (chosen.trigger && !trigger) || (chosen.trigger == trigger && chosen.last <= last) { continue }
-            best = (model, window, trigger, last)
+            best = (model, window, mode, mentioned, trigger, last)
         }
         guard let best else { return }
-        await judge(best.model, window: best.window, at: current)
+        await judge(best.model, window: best.window, mode: best.mode, mentioned: best.mentioned, at: current)
     }
 
     private func observeParticipants(_ model: NativeDesktopMeetingModel, now: Date) {
@@ -239,7 +328,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             soundOn: model.snapshot.playoutOn, now: now ?? self.now()))
     }
 
-    private func judge(_ model: NativeDesktopMeetingModel, window: AttentionWindow, at time: Date) async {
+    private func judge(_ model: NativeDesktopMeetingModel, window: AttentionWindow, mode: AttentionMode, mentioned: Bool, at time: Date) async {
         let id = model.sessionID
         judging = id; calls.append(time)
         defer { judging = nil }
@@ -285,7 +374,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             let card = Card(id: decisionID, meetingID: id, meetingTitle: model.title, invitation: model.invitation,
                 seriesID: model.calendarSeriesID, verdict: result.verdict, window: window, presetID: preset?.id, threshold: threshold,
                 provider: judgedBy.host, model: judgedBy.model, latency: result.latency, createdAt: now(), channels: channels,
-                canDraft: store.draftsAllowed, canSpeak: store.draftReplies && (preset?.repliesAllowed ?? true) && voiceAvailable(model))
+                canDraft: store.draftsAllowed, canSpeak: store.draftReplies && (preset?.repliesAllowed ?? true) && voiceAvailable(model),
+                mode: mode, mentioned: mentioned)
             let outcome = apply(card, state: &state), shown = outcome == .shown
             // The judge suggests answering in writing: have a draft ready on the card.
             if shown, card.canDraft, [.chat, .reaction].contains(result.verdict.action), !channels.isEmpty,
@@ -296,8 +386,9 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             store.log(.init(id: decisionID, at: now(), meetingTitle: model.title, presetID: preset?.id, window: window, verdict: result.verdict,
                 provider: judgedBy.host, model: judgedBy.model, latencyMilliseconds: Int(result.latency * 1000),
                 outcome: outcome, messages: AttentionPrompt.messages(request), threshold: threshold,
-                firstVerdict: first?.verdict, firstModel: first?.model))
+                firstVerdict: first?.verdict, firstModel: first?.model, mode: mode, mentioned: mentioned))
             probeLog("attention-verdict", ["level": result.verdict.level.rawValue, "probability": result.verdict.probability,
+                "mode": mode.rawValue, "mentioned": mentioned,
                 "lines": window.lines.count, "latencyMs": Int(result.latency * 1000), "shown": shown,
                 "escalated": first != nil, "firstProbability": first?.verdict.probability ?? -1, "outcome": outcome.rawValue])
         } catch is CancellationError {
@@ -319,7 +410,11 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     private func apply(_ card: Card, state: inout MeetingState) -> AttentionDecisionRecord.Outcome {
         let verdict = card.verdict, current = card.createdAt
         let existing = cards.first { $0.meetingID == card.meetingID }
-        let qualifies = verdict.level != .no && verdict.probability >= card.threshold
+        var qualifies = verdict.level != .no && verdict.probability >= card.threshold
+        // In Mentions, a window that did not name or ask you raises a card only when it is urgent.
+        if card.mode == .mentions && !card.mentioned {
+            qualifies = qualifies && verdict.level == .now && verdict.probability >= Self.mentionsUrgency
+        }
         // A card you are replying from stays until you send, dismiss or decline it.
         if existing?.engaged == true { return qualifies ? .crowdedOut : .belowThreshold }
         let held = existing?.verdict.level == .now && (state.heldUntil ?? .distantPast) > current

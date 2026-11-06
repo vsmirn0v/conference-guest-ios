@@ -112,6 +112,9 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// verdict and model are then the stronger judge's).
     var firstVerdict: AttentionVerdict? = nil
     var firstModel: String? = nil
+    /// The meeting's mode when it was judged, and whether you were named or asked in the window.
+    var mode: AttentionMode? = nil
+    var mentioned: Bool? = nil
     /// The writer's exact prompt and its draft, so writers can be compared later.
     var replyMessages: [[String: String]]? = nil
     var draft: ReplyDraft? = nil
@@ -135,6 +138,14 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
 
     @Published var enabled: Bool { didSet { defaults.set(enabled, forKey: Self.enabledKey) } }
     @Published var pauseOnBattery: Bool { didSet { defaults.set(pauseOnBattery, forKey: Self.batteryKey) } }
+    /// The mode of a meeting without its own, by where it is relative to you.
+    @Published var situationModes: [AttentionSituation: AttentionMode] {
+        didSet { for (situation, mode) in situationModes { defaults.set(mode.rawValue, forKey: Self.modeKey(situation)) } }
+    }
+    static func modeKey(_ situation: AttentionSituation) -> String { "attention.mode." + situation.rawValue }
+    func mode(for situation: AttentionSituation) -> AttentionMode {
+        situationModes[situation] ?? AttentionSituation.defaultModes[situation] ?? .watch
+    }
     /// Cards offer a drafted chat reply or reaction where the meeting accepts one.
     @Published var draftReplies: Bool { didSet { defaults.set(draftReplies, forKey: Self.repliesKey) } }
     /// Small models on this Mac judge well but answer questions for you when they
@@ -205,6 +216,10 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         self.defaults = defaults; self.keychain = keychain
         enabled = defaults.bool(forKey: Self.enabledKey)
         pauseOnBattery = defaults.bool(forKey: Self.batteryKey)
+        situationModes = Dictionary(uniqueKeysWithValues: AttentionSituation.allCases.map { situation in
+            (situation, defaults.string(forKey: Self.modeKey(situation)).flatMap(AttentionMode.init(rawValue:))
+                ?? AttentionSituation.defaultModes[situation] ?? .watch)
+        })
         draftReplies = defaults.object(forKey: Self.repliesKey) as? Bool ?? true
         localDrafts = defaults.bool(forKey: Self.localDraftsKey)
         writerProvider = defaults.data(forKey: Self.writerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
@@ -282,6 +297,14 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// The room's preset, created empty when the room has none.
     func presetForFeedback(room: URL, latest: URL?, series: String?, title: String) -> MeetingPreset {
         preset(room: room, latest: latest, series: series) ?? MeetingPreset(title: title, bindings: [.room(room.absoluteString)])
+    }
+    /// Sets the mode every occurrence of this meeting starts in: on its room, and on its
+    /// calendar series when it has one. Nil returns it to the situation defaults.
+    func setMeetingMode(_ mode: AttentionMode?, room: URL, latest: URL? = nil, series: String?, title: String) {
+        var preset = presetForFeedback(room: room, latest: latest, series: series, title: title)
+        if let series, !preset.bindings.contains(.calendarSeries(series)) { preset.bindings.append(.calendarSeries(series)) }
+        preset.mode = mode
+        save(preset)
     }
     func record(_ example: PresetExample, in preset: MeetingPreset) {
         var updated = self.preset(id: preset.id) ?? preset

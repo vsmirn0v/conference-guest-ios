@@ -483,6 +483,90 @@ import XCTest
         XCTAssertTrue(decisions.contains("\"crowdedOut\""))
     }
 
+    /// Your choice for the meeting beats its series' mode, which beats the situation default;
+    /// a timed choice runs out; the situation follows the meeting as it is silenced or shown.
+    func testModeResolvesFromMeetingThenSeriesThenSituation() async throws {
+        let store = store()
+        store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+        let (infra, engine) = try await meeting("infra")
+        var clock = Date(), onScreen = false
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [infra] }; coordinator.now = { clock }; coordinator.isOnScreen = { _ in onScreen }
+
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .watch, source: .situation(.background)))
+        try await engine.setPlayout(false)
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .mentions, source: .situation(.silenced)))
+        onScreen = true
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .off, source: .situation(.onScreen)), "on screen beats silenced")
+        XCTAssertEqual(coordinator.waitingReason(infra), L("You are looking at this meeting."))
+        store.situationModes[.onScreen] = .mentions
+        XCTAssertEqual(coordinator.resolvedMode(infra).mode, .mentions)
+        onScreen = false
+
+        coordinator.setMode(.watch, for: infra, scope: .series)
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .watch, source: .series))
+        XCTAssertEqual(store.preset(room: infra.invitation)?.mode, .watch, "Every time is kept on the room's instructions")
+
+        coordinator.setMode(.off, for: infra, scope: .minutes(30))
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .off, source: .meeting(until: clock.addingTimeInterval(1800))))
+        clock += 1801
+        await coordinator.tick()
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .watch, source: .series), "the timed choice ran out")
+
+        coordinator.cycleMode(for: infra)
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .off, source: .meeting(until: nil)), "Watch → Off")
+        coordinator.resetMode(for: infra, series: true)
+        XCTAssertNil(store.preset(room: infra.invitation)?.mode)
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .mentions, source: .situation(.silenced)))
+    }
+
+    /// Mentions judges a window as soon as you are named, otherwise only every two minutes,
+    /// and then shows a card only for an urgent "now"; Off removes the meeting's card.
+    func testMentionsJudgesOnYourNameAndOtherwiseOnlyUrgentNow() async throws {
+        let store = store()
+        store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+        let (standup, _) = try await meeting("standup")
+        let judge = FakeJudge()
+        var clock = Date()
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [standup] }; coordinator.hasTranscript = { _ in true }
+        coordinator.makeJudge = { _, _ in judge }; coordinator.now = { clock }
+        coordinator.setMode(.mentions, for: standup)
+
+        standup.receiveLocalLineForTesting(.init(id: "s1", trackID: "a", text: "Миграцию переносим на субботу.", start: clock, end: clock))
+        judge.next = .init(level: .soon, probability: 0.9, reason: "Migration moved.", evidence: ["L1"], action: .open)
+        await coordinator.tick()
+        XCTAssertEqual(judge.calls, 1, "the first window is judged once")
+        XCTAssertNil(coordinator.card(for: standup.sessionID), "not named: a 'soon' does not reach you in Mentions")
+
+        clock += 30
+        standup.receiveLocalLineForTesting(.init(id: "s2", trackID: "a", text: "Окно с часу ночи.", start: clock, end: clock))
+        await coordinator.tick()
+        XCTAssertEqual(judge.calls, 1, "no name, no urgency check before two minutes")
+
+        clock += 30
+        standup.receiveLocalLineForTesting(.init(id: "s3", trackID: "a", text: "Vitalii, can you confirm the window?", start: clock, end: clock))
+        judge.next = .init(level: .soon, probability: 0.7, reason: "Asked to confirm.", evidence: ["L3"], action: .chat)
+        await coordinator.tick()
+        XCTAssertEqual(judge.calls, 2, "your name triggers the judge at once")
+        let card = try XCTUnwrap(coordinator.card(for: standup.sessionID), "named: the card shows")
+        XCTAssertEqual(card.mode, .mentions); XCTAssertTrue(card.mentioned)
+
+        coordinator.setMode(.off, for: standup)
+        XCTAssertNil(coordinator.card(for: standup.sessionID), "Off removes the meeting's card")
+        coordinator.setMode(.mentions, for: standup)
+
+        clock += Self.mentionsCadence
+        standup.receiveLocalLineForTesting(.init(id: "s4", trackID: "a", text: "Прод упал, все сюда.", start: clock, end: clock))
+        judge.next = .init(level: .now, probability: 0.85, reason: "Production is down.", evidence: ["L4"], action: .open)
+        await coordinator.tick()
+        XCTAssertEqual(judge.calls, 3, "two minutes on, the urgency check runs")
+        XCTAssertEqual(coordinator.card(for: standup.sessionID)?.verdict.reason, "Production is down.", "an urgent 'now' reaches you without your name")
+        let decisions = try store.decisionFiles().map { try String(contentsOf: $0, encoding: .utf8) }.joined()
+        XCTAssertTrue(decisions.contains("\"mentions\""), "decisions keep the mode they were judged in")
+    }
+    private static let mentionsCadence = AttentionCoordinator.mentionsInterval
+
     func testCoordinatorWaitsWhenOffPausedOrOnBatteryAndReportsFailures() async throws {
         let store = store()
         store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
@@ -494,9 +578,9 @@ import XCTest
         infra.receiveLocalLineForTesting(.init(id: "i1", trackID: "a", text: "Привет", start: Date(), end: Date()))
         XCTAssertEqual(coordinator.waitingReason(infra), L("Attention is off."))
         store.enabled = true
-        coordinator.setPaused(true, meetingID: infra.sessionID)
-        XCTAssertEqual(coordinator.waitingReason(infra), L("Paused for this meeting."))
-        coordinator.setPaused(false, meetingID: infra.sessionID)
+        coordinator.setMode(.off, for: infra)
+        XCTAssertEqual(coordinator.waitingReason(infra), L("Off for this meeting."))
+        coordinator.resetMode(for: infra)
         store.pauseOnBattery = true
         XCTAssertEqual(coordinator.waitingReason(infra), L("Paused on battery power."))
         store.pauseOnBattery = false

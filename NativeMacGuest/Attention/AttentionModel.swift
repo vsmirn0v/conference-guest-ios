@@ -17,6 +17,28 @@ enum AttentionUrgency: String, Codable, CaseIterable, Sendable {
     var baseThreshold: Double { switch self { case .quiet: 0.7; case .normal: 0.55; case .eager: 0.4 } }
 }
 
+/// How closely the assistant follows one meeting for you.
+enum AttentionMode: String, Codable, CaseIterable, Sendable {
+    /// Nothing is judged.
+    case off
+    /// Judged when you are named or asked directly; otherwise only an urgent "now" raises a card.
+    case mentions
+    /// Judged as the conversation moves; a card whenever it needs you.
+    case watch
+}
+
+/// Where a meeting is relative to you, which picks its default mode.
+enum AttentionSituation: String, CaseIterable, Sendable {
+    /// You are looking at it.
+    case onScreen
+    /// Its sound plays while something else is in front.
+    case background
+    /// Its sound is off.
+    case silenced
+
+    static let defaultModes: [AttentionSituation: AttentionMode] = [.onScreen: .off, .background: .watch, .silenced: .mentions]
+}
+
 /// One approve or decline, shown to the judge as an example on its preset.
 struct PresetExample: Codable, Identifiable, Equatable, Sendable {
     enum Decision: String, Codable, Sendable { case approved, declined }
@@ -53,6 +75,8 @@ struct MeetingPreset: Codable, Identifiable, Equatable, Sendable {
     var people: [String] = []
     var never = ""
     var urgency: AttentionUrgency = .normal
+    /// This meeting's mode whatever its situation; nil follows the situation defaults.
+    var mode: AttentionMode?
     /// Moved by your approvals and declines, so a noisy meeting becomes quieter.
     var thresholdAdjustment = 0.0
     var examples: [PresetExample] = []

@@ -269,6 +269,10 @@ struct MeetingPresetEditor: View {
                     field(L("What matters to me"), text: $preset.matters, prompt: L("DNS cut-over, certificates, decisions that need my sign-off."))
                     TextField(L("People to listen for"), text: $people, prompt: Text(L("Names separated by commas")))
                     field(L("Never"), text: $preset.never, prompt: L("Budget questions are not mine."))
+                    Picker(L("Attention"), selection: $preset.mode) {
+                        Text(L("By situation")).tag(AttentionMode?.none)
+                        ForEach(AttentionMode.allCases, id: \.self) { Text($0.title).tag(AttentionMode?.some($0)) }
+                    }
                     Picker(L("Urgency"), selection: $preset.urgency) {
                         Text(L("Quiet")).tag(AttentionUrgency.quiet); Text(L("Normal")).tag(AttentionUrgency.normal); Text(L("Eager")).tag(AttentionUrgency.eager)
                     }.pickerStyle(.segmented)
@@ -534,6 +538,12 @@ struct NativeDesktopIntelligenceSettings: View {
                 Toggle(L("Pause on battery power"), isOn: $store.pauseOnBattery)
                 if let error = attention.lastError { Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
             }
+            Section {
+                AttentionSituationDefaults(store: store)
+                Text(L("Mentions: a card when someone names you or asks you directly, and only urgent ones otherwise. Watch: also when the discussion concerns you. A meeting's own choice, from its row, its control bar or its instructions, comes first.")).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: { Text(L("Attention by situation")) }
+                .disabled(!store.enabled)
             Section(L("Roles")) {
                 roleRow(L("Listen"), listen.enabled ? (listen.selected?.title ?? L("Off")) : L("Off"), local: true,
                         detail: L("%@ of speech models on this Mac", ByteCountFormatter.string(fromByteCount: listen.installedSize, countStyle: .file)))

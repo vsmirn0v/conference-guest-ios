@@ -395,6 +395,9 @@ struct NativeDesktopMeetingView: View {
                     .contextMenu { Button(L("Meeting volume")) { soundOpen = true } }
                 controlButton("face.smiling", L("Reactions"), selected: reactionsOpen) { reactionsOpen.toggle() }
                     .disabled(!model.canReact).popover(isPresented: $reactionsOpen, arrowEdge: .bottom) { reactionPicker }
+                if let workspace, workspace.attention.store.enabled {
+                    AttentionControlButton(attention: workspace.attention, model: model)
+                }
                 if singleControlRow && !textSelection.isOpen {
                     Menu { viewMenuItems } label: { controlLabel(viewMenuSymbol, L("View")) }
                         .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().help(viewMenuTitle)
