@@ -1,0 +1,36 @@
+{
+  "version": "0.3.0",
+  "build": "71",
+  "channel": "beta",
+  "sourceCommit": "9552478",
+  "changes": [
+    "Meetings: the startup-audio timeout log and Copy/Export Diagnostics read the audio route off the main thread, bounded to 1 s (beta 70 froze its main thread on a stalled CoreAudio lock) (9552478)",
+    "Meetings: AirPods/headset-button mute is a setting (Settings > General > Meetings), off by default; on macOS 27.2 audiomxd deadlocked on its opt-in at 4 of 5 meeting starts and left meeting audio unable to start; an opt-in that fails or takes over 2 s turns the setting off for later meetings (9552478)",
+    "Attention: API keys per provider kind, the old key moves to the judge's provider; writer and escalation get their own key fields (9552478)",
+    "Local transcription: the speech model unloads when no meeting transcribes; line times re-anchor to each buffer's arrival so a playout stall no longer dates lines early (9552478)",
+    "Attention: a card crowded out by two more urgent ones changes nothing and is logged crowdedOut; system and Personal Voice synthesis gives up after 30 s (9552478)"
+  ],
+  "frameworkBinarySHA256": "25c5557b909445dad9faa70820743ad0c631217eaf02fd994bb0b007575ba94d",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-71-arm64.dmg",
+    "sha256": "7ef70a14c92160dec147c071fb0e026b03268b5b769ff8ccbe0f89b111b5ed93",
+    "length": 26331486
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-71-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "beta70Hang": "sample of the hung app: main thread in GuestAcousticEnvironment.route from the startup-audio timeout, waiting on the CoreAudio HAL mutex held by a HALC IO queue blocked on coreaudiod; system log: audiomxd 'XPC message timeout ... probably deadlocked' 9 s after the app's PrefersBluetoothAccessoryMuting opt-in, at 17:47, 18:35, 18:56 and 18:58",
+    "suites": "77 app tests pass with none skipped (AttentionTests, OnDeviceJudgeTests incl. the real Apple model, LocalTranscriptionTests incl. a 300 s playout stall with real models, GuestNativeCallsTests incl. a stuck route read, ScreenEncoderQualityTests, ExternalRecoveryTests, InitialSubscriberICETests, diagnostics report); headset mute executable incl. the breaker; Guest engine and meeting-features suites pass"
+  },
+  "notVerified": [
+    "a live meeting on 71",
+    "Sparkle update of an installed app to 71",
+    "whether the headset opt-in deadlock occurs on macOS builds other than 27.2 (26B123)",
+    "sidebar crash on fast window resize"
+  ]
+}
