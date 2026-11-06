@@ -1,0 +1,34 @@
+{
+  "version": "0.3.0",
+  "build": "67",
+  "channel": "beta",
+  "sourceCommit": "24799f2",
+  "changes": [
+    "Meetings: a failed macOS input-mute write (AVAudioApplication.setInputMuted, e.g. err -50 while the audio session service restarts after AirPods drop) is logged as headset-mute-platform-error instead of shown as a meeting alert; the capture gate already fails closed and retries (363fa4a)",
+    "Attention: new judge provider \"Apple on this Mac\" (macOS 26+): Foundation Models judges and drafts replies; Russian meetings are translated to English on this Mac first (per-line cache) and the reason and chat drafts are translated back; per-window verdict schema and four extra rules; FoundationModels and Translation weak-linked so the app still runs on macOS 13 (24799f2)"
+  ],
+  "frameworkBinarySHA256": "7a789dcd261c52478422f3bf38108370e58bbda4832807804745d55d69eb8f01",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-67-arm64.dmg",
+    "sha256": "59e51367708bd321e175e0add0ba061a9ed0e04886489c80909e24ba6afcbb01",
+    "length": 26128190
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-67-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "onDeviceJudgeBench": "Experiments/AttentionBench ru_scenarios (31 tuning + 12 held-out Russian windows) through AppleOnDeviceJudge: 28/31 and 12/12 acceptable, 0 missed now, median 3.3 s per window including translation",
+    "suites": "AttentionTests (32) and OnDeviceJudgeTests (5) pass; one real Foundation Models call translates, judges now and returns a Russian reason (first 8.7 s, cached lines 2.4 s)"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 67",
+    "the Apple on-device judge inside the running app and in live meetings",
+    "the input-mute fix against a real audiomxd restart (verified by compiling and reading the fail-closed path only)",
+    "the rest of the native test suite (audio-device tests not run while the user may be in a meeting)",
+    "the 43 s freeze after an AirPods disconnect and the SwiftUI sidebar crash on fast resize: diagnosed, not fixed"
+  ]
+}
