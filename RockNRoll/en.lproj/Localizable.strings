@@ -1721,3 +1721,9 @@
 "The voice model answered with error %ld." = "The voice model answered with error %ld.";
 "The voice model on this Mac could not be reached. Is Rapid-MLX running with audio?" = "The voice model on this Mac could not be reached. Is Rapid-MLX running with audio?";
 "The voice model returned audio this Mac could not read." = "The voice model returned audio this Mac could not read.";
+"Audio could not be released cleanly. Quit and reopen the app to use audio again." = "Audio could not be released cleanly. Quit and reopen the app to use audio again.";
+"Audio could not be started." = "Audio could not be started.";
+"This meeting has already left the audio engine." = "This meeting has already left the audio engine.";
+"One audio engine for all meetings (experimental)" = "One audio engine for all meetings (experimental)";
+"Guest meetings share one microphone and speaker setup: moving your microphone needs no device restart and echo cancellation covers every meeting. Takes effect after you quit and reopen the app." = "Guest meetings share one microphone and speaker setup: moving your microphone needs no device restart and echo cancellation covers every meeting. Takes effect after you quit and reopen the app.";
+"Quit and reopen the app to apply." = "Quit and reopen the app to apply.";

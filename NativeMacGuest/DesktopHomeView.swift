@@ -443,6 +443,7 @@ struct NativeDesktopSettingsView: View {
     @AppStorage("nativeDesktop.multipleMeetings") private var multipleMeetings = true
     @AppStorage(NativeDesktopMeetingModel.keepMicrophoneWarmKey) private var keepMicrophoneWarm = false
     @AppStorage(GuestSystemAudio.voiceRepliesKey) private var voiceReplies = false
+    @AppStorage(SharedAudioEngine.flagKey) private var sharedAudioEngine = false
     var body: some View {
         TabView(selection: $tab) {
             Form {
@@ -462,6 +463,12 @@ struct NativeDesktopSettingsView: View {
                     Toggle(L("Voice replies (experimental)"), isOn: $voiceReplies)
                     Text(L("Lets the app play a spoken reply into a meeting while your own microphone is held back. Applies to meetings joined after turning it on. Try it from a meeting's More menu."))
                         .font(.caption).foregroundStyle(.secondary)
+                    Toggle(L("One audio engine for all meetings (experimental)"), isOn: $sharedAudioEngine)
+                    Text(L("Guest meetings share one microphone and speaker setup: moving your microphone needs no device restart and echo cancellation covers every meeting. Takes effect after you quit and reopen the app."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if sharedAudioEngine != SharedAudioEngine.enabledAtLaunch {
+                        Text(L("Quit and reopen the app to apply.")).font(.caption).foregroundStyle(.orange)
+                    }
                 }
             }.tabItem { Label(L("General"), systemImage: "person.crop.circle") }.tag(0)
             Form {

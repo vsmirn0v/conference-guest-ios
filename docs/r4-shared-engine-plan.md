@@ -142,6 +142,31 @@ Decided for later steps:
   observer forwarding to the SDK (S0 findings); `GuestSystemAudio.create` gets a factory hook then.
 - S2 moves the headset capture gate to the engine (guarantee 3).
 
+## S2 status (6 Nov 2026): Guest meetings on the shared engine behind the flag
+
+- `GuestMeetingAudio` (Experiments/NativeGuest) is the owner surface the Guest session uses;
+  `GuestSystemAudio` conforms unchanged, so the flag-off path is the same code.
+- `SharedGuestMeetingAudio` adapts one meeting's attachment to it: talk role =
+  `setInputPermitted`, mute through the attachment (its microphone track is registered by
+  `GuestEngine` at publish and enabled only by the engine), sound through the attachment's
+  aggregate output, meeting volume through the session's existing per-track gain
+  (`meetingLevel`), no per-meeting playout gate (behaves as a disabled one). Snapshots come from
+  the one owner with talk/mute/input answered per meeting.
+- `NativeDesktopGuestEngine` attaches instead of reserving a room when the flag is on; each
+  connection attempt starts muted with no senders, and leaving detaches. The first meeting to
+  connect takes the talk role; later ones only when the workspace moves it there. Leaving no
+  longer hands the permit back (it would take the talk role from another meeting).
+- With the flag on the foreground idle microphone preparation is off (it would be a second
+  engine), and a concurrent Guest meeting gets no separate owner.
+- Settings → General: "One audio engine for all meetings (experimental)", applied on relaunch.
+  Debug suites can force it with `R4_SHARED_AUDIO_ENGINE=1|0` (`TEST_RUNNER_` prefix).
+- Guarantee 3 needed no change: headset handling already begins only in the meeting that owns
+  the microphone and moves with it (`relinquish/assumeMicrophone`).
+
+Known limits until later steps: voice replies reach only the talk meeting (they share its
+input graph and sender); Telemost/TrueConf (S3) and Rock (S4) still use their own engines, so
+with the flag on a Guest meeting beside them still means two engines.
+
 ## Risks
 
 - Our M156 fork must accept new peer connections on a running module with VPIO active, and send

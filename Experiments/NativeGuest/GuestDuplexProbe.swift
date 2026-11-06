@@ -55,7 +55,7 @@ import Foundation
                 qualityPassed = qualityPassed && afterQuality
             }
             if compareProcessing {
-                guard let freshAudio = local.engine?.systemAudio,
+                guard let freshAudio = local.engine?.systemAudio as? GuestSystemAudio,
                       await freshAudio.setVoiceProcessingBypassedForTesting(true) else { throw GuestEngineError.disconnected }
                 try await Task.sleep(nanoseconds: 2_000_000_000)
                 try await window(local, remote, phase: "physical-reconnected-acoustic-control", seconds: 4,
@@ -229,7 +229,7 @@ import Foundation
     }
 
     private static func compare(_ local: GuestSession, _ remote: GuestSession, normal: Measurement, seconds: UInt64) async throws -> [String: Any] {
-        guard let audio = local.engine?.systemAudio else { throw GuestEngineError.disconnected }
+        guard let audio = local.engine?.systemAudio as? GuestSystemAudio else { throw GuestEngineError.disconnected }
         try await remote.mute(true)
         guard await audio.setVoiceProcessingBypassedForTesting(true) else { throw GuestEngineError.disconnected }
         try await Task.sleep(nanoseconds: 2_000_000_000)

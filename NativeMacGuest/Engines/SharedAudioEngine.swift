@@ -47,7 +47,15 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
 @MainActor final class SharedAudioEngine {
     static let flagKey = "nativeDesktop.sharedAudioEngine"
     /// Read once: Rock's factory is fixed for the process, so a change needs a relaunch.
-    static let enabledAtLaunch = UserDefaults.standard.bool(forKey: flagKey)
+    /// Debug builds also take `R4_SHARED_AUDIO_ENGINE=1|0` so suites can run either way.
+    static let enabledAtLaunch: Bool = {
+#if DEBUG
+        if let value = ProcessInfo.processInfo.environment["R4_SHARED_AUDIO_ENGINE"] { return value == "1" }
+#endif
+        return UserDefaults.standard.bool(forKey: flagKey)
+    }()
+    /// The app's one engine; its owner is created when the first meeting attaches.
+    static let shared = SharedAudioEngine.live()
 
     struct Timeouts {
         var mute: TimeInterval = 2
@@ -92,6 +100,8 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     }
 
     var factory: LKRTCPeerConnectionFactory? { module?.factory }
+    /// The physical owner when it is the app's `GuestSystemAudio` (diagnostics, snapshots).
+    var guestOwner: GuestSystemAudio? { module as? GuestSystemAudio }
     var meetingIDs: [UUID] { order }
     func attachment(_ id: UUID) -> MeetingAudioAttachment? { attachments[id] }
 
@@ -192,6 +202,16 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
             }
             moduleMuted = false
             return true
+        }
+    }
+
+    /// Starts the microphone muted for the talk meeting after an explicit microphone
+    /// action; another meeting's request waits for its next unmute with the talk role.
+    func activateInput(for attachment: MeetingAudioAttachment) async -> Bool {
+        await work.run { [self] in
+            guard let module, attachments[attachment.meetingID] === attachment, !cleanupFailed else { return false }
+            guard talkMeetingID == attachment.meetingID else { return true }
+            return await module.activateMicrophone(timeout: timeouts.activation)
         }
     }
 
@@ -322,6 +342,15 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
         sender.isEnabled = false
         senders[ObjectIdentifier(sender)] = nil
     }
+    /// A finished connection attempt: its tracks are off and forgotten.
+    func removeAllSenders() { disableSenders(); senders.removeAll() }
+    /// Privacy barrier: senders off now, the module mute follows in order.
+    func suppress() {
+        disableSenders()
+        Task { await setMuted(true) }
+    }
+    var moduleMuted: Bool { engine?.moduleMuted ?? true }
+    var privateCheckActive: Bool { engine?.privateCheckActive ?? false }
 
     // Received tracks: volume = meeting volume × participant volume, 0 with sound off.
     func addReceived(id: String, participantVolume: Double = 1, setVolume: @escaping (Double) -> Void) {

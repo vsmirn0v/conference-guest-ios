@@ -404,7 +404,9 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
         guard started, !stopped else { return }
         let foreground = foregroundWindowVisible
         let policy = NativeDesktopJoinReadinessPolicy.current(), state = power.snapshot
-        NativeDesktopMediaService.shared.setForeground(foreground, microphone: policy.microphone.allows(state), profile: .saved)
+        // With one engine for all meetings, an idle prepared owner would be a second engine.
+        NativeDesktopMediaService.shared.setForeground(foreground && !SharedAudioEngine.enabledAtLaunch,
+            microphone: policy.microphone.allows(state), profile: .saved)
         guard foreground, !NativeDesktopMediaService.shared.busy, policy.camera.allows(state), metadata == nil else { return }
         metadata = Task { [weak self] in
             defer { self?.metadata = nil }

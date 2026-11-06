@@ -1719,3 +1719,9 @@
 "The voice model answered with error %ld." = "Голосовая модель ответила ошибкой %ld.";
 "The voice model on this Mac could not be reached. Is Rapid-MLX running with audio?" = "Голосовая модель на этом Mac недоступна. Rapid-MLX запущен с аудио?";
 "The voice model returned audio this Mac could not read." = "Голосовая модель вернула звук, который Mac не смог прочитать.";
+"Audio could not be released cleanly. Quit and reopen the app to use audio again." = "Не удалось корректно освободить звук. Закройте и снова откройте приложение, чтобы звук снова работал.";
+"Audio could not be started." = "Не удалось запустить звук.";
+"This meeting has already left the audio engine." = "Эта встреча уже отключена от звукового движка.";
+"One audio engine for all meetings (experimental)" = "Один звуковой движок для всех встреч (эксперимент)";
+"Guest meetings share one microphone and speaker setup: moving your microphone needs no device restart and echo cancellation covers every meeting. Takes effect after you quit and reopen the app." = "Гостевые встречи используют общий микрофон и динамики: перенос микрофона не перезапускает устройство, а эхоподавление действует во всех встречах. Вступает в силу после перезапуска приложения.";
+"Quit and reopen the app to apply." = "Закройте и снова откройте приложение, чтобы применить.";

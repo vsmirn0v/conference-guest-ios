@@ -56,7 +56,7 @@ final class NativeGuestEngine {
 #endif
     }
     let audio: GuestSyntheticAudio?
-    let systemAudio: GuestSystemAudio?
+    let systemAudio: (any GuestMeetingAudio)?
     var releaseSystemAudio: ((Bool) async -> Bool)?
     private let icePolicy: GuestICEPolicy
     private let verifyReceivedPixels: Bool
@@ -216,7 +216,7 @@ final class NativeGuestEngine {
     var featureNotifyForTesting: ((String, [String: Any]) async throws -> Void)?
 #endif
 
-    init(label: String, systemAudio: GuestSystemAudio? = nil, icePolicy: GuestICEPolicy = .automatic, verifyReceivedPixels: Bool = true) {
+    init(label: String, systemAudio: (any GuestMeetingAudio)? = nil, icePolicy: GuestICEPolicy = .automatic, verifyReceivedPixels: Bool = true) {
         self.label = label; self.systemAudio = systemAudio; self.icePolicy = icePolicy
         self.verifyReceivedPixels = verifyReceivedPixels
         _ = LKRTCInitializeSSL()
@@ -611,6 +611,7 @@ final class NativeGuestEngine {
             let cid = UUID().uuidString.lowercased()
             let audio = publisher.prepareAudio(cid: cid, profile: systemAudio?.profile ?? .speech)
             audio.isEnabled = false
+            systemAudio?.registerMicrophoneTrack(audio)
             try requirePermission(video: false)
             let info = try await register(["cid": cid, "type": "AUDIO", "source": "MICROPHONE", "muted": true])
             guard let sid = info["sid"] as? String else { throw GuestEngineError.malformed }
@@ -695,10 +696,13 @@ final class NativeGuestEngine {
         startupPlaybackGain?.reconcile()
     }
     private func participantLevel(_ source: GuestStartupPlaybackGain.Source) -> Double {
+        let meeting = systemAudio?.meetingLevel ?? 1
         guard !participantVolumes.isEmpty, let publication = knownPublication(source, type: "AUDIO"),
-              let identity = remoteParticipantIdentities[publication.participant] else { return 1 }
-        return participantVolumes[identity] ?? 1
+              let identity = remoteParticipantIdentities[publication.participant] else { return meeting }
+        return meeting * (participantVolumes[identity] ?? 1)
     }
+    /// Re-applies levels after the owner's meeting level changes.
+    func reconcilePlaybackLevels() { startupPlaybackGain?.reconcile() }
 
     /// Intent is recorded immediately, even when session control is awaiting readiness.
     func setStartupPlaybackIntent(_ enabled: Bool) {
