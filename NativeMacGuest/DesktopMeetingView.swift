@@ -229,7 +229,10 @@ struct NativeDesktopMeetingView: View {
                     let edge: CGFloat = model.immersive ? 0 : 14
                     media.padding(.leading, edge).padding(.trailing, edge + reserved)
                         .padding(.top, model.immersive ? 0 : (model.controlsHidden || embedded ? 12 : 70) + (model.isSharingLive ? 48 : 0))
-                        .padding(.bottom, model.immersive ? 0 : model.controlsHidden ? 12 : singleControlRow ? 96 : (model.showsFocus ? 90 : 160))
+                        // Two control rows need the taller gap in focus too: a shared screen's
+                        // presenter label and zoom strip sit on the video's bottom edge, and the
+                        // Select text · View · More row used to land on them in a narrow window.
+                        .padding(.bottom, model.immersive ? 0 : model.controlsHidden ? 12 : singleControlRow ? 96 : 160)
                 }
                 if textSelection.isOpen { NativeDesktopSharedTextView(model: textSelection, meetingTools: AnyView(viewAndMoreMenus)) }
                 VStack(spacing: 0) {
