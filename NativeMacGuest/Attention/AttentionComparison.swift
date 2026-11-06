@@ -12,6 +12,7 @@ struct ComparisonCase: Identifiable, Equatable, Sendable {
     let original: AttentionVerdict
     let originalModel: String
     let threshold: Double
+    var presetID: UUID? = nil
     /// What you did with the card: true for Open, a reply or a reaction, false
     /// for Decline, nil when you never saw it or did not choose.
     let needed: Bool?
@@ -46,7 +47,7 @@ enum ComparisonLoader {
                 guard let decision = record.decisionID else { continue }
                 switch record.outcome {
                 case .opened: choices[decision] = true
-                case .replied, .reacted: choices[decision] = true; sent[decision] = (record.sent, record.reaction)
+                case .replied, .reacted, .spoken: choices[decision] = true; sent[decision] = (record.sent, record.reaction)
                 case .declined: choices[decision] = false
                 case .drafted where record.replyMessages?.isEmpty == false && record.draft != nil: drafted.append(record)
                 default: break
@@ -57,7 +58,8 @@ enum ComparisonLoader {
             guard let verdict = record.verdict, let window = record.window, let messages = record.messages else { return nil }
             return .init(id: record.id, at: record.at, meetingTitle: record.meetingTitle, messages: messages, window: window,
                          original: verdict, originalModel: record.model,
-                         threshold: record.threshold ?? AttentionUrgency.normal.baseThreshold, needed: choices[record.id])
+                         threshold: record.threshold ?? AttentionUrgency.normal.baseThreshold, presetID: record.presetID,
+                         needed: choices[record.id])
         }.sorted { ($0.needed != nil) == ($1.needed != nil) ? $0.at > $1.at : $0.needed != nil }
         // The newest draft per card, with what you sent from it.
         var latest: [UUID: AttentionDecisionRecord] = [:]
@@ -74,6 +76,38 @@ enum ComparisonLoader {
     static func channels(of messages: [[String: String]]) -> ReplyChannels {
         let prompt = messages.last?["content"] ?? ""
         return .init(chat: prompt.contains("a chat message"), reactions: prompt.contains("one reaction:") ? MeetingReaction.allCases : [])
+    }
+}
+
+/// Finds the threshold under which the saved verdicts would have matched your
+/// choices best, instead of moving it ±0.05 per card.
+enum ThresholdTuner {
+    struct Result: Equatable {
+        let threshold: Double
+        let agreed: Int
+        let labelled: Int
+        /// Agreement at the meeting's current threshold, for comparison.
+        let currentAgreed: Int
+    }
+    static let minimumChoices = 6
+
+    /// Needs at least six choices with both kinds among them; ties keep the threshold
+    /// closest to the current one.
+    static func best(_ cases: [ComparisonCase], current: Double, range: ClosedRange<Double> = MeetingPreset.thresholdRange) -> Result? {
+        let labelled = cases.compactMap { item in item.needed.map { (verdict: item.original, needed: $0) } }
+        guard labelled.count >= minimumChoices, labelled.contains(where: \.needed), labelled.contains(where: { !$0.needed }) else { return nil }
+        func agreed(_ threshold: Double) -> Int {
+            labelled.filter { ($0.verdict.level != .no && $0.verdict.probability >= threshold - 1e-9) == $0.needed }.count
+        }
+        var best = (threshold: current, agreed: agreed(current))
+        for step in 0...Int(((range.upperBound - range.lowerBound) / 0.05).rounded()) {
+            let threshold = ((range.lowerBound + Double(step) * 0.05) * 100).rounded() / 100
+            let score = agreed(threshold)
+            if score > best.agreed || score == best.agreed && abs(threshold - current) < abs(best.threshold - current) {
+                best = (threshold, score)
+            }
+        }
+        return .init(threshold: best.threshold, agreed: best.agreed, labelled: labelled.count, currentAgreed: agreed(current))
     }
 }
 

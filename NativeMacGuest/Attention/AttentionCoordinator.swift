@@ -1,5 +1,25 @@
+import AVFoundation
 import ConferenceCore
 import Foundation
+
+/// The system's memory pressure, so a judge on this Mac can step aside.
+final class AttentionMemoryPressure: @unchecked Sendable {
+    static let shared = AttentionMemoryPressure()
+    private let lock = NSLock()
+    private var level: DispatchSource.MemoryPressureEvent = .normal
+    private let source: DispatchSourceMemoryPressure
+    var pressured: Bool { lock.lock(); defer { lock.unlock() }; return level.contains(.warning) || level.contains(.critical) }
+    private init() {
+        source = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .global(qos: .utility))
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let event = source.data
+            lock.lock(); level = event; lock.unlock()
+            probeLog("attention-memory-pressure", ["warning": event.contains(.warning), "critical": event.contains(.critical)])
+        }
+        source.activate()
+    }
+}
 
 /// Judges every meeting you are not looking at and raises a card when one needs
 /// you. One judge call runs at a time across meetings, at most six a minute.
@@ -22,11 +42,16 @@ import Foundation
         /// How you can answer from the card; empty when replies are off or the meeting accepts none.
         var channels = ReplyChannels()
         var draft: ReplyDraft?
+        /// The provider may draft; otherwise the card offers reactions only.
+        var canDraft = true
+        /// The meeting can play a spoken reply ("Say it").
+        var canSpeak = false
+        var speaking = false
         var drafting = false
         var draftError: String?
         var evidence: [AttentionWindow.Line] { verdict.evidence.compactMap { window.line(id: $0) } }
         /// You are working on a reply: a newer verdict does not replace the card.
-        var engaged: Bool { draft != nil || drafting }
+        var engaged: Bool { draft != nil || drafting || speaking }
     }
     struct MeetingState: Equatable {
         var verdict: AttentionVerdict?
@@ -49,6 +74,9 @@ import Foundation
     static let holdNow: TimeInterval = 120
     static let callsPerMinute = 6
     static let maxCards = 2
+    /// A judge on this Mac costs nothing per call: plugged in and cool, it checks twice as often.
+    static let localInterval: TimeInterval = 10
+    static let localCallsPerMinute = 12
 
     @Published private(set) var cards: [Card] = []
     @Published private(set) var states: [UUID: MeetingState] = [:]
@@ -60,6 +88,14 @@ import Foundation
     /// The meeting is in front of you: the judge leaves it alone.
     var isOnScreen: (NativeDesktopMeetingModel) -> Bool = { _ in false }
     var power: () -> NativeDesktopPowerSnapshot = NativeDesktopPowerSnapshot.current
+    var thermalState: () -> ProcessInfo.ThermalState = { ProcessInfo.processInfo.thermalState }
+    var memoryPressured: () -> Bool = { AttentionMemoryPressure.shared.pressured }
+    /// The judge runs on this Mac and the Mac can afford more frequent checks.
+    var fastLocal: Bool {
+        store.provider.onThisMac && power().pluggedIn && [.nominal, .fair].contains(thermalState()) && !memoryPressured()
+    }
+    var interval: TimeInterval { fastLocal ? Self.localInterval : Self.interval }
+    var callsPerMinuteLimit: Int { fastLocal ? Self.localCallsPerMinute : Self.callsPerMinute }
     /// The meeting produces text: the service transcribes it, or this Mac does.
     var hasTranscript: (NativeDesktopMeetingModel) -> Bool = { $0.transcriptionIndicator == .on || $0.transcriptionIndicator == .local }
     var openMeeting: (UUID) -> Void = { _ in }
@@ -73,6 +109,11 @@ import Foundation
     /// Sends through the meeting's own chat; false when it did not accept the text.
     var deliverChat: (NativeDesktopMeetingModel, String) -> Bool = { $0.chat.send($1) }
     var deliverReaction: (NativeDesktopMeetingModel, MeetingReaction) -> Void = { $0.sendReaction($1) }
+    /// The meeting can take a spoken reply (voice replies are on and it joined with them).
+    var voiceAvailable: (NativeDesktopMeetingModel) -> Bool = { $0.supportsVoiceReply }
+    var deliverVoice: (NativeDesktopMeetingModel, AVAudioPCMBuffer) async throws -> Void = { try await $0.speak($1) }
+    /// Replaces the configured voice, for tests.
+    var synthesizeOverride: ((String) async throws -> AVAudioPCMBuffer)?
     var now: () -> Date = Date.init
     var language: String = Bundle.main.preferredLocalizations.first ?? "en"
 
@@ -130,6 +171,12 @@ import Foundation
             return L("No transcript: turn on transcription on this Mac or in the meeting.")
         }
         if store.pauseOnBattery && !power().pluggedIn { return L("Paused on battery power.") }
+        // A judge on this Mac competes with the meetings for heat, energy and memory.
+        if store.provider.onThisMac {
+            if [.serious, .critical].contains(thermalState()) { return L("Paused while this Mac is hot.") }
+            if power().lowPowerMode { return L("Paused in Low Power Mode.") }
+            if memoryPressured() { return L("Paused while this Mac is low on memory.") }
+        }
         if isOnScreen(model) { return L("You are looking at this meeting.") }
         return nil
     }
@@ -149,7 +196,7 @@ import Foundation
         for model in list { observeParticipants(model, now: current) }
         guard judging == nil else { return }
         calls.removeAll { current.timeIntervalSince($0) > 60 }
-        guard calls.count < Self.callsPerMinute else { return }
+        guard calls.count < callsPerMinuteLimit else { return }
         var best: (model: NativeDesktopMeetingModel, window: AttentionWindow, trigger: Bool, last: Date)?
         for model in list where eligible(model) {
             let state = states[model.sessionID] ?? .init()
@@ -159,7 +206,7 @@ import Foundation
             let trigger = fresh.contains { $0.mentionsYou && !$0.isYou } ||
                 state.changes.contains { !$0.joined && $0.at > (state.judgedAt ?? .distantPast) }
             let last = state.judgedAt ?? .distantPast
-            guard trigger || current.timeIntervalSince(last) >= Self.interval else { continue }
+            guard trigger || current.timeIntervalSince(last) >= interval else { continue }
             if let chosen = best, (chosen.trigger && !trigger) || (chosen.trigger == trigger && chosen.last <= last) { continue }
             best = (model, window, trigger, last)
         }
@@ -211,11 +258,12 @@ import Foundation
             let threshold = preset?.threshold ?? AttentionUrgency.normal.baseThreshold
             let card = Card(id: decisionID, meetingID: id, meetingTitle: model.title, invitation: model.invitation,
                 seriesID: model.calendarSeriesID, verdict: result.verdict, window: window, presetID: preset?.id, threshold: threshold,
-                provider: provider.host, model: provider.model, latency: result.latency, createdAt: now(), channels: channels)
+                provider: provider.host, model: provider.model, latency: result.latency, createdAt: now(), channels: channels,
+                canDraft: store.draftsAllowed, canSpeak: store.draftReplies && (preset?.repliesAllowed ?? true) && voiceAvailable(model))
             let shown = apply(card, state: &state)
             // The judge suggests answering in writing: have a draft ready on the card.
-            if shown, [.chat, .reaction].contains(result.verdict.action), !channels.isEmpty,
-               calls.filter({ now().timeIntervalSince($0) <= 60 }).count < Self.callsPerMinute {
+            if shown, card.canDraft, [.chat, .reaction].contains(result.verdict.action), !channels.isEmpty,
+               calls.filter({ now().timeIntervalSince($0) <= 60 }).count < callsPerMinuteLimit {
                 draftReply(decisionID)
             }
             states[id] = state
@@ -280,15 +328,19 @@ import Foundation
     /// Drafts a chat reply or reaction for a card. Nothing is sent: you send,
     /// edit or discard the draft on the card.
     func draftReply(_ cardID: UUID) {
-        guard let index = cards.firstIndex(where: { $0.id == cardID }), !cards[index].drafting, !cards[index].channels.isEmpty,
+        guard let index = cards.firstIndex(where: { $0.id == cardID }), cards[index].canDraft, !cards[index].drafting,
+              !cards[index].channels.isEmpty || cards[index].canSpeak,
               let model = meetings().first(where: { $0.sessionID == cards[index].meetingID }), !model.isClosed else { return }
         let card = cards[index]
         cards[index].drafting = true; cards[index].draftError = nil
         calls.append(now())
         let preset = card.presetID.flatMap(store.preset(id:))
+        // A reply that can be spoken is written like a chat message.
+        var channels = card.channels
+        if card.canSpeak { channels.chat = true }
         let request = ReplyRequest(judge: JudgeRequest(window: card.window, preset: preset, profile: store.profile,
-            yourName: model.displayName, language: language, replyChannels: card.channels), verdict: card.verdict)
-        let provider = store.provider, writer = makeWriter(provider, store.apiKey())
+            yourName: model.displayName, language: language, replyChannels: channels), verdict: card.verdict)
+        let provider = store.effectiveWriter, writer = makeWriter(provider, store.apiKey())
         Task { @MainActor [weak self] in
             do {
                 let result = try await writer.draft(request)
@@ -320,6 +372,11 @@ import Foundation
         }
         feedback(card, decision: .approved, reason: nil, note: nil, outcome: .replied,
                  sent: clean, reaction: nil, edited: clean != card.draft?.chat.trimmed)
+        // A rewritten draft teaches the writer how you put things.
+        if let draft = card.draft?.chat.trimmed, !draft.isEmpty, draft != clean,
+           let preset = card.presetID.flatMap(store.preset(id:)) ?? store.preset(room: card.invitation, series: card.seriesID) {
+            store.recordEdit(.init(at: now(), draft: draft, sent: clean), in: preset)
+        }
         return true
     }
 
@@ -333,6 +390,43 @@ import Foundation
         feedback(card, decision: .approved, reason: nil, note: nil, outcome: .reacted,
                  sent: nil, reaction: reaction, edited: reaction != card.draft?.reaction)
         return true
+    }
+
+    /// Speaks the text into the meeting with the chosen voice. Your microphone is held
+    /// back while it plays; counts as an approval once it has played.
+    func sayReply(_ card: Card, text: String) {
+        let clean = text.trimmed
+        guard let index = cards.firstIndex(where: { $0.id == card.id }), card.canSpeak, !clean.isEmpty, !cards[index].speaking,
+              let model = meetings().first(where: { $0.sessionID == card.meetingID }), !model.isClosed else {
+            setDraftError(L("This meeting cannot play a spoken reply now. Open the meeting to answer."), card: card); return
+        }
+        cards[index].speaking = true; cards[index].draftError = nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let started = ProcessInfo.processInfo.systemUptime
+            do {
+                let buffer = try await synthesize(clean)
+                let synthesized = ProcessInfo.processInfo.systemUptime
+                try await deliverVoice(model, buffer)
+                probeLog("attention-spoken", ["voice": store.voiceEngine.rawValue, "seconds": Double(buffer.frameLength) / buffer.format.sampleRate,
+                    "synthesisMs": Int((synthesized - started) * 1000)])
+                feedback(card, decision: .approved, reason: nil, note: nil, outcome: .spoken,
+                         sent: clean, reaction: nil, edited: clean != card.draft?.chat.trimmed)
+            } catch {
+                guard let index = cards.firstIndex(where: { $0.id == card.id }) else { return }
+                cards[index].speaking = false
+                if !(error is CancellationError) { cards[index].draftError = error.localizedDescription }
+            }
+        }
+    }
+
+    func synthesize(_ text: String) async throws -> AVAudioPCMBuffer {
+        if let synthesizeOverride { return try await synthesizeOverride(text) }
+        switch store.voiceEngine {
+        case .system: return try await VoiceSynthesis.system(text)
+        case .rapidMLX:
+            return try await VoiceSynthesis.rapidMLX(text, baseURL: store.voiceBaseURL, model: store.voiceModel, description: store.voiceDescription)
+        }
     }
 
     private func setDraftError(_ message: String, card: Card) {

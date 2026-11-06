@@ -59,6 +59,25 @@ struct MeetingPreset: Codable, Identifiable, Equatable, Sendable {
     /// Draft chat replies and reactions on this meeting's cards; nil means yes.
     var suggestReplies: Bool?
     var repliesAllowed: Bool { suggestReplies ?? true }
+    /// Drafts you changed before sending, newest last; the writer sees them as examples.
+    var replyEdits: [ReplyEdit]?
+    static let replyEditLimit = 10
+    static let promptReplyEditLimit = 5
+
+    mutating func recordEdit(_ edit: ReplyEdit) {
+        var edits = replyEdits ?? []
+        edits.append(edit)
+        if edits.count > Self.replyEditLimit { edits.removeFirst(edits.count - Self.replyEditLimit) }
+        replyEdits = edits
+    }
+    /// Decline reasons you gave at least three times, most frequent first.
+    var repeatedDeclines: [(reason: PresetExample.DeclineReason, count: Int)] {
+        var counts: [PresetExample.DeclineReason: Int] = [:]
+        for example in examples where example.decision == .declined {
+            if let reason = example.declineReason, reason != .other { counts[reason, default: 0] += 1 }
+        }
+        return counts.filter { $0.value >= 3 }.map { ($0.key, $0.value) }.sorted { $0.count == $1.count ? $0.reason.rawValue < $1.reason.rawValue : $0.count > $1.count }
+    }
 
     var threshold: Double {
         min(Self.thresholdRange.upperBound, max(Self.thresholdRange.lowerBound, urgency.baseThreshold + thresholdAdjustment))
@@ -78,6 +97,13 @@ struct MeetingPreset: Codable, Identifiable, Equatable, Sendable {
     }
     /// The most recent examples the judge sees, newest first.
     var promptExamples: [PresetExample] { Array(examples.suffix(Self.promptExampleLimit).reversed()) }
+}
+
+/// A draft you rewrote before sending it.
+struct ReplyEdit: Codable, Equatable, Sendable {
+    var at: Date
+    var draft: String
+    var sent: String
 }
 
 /// Who you are to the judge: the names people use for you and what you do.
@@ -232,6 +258,12 @@ enum ReplyPrompt {
     static let schemaName = "meeting_reply"
     static let chatLimit = 500
 
+    /// The draft's shape, for models answering in JSON mode instead of a strict schema.
+    static func jsonHint(_ channels: ReplyChannels) -> String {
+        let reactions = (["none"] + channels.reactions.map(\.rawValue)).map { "\"\($0)\"" }.joined(separator: "|")
+        return "\n- Answer with one JSON object and nothing else: {\"chat\": string, \"reaction\": \(reactions)}."
+    }
+
     static func schema(_ channels: ReplyChannels) -> [String: Any] {
         ["type": "object", "additionalProperties": false, "required": ["chat", "reaction"],
          "properties": [
@@ -279,6 +311,10 @@ enum ReplyPrompt {
             available.append("one reaction: " + channels.reactions.map { "\($0.rawValue) \($0.emoji)" }.joined(separator: ", "))
         }
         parts.append("The user can answer with " + available.joined(separator: " or ") + ".")
+        if let edits = request.judge.preset?.replyEdits?.suffix(MeetingPreset.promptReplyEditLimit), !edits.isEmpty {
+            parts.append("The user rewrote earlier drafts before sending them; write the way the user did:\n" +
+                edits.reversed().map { "- draft: \"\($0.draft.prefix(200))\" → sent: \"\($0.sent.prefix(200))\"" }.joined(separator: "\n"))
+        }
         parts.append("Draft the user's reply.")
         return parts.joined(separator: "\n\n")
     }
@@ -286,7 +322,7 @@ enum ReplyPrompt {
     /// Decodes the model's JSON and keeps only what this meeting accepts.
     static func draft(from content: String, channels: ReplyChannels) throws -> ReplyDraft {
         struct Raw: Decodable { let chat: String; let reaction: String }
-        guard let data = content.trimmed.data(using: .utf8), let raw = try? JSONDecoder().decode(Raw.self, from: data) else {
+        guard let data = content.jsonPayload.data(using: .utf8), let raw = try? JSONDecoder().decode(Raw.self, from: data) else {
             throw ReplyDraftError.malformed
         }
         var chat = raw.chat.trimmed
@@ -338,6 +374,13 @@ enum AttentionPrompt {
             "action": ["type": "string", "enum": AttentionAction.allCases.map(\.rawValue)],
          ]]
     }
+
+    /// The verdict's shape, for models answering in JSON mode instead of a strict schema.
+    static let jsonHint = #"""
+
+    - Answer with one JSON object and nothing else: {"attention": "no"|"soon"|"now", "probability": number from 0 to 1, \#
+    "reason": string, "evidence": [refs such as "L3"], "action": "none"|"open"|"chat"|"reaction"}.
+    """#
 
     static let system = """
     You watch a video meeting on behalf of one person (the user) who is busy elsewhere, \
@@ -397,6 +440,11 @@ enum AttentionPrompt {
                 parts.append("The user said these did not need attention:\n" + declined.map { "- " + exampleLine($0) }.joined(separator: "\n"))
             }
         }
+        if includeExamples, let repeated = request.preset?.repeatedDeclines, !repeated.isEmpty {
+            parts.append("In this meeting the user keeps declining cards as: " +
+                repeated.map { "\(declineDescription($0.reason)) (\($0.count) times)" }.joined(separator: ", ") +
+                ". Treat similar situations as not needing the user.")
+        }
         let window = request.window
         var state = "Meeting \"\(window.meetingTitle)\", \(window.participantCount) participants. "
         state += "The user's microphone is " + (window.microphoneOn ? "on" : "off") + ", meeting sound is " + (window.soundOn ? "on" : "off") + "."
@@ -431,13 +479,19 @@ enum AttentionPrompt {
         return text
     }
 
+    private static func declineDescription(_ reason: PresetExample.DeclineReason) -> String {
+        switch reason {
+        case .notUrgent: "not urgent"; case .wrongMeeting: "not for the user"; case .alreadyKnown: "already known to the user"; case .other: "other"
+        }
+    }
+
     private static func languageName(_ code: String) -> String { code.hasPrefix("ru") ? "Russian" : "English" }
 
     /// Decodes and checks the model's JSON against the window it read. Refs
     /// become line ids; evidence must name lines that exist.
     static func verdict(from content: String, window: AttentionWindow) throws -> AttentionVerdict {
         struct Raw: Decodable { let attention: AttentionLevel; let probability: Double; let reason: String; let evidence: [String]; let action: AttentionAction }
-        let trimmed = content.trimmed
+        let trimmed = content.jsonPayload
         guard let data = trimmed.data(using: .utf8), let raw = try? JSONDecoder().decode(Raw.self, from: data) else {
             throw AttentionVerdictError.malformed
         }
@@ -456,4 +510,13 @@ enum AttentionPrompt {
 
 extension String {
     var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// The JSON inside a reply, without a Markdown code fence some models add in JSON mode.
+    var jsonPayload: String {
+        var text = trimmed
+        guard text.hasPrefix("```") else { return text }
+        text.removeFirst(3)
+        if let newline = text.firstIndex(of: "\n") { text = String(text[text.index(after: newline)...]) }
+        if text.hasSuffix("```") { text.removeLast(3) }
+        return text.trimmed
+    }
 }

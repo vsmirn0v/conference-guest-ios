@@ -41,7 +41,7 @@ struct AttentionCardView: View {
                     (Text(line.speaker).fontWeight(.semibold) + Text(" — " + line.text)).font(.callout).foregroundStyle(.secondary).lineLimit(3)
                 }.fixedSize(horizontal: false, vertical: true)
             }
-            if !card.channels.isEmpty && !declining { AttentionReplyView(attention: attention, card: card) }
+            if (!card.channels.isEmpty || card.canSpeak) && !declining { AttentionReplyView(attention: attention, card: card) }
             if declining {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(L("Why not?")).font(.caption).foregroundStyle(.secondary)
@@ -84,36 +84,47 @@ struct AttentionReplyView: View {
     @State private var text = ""
     @State private var edited = false
 
+    /// A text field when there is a draft, or when you can only write or speak the reply yourself.
+    private var showsField: Bool {
+        card.draft != nil || (!card.canDraft && (card.channels.chat || card.canSpeak))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if card.drafting {
+            if card.drafting || card.speaking {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text(L("Drafting a reply…")).font(.caption).foregroundStyle(.secondary)
+                    Text(card.speaking ? L("Speaking the reply into the meeting…") : L("Drafting a reply…")).font(.caption).foregroundStyle(.secondary)
                 }
-            } else if let draft = card.draft {
-                if card.channels.chat {
-                    TextField(L("Reply in the meeting chat"), text: $text, axis: .vertical)
+            } else {
+                if showsField {
+                    TextField(card.channels.chat ? L("Reply in the meeting chat") : L("Reply to say in the meeting"), text: $text, axis: .vertical)
                         .lineLimit(1...4).textFieldStyle(.roundedBorder).accessibilityIdentifier("attention.reply")
-                        .onChange(of: text) { value in edited = value != draft.chat }
+                        .onChange(of: text) { value in edited = value != (card.draft?.chat ?? "") }
                 }
                 HStack(spacing: 6) {
-                    if card.channels.chat {
+                    if showsField && card.channels.chat {
                         Button(L("Send")) { attention.sendReply(card, text: text) }
                             .buttonStyle(.borderedProminent).disabled(text.trimmed.isEmpty)
                             .keyboardShortcut(.return, modifiers: .command).help(L("Send this message to the meeting chat (⌘↩)"))
                     }
-                    if let reaction = draft.reaction {
+                    if showsField && card.canSpeak {
+                        Button { attention.sayReply(card, text: text) } label: { Label(L("Say it"), systemImage: "speaker.wave.2") }
+                            .disabled(text.trimmed.isEmpty).help(L("Speak this reply into the meeting; your microphone is held back while it plays"))
+                    }
+                    if let reaction = card.draft?.reaction {
                         Button(reaction.emoji) { attention.sendReaction(card, reaction) }.help(L("Send this reaction"))
                     }
-                    if card.channels.reactions.count > 1 { reactionMenu }
+                    if !card.channels.reactions.isEmpty { reactionMenu }
                     Spacer(minLength: 4)
-                    Button(L("Redraft")) { edited = false; attention.draftReply(card.id) }.buttonStyle(.borderless).controlSize(.small)
-                }
-            } else {
-                HStack(spacing: 6) {
-                    Button(card.channels.chat ? L("Draft a reply") : L("Suggest a reaction")) { attention.draftReply(card.id) }.controlSize(.small)
-                    if card.channels.reactions.count > 1 { reactionMenu }
+                    if card.canDraft {
+                        if card.draft == nil {
+                            Button(card.channels.chat || card.canSpeak ? L("Draft a reply") : L("Suggest a reaction")) { attention.draftReply(card.id) }
+                                .controlSize(.small)
+                        } else {
+                            Button(L("Redraft")) { edited = false; attention.draftReply(card.id) }.buttonStyle(.borderless).controlSize(.small)
+                        }
+                    }
                 }
             }
             if let error = card.draftError { Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true) }
@@ -234,6 +245,8 @@ struct MeetingPresetEditor: View {
     @State private var preset: MeetingPreset
     @State private var people: String
     @State private var appliesToSeries: Bool
+    @State private var tuning: ThresholdTuner.Result?
+    @State private var tuneMessage: String?
 
     init(store: AttentionStore, target: AttentionCoordinator.PresetTarget) {
         self.store = store; self.target = target
@@ -265,6 +278,15 @@ struct MeetingPresetEditor: View {
                     if target.seriesID != nil { Toggle(L("Use for every meeting in this calendar series"), isOn: $appliesToSeries) }
                 }
                 Section(L("Learned from you")) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Button(L("Tune threshold from your choices")) { tune() }
+                            if let tuning, abs(tuning.threshold - preset.threshold) > 0.001 {
+                                Button(L("Use %.2f", tuning.threshold)) { applyTuning(tuning) }
+                            }
+                        }
+                        if let tuneMessage { Text(tuneMessage).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+                    }
                     if preset.examples.isEmpty {
                         Text(L("Approve or decline cards and they appear here.")).foregroundStyle(.secondary)
                     }
@@ -301,6 +323,23 @@ struct MeetingPresetEditor: View {
             TextField("", text: text, prompt: Text(prompt), axis: .vertical).lineLimit(2...5)
         }
     }
+    /// Replays this meeting's saved verdicts under every threshold and finds the one
+    /// that matches your Open, reply, reaction and Decline choices best.
+    private func tune() {
+        let cases = ComparisonLoader.load(store.decisionFiles()).cases.filter { $0.presetID == preset.id }
+        tuning = ThresholdTuner.best(cases, current: preset.threshold)
+        if let tuning {
+            tuneMessage = L("At %.2f the judge's saved verdicts match %ld of your %ld choices here; at the current %.2f, %ld.",
+                            tuning.threshold, tuning.agreed, tuning.labelled, preset.threshold, tuning.currentAgreed)
+        } else {
+            tuneMessage = L("Needs at least %ld cards here that you opened, answered or declined, with both kinds among them.", ThresholdTuner.minimumChoices)
+        }
+    }
+    private func applyTuning(_ result: ThresholdTuner.Result) {
+        let base = preset.urgency.baseThreshold
+        preset.thresholdAdjustment = min(MeetingPreset.thresholdRange.upperBound - base, max(MeetingPreset.thresholdRange.lowerBound - base, result.threshold - base))
+        tuneMessage = L("Threshold set to %.2f. Save to keep it.", preset.threshold)
+    }
     private func save() {
         var value = preset
         value.people = people.split(separator: ",").map { String($0).trimmed }.filter { !$0.isEmpty }
@@ -311,6 +350,52 @@ struct MeetingPresetEditor: View {
         else { bindings += value.bindings.filter { if case .calendarSeries(let id) = $0 { id != target.seriesID } else { false } } }
         value.bindings = bindings
         store.save(value)
+    }
+}
+
+/// Whether Rapid-MLX answers on this Mac and has the chosen model, with the
+/// commands to install and start it when it does not.
+struct RapidMLXStatusView: View {
+    @ObservedObject var store: AttentionStore
+    /// Rapid-MLX serves one model and lists it by its full name, not the alias the judge sends.
+    enum Status: Equatable { case checking, running(serving: String?), stopped(String) }
+    @State private var status = Status.checking
+
+    static let installCommands = """
+    python3 -m venv ~/.rapid-mlx/venv
+    ~/.rapid-mlx/venv/bin/pip install "rapid-mlx[audio]==1.0.1"
+    ~/.rapid-mlx/venv/bin/rapid-mlx --no-telemetry serve qwen3.5-4b-4bit --host 127.0.0.1 --port 8000 --enable-audio
+    """
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                switch status {
+                case .checking: ProgressView().controlSize(.small); Text(L("Checking Rapid-MLX…")).foregroundStyle(.secondary)
+                case .running(let serving):
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Text(L("Rapid-MLX is running with %@.", serving ?? store.provider.model))
+                case .stopped: Image(systemName: "xmark.circle.fill").foregroundStyle(.red); Text(L("Rapid-MLX does not answer at %@.", store.provider.host))
+                }
+                Spacer()
+                Button(L("Check again")) { Task { await check() } }.controlSize(.small)
+            }.font(.callout)
+            if case .stopped = status {
+                Text(L("Install it once, then start it (needs Python 3.12 or later):")).font(.caption).foregroundStyle(.secondary)
+                Text(Self.installCommands).font(.caption.monospaced()).textSelection(.enabled)
+                    .padding(6).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+            }
+        }
+        .task(id: store.provider.baseURL + store.provider.model) { await check() }
+    }
+
+    private func check() async {
+        status = .checking
+        do {
+            let models = try await AttentionModelCatalog.fetch(store.provider, key: nil)
+            status = .running(serving: models.first { $0.id == store.provider.model }?.id ?? models.first?.id)
+        } catch { status = .stopped(error.localizedDescription) }
     }
 }
 
@@ -394,6 +479,9 @@ struct NativeDesktopIntelligenceSettings: View {
     @State private var testFailed = false
     @State private var choosingModel = false
     @State private var comparing = false
+    @State private var previewing = false
+    @State private var voiceMessage: String?
+    @State private var voiceFailed = false
 
     var body: some View {
         Form {
@@ -421,6 +509,7 @@ struct NativeDesktopIntelligenceSettings: View {
                     Button(L("Choose…")) { choosingModel = true }.disabled(store.provider.endpoint == nil)
                         .help(L("Pick from the models this provider offers"))
                 }
+                if store.provider.kind == .rapidMLX { RapidMLXStatusView(store: store) }
                 if store.provider.needsKey {
                     HStack {
                         SecureField(store.hasKey ? L("Saved in the keychain") : L("API key"), text: $key).accessibilityIdentifier("attention.key")
@@ -445,11 +534,58 @@ struct NativeDesktopIntelligenceSettings: View {
                                                            set: { store.profile.replyStyle = $0.trimmed.isEmpty ? nil : $0 }),
                           prompt: Text(L("For example: brief and informal, no emoji")))
                     .disabled(!store.draftReplies)
+                Picker(L("Write replies with"), selection: Binding(get: { store.writerProvider?.kind }, set: { kind in
+                    store.writerProvider = kind.flatMap { AttentionProvider.defaults[$0] }
+                })) {
+                    Text(L("The judge's provider")).tag(AttentionProvider.Kind?.none)
+                    ForEach(AttentionProvider.Kind.allCases.filter { $0 != .custom }, id: \.self) { kind in
+                        Text(AttentionProvider.defaults[kind]?.title ?? kind.rawValue).tag(AttentionProvider.Kind?.some(kind))
+                    }
+                }.disabled(!store.draftReplies)
+                if store.writerProvider != nil {
+                    TextField(L("Writer model"), text: Binding(get: { store.writerProvider?.model ?? "" },
+                                                              set: { store.writerProvider?.model = $0 }))
+                        .disabled(!store.draftReplies)
+                    if store.effectiveWriter.needsKey && !store.hasKey {
+                        Text(L("The writer needs the API key saved above.")).font(.caption).foregroundStyle(.orange)
+                    }
+                }
+                if store.effectiveWriter.onThisMac {
+                    Toggle(L("Draft with the model on this Mac anyway"), isOn: $store.localDrafts).disabled(!store.draftReplies)
+                    Text(L("Small models on this Mac judge well, but in tests they answered questions for you (confirmed things, chose options). While the judge runs here, cards offer reactions only unless you turn this on.")).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Section(L("Voice")) {
+                Picker(L("Speak replies with"), selection: $store.voiceEngine) {
+                    Text(L("The macOS voice")).tag(VoiceEngine.system)
+                    Text(L("Rapid-MLX on this Mac")).tag(VoiceEngine.rapidMLX)
+                }
+                if store.voiceEngine == .rapidMLX {
+                    TextField(L("Voice model"), text: $store.voiceModel)
+                    TextField(L("How the voice sounds"), text: $store.voiceDescription, axis: .vertical).lineLimit(1...3)
+                    TextField(L("Address"), text: $store.voiceBaseURL)
+                    Text(L("Start Rapid-MLX with --enable-audio. The first reply loads the voice model and takes longer.")).font(.caption).foregroundStyle(.secondary)
+                }
+                HStack {
+                    Button(previewing ? L("Preparing…") : L("Listen")) { previewVoice() }.disabled(previewing)
+                    if let voiceMessage { Text(voiceMessage).font(.caption).foregroundStyle(voiceFailed ? Color.red : .secondary).lineLimit(3) }
+                }
+                Text(L("“Say it” on a card speaks the reply into that meeting while your microphone is held back. It needs Voice replies (experimental) in Settings → General, for meetings joined after turning it on. Listen plays only on this Mac.")).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Section(L("What leaves this Mac")) {
-                Label(L("For each meeting you are not looking at: its last three minutes of text and chat, its instructions and your profile go to %@, at most six times a minute.", store.provider.host), systemImage: "arrow.up.forward")
-                if store.draftReplies {
-                    Label(L("Drafting a reply sends the same text and the judge's reason once more. What you send goes to the meeting, as if you typed it."), systemImage: "text.bubble")
+                if store.provider.onThisMac {
+                    Label(L("The judge runs on this Mac at %@: meeting text, instructions and your profile stay here.", store.provider.host), systemImage: "laptopcomputer")
+                } else {
+                    Label(L("For each meeting you are not looking at: its last three minutes of text and chat, its instructions and your profile go to %@, at most six times a minute.", store.provider.host), systemImage: "arrow.up.forward")
+                }
+                if store.draftsAllowed {
+                    if store.effectiveWriter.onThisMac {
+                        Label(L("Replies are drafted on this Mac. What you send goes to the meeting, as if you typed it."), systemImage: "text.bubble")
+                    } else {
+                        Label(L("Drafting a reply sends the same meeting text and the judge's reason to %@. What you send goes to the meeting, as if you typed it.", store.effectiveWriter.host), systemImage: "text.bubble")
+                    }
                 }
                 Label(L("Audio never leaves this Mac."), systemImage: "lock")
                 Label(L("Decisions are kept on this Mac for 30 days so you can see why a card appeared."), systemImage: "clock")
@@ -479,6 +615,19 @@ struct NativeDesktopIntelligenceSettings: View {
             .sheet(isPresented: $comparing) { AttentionComparisonView(store: store) }
     }
 
+    private func previewVoice() {
+        previewing = true; voiceMessage = nil
+        Task { @MainActor in
+            defer { previewing = false }
+            let started = ProcessInfo.processInfo.systemUptime
+            do {
+                let buffer = try await attention.synthesize(L("I'm in another meeting right now, I'll answer in a couple of minutes."))
+                try VoicePreviewPlayer.shared.play(buffer)
+                voiceFailed = false
+                voiceMessage = L("Ready in %.1f s.", ProcessInfo.processInfo.systemUptime - started)
+            } catch { voiceFailed = true; voiceMessage = error.localizedDescription }
+        }
+    }
     private func saveAliases() {
         let values = aliases.split(separator: ",").map { String($0).trimmed }.filter { !$0.isEmpty }
         if values != store.profile.aliases { store.profile.aliases = values }

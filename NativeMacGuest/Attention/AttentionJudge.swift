@@ -55,6 +55,8 @@ enum AttentionJudgeError: LocalizedError, Equatable {
         switch status {
         case 401, 403: return .unauthorized(message)
         case 402: return .quota(message)
+        // Rapid-MLX: the model's answer broke the strict schema; not worth retrying as is.
+        case 422 where code == "json_schema_violation": return .verdict(.malformed)
         case 429: return code == "insufficient_quota" ? .quota(message) : .rateLimited(message)
         default: return .http(status, message)
         }
@@ -76,8 +78,8 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter {
 
     /// Judges saved messages again, as the model comparison does.
     func judge(messages: [[String: String]], window: AttentionWindow) async throws -> JudgeResult {
-        let (content, latency) = try await complete(Self.body(messages: messages, model: provider.model.trimmed,
-                                                              name: AttentionPrompt.schemaName, schema: AttentionPrompt.schema))
+        let (content, latency) = try await complete(requestBody(messages: messages, name: AttentionPrompt.schemaName,
+                                                                schema: AttentionPrompt.schema, hint: AttentionPrompt.jsonHint))
         do { return .init(verdict: try AttentionPrompt.verdict(from: content, window: window), latency: latency) }
         catch let error as AttentionVerdictError { throw AttentionJudgeError.verdict(error) }
     }
@@ -88,9 +90,26 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter {
     }
 
     func draft(messages: [[String: String]], channels: ReplyChannels) async throws -> ReplyResult {
-        let (content, latency) = try await complete(Self.body(messages: messages, model: provider.model.trimmed,
-                                                              name: ReplyPrompt.schemaName, schema: ReplyPrompt.schema(channels)))
+        let (content, latency) = try await complete(requestBody(messages: messages, name: ReplyPrompt.schemaName,
+                                                                schema: ReplyPrompt.schema(channels), hint: ReplyPrompt.jsonHint(channels)))
         return .init(draft: try ReplyPrompt.draft(from: content, channels: channels), latency: latency)
+    }
+
+    /// Providers elsewhere get the strict schema. A model on this Mac gets JSON mode with
+    /// the shape in its instructions: Rapid-MLX's strict schema lengthens the prompt,
+    /// loses its prompt cache and halves decode speed, and every answer is validated here anyway.
+    func requestBody(messages: [[String: String]], name: String, schema: [String: Any], hint: String) -> [String: Any] {
+        let model = provider.model.trimmed
+        guard provider.onThisMac else { return Self.body(messages: messages, model: model, name: name, schema: schema) }
+        var adjusted = messages
+        if let index = adjusted.firstIndex(where: { $0["role"] == "system" }), !(adjusted[index]["content"] ?? "").contains(hint) {
+            adjusted[index]["content"] = (adjusted[index]["content"] ?? "") + hint
+        }
+        var body: [String: Any] = ["model": model, "messages": adjusted, "temperature": 0, "max_tokens": 400,
+                                   "response_format": ["type": "json_object"]]
+        // Qwen-family models would otherwise think first; the verdict needs no reasoning pass.
+        if provider.kind == .rapidMLX { body["chat_template_kwargs"] = ["enable_thinking": false] }
+        return body
     }
 
     static func body(messages: [[String: String]], model: String, name: String, schema: [String: Any]) -> [String: Any] {
@@ -128,7 +147,8 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter {
     }
 
     private func send(_ body: Data, to endpoint: URL) async throws -> String {
-        var urlRequest = URLRequest(url: endpoint, timeoutInterval: timeout)
+        // A model on this Mac may still be loading on the first call.
+        var urlRequest = URLRequest(url: endpoint, timeoutInterval: provider.onThisMac ? max(timeout, 60) : timeout)
         urlRequest.httpMethod = "POST"; urlRequest.httpBody = body
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let key, !key.isEmpty { urlRequest.setValue("Bearer " + key, forHTTPHeaderField: "Authorization") }

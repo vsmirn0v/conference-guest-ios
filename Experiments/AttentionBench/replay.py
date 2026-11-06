@@ -45,7 +45,7 @@ def load(folder):
             record = json.loads(line)
             if record.get("messages") and record.get("verdict"):
                 decisions[record["id"]] = record
-            elif record.get("decisionID") and record.get("outcome") in ("opened", "replied", "reacted", "declined"):
+            elif record.get("decisionID") and record.get("outcome") in ("opened", "replied", "reacted", "spoken", "declined"):
                 outcomes[record["decisionID"]] = record["outcome"]
     return decisions, outcomes
 
@@ -95,7 +95,7 @@ def main():
                "probability": verdict.get("probability"), "seconds": round(seconds, 2)}
         rows.append(row)
         if user:
-            needed = user in ("opened", "replied", "reacted")
+            needed = user in ("opened", "replied", "reacted", "spoken")
             labelled += 1; agree += int(replayed == needed)
             true_pos += int(replayed and needed); false_pos += int(replayed and not needed); false_neg += int(not replayed and needed)
         print(f'{record["at"][:19]}  {record["meetingTitle"][:24]:24}  user={user or "-":8}  '

@@ -4,22 +4,32 @@ import Security
 
 /// Where the judge runs: any OpenAI-compatible chat completions endpoint.
 struct AttentionProvider: Codable, Equatable, Sendable {
-    enum Kind: String, Codable, CaseIterable, Sendable { case openAI, openRouter, local, custom }
+    enum Kind: String, Codable, CaseIterable, Sendable { case openAI, openRouter, rapidMLX, local, custom }
     var kind: Kind
     var baseURL: String
     var model: String
 
+    static let rapidMLXModel = "qwen3.5-4b-4bit"
     static let defaults: [Kind: AttentionProvider] = [
         .openAI: .init(kind: .openAI, baseURL: "https://api.openai.com/v1", model: "gpt-4.1-mini"),
         .openRouter: .init(kind: .openRouter, baseURL: "https://openrouter.ai/api/v1", model: "openai/gpt-4.1-mini"),
+        .rapidMLX: .init(kind: .rapidMLX, baseURL: "http://127.0.0.1:8000/v1", model: rapidMLXModel),
         .local: .init(kind: .local, baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b"),
         .custom: .init(kind: .custom, baseURL: "https://", model: ""),
     ]
     var title: String {
-        switch kind { case .openAI: "OpenAI"; case .openRouter: "OpenRouter"; case .local: L("Server on this network"); case .custom: L("Other") }
+        switch kind {
+        case .openAI: "OpenAI"; case .openRouter: "OpenRouter"; case .rapidMLX: L("Rapid-MLX on this Mac")
+        case .local: L("Server on this network"); case .custom: L("Other")
+        }
     }
     /// A local server usually needs no key.
-    var needsKey: Bool { kind != .local }
+    var needsKey: Bool { kind != .local && kind != .rapidMLX }
+    /// The judge runs on this Mac: nothing about your meetings leaves it.
+    var onThisMac: Bool {
+        guard let host = URL(string: baseURL.trimmed)?.host?.lowercased() else { return false }
+        return ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host)
+    }
     var endpoint: URL? {
         guard var base = URL(string: baseURL.trimmed), let scheme = base.scheme?.lowercased(), ["https", "http"].contains(scheme), base.host != nil else { return nil }
         if base.absoluteString.hasSuffix("/") { base = URL(string: String(base.absoluteString.dropLast())) ?? base }
@@ -66,6 +76,8 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         case drafted, draftFailed
         /// You sent the card's chat reply or a reaction from it.
         case replied, reacted
+        /// You had the reply spoken into the meeting.
+        case spoken
     }
     var id = UUID()
     var at: Date
@@ -109,6 +121,36 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     @Published var pauseOnBattery: Bool { didSet { defaults.set(pauseOnBattery, forKey: Self.batteryKey) } }
     /// Cards offer a drafted chat reply or reaction where the meeting accepts one.
     @Published var draftReplies: Bool { didSet { defaults.set(draftReplies, forKey: Self.repliesKey) } }
+    /// Small models on this Mac judge well but answer questions for you when they
+    /// draft, so drafting with them is opt-in.
+    @Published var localDrafts: Bool { didSet { defaults.set(localDrafts, forKey: Self.localDraftsKey) } }
+    static let localDraftsKey = "attention.replies.local"
+    /// Who drafts replies; nil means the judge's provider. Lets a model on this Mac
+    /// judge while a stronger model elsewhere writes. Uses the same keychain key.
+    @Published var writerProvider: AttentionProvider? {
+        didSet {
+            if let writerProvider, let data = try? JSONEncoder().encode(writerProvider) { defaults.set(data, forKey: Self.writerKey) }
+            else { defaults.removeObject(forKey: Self.writerKey) }
+        }
+    }
+    static let writerKey = "attention.writer.provider"
+
+    /// The voice that speaks a reply into a meeting ("Say it" on a card).
+    @Published var voiceEngine: VoiceEngine { didSet { defaults.set(voiceEngine.rawValue, forKey: Self.voiceEngineKey) } }
+    @Published var voiceModel: String { didSet { defaults.set(voiceModel, forKey: Self.voiceModelKey) } }
+    /// How the voice should sound, for a VoiceDesign model.
+    @Published var voiceDescription: String { didSet { defaults.set(voiceDescription, forKey: Self.voiceDescriptionKey) } }
+    @Published var voiceBaseURL: String { didSet { defaults.set(voiceBaseURL, forKey: Self.voiceBaseURLKey) } }
+    static let voiceEngineKey = "attention.voice.engine", voiceModelKey = "attention.voice.model"
+    static let voiceDescriptionKey = "attention.voice.description", voiceBaseURLKey = "attention.voice.baseURL"
+    static let defaultVoiceModel = "qwen3-tts-voicedesign-4bit"
+    static let defaultVoiceDescription = "A calm, clear adult voice speaking at a natural pace, like a colleague in a work call."
+    var effectiveWriter: AttentionProvider { writerProvider ?? provider }
+    /// Cards can draft with the writer.
+    var draftsAllowed: Bool {
+        let writer = effectiveWriter
+        return draftReplies && writer.endpoint != nil && (!writer.onThisMac || localDrafts) && (!writer.needsKey || hasKey)
+    }
     @Published var provider: AttentionProvider {
         didSet { if let data = try? JSONEncoder().encode(provider) { defaults.set(data, forKey: Self.providerKey) } }
     }
@@ -128,6 +170,12 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         enabled = defaults.bool(forKey: Self.enabledKey)
         pauseOnBattery = defaults.bool(forKey: Self.batteryKey)
         draftReplies = defaults.object(forKey: Self.repliesKey) as? Bool ?? true
+        localDrafts = defaults.bool(forKey: Self.localDraftsKey)
+        writerProvider = defaults.data(forKey: Self.writerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
+        voiceEngine = defaults.string(forKey: Self.voiceEngineKey).flatMap(VoiceEngine.init(rawValue:)) ?? .system
+        voiceModel = defaults.string(forKey: Self.voiceModelKey) ?? Self.defaultVoiceModel
+        voiceDescription = defaults.string(forKey: Self.voiceDescriptionKey) ?? Self.defaultVoiceDescription
+        voiceBaseURL = defaults.string(forKey: Self.voiceBaseURLKey) ?? AttentionProvider.defaults[.rapidMLX]!.baseURL
         provider = defaults.data(forKey: Self.providerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
             ?? AttentionProvider.defaults[.openAI]!
         hasKey = keychain.read()?.isEmpty == false
@@ -192,6 +240,10 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     func record(_ example: PresetExample, in preset: MeetingPreset) {
         var updated = self.preset(id: preset.id) ?? preset
         updated.record(example); save(updated)
+    }
+    func recordEdit(_ edit: ReplyEdit, in preset: MeetingPreset) {
+        var updated = self.preset(id: preset.id) ?? preset
+        updated.recordEdit(edit); save(updated)
     }
 
     // MARK: Decisions

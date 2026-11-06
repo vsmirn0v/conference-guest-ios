@@ -436,7 +436,8 @@ import XCTest
 
     func testCoordinatorDraftsAReplyAndSendsOnlyWhatYouApprove() async throws {
         let store = store()
-        store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+        // A server elsewhere on the network: drafting with a model on this Mac is opt-in.
+        store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
         let (infra, _) = try await meeting("infra")
         let judge = FakeJudge(), writer = FakeWriter()
         var sent: [String] = [], reacted: [MeetingReaction] = [], clock = Date()
@@ -486,6 +487,288 @@ import XCTest
         await coordinator.tick()
         XCTAssertEqual(judge.lastChannels, ReplyChannels()); XCTAssertEqual(coordinator.card(for: infra.sessionID)?.channels, ReplyChannels())
         XCTAssertEqual(writer.calls, 1, "Replies off for this meeting: nothing is drafted")
+
+        // A judge on this Mac: reactions only, no draft, until you opt in.
+        preset.suggestReplies = true; store.save(preset)
+        if let card = coordinator.card(for: infra.sessionID) { coordinator.dismiss(card) }
+        store.provider = .init(kind: .rapidMLX, baseURL: "http://127.0.0.1:8000/v1", model: "m")
+        clock += 30
+        infra.receiveLocalLineForTesting(.init(id: "i5", trackID: "a", text: "Виталий, подтверди окно.", start: clock, end: clock))
+        judge.next = .init(level: .now, probability: 0.95, reason: "Confirm the window.", evidence: ["L5"], action: .chat)
+        await coordinator.tick()
+        let local = try XCTUnwrap(coordinator.card(for: infra.sessionID))
+        XCTAssertFalse(local.canDraft); XCTAssertFalse(local.channels.reactions.isEmpty)
+        coordinator.draftReply(local.id)
+        XCTAssertEqual(writer.calls, 1, "No draft from a model on this Mac without your opt-in")
+    }
+
+    // MARK: Phase 4a — Rapid-MLX on this Mac
+
+    func testRapidMLXRunsOnThisMacWithoutAKey() throws {
+        let rapid = try XCTUnwrap(AttentionProvider.defaults[.rapidMLX])
+        XCTAssertEqual(rapid.endpoint?.absoluteString, "http://127.0.0.1:8000/v1/chat/completions")
+        XCTAssertEqual(rapid.model, AttentionProvider.rapidMLXModel)
+        XCTAssertFalse(rapid.needsKey); XCTAssertTrue(rapid.onThisMac)
+        XCTAssertTrue(AttentionProvider(kind: .local, baseURL: "http://localhost:11434/v1", model: "m").onThisMac)
+        XCTAssertFalse(AttentionProvider(kind: .local, baseURL: "http://192.168.1.5:8000/v1", model: "m").onThisMac,
+                       "A server elsewhere on the network is not this Mac")
+        XCTAssertFalse(try XCTUnwrap(AttentionProvider.defaults[.openAI]).onThisMac)
+        let violation = Data(#"{"error":{"message":"output did not match the schema","code":"json_schema_violation"}}"#.utf8)
+        XCTAssertEqual(AttentionJudgeError.from(status: 422, body: violation), .verdict(.malformed))
+        XCTAssertFalse(AttentionJudgeError.from(status: 422, body: violation).retryable)
+        XCTAssertEqual(AttentionJudgeError.from(status: 422, body: Data("{}".utf8)), .http(422, nil))
+    }
+
+    /// A model on this Mac gets JSON mode with the shape in its instructions (strict
+    /// schema there costs the prompt cache and half the speed); elsewhere the strict schema stays.
+    func testModelsOnThisMacUseJSONModeAndFencedAnswersParse() throws {
+        let request = JudgeRequest(window: sampleWindow(), preset: nil, profile: .init(name: "Vitalii"), yourName: "Vitalii", language: "ru")
+        let messages = AttentionPrompt.messages(request)
+        let local = OpenAIChatJudge(provider: try XCTUnwrap(AttentionProvider.defaults[.rapidMLX]), key: nil)
+        let body = local.requestBody(messages: messages, name: AttentionPrompt.schemaName, schema: AttentionPrompt.schema, hint: AttentionPrompt.jsonHint)
+        XCTAssertEqual((body["response_format"] as? [String: Any])?["type"] as? String, "json_object")
+        XCTAssertEqual((body["chat_template_kwargs"] as? [String: Bool])?["enable_thinking"], false)
+        let system = ((body["messages"] as? [[String: String]])?.first?["content"]) ?? ""
+        XCTAssertTrue(system.hasSuffix(AttentionPrompt.jsonHint))
+        let again = local.requestBody(messages: body["messages"] as? [[String: String]] ?? [], name: AttentionPrompt.schemaName,
+                                      schema: AttentionPrompt.schema, hint: AttentionPrompt.jsonHint)
+        XCTAssertEqual(((again["messages"] as? [[String: String]])?.first?["content"])?.components(separatedBy: "Answer with one JSON object").count, 2,
+                       "Saved messages replayed locally get the shape once")
+        let remote = OpenAIChatJudge(provider: try XCTUnwrap(AttentionProvider.defaults[.openAI]), key: "k")
+        let strict = remote.requestBody(messages: messages, name: AttentionPrompt.schemaName, schema: AttentionPrompt.schema, hint: AttentionPrompt.jsonHint)
+        XCTAssertEqual((strict["response_format"] as? [String: Any])?["type"] as? String, "json_schema")
+        XCTAssertNil(strict["chat_template_kwargs"])
+
+        let ref = try XCTUnwrap(sampleWindow().lines.last?.ref)
+        let fenced = "```json\n{\"attention\":\"now\",\"probability\":0.9,\"reason\":\"Ждут ответа.\",\"evidence\":[\"\(ref)\"],\"action\":\"chat\"}\n```"
+        XCTAssertEqual(try AttentionPrompt.verdict(from: fenced, window: sampleWindow()).level, .now)
+        XCTAssertEqual(try ReplyPrompt.draft(from: "```\n{\"chat\":\"Сейчас посмотрю.\",\"reaction\":\"none\"}\n```", channels: .init(chat: true)).chat, "Сейчас посмотрю.")
+        XCTAssertTrue(ReplyPrompt.jsonHint(.init(chat: true, reactions: [.like])).contains(#""none"|"like""#))
+    }
+
+    func testDraftingWithAModelOnThisMacIsOptIn() throws {
+        let store = store()
+        store.provider = try XCTUnwrap(AttentionProvider.defaults[.openAI])
+        XCTAssertFalse(store.draftsAllowed, "No key, no drafts")
+        store.setAPIKey("k")
+        XCTAssertTrue(store.draftsAllowed)
+        store.provider = try XCTUnwrap(AttentionProvider.defaults[.rapidMLX])
+        XCTAssertFalse(store.draftsAllowed, "A small local writer answers questions for you")
+        store.localDrafts = true
+        XCTAssertTrue(store.draftsAllowed)
+        store.draftReplies = false
+        XCTAssertFalse(store.draftsAllowed)
+    }
+
+    /// The app's own client against Rapid-MLX on this Mac, when it is running.
+    func testLiveRapidMLXJudgesARussianMeeting() async throws {
+        let provider = try XCTUnwrap(AttentionProvider.defaults[.rapidMLX])
+        guard (try? await AttentionModelCatalog.fetch(provider, key: nil))?.isEmpty == false else {
+            throw XCTSkip("Rapid-MLX is not running on 127.0.0.1:8000")
+        }
+        let now = Date()
+        let lines = [
+            GuestMeetingMessage(id: "1", participantID: "a", participantName: "Анна", text: "Давайте пройдёмся по плану релиза.", sentAt: now - 40, isOwn: false),
+            GuestMeetingMessage(id: "2", participantID: "b", participantName: "Игорь", text: "Сертификаты истекают в пятницу.", sentAt: now - 20, isOwn: false),
+            GuestMeetingMessage(id: "3", participantID: "a", participantName: "Анна", text: "Виталий, ты подтверждаешь, что DNS готов к переключению? Мы ждём тебя.", sentAt: now - 5, isOwn: false),
+        ]
+        let window = AttentionWindowBuilder.build(.init(title: "Инфраструктура", transcript: lines, chat: [], reactions: [],
+            participantCount: 4, yourNames: ["Виталий"], microphoneOn: false, soundOn: false, now: now))
+        let request = JudgeRequest(window: window, preset: nil, profile: .init(name: "Виталий", role: "отвечает за DNS"),
+                                   yourName: "Виталий", language: "ru", replyChannels: .init(chat: true))
+        let result = try await OpenAIChatJudge(provider: provider, key: nil).judge(request)
+        XCTAssertEqual(result.verdict.level, .now)
+        XCTAssertTrue(result.verdict.evidence.contains("3"), "The verdict cites Anna's question")
+        XCTAssertLessThan(result.latency, 30)
+    }
+
+    // MARK: Separate writer, local scheduling, learning, voice
+
+    func testAModelOnThisMacJudgesWhileAnotherWrites() async throws {
+        let store = store()
+        store.enabled = true; store.provider = try XCTUnwrap(AttentionProvider.defaults[.rapidMLX])
+        XCTAssertFalse(store.draftsAllowed)
+        store.writerProvider = .init(kind: .local, baseURL: "http://192.168.1.5:8000/v1", model: "writer-model")
+        XCTAssertTrue(store.draftsAllowed, "A writer elsewhere drafts even though the judge runs here")
+        XCTAssertEqual(store.effectiveWriter.model, "writer-model")
+        let reloaded = AttentionStore(root: store.root, defaults: UserDefaults(suiteName: "attention-\(UUID())")!,
+                                      keychain: AttentionKeychain(service: "t.\(UUID())"))
+        XCTAssertNil(reloaded.writerProvider, "Other settings start with the judge as writer")
+
+        let (infra, _) = try await meeting("infra")
+        let judge = FakeJudge(), writer = FakeWriter()
+        var writerProviders: [String] = []
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [infra] }; coordinator.hasTranscript = { _ in true }
+        coordinator.makeJudge = { _, _ in judge }
+        coordinator.makeWriter = { provider, _ in writerProviders.append(provider.model); return writer }
+        coordinator.replyChannels = { _ in .init(chat: true) }
+        coordinator.power = { .init(pluggedIn: true, lowPowerMode: false) }
+        coordinator.thermalState = { .nominal }; coordinator.memoryPressured = { false }
+        infra.receiveLocalLineForTesting(.init(id: "i1", trackID: "a", text: "Виталий, DNS готов?", start: Date(), end: Date()))
+        judge.next = .init(level: .now, probability: 0.9, reason: "Asked.", evidence: ["L1"], action: .chat)
+        await coordinator.tick()
+        try await spin { coordinator.card(for: infra.sessionID)?.draft != nil }
+        XCTAssertEqual(writerProviders, ["writer-model"])
+    }
+
+    func testJudgeOnThisMacChecksMoreOftenAndStepsAsideWhenTheMacIsBusy() async throws {
+        let store = store()
+        store.enabled = true; store.provider = try XCTUnwrap(AttentionProvider.defaults[.rapidMLX])
+        let (infra, _) = try await meeting("infra")
+        infra.receiveLocalLineForTesting(.init(id: "i1", trackID: "a", text: "Привет", start: Date(), end: Date()))
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.hasTranscript = { _ in true }
+        var power = NativeDesktopPowerSnapshot(pluggedIn: true, lowPowerMode: false), thermal = ProcessInfo.ThermalState.nominal, pressure = false
+        coordinator.power = { power }; coordinator.thermalState = { thermal }; coordinator.memoryPressured = { pressure }
+        XCTAssertEqual(coordinator.interval, 10); XCTAssertEqual(coordinator.callsPerMinuteLimit, 12)
+        XCTAssertNil(coordinator.waitingReason(infra))
+        power.pluggedIn = false
+        XCTAssertEqual(coordinator.interval, 20, "On battery the local judge keeps the normal pace")
+        power.pluggedIn = true; thermal = .serious
+        XCTAssertEqual(coordinator.waitingReason(infra), L("Paused while this Mac is hot."))
+        thermal = .nominal; power.lowPowerMode = true
+        XCTAssertEqual(coordinator.waitingReason(infra), L("Paused in Low Power Mode."))
+        power.lowPowerMode = false; pressure = true
+        XCTAssertEqual(coordinator.waitingReason(infra), L("Paused while this Mac is low on memory."))
+        XCTAssertEqual(coordinator.interval, 20)
+        store.provider = try XCTUnwrap(AttentionProvider.defaults[.openAI]); store.setAPIKey("k")
+        XCTAssertNil(coordinator.waitingReason(infra), "A provider elsewhere does not load this Mac")
+        XCTAssertEqual(coordinator.interval, 20)
+    }
+
+    func testThresholdTunerFindsTheThresholdThatMatchesYourChoices() {
+        func item(_ probability: Double, _ needed: Bool?, level: AttentionLevel = .now) -> ComparisonCase {
+            .init(id: UUID(), at: Date(), meetingTitle: "m", messages: [], window: sampleWindow(),
+                  original: .init(level: level, probability: probability, reason: "r", evidence: [], action: .open),
+                  originalModel: "x", threshold: 0.55, needed: needed)
+        }
+        // You open cards at 0.75+ and decline 0.6–0.7: the best threshold sits between them.
+        let cases = [item(0.9, true), item(0.8, true), item(0.75, true), item(0.7, false), item(0.65, false), item(0.6, false), item(0.4, nil)]
+        let result = ThresholdTuner.best(cases, current: 0.55)
+        XCTAssertEqual(result?.threshold ?? 0, 0.75, accuracy: 0.001)
+        XCTAssertEqual(result?.agreed, 6); XCTAssertEqual(result?.labelled, 6); XCTAssertEqual(result?.currentAgreed, 3)
+        XCTAssertNil(ThresholdTuner.best(Array(cases.prefix(5)), current: 0.55), "Too few choices")
+        XCTAssertNil(ThresholdTuner.best(cases.map { item($0.original.probability, $0.needed == nil ? nil : true) }, current: 0.55),
+                     "Only one kind of choice says nothing about where to cut")
+    }
+
+    func testRepeatedDeclinesAndYourEditsReachThePrompts() async throws {
+        var preset = MeetingPreset(title: "Infra", bindings: [.room("https://example.test/calls/infra")])
+        for _ in 0..<3 { preset.record(.init(at: Date(), level: .soon, decision: .declined, declineReason: .notUrgent, excerpt: "x", reason: "y")) }
+        preset.record(.init(at: Date(), level: .soon, decision: .declined, declineReason: .wrongMeeting, excerpt: "x", reason: "y"))
+        XCTAssertEqual(preset.repeatedDeclines.map(\.reason), [.notUrgent])
+        let judge = JudgeRequest(window: sampleWindow(), preset: preset, profile: .init(name: "Vitalii"), yourName: "Vitalii", language: "ru",
+                                 replyChannels: .init(chat: true))
+        XCTAssertTrue(AttentionPrompt.userContent(judge).contains("keeps declining cards as: not urgent (3 times)"))
+        for index in 0..<12 { preset.recordEdit(.init(at: Date(), draft: "draft \(index)", sent: "sent \(index)")) }
+        XCTAssertEqual(preset.replyEdits?.count, MeetingPreset.replyEditLimit)
+        var withEdits = judge; withEdits.preset = preset
+        let writer = ReplyPrompt.userContent(.init(judge: withEdits, verdict: .init(level: .now, probability: 0.9, reason: "r", evidence: [], action: .chat)))
+        XCTAssertTrue(writer.contains("draft: \"draft 11\" → sent: \"sent 11\""))
+        XCTAssertFalse(writer.contains("draft 6\""), "Only the five newest edits are shown")
+
+        // Sending an edited draft records it on the meeting's instructions.
+        let store = store()
+        store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
+        let (infra, _) = try await meeting("infra")
+        let fake = FakeJudge(), writerFake = FakeWriter()
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [infra] }; coordinator.hasTranscript = { _ in true }
+        coordinator.makeJudge = { _, _ in fake }; coordinator.makeWriter = { _, _ in writerFake }
+        coordinator.replyChannels = { _ in .init(chat: true) }; coordinator.deliverChat = { _, _ in true }
+        infra.receiveLocalLineForTesting(.init(id: "i1", trackID: "a", text: "Виталий, DNS готов?", start: Date(), end: Date()))
+        fake.next = .init(level: .now, probability: 0.9, reason: "Asked.", evidence: ["L1"], action: .chat)
+        await coordinator.tick()
+        try await spin { coordinator.card(for: infra.sessionID)?.draft != nil }
+        let card = try XCTUnwrap(coordinator.card(for: infra.sessionID))
+        XCTAssertTrue(coordinator.sendReply(card, text: "Проверю и напишу через 5 минут."))
+        XCTAssertEqual(store.preset(room: infra.invitation)?.replyEdits?.last,
+                       .init(at: try XCTUnwrap(store.preset(room: infra.invitation)?.replyEdits?.last?.at),
+                             draft: "Сейчас посмотрю и отвечу.", sent: "Проверю и напишу через 5 минут."))
+    }
+
+    func testSayItSpeaksTheReplyAndCountsAsApproval() async throws {
+        let store = store()
+        store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
+        let (trueconf, _) = try await meeting("trueconf")
+        let judge = FakeJudge()
+        var spoken: [String] = [], played = 0, fail = false
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [trueconf] }; coordinator.hasTranscript = { _ in true }; coordinator.makeJudge = { _, _ in judge }
+        coordinator.replyChannels = { _ in .init() }  // no chat, no reactions
+        coordinator.voiceAvailable = { _ in true }
+        coordinator.synthesizeOverride = { text in
+            spoken.append(text); if fail { throw VoiceSynthesisError.transport }
+            return MicrophoneMoveTests.tone(seconds: 0.2, frequency: 300, amplitude: 0.2)
+        }
+        coordinator.deliverVoice = { _, _ in played += 1 }
+        trueconf.receiveLocalLineForTesting(.init(id: "t1", trackID: "a", text: "Виталий, ты с нами?", start: Date(), end: Date()))
+        judge.next = .init(level: .now, probability: 0.9, reason: "Asked.", evidence: ["L1"], action: .open)
+        await coordinator.tick()
+        let card = try XCTUnwrap(coordinator.card(for: trueconf.sessionID))
+        XCTAssertTrue(card.canSpeak); XCTAssertTrue(card.channels.isEmpty)
+        fail = true
+        coordinator.sayReply(card, text: "Да, через минуту буду.")
+        try await spin { coordinator.card(for: trueconf.sessionID)?.draftError != nil }
+        XCTAssertEqual(played, 0); XCTAssertEqual(coordinator.card(for: trueconf.sessionID)?.speaking, false)
+        fail = false
+        coordinator.sayReply(card, text: "Да, через минуту буду.")
+        try await spin { coordinator.card(for: trueconf.sessionID) == nil }
+        XCTAssertEqual(spoken, ["Да, через минуту буду.", "Да, через минуту буду."]); XCTAssertEqual(played, 1)
+        XCTAssertEqual(store.preset(room: trueconf.invitation)?.examples.last?.decision, .approved)
+        let log = try store.decisionFiles().map { try String(contentsOf: $0, encoding: .utf8) }.joined()
+        XCTAssertTrue(log.contains("\"spoken\""))
+    }
+
+    func testRapidMLXVoiceRequestAndWAVDecoding() async throws {
+        let wav = Self.wav(seconds: 0.5)
+        let decoded = try VoiceSynthesis.buffer(fromAudio: wav)
+        XCTAssertEqual(Double(decoded.frameLength) / decoded.format.sampleRate, 0.5, accuracy: 0.01)
+        XCTAssertThrowsError(try VoiceSynthesis.buffer(fromAudio: Data("not audio".utf8)))
+        var sent: [String: Any] = [:]
+        let session = StubProtocol.session { request in
+            sent = (try? JSONSerialization.jsonObject(with: StubProtocol.body(request))) as? [String: Any] ?? [:]
+            XCTAssertEqual(request.url?.path, "/v1/audio/speech")
+            return (200, wav)
+        }
+        let buffer = try await VoiceSynthesis.rapidMLX("Сейчас посмотрю и отвечу.", baseURL: "http://127.0.0.1:8000/v1",
+                                                       model: "qwen3-tts-voicedesign-4bit", description: "Calm voice", session: session)
+        XCTAssertGreaterThan(buffer.frameLength, 0)
+        XCTAssertEqual(sent["model"] as? String, "qwen3-tts-voicedesign-4bit"); XCTAssertEqual(sent["instructions"] as? String, "Calm voice")
+        XCTAssertEqual(sent["language"] as? String, "ru", "The reply's language is detected from its text")
+        let failing = StubProtocol.session { _ in (404, Data(#"{"detail":"model not found"}"#.utf8)) }
+        do { _ = try await VoiceSynthesis.rapidMLX("Привет", baseURL: "http://127.0.0.1:8000/v1", model: "x", description: "", session: failing); XCTFail() }
+        catch { XCTAssertEqual(error as? VoiceSynthesisError, .server(404, "model not found")) }
+    }
+
+    /// Qwen3-TTS through Rapid-MLX on this Mac, when it runs with audio.
+    func testLiveRapidMLXSpeaksRussian() async throws {
+        let base = AttentionProvider.defaults[.rapidMLX]!.baseURL
+        guard (try? await AttentionModelCatalog.fetch(AttentionProvider.defaults[.rapidMLX]!, key: nil))?.isEmpty == false else {
+            throw XCTSkip("Rapid-MLX is not running on 127.0.0.1:8000")
+        }
+        let buffer: AVAudioPCMBuffer
+        do {
+            buffer = try await VoiceSynthesis.rapidMLX("Я сейчас на другой встрече, отвечу через пару минут.", baseURL: base,
+                model: AttentionStore.defaultVoiceModel, description: AttentionStore.defaultVoiceDescription)
+        } catch VoiceSynthesisError.server(let code, _) where code == 404 || code == 400 {
+            throw XCTSkip("Rapid-MLX runs without audio")
+        }
+        let seconds = Double(buffer.frameLength) / buffer.format.sampleRate
+        XCTAssertGreaterThan(seconds, 2); XCTAssertLessThan(seconds, 15)
+    }
+
+    private static func wav(seconds: Double) -> Data {
+        let rate = 24_000, frames = Int(Double(rate) * seconds)
+        var data = Data()
+        func append<T>(_ value: T) { withUnsafeBytes(of: value) { data.append(contentsOf: $0) } }
+        data.append(contentsOf: Array("RIFF".utf8)); append(UInt32(36 + frames * 2).littleEndian)
+        data.append(contentsOf: Array("WAVEfmt ".utf8)); append(UInt32(16).littleEndian); append(UInt16(1).littleEndian); append(UInt16(1).littleEndian)
+        append(UInt32(rate).littleEndian); append(UInt32(rate * 2).littleEndian); append(UInt16(2).littleEndian); append(UInt16(16).littleEndian)
+        data.append(contentsOf: Array("data".utf8)); append(UInt32(frames * 2).littleEndian)
+        for index in 0..<frames { append(Int16(sin(Double(index) * 0.05) * 8000).littleEndian) }
+        return data
     }
 
     // MARK: Model comparison
