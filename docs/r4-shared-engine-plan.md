@@ -115,6 +115,33 @@ Findings that shape S1–S4:
   attachment (guarantee 3), and ending a non-talk meeting must not close it. (Found because
   earlier tests' meetings left it closed and silenced the spike.)
 
+## S1 status (6 Nov 2026): arbitration in place, nothing wired yet
+
+`NativeMacGuest/Engines/SharedAudioEngine.swift`: `SharedAudioEngine` wraps one
+`GuestSystemAudio` owner (through the `SharedAudioModule` protocol, so the native gate,
+timeouts and quarantine stay where they are) and runs every talk/mute/output change in one
+serial order. `MeetingAudioAttachment` is a meeting's handle: senders (registered disabled,
+enabled only by the engine), received tracks (meeting × participant volume, 0 with sound off),
+sound, transcription output, input transcription sink and voice replies (talk meeting only).
+Flag key `nativeDesktop.sharedAudioEngine`, read once (`enabledAtLaunch`); no settings toggle
+until S2 makes it do something.
+
+Tests (`SharedAudioEngineTests`, 12): guarantee 1 (per-meeting mute), 2 (two and four
+meetings; at the instant the module unmutes no other sender is on; stale-epoch unmute refused;
+a new talk meeting never inherits an unmute; failed unmute ends silent), 4 (private check only
+with every sender off; no unmute during it), 5 (failed release quarantines the engine), 8
+(sound and volumes per meeting; transcription output silenced), plus the real owner shared by
+two meetings and released by the last.
+
+Decided for later steps:
+
+- The last meeting out shuts the owner down (releases the device and the owner lease, so the
+  prejoin private check can run). S4 changes this for Rock: its factory lives for the process,
+  so the owner must stay and the prejoin check must borrow the shared engine instead.
+- S4 also needs the owner's factory built with LiveKit's APM and codec factories and its
+  observer forwarding to the SDK (S0 findings); `GuestSystemAudio.create` gets a factory hook then.
+- S2 moves the headset capture gate to the engine (guarantee 3).
+
 ## Risks
 
 - Our M156 fork must accept new peer connections on a running module with VPIO active, and send
