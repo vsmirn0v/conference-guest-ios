@@ -71,7 +71,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     private var videoSender: LKRTCRtpSender?
     private var videoProfile = GuestVideoProfile.pattern
     private(set) var source: LKRTCVideoSource?
-#if DEBUG
+    // ICE evidence for diagnostics (counts and types only; release builds log it on stalls).
     private var generatedICECandidates = 0
     private var queuedLocalICECandidates = 0
     private var sentLocalICECandidates = 0
@@ -81,6 +81,12 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     private var iceGatheringErrors = 0
     private var lastGatheringState = LKRTCIceGatheringState.new
     private let maximumLoggedICEGatheringErrors = 32
+    /// Candidate kinds in the last remote description ("host/udp": 2, ...), no addresses.
+    private var remoteDescriptionCandidates: [String: Int] = [:]
+    private var stallDiagnosticsLogged = false
+    /// The subscriber never connected before its deadline (receive path stalled).
+    var onInitialStall: (() -> Void)?
+#if DEBUG
     var iceDiagnosticForTesting: ((String, [String: Any]) -> Void)?
     var iceCandidateEventFinishedForTesting: (() -> Void)?
     var iceGatherEventFinishedForTesting: (() -> Void)?
@@ -138,7 +144,8 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         guard !closed else { throw GuestPeerError.closed }
         let config = connection.configuration
         let icePolicy = self.icePolicy.forTarget(target)
-        let servers = try icePolicy.servers(value["iceServers"] as? [[String: Any]] ?? [])
+        let advertised = value["iceServers"] as? [[String: Any]] ?? []
+        let servers = try icePolicy.servers(advertised)
         if value["iceServers"] is [[String: Any]] || icePolicy != .automatic {
             config.iceServers = servers.compactMap { server in
                 let urls = server["urls"] as? [String] ?? (server["urls"] as? String).map { [$0] } ?? []
@@ -147,13 +154,14 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
                     credential: server["credential"] as? String)
             }
         }
-        if icePolicy != .automatic || value["iceTransportPolicy"] as? String == "relay" { config.iceTransportPolicy = .relay }
+        if icePolicy.relayOnly(advertised) || value["iceTransportPolicy"] as? String == "relay" { config.iceTransportPolicy = .relay }
         guard connection.setConfiguration(config) else { throw GuestPeerError.malformed }
     }
 
     func answer(_ description: [String: Any]) async throws -> [String: Any] {
         guard let sdp = description["sdp"] as? String, sdp.utf8.count < 1_000_000 else { throw GuestPeerError.malformed }
         localSDPSent = false
+        remoteDescriptionCandidates = Self.candidateKinds(sdp)
         try await setRemote(.init(type: .offer, sdp: sdp))
         let answer = try await descriptionForOffer(false)
         try await setLocal(answer)
@@ -163,6 +171,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 
     func acceptAnswer(_ description: [String: Any]) async throws {
         guard let sdp = description["sdp"] as? String, sdp.utf8.count < 1_000_000 else { throw GuestPeerError.malformed }
+        remoteDescriptionCandidates = Self.candidateKinds(sdp)
         try await setRemote(.init(type: .answer, sdp: sdp))
         probeLog("video-negotiation", ["target": target.rawValue, "remote": GuestSDPSummary.video(sdp), "local": GuestSDPSummary.video(connection.localDescription?.sdp ?? "")])
     }
@@ -182,9 +191,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         for value in values {
             if let sendCandidate {
                 try await sendCandidate(value)
-#if DEBUG
                 if sentLocalICECandidates < Int.max { sentLocalICECandidates += 1 }
-#endif
             }
         }
     }
@@ -193,23 +200,17 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         for value in values where value["target"] as? String == target.rawValue {
             guard !closed else { throw GuestPeerError.closed }
             guard let sdp = value["candidate"] as? String, sdp.utf8.count < 16_384 else { throw GuestPeerError.malformed }
-#if DEBUG
             if receivedRemoteICECandidates < Int.max { receivedRemoteICECandidates += 1 }
-#endif
             let candidate = LKRTCIceCandidate(sdp: sdp,
                 sdpMLineIndex: (value["sdpMLineIndex"] as? NSNumber)?.int32Value ?? 0,
                 sdpMid: value["sdpMid"] as? String)
             if connection.remoteDescription == nil {
                 guard remoteICE.count < 256 else { throw GuestPeerError.candidateOverflow }
                 remoteICE.append(candidate)
-#if DEBUG
                 if bufferedRemoteICECandidates < Int.max { bufferedRemoteICECandidates += 1 }
-#endif
             } else {
                 try await add(candidate)
-#if DEBUG
                 if addedRemoteICECandidates < Int.max { addedRemoteICECandidates += 1 }
-#endif
             }
         }
     }
@@ -556,9 +557,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         let pending = remoteICE; remoteICE.removeAll()
         for value in pending {
             try await add(value)
-#if DEBUG
             if addedRemoteICECandidates < Int.max { addedRemoteICECandidates += 1 }
-#endif
         }
     }
     private func add(_ value: LKRTCIceCandidate) async throws {
@@ -576,36 +575,31 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             defer { self.iceCandidateEventFinishedForTesting?() }
 #endif
             guard !closed else { return }
-#if DEBUG
             if generatedICECandidates < Int.max { generatedICECandidates += 1 }
-#endif
             let value: [String: Any] = ["candidate": candidate.sdp, "sdpMLineIndex": candidate.sdpMLineIndex,
                 "sdpMid": candidate.sdpMid ?? "0", "target": target.rawValue]
             do {
                 if localSDPSent {
                     if let sendCandidate {
                         try await sendCandidate(value)
-#if DEBUG
                         if sentLocalICECandidates < Int.max { sentLocalICECandidates += 1 }
-#endif
                     }
                 } else {
                     guard localICE.count < 256 else { throw GuestPeerError.candidateOverflow }; localICE.append(value)
-#if DEBUG
                     if queuedLocalICECandidates < Int.max { queuedLocalICECandidates += 1 }
-#endif
                 }
             } catch { onFailure?(error) }
         }
     }
-#if DEBUG
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didFailToGatherIceCandidate event: LKRTCIceCandidateErrorEvent) {
         // Deliberately copy only the numeric code. Do not retain/log the event,
         // which also contains server URL, local address and implementation text.
         let errorCode = event.errorCode
         Task { @MainActor [weak self] in
             guard let self else { return }
+#if DEBUG
             defer { self.iceGatherEventFinishedForTesting?() }
+#endif
             guard !closed else { return }
             if iceGatheringErrors < Int.max { iceGatheringErrors += 1 }
             if iceGatheringErrors <= maximumLoggedICEGatheringErrors {
@@ -619,7 +613,9 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         fields["peerID"] = diagnosticID
         fields["target"] = target.rawValue
         probeLog(event, fields)
+#if DEBUG
         iceDiagnosticForTesting?(event, fields)
+#endif
     }
 
     private func logICEFailureDiagnostics(reason: String, state: LKRTCIceConnectionState) {
@@ -632,7 +628,9 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             "addedRemoteCandidates": addedRemoteICECandidates,
             "pendingLocalCandidates": localICE.count, "pendingRemoteCandidates": remoteICE.count,
             "gatheringState": lastGatheringState.rawValue, "gatheringErrors": iceGatheringErrors,
-            "gatheringErrorsLogged": min(iceGatheringErrors, maximumLoggedICEGatheringErrors)])
+            "gatheringErrorsLogged": min(iceGatheringErrors, maximumLoggedICEGatheringErrors),
+            "policy": icePolicy.forTarget(target).rawValue, "relayOnly": connection.configuration.iceTransportPolicy == .relay,
+            "remoteDescriptionCandidates": remoteDescriptionCandidates])
         // Request bounded, allowlisted native evidence without delaying recovery.
         let diagnosticID = diagnosticID, targetName = target.rawValue
         connection.statistics { report in
@@ -692,7 +690,27 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
                 "pairedRemoteCandidateStats": candidates.filter { $0["type"] as? String == "remote-candidate" }.count,
                 "pairs": Array(details)]
     }
-#endif
+
+    /// Candidate kinds in an SDP ("host/udp" -> count). Types and protocols only.
+    nonisolated static func candidateKinds(_ sdp: String) -> [String: Int] {
+        let types: Set<String> = ["host", "srflx", "prflx", "relay"]
+        var kinds: [String: Int] = [:]
+        for line in sdp.split(whereSeparator: \.isNewline) where line.hasPrefix("a=candidate:") {
+            let fields = line.split(separator: " ")
+            guard fields.count > 7 else { kinds["other", default: 0] += 1; continue }
+            let proto = fields[2].lowercased() == "tcp" ? "tcp" : fields[2].lowercased() == "udp" ? "udp" : "other"
+            let type = fields.firstIndex(of: "typ").flatMap { $0 + 1 < fields.count ? String(fields[$0 + 1]) : nil }
+            kinds["\((type.map { types.contains($0) ? $0 : "other" }) ?? "other")/\(proto)", default: 0] += 1
+        }
+        return kinds
+    }
+
+    /// Once per peer: why a receive path has not connected (no addresses or URLs).
+    func logStallDiagnostics(reason: String) {
+        guard !stallDiagnosticsLogged, !closed else { return }
+        stallDiagnosticsLogged = true
+        logICEFailureDiagnostics(reason: reason, state: lastICEState)
+    }
 
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didAdd receiver: LKRTCRtpReceiver, streams: [LKRTCMediaStream]) {
         if let track = receiver.track as? LKRTCAudioTrack { startupPlaybackGain?.register(track, streamIDs: streams.map(\.streamId)) }
@@ -799,9 +817,8 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         guard !initialExpiryReported else { return }
         initialExpiryReported = true
         probeLog("ice-timeout", ["target": target.rawValue, "state": state.rawValue])
-#if DEBUG
-        logICEFailureDiagnostics(reason: "deadline", state: state)
-#endif
+        logStallDiagnostics(reason: "deadline")
+        if target == .subscriber { onInitialStall?() }
         onFailure?(GuestPeerError.iceFailed)
     }
     private func refreshICETimeout() {
@@ -848,9 +865,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             guard lastICEState == state,
                   state != .checking || target != .subscriber || activeIncomingMediaDemand else { return }
             probeLog("ice-timeout", ["target": target.rawValue, "state": state.rawValue])
-#if DEBUG
-            logICEFailureDiagnostics(reason: "deadline", state: state)
-#endif
+            logStallDiagnostics(reason: "deadline")
             onFailure?(GuestPeerError.iceFailed)
         }
     }
@@ -866,24 +881,18 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             if iceConnected { hasEstablishedConnection = true; initialRequiredDeadline = nil }
             refreshICETimeout()
             probeLog("ice-state", ["target": target.rawValue, "state": newState.rawValue])
-#if DEBUG
-            if newState == .failed {
-                logICEFailureDiagnostics(reason: "native-failed", state: newState)
-            }
-#endif
+            if newState == .failed { logStallDiagnostics(reason: "native-failed") }
             if newState == .closed || (newState == .failed && (target != .subscriber || hasEstablishedConnection)) {
                 onFailure?(GuestPeerError.iceFailed)
             }
         }
     }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didChange newState: LKRTCIceGatheringState) {
-#if DEBUG
         Task { @MainActor [weak self] in
             guard let self, !closed, newState != lastGatheringState else { return }
             lastGatheringState = newState
             logICEDiagnostic("ice-gathering-state", ["state": newState.rawValue])
         }
-#endif
     }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didRemove candidates: [LKRTCIceCandidate]) {}
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didOpen dataChannel: LKRTCDataChannel) {}

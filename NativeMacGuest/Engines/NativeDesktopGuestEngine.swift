@@ -92,6 +92,8 @@ enum NativeDesktopGuestError: LocalizedError {
     private var microphoneReadinessAllowed = false
     private var leaving = false
     private var cleanupSucceeded = true
+    /// Set for the rest of this meeting once its receive path stalled (see onSubscriberStall).
+    private(set) var subscriberRelayFallback = false
     private var chatHistoryRequested = false
     private var transcriptHistoryRequested = false
     private var chatHistoryTask: Task<Void, Never>?
@@ -111,6 +113,7 @@ enum NativeDesktopGuestError: LocalizedError {
         let target = try GuestInvitation.parse(invitation)
         revision = UUID(); let token = revision
         leaving = false; quietJoin = quiet; outputIntent = !quiet; featureError = nil
+        subscriberRelayFallback = false
         snapshot = .init(phase: .connecting, playoutOn: !quiet)
         guestSnapshot = .init(); onFeatures?(guestSnapshot); emit()
         let profile = GuestAudioProfile.saved
@@ -164,12 +167,17 @@ enum NativeDesktopGuestError: LocalizedError {
             if !inputPermitted, !(await owner.setInputPermitted(false)) {
                 _ = await release(false); throw NativeDesktopGuestError.cleanupFailed
             }
+            // After the receive path stalled in this meeting, its subscriber uses the relay.
+            var icePolicy: GuestICEPolicy = subscriberRelayFallback ? .subscriberRelay : .automatic
 #if DEBUG
-            let engine = NativeGuestEngine(label: name, systemAudio: owner,
-                icePolicy: diagnosticICEPolicyForTesting, verifyReceivedPixels: false)
-#else
-            let engine = NativeGuestEngine(label: name, systemAudio: owner, verifyReceivedPixels: false)
+            if diagnosticICEPolicyForTesting != .automatic { icePolicy = diagnosticICEPolicyForTesting }
 #endif
+            let engine = NativeGuestEngine(label: name, systemAudio: owner, icePolicy: icePolicy, verifyReceivedPixels: false)
+            engine.onSubscriberStall = { [weak self] in
+                guard let self, revision == token, !subscriberRelayFallback else { return }
+                subscriberRelayFallback = true
+                probeLog("subscriber-relay-fallback", ["reason": "receive-stalled"])
+            }
             engine.releaseSystemAudio = release
             sharedMeeting?.onLevelChange = { [weak engine] in engine?.reconcilePlaybackLevels() }
             engine.configureStartupPlayback(sound: outputIntent)

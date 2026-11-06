@@ -268,6 +268,7 @@ final class NativeGuestEngine {
         let peer = try GuestPeer(target: target, factory: factory, physicalAudio: systemAudio != nil, icePolicy: icePolicy, verifyReceivedPixels: verifyReceivedPixels,
             startupPlaybackGain: startupPlaybackGain)
         if GuestPeer.diagnosticEventLogDirectory != nil { probeLog("rtc-event-log", ["client": probeClient, "target": target.rawValue, "id": peer.diagnosticID]) }
+        if target == .subscriber { peer.onInitialStall = { [weak self] in self?.onSubscriberStall?() } }
         peer.sendCandidate = { [weak self] value in
             guard let self, !closing else { throw GuestPeerError.closed }
             try await media(["method": "rtc:ice", "rtcIceCandidates": [value]])
@@ -357,7 +358,10 @@ final class NativeGuestEngine {
         case "rtc:config":
             guard let config = payload["configuration"] as? [String: Any] else { throw GuestEngineError.malformed }
             try subscriber?.configure(config); try publisher?.configure(config)
-            probeLog("rtc-config", ["client": probeClient, "iceServers": (config["iceServers"] as? [Any])?.count ?? 0])
+            probeLog("rtc-config", ["client": probeClient, "iceServers": (config["iceServers"] as? [Any])?.count ?? 0,
+                "serverKinds": GuestICEPolicy.serverKinds(config["iceServers"] as? [[String: Any]] ?? []),
+                "serverRelayOnly": config["iceTransportPolicy"] as? String == "relay",
+                "subscriberPolicy": icePolicy.forTarget(.subscriber).rawValue])
         case "rtc:join":
             guard let join = payload["join"] as? [String: Any], let participant = join["participant"] as? [String: Any],
                   let identity = participant["identity"] as? String else { throw GuestEngineError.malformed }
@@ -727,6 +731,9 @@ final class NativeGuestEngine {
     }
 
     var onRemoteAudioChange: (() -> Void)?
+    /// The receive path never connected (subscriber ICE deadline or startup audio waiting
+    /// only on it). The app can route the next attempt's subscriber through a relay.
+    var onSubscriberStall: (() -> Void)?
     /// Each remote audio track with the participant identity the roster uses.
     var remoteAudio: [GuestRemoteAudio] {
         (subscriber?.incomingAudioTracks ?? []).map { item in
@@ -817,6 +824,11 @@ final class NativeGuestEngine {
             } catch {
                 if error is GuestStartupAudioError {
                     let receive = startupReceiveReadiness(gain.sourceSnapshot)
+                    // Audio itself may be ready: the receive path never connected.
+                    if receive.requiresTransport && !receive.transportConnected {
+                        subscriber?.logStallDiagnostics(reason: "startup-audio")
+                        onSubscriberStall?()
+                    }
                     let observation = owner.startupAudioObservation
                     probeLog("startup-audio-timeout", ["client": probeClient, "inputRequired": startupRequiresInput,
                         "supports": observation.supports(input: startupRequiresInput),

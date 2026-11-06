@@ -118,6 +118,58 @@ final class InitialSubscriberICETests: XCTestCase {
         }
     }
 
+    /// A receive path that never connects reports a stall to the engine (relay fallback)
+    /// and logs bounded diagnostics once, without addresses.
+    @MainActor func testInitialStallReportsToTheEngineAndLogsDiagnosticsOnce() async throws {
+        try await exercise { h in
+            var stalls = 0, diagnostics: [[String: Any]] = []
+            h.engine.onSubscriberStall = { stalls += 1 }
+            h.peer.iceDiagnosticForTesting = { event, fields in if event == "ice-failure-diagnostics" { diagnostics.append(fields) } }
+            h.peer.setActiveIncomingMediaDemand(true)
+            await h.signal(.checking); try await h.until { h.waits.count == 1 }
+            h.clock = 111; h.waits[0].release(); try await h.until { h.finished == 1 }
+            XCTAssertEqual(h.failures, 1); XCTAssertEqual(stalls, 1)
+            XCTAssertEqual(diagnostics.count, 1)
+            XCTAssertEqual(diagnostics.first?["reason"] as? String, "deadline")
+            XCTAssertNotNil(diagnostics.first?["remoteDescriptionCandidates"])
+            h.peer.logStallDiagnostics(reason: "startup-audio")
+            XCTAssertEqual(diagnostics.count, 1, "Stall diagnostics are logged once per peer")
+        }
+    }
+
+    func testSubscriberRelayPolicyUsesTheAdvertisedRelayOnlyForTheSubscriber() throws {
+        let stun: [String: Any] = ["urls": ["stun:stun.example.test:3478"]]
+        let tcp: [String: Any] = ["urls": ["turn:turn.example.test:443?transport=tcp"], "username": "u", "credential": "c"]
+        let udp: [String: Any] = ["urls": ["turn:turn.example.test:3478?transport=udp"], "username": "u", "credential": "c"]
+        let policy = GuestICEPolicy.subscriberRelay
+        XCTAssertEqual(policy.forTarget(.publisher), .automatic, "The publisher path stays direct")
+        XCTAssertEqual(policy.forTarget(.subscriber), .subscriberRelay)
+        let both = try policy.servers([stun, tcp, udp])
+        XCTAssertEqual(both.count, 1); XCTAssertEqual(both.first?["urls"] as? [String], ["turn:turn.example.test:3478?transport=udp"])
+        XCTAssertEqual(try policy.servers([stun, tcp]).first?["urls"] as? [String], ["turn:turn.example.test:443?transport=tcp"])
+        XCTAssertTrue(policy.relayOnly([stun, tcp]))
+        // Without an advertised relay nothing changes (never an empty candidate set).
+        XCTAssertEqual(try policy.servers([stun]).count, 1)
+        XCTAssertFalse(policy.relayOnly([stun]))
+        XCTAssertFalse(GuestICEPolicy.automatic.relayOnly([stun, udp]))
+        XCTAssertTrue(GuestICEPolicy.tcpRelay.relayOnly([tcp]), "Diagnostic relay modes keep their meaning")
+        XCTAssertEqual(GuestICEPolicy.serverKinds([stun, tcp, udp, ["urls": "turns:turn.example.test:5349?transport=tcp"]]),
+                       ["stun": 1, "turn-tcp": 1, "turn-udp": 1, "turns-tcp": 1])
+    }
+
+    func testRemoteDescriptionCandidateKindsCarryNoAddresses() {
+        let sdp = """
+        v=0\r
+        a=candidate:1 1 udp 2130706431 10.0.0.5 50000 typ host\r
+        a=candidate:2 1 udp 1694498815 203.0.113.9 50001 typ srflx raddr 10.0.0.5 rport 50000\r
+        a=candidate:3 1 tcp 1518280447 10.0.0.5 9 typ host tcptype passive\r
+        a=candidate:4 1 udp 41885439 198.51.100.1 3478 typ relay raddr 0.0.0.0 rport 0\r
+        """
+        let kinds = GuestPeer.candidateKinds(sdp)
+        XCTAssertEqual(kinds, ["host/udp": 1, "srflx/udp": 1, "host/tcp": 1, "relay/udp": 1])
+        XCTAssertFalse(kinds.keys.contains { $0.contains(".") }, "No address leaves the summary")
+    }
+
     @MainActor func testUnusedFailedStateRetainsExpiredDemandDeadline() async throws {
         try await exercise { h in
             await h.signal(.failed)

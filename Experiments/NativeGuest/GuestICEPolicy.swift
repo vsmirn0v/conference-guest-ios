@@ -9,17 +9,64 @@ enum GuestICEPolicy: String {
     case udpRelay = "udp-relay"
     case udpReceive = "udp-receive"
     case udpPublish = "udp-publish"
+    /// Recovery after the receive path stalled: only the subscriber goes through the
+    /// server's TURN relay (UDP, else TCP); without an advertised relay it stays automatic.
+    case subscriberRelay = "subscriber-relay"
 
     func forTarget(_ target: GuestPeerTarget) -> GuestICEPolicy {
         switch self {
         case .udpReceive: return target == .subscriber ? .udpRelay : .tcpRelay
         case .udpPublish: return target == .publisher ? .udpRelay : .tcpRelay
+        case .subscriberRelay: return target == .subscriber ? .subscriberRelay : .automatic
         default: return self
         }
     }
 
+    /// Whether candidates are limited to relays for these advertised servers.
+    func relayOnly(_ advertised: [[String: Any]]) -> Bool {
+        switch self {
+        case .automatic: return false
+        case .subscriberRelay: return !Self.relays(advertised, transport: "udp").isEmpty || !Self.relays(advertised, transport: "tcp").isEmpty
+        default: return true
+        }
+    }
+
+    private static func relays(_ advertised: [[String: Any]], transport: String) -> [[String: Any]] {
+        advertised.compactMap { server -> [String: Any]? in
+            let urls = server["urls"] as? [String] ?? (server["urls"] as? String).map { [$0] } ?? []
+            let eligible = urls.filter { isExplicitRelay($0, transport: transport) }
+            guard !eligible.isEmpty else { return nil }
+            var copy = server; copy["urls"] = eligible
+            return copy
+        }
+    }
+
+    /// Counts of advertised server kinds for diagnostics (no hosts, ports or credentials).
+    static func serverKinds(_ advertised: [[String: Any]]) -> [String: Int] {
+        var kinds: [String: Int] = [:]
+        for server in advertised {
+            let urls = server["urls"] as? [String] ?? (server["urls"] as? String).map { [$0] } ?? []
+            for url in urls {
+                let kind: String
+                if isExplicitRelay(url, transport: "udp") { kind = "turn-udp" }
+                else if isExplicitRelay(url, transport: "tcp") { kind = url.lowercased().hasPrefix("turns:") ? "turns-tcp" : "turn-tcp" }
+                else if url.lowercased().hasPrefix("turn") { kind = "turn-unspecified" }
+                else if url.lowercased().hasPrefix("stun") { kind = "stun" }
+                else { kind = "other" }
+                kinds[kind, default: 0] += 1
+            }
+        }
+        return kinds
+    }
+
     func servers(_ advertised: [[String: Any]]) throws -> [[String: Any]] {
         guard self != .automatic else { return advertised }
+        if self == .subscriberRelay {
+            let udp = Self.relays(advertised, transport: "udp")
+            if !udp.isEmpty { return udp }
+            let tcp = Self.relays(advertised, transport: "tcp")
+            return tcp.isEmpty ? advertised : tcp
+        }
         let selected = advertised.compactMap { server -> [String: Any]? in
             let urls = server["urls"] as? [String] ?? (server["urls"] as? String).map { [$0] } ?? []
             let eligible = urls.filter { Self.isExplicitRelay($0, transport: self == .tcpRelay ? "tcp" : "udp") }
