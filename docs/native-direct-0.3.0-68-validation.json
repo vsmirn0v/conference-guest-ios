@@ -1,0 +1,32 @@
+{
+  "version": "0.3.0",
+  "build": "68",
+  "channel": "beta",
+  "sourceCommit": "d2dc2d5",
+  "changes": [
+    "Guest meetings: every GuestPeer call into native WebRTC runs on a serial background queue per peer (GuestNativeCalls); the main thread only awaits with timeouts, so a WebRTC stall behind the audio device (e.g. 30+ s in CoreAudio after AirPods drop) no longer freezes the app; stalled calls are logged as native-call-timeout and complete later in order, so a later mute always wins over a late unmute (d2dc2d5)"
+  ],
+  "frameworkBinarySHA256": "8c645fc3111b760ba405aab65d7f148013a2071e3aff82ee23137ce540ea35e1",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-68-arm64.dmg",
+    "sha256": "7aa5a560811d3ceead54374c84ae442972c80bdac25a4c7be00d4bf83b53b8ee",
+    "length": 26252218
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-68-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "stuckPeer": "GuestNativeCallsTests: with a peer's native queue blocked, the main thread kept running, stats and unmute timed out in under 1 s, the microphone track ended disabled, and the peer worked again after release",
+    "suites": "Guest engine and meeting-features suites pass (EngineTests ICE diagnostics key set updated; it was already failing on HEAD); 44 app tests pass (Attention, on-device judge, screen encoder, native calls)"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 68",
+    "a live Guest meeting, and an AirPods disconnect during one",
+    "test suites that open real audio devices",
+    "Telemost/TrueConf meetings (NativeDesktopRTCPeer still calls WebRTC on the main thread) and peer creation at join"
+  ]
+}
