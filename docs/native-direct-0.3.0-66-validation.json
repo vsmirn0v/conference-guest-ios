@@ -1,0 +1,31 @@
+{
+  "version": "0.3.0",
+  "build": "66",
+  "channel": "beta",
+  "sourceCommit": "608715d",
+  "changes": [
+    "Local transcription: GigaAM v3 (end-to-end RNN-T with punctuation) runs natively through Core ML on the Neural Engine and is the default model for new setups; the previous default stays selected when it is the only installed model (608715d)"
+  ],
+  "frameworkBinarySHA256": "0f2498b3455a77e5bbb81633fb22510299269f38d04fc7a52618772e52d2a0ac",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-66-arm64.dmg",
+    "sha256": "6bdf5ce7526ba6da4b5a16562851ab85dab44a306fd5380e4c39f4acbbac8f8d",
+    "length": 26111358
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-66-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "coreMLGigaAM": "bench sample: real-time factor 0.0104 on the Neural Engine, WER 4.14 (int8 sherpa on CPU: 28x real time, WER 4.60); first load 9-12 s, then cached compiled models",
+    "suites": "CoreMLGigaAMTests and LocalTranscriptionTests pass; log-mel parity with the reference max 9e-5"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 66",
+    "Core ML GigaAM download and transcription in live meetings",
+    "default-model migration on a Mac that already has the previous model installed"
+  ]
+}
