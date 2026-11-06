@@ -105,7 +105,7 @@ class DistributionConfigurationTests(unittest.TestCase):
                 self.assertIn(ROOT / 'Experiments/NativeGuest', group_paths)
                 package_paths = {(project_dir / value['relativePath']).resolve() for value in objects.values()
                                  if value.get('isa') == 'XCLocalSwiftPackageReference'}
-                self.assertEqual(package_paths, packages | {ROOT / 'ConferenceCore'})
+                self.assertEqual(package_paths, packages | {ROOT / 'ConferenceCore', ROOT / 'Dependencies/SherpaOnnxKit'})
                 self.assertNotIn('$(SRCROOT)/../../../', project.read_text())
 
 

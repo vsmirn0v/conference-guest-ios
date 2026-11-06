@@ -1,0 +1,39 @@
+{
+  "version": "0.3.0",
+  "build": "70",
+  "channel": "beta",
+  "sourceCommit": "fb959c3",
+  "changes": [
+    "Meetings: Guest and Telemost/TrueConf peer connections are created on the peer's native queue, not the main thread; join and recovery drop a peer created after close (7197957)",
+    "Attention: a trailing question followed by 4 s of silence judges at once (fb959c3)",
+    "Attention: 'When the judge is unsure, ask' re-judges verdicts with probability 0.35-0.65 on a second provider, which also stands in when the primary judge errors; first verdict and model kept in the decision log (fb959c3)",
+    "Settings > Intelligence: roles view (Listen, Judge, When unsure, Write, Voice) with On this Mac / Cloud badges and installed speech-model size (fb959c3)",
+    "Listen models: signed remote catalog client (appcast key over the exact bytes, newer revision only, every model pinned), bundled fallback; sign-catalog.py (fb959c3)",
+    "Voice: Personal Voice as a reply voice, macOS 14+, behind the system prompt (fb959c3)",
+    "Apple writer can draft replies; failed ru->en translation judges in the original language (fb959c3)"
+  ],
+  "frameworkBinarySHA256": "b240e8baff3757821da36a2deaa77b68e7cc146377c2815e48f9f70c015e9e47",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-70-arm64.dmg",
+    "sha256": "6974a958844a5e01ec3ee0f97c792b46b23463358bf9f726457a5d7e694ecbec",
+    "length": 26309292
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-70-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "suites": "70 app tests (AttentionTests, OnDeviceJudgeTests, LocalTranscriptionTests, GuestNativeCallsTests, ScreenEncoderQualityTests, ExternalRecoveryTests, InitialSubscriberICETests) pass, 1 skipped; Guest engine and meeting-features suites pass; 27 distribution tests pass",
+    "realModelSkip": "OnDeviceJudgeTests real-model call skipped: macOS refused the Apple model and translation with ModelManagerError 1013 (CriticalMemoryPressure)"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 70",
+    "sidebar crash on fast window resize (no safe reproduction: debug build shares the installed app's bundle ID)",
+    "remote model catalog: none hosted yet, the app uses the bundled catalog",
+    "escalation and question trigger in a live meeting",
+    "Personal Voice playback with a real personal voice"
+  ]
+}
