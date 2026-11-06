@@ -230,7 +230,8 @@ import CoreMedia
         precondition(event == "ice-failure-diagnostics" && Set(fields.keys) == [
             "peerID", "target", "reason", "state", "generatedCandidates", "gatheringErrors", "gatheringErrorsLogged",
             "queuedLocalCandidates", "sentLocalCandidates", "receivedRemoteCandidates", "bufferedRemoteCandidates",
-            "addedRemoteCandidates", "pendingLocalCandidates", "pendingRemoteCandidates", "gatheringState"])
+            "addedRemoteCandidates", "pendingLocalCandidates", "pendingRemoteCandidates", "gatheringState",
+            "policy", "relayOnly", "remoteDescriptionCandidates"])
         precondition(fields["generatedCandidates"] as? Int == 3 && fields["gatheringErrors"] as? Int == 40 &&
                      fields["gatheringErrorsLogged"] as? Int == 32)
         precondition(fields["reason"] as? String == "native-failed" && fields["state"] as? Int == LKRTCIceConnectionState.failed.rawValue)
@@ -285,7 +286,7 @@ import CoreMedia
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
         let peer = try GuestPeer(target: .publisher, factory: factory, icePolicy: .tcpRelay)
         defer { peer.close() }
-        try peer.configure(["iceServers": advertised, "iceTransportPolicy": "all"])
+        try await peer.configure(["iceServers": advertised, "iceTransportPolicy": "all"])
         precondition(peer.connection.configuration.iceTransportPolicy == .relay)
         precondition(peer.connection.configuration.iceServers.flatMap(\.urlStrings) == valid)
         precondition(GuestICEPolicy.udpReceive.forTarget(.publisher) == .tcpRelay)
@@ -295,7 +296,7 @@ import CoreMedia
         let udpURL = "turn:relay.example:3478?transport=udp"
         let udp = try GuestPeer(target: .subscriber, factory: factory, icePolicy: .udpRelay)
         defer { udp.close() }
-        try udp.configure(["iceServers": [["urls": [valid[0], udpURL], "username": "test", "credential": "test"]]])
+        try await udp.configure(["iceServers": [["urls": [valid[0], udpURL], "username": "test", "credential": "test"]]])
         precondition(udp.connection.configuration.iceTransportPolicy == .relay)
         precondition(udp.connection.configuration.iceServers.flatMap(\.urlStrings) == [udpURL])
         precondition(!GuestICEPolicy.isExplicitRelay("turns:relay.example?transport=udp", transport: "udp"))
@@ -303,11 +304,11 @@ import CoreMedia
         catch GuestICEPolicyError.noUDPRelay {}
         let automatic = try GuestPeer(target: .publisher, factory: factory)
         defer { automatic.close() }
-        try automatic.configure(["iceServers": [advertised[0]]])
+        try await automatic.configure(["iceServers": [advertised[0]]])
         precondition(automatic.connection.configuration.iceServers.count == 1)
-        try automatic.configure([:])
+        try await automatic.configure([:])
         precondition(automatic.connection.configuration.iceServers.count == 1)
-        try automatic.configure(["iceServers": [] as [[String: Any]]])
+        try await automatic.configure(["iceServers": [] as [[String: Any]]])
         precondition(automatic.connection.configuration.iceServers.isEmpty)
         func candidate(_ target: String, _ protocolName: String) -> [String: Any] {
             ["type": "local-candidate", "target": target, "candidateType": "relay", "protocol": "udp", "relayProtocol": protocolName]
@@ -362,15 +363,15 @@ import CoreMedia
             decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
         let peer = try GuestPeer(target: .publisher, factory: factory)
         defer { peer.close() }
-        let track = peer.prepareVideo(cid: "codec-fixture")
+        let track = try await peer.prepareVideo(cid: "codec-fixture")
         do {
-            try peer.attach(track, codec: "not-a-codec")
+            try await peer.attach(track, codec: "not-a-codec")
             preconditionFailure("Repair codecs must not make an unsupported primary valid")
         } catch GuestPeerError.unsupportedCodec {}
         // A fresh peer avoids the intentionally rejected transceiver above.
         let valid = try GuestPeer(target: .publisher, factory: factory)
         defer { valid.close() }
-        try valid.attach(valid.prepareVideo(cid: "repair-fixture"), codec: "h264")
+        try await valid.attach(try await valid.prepareVideo(cid: "repair-fixture"), codec: "h264")
         let encodings = valid.connection.transceivers.last!.sender.parameters.encodings
         precondition(encodings.count == 1 && encodings[0].rid == nil)
         precondition(encodings[0].maxBitrateBps?.intValue == GuestVideoProfile.pattern.maximumBitrate)

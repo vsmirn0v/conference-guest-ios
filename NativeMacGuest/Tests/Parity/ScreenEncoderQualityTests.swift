@@ -73,18 +73,18 @@ final class ScreenEncoderQualityTests: XCTestCase {
         XCTAssertFalse(encoder.screenQualityConfigured, "A reused H264 leaf must not apply screen settings to camera video")
     }
 
-    @MainActor func testOnlyH264ScreenSenderPreservesResolutionAcrossUpdates() throws {
+    @MainActor func testOnlyH264ScreenSenderPreservesResolutionAcrossUpdates() async throws {
         let audio = GuestSyntheticAudio(); defer { XCTAssertTrue(audio.terminateDevice()) }
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
         for codec in ["h264", "vp9"] {
             let peer = try GuestPeer(target: .publisher, factory: factory); defer { peer.close() }
-            let track = peer.prepareScreenVideo(cid: UUID().uuidString, profile: .init(width: 1920, height: 1080, fps: 30, maximumBitrate: 18_000_000))
-            try peer.attachScreenVideo(track, codec: codec)
+            let track = try await peer.prepareScreenVideo(cid: UUID().uuidString, profile: .init(width: 1920, height: 1080, fps: 30, maximumBitrate: 18_000_000))
+            try await peer.attachScreenVideo(track, codec: codec)
             let sender = try XCTUnwrap(peer.connection.senders.first { $0.track?.trackId == track.trackId })
             let expected: NSNumber? = codec == "h264" ? NSNumber(value: LKRTCDegradationPreference.maintainResolution.rawValue) : nil
             XCTAssertEqual(sender.parameters.degradationPreference, expected)
             peer.updateScreenProfile(.init(width: 2560, height: 1440, fps: 30, maximumBitrate: 18_000_000))
-            try peer.setScreenMuted(false); try peer.setScreenMuted(true)
+            try await peer.setScreenMuted(false); try await peer.setScreenMuted(true)
             XCTAssertEqual(sender.parameters.degradationPreference, expected)
             XCTAssertEqual(sender.parameters.encodings.first?.scaleResolutionDownBy, 1)
         }

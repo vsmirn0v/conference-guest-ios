@@ -18,13 +18,15 @@ struct GuestRemoteVideo {
     var source: String?
 }
 
-/// Owns one guest PC. All signaling operations are driven by the MainActor engine.
+/// Owns one guest PC. All signaling operations are driven by the MainActor engine;
+/// every call into the native objects runs on `native`, never on the main thread.
 @MainActor
 final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     static var diagnosticEventLogDirectory: URL?
     let diagnosticID = UUID().uuidString
     let target: GuestPeerTarget
     let factory: LKRTCPeerConnectionFactory
+    let native: GuestNativeCalls
     private(set) var connection: LKRTCPeerConnection!
     let renderer: GuestFrameCounter
     let pcmMeter = GuestPCMMeter()
@@ -84,6 +86,8 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     /// Candidate kinds in the last remote description ("host/udp": 2, ...), no addresses.
     private var remoteDescriptionCandidates: [String: Int] = [:]
     private var stallDiagnosticsLogged = false
+    /// The ICE transport policy this peer set to relay (the native configuration is not read on main).
+    private var relayOnlyConfigured = false
     /// The subscriber never connected before its deadline (receive path stalled).
     var onInitialStall: (() -> Void)?
 #if DEBUG
@@ -126,6 +130,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         self.target = target; self.factory = factory; self.physicalAudio = physicalAudio; self.icePolicy = icePolicy
         self.startupPlaybackGain = startupPlaybackGain
         renderer = GuestFrameCounter(verifyPixels: verifyReceivedPixels)
+        native = GuestNativeCalls(label: target.rawValue.lowercased())
         super.init()
         let config = LKRTCConfiguration()
         config.sdpSemantics = .unifiedPlan
@@ -140,22 +145,35 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         }
     }
 
-    func configure(_ value: [String: Any]) throws {
+    func configure(_ value: [String: Any]) async throws {
         guard !closed else { throw GuestPeerError.closed }
-        let config = connection.configuration
         let icePolicy = self.icePolicy.forTarget(target)
         let advertised = value["iceServers"] as? [[String: Any]] ?? []
         let servers = try icePolicy.servers(advertised)
-        if value["iceServers"] is [[String: Any]] || icePolicy != .automatic {
-            config.iceServers = servers.compactMap { server in
-                let urls = server["urls"] as? [String] ?? (server["urls"] as? String).map { [$0] } ?? []
-                guard !urls.isEmpty else { return nil }
-                return LKRTCIceServer(urlStrings: urls, username: server["username"] as? String,
-                    credential: server["credential"] as? String)
+        let replaceServers = value["iceServers"] is [[String: Any]] || icePolicy != .automatic
+        let relay = icePolicy.relayOnly(advertised) || value["iceTransportPolicy"] as? String == "relay"
+        let connection = connection!
+        let applied = try await native.run("set-configuration") { () -> Bool in
+            let config = connection.configuration
+            if replaceServers {
+                config.iceServers = servers.compactMap { server in
+                    let urls = server["urls"] as? [String] ?? (server["urls"] as? String).map { [$0] } ?? []
+                    guard !urls.isEmpty else { return nil }
+                    return LKRTCIceServer(urlStrings: urls, username: server["username"] as? String,
+                        credential: server["credential"] as? String)
+                }
             }
+            if relay { config.iceTransportPolicy = .relay }
+            return connection.setConfiguration(config)
         }
-        if icePolicy.relayOnly(advertised) || value["iceTransportPolicy"] as? String == "relay" { config.iceTransportPolicy = .relay }
-        guard connection.setConfiguration(config) else { throw GuestPeerError.malformed }
+        guard applied else { throw GuestPeerError.malformed }
+        if relay { relayOnlyConfigured = true }
+    }
+
+    /// The active configuration, read on the native queue (tests and diagnostics).
+    func currentConfiguration() async throws -> LKRTCConfiguration {
+        let connection = connection!
+        return try await native.run("configuration") { connection.configuration }
     }
 
     func answer(_ description: [String: Any]) async throws -> [String: Any] {
@@ -173,7 +191,9 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         guard let sdp = description["sdp"] as? String, sdp.utf8.count < 1_000_000 else { throw GuestPeerError.malformed }
         remoteDescriptionCandidates = Self.candidateKinds(sdp)
         try await setRemote(.init(type: .answer, sdp: sdp))
-        probeLog("video-negotiation", ["target": target.rawValue, "remote": GuestSDPSummary.video(sdp), "local": GuestSDPSummary.video(connection.localDescription?.sdp ?? "")])
+        let connection = connection!
+        let local = (try? await native.run("local-description") { connection.localDescription?.sdp }) ?? nil
+        probeLog("video-negotiation", ["target": target.rawValue, "remote": GuestSDPSummary.video(sdp), "local": GuestSDPSummary.video(local ?? "")])
     }
 
     func makeOffer() async throws -> [String: Any] {
@@ -204,7 +224,10 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             let candidate = LKRTCIceCandidate(sdp: sdp,
                 sdpMLineIndex: (value["sdpMLineIndex"] as? NSNumber)?.int32Value ?? 0,
                 sdpMid: value["sdpMid"] as? String)
-            if connection.remoteDescription == nil {
+            let connection = connection!
+            let hasRemoteDescription = try await native.run("has-remote-description") { connection.remoteDescription != nil }
+            guard !closed else { throw GuestPeerError.closed }
+            if !hasRemoteDescription {
                 guard remoteICE.count < 256 else { throw GuestPeerError.candidateOverflow }
                 remoteICE.append(candidate)
                 if bufferedRemoteICECandidates < Int.max { bufferedRemoteICECandidates += 1 }
@@ -215,124 +238,173 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         }
     }
 
-    func prepareAudio(cid: String, profile: GuestAudioProfile = .speech) -> LKRTCAudioTrack {
+    func prepareAudio(cid: String, profile: GuestAudioProfile = .speech) async throws -> LKRTCAudioTrack {
         let constraints = physicalAudio ? profile.audioConstraints : [
             "googEchoCancellation": "false", "googNoiseSuppression": "false", "googAutoGainControl": "false"]
-        let source = factory.audioSource(with: LKRTCMediaConstraints(mandatoryConstraints: constraints, optionalConstraints: nil))
-        // WebRTC creates tracks enabled. Disable before anyone can attach it, so a
-        // microphone track never sends until an unmute enables it.
-        let track = factory.audioTrack(with: source, trackId: cid)
-        track.isEnabled = false
+        let factory = factory
+        return try await native.run("prepare-audio") {
+            let source = factory.audioSource(with: LKRTCMediaConstraints(mandatoryConstraints: constraints, optionalConstraints: nil))
+            // WebRTC creates tracks enabled. Disable before anyone can attach it, so a
+            // microphone track never sends until an unmute enables it.
+            let track = factory.audioTrack(with: source, trackId: cid)
+            track.isEnabled = false
+            return track
+        }
+    }
+
+    /// `enabled: false` returns the track already disabled, before anyone can attach it.
+    func prepareVideo(cid: String, profile: GuestVideoProfile = .pattern, screenCast: Bool = false,
+                      enabled: Bool = true) async throws -> LKRTCVideoTrack {
+        videoProfile = profile
+        let factory = factory
+        let (source, track) = try await native.run("prepare-video") { () -> (LKRTCVideoSource, LKRTCVideoTrack) in
+            let source = screenCast ? factory.videoSource(forScreenCast: true) : factory.videoSource()
+            source.adaptOutputFormat(toWidth: profile.width, height: profile.height, fps: profile.fps)
+            let track = factory.videoTrack(with: source, trackId: cid)
+            if !enabled { track.isEnabled = false }
+            return (source, track)
+        }
+        self.source = source
         return track
     }
 
-    func prepareVideo(cid: String, profile: GuestVideoProfile = .pattern, screenCast: Bool = false) -> LKRTCVideoTrack {
-        videoProfile = profile
-        let source = screenCast ? factory.videoSource(forScreenCast: true) : factory.videoSource()
-        source.adaptOutputFormat(toWidth: profile.width, height: profile.height, fps: profile.fps)
-        self.source = source
-        return factory.videoTrack(with: source, trackId: cid)
-    }
-
-    func prepareScreenVideo(cid: String, profile: GuestVideoProfile) -> LKRTCVideoTrack {
-        let source = factory.videoSource(forScreenCast: true)
+    func prepareScreenVideo(cid: String, profile: GuestVideoProfile) async throws -> LKRTCVideoTrack {
+        let factory = factory
+        let (source, track) = try await native.run("prepare-screen-video") { () -> (LKRTCVideoSource, LKRTCVideoTrack) in
+            let source = factory.videoSource(forScreenCast: true)
+            source.adaptOutputFormat(toWidth: profile.width, height: profile.height, fps: profile.fps)
+            let track = factory.videoTrack(with: source, trackId: cid)
+            track.isEnabled = false
+            return (source, track)
+        }
         screenSource = source; screenProfile = profile
-        source.adaptOutputFormat(toWidth: profile.width, height: profile.height, fps: profile.fps)
-        let track = factory.videoTrack(with: source, trackId: cid)
-        track.isEnabled = false
         return track
     }
 
     func updateScreenProfile(_ profile: GuestVideoProfile) {
         screenProfile = profile
-        screenSource?.adaptOutputFormat(toWidth: profile.width, height: profile.height, fps: profile.fps)
-        if let screenSender {
-            let parameters = screenSender.parameters
+        let source = screenSource, sender = screenSender
+        native.post("update-screen-profile") {
+            source?.adaptOutputFormat(toWidth: profile.width, height: profile.height, fps: profile.fps)
+            guard let sender else { return }
+            let parameters = sender.parameters
             parameters.encodings.forEach {
                 $0.maxBitrateBps = NSNumber(value: profile.maximumBitrate)
                 $0.maxFramerate = NSNumber(value: profile.fps)
             }
-            screenSender.parameters = parameters
+            sender.parameters = parameters
         }
     }
 
-    func attachScreenVideo(_ track: LKRTCVideoTrack, codec: String) throws {
+    func attachScreenVideo(_ track: LKRTCVideoTrack, codec: String) async throws {
         guard !closed, screenSender == nil else { throw GuestPeerError.closed }
-        let capabilities = factory.rtpSenderCapabilities(forKind: "video").codecs
-        let matches = capabilities.filter { $0.name.lowercased() == codec.lowercased() }
-        guard !matches.isEmpty else { throw GuestPeerError.unsupportedCodec }
-        let config = LKRTCRtpTransceiverInit(); config.direction = .sendOnly
-        config.sendEncodings = [screenProfile.encoding()]
-        guard let transceiver = connection.addTransceiver(with: track, init: config) else { throw GuestPeerError.malformed }
-        try transceiver.setCodecPreferences(matches + capabilities.filter { $0.name.lowercased() == "rtx" }, error: ())
-        if codec.lowercased() == "h264" {
-            let parameters = transceiver.sender.parameters
-            parameters.degradationPreference = NSNumber(value: LKRTCDegradationPreference.maintainResolution.rawValue)
-            transceiver.sender.parameters = parameters
+        let factory = factory, connection = connection!, encoding = screenProfile.encoding()
+        let sender = try await native.run("attach-screen-video") { () -> LKRTCRtpSender in
+            let capabilities = factory.rtpSenderCapabilities(forKind: "video").codecs
+            let matches = capabilities.filter { $0.name.lowercased() == codec.lowercased() }
+            guard !matches.isEmpty else { throw GuestPeerError.unsupportedCodec }
+            let config = LKRTCRtpTransceiverInit(); config.direction = .sendOnly
+            config.sendEncodings = [encoding]
+            guard let transceiver = connection.addTransceiver(with: track, init: config) else { throw GuestPeerError.malformed }
+            try transceiver.setCodecPreferences(matches + capabilities.filter { $0.name.lowercased() == "rtx" }, error: ())
+            if codec.lowercased() == "h264" {
+                let parameters = transceiver.sender.parameters
+                parameters.degradationPreference = NSNumber(value: LKRTCDegradationPreference.maintainResolution.rawValue)
+                transceiver.sender.parameters = parameters
+            }
+            return transceiver.sender
         }
-        screenTrack = track; screenSender = transceiver.sender
+        guard !closed else { throw GuestPeerError.closed }
+        screenTrack = track; screenSender = sender
     }
 
-    func setScreenMuted(_ muted: Bool) throws {
+    func setScreenMuted(_ muted: Bool) async throws {
         guard !closed, let screenSender, let screenTrack else { throw GuestPeerError.closed }
-        if muted { screenTrack.isEnabled = false }
-        let parameters = screenSender.parameters
-        guard !parameters.encodings.isEmpty else { throw GuestPeerError.malformed }
-        parameters.encodings.forEach { $0.isActive = !muted }
-        if !muted { screenTrack.isEnabled = true }
-        screenSender.parameters = parameters
-        guard screenSender.parameters.encodings.allSatisfy({ $0.isActive == !muted }) else {
-            screenTrack.isEnabled = false; throw GuestPeerError.malformed
+        try await native.run(muted ? "mute-screen" : "unmute-screen") {
+            try Self.setSending(!muted, track: screenTrack, sender: screenSender)
         }
     }
 
-    func suppressScreenVideo() {
-        screenTrack?.isEnabled = false
-        if screenSender != nil { try? setScreenMuted(true) }
+    /// Stops or starts one sender's RTP. Muting stops the track before the
+    /// encodings; unmuting activates the encodings first. Native queue only.
+    nonisolated private static func setSending(_ sending: Bool, track: LKRTCVideoTrack, sender: LKRTCRtpSender) throws {
+        if !sending { track.isEnabled = false }
+        let parameters = sender.parameters
+        guard !parameters.encodings.isEmpty else { throw GuestPeerError.malformed }
+        parameters.encodings.forEach { $0.isActive = sending }
+        if sending { track.isEnabled = true }
+        sender.parameters = parameters
+        guard sender.parameters.encodings.allSatisfy({ $0.isActive == sending }) else {
+            track.isEnabled = false
+            throw GuestPeerError.malformed
+        }
     }
 
-    @discardableResult func removeScreenVideo() throws -> Bool {
+    /// Synchronous privacy barrier: queued ahead of any later native call.
+    func suppressScreenVideo() {
+        let track = screenTrack, sender = screenSender
+        native.post("suppress-screen") {
+            track?.isEnabled = false
+            if let track, let sender { try? Self.setSending(false, track: track, sender: sender) }
+        }
+    }
+
+    @discardableResult func removeScreenVideo() async throws -> Bool {
         suppressScreenVideo()
         guard let screenSender else { screenSource = nil; screenTrack = nil; return false }
-        guard !closed, connection.removeTrack(screenSender) else { throw GuestPeerError.closed }
+        guard !closed else { throw GuestPeerError.closed }
+        let connection = connection!
+        let removed = try await native.run("remove-screen-video") { connection.removeTrack(screenSender) }
+        guard !closed, removed else { throw GuestPeerError.closed }
         self.screenSender = nil; screenTrack = nil; screenSource = nil
         return true
     }
 
     func waitForStableSignaling() async throws {
+        let connection = connection!
         for _ in 0..<100 {
             try Task.checkCancellation()
-            guard !closed, connection.signalingState != .closed else { throw GuestPeerError.closed }
-            if connection.signalingState == .stable { return }
+            guard !closed else { throw GuestPeerError.closed }
+            let state = try await native.run("signaling-state") { connection.signalingState }
+            guard !closed, state != .closed else { throw GuestPeerError.closed }
+            if state == .stable { return }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         throw GuestTransportError.timedOut
     }
 
-    func attach(_ track: LKRTCMediaStreamTrack, codec: String) throws {
+    func attach(_ track: LKRTCMediaStreamTrack, codec: String) async throws {
         guard !closed else { throw GuestPeerError.closed }
-        let config = LKRTCRtpTransceiverInit(); config.direction = .sendOnly
-        if track.kind == "video" { config.sendEncodings = [videoProfile.encoding()] }
-        guard let transceiver = connection.addTransceiver(with: track, init: config) else { throw GuestPeerError.malformed }
-        if track.kind == "video" {
-            let capabilities = factory.rtpSenderCapabilities(forKind: "video").codecs
-            let matches = capabilities.filter { $0.name.lowercased() == codec.lowercased() }
-            guard !matches.isEmpty else { throw GuestPeerError.unsupportedCodec }
-            // Native codec negotiation creates the RTX apt association. Filtering
-            // only the primary codec silently disables repair payloads.
-            let repair = capabilities.filter { $0.name.lowercased() == "rtx" }
-            // The guest SFU learns its publisher codec table from the first
-            // video m-section. Advertise later content capability there without
-            // starting its encoder or changing the H264 camera registration.
-            let contentCapability = codec.lowercased() == "h264"
-                ? capabilities.filter { $0.name.lowercased() == "vp9" } : []
-            try transceiver.setCodecPreferences(matches + contentCapability + repair, error: ())
+        let factory = factory, connection = connection!, encoding = videoProfile.encoding()
+        let (video, sender) = try await native.run("attach") { () -> (Bool, LKRTCRtpSender) in
+            let video = track.kind == "video"
+            let config = LKRTCRtpTransceiverInit(); config.direction = .sendOnly
+            if video { config.sendEncodings = [encoding] }
+            guard let transceiver = connection.addTransceiver(with: track, init: config) else { throw GuestPeerError.malformed }
+            if video {
+                let capabilities = factory.rtpSenderCapabilities(forKind: "video").codecs
+                let matches = capabilities.filter { $0.name.lowercased() == codec.lowercased() }
+                guard !matches.isEmpty else { throw GuestPeerError.unsupportedCodec }
+                // Native codec negotiation creates the RTX apt association. Filtering
+                // only the primary codec silently disables repair payloads.
+                let repair = capabilities.filter { $0.name.lowercased() == "rtx" }
+                // The guest SFU learns its publisher codec table from the first
+                // video m-section. Advertise later content capability there without
+                // starting its encoder or changing the H264 camera registration.
+                let contentCapability = codec.lowercased() == "h264"
+                    ? capabilities.filter { $0.name.lowercased() == "vp9" } : []
+                try transceiver.setCodecPreferences(matches + contentCapability + repair, error: ())
+            }
+            return (video, transceiver.sender)
+        }
+        guard !closed else { throw GuestPeerError.closed }
+        if video {
             videoTrack = track as? LKRTCVideoTrack
-            videoSender = transceiver.sender
+            videoSender = sender
         } else { audioTrack = track as? LKRTCAudioTrack }
     }
 
-    func setMuted(_ mute: Bool, video: Bool) throws {
+    func setMuted(_ mute: Bool, video: Bool) async throws {
 #if DEBUG
         if !mute && video { videoEnableCallsForTesting += 1 }
 #endif
@@ -341,24 +413,28 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             guard let videoSender, let videoTrack else { throw GuestPeerError.malformed }
             // Stop RTP before advertising mute. Reactivation reinitializes the
             // encoder layer, producing an independently decodable resume frame.
-            if mute { videoTrack.isEnabled = false }
-            let parameters = videoSender.parameters
-            guard !parameters.encodings.isEmpty else { throw GuestPeerError.malformed }
-            parameters.encodings.forEach { $0.isActive = !mute }
-            if !mute { videoTrack.isEnabled = true }
-            videoSender.parameters = parameters
-            guard videoSender.parameters.encodings.allSatisfy({ $0.isActive == !mute }) else {
-                videoTrack.isEnabled = false
-                throw GuestPeerError.malformed
+            try await native.run(mute ? "mute-video" : "unmute-video") {
+                try Self.setSending(!mute, track: videoTrack, sender: videoSender)
             }
-        } else { audioTrack?.isEnabled = !mute }
+        } else {
+            let track = audioTrack
+            try await native.run(mute ? "mute-audio" : "unmute-audio") { track?.isEnabled = !mute }
+        }
     }
 
+    /// Synchronous privacy barrier: queued ahead of any later native call,
+    /// so a pending unmute that completes late is turned off again.
     func suppress(video: Bool) {
         if video {
-            videoTrack?.isEnabled = false
-            if videoSender != nil { try? setMuted(true, video: true) }
-        } else { audioTrack?.isEnabled = false }
+            let track = videoTrack, sender = videoSender
+            native.post("suppress-video") {
+                track?.isEnabled = false
+                if let track, let sender { try? Self.setSending(false, track: track, sender: sender) }
+            }
+        } else {
+            let track = audioTrack
+            native.post("suppress-audio") { track?.isEnabled = false }
+        }
     }
 
     func stopPattern() { patternTask?.cancel(); patternTask = nil }
@@ -403,15 +479,22 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         return ["sender": videoSender.senderId, "mid": mid]
     }
 
-    var localVideoState: [String: Any] {
-        ["generatedFrames": generatedFrames, "generatedLastUptime": generatedLastUptime,
-            "enabled": videoTrack?.isEnabled ?? false, "encodingActive": videoSender?.parameters.encodings.map(\.isActive) ?? [],
-            "negotiatedCodecs": videoSender?.parameters.codecs.map(\.name) ?? [],
-            "encodingMaximumBitrates": videoSender?.parameters.encodings.map { $0.maxBitrateBps?.intValue ?? -1 } ?? [],
-            "encodingMaximumFrameRates": videoSender?.parameters.encodings.map { $0.maxFramerate?.intValue ?? -1 } ?? [],
-            "registeredProfile": videoProfile.layer,
-            "localSDPVideoCodecs": Self.videoCodecNames(connection.localDescription?.sdp),
-            "remoteSDPVideoCodecs": Self.videoCodecNames(connection.remoteDescription?.sdp)]
+    func localVideoState() async -> [String: Any] {
+        var state: [String: Any] = ["generatedFrames": generatedFrames, "generatedLastUptime": generatedLastUptime,
+                                    "registeredProfile": videoProfile.layer]
+        guard !closed else { return state }
+        let track = videoTrack, sender = videoSender, connection = connection!
+        let native = try? await self.native.run("local-video-state", timeout: 3) { () -> [String: Any] in
+            let parameters = sender?.parameters
+            return ["enabled": track?.isEnabled ?? false, "encodingActive": parameters?.encodings.map(\.isActive) ?? [],
+                    "negotiatedCodecs": parameters?.codecs.map(\.name) ?? [],
+                    "encodingMaximumBitrates": parameters?.encodings.map { $0.maxBitrateBps?.intValue ?? -1 } ?? [],
+                    "encodingMaximumFrameRates": parameters?.encodings.map { $0.maxFramerate?.intValue ?? -1 } ?? [],
+                    "localSDPVideoCodecs": Self.videoCodecNames(connection.localDescription?.sdp),
+                    "remoteSDPVideoCodecs": Self.videoCodecNames(connection.remoteDescription?.sdp)]
+        }
+        state.merge(native ?? ["nativeStateUnavailable": true]) { _, value in value }
+        return state
     }
 
 #if DEBUG
@@ -425,7 +508,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 #endif
 
     /// Sanitized formal SDP metadata only; never emit descriptions, ICE or addresses.
-    private static func videoCodecNames(_ sdp: String?) -> [String] {
+    nonisolated private static func videoCodecNames(_ sdp: String?) -> [String] {
         guard let sdp else { return [] }
         var video = false, names = Set<String>()
         for line in sdp.components(separatedBy: .newlines) {
@@ -442,8 +525,9 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 
     func stats() async -> [[String: Any]]? {
         guard !closed else { return nil }
-        guard let report: LKRTCStatisticsReport = try? await guestAwait(timeout: 3, { done in
-            self.connection.statistics { done(.success($0)) }
+        let connection = connection!
+        guard let report: LKRTCStatisticsReport = try? await native.call("statistics", timeout: 3, { done in
+            connection.statistics { done(.success($0)) }
         }) else { return nil }
         var keys = ["kind", "mid", "bytesReceived", "bytesSent", "packetsReceived", "packetsSent",
             "frames", "framesSent", "framesDecoded", "framesEncoded",
@@ -510,37 +594,49 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
         transportConnected = false
         patternTask?.cancel(); patternTask = nil
         iceTimeout?.cancel(); iceTimeout = nil
-        audioTrack?.isEnabled = false; videoTrack?.isEnabled = false; screenTrack?.isEnabled = false
-        incomingVideo.forEach { $0.sink.stop(); $0.video.track.remove($0.sink) }; incomingVideo.removeAll()
+        // Sinks stop at once; native detach and close are queued in order and never
+        // wait on WebRTC threads here (they can be stuck behind the audio device).
+        let tracks: [LKRTCMediaStreamTrack?] = [audioTrack, videoTrack, screenTrack]
+        let videoSinks = incomingVideo.map { ($0.video.track, $0.sink) }
+        let audioTracks = incomingAudio.map(\.track), meter = pcmMeter
+        incomingVideo.forEach { $0.sink.stop() }; incomingVideo.removeAll()
         onIncomingVideoChange?([]); onIncomingVideoChange = nil
-        incomingAudio.forEach { $0.track.remove(pcmMeter) }; incomingAudio.removeAll()
+        incomingAudio.removeAll()
         onIncomingAudioChange = nil
         localICE.removeAll(); remoteICE.removeAll(); sendCandidate = nil
-        connection.stopRtcEventLog()
-        connection.close(); connection.delegate = nil
+        let connection = connection!
+        native.post("close") {
+            tracks.forEach { $0?.isEnabled = false }
+            videoSinks.forEach { track, sink in track.remove(sink) }
+            audioTracks.forEach { $0.remove(meter) }
+            connection.stopRtcEventLog()
+            connection.close(); connection.delegate = nil
+        }
         audioTrack = nil; videoTrack = nil; videoSender = nil; source = nil
         screenTrack = nil; screenSender = nil; screenSource = nil
     }
 
     private func descriptionForOffer(_ offer: Bool) async throws -> LKRTCSessionDescription {
         guard !closed else { throw GuestPeerError.closed }
-        let result: LKRTCSessionDescription = try await guestAwait { done in
+        let connection = connection!
+        let result: LKRTCSessionDescription = try await native.call(offer ? "create-offer" : "create-answer") { done in
             let completion: @Sendable (LKRTCSessionDescription?, Error?) -> Void = { value, error in
                 if let error { done(.failure(error)) }
                 else if let value { done(.success(value)) }
                 else { done(.failure(GuestPeerError.malformed)) }
             }
             let constraints = LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
-            if offer { self.connection.offer(for: constraints, completionHandler: completion) }
-            else { self.connection.answer(for: constraints, completionHandler: completion) }
+            if offer { connection.offer(for: constraints, completionHandler: completion) }
+            else { connection.answer(for: constraints, completionHandler: completion) }
         }
         guard !closed else { throw GuestPeerError.closed }
         return result
     }
     private func setLocal(_ value: LKRTCSessionDescription) async throws {
         guard !closed else { throw GuestPeerError.closed }
-        let _: Void = try await guestAwait { done in
-            self.connection.setLocalDescription(value) { error in
+        let connection = connection!
+        let _: Void = try await native.call("set-local-description") { done in
+            connection.setLocalDescription(value) { error in
                 done(error.map { .failure($0) } ?? .success(()))
             }
         }
@@ -548,8 +644,9 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     }
     private func setRemote(_ value: LKRTCSessionDescription) async throws {
         guard !closed else { throw GuestPeerError.closed }
-        let _: Void = try await guestAwait { done in
-            self.connection.setRemoteDescription(value) { error in
+        let connection = connection!
+        let _: Void = try await native.call("set-remote-description") { done in
+            connection.setRemoteDescription(value) { error in
                 done(error.map { .failure($0) } ?? .success(()))
             }
         }
@@ -562,8 +659,9 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     }
     private func add(_ value: LKRTCIceCandidate) async throws {
         guard !closed else { throw GuestPeerError.closed }
-        let _: Void = try await guestAwait { done in
-            self.connection.add(value) { error in done(error.map { .failure($0) } ?? .success(())) }
+        let connection = connection!
+        let _: Void = try await native.call("add-candidate") { done in
+            connection.add(value) { error in done(error.map { .failure($0) } ?? .success(())) }
         }
         guard !closed else { throw GuestPeerError.closed }
     }
@@ -629,10 +727,11 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             "pendingLocalCandidates": localICE.count, "pendingRemoteCandidates": remoteICE.count,
             "gatheringState": lastGatheringState.rawValue, "gatheringErrors": iceGatheringErrors,
             "gatheringErrorsLogged": min(iceGatheringErrors, maximumLoggedICEGatheringErrors),
-            "policy": icePolicy.forTarget(target).rawValue, "relayOnly": connection.configuration.iceTransportPolicy == .relay,
+            "policy": icePolicy.forTarget(target).rawValue, "relayOnly": relayOnlyConfigured,
             "remoteDescriptionCandidates": remoteDescriptionCandidates])
         // Request bounded, allowlisted native evidence without delaying recovery.
-        let diagnosticID = diagnosticID, targetName = target.rawValue
+        let diagnosticID = diagnosticID, targetName = target.rawValue, connection = connection!
+        native.post("ice-failure-statistics") {
         connection.statistics { report in
             let summary = Self.failedChecklistSummary(report.statistics.values.map { stat -> [String: Any] in
                 var row: [String: Any] = ["type": stat.type, "id": stat.id]
@@ -644,6 +743,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             })
             probeLog("ice-failed-checklist", ["peerID": diagnosticID, "target": targetName,
                 "reason": reason, "state": state.rawValue, "summary": summary])
+        }
         }
     }
 
@@ -713,7 +813,11 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
     }
 
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didAdd receiver: LKRTCRtpReceiver, streams: [LKRTCMediaStream]) {
-        if let track = receiver.track as? LKRTCAudioTrack { startupPlaybackGain?.register(track, streamIDs: streams.map(\.streamId)) }
+        // Native reads happen here, on WebRTC's own thread; the main actor only
+        // compares identities and queues sink changes on the native queue.
+        let receivedTrack = receiver.track, streamIDs = streams.map(\.streamId)
+        let kind = receivedTrack?.kind ?? "unknown", audioTrackID = (receivedTrack as? LKRTCAudioTrack)?.trackId
+        if let track = receivedTrack as? LKRTCAudioTrack { startupPlaybackGain?.register(track, streamIDs: streamIDs) }
         Task { @MainActor [weak self] in
             guard let self, !closed else { return }
             self.startupPlaybackGain?.reconcile()
@@ -722,8 +826,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 #endif
             // receiver.track returns a new wrapper on each read. isEqual compares
             // native track identity, including when callbacks repeat on reconnect.
-            if let track = receiver.track as? LKRTCVideoTrack {
-                let streamIDs = streams.map(\.streamId)
+            if let track = receivedTrack as? LKRTCVideoTrack {
                 if let index = incomingVideo.firstIndex(where: { $0.video.track.isEqual(track) }) {
                     // Unified Plan may reuse the receiver when a publication is replaced.
                     if incomingVideo[index].video.streamIDs != streamIDs {
@@ -733,51 +836,57 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
                 } else {
                     let sink = GuestTrackRenderer(counter: renderer)
                     incomingVideo.append((GuestRemoteVideo(id: UUID().uuidString, track: track,
-                        streamIDs: streamIDs), sink)); track.add(sink)
+                        streamIDs: streamIDs), sink))
+                    native.post("add-video-sink") { track.add(sink) }
                     onIncomingVideoChange?(receivedVideo)
 #if DEBUG
                     receiverAttachmentsForTesting += 1
 #endif
                 }
             }
-            if let track = receiver.track as? LKRTCAudioTrack {
-                let source = GuestStartupPlaybackGain.Source(trackID: track.trackId, streamIDs: streams.map(\.streamId))
+            if let track = receivedTrack as? LKRTCAudioTrack {
+                let source = GuestStartupPlaybackGain.Source(trackID: audioTrackID ?? "", streamIDs: streamIDs)
                 if let index = incomingAudio.firstIndex(where: { $0.track.isEqual(track) }) {
                     incomingAudio[index].source = source
                 } else {
-                    incomingAudio.append((track, source)); track.add(pcmMeter)
+                    incomingAudio.append((track, source))
+                    let meter = pcmMeter
+                    native.post("add-audio-sink") { track.add(meter) }
 #if DEBUG
                     receiverAttachmentsForTesting += 1
 #endif
                 }
                 onIncomingAudioChange?()
             }
-            var fields: [String: Any] = ["target": target.rawValue, "kind": receiver.track?.kind ?? "unknown"]
+            var fields: [String: Any] = ["target": target.rawValue, "kind": kind]
 #if DEBUG
-            fields["peerID"] = diagnosticID; fields["streamIDs"] = streams.map(\.streamId)
+            fields["peerID"] = diagnosticID; fields["streamIDs"] = streamIDs
             fields["receiverAttachments"] = receiverAttachmentsForTesting
 #endif
             probeLog("remote-track", fields)
         }
     }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didRemove receiver: LKRTCRtpReceiver) {
-        if let track = receiver.track as? LKRTCAudioTrack { startupPlaybackGain?.remove(track) }
+        let removedTrack = receiver.track, removedTrackID = removedTrack?.trackId ?? ""
+        if let track = removedTrack as? LKRTCAudioTrack { startupPlaybackGain?.remove(track) }
         Task { @MainActor [weak self] in
             guard let self, !closed else { return }
 #if DEBUG
             defer { self.receiverEventFinishedForTesting?() }
 #endif
-            guard let track = receiver.track else { return }
+            guard let track = removedTrack else { return }
             if let index = incomingVideo.firstIndex(where: { $0.video.track.isEqual(track) }) {
                 let removed = incomingVideo.remove(at: index)
-                removed.sink.stop(); removed.video.track.remove(removed.sink)
+                removed.sink.stop()
+                native.post("remove-video-sink") { removed.video.track.remove(removed.sink) }
                 onIncomingVideoChange?(receivedVideo)
 #if DEBUG
                 receiverDetachmentsForTesting += 1
 #endif
             }
             if let index = incomingAudio.firstIndex(where: { $0.track.isEqual(track) }) {
-                incomingAudio.remove(at: index).track.remove(pcmMeter)
+                let audio = incomingAudio.remove(at: index).track, meter = pcmMeter
+                native.post("remove-audio-sink") { audio.remove(meter) }
                 onIncomingAudioChange?()
 #if DEBUG
                 receiverDetachmentsForTesting += 1
@@ -785,7 +894,7 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
             }
 #if DEBUG
             probeLog("remote-track-removed", ["peerID": diagnosticID, "target": target.rawValue,
-                "trackID": track.trackId, "receiverDetachments": receiverDetachmentsForTesting])
+                "trackID": removedTrackID, "receiverDetachments": receiverDetachmentsForTesting])
 #endif
         }
     }

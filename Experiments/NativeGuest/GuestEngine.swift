@@ -357,7 +357,7 @@ final class NativeGuestEngine {
         switch method {
         case "rtc:config":
             guard let config = payload["configuration"] as? [String: Any] else { throw GuestEngineError.malformed }
-            try subscriber?.configure(config); try publisher?.configure(config)
+            try await subscriber?.configure(config); try await publisher?.configure(config)
             probeLog("rtc-config", ["client": probeClient, "iceServers": (config["iceServers"] as? [Any])?.count ?? 0,
                 "serverKinds": GuestICEPolicy.serverKinds(config["iceServers"] as? [[String: Any]] ?? []),
                 "serverRelayOnly": config["iceTransportPolicy"] as? String == "relay",
@@ -613,15 +613,15 @@ final class NativeGuestEngine {
         if let systemAudio, !(await systemAudio.setMicrophoneMuted(true)) { throw GuestEngineError.disconnected }
         if mediaPermissions.canShareMicrophone {
             let cid = UUID().uuidString.lowercased()
-            let audio = publisher.prepareAudio(cid: cid, profile: systemAudio?.profile ?? .speech)
-            audio.isEnabled = false
+            // Returned disabled: it never sends until an unmute enables it.
+            let audio = try await publisher.prepareAudio(cid: cid, profile: systemAudio?.profile ?? .speech)
             systemAudio?.registerMicrophoneTrack(audio)
             try requirePermission(video: false)
             let info = try await register(["cid": cid, "type": "AUDIO", "source": "MICROPHONE", "muted": true])
             guard let sid = info["sid"] as? String else { throw GuestEngineError.malformed }
             try requirePermission(video: false)
             published["audio"] = sid
-            try publisher.attach(audio, codec: codec)
+            try await publisher.attach(audio, codec: codec)
         }
         if mediaPermissions.canShareCamera {
             let cid = UUID().uuidString.lowercased()
@@ -633,8 +633,8 @@ final class NativeGuestEngine {
                 profile = screen; publicationSource = "SCREEN_SHARE"
             }
 #endif
-            let video = publisher.prepareVideo(cid: cid, profile: profile, screenCast: publicationSource == "SCREEN_SHARE")
-            video.isEnabled = false
+            let video = try await publisher.prepareVideo(cid: cid, profile: profile, screenCast: publicationSource == "SCREEN_SHARE",
+                                                        enabled: false)
             try requirePermission(video: true)
             let info = try await register(["cid": cid, "type": "VIDEO", "source": publicationSource, "muted": true,
                 "width": profile.width, "height": profile.height, "layers": [profile.layer],
@@ -649,8 +649,8 @@ final class NativeGuestEngine {
 #endif
             try requirePermission(video: true)
             published["video"] = sid
-            try publisher.attach(video, codec: codec)
-            try publisher.setMuted(true, video: true)
+            try await publisher.attach(video, codec: codec)
+            try await publisher.setMuted(true, video: true)
         }
         guard !published.isEmpty else { return }
         try await media(["method": "rtc:offer", "description": try await publisher.makeOffer()])
@@ -1069,7 +1069,7 @@ final class NativeGuestEngine {
                             // authoritative participant update below.
                             if video && !muted && self.localMuteIntent[video] == false && !self.outputSuppressed {
                                 try self.requirePermission(video: true)
-                                try publisher.setMuted(false, video: true)
+                                try await publisher.setMuted(false, video: true)
                             }
                         } catch { completion.finish(.failure(error)) }
                     }
@@ -1095,8 +1095,8 @@ final class NativeGuestEngine {
                 }
                 try requirePermission(video: video)
             }
-            if video { try publisher.setMuted(true, video: true) }
-            try publisher.setMuted(false, video: video)
+            if video { try await publisher.setMuted(true, video: true) }
+            try await publisher.setMuted(false, video: video)
         }
         probeLog("local-mute", ["client": probeClient, "video": video, "muted": muted, "serverConfirmed": true])
     }
@@ -1185,7 +1185,7 @@ final class NativeGuestEngine {
             "physicalPlayoutMeter": systemAudio?.playoutMeterEvidence ?? [:],
             "physicalAudioSnapshotFresh": physicalAudioFresh,
             "subscriberStatsFresh": rx != nil, "publisherStatsFresh": tx != nil,
-            "localVideo": publisher?.localVideoState ?? [:], "stats": (rx ?? []) + (tx ?? []), "subscriptions": subscriptions.count, "publications": published.count]
+            "localVideo": await publisher?.localVideoState() ?? [:], "stats": (rx ?? []) + (tx ?? []), "subscriptions": subscriptions.count, "publications": published.count]
     }
 
     var publicationIdentity: [String: String] {
@@ -1412,7 +1412,7 @@ extension NativeGuestEngine {
         do {
             try requireScreenPermission(generation: generation)
             let cid = UUID().uuidString.lowercased()
-            let track = publisher.prepareScreenVideo(cid: cid, profile: profile)
+            let track = try await publisher.prepareScreenVideo(cid: cid, profile: profile)
             guard let source = publisher.screenSource else { throw GuestEngineError.malformed }
             let capture = captureFactory(source); screenCapture = capture
             let info = try await capture.start()
@@ -1431,7 +1431,7 @@ extension NativeGuestEngine {
                 throw GuestEngineError.malformed
             }
             published["screen"] = sid
-            try publisher.attachScreenVideo(track, codec: codec)
+            try await publisher.attachScreenVideo(track, codec: codec)
             try await negotiatePublisher()
             try requireScreenPermission(generation: generation)
             try await setScreenServerMuted(false, generation: generation)
@@ -1483,7 +1483,7 @@ extension NativeGuestEngine {
                             try await self.media(["method": "rtc:track:muted", "mute": ["sid": sid, "muted": muted]])
                             if !muted {
                                 try self.requireScreenPermission(generation: generation)
-                                try publisher.setScreenMuted(false)
+                                try await publisher.setScreenMuted(false)
                             }
                         } catch { completion.finish(.failure(error)) }
                     }
@@ -1492,7 +1492,7 @@ extension NativeGuestEngine {
         }
         if !muted {
             try requireScreenPermission(generation: generation)
-            try publisher.setScreenMuted(true); try publisher.setScreenMuted(false)
+            try await publisher.setScreenMuted(true); try await publisher.setScreenMuted(false)
         }
     }
 
@@ -1504,7 +1504,7 @@ extension NativeGuestEngine {
             if !closing, failure == nil { try? await setScreenServerMuted(true, generation: screenGeneration) }
             serverMute.removeValue(forKey: sid); published.removeValue(forKey: "screen")
         }
-        if try publisher.removeScreenVideo(), !closing, failure == nil { try await negotiatePublisher() }
+        if try await publisher.removeScreenVideo(), !closing, failure == nil { try await negotiatePublisher() }
     }
 }
 
@@ -1544,11 +1544,10 @@ extension NativeGuestEngine {
         configuration.iceTransportPolicy = .none
         guard peer.connection.setConfiguration(configuration) else { throw GuestPeerError.malformed }
         cameraPublication = camera
-        let track = peer.prepareVideo(cid: "test-video-cid")
-        track.isEnabled = false
-        try peer.attach(track, codec: "vp8")
+        let track = try await peer.prepareVideo(cid: "test-video-cid", enabled: false)
+        try await peer.attach(track, codec: "vp8")
         _ = try await peer.makeOffer()
-        try peer.setMuted(true, video: true)
+        try await peer.setMuted(true, video: true)
         joined = true; rtcJoined = true
         localIdentity = "local"; localParticipantVersion = 1
         permissions["canShareCamera"] = true
