@@ -153,6 +153,10 @@ struct NativeGuestApplication {
         // doing it now, after the window is up, makes the first meeting's transcript start at once.
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
+            // An app or macOS update makes Core AI compile the cloned voice again; start it in the background.
+            if UserDefaults.standard.string(forKey: AttentionStore.voiceEngineKey) == VoiceEngine.cloned.rawValue {
+                VoiceCloneStore.shared.prepareIfNeeded()
+            }
             let listen = ListenModelStore.shared
             guard listen.ready, let model = listen.recognizerModel() else { return }
             LocalSpeechRecognizer.shared.warmUp(model)

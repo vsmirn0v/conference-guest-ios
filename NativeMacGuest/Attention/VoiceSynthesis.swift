@@ -10,10 +10,14 @@ enum VoiceEngine: String, Codable, CaseIterable, Sendable {
     case rapidMLX
     /// The Personal Voice you created in System Settings → Accessibility (macOS 14+).
     case personal
+    /// Your voice, cloned from a short sample by VoxCPM2 on the Neural Engine (macOS 27+).
+    case cloned
 }
 
 enum VoiceSynthesisError: LocalizedError, Equatable {
     case empty, system, server(Int, String?), transport, audio, personalUnsupported, personalDenied, personalMissing
+    case cloneUnsupported, cloneModelMissing, cloneVoiceMissing, clonePreparing, cloneTranscriptMissing
+    case cloneSampleTooShort, cloneSampleTooLong, microphoneDenied
     var errorDescription: String? {
         switch self {
         case .empty: L("There is nothing to say.")
@@ -25,6 +29,14 @@ enum VoiceSynthesisError: LocalizedError, Equatable {
         case .personalUnsupported: L("Personal Voice needs macOS 14 or later.")
         case .personalDenied: L("Allow this app to use your Personal Voice in System Settings → Privacy & Security → Personal Voice.")
         case .personalMissing: L("No Personal Voice found. Create one in System Settings → Accessibility → Personal Voice.")
+        case .cloneUnsupported: L("Your cloned voice needs macOS 27 and a Mac with Apple silicon.")
+        case .cloneModelMissing: L("Download the voice model in Settings → Intelligence → Voice first.")
+        case .cloneVoiceMissing: L("Record your voice in Settings → Intelligence → Voice first.")
+        case .clonePreparing: L("The voice model is still being prepared for this Mac's Neural Engine. Try again when Settings shows it is ready.")
+        case .cloneTranscriptMissing: L("Enter the words you read in the recording.")
+        case .cloneSampleTooShort: L("The recording is too short. Read for at least %ld seconds.", Int(VoiceSampleAudio.minimumSeconds))
+        case .cloneSampleTooLong: L("The recording is too long. Keep it under %ld seconds.", Int(VoiceSampleAudio.maximumSeconds))
+        case .microphoneDenied: L("Allow this app to use the microphone in System Settings → Privacy & Security → Microphone.")
         }
     }
 }
@@ -76,6 +88,15 @@ enum VoiceSynthesis {
         }
         guard let buffer = await VoiceReplySample.make(text: clean, voice: voice) else { throw VoiceSynthesisError.system }
         return buffer
+    }
+
+    /// Your cloned voice, generated on this Mac's Neural Engine.
+    static func cloned(_ text: String) async throws -> AVAudioPCMBuffer {
+        let clean = text.trimmed
+        guard !clean.isEmpty else { throw VoiceSynthesisError.empty }
+        let inputs = try await MainActor.run { try VoiceCloneStore.shared.synthesisInputs() }
+        let samples = try await ClonedVoiceEngine.shared.speak(clean, voice: inputs.voice, folder: inputs.folder)
+        return try VoiceSampleAudio.buffer(samples, rate: 48_000)
     }
 
     /// OpenAI-style `/audio/speech` on Rapid-MLX: WAV back, read into one buffer.

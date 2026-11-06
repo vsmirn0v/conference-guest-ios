@@ -117,6 +117,76 @@ Effort is one person; each item ends in a beta. Items marked *gated* wait on you
 - Not verified: a live meeting on beta 71, and whether the headset opt-in deadlock
   reproduces on other macOS builds.
 
+### Ledger against the original plan (5 Nov artifact), as of beta 73
+
+| Original item | Status |
+|---|---|
+| Listen: GigaAM v3 (ONNX Runtime + Core ML EP), Whisper (WhisperKit), Parakeet | Done with substitutions: sherpa-onnx, then native Core ML GigaAM on the ANE (beta 66). Whisper via sherpa. Parakeet not added. Benchmark on own recorded meetings with consent: not done (FLEURS only). |
+| Phase 2: external meetings via ScreenCaptureKit + diarization | Done differently: in-app WebRTC audio tracks; attribution from the service's speaking signals; TrueConf lines unattributed. Microphone: done. |
+| Phase 3: presets, API judge, cards, inspector, triggers, hysteresis, log, replay | Done. Triggers: name, leave, question-then-silence (beta 70). Not done: "can everyone hear" pattern, JEV adapter (no demand), preset sync (Mac-only). |
+| Phase 4: in-app MLX judge, two-tier escalation, feedback | Judge runs as a user-installed Rapid-MLX sidecar (option A) or Apple's on-device model (beta 67); bundling Rapid-MLX (option B) was rejected for size and notarization; in-app MLX (4d) superseded by the Apple judge. Escalation (beta 70), examples, threshold tuner: done. Russian 8B candidates (YandexGPT-Lite, GigaChat-A3B, T-pro) not benchmarked. Rapid-MLX LaunchAgent: not done (started by hand). |
+| Phase 5: chat and reaction replies | Done; preset-allowed auto-send deferred. |
+| Phase 6: roles view, signed catalog, HF search, storage, provider form with Test, badges | Done except HF search (deferred for safety), "keep on external disk", Mac-tier (8/16/32 GB) hints. Catalog not hosted yet. Compare models added. |
+| Phase 7: cloned voice (enrollment + consent), in-app Qwen3-TTS, pre-synthesis, indicator | Partly: system voice, Rapid-MLX VoiceDesign (no clone), Personal Voice. Not done: enrollment of your own voice, in-app TTS runtime (7c), pre-synthesis when the card appears. Voice works in Telemost/TrueConf too (plan said Guest-only). |
+
+### Voice engine options (researched 6 Nov 2026)
+
+Goal: Russian quality first, Neural Engine where it exists, no Python in the app.
+
+| Model | Russian | Runs how | Clone | Size | Notes |
+|---|---|---|---|---|---|
+| Qwen3-TTS 0.6B Base, ANE port (tinytrashlabs) | Yes; report WER 4.46 / SIM 0.78 | Core ML, talker + code predictor + vocoder on the ANE, no GPU; Swift `QwenANE` (gloam-voice-studio, MIT) | 3–10 s + transcript | 1.9 GB | Apache-2.0; real time on an iPhone 15 Pro at ~5 % CPU; macOS 15+; 0.96 s chunks. Runtime is a 3-star repo with an undocumented API. |
+| Qwen3-TTS 1.7B Base | Best of the open models: WER 3.21 / SIM 0.79 | MLX on the GPU (mlx-audio-swift, swift-qwen3-tts) | same | 3.9 GB | Batch RTF ~0.55 (M2 Max); streaming is not real time on an M4 Pro (161 ms/step); we synthesise whole replies, so batch is fine. |
+| Chatterbox Multilingual (v3) | Listed; vendor CER band 1–5 %, no listening data | speech-swift: MLX fp16, or "Flash" Core ML path on the ANE | ≤ 6 s (Core ML) / 10 s (MLX) | ~0.5 B | MIT; output carries a watermark. |
+| VoxCPM2 | Listed (30 languages); stress guessed | MLX on the GPU, or Core AI on the ANE (tinkerbox-ane LUT8 bundle, macOS 27) | audio, or audio + transcript | 1.9 GB int4; ANE bundle 2.9 GB | Apache-2.0. ANE path measured below. |
+| Turing TTS | not found under that name | | | | Need a link. |
+| F5-TTS Russian fine-tune (Misha24-10) | Explicit stress marks ("+"), MIT | f5-tts-mlx (Swift port exists) | 3–10 s | ~0.3 B | The only candidate that obeys stress marks; needs a stress placer (RUAccent is Python). |
+
+Every codec-LLM model (Qwen, Fish, VoxCPM2) guesses Russian lexical stress and ignores
+marks; that is the main quality limit, not the vocoder.
+
+**Bench result (6 Nov, M4 Air 16 GB, mlx-audio 0.5.9, FLEURS male reference 13 s, ten Russian
+replies, GigaAM round trip + CAM++ similarity; listening page: claude.ai/artifact/YVhff2bPwcGbiheAirThBa):**
+
+| Voice | Wrong words / 79 | Similarity | Time per s of speech | Peak MLX memory |
+|---|---|---|---|---|
+| Qwen3-TTS 0.6B Base bf16 | 0 | 0.58 | 1.11× | 7.0 GB |
+| Qwen3-TTS 1.7B Base bf16 | 0 | 0.55 | 1.66× | 9.1 GB |
+| Chatterbox Multilingual fp16 | 5 ("DNS" garbled) | 0.50 | 1.61× | 4.8 GB |
+| VoxCPM2 8-bit | 3 (логи→налоги, миграция→интеграция) | 0.52 | 2.61× | 5.8 GB |
+| VoxCPM2 LUT8, ANE, clone | 3 ("Мне нужен" dropped) | 0.53 | 0.47× | 2.5 GB process, no GPU |
+| VoxCPM2 LUT8, ANE, clone + transcript | 1 (DNS→1С) | 0.59 | 0.52× | 2.5 GB process, no GPU |
+| VoxCPM2 LUT8, ANE, **app's Swift port** | 0 | 0.63 | 0.57× | 2.85 GB process, no GPU |
+| macOS Milena (baseline) | 0 | 0.39 | instant | — |
+
+Digits ("5", "3:00") excluded from wrong words. Similarity has a high floor (an unrelated female
+voice scores 0.39). By ear the user preferred VoxCPM2 over Qwen 0.6B for stress.
+
+VoxCPM2 on the Neural Engine (tinkerbox-ane 2.2.0, `voxcpm2-lut8` bundle, macOS 27.2): base
+LM, residual LM, local DiT and encoder run as Core AI `.aimodelc` on the ANE; the AudioVAE
+decoder runs on the CPU (torch); 48 kHz output. Load 2.4 s once cached; the first load
+compiled on the device for 26 min (`aned`), once per OS/model version. The runtime's shipped
+host hooks private `_ANEClient`/`_ANECloneHelper` to skip that compile and crashes on 27.2
+(unrecognized selector); a host built with the hook stubbed out works through public Core AI
+only. App integration means porting the Python orchestration (generation loop, FSQ, CFG, Euler
+sampling) and the AudioVAE decoder to Swift; the Core AI host is already Swift on public API.
+Chosen: VoxCPM2 with transcript on the ANE, compiled in the background after download.
+
+**Swift port (6 Nov, uncommitted):** `NativeMacGuest/Attention/VoxCPM2/` runs it in process,
+no Python, public Core AI only: BPE tokenizer, safetensors mmap, AudioVAE encoder and
+streaming decoder on Accelerate, cached base/residual LM stages, patch encoder and fused
+diffusion sampler. Parity (`Tests/run-voxcpm2.sh` against tensors dumped from the Python
+runtime): tokenizer 18/18 texts identical; AudioVAE encode/decode within 1e-5 relative;
+generation with Python's noise gives the same 22 patches, audio within 2.8 % (fp16 ANE).
+Core AI's compile cache survives a rebuilt, moved or renamed binary (0.5–18 s), so app
+updates do not repeat the 26-minute compile; only the app's first preparation does.
+App: "Your voice, on the Neural Engine" in Settings → Intelligence → Voice (macOS 27 only;
+Core AI weak-linked): download of this chip's bundle (2.9–3.1 GB, every file SHA-256-pinned
+in `VoiceModels.json` for 21 chip families by `voice-model-catalog.py`), background
+preparation with a build marker, a 10–20 s recording of a read script (only the latents
+are kept), replies serialized and the model unloaded after 10 idle minutes. Not yet tried
+end to end in the app: the app's own first compile, recording, and a spoken reply in a meeting.
+
 ### 6. Deferred, with the reason
 
 | Item | Why deferred |

@@ -454,6 +454,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         switch store.voiceEngine {
         case .system: return try await VoiceSynthesis.system(text)
         case .personal: return try await VoiceSynthesis.personal(text)
+        case .cloned: return try await VoiceSynthesis.cloned(text)
         case .rapidMLX:
             return try await VoiceSynthesis.rapidMLX(text, baseURL: store.voiceBaseURL, model: store.voiceModel, description: store.voiceDescription)
         }

@@ -112,8 +112,8 @@ targets:
         INFOPLIST_KEY_NSCameraUsageDescription: Share your camera when you turn video on in the native guest preview.
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Share your microphone when you unmute in the native guest preview.
         ENABLE_HARDENED_RUNTIME: YES
-        # The on-device judge's frameworks exist only on newer macOS; the app still runs on 13.
-        OTHER_LDFLAGS: ['$(inherited)', '-weak_framework', 'FoundationModels', '-weak_framework', 'Translation']
+        # The on-device judge's and the cloned voice's frameworks exist only on newer macOS; the app still runs on 13.
+        OTHER_LDFLAGS: ['$(inherited)', '-weak_framework', 'FoundationModels', '-weak_framework', 'Translation', '-weak_framework', 'CoreAI']
         ONLY_ACTIVE_ARCH: YES
         ARCHS: arm64
   NativeDesktopTests:
@@ -133,4 +133,4 @@ targets:
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Rock'N'Roll for Mac.app/Contents/MacOS/RockNRoll Native Guest
         BUNDLE_LOADER: $(TEST_HOST)
         SWIFT_VERSION: '5.0'
-        OTHER_LDFLAGS: ['$(inherited)', '-weak_framework', 'FoundationModels', '-weak_framework', 'Translation']
+        OTHER_LDFLAGS: ['$(inherited)', '-weak_framework', 'FoundationModels', '-weak_framework', 'Translation', '-weak_framework', 'CoreAI']

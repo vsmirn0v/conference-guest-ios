@@ -485,6 +485,7 @@ struct NativeDesktopIntelligenceSettings: View {
     @State private var voiceMessage: String?
     @State private var voiceFailed = false
     @ObservedObject private var listen = ListenModelStore.shared
+    @ObservedObject private var clone = VoiceCloneStore.shared
 
     /// Provider and model as one line; the Apple judge has no model name to show.
     private func describe(_ provider: AttentionProvider) -> String {
@@ -520,6 +521,7 @@ struct NativeDesktopIntelligenceSettings: View {
         case .system: L("The macOS voice")
         case .rapidMLX: L("Rapid-MLX on this Mac") + " · " + store.voiceModel
         case .personal: L("Your Personal Voice")
+        case .cloned: L("Your voice, on the Neural Engine")
         }
     }
 
@@ -638,6 +640,16 @@ struct NativeDesktopIntelligenceSettings: View {
                     Text(L("The macOS voice")).tag(VoiceEngine.system)
                     Text(L("Rapid-MLX on this Mac")).tag(VoiceEngine.rapidMLX)
                     Text(L("Your Personal Voice")).tag(VoiceEngine.personal)
+                    if clone.available || store.voiceEngine == .cloned {
+                        Text(L("Your voice, on the Neural Engine")).tag(VoiceEngine.cloned)
+                    }
+                }
+                if store.voiceEngine == .cloned {
+                    if clone.available {
+                        VoiceCloneSettingsView(clone: clone, listen: listen)
+                    } else {
+                        Text(VoiceSynthesisError.cloneUnsupported.localizedDescription).font(.caption).foregroundStyle(.orange)
+                    }
                 }
                 if store.voiceEngine == .personal {
                     Text(L("Uses the Personal Voice you created in System Settings → Accessibility. macOS asks once whether this app may use it. It speaks the language it was recorded in.")).font(.caption).foregroundStyle(.secondary)

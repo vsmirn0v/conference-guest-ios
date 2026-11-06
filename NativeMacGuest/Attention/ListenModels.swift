@@ -100,7 +100,8 @@ struct ListenModelCatalog: Decodable, Equatable {
         guard let url = Bundle.main.url(forResource: "ListenModels", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let value = try? JSONDecoder().decode(ListenModelCatalog.self, from: data) else { return .empty }
-        return value
+        // The voice model for this Mac's chip downloads, verifies and deletes like the listen models.
+        return value.including(VoiceCloneSupport.model)
     }()
 }
 
