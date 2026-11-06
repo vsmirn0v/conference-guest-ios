@@ -267,3 +267,25 @@ GigaAM transcribed both back correctly ("Анна" heard as "Она"). The app's
 
 Not built: 4d and 7c (models inside the app via mlx-swift / mlx-audio-swift, 1–2 weeks each). They
 remain gated on real use of the Rapid-MLX route.
+
+## Status (6 Nov 2026): betas 66–69
+
+- **Listen on the Neural Engine (beta 66, 608715d).** GigaAM v3 e2e RNN-T runs natively through
+  Core ML (`CoreMLGigaAM.swift`): encoder on the ANE, decoder/joint on the CPU, Swift log-mel
+  front end matching torchaudio (parity max 9e-5). Default model `gigaam-v3-e2e-rnnt-coreml`
+  (446 MB); the previous sherpa model stays selected when it is the only one installed. Bench:
+  real-time factor 0.0104, WER 4.14 (int8 sherpa on CPU: 28×, WER 4.60), first load 9–12 s.
+- **Judge "Apple on this Mac" (beta 67, 24799f2, `OnDeviceJudge.swift`).** Foundation Models
+  (macOS 26+) judges and drafts. The system model lists no Russian, so a meeting in a language
+  it lacks is translated to English on this Mac first (Translation framework, per-line cache),
+  and the card's reason and chat drafts are translated back. The verdict schema is built per
+  window so evidence can only cite existing lines; four extra rules stop the small model from
+  treating the user's interests as the meeting's topic. Bench (`Experiments/AttentionBench/
+  ru_scenarios.py`, 31 tuning + 12 held-out Russian windows, opt-in `AttentionLocalModelBench`):
+  through the app's judge 28/31 and 12/12 acceptable, no missed "now", median 3.3 s per window
+  including translation. Rapid-MLX on the same set: 27/31 and 12/12 in English, 25/31 in
+  Russian. FoundationModels and Translation are weak-linked; the app still runs on macOS 13.
+- Betas 68–69 carried no attention changes (main-thread WebRTC freeze fixes).
+- Still not verified live: the Apple judge in a real meeting, Compare models on real decisions.
+  4d is now superseded by the Apple judge for the judge role (see
+  `remaining-work-plan-2026-11-06.md`).

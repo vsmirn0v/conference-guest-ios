@@ -255,6 +255,13 @@ reopen. With it off the app behaves as beta 64.
 Report issues with "Copy diagnostics" from the meeting; the snapshot shows `sharedAudioEngine`,
 `talkMeeting` and the engine counters.
 
+Status (6 Nov 2026, beta 69): betas 66–69 ship the flag still off; none of the eight checks has
+a recorded result yet. Check 5 (devices) gained evidence outside the flag: an AirPods disconnect
+on beta 66 stalled WebRTC's audio-module thread in CoreAudio for 30+ s and froze the app from
+main-thread WebRTC calls; betas 68–69 move every peer call off the main thread (d2dc2d5,
+d7c37fd). The stall itself is inside the module and is unchanged by the flag. The default-on
+decision waits for the checks; see `remaining-work-plan-2026-11-06.md` § 1.
+
 ## Risks
 
 - Our M156 fork must accept new peer connections on a running module with VPIO active, and send
