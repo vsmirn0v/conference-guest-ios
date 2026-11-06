@@ -1,0 +1,31 @@
+{
+  "version": "0.3.0",
+  "build": "73",
+  "channel": "beta",
+  "sourceCommit": "6ee13ff",
+  "changes": [
+    "Guest meetings: startup-audio-ready passes its live audio state through probeSafe (non-finite numbers become -1, other types their description), because beta 72 never logged the event in real joins and probeLog silently drops values JSON cannot encode (6ee13ff)"
+  ],
+  "frameworkBinarySHA256": "1c47434c135bd4f4f0333e853f695be98e685563ed801c7a29ee27abcfdb7bb3",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-73-arm64.dmg",
+    "sha256": "e53f8e35575a2dd3df76991b6d5550aab4f772327415bda41650cd2d81347e80",
+    "length": 26321341
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-73-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "beta72Joins": "connected to mic track ready: 2.4 s and 0.9 s alone, 1.2 s with two; the 4.7-5 s slow join of beta 71 did not reproduce; the speech model warm-up finished 11.3 s after launch",
+    "beta71Timeout": "19:30 on 71: startup audio timed out after 8 s with the engine never running (CoreAudio read-native-snapshot stalled); the bounded route read reported a timeout and the session recovered without freezing",
+    "suites": "probeSafe test, probe history and diagnostics tests pass; Guest engine and meeting-features suites pass"
+  },
+  "notVerified": [
+    "startup-audio-ready appearing in a real join on 73",
+    "Sparkle update of an installed app to 73"
+  ]
+}
