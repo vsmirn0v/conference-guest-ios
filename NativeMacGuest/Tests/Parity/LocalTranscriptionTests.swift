@@ -36,6 +36,33 @@ import XCTest
     }
 
     /// Downloads from local files: verified, marked installed, ready only with the VAD.
+    /// A downloaded catalog counts only with the update key's signature over its exact
+    /// bytes, the same schema and runtime, a higher revision and pinned files.
+    func testSignedCatalogVerification() throws {
+        let key = Curve25519.Signing.PrivateKey(), publicKey = key.publicKey.rawRepresentation.base64EncodedString()
+        let current = ListenModelCatalog(schemaVersion: 1, runtime: "sherpa-onnx 2.0.1", revision: 3, models: [])
+        func catalog(revision: Int = 4, runtime: String = "sherpa-onnx 2.0.1", sha: String = String(repeating: "a", count: 64)) -> Data {
+            let json: [String: Any] = ["schemaVersion": 1, "runtime": runtime, "revision": revision, "models": [[
+                "id": "new-model", "role": "listen", "title": "New", "kind": "nemo_ctc", "languages": ["ru"], "licence": "MIT",
+                "source": "https://example.test/m", "config": ["model": "m.onnx"],
+                "files": [["name": "m.onnx", "size": 1, "url": "https://example.test/m.onnx", "sha256": sha]]]]]
+            return try! JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+        }
+        let good = catalog()
+        let accepted = try XCTUnwrap(ListenModelCatalog.verified(good, signature: try key.signature(for: good), publicKey: publicKey, over: current))
+        XCTAssertEqual(accepted.revision, 4)
+        XCTAssertNotNil(accepted.model("new-model"))
+        var tampered = good; tampered[tampered.count - 3] ^= 1
+        XCTAssertNil(ListenModelCatalog.verified(tampered, signature: try key.signature(for: good), publicKey: publicKey, over: current))
+        let otherKey = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation.base64EncodedString()
+        XCTAssertNil(ListenModelCatalog.verified(good, signature: try key.signature(for: good), publicKey: otherKey, over: current))
+        XCTAssertNil(ListenModelCatalog.verified(good, signature: try key.signature(for: good), publicKey: nil, over: current),
+                     "Builds without the update key never use a downloaded catalog")
+        for data in [catalog(revision: 3), catalog(runtime: "other"), catalog(sha: "not-a-hash")] {
+            XCTAssertNil(ListenModelCatalog.verified(data, signature: try key.signature(for: data), publicKey: publicKey, over: current))
+        }
+    }
+
     func testStoreDownloadsVerifiesAndDeletesModels() async throws {
         let source = temporaryFolder()
         try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)

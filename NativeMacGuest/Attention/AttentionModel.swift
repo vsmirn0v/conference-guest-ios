@@ -152,6 +152,17 @@ struct AttentionWindow: Equatable, Sendable, Codable {
         return SHA256.hash(data: Data(parts.joined(separator: "\n").utf8)).map { String(format: "%02x", $0) }.joined()
     }
     var isEmpty: Bool { lines.isEmpty && reactions.isEmpty && joined.isEmpty && left.isEmpty }
+    /// Silence after someone else's question long enough to suggest they wait for an answer.
+    static let questionSilence: TimeInterval = 4
+    /// The newest line, when someone else asked a question (it ends with a question mark),
+    /// nobody has spoken or written since for `questionSilence`, and it is newer than `after`.
+    func unansweredQuestion(now: Date, after: Date?) -> Line? {
+        guard let last = lines.last, !last.isYou, let at = last.at,
+              last.text.trimmed.last.map({ "?？".contains($0) }) == true,
+              now.timeIntervalSince(at) >= Self.questionSilence,
+              at > (after ?? .distantPast) else { return nil }
+        return last
+    }
     func line(ref: String) -> Line? { lines.first { $0.ref == ref } }
     func line(id: String) -> Line? { lines.first { $0.id == id } }
 }

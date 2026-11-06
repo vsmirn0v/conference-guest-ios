@@ -82,9 +82,10 @@ enum AppleOnDevice {
                                                                 list: "evidence"), window: request.window) }
         catch let error as AttentionVerdictError { throw AttentionJudgeError.verdict(error) }
         // Only a card shows the reason; a "no" keeps the English one in the decision log.
+        // A reason that cannot be translated back stays in English rather than losing the card.
         let target = Locale.Language(identifier: request.language)
-        if verdict.level != .no, target.languageCode != english.languageCode {
-            verdict.reason = try await OnDeviceTranslator.shared.translate([verdict.reason], from: english, to: target, cache: false)[verdict.reason]
+        if verdict.level != .no, translated.language == "en", target.languageCode != english.languageCode {
+            verdict.reason = (try? await OnDeviceTranslator.shared.translate([verdict.reason], from: english, to: target, cache: false))?[verdict.reason]
                 ?? verdict.reason
         }
         return .init(verdict: verdict, latency: Date().timeIntervalSince(started))
@@ -97,8 +98,8 @@ enum AppleOnDevice {
         var verdict = request.verdict
         // The card shows the reason in your language; the writer reads it in English.
         let reasonLanguage = Locale.Language(identifier: request.judge.language)
-        if reasonLanguage.languageCode != english.languageCode, needsTranslation(reasonLanguage) {
-            verdict.reason = try await OnDeviceTranslator.shared.translate([verdict.reason], from: reasonLanguage, to: english, cache: false)[verdict.reason]
+        if englishJudge.language == "en", reasonLanguage.languageCode != english.languageCode, needsTranslation(reasonLanguage) {
+            verdict.reason = (try? await OnDeviceTranslator.shared.translate([verdict.reason], from: reasonLanguage, to: english, cache: false))?[verdict.reason]
                 ?? verdict.reason
         }
         let channels = request.judge.replyChannels
@@ -137,7 +138,9 @@ enum AppleOnDevice {
 
     /// The request as the model reads it: in English when the model does not know the
     /// meeting's language, with the reason asked for in English. Returns the meeting's
-    /// language when it was translated.
+    /// language when it was translated. When translation fails (the system service can
+    /// return internal errors), the model reads the meeting as is in its own language:
+    /// weaker on Russian (25/31 vs 29/31 on the bench) but still a verdict.
     static func englishRequest(_ request: JudgeRequest) async throws -> (JudgeRequest, Locale.Language?) {
         var out = request
         out.language = "en"
@@ -148,7 +151,15 @@ enum AppleOnDevice {
             texts += [preset.about, preset.matters, preset.never] + preset.people
             texts += preset.promptExamples.flatMap { [$0.excerpt, $0.reason, $0.note ?? ""] }
         }
-        let map = try await OnDeviceTranslator.shared.translate(texts, from: source, to: Self.english)
+        let map: [String: String]
+        do { map = try await OnDeviceTranslator.shared.translate(texts, from: source, to: Self.english) }
+        catch is CancellationError { throw CancellationError() }
+        // Missing languages are for you to download: say so instead of judging weaker.
+        catch let error as OnDeviceJudgeError { throw error }
+        catch {
+            probeLog("on-device-translation-failed", ["error": String(describing: error), "language": source.minimalIdentifier])
+            return (request, nil)
+        }
         func t(_ text: String) -> String { map[text] ?? text }
         out.window.meetingTitle = t(request.window.meetingTitle)
         out.window.lines = request.window.lines.map {

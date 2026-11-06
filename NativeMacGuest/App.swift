@@ -145,6 +145,8 @@ struct NativeGuestApplication {
             let alert = NSAlert(); alert.messageText = L("Unable to verify update safety")
             alert.informativeText = error.localizedDescription; alert.runModal(); NSApp.terminate(nil); return
         }
+        // A newer signed speech-model catalog is used from the next launch.
+        Task.detached(priority: .utility) { await ListenModelCatalog.refreshRemote() }
         #endif
         launched = true
         NativeDesktopForegroundMedia.shared.start()

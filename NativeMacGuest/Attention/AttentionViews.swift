@@ -482,6 +482,33 @@ struct NativeDesktopIntelligenceSettings: View {
     @State private var previewing = false
     @State private var voiceMessage: String?
     @State private var voiceFailed = false
+    @ObservedObject private var listen = ListenModelStore.shared
+
+    /// Provider and model as one line; the Apple judge has no model name to show.
+    private func describe(_ provider: AttentionProvider) -> String {
+        provider.kind == .apple || provider.model.trimmed.isEmpty ? provider.title : provider.title + " · " + provider.model
+    }
+    private func roleRow(_ role: String, _ value: String, local: Bool, detail: String? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(role).frame(width: 110, alignment: .leading).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value).lineLimit(1)
+                if let detail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+            }
+            Spacer()
+            Text(local ? L("On this Mac") : L("Cloud")).font(.caption2.weight(.semibold))
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .foregroundStyle(local ? Color.green : Color.blue)
+                .overlay(Capsule().stroke(local ? Color.green : Color.blue, lineWidth: 1))
+        }
+    }
+    private var voiceTitle: String {
+        switch store.voiceEngine {
+        case .system: L("The macOS voice")
+        case .rapidMLX: L("Rapid-MLX on this Mac") + " · " + store.voiceModel
+        case .personal: L("Your Personal Voice")
+        }
+    }
 
     var body: some View {
         Form {
@@ -491,6 +518,16 @@ struct NativeDesktopIntelligenceSettings: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Toggle(L("Pause on battery power"), isOn: $store.pauseOnBattery)
                 if let error = attention.lastError { Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
+            }
+            Section(L("Roles")) {
+                roleRow(L("Listen"), listen.enabled ? (listen.selected?.title ?? L("Off")) : L("Off"), local: true,
+                        detail: L("%@ of speech models on this Mac", ByteCountFormatter.string(fromByteCount: listen.installedSize, countStyle: .file)))
+                roleRow(L("Judge"), describe(store.provider), local: store.provider.onThisMac)
+                if let strong = store.escalationProvider {
+                    roleRow(L("When unsure"), describe(strong), local: strong.onThisMac)
+                }
+                roleRow(L("Write"), describe(store.effectiveWriter), local: store.effectiveWriter.onThisMac)
+                roleRow(L("Voice"), voiceTitle, local: true)
             }
             Section(L("About you")) {
                 TextField(L("Your name"), text: $store.profile.name, prompt: Text(L("As people say it in meetings")))
@@ -531,6 +568,25 @@ struct NativeDesktopIntelligenceSettings: View {
                     Button(testing ? L("Testing…") : L("Test")) { runTest() }.disabled(testing || !store.ready && !(store.provider.configured && (!store.provider.needsKey || store.hasKey)))
                     if let testResult { Text(testResult).font(.caption).foregroundStyle(testFailed ? Color.red : .secondary).lineLimit(3) }
                 }
+                Picker(L("When the judge is unsure, ask"), selection: Binding(get: { store.escalationProvider?.kind }, set: { kind in
+                    store.escalationProvider = kind.flatMap { AttentionProvider.defaults[$0] }
+                })) {
+                    Text(L("Nobody")).tag(AttentionProvider.Kind?.none)
+                    ForEach(AttentionProvider.Kind.allCases.filter { $0 != .custom && $0 != store.provider.kind }, id: \.self) { kind in
+                        Text(AttentionProvider.defaults[kind]?.title ?? kind.rawValue).tag(AttentionProvider.Kind?.some(kind))
+                    }
+                }
+                if let strong = store.escalationProvider {
+                    if strong.kind != .apple {
+                        TextField(L("Model to ask"), text: Binding(get: { store.escalationProvider?.model ?? "" },
+                                                                   set: { store.escalationProvider?.model = $0 }))
+                    }
+                    if strong.needsKey && !store.hasKey {
+                        Text(L("Asking needs the API key saved above.")).font(.caption).foregroundStyle(.orange)
+                    }
+                    Text(L("When the first judge's probability is between 0.35 and 0.65, the same text goes to this one and its answer decides the card. The decision log keeps both answers.")).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Section(L("Replies")) {
                 Toggle(L("Draft chat replies and reactions on cards"), isOn: $store.draftReplies).accessibilityIdentifier("attention.replies")
@@ -566,6 +622,11 @@ struct NativeDesktopIntelligenceSettings: View {
                 Picker(L("Speak replies with"), selection: $store.voiceEngine) {
                     Text(L("The macOS voice")).tag(VoiceEngine.system)
                     Text(L("Rapid-MLX on this Mac")).tag(VoiceEngine.rapidMLX)
+                    Text(L("Your Personal Voice")).tag(VoiceEngine.personal)
+                }
+                if store.voiceEngine == .personal {
+                    Text(L("Uses the Personal Voice you created in System Settings → Accessibility. macOS asks once whether this app may use it. It speaks the language it was recorded in.")).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if store.voiceEngine == .rapidMLX {
                     TextField(L("Voice model"), text: $store.voiceModel)
@@ -586,6 +647,9 @@ struct NativeDesktopIntelligenceSettings: View {
                           : L("The judge runs on this Mac at %@: meeting text, instructions and your profile stay here.", store.provider.host), systemImage: "laptopcomputer")
                 } else {
                     Label(L("For each meeting you are not looking at: its last three minutes of text and chat, its instructions and your profile go to %@, at most six times a minute.", store.provider.host), systemImage: "arrow.up.forward")
+                }
+                if let strong = store.escalationProvider, !strong.onThisMac {
+                    Label(L("When the judge is unsure, the same text goes to %@.", strong.host), systemImage: "arrow.up.forward")
                 }
                 if store.draftsAllowed {
                     if store.effectiveWriter.onThisMac {

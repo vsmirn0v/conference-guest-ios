@@ -27,6 +27,8 @@ struct ListenModelCatalog: Decodable, Equatable {
     }
     let schemaVersion: Int
     let runtime: String
+    /// Increases with every published catalog; a downloaded one is used only when newer.
+    var revision: Int? = nil
     let models: [Model]
 
     var listen: [Model] { models.filter { $0.role == "listen" } }
@@ -34,6 +36,66 @@ struct ListenModelCatalog: Decodable, Equatable {
     func model(_ id: String) -> Model? { models.first { $0.id == id } }
 
     static let empty = ListenModelCatalog(schemaVersion: 1, runtime: "", models: [])
+
+    // MARK: Signed catalog from rock.glowsoft.ru
+
+    /// Published next to the update feed and signed with the same Ed25519 key.
+    static let remoteURL = URL(string: "https://rock.glowsoft.ru/mac/models.json")!
+    static let remoteSignatureURL = URL(string: "https://rock.glowsoft.ru/mac/models.json.sig")!
+    static let maximumSize = 262_144
+
+    /// A downloaded catalog is accepted only when the update key signed these exact
+    /// bytes, it has this app's schema and runtime, every file is pinned, and it is
+    /// newer than `current`. Models it lists replace or add to the bundled ones.
+    static func verified(_ data: Data, signature: Data, publicKey: String?, over current: ListenModelCatalog) -> ListenModelCatalog? {
+        guard data.count <= maximumSize, let publicKey, let raw = Data(base64Encoded: publicKey),
+              let key = try? Curve25519.Signing.PublicKey(rawRepresentation: raw),
+              key.isValidSignature(signature, for: data),
+              let remote = try? JSONDecoder().decode(ListenModelCatalog.self, from: data),
+              remote.schemaVersion == current.schemaVersion, remote.runtime == current.runtime,
+              (remote.revision ?? 0) > (current.revision ?? 0),
+              !remote.models.isEmpty, remote.models.allSatisfy(\.pinned) else { return nil }
+        let ids = Set(remote.models.map(\.id))
+        return ListenModelCatalog(schemaVersion: remote.schemaVersion, runtime: remote.runtime, revision: remote.revision,
+                                  models: current.models.filter { !ids.contains($0.id) } + remote.models)
+    }
+
+    /// The update key this build trusts (direct-distribution builds only).
+    static var trustedKey: String? { Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String }
+    static var cacheFolder: URL {
+        (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
+            FileManager.default.temporaryDirectory).appendingPathComponent("Models", isDirectory: true)
+    }
+
+    /// The bundled catalog, or a newer signed one downloaded earlier (re-verified on every launch).
+    static let current: ListenModelCatalog = {
+        let folder = cacheFolder
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("catalog.json")),
+              let signature = try? Data(contentsOf: folder.appendingPathComponent("catalog.json.sig")),
+              let value = verified(data, signature: signature, publicKey: trustedKey, over: bundled) else { return bundled }
+        return value
+    }()
+
+    /// Fetches the signed catalog and keeps it for the next launch when it verifies.
+    static func refreshRemote(session: URLSession = .shared) async {
+        guard trustedKey != nil else { return }
+        do {
+            let (data, response) = try await session.data(from: remoteURL)
+            guard (response as? HTTPURLResponse)?.statusCode == 200, data.count <= maximumSize else { return }
+            let (encoded, signed) = try await session.data(from: remoteSignatureURL)
+            guard (signed as? HTTPURLResponse)?.statusCode == 200,
+                  let text = String(data: encoded, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let signature = Data(base64Encoded: text),
+                  let value = verified(data, signature: signature, publicKey: trustedKey, over: current) else { return }
+            let folder = cacheFolder
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: folder.appendingPathComponent("catalog.json"), options: .atomic)
+            try signature.write(to: folder.appendingPathComponent("catalog.json.sig"), options: .atomic)
+            probeLog("listen-catalog-updated", ["revision": value.revision ?? 0, "models": value.models.count])
+        } catch {
+            probeLog("listen-catalog-refresh-failed", ["error": String(describing: error)])
+        }
+    }
     static let bundled: ListenModelCatalog = {
         guard let url = Bundle.main.url(forResource: "ListenModels", withExtension: "json"),
               let data = try? Data(contentsOf: url),
@@ -73,7 +135,7 @@ struct ListenModelCatalog: Decodable, Equatable {
     private let defaults: UserDefaults
     private var downloads: [String: Task<Void, Never>] = [:]
 
-    init(catalog: ListenModelCatalog = .bundled, root: URL? = nil, defaults: UserDefaults = .standard) {
+    init(catalog: ListenModelCatalog = .current, root: URL? = nil, defaults: UserDefaults = .standard) {
         self.catalog = catalog
         self.root = root ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
             FileManager.default.temporaryDirectory).appendingPathComponent("Models", isDirectory: true)
@@ -93,6 +155,9 @@ struct ListenModelCatalog: Decodable, Equatable {
     }
 
     var selected: ListenModelCatalog.Model? { catalog.model(selectedID) }
+    /// Installed models and the space they take.
+    var installed: [ListenModelCatalog.Model] { catalog.models.filter { state($0).installed } }
+    var installedSize: Int64 { installed.reduce(0) { $0 + $1.size } }
     func state(_ model: ListenModelCatalog.Model) -> State { states[model.id] ?? .absent }
     /// Transcription can run: switched on, and the chosen model and the VAD are installed.
     var ready: Bool {

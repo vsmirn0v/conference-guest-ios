@@ -8,10 +8,12 @@ enum VoiceEngine: String, Codable, CaseIterable, Sendable {
     case system
     /// Qwen3-TTS (or another speech model) served by Rapid-MLX on this Mac.
     case rapidMLX
+    /// The Personal Voice you created in System Settings → Accessibility (macOS 14+).
+    case personal
 }
 
 enum VoiceSynthesisError: LocalizedError, Equatable {
-    case empty, system, server(Int, String?), transport, audio
+    case empty, system, server(Int, String?), transport, audio, personalUnsupported, personalDenied, personalMissing
     var errorDescription: String? {
         switch self {
         case .empty: L("There is nothing to say.")
@@ -20,6 +22,9 @@ enum VoiceSynthesisError: LocalizedError, Equatable {
             L("The voice model answered with error %ld.", code) + (message.map { " " + L("Provider says: %@", String($0.prefix(240))) } ?? "")
         case .transport: L("The voice model on this Mac could not be reached. Is Rapid-MLX running with audio?")
         case .audio: L("The voice model returned audio this Mac could not read.")
+        case .personalUnsupported: L("Personal Voice needs macOS 14 or later.")
+        case .personalDenied: L("Allow this app to use your Personal Voice in System Settings → Privacy & Security → Personal Voice.")
+        case .personalMissing: L("No Personal Voice found. Create one in System Settings → Accessibility → Personal Voice.")
         }
     }
 }
@@ -52,6 +57,24 @@ enum VoiceSynthesis {
         guard !clean.isEmpty else { throw VoiceSynthesisError.empty }
         let language = language(of: clean) ?? Locale.preferredLanguages.first ?? "en-US"
         guard let buffer = await VoiceReplySample.make(text: clean, language: language) else { throw VoiceSynthesisError.system }
+        return buffer
+    }
+
+    /// Your Personal Voice, after the system asks you once whether this app may use it.
+    /// It speaks the language it was recorded in; a reply in another language still uses it.
+    static func personal(_ text: String) async throws -> AVAudioPCMBuffer {
+        let clean = text.trimmed
+        guard !clean.isEmpty else { throw VoiceSynthesisError.empty }
+        guard #available(macOS 14.0, *) else { throw VoiceSynthesisError.personalUnsupported }
+        var status = AVSpeechSynthesizer.personalVoiceAuthorizationStatus
+        if status == .notDetermined { status = await AVSpeechSynthesizer.requestPersonalVoiceAuthorization() }
+        guard status == .authorized else { throw VoiceSynthesisError.personalDenied }
+        let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.voiceTraits.contains(.isPersonalVoice) }
+        let language = language(of: clean) ?? ""
+        guard let voice = voices.first(where: { !language.isEmpty && $0.language.hasPrefix(language) }) ?? voices.first else {
+            throw VoiceSynthesisError.personalMissing
+        }
+        guard let buffer = await VoiceReplySample.make(text: clean, voice: voice) else { throw VoiceSynthesisError.system }
         return buffer
     }
 

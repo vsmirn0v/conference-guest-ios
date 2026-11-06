@@ -92,6 +92,56 @@ import XCTest
         ], chat: [], reactions: [], participantCount: 3, yourNames: ["Виталий"], microphoneOn: false, soundOn: false, now: now))
     }
 
+    func testEscalationOnlyForUnsureVerdictsAndAConfiguredOtherJudge() {
+        let root = folder(), defaults = UserDefaults(suiteName: "attention-\(UUID())")!
+        let keychain = AttentionKeychain(service: "dev.vsmirn0v.conferenceguest.attention.tests.\(UUID().uuidString)")
+        addTeardownBlock { keychain.delete() }
+        let store = AttentionStore(root: root, defaults: defaults, keychain: keychain)
+        store.provider = AttentionProvider.defaults[.apple]!
+        func verdict(_ probability: Double) -> AttentionVerdict {
+            .init(level: .soon, probability: probability, reason: "r", evidence: [], action: .none)
+        }
+        XCTAssertNil(store.escalation(for: verdict(0.5)), "No escalation judge chosen")
+        store.escalationProvider = AttentionProvider.defaults[.openAI]
+        XCTAssertNil(store.escalation(for: verdict(0.5)), "The API judge needs its key first")
+        store.setAPIKey("sk-test")
+        XCTAssertEqual(store.escalation(for: verdict(0.5))?.kind, .openAI)
+        XCTAssertEqual(store.escalation(for: verdict(0.35))?.kind, .openAI)
+        XCTAssertNil(store.escalation(for: verdict(0.8)), "A confident judge decides alone")
+        XCTAssertNil(store.escalation(for: verdict(0.2)))
+        store.escalationProvider = AttentionProvider.defaults[.apple]
+        XCTAssertNil(store.escalation(for: verdict(0.5)), "Never ask the same judge again")
+        let reloaded = AttentionStore(root: root, defaults: defaults, keychain: keychain)
+        XCTAssertEqual(reloaded.escalationProvider?.kind, .apple)
+    }
+
+    func testAppleWriterCanDraftWhenLocalDraftsAreAllowed() {
+        let store = store()
+        store.provider = AttentionProvider.defaults[.apple]!
+        store.draftReplies = true
+        XCTAssertFalse(store.draftsAllowed, "Drafting on this Mac stays opt-in")
+        store.localDrafts = true
+        XCTAssertTrue(store.draftsAllowed, "The Apple writer has no address but can draft")
+    }
+
+    func testUnansweredQuestionWaitsForSilenceAndIgnoresOwnAndAnswered() {
+        let now = Date()
+        func window(_ lines: [(String, String, TimeInterval, Bool)]) -> AttentionWindow {
+            AttentionWindowBuilder.build(.init(title: "d2v2", transcript: lines.enumerated().map { index, line in
+                message("q\(index)", line.0, line.1, now.addingTimeInterval(line.2), own: line.3)
+            }, chat: [], reactions: [], participantCount: 3, yourNames: ["Виталий"], microphoneOn: false, soundOn: false, now: now))
+        }
+        let asked = window([("Anna", "Кто проверит сертификаты?", -5, false)])
+        XCTAssertEqual(asked.unansweredQuestion(now: now, after: nil)?.text, "Кто проверит сертификаты?")
+        XCTAssertNil(window([("Anna", "Кто проверит сертификаты?", -2, false)]).unansweredQuestion(now: now, after: nil),
+                     "Under four seconds of silence is not yet a wait")
+        XCTAssertNil(window([("Anna", "Кто проверит?", -9, false), ("Igor", "Я проверю.", -6, false)])
+            .unansweredQuestion(now: now, after: nil), "Someone answered")
+        XCTAssertNil(window([("Me", "Всё готово?", -6, true)]).unansweredQuestion(now: now, after: nil), "Your own question")
+        XCTAssertNil(asked.unansweredQuestion(now: now, after: now.addingTimeInterval(-1)), "Already judged after it")
+        XCTAssertNil(window([("Anna", "Проверим сертификаты.", -6, false)]).unansweredQuestion(now: now, after: nil))
+    }
+
     func testPromptCarriesInstructionsExamplesAndMarkedLines() {
         var preset = MeetingPreset(title: "d2v2", bindings: [], about: "Weekly infra sync", matters: "DNS cut-over",
                                    people: ["Анна"], never: "Budget is not mine")

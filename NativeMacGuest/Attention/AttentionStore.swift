@@ -101,6 +101,10 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// The exact chat messages sent, so a replay can compare models on the same input.
     var messages: [[String: String]]? = nil
     var threshold: Double? = nil
+    /// When an unsure first judge was escalated: its verdict and model (the record's
+    /// verdict and model are then the stronger judge's).
+    var firstVerdict: AttentionVerdict? = nil
+    var firstModel: String? = nil
     /// The writer's exact prompt and its draft, so writers can be compared later.
     var replyMessages: [[String: String]]? = nil
     var draft: ReplyDraft? = nil
@@ -139,6 +143,22 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         }
     }
     static let writerKey = "attention.writer.provider"
+    /// A stronger judge asked again when the first one is unsure; nil means never.
+    @Published var escalationProvider: AttentionProvider? {
+        didSet {
+            if let escalationProvider, let data = try? JSONEncoder().encode(escalationProvider) { defaults.set(data, forKey: Self.escalationKey) }
+            else { defaults.removeObject(forKey: Self.escalationKey) }
+        }
+    }
+    static let escalationKey = "attention.judge.escalation"
+    /// Probabilities the first judge is unsure about.
+    static let escalationBand = 0.35...0.65
+    /// The escalation judge to ask for this verdict, or nil.
+    func escalation(for verdict: AttentionVerdict) -> AttentionProvider? {
+        guard let strong = escalationProvider, strong != provider, Self.escalationBand.contains(verdict.probability),
+              strong.configured, !strong.needsKey || hasKey else { return nil }
+        return strong
+    }
 
     /// The voice that speaks a reply into a meeting ("Say it" on a card).
     @Published var voiceEngine: VoiceEngine { didSet { defaults.set(voiceEngine.rawValue, forKey: Self.voiceEngineKey) } }
@@ -154,7 +174,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// Cards can draft with the writer.
     var draftsAllowed: Bool {
         let writer = effectiveWriter
-        return draftReplies && writer.endpoint != nil && (!writer.onThisMac || localDrafts) && (!writer.needsKey || hasKey)
+        return draftReplies && writer.configured && (!writer.onThisMac || localDrafts) && (!writer.needsKey || hasKey)
     }
     @Published var provider: AttentionProvider {
         didSet { if let data = try? JSONEncoder().encode(provider) { defaults.set(data, forKey: Self.providerKey) } }
@@ -177,6 +197,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         draftReplies = defaults.object(forKey: Self.repliesKey) as? Bool ?? true
         localDrafts = defaults.bool(forKey: Self.localDraftsKey)
         writerProvider = defaults.data(forKey: Self.writerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
+        escalationProvider = defaults.data(forKey: Self.escalationKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
         voiceEngine = defaults.string(forKey: Self.voiceEngineKey).flatMap(VoiceEngine.init(rawValue:)) ?? .system
         voiceModel = defaults.string(forKey: Self.voiceModelKey) ?? Self.defaultVoiceModel
         voiceDescription = defaults.string(forKey: Self.voiceDescriptionKey) ?? Self.defaultVoiceDescription

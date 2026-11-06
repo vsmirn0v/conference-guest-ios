@@ -204,7 +204,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             guard !window.isEmpty, window.fingerprint != state.fingerprint else { continue }
             let fresh = window.lines.filter { !state.seenLines.contains($0.id) }
             let trigger = fresh.contains { $0.mentionsYou && !$0.isYou } ||
-                state.changes.contains { !$0.joined && $0.at > (state.judgedAt ?? .distantPast) }
+                state.changes.contains { !$0.joined && $0.at > (state.judgedAt ?? .distantPast) } ||
+                window.unansweredQuestion(now: current, after: state.judgedAt) != nil
             let last = state.judgedAt ?? .distantPast
             guard trigger || current.timeIntervalSince(last) >= interval else { continue }
             if let chosen = best, (chosen.trigger && !trigger) || (chosen.trigger == trigger && chosen.last <= last) { continue }
@@ -249,7 +250,32 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         let provider = store.provider
         let decisionID = UUID()
         do {
-            let result = try await makeJudge(provider, store.apiKey()).judge(request)
+            var result: JudgeResult
+            var judgedBy = provider, first: (verdict: AttentionVerdict, model: String)?
+            do { result = try await makeJudge(provider, store.apiKey()).judge(request) }
+            catch is CancellationError { throw CancellationError() }
+            catch {
+                // The first judge failed outright (e.g. the system model is unavailable):
+                // the escalation judge, when set, decides instead of leaving the window unjudged.
+                guard let strong = store.escalationProvider, strong != provider, strong.configured,
+                      !strong.needsKey || store.hasKey else { throw error }
+                probeLog("attention-judge-fallback", ["error": String(describing: error)])
+                calls.append(now())
+                result = try await makeJudge(strong, store.apiKey()).judge(request)
+                judgedBy = strong
+            }
+            // An unsure first judge hands the same window to the stronger one.
+            if judgedBy == provider, let strong = store.escalation(for: result.verdict),
+               calls.filter({ now().timeIntervalSince($0) <= 60 }).count < callsPerMinuteLimit {
+                calls.append(now())
+                do {
+                    let second = try await makeJudge(strong, store.apiKey()).judge(request)
+                    first = (result.verdict, provider.model)
+                    result = .init(verdict: second.verdict, latency: result.latency + second.latency)
+                    judgedBy = strong
+                } catch is CancellationError { throw CancellationError() }
+                catch { probeLog("attention-escalation-failed", ["error": String(describing: error)]) }
+            }
             guard let model = meetings().first(where: { $0.sessionID == id }), !model.isClosed else { return }
             var state = states[id] ?? .init()
             state.verdict = result.verdict; state.judgedAt = now(); state.fingerprint = window.fingerprint; state.error = nil
@@ -258,7 +284,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             let threshold = preset?.threshold ?? AttentionUrgency.normal.baseThreshold
             let card = Card(id: decisionID, meetingID: id, meetingTitle: model.title, invitation: model.invitation,
                 seriesID: model.calendarSeriesID, verdict: result.verdict, window: window, presetID: preset?.id, threshold: threshold,
-                provider: provider.host, model: provider.model, latency: result.latency, createdAt: now(), channels: channels,
+                provider: judgedBy.host, model: judgedBy.model, latency: result.latency, createdAt: now(), channels: channels,
                 canDraft: store.draftsAllowed, canSpeak: store.draftReplies && (preset?.repliesAllowed ?? true) && voiceAvailable(model))
             let shown = apply(card, state: &state)
             // The judge suggests answering in writing: have a draft ready on the card.
@@ -268,10 +294,12 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             }
             states[id] = state
             store.log(.init(id: decisionID, at: now(), meetingTitle: model.title, presetID: preset?.id, window: window, verdict: result.verdict,
-                provider: provider.host, model: provider.model, latencyMilliseconds: Int(result.latency * 1000),
-                outcome: shown ? .shown : .belowThreshold, messages: AttentionPrompt.messages(request), threshold: threshold))
+                provider: judgedBy.host, model: judgedBy.model, latencyMilliseconds: Int(result.latency * 1000),
+                outcome: shown ? .shown : .belowThreshold, messages: AttentionPrompt.messages(request), threshold: threshold,
+                firstVerdict: first?.verdict, firstModel: first?.model))
             probeLog("attention-verdict", ["level": result.verdict.level.rawValue, "probability": result.verdict.probability,
-                "lines": window.lines.count, "latencyMs": Int(result.latency * 1000), "shown": shown])
+                "lines": window.lines.count, "latencyMs": Int(result.latency * 1000), "shown": shown,
+                "escalated": first != nil, "firstProbability": first?.verdict.probability ?? -1])
         } catch is CancellationError {
             return
         } catch {
@@ -424,6 +452,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         if let synthesizeOverride { return try await synthesizeOverride(text) }
         switch store.voiceEngine {
         case .system: return try await VoiceSynthesis.system(text)
+        case .personal: return try await VoiceSynthesis.personal(text)
         case .rapidMLX:
             return try await VoiceSynthesis.rapidMLX(text, baseURL: store.voiceBaseURL, model: store.voiceModel, description: store.voiceDescription)
         }

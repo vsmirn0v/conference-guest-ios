@@ -29,9 +29,10 @@ struct TalkHandoverRecord: Equatable {
 /// A spoken test clip from the macOS system voice, for trying voice replies
 /// before any voice model is installed.
 enum VoiceReplySample {
-    static func make(text: String, language: String = Locale.preferredLanguages.first ?? "en-US") async -> AVAudioPCMBuffer? {
+    static func make(text: String, language: String = Locale.preferredLanguages.first ?? "en-US",
+                     voice: AVSpeechSynthesisVoice? = nil) async -> AVAudioPCMBuffer? {
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: language) ?? AVSpeechSynthesisVoice(language: "en-US")
+        utterance.voice = voice ?? AVSpeechSynthesisVoice(language: language) ?? AVSpeechSynthesisVoice(language: "en-US")
         let synthesizer = AVSpeechSynthesizer()
         let collected = Collected()
         return await withCheckedContinuation { continuation in

@@ -80,6 +80,25 @@ Effort is one person; each item ends in a beta. Items marked *gated* wait on you
 - **Defer 7c** (Qwen3-TTS port, 5–7 weeks) and in-app enrollment unless Personal Voice is not
   enough.
 
+### Status after beta 70 (items 2–5 shipped together)
+
+- **Done:** peer creation off the main thread (Guest and external peers; inits async, join
+  and recovery drop a peer created after close). Question-then-silence trigger. Escalation
+  ("When the judge is unsure, ask …", band 0.35–0.65, first verdict and model kept in the
+  decision log); the escalation provider also stands in when the primary judge errors. Roles
+  view with On this Mac / Cloud badges and installed speech-model size. Signed catalog client
+  (Curve25519 over the exact bytes with the appcast key, higher revision only, every model
+  pinned) plus `distribution/sign-catalog.py`. Personal Voice as a reply voice. The Apple
+  writer can now draft (it was blocked by an endpoint check). A failed ru→en translation now
+  judges in the original language instead of failing.
+- **Not done:** sidebar resize crash and the Sparkle 65→70 update check — the debug build
+  shares the bundle ID with the installed app, so reproducing or updating would replace it;
+  needs a separate test Mac or account. No catalog is hosted yet (the app keeps the bundled
+  one until `models.json` + `.sig` are uploaded).
+- **Observed:** on this Mac the Apple model and translation refuse sessions with
+  ModelManagerError 1013 "CriticalMemoryPressure"; the real-model test skips in that state.
+  Personal Voice speaks only the languages the user's voice was recorded in.
+
 ### 6. Deferred, with the reason
 
 | Item | Why deferred |
