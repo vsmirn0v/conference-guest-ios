@@ -232,6 +232,29 @@ warm"), as planned for a non-warm move.
 Not covered here (S6 live checks): real AirPods connect/disconnect and default-device changes,
 sleep/wake on hardware, `onRecoveryFailed` surfaced in the meeting UI.
 
+## S6: beta 65 behind the flag — live checks
+
+Turn on Settings → General → "One audio engine for all meetings (experimental)", quit and
+reopen. With it off the app behaves as beta 64.
+
+1. One Guest meeting: unmute, talk, mute; the other side hears you only while unmuted.
+2. Two meetings (Guest + Telemost or TrueConf): move the microphone both ways. Expect the move to
+   take about the service round trip; only the meeting with the microphone hears you.
+3. Rock beside a Guest meeting: join Rock second and first; unmute in Rock, move to Guest and
+   back. Rock's microphone unpublishes when it loses the microphone and returns when it gets it.
+4. Echo: two meetings with sound on through the Mac speakers (no headphones), talk in one. With
+   one engine, echo cancellation covers both; compare with the flag off.
+5. Devices: plug/unplug AirPods, switch the default input/output in System Settings, close the
+   lid/sleep and wake during a meeting. Expect a moment of silence, then your microphone state as
+   it was; never another meeting hearing you.
+6. Prejoin microphone check after a Rock meeting has been joined and left (it borrows the engine).
+7. Voice replies: only the meeting with the microphone can play them (and none besides Rock once
+   a Rock meeting has been joined).
+8. CPU in Activity Monitor with three meetings, flag on vs off.
+
+Report issues with "Copy diagnostics" from the meeting; the snapshot shows `sharedAudioEngine`,
+`talkMeeting` and the engine counters.
+
 ## Risks
 
 - Our M156 fork must accept new peer connections on a running module with VPIO active, and send

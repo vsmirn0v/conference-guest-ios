@@ -1,0 +1,37 @@
+{
+  "version": "0.3.0",
+  "build": "65",
+  "channel": "beta",
+  "sourceCommit": "1c4970a",
+  "changes": [
+    "One audio engine for all meetings (experimental setting, off by default, applies after relaunch): Guest, Telemost, TrueConf and Rock meetings share one WebRTC audio engine; only the meeting with the microphone sends; per-meeting sound and volume; recovery after device changes and sleep (R4 S0-S5: e999737, 4ecd652, d6cc140, 83d23e3, 7f2917c, 1c4970a)",
+    "LiveKit SDK patches applied by prepare-livekit.py: shared factory injection and sender switch for Rock (shared-factory.patch, shared-track.patch)",
+    "Guest: receive-path ICE stalls are logged in release builds and the subscriber is relayed after one (bb34cab)"
+  ],
+  "frameworkBinarySHA256": "3d0a8ec0769bab34ce4ca47d85efe5be32f3aa12cf3c78c3b0bc19a2b70e0bc5",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-65-arm64.dmg",
+    "sha256": "6090598f1affb547590f221dbd2ef4d24ce0e9b974e28834e7d34b9b32b49439",
+    "length": 26100057
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-65-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "sharedEngineSpike": "second call attaches in 34-40 ms; sender switch ~0.1 s without engine restart",
+    "rockOnSharedOwner": "local livekit-server: listener 8.5-9.4 KB/s while Rock talks, 0 after the talk role moves (microphone unpublished); unmute 18-35 ms, move 5-9 ms",
+    "suites": "full suite with the flag off and on: only window-focus SharedTextTests and a camera-metadata test that also fails on older commits on this Mac"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 65",
+    "the shared engine in live meetings: Guest, Telemost/TrueConf, Rock, and mixed",
+    "echo across meetings on speakers, AirPods and default-device changes, sleep/wake on hardware",
+    "voice-processing (hardware) variant of the shared engine",
+    "Telemost/TrueConf speaking indicators with a disabled sender",
+    "the ICE relay fix against the reporting user's network"
+  ]
+}
