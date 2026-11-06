@@ -1,0 +1,34 @@
+{
+  "version": "0.3.0",
+  "build": "72",
+  "channel": "beta",
+  "sourceCommit": "78a365d",
+  "changes": [
+    "Local transcription: the speech model warms up 3 s after launch off every meeting's path and is freed unless a meeting uses it; the first Neural Engine load per run took 10-12 s, a reload after freeing 0.04 s (78a365d)",
+    "Guest meetings: every successful join logs startup-audio-ready with the startup report and the system-audio operation timeline, to attribute the ~4.7-5 s to active controls when alone in a room (~2 s with someone else) (78a365d)"
+  ],
+  "frameworkBinarySHA256": "c25d5287f7c46ce6db8f3f363989365ed4370ec0918a159abd6b3044c61afc2f",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-72-arm64.dmg",
+    "sha256": "1f2b2dd33e289dd08252835b5a469ffcb6b202f6496bf252d66d2b0279ba6250",
+    "length": 26323329
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-72-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "joinTimeline": "beta 71 log: connected to active controls 2.0 s with a remote audio track, 4.7 and 5.0 s alone; alone, voice processing was set up twice with ~0.9 s and ~1.0 s idle waits; the speech model started after the controls in every join",
+    "coreMLReload": "CoreMLGigaAMTests: first load 10.3 s, after freeing 0.04 s",
+    "suites": "LocalTranscriptionTests, CoreMLGigaAMTests and the diagnostics test pass (19); Guest engine and meeting-features suites pass",
+    "packaging": "first hdiutil create failed with Resource busy; the retry into a clean folder succeeded"
+  },
+  "notVerified": [
+    "startup-audio-ready appearing in a real join (engine fixtures do not reach that path)",
+    "the warm-up in a real launch",
+    "Sparkle update of an installed app to 72"
+  ]
+}
