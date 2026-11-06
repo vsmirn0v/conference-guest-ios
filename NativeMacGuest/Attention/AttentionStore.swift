@@ -2,9 +2,10 @@ import ConferenceCore
 import Foundation
 import Security
 
-/// Where the judge runs: any OpenAI-compatible chat completions endpoint.
+/// Where the judge runs: any OpenAI-compatible chat completions endpoint, or Apple's
+/// on-device model (`apple`), which needs no address, model name or key.
 struct AttentionProvider: Codable, Equatable, Sendable {
-    enum Kind: String, Codable, CaseIterable, Sendable { case openAI, openRouter, rapidMLX, local, custom }
+    enum Kind: String, Codable, CaseIterable, Sendable { case openAI, openRouter, rapidMLX, apple, local, custom }
     var kind: Kind
     var baseURL: String
     var model: String
@@ -14,19 +15,21 @@ struct AttentionProvider: Codable, Equatable, Sendable {
         .openAI: .init(kind: .openAI, baseURL: "https://api.openai.com/v1", model: "gpt-4.1-mini"),
         .openRouter: .init(kind: .openRouter, baseURL: "https://openrouter.ai/api/v1", model: "openai/gpt-4.1-mini"),
         .rapidMLX: .init(kind: .rapidMLX, baseURL: "http://127.0.0.1:8000/v1", model: rapidMLXModel),
+        .apple: .init(kind: .apple, baseURL: "", model: "system"),
         .local: .init(kind: .local, baseURL: "http://127.0.0.1:11434/v1", model: "qwen3:8b"),
         .custom: .init(kind: .custom, baseURL: "https://", model: ""),
     ]
     var title: String {
         switch kind {
-        case .openAI: "OpenAI"; case .openRouter: "OpenRouter"; case .rapidMLX: L("Rapid-MLX on this Mac")
+        case .openAI: "OpenAI"; case .openRouter: "OpenRouter"; case .rapidMLX: L("Rapid-MLX on this Mac"); case .apple: L("Apple on this Mac")
         case .local: L("Server on this network"); case .custom: L("Other")
         }
     }
     /// A local server usually needs no key.
-    var needsKey: Bool { kind != .local && kind != .rapidMLX }
+    var needsKey: Bool { ![.local, .rapidMLX, .apple].contains(kind) }
     /// The judge runs on this Mac: nothing about your meetings leaves it.
     var onThisMac: Bool {
+        if kind == .apple { return true }
         guard let host = URL(string: baseURL.trimmed)?.host?.lowercased() else { return false }
         return ["127.0.0.1", "localhost", "::1", "[::1]"].contains(host)
     }
@@ -36,7 +39,9 @@ struct AttentionProvider: Codable, Equatable, Sendable {
         return base.appendingPathComponent("chat/completions")
     }
     /// Shown as what leaves this Mac; never includes the key.
-    var host: String { URL(string: baseURL.trimmed)?.host ?? baseURL }
+    var host: String { kind == .apple ? L("this Mac") : URL(string: baseURL.trimmed)?.host ?? baseURL }
+    /// Has what a call needs, apart from a key.
+    var configured: Bool { kind == .apple || endpoint != nil && !model.trimmed.isEmpty }
 }
 
 /// The judge's API key, kept in the login keychain for this app only.
@@ -214,7 +219,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         hasKey = apiKey() != nil
         return saved
     }
-    var ready: Bool { enabled && provider.endpoint != nil && !provider.model.trimmed.isEmpty && (!provider.needsKey || hasKey) }
+    var ready: Bool { enabled && provider.configured && (!provider.needsKey || hasKey) }
 
     // MARK: Presets
 

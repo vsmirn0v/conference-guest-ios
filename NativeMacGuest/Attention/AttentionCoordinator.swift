@@ -100,8 +100,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     var hasTranscript: (NativeDesktopMeetingModel) -> Bool = { $0.transcriptionIndicator == .on || $0.transcriptionIndicator == .local }
     var openMeeting: (UUID) -> Void = { _ in }
     var notify: (Card) -> Void = { _ in }
-    var makeJudge: (AttentionProvider, String?) -> any AttentionJudge = { OpenAIChatJudge(provider: $0, key: $1) }
-    var makeWriter: (AttentionProvider, String?) -> any ReplyWriter = { OpenAIChatJudge(provider: $0, key: $1) }
+    var makeJudge: (AttentionProvider, String?) -> any AttentionJudge = { $0.client(key: $1) }
+    var makeWriter: (AttentionProvider, String?) -> any ReplyWriter = { $0.client(key: $1) }
     /// What the meeting accepts from you right now.
     var replyChannels: (NativeDesktopMeetingModel) -> ReplyChannels = { model in
         ReplyChannels(chat: model.chat.canSend, reactions: model.canReact ? MeetingReaction.allCases : [])

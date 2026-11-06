@@ -1730,3 +1730,13 @@
 "Runs on the Neural Engine: barely uses the processor. First start takes a few seconds" = "Runs on the Neural Engine: barely uses the processor. First start takes a few seconds";
 "Models run on this Mac, on its processor or Neural Engine. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder." = "Models run on this Mac, on its processor or Neural Engine. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder.";
 "Russian, with punctuation; runs on the processor" = "Russian, with punctuation; runs on the processor";
+"Apple on this Mac" = "Apple on this Mac";
+"this Mac" = "this Mac";
+"The model on this Mac needs macOS 26 or later." = "The model on this Mac needs macOS 26 or later.";
+"Turn on Apple Intelligence in System Settings to use the model on this Mac." = "Turn on Apple Intelligence in System Settings to use the model on this Mac.";
+"This Mac cannot run Apple's on-device model." = "This Mac cannot run Apple's on-device model.";
+"Apple's on-device model is still downloading. Try again later." = "Apple's on-device model is still downloading. Try again later.";
+"Download %@ and English in System Settings → General → Language & Region → Translation Languages." = "Download %@ and English in System Settings → General → Language & Region → Translation Languages.";
+"The meeting text is too long for the model on this Mac." = "The meeting text is too long for the model on this Mac.";
+"Apple's on-device model judges here. Meetings in a language it does not know, such as Russian, are translated to English on this Mac first; the card's reason and drafted replies are translated back." = "Apple's on-device model judges here. Meetings in a language it does not know, such as Russian, are translated to English on this Mac first; the card's reason and drafted replies are translated back.";
+"The judge runs on this Mac: meeting text, instructions and your profile stay here." = "The judge runs on this Mac: meeting text, instructions and your profile stay here.";

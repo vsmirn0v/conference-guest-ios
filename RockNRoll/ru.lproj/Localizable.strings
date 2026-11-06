@@ -1728,3 +1728,13 @@
 "Runs on the Neural Engine: barely uses the processor. First start takes a few seconds" = "Работает на Neural Engine и почти не нагружает процессор. Первый запуск занимает несколько секунд";
 "Models run on this Mac, on its processor or Neural Engine. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder." = "Модели работают на этом Mac — на процессоре или Neural Engine. Они загружаются с Hugging Face, проверяются по фиксированной контрольной сумме и хранятся в папке приложения.";
 "Russian, with punctuation; runs on the processor" = "Русский, с пунктуацией; работает на процессоре";
+"Apple on this Mac" = "Apple на этом Mac";
+"this Mac" = "этот Mac";
+"The model on this Mac needs macOS 26 or later." = "Для модели на этом Mac нужна macOS 26 или новее.";
+"Turn on Apple Intelligence in System Settings to use the model on this Mac." = "Включите Apple Intelligence в Системных настройках, чтобы использовать модель на этом Mac.";
+"This Mac cannot run Apple's on-device model." = "На этом Mac нельзя запустить встроенную модель Apple.";
+"Apple's on-device model is still downloading. Try again later." = "Встроенная модель Apple ещё загружается. Попробуйте позже.";
+"Download %@ and English in System Settings → General → Language & Region → Translation Languages." = "Загрузите %@ и английский: Системные настройки → Основные → Язык и регион → Языки перевода.";
+"The meeting text is too long for the model on this Mac." = "Текст встречи слишком длинный для модели на этом Mac.";
+"Apple's on-device model judges here. Meetings in a language it does not know, such as Russian, are translated to English on this Mac first; the card's reason and drafted replies are translated back." = "Решает встроенная модель Apple. Встречи на языке, которого она не знает (например, русском), сначала переводятся на английский на этом Mac; причина на карточке и черновики ответов переводятся обратно.";
+"The judge runs on this Mac: meeting text, instructions and your profile stay here." = "Модель работает на этом Mac: текст встреч, инструкции и ваш профиль остаются здесь.";

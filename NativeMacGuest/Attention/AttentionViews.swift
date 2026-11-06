@@ -502,12 +502,18 @@ struct NativeDesktopIntelligenceSettings: View {
                 Picker(L("Provider"), selection: Binding(get: { store.provider.kind }, set: { kind in
                     if kind != store.provider.kind { store.provider = AttentionProvider.defaults[kind] ?? store.provider }
                 })) { ForEach(AttentionProvider.Kind.allCases, id: \.self) { Text(AttentionProvider.defaults[$0]?.title ?? $0.rawValue).tag($0) } }
-                TextField(L("Address"), text: $store.provider.baseURL)
-                if store.provider.endpoint == nil { Text(L("Enter an http or https address.")).font(.caption).foregroundStyle(.red) }
-                HStack {
-                    TextField(L("Model"), text: $store.provider.model)
-                    Button(L("Choose…")) { choosingModel = true }.disabled(store.provider.endpoint == nil)
-                        .help(L("Pick from the models this provider offers"))
+                if store.provider.kind == .apple {
+                    Text(L("Apple's on-device model judges here. Meetings in a language it does not know, such as Russian, are translated to English on this Mac first; the card's reason and drafted replies are translated back.")).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let reason = AppleOnDeviceJudge.unavailableReason { Text(reason).font(.caption).foregroundStyle(.orange) }
+                } else {
+                    TextField(L("Address"), text: $store.provider.baseURL)
+                    if store.provider.endpoint == nil { Text(L("Enter an http or https address.")).font(.caption).foregroundStyle(.red) }
+                    HStack {
+                        TextField(L("Model"), text: $store.provider.model)
+                        Button(L("Choose…")) { choosingModel = true }.disabled(store.provider.endpoint == nil)
+                            .help(L("Pick from the models this provider offers"))
+                    }
                 }
                 if store.provider.kind == .rapidMLX { RapidMLXStatusView(store: store) }
                 if store.provider.needsKey {
@@ -520,9 +526,9 @@ struct NativeDesktopIntelligenceSettings: View {
                 }
                 HStack {
                     Button(L("Compare models…")) { comparing = true }
-                        .disabled(store.provider.endpoint == nil || store.provider.needsKey && !store.hasKey)
+                        .disabled(store.provider.endpoint == nil || store.provider.needsKey && !store.hasKey || store.provider.kind == .apple)
                         .help(L("Run your saved decisions through another model and see how it agrees with your choices"))
-                    Button(testing ? L("Testing…") : L("Test")) { runTest() }.disabled(testing || !store.ready && !(store.provider.endpoint != nil && (!store.provider.needsKey || store.hasKey)))
+                    Button(testing ? L("Testing…") : L("Test")) { runTest() }.disabled(testing || !store.ready && !(store.provider.configured && (!store.provider.needsKey || store.hasKey)))
                     if let testResult { Text(testResult).font(.caption).foregroundStyle(testFailed ? Color.red : .secondary).lineLimit(3) }
                 }
             }
@@ -542,7 +548,7 @@ struct NativeDesktopIntelligenceSettings: View {
                         Text(AttentionProvider.defaults[kind]?.title ?? kind.rawValue).tag(AttentionProvider.Kind?.some(kind))
                     }
                 }.disabled(!store.draftReplies)
-                if store.writerProvider != nil {
+                if let kind = store.writerProvider?.kind, kind != .apple {
                     TextField(L("Writer model"), text: Binding(get: { store.writerProvider?.model ?? "" },
                                                               set: { store.writerProvider?.model = $0 }))
                         .disabled(!store.draftReplies)
@@ -576,7 +582,8 @@ struct NativeDesktopIntelligenceSettings: View {
             }
             Section(L("What leaves this Mac")) {
                 if store.provider.onThisMac {
-                    Label(L("The judge runs on this Mac at %@: meeting text, instructions and your profile stay here.", store.provider.host), systemImage: "laptopcomputer")
+                    Label(store.provider.kind == .apple ? L("The judge runs on this Mac: meeting text, instructions and your profile stay here.")
+                          : L("The judge runs on this Mac at %@: meeting text, instructions and your profile stay here.", store.provider.host), systemImage: "laptopcomputer")
                 } else {
                     Label(L("For each meeting you are not looking at: its last three minutes of text and chat, its instructions and your profile go to %@, at most six times a minute.", store.provider.host), systemImage: "arrow.up.forward")
                 }

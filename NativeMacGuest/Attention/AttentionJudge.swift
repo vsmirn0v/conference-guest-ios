@@ -63,6 +63,13 @@ enum AttentionJudgeError: LocalizedError, Equatable {
     }
 }
 
+extension AttentionProvider {
+    /// The client that judges and drafts for this provider.
+    func client(key: String?) -> any AttentionJudge & ReplyWriter {
+        kind == .apple ? AppleOnDeviceJudge() : OpenAIChatJudge(provider: self, key: key)
+    }
+}
+
 /// Any OpenAI-compatible chat completions endpoint with JSON-schema output.
 /// The same provider judges meetings and drafts replies.
 struct OpenAIChatJudge: AttentionJudge, ReplyWriter {
