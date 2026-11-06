@@ -651,7 +651,13 @@ import UniformTypeIdentifiers
         joinReadinessPolicy = readinessPolicy(); joinPower = power.snapshot
         power.start { [weak self] in self?.refreshReadinessEligibility() }
         let completion = GuestCompletion<Void>(); connection = completion
-        headset.onError = { [weak self] failure in self?.error = failure.localizedDescription }
+        // A failed system input-mute write fails closed (the capture gate stays shut) and is
+        // retried on the next mute change, so it is not a meeting failure. macOS returns it
+        // while its audio session service restarts, e.g. after AirPods drop (-50).
+        headset.onError = { [weak self] failure in
+            probeLog("headset-mute-platform-error", ["error": failure.localizedDescription,
+                "phase": String(describing: self?.snapshot.phase)])
+        }
         let headsetReady = ownsMicrophone ? headset.begin { [weak self] muted in self?.setMicrophoneEnabled(!muted) } : true
         guard await NativeDesktopDeviceModel.stopPrivatePreview() else { throw NativeDesktopRTCError.cleanupFailed }
         try Task.checkCancellation()
