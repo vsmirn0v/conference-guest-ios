@@ -43,7 +43,7 @@ import CoreMedia
         for action in ["timeout", "connected", "closed", "rechecking"] {
             let audio = GuestSyntheticAudio(); defer { precondition(audio.terminateDevice()) }
             let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
-            let peer = try GuestPeer(target: .subscriber, factory: factory); defer { peer.close() }
+            let peer = try await GuestPeer(target: .subscriber, factory: factory); defer { peer.close() }
             var clock: TimeInterval = 100
             peer.iceClockForTesting = { clock }
             peer.setActiveIncomingMediaDemand(true)
@@ -96,8 +96,8 @@ import CoreMedia
 
     private static func iceActiveIncomingDemand() async throws {
         try await exercise("subscriber-active-demand") { engine in
-            _ = try engine.prepareJoinForTesting()
-            let peer = try engine.prepareSubscriberForTesting()
+            _ = try await engine.prepareJoinForTesting()
+            let peer = try await engine.prepareSubscriberForTesting()
             peer.iceClockForTesting = { 100 }
             var subscribed = Set<String>(), delays: [UInt64] = [], releases: [() -> Void] = []
             var failures = 0, finished = 0
@@ -165,7 +165,7 @@ import CoreMedia
                                                (.subscriber, .disconnected, 5_000_000_000), (.subscriber, .failed, 0)] {
             let audio = GuestSyntheticAudio(); defer { precondition(audio.terminateDevice()) }
             let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
-            let peer = try GuestPeer(target: target, factory: factory); defer { peer.close() }
+            let peer = try await GuestPeer(target: target, factory: factory); defer { peer.close() }
             var delays: [UInt64] = [], failures = 0
             let failed = Signal()
             peer.iceWaitForTesting = { delays.append($0) }
@@ -193,7 +193,7 @@ import CoreMedia
     private static func iceGatheringDiagnostics() async throws {
         let audio = GuestSyntheticAudio(); defer { precondition(audio.terminateDevice()) }
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
-        let peer = try GuestPeer(target: .subscriber, factory: factory); defer { peer.close() }
+        let peer = try await GuestPeer(target: .subscriber, factory: factory); defer { peer.close() }
         var observed: [(String, [String: Any])] = [], failures = 0
         peer.iceDiagnosticForTesting = { observed.append(($0, $1)) }
         peer.onFailure = { _ in failures += 1 }
@@ -284,7 +284,7 @@ import CoreMedia
         catch GuestICEPolicyError.noTCPRelay {}
         let audio = GuestSyntheticAudio(); defer { precondition(audio.terminateDevice()) }
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
-        let peer = try GuestPeer(target: .publisher, factory: factory, icePolicy: .tcpRelay)
+        let peer = try await GuestPeer(target: .publisher, factory: factory, icePolicy: .tcpRelay)
         defer { peer.close() }
         try await peer.configure(["iceServers": advertised, "iceTransportPolicy": "all"])
         precondition(peer.connection.configuration.iceTransportPolicy == .relay)
@@ -294,7 +294,7 @@ import CoreMedia
         precondition(GuestICEPolicy.udpPublish.forTarget(.publisher) == .udpRelay)
         precondition(GuestICEPolicy.udpPublish.forTarget(.subscriber) == .tcpRelay)
         let udpURL = "turn:relay.example:3478?transport=udp"
-        let udp = try GuestPeer(target: .subscriber, factory: factory, icePolicy: .udpRelay)
+        let udp = try await GuestPeer(target: .subscriber, factory: factory, icePolicy: .udpRelay)
         defer { udp.close() }
         try await udp.configure(["iceServers": [["urls": [valid[0], udpURL], "username": "test", "credential": "test"]]])
         precondition(udp.connection.configuration.iceTransportPolicy == .relay)
@@ -302,7 +302,7 @@ import CoreMedia
         precondition(!GuestICEPolicy.isExplicitRelay("turns:relay.example?transport=udp", transport: "udp"))
         do { _ = try GuestICEPolicy.udpRelay.servers([["urls": valid]]); preconditionFailure("No UDP endpoint") }
         catch GuestICEPolicyError.noUDPRelay {}
-        let automatic = try GuestPeer(target: .publisher, factory: factory)
+        let automatic = try await GuestPeer(target: .publisher, factory: factory)
         defer { automatic.close() }
         try await automatic.configure(["iceServers": [advertised[0]]])
         precondition(automatic.connection.configuration.iceServers.count == 1)
@@ -361,7 +361,7 @@ import CoreMedia
         defer { precondition(audio.terminateDevice()) }
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
             decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
-        let peer = try GuestPeer(target: .publisher, factory: factory)
+        let peer = try await GuestPeer(target: .publisher, factory: factory)
         defer { peer.close() }
         let track = try await peer.prepareVideo(cid: "codec-fixture")
         do {
@@ -369,7 +369,7 @@ import CoreMedia
             preconditionFailure("Repair codecs must not make an unsupported primary valid")
         } catch GuestPeerError.unsupportedCodec {}
         // A fresh peer avoids the intentionally rejected transceiver above.
-        let valid = try GuestPeer(target: .publisher, factory: factory)
+        let valid = try await GuestPeer(target: .publisher, factory: factory)
         defer { valid.close() }
         try await valid.attach(try await valid.prepareVideo(cid: "repair-fixture"), codec: "h264")
         let encodings = valid.connection.transceivers.last!.sender.parameters.encodings
@@ -530,8 +530,8 @@ import CoreMedia
 
     private static func emptyViewportRetiresAllVideo() async throws {
         try await exercise("empty-viewport") { engine in
-            _ = try engine.prepareJoinForTesting()
-            let peer = try engine.prepareSubscriberForTesting()
+            _ = try await engine.prepareJoinForTesting()
+            let peer = try await engine.prepareSubscriberForTesting()
             guard let receiver = peer.connection.addTransceiver(of: .video)?.receiver else {
                 preconditionFailure("Fixture screen receiver is missing")
             }
@@ -764,7 +764,7 @@ import CoreMedia
     private static func mutedCameraPublicationAndDeniedKinds() async throws {
         for (microphone, camera) in [(true, true), (true, false), (false, true), (false, false)] {
             try await exercise("muted-publication-\(microphone)-\(camera)") { engine in
-                let peer = try engine.prepareJoinForTesting(microphone: microphone, camera: camera)
+                let peer = try await engine.prepareJoinForTesting(microphone: microphone, camera: camera)
                 var captures = 0, kinds: [String] = []
                 engine.cameraFactoryForTesting = { _ in captures += 1; return MemoryCamera() }
                 engine.mediaNotifyForTesting = { payload in
@@ -889,7 +889,7 @@ import CoreMedia
 
     private static func receiverPublicationReassociation() async throws {
         try await exercise("receiver-publication") { engine in
-            let peer = try engine.prepareSubscriberForTesting()
+            let peer = try await engine.prepareSubscriberForTesting()
             guard let receiver = peer.connection.addTransceiver(of: .video)?.receiver,
                   let nativeTrack = receiver.track as? LKRTCVideoTrack else {
                 preconditionFailure("Fixture video receiver is missing")

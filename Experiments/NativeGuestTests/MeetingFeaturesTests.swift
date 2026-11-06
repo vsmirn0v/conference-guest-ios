@@ -134,7 +134,7 @@ import LiveKitWebRTC
 
     static func engineFeatureRequests() async throws {
         let engine = NativeGuestEngine(label: "Feature fixture")
-        _ = try engine.prepareJoinForTesting(); try await engine.processEventForTesting(joined())
+        _ = try await engine.prepareJoinForTesting(); try await engine.processEventForTesting(joined())
         var changes = 0, requests: [String] = [], reactions: [String] = []
         engine.onMeetingChange = { _ in changes += 1 }
         engine.featureRequestForTesting = { kind, payload, id in
@@ -170,7 +170,7 @@ import LiveKitWebRTC
 
     static func historyPermissionRace() async throws {
         let engine = NativeGuestEngine(label: "History fixture")
-        _ = try engine.prepareJoinForTesting(); try await engine.processEventForTesting(joined())
+        _ = try await engine.prepareJoinForTesting(); try await engine.processEventForTesting(joined())
         engine.featureRequestForTesting = { _, _, _ in
             try await engine.processEventForTesting(event("permissions-updated", ["canViewChat": false]))
             try await engine.processEventForTesting(event("permissions-updated", ["canViewChat": true]))
@@ -212,13 +212,13 @@ import LiveKitWebRTC
 
     static func screenSenderLifecycle() async throws {
         let engine = NativeGuestEngine(label: "Screen fixture")
-        let publisher = try engine.prepareJoinForTesting()
+        let publisher = try await engine.prepareJoinForTesting()
         try await engine.processEventForTesting(joined())
         let camera = try await publisher.prepareVideo(cid: "camera", enabled: false)
         try await publisher.attach(camera, codec: "h264")
         let audio = GuestSyntheticAudio()
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
-        let server = try GuestPeer(target: .subscriber, factory: factory)
+        let server = try await GuestPeer(target: .subscriber, factory: factory)
         let config = server.connection.configuration; config.iceServers = []; config.iceTransportPolicy = .none
         precondition(server.connection.setConfiguration(config))
         var version = 0, source: String?, capture: Capture?
@@ -257,7 +257,7 @@ import LiveKitWebRTC
 
     static func videoViewportDemand() async throws {
         let engine = NativeGuestEngine(label: "Viewport fixture")
-        _ = try engine.prepareJoinForTesting(); try await engine.processEventForTesting(joined())
+        _ = try await engine.prepareJoinForTesting(); try await engine.processEventForTesting(joined())
         var commands: [[String: Any]] = []
         engine.mediaNotifyForTesting = { commands.append($0) }
         let participants = (1...8).map { index -> [String: Any] in
@@ -281,7 +281,7 @@ import LiveKitWebRTC
 
     static func revokedScreenStart() async throws {
         let engine = NativeGuestEngine(label: "Screen privacy fixture")
-        _ = try engine.prepareJoinForTesting(); try await engine.processEventForTesting(joined())
+        _ = try await engine.prepareJoinForTesting(); try await engine.processEventForTesting(joined())
         var registered = false
         engine.mediaNotifyForTesting = { _ in registered = true }
         let capture = Capture()

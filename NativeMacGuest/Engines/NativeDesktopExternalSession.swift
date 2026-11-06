@@ -411,10 +411,12 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         snapshot.sharing = screenTrack != nil && sharing
         refresh(); markConnected()
     }
-    func makePeer(target: String, ice: [[String: Any]], topology: NativeDesktopRTCPeer.Topology = .split) throws -> NativeDesktopRTCPeer {
+    func makePeer(target: String, ice: [[String: Any]], topology: NativeDesktopRTCPeer.Topology = .split) async throws -> NativeDesktopRTCPeer {
         guard let factory else { throw NativeDesktopRTCError.closed }
-        let peer = try NativeDesktopRTCPeer(target: target, factory: factory, ice: ice, topology: topology, audioProfile: audioProfile)
         let attempt = epoch
+        let peer = try await NativeDesktopRTCPeer(target: target, factory: factory, ice: ice, topology: topology, audioProfile: audioProfile)
+        // Creation awaited WebRTC: a newer attempt or a leave may have started meanwhile.
+        guard epoch == attempt, self.factory === factory else { _ = await peer.close(); throw CancellationError() }
         // The owner enables the microphone track only while this meeting may be heard.
         if let track = peer.microphoneTrack { audio?.registerMicrophoneTrack(track) }
         peer.onMicrophoneTrack = { [weak self] track in

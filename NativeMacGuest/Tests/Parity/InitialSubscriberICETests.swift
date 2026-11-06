@@ -18,9 +18,9 @@ import XCTest
     var clock: TimeInterval = 100
     var waits: [Wait] = []
     var failures = 0, finished = 0
-    init(target: GuestPeerTarget) throws {
-        let publisher = try engine.prepareJoinForTesting()
-        peer = target == .subscriber ? try engine.prepareSubscriberForTesting() : publisher
+    init(target: GuestPeerTarget) async throws {
+        let publisher = try await engine.prepareJoinForTesting()
+        peer = target == .subscriber ? try await engine.prepareSubscriberForTesting() : publisher
         peer.iceClockForTesting = { [weak self] in self?.clock ?? 0 }
         peer.iceWaitForTesting = { [weak self] delay in
             try await withCheckedThrowingContinuation { [weak self] done in
@@ -72,7 +72,7 @@ import XCTest
 final class InitialSubscriberICETests: XCTestCase {
     @MainActor private func exercise(_ target: GuestPeerTarget = .subscriber,
                                     _ body: (InitialICEFixture) async throws -> Void) async throws {
-        let fixture = try InitialICEFixture(target: target)
+        let fixture = try await InitialICEFixture(target: target)
         do { try await body(fixture) }
         catch { await fixture.stop(); throw error }
         await fixture.stop()

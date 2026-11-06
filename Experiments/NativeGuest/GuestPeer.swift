@@ -126,23 +126,30 @@ final class GuestPeer: NSObject, LKRTCPeerConnectionDelegate {
 #endif
 
     init(target: GuestPeerTarget, factory: LKRTCPeerConnectionFactory, physicalAudio: Bool = false, icePolicy: GuestICEPolicy = .automatic, verifyReceivedPixels: Bool = true,
-         startupPlaybackGain: GuestStartupPlaybackGain? = nil) throws {
+         startupPlaybackGain: GuestStartupPlaybackGain? = nil) async throws {
         self.target = target; self.factory = factory; self.physicalAudio = physicalAudio; self.icePolicy = icePolicy
         self.startupPlaybackGain = startupPlaybackGain
         renderer = GuestFrameCounter(verifyPixels: verifyReceivedPixels)
         native = GuestNativeCalls(label: target.rawValue.lowercased())
         super.init()
-        let config = LKRTCConfiguration()
-        config.sdpSemantics = .unifiedPlan
-        config.continualGatheringPolicy = .gatherContinually
-        guard let pc = factory.peerConnection(with: config,
-            constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
-        else { throw GuestPeerError.malformed }
-        connection = pc
-        if let directory = Self.diagnosticEventLogDirectory {
-            let path = directory.appendingPathComponent("\(target.rawValue)-\(diagnosticID).rtc").path
-            guard pc.startRtcEventLog(withFilePath: path, maxSizeInBytes: 8 * 1024 * 1024) else { pc.close(); throw GuestPeerError.malformed }
+        // Creating the connection waits on WebRTC's threads, which can be stuck behind the
+        // audio device; it runs on the native queue like every later call.
+        let eventLog = Self.diagnosticEventLogDirectory.map {
+            $0.appendingPathComponent("\(target.rawValue)-\(diagnosticID).rtc").path
         }
+        let pc = try await native.run("create-peer-connection") { [self] () -> LKRTCPeerConnection in
+            let config = LKRTCConfiguration()
+            config.sdpSemantics = .unifiedPlan
+            config.continualGatheringPolicy = .gatherContinually
+            guard let pc = factory.peerConnection(with: config,
+                constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
+            else { throw GuestPeerError.malformed }
+            if let eventLog, !pc.startRtcEventLog(withFilePath: eventLog, maxSizeInBytes: 8 * 1024 * 1024) {
+                pc.close(); throw GuestPeerError.malformed
+            }
+            return pc
+        }
+        connection = pc
     }
 
     func configure(_ value: [String: Any]) async throws {

@@ -236,8 +236,13 @@ final class NativeGuestEngine {
         try checkActive()
         let transport = GuestTransport(url: prepared.connectorURL, roomID: prepared.roomID, origin: invitation.origin)
         self.transport = transport
-        subscriber = try makePeer(.subscriber)
-        publisher = try makePeer(.publisher)
+        // Peer creation awaits WebRTC; a leave during it closes what was made.
+        let subscriber = try await makePeer(.subscriber)
+        guard !closing else { subscriber.close(); throw CancellationError() }
+        self.subscriber = subscriber
+        let publisher = try await makePeer(.publisher)
+        guard !closing else { publisher.close(); throw CancellationError() }
+        self.publisher = publisher
         reader = Task { [weak self] in
             for await event in transport.events {
                 guard let self, !closing else { break }
@@ -264,8 +269,8 @@ final class NativeGuestEngine {
         throw GuestTransportError.timedOut
     }
 
-    private func makePeer(_ target: GuestPeerTarget) throws -> GuestPeer {
-        let peer = try GuestPeer(target: target, factory: factory, physicalAudio: systemAudio != nil, icePolicy: icePolicy, verifyReceivedPixels: verifyReceivedPixels,
+    private func makePeer(_ target: GuestPeerTarget) async throws -> GuestPeer {
+        let peer = try await GuestPeer(target: target, factory: factory, physicalAudio: systemAudio != nil, icePolicy: icePolicy, verifyReceivedPixels: verifyReceivedPixels,
             startupPlaybackGain: startupPlaybackGain)
         if GuestPeer.diagnosticEventLogDirectory != nil { probeLog("rtc-event-log", ["client": probeClient, "target": target.rawValue, "id": peer.diagnosticID]) }
         if target == .subscriber { peer.onInitialStall = { [weak self] in self?.onSubscriberStall?() } }
@@ -1516,18 +1521,18 @@ extension NativeGuestEngine {
         (localMuteIntent, serverMute, localParticipantVersion, outputSuppressed)
     }
     func identifyForTesting(_ identity: String) { localIdentity = identity }
-    func prepareSubscriberForTesting() throws -> GuestPeer {
+    func prepareSubscriberForTesting() async throws -> GuestPeer {
         guard subscriber == nil else { throw GuestEngineError.malformed }
-        let peer = try makePeer(.subscriber)
+        let peer = try await makePeer(.subscriber)
         let config = peer.connection.configuration
         config.iceServers = []; config.iceTransportPolicy = .none
         guard peer.connection.setConfiguration(config) else { throw GuestPeerError.malformed }
         subscriber = peer; localIdentity = "local"
         return peer
     }
-    func prepareJoinForTesting(microphone: Bool = true, camera: Bool = true) throws -> GuestPeer {
+    func prepareJoinForTesting(microphone: Bool = true, camera: Bool = true) async throws -> GuestPeer {
         guard publisher == nil else { throw GuestEngineError.malformed }
-        let peer = try GuestPeer(target: .publisher, factory: factory)
+        let peer = try await GuestPeer(target: .publisher, factory: factory)
         let config = peer.connection.configuration
         config.iceServers = []; config.iceTransportPolicy = .none
         guard peer.connection.setConfiguration(config) else { throw GuestPeerError.malformed }
@@ -1537,7 +1542,7 @@ extension NativeGuestEngine {
     }
     func prepareVideoUnmuteForTesting(camera: Bool = false) async throws -> GuestPeer {
         guard systemAudio == nil, publisher == nil else { throw GuestEngineError.malformed }
-        let peer = try GuestPeer(target: .publisher, factory: factory)
+        let peer = try await GuestPeer(target: .publisher, factory: factory)
         publisher = peer
         let configuration = peer.connection.configuration
         configuration.iceServers = []

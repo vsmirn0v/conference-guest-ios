@@ -55,17 +55,24 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
     private var remoteCandidates: [LKRTCIceCandidate] = []
 
     init(target: String, factory: LKRTCPeerConnectionFactory, ice: [[String: Any]], topology: Topology = .split,
-         audioProfile: GuestAudioProfile = .speech) throws {
+         audioProfile: GuestAudioProfile = .speech) async throws {
         self.target = target; self.factory = factory; self.topology = topology; self.audioProfile = audioProfile
         sequence = target == "PUBLISHER" ? 1 : 0
         native = GuestNativeCalls(label: "external-\(target.lowercased())")
         super.init()
-        let config = LKRTCConfiguration(); config.sdpSemantics = .unifiedPlan
-        config.iceServers = Self.servers(ice)
-        connection = factory.peerConnection(with: config,
-            constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
-        guard connection != nil else { throw NativeDesktopRTCError.invalidResponse }
-        if target == "PUBLISHER" { try installPublishing(Self.makePublishing(factory: factory, connection: connection, audioProfile: audioProfile)) }
+        // Creation waits on WebRTC's threads too, so it runs on the native queue.
+        let servers = Self.servers(ice), publisher = target == "PUBLISHER"
+        let (pc, publishing) = try await native.run("create-peer-connection") { [self] () -> (LKRTCPeerConnection, Publishing?) in
+            let config = LKRTCConfiguration(); config.sdpSemantics = .unifiedPlan
+            config.iceServers = servers
+            guard let pc = factory.peerConnection(with: config,
+                constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
+            else { throw NativeDesktopRTCError.invalidResponse }
+            let publishing = publisher ? try Self.makePublishing(factory: factory, connection: pc, audioProfile: audioProfile) : nil
+            return (pc, publishing)
+        }
+        connection = pc
+        if let publishing { installPublishing(publishing) }
     }
     private static func servers(_ values: [[String: Any]]) -> [LKRTCIceServer] {
         values.compactMap { value in

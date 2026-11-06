@@ -46,7 +46,7 @@ import XCTest
         let audio = GuestSyntheticAudio(); defer { XCTAssertTrue(audio.terminateDevice()) }
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
             decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
-        let peer = try GuestPeer(target: .publisher, factory: factory); defer { peer.close() }
+        let peer = try await GuestPeer(target: .publisher, factory: factory); defer { peer.close() }
         let microphone = try await peer.prepareAudio(cid: "mic")
         try await peer.attach(microphone, codec: "opus")
         peer.native.timeoutOverrideForTesting = 0.3
@@ -74,7 +74,7 @@ import XCTest
         let audio = GuestSyntheticAudio(); defer { XCTAssertTrue(audio.terminateDevice()) }
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
             decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
-        let peer = try NativeDesktopRTCPeer(target: "PUBLISHER", factory: factory, ice: [])
+        let peer = try await NativeDesktopRTCPeer(target: "PUBLISHER", factory: factory, ice: [])
         let microphone = try XCTUnwrap(peer.microphoneTrack)
         peer.native.timeoutOverrideForTesting = 0.3
 

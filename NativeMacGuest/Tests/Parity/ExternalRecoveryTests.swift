@@ -24,16 +24,16 @@ import XCTest
         }
         return predicate()
     }
-    private func blockedPeer(_ stop: BlockedCameraStop) throws -> NativeDesktopRTCPeer {
+    private func blockedPeer(_ stop: BlockedCameraStop) async throws -> NativeDesktopRTCPeer {
         _ = LKRTCInitializeSSL()
         // No system-audio owner, send tracks, permission request or camera start.
-        let peer = try NativeDesktopRTCPeer(target: "SUBSCRIBER", factory: LKRTCPeerConnectionFactory(), ice: [])
+        let peer = try await NativeDesktopRTCPeer(target: "SUBSCRIBER", factory: LKRTCPeerConnectionFactory(), ice: [])
         peer.installCameraStopForTesting(Task { await stop.wait() })
         return peer
     }
     func testLeaveDrainsBlockedRealPeerRetirementDespiteRecoveryCancellation() async throws {
         let stop = BlockedCameraStop(); defer { stop.finish(true) }
-        let engine = NativeDesktopTelemostEngine(), peer = try blockedPeer(stop)
+        let engine = NativeDesktopTelemostEngine(), peer = try await blockedPeer(stop)
         engine.publisher = peer; engine.snapshot.phase = .connected
         var audioShutdownReached = false
         engine.beforeAudioShutdownForTesting = { audioShutdownReached = true }
@@ -62,7 +62,7 @@ import XCTest
         XCTAssertNil(engine.connectionRetirementTask)
         // Post-Leave state stability: observing the cancelled recovery's result
         // cannot clear or fail a synthetic newer generation. It may already be done.
-        let replacement = try NativeDesktopRTCPeer(target: "SUBSCRIBER", factory: peer.factory, ice: [])
+        let replacement = try await NativeDesktopRTCPeer(target: "SUBSCRIBER", factory: peer.factory, ice: [])
         engine.epoch = UUID(); engine.snapshot.phase = .connected; engine.snapshot.lastError = nil
         engine.publisher = replacement
         await recovery?.value
@@ -73,7 +73,7 @@ import XCTest
     }
     func testFailedBlockedRetirementStaysFailedForAllClosersAndReplacement() async throws {
         let stop = BlockedCameraStop(); defer { stop.finish(false) }
-        let engine = NativeDesktopTrueConfEngine(), peer = try blockedPeer(stop)
+        let engine = NativeDesktopTrueConfEngine(), peer = try await blockedPeer(stop)
         engine.publisher = peer; engine.snapshot.phase = .connected
         var audioShutdownReached = false, leaveFinished = false
         engine.beforeAudioShutdownForTesting = { audioShutdownReached = true }

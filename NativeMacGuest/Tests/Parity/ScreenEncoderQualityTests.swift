@@ -77,7 +77,7 @@ final class ScreenEncoderQualityTests: XCTestCase {
         let audio = GuestSyntheticAudio(); defer { XCTAssertTrue(audio.terminateDevice()) }
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
         for codec in ["h264", "vp9"] {
-            let peer = try GuestPeer(target: .publisher, factory: factory); defer { peer.close() }
+            let peer = try await GuestPeer(target: .publisher, factory: factory); defer { peer.close() }
             let track = try await peer.prepareScreenVideo(cid: UUID().uuidString, profile: .init(width: 1920, height: 1080, fps: 30, maximumBitrate: 18_000_000))
             try await peer.attachScreenVideo(track, codec: codec)
             let sender = try XCTUnwrap(peer.connection.senders.first { $0.track?.trackId == track.trackId })
@@ -94,7 +94,7 @@ final class ScreenEncoderQualityTests: XCTestCase {
         let audio = GuestSyntheticAudio(); defer { XCTAssertTrue(audio.terminateDevice()) }
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
         for topology in [NativeDesktopRTCPeer.Topology.split, .composite] {
-            let peer = try NativeDesktopRTCPeer(target: "PUBLISHER", factory: factory, ice: [], topology: topology)
+            let peer = try await NativeDesktopRTCPeer(target: "PUBLISHER", factory: factory, ice: [], topology: topology)
             let source = factory.videoSource(forScreenCast: true)
             let track = factory.videoTrack(with: source, trackId: UUID().uuidString)
             try await peer.setScreenTrack(track)

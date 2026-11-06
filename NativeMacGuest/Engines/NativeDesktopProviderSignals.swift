@@ -16,8 +16,8 @@ extension NativeDesktopExternalSession {
             let target = try TelemostTarget.parse(invitation.absoluteString)
             let bootstrap = try await TelemostBootstrap.load(target, name: name, session: session)
             try check(attempt); telemostBootstrap = bootstrap; localID = bootstrap.participantID; roomID = bootstrap.roomID
-            subscriber = try makePeer(target: "SUBSCRIBER", ice: bootstrap.iceServers)
-            publisher = try makePeer(target: "PUBLISHER", ice: bootstrap.iceServers)
+            subscriber = try await makePeer(target: "SUBSCRIBER", ice: bootstrap.iceServers)
+            publisher = try await makePeer(target: "PUBLISHER", ice: bootstrap.iceServers)
             let transport = TelemostTransport(server: bootstrap.serverURL, session: session); telemost = transport
             transport.onMessage = { [weak self] kind, body in
                 guard let self, epoch == attempt else { return }; try await receiveTelemost(kind, body, attempt: attempt)
@@ -143,7 +143,7 @@ extension NativeDesktopExternalSession {
             try await transport.send(["method": "getIceConfig", "streamConferenceId": stream])
         case "getIceConfig":
             guard publisher == nil, !streamID.isEmpty, let values = body["iceServers"] as? [[String: Any]] else { return }
-            publisher = try makePeer(target: "COMPOSITE", ice: TrueConfICE.decode(values, cid: cid, stream: streamID), topology: .composite)
+            publisher = try await makePeer(target: "COMPOSITE", ice: TrueConfICE.decode(values, cid: cid, stream: streamID), topology: .composite)
             try await transport.send(["method": "connectMedia", "streamConferenceId": streamID, "type": 1]); try check(attempt)
             try await transport.send(["method": "DeviceStatus", "value": 262148])
         case "connectMedia":
