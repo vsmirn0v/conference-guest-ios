@@ -95,6 +95,34 @@ import XCTest
         ok(await telemost.shutdown()); ok(await trueconf.shutdown())
     }
 
+    /// Guarantee 10 on the real owner: four meetings, the talk role moving round them; the
+    /// module really activates and unmutes (manual rendering: no device is opened).
+    func testFourMeetingsShareOneOwnerAndOnlyTheTalkMeetingSends() async throws {
+        GuestSystemAudio.microphoneAuthorizationOverrideForTesting = true
+        defer { GuestSystemAudio.microphoneAuthorizationOverrideForTesting = nil }
+        let engine = SharedAudioEngine.live(manualRenderingForTesting: true)
+        var meetings: [SharedGuestMeetingAudio] = [], tracks: [LKRTCAudioTrack] = []
+        for _ in 0..<4 {
+            let meeting = try await SharedGuestMeetingAudio.attach(to: engine)
+            let track = Self.track(meeting.factory); meeting.registerMicrophoneTrack(track)
+            meetings.append(meeting); tracks.append(track)
+        }
+        XCTAssertTrue(meetings.allSatisfy { $0.factory === meetings[0].factory })
+        for round in 0..<8 {
+            let talk = round % 4
+            for (index, meeting) in meetings.enumerated() where index != talk { ok(await meeting.setInputPermitted(false)) }
+            ok(await meetings[talk].setInputPermitted(true))
+            ok(await meetings[talk].activateMicrophone())
+            ok(await meetings[talk].setMicrophoneMuted(false), "round \(round)")
+            XCTAssertEqual(tracks.map(\.isEnabled), (0..<4).map { $0 == talk }, "round \(round)")
+            XCTAssertEqual(meetings.map { $0.snapshot["microphoneMuted"] as? Bool }, (0..<4).map { $0 != talk }, "round \(round)")
+        }
+        ok(await meetings[3].setMicrophoneMuted(true))
+        XCTAssertFalse(tracks.contains { $0.isEnabled })
+        for meeting in meetings { ok(await meeting.shutdown()) }
+        XCTAssertFalse(engine.cleanupFailed)
+    }
+
     /// Records which path this test process runs (`R4_SHARED_AUDIO_ENGINE`).
     func testReportsWhetherTheSharedEngineIsOn() {
         print("R4-SHARED-AUDIO-ENGINE=\(SharedAudioEngine.enabledAtLaunch)")

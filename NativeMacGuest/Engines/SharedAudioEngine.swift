@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import Foundation
 import LiveKitWebRTC
@@ -23,6 +24,8 @@ import LiveKitWebRTC
     func setMicrophoneGate(open: Bool) -> Bool
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool
     func shutdown(timeout: TimeInterval) async -> Bool
+    /// Engine stops/starts the owner did not ask for (device or route change); any thread.
+    var onSpontaneousEngineChange: ((GuestEngineChange) -> Void)? { get set }
 }
 
 extension GuestSystemAudio: SharedAudioModule {}
@@ -55,7 +58,11 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
         return UserDefaults.standard.bool(forKey: flagKey)
     }()
     /// The app's one engine; its owner is created when the first meeting attaches.
-    static let shared = SharedAudioEngine.live()
+    static let shared: SharedAudioEngine = {
+        let engine = SharedAudioEngine.live()
+        engine.observeSystemSleep()
+        return engine
+    }()
 
     struct Timeouts {
         var mute: TimeInterval = 2
@@ -83,6 +90,14 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     private(set) var cleanupFailed = false
     /// Keep the device and voice processing running when the talk role leaves (warm move).
     var keepInputWarm = false
+    /// The talk meeting's last confirmed unmute; recovery restores exactly this.
+    private(set) var talkUnmuted = false
+    /// Between an engine stop the app did not ask for and the next start (guarantee 9).
+    private(set) var rebuilding = false
+    private(set) var recoveries = 0
+    /// The talk meeting whose unmute could not be restored after a rebuild (it stays muted).
+    var onRecoveryFailed: ((UUID) -> Void)?
+    private var sleepObservers: [NSObjectProtocol] = []
 
     private let reportFailedStop: () -> Void
 
@@ -124,6 +139,9 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
                 do {
                     let created = try await makeModule()
                     created.setInputTranscriptionSink { [inputSink] buffer in inputSink.deliver(buffer) }
+                    created.onSpontaneousEngineChange = { [weak self] change in
+                        Task { @MainActor in self?.engineChanged(change) }
+                    }
                     module = created
                 } catch { result = .failure(error); return false }
             }
@@ -171,6 +189,7 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
             guard attachments[attachment.meetingID] === attachment, !cleanupFailed else { return false }
             if talkMeetingID == attachment.meetingID { return true }
             guard await muteEverythingLocked() else { return false }
+            talkUnmuted = false
             talkMeetingID = attachment.meetingID; talkEpoch &+= 1
             inputSink.set(attachment.inputSinkHandler)
             _ = module?.setMicrophoneGate(open: true)
@@ -198,22 +217,57 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
             if muted {
                 attachment.disableSenders()
                 guard isTalk else { return true }
+                talkUnmuted = false
                 return await muteModuleLocked(module)
             }
             guard isTalk, epoch == talkEpoch, !privateCheckActive, !cleanupFailed else { return false }
-            for other in attachments.values where other !== attachment { other.disableSenders() }
-            guard attachments.values.allSatisfy({ $0 === attachment || !$0.anySenderEnabled }) else { return false }
-            guard await module.activateMicrophone(timeout: timeouts.activation) else { return false }
-            // Still the talk meeting at the same epoch after the (possibly slow) activation.
-            guard talkMeetingID == attachment.meetingID, epoch == talkEpoch else { return false }
-            attachment.enableSenders()
-            guard await module.setMicrophoneMuted(false, timeout: timeouts.mute) else {
-                attachment.disableSenders(); module.suppressMicrophone(); moduleMuted = true
-                return false
-            }
-            moduleMuted = false
-            return true
+            let unmuted = await unmuteLocked(attachment, module: module, epoch: epoch)
+            if unmuted { talkUnmuted = true }
+            return unmuted
         }
+    }
+
+    // MARK: Recovery (guarantee 9)
+
+    /// An engine stop the app did not ask for (device or route change, sleep): every sender
+    /// off at once, the module muted in order. The next start restores the talk meeting's
+    /// last confirmed unmute, through the same ordered path as a user's unmute.
+    @discardableResult func engineChanged(_ change: GuestEngineChange) -> Task<Bool, Never>? {
+        switch change {
+        case .stopped:
+            guard !rebuilding else { return nil }
+            rebuilding = true
+            for attachment in attachments.values { attachment.disableSenders() }
+            return Task { await work.run { [self] in
+                guard let module else { return true }
+                return await muteModuleLocked(module)
+            } }
+        case .started:
+            guard rebuilding else { return nil }
+            return Task { await work.run { [self] in
+                guard rebuilding else { return true }
+                rebuilding = false; recoveries += 1
+                guard talkUnmuted, let id = talkMeetingID, let talk = attachments[id], let module,
+                      !privateCheckActive, !cleanupFailed else { return true }
+                let restored = await unmuteLocked(talk, module: module, epoch: talkEpoch)
+                if !restored { talkUnmuted = false; onRecoveryFailed?(id) }
+                return restored
+            } }
+        }
+    }
+
+    /// Sleep and wake go through the same path as an engine rebuild.
+    func observeSystemSleep() {
+        guard sleepObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        sleepObservers = [
+            center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { _ = self?.engineChanged(.stopped) }
+            },
+            center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { _ = self?.engineChanged(.started) }
+            },
+        ]
     }
 
     /// Starts the microphone muted for the talk meeting after an explicit microphone
@@ -281,6 +335,22 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
 
     // MARK: Internals (run inside `work`)
 
+    /// Every other sender off, input active, then this meeting's senders and the module.
+    private func unmuteLocked(_ attachment: MeetingAudioAttachment, module: SharedAudioModule, epoch: UInt64) async -> Bool {
+        for other in attachments.values where other !== attachment { other.disableSenders() }
+        guard attachments.values.allSatisfy({ $0 === attachment || !$0.anySenderEnabled }) else { return false }
+        guard await module.activateMicrophone(timeout: timeouts.activation) else { return false }
+        // Still the talk meeting at the same epoch after the (possibly slow) activation.
+        guard talkMeetingID == attachment.meetingID, epoch == talkEpoch else { return false }
+        attachment.enableSenders()
+        guard await module.setMicrophoneMuted(false, timeout: timeouts.mute) else {
+            attachment.disableSenders(); module.suppressMicrophone(); moduleMuted = true
+            return false
+        }
+        moduleMuted = false
+        return true
+    }
+
     private func muteEverythingLocked() async -> Bool {
         for attachment in attachments.values { attachment.disableSenders() }
         guard let module else { return true }
@@ -297,6 +367,7 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
 
     private func releaseTalkLocked() async -> Bool {
         let muted = await muteEverythingLocked()
+        talkUnmuted = false
         talkMeetingID = nil; talkEpoch &+= 1
         inputSink.set(nil)
         guard let module else { return muted }

@@ -214,6 +214,67 @@ import XCTest
         XCTAssertNotNil(GuestAudioOwnerLease(privateCheck: true), "The last meeting out released the owner")
     }
 
+    // Guarantee 9: a rebuild the app did not ask for silences everything until the talk
+    // meeting's own confirmed unmute is restored.
+    func testRebuildSilencesEveryoneThenRestoresOnlyTheTalkMeetingsUnmute() async throws {
+        let (engine, module) = make()
+        let daily = try await engine.attach(meetingID: UUID()), infra = try await engine.attach(meetingID: UUID())
+        let a = FakeSender(), b = FakeSender()
+        daily.addSender(a); infra.addSender(b)
+        ok(await daily.assumeTalk()); ok(await daily.setMuted(false))
+        XCTAssertTrue(engine.talkUnmuted)
+
+        // Reported by the owner on its native worker, as a device change would be.
+        module.onSpontaneousEngineChange?(.stopped)
+        try await spin { engine.rebuilding }
+        XCTAssertFalse(a.isEnabled, "Senders are off as soon as the engine stops")
+        ok(await engine.engineChanged(.stopped)?.value ?? true, "A second stop report changes nothing")
+        try await spin { module.muted }
+        let restored = try XCTUnwrap(engine.engineChanged(.started))
+        ok(await restored.value)
+        XCTAssertTrue(a.isEnabled); XCTAssertFalse(b.isEnabled); XCTAssertFalse(module.muted)
+        XCTAssertEqual(engine.recoveries, 1); XCTAssertFalse(engine.rebuilding)
+
+        // A muted talk meeting stays muted.
+        ok(await daily.setMuted(true))
+        _ = await engine.engineChanged(.stopped)?.value
+        ok(await engine.engineChanged(.started)?.value ?? false)
+        XCTAssertFalse(a.isEnabled); XCTAssertTrue(module.muted)
+
+        // The talk role moving during the rebuild: nobody inherits the old unmute.
+        ok(await daily.setMuted(false))
+        _ = await engine.engineChanged(.stopped)?.value
+        ok(await infra.assumeTalk())
+        ok(await engine.engineChanged(.started)?.value ?? false)
+        XCTAssertFalse(a.isEnabled || b.isEnabled); XCTAssertTrue(module.muted)
+    }
+
+    func testAFailedRestoreLeavesTheMeetingMutedAndReportsIt() async throws {
+        let (engine, module) = make()
+        let daily = try await engine.attach(meetingID: UUID()), sender = FakeSender()
+        daily.addSender(sender)
+        ok(await daily.assumeTalk()); ok(await daily.setMuted(false))
+        var failed: [UUID] = []
+        engine.onRecoveryFailed = { failed.append($0) }
+        _ = await engine.engineChanged(.stopped)?.value
+        module.failActivation = true
+        no(await engine.engineChanged(.started)?.value ?? true)
+        XCTAssertFalse(sender.isEnabled); XCTAssertTrue(module.muted)
+        XCTAssertEqual(failed, [daily.meetingID]); XCTAssertFalse(engine.talkUnmuted)
+        module.failActivation = false
+        _ = await engine.engineChanged(.stopped)?.value
+        ok(await engine.engineChanged(.started)?.value ?? false)
+        XCTAssertFalse(sender.isEnabled, "After a failed restore the meeting must unmute itself again")
+    }
+
+    private func spin(_ condition: @escaping @MainActor () -> Bool, timeout: TimeInterval = 2) async throws {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        while !condition() {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { XCTFail("Condition not reached"); return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     func testLiveTracksActAsSenders() {
         let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory())
         let track = factory.audioTrack(with: factory.audioSource(with: nil), trackId: "microphone")
@@ -269,4 +330,5 @@ private final class FakeSender: MeetingAudioSender { var isEnabled = true }
     func setMicrophoneGate(open: Bool) -> Bool { true }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { replies += 1; return true }
     func shutdown(timeout: TimeInterval) async -> Bool { log.append("shutdown"); return !failShutdown }
+    var onSpontaneousEngineChange: ((GuestEngineChange) -> Void)?
 }

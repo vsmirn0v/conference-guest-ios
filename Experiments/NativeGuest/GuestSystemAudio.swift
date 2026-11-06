@@ -302,6 +302,9 @@ final class GuestAudioOperationTrace: @unchecked Sendable {
 
 /// This owner belongs only to the native probe process. Availability is an explicit privacy gate.
 /// Native ADM calls can block internally, so none run on the main actor and every caller has a deadline.
+/// An engine stop or start the owner did not ask for (device or route change, sleep).
+enum GuestEngineChange: Sendable { case stopped, started }
+
 final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @unchecked Sendable {
     private static let quarantineLock = NSLock()
     private static var quarantined: [ObjectIdentifier: GuestSystemAudio] = [:]
@@ -330,6 +333,19 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private var voiceReply: GuestVoiceReplyGraph?
     /// Tests only (manual rendering): set once at creation, before any native work.
     private var manualRenderingMode = false
+    /// Native work this owner runs itself; engine stops/starts outside it come from the
+    /// system (device or route change, sleep) and are reported to `onSpontaneousEngineChange`.
+    private var operationDepth = 0
+    private var spontaneousChangeHandler: ((GuestEngineChange) -> Void)?
+    /// Called on the native audio worker; the handler must return at once.
+    var onSpontaneousEngineChange: ((GuestEngineChange) -> Void)? {
+        get { locked { spontaneousChangeHandler } }
+        set { locked { spontaneousChangeHandler = newValue } }
+    }
+    private func reportSpontaneous(_ change: GuestEngineChange) {
+        let handler = locked { operationDepth == 0 ? spontaneousChangeHandler : nil }
+        handler?(change)
+    }
     /// Microphone permission as every check here sees it (debug tests may override it,
     /// together with manual rendering, to run without the test host's permission).
     static var microphoneAuthorized: Bool {
@@ -965,7 +981,9 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             audioQueue.async {
                 self.operationTrace.start(operationID)
                 // One owner's native audio work at a time, after others' queued work.
+                self.locked { self.operationDepth += 1 }
                 let result = GuestAudioEngineGate.shared.run(for: ObjectIdentifier(self), body)
+                self.locked { self.operationDepth -= 1 }
                 self.operationTrace.finish(operationID, succeeded: result)
                 self.update(["lastCompletedOperation": name, "lastOperationSucceeded": result])
                 if !result { probeLog("physical-audio-operation-failed", self.snapshot) }
@@ -994,13 +1012,15 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                            isPlayoutEnabled: Bool, isRecordingEnabled: Bool) -> Int {
         let forwarded = forwardObserver?.audioDeviceModule(audioDeviceModule, willStartEngine: engine,
             isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled) ?? 0
-        locked { cached["engineStarts"] = (cached["engineStarts"] as? Int ?? 0) + 1 }; return forwarded
+        locked { cached["engineStarts"] = (cached["engineStarts"] as? Int ?? 0) + 1 }
+        reportSpontaneous(.started); return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, didStopEngine engine: AVAudioEngine,
                            isPlayoutEnabled: Bool, isRecordingEnabled: Bool) -> Int {
         let forwarded = forwardObserver?.audioDeviceModule(audioDeviceModule, didStopEngine: engine,
             isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled) ?? 0
-        locked { cached["engineStops"] = (cached["engineStops"] as? Int ?? 0) + 1 }; return forwarded
+        locked { cached["engineStops"] = (cached["engineStops"] as? Int ?? 0) + 1 }
+        reportSpontaneous(.stopped); return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, didDisableEngine engine: AVAudioEngine,
                            isPlayoutEnabled: Bool, isRecordingEnabled: Bool) -> Int {
@@ -1022,7 +1042,8 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             voiceReply = nil; return current
         }
         graph?.detach()
-        locked { cached["enginesReleased"] = (cached["enginesReleased"] as? Int ?? 0) + 1 }; return forwarded
+        locked { cached["enginesReleased"] = (cached["enginesReleased"] as? Int ?? 0) + 1 }
+        reportSpontaneous(.stopped); return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, engine: AVAudioEngine,
                            configureInputFromSource source: AVAudioNode?, toDestination destination: AVAudioNode,

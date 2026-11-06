@@ -211,6 +211,27 @@ after the talk role moves away, 9.3–9.4 KB/s after it moves back; unmute 18–
 The engine is recreated once on the move back (input is released without "keep microphone
 warm"), as planned for a non-warm move.
 
+## S5 status (6 Nov 2026): recovery
+
+- Today the app has no audio recovery of its own: WebRTC's module rebuilds its engine on device
+  and route changes, and meeting-level recovery is the session's reconnect (on the shared engine
+  each attempt starts muted with no senders).
+- `GuestSystemAudio` reports engine stops/starts that happen outside its own operations
+  (`onSpontaneousEngineChange`). On such a stop the shared engine turns every sender off at
+  once and mutes the module; on the next start it restores the talk meeting's last confirmed
+  unmute through the same ordered path as a user's unmute, only if the same meeting still has
+  the talk role. A failed restore leaves the meeting muted and is reported (`onRecoveryFailed`).
+  Sleep/wake go through the same path (`observeSystemSleep`, app engine only).
+- Engine restarts LiveKit itself starts (Rock republishing its microphone) also count as
+  rebuilds: a moment of silence, then the confirmed unmute returns (seen once in the Rock test).
+- Tests: rebuild silences everyone and restores only the talk meeting's unmute; a muted talk
+  meeting stays muted; a talk move during the rebuild leaves everyone muted; a failed restore is
+  reported and needs a fresh unmute; four meetings on the real owner (manual rendering) with the
+  talk role going round twice, only the talk meeting's track enabled each time.
+
+Not covered here (S6 live checks): real AirPods connect/disconnect and default-device changes,
+sleep/wake on hardware, `onRecoveryFailed` surfaced in the meeting UI.
+
 ## Risks
 
 - Our M156 fork must accept new peer connections on a running module with VPIO active, and send

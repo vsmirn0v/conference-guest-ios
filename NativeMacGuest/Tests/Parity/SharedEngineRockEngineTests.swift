@@ -79,7 +79,7 @@ import XCTest
         let talkingAgain = try await Self.rate(back, seconds: 2)
 
         let evidence: [String: Any] = ["silentBytesPerSecond": silent, "talkingBytesPerSecond": talking, "unpublishedAfterMove": unpublished, "afterMoveBytesPerSecond": afterMove,
-            "talkingAgainBytesPerSecond": talkingAgain, "unmuteSeconds": unmuteSeconds, "moveSeconds": moveSeconds,
+            "talkingAgainBytesPerSecond": talkingAgain, "unmuteSeconds": unmuteSeconds, "moveSeconds": moveSeconds, "recoveries": engine.recoveries,
             "owner": engine.guestOwner?.snapshot.filter { ["enginesCreated", "engineStarts", "engineStops", "manualRendering"].contains($0.key) } ?? [:]]
         if let data = try? JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]) {
             print("R4-ROCK-ENGINE \(String(decoding: data, as: UTF8.self))")
