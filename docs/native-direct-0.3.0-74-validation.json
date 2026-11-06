@@ -1,0 +1,35 @@
+{
+  "version": "0.3.0",
+  "build": "74",
+  "channel": "beta",
+  "sourceCommit": "260c47f",
+  "changes": [
+    "Voice replies: \"Your voice, on the Neural Engine\" in Settings → Intelligence → Voice (macOS 27). VoxCPM2 runs in process through a Swift port of tinkerbox-ane's runtime on public Core AI: download of this chip's bundle with every file SHA-256-pinned (VoiceModels.json, 21 chip families), one-time background preparation for the Neural Engine, a short read sample of your voice kept only as latents, replies one at a time and the model unloaded after 10 idle minutes (260c47f)"
+  ],
+  "frameworkBinarySHA256": "fdf3de576a072b3e4ea6ecb6f31ef0ac1df8d7b667e30666548df9498951d789",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-74-arm64.dmg",
+    "sha256": "1a7845badb37e8bbe85b7edddaab0266ac813dd9f70091ee18d15f7357d872f4",
+    "length": 26494575
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-74-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "port": "parity with the Python runtime: tokens identical for 18 texts, AudioVAE within 1e-5, the same 22 patches given the same noise; ten Russian replies with no wrong words, similarity 0.63, 0.57 s per second of speech, 2.85 GB peak, M4 Air",
+    "compileCache": "Core AI's compiled cache survived a rebuilt, moved and renamed binary (0.5-18 s loads); the first compile per client took 24-26 min",
+    "linking": "CoreAI is LC_LOAD_WEAK_DYLIB in the release binary; VoiceModels.json and VoxCPM2-NOTICE.txt are in Resources",
+    "suites": "VoiceCloneTests (10) and AttentionTests (38) pass"
+  },
+  "notVerified": [
+    "the app's own first Neural Engine preparation",
+    "recording a voice sample in the app",
+    "a spoken reply in a meeting with the cloned voice",
+    "launch on macOS 13-26 with Core AI absent",
+    "Sparkle update of an installed app to 74"
+  ]
+}

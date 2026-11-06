@@ -172,7 +172,7 @@ only. App integration means porting the Python orchestration (generation loop, F
 sampling) and the AudioVAE decoder to Swift; the Core AI host is already Swift on public API.
 Chosen: VoxCPM2 with transcript on the ANE, compiled in the background after download.
 
-**Swift port (6 Nov, uncommitted):** `NativeMacGuest/Attention/VoxCPM2/` runs it in process,
+**Swift port (6 Nov, 260c47f, beta 74):** `NativeMacGuest/Attention/VoxCPM2/` runs it in process,
 no Python, public Core AI only: BPE tokenizer, safetensors mmap, AudioVAE encoder and
 streaming decoder on Accelerate, cached base/residual LM stages, patch encoder and fused
 diffusion sampler. Parity (`Tests/run-voxcpm2.sh` against tensors dumped from the Python
