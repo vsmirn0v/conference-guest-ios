@@ -1,0 +1,32 @@
+{
+  "version": "0.3.0",
+  "build": "69",
+  "channel": "beta",
+  "sourceCommit": "d7c37fd",
+  "changes": [
+    "Telemost/TrueConf meetings: after creation, every NativeDesktopRTCPeer call into native WebRTC runs on a serial background queue (GuestNativeCalls), as Guest peers do since beta 68; a WebRTC stall behind the audio device no longer freezes the app; microphone enable/disable is queued in order so a later mute wins; configure, enablePublishing and setScreenTrack are async (d7c37fd)"
+  ],
+  "frameworkBinarySHA256": "0e2933fbb3bcfb7961cd38226ef5075d6780f7939e68c4c29f88283ddf6348ee",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-69-arm64.dmg",
+    "sha256": "7cd0de19ce966d3e7bfabd4555ce2bf5d301ec4f81d510c92618e53d6edf8ca7",
+    "length": 26263514
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-69-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "stuckExternalPeer": "GuestNativeCallsTests: with a Telemost/TrueConf peer's native queue blocked, the main thread kept running, configuration timed out, and the microphone track ended disabled after release",
+    "suites": "GuestNativeCallsTests (3), ScreenEncoderQualityTests (5), ExternalRecoveryTests (5) pass"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 69",
+    "live Telemost and TrueConf meetings (ExternalLiveTests need the services)",
+    "an audio-device stall during a real meeting",
+    "peer creation at join is still synchronous on the main thread (Guest and external)"
+  ]
+}
