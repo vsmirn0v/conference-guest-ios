@@ -33,7 +33,7 @@ struct NativeDesktopTranscriptionSettings: View {
             }
             Section(L("Speech model")) {
                 ForEach(store.catalog.listen) { model in row(model) }
-                Text(L("Models run on this Mac's processor. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder."))
+                Text(L("Models run on this Mac, on its processor or Neural Engine. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section(L("Privacy")) {
@@ -83,8 +83,9 @@ struct NativeDesktopTranscriptionSettings: View {
         let size = ByteCountFormatter.string(fromByteCount: model.size, countStyle: .file)
         let note: String
         switch model.id {
-        case "gigaam-v3-rnnt-punct": note = L("Fastest for Russian, with punctuation")
+        case "gigaam-v3-rnnt-punct": note = L("Russian, with punctuation; runs on the processor")
         case "gigaam-v3-e2e-ctc": note = L("Russian, with punctuation")
+        case "gigaam-v3-e2e-rnnt-coreml": note = L("Runs on the Neural Engine: barely uses the processor. First start takes a few seconds")
         case "whisper-large-v3-turbo": note = L("Mixed languages; about 15 times slower")
         default: note = ""
         }

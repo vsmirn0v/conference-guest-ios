@@ -1725,3 +1725,6 @@
 "One audio engine for all meetings (experimental)" = "Один звуковой движок для всех встреч (эксперимент)";
 "Guest meetings share one microphone and speaker setup: moving your microphone needs no device restart and echo cancellation covers every meeting. Takes effect after you quit and reopen the app." = "Гостевые встречи используют общий микрофон и динамики: перенос микрофона не перезапускает устройство, а эхоподавление действует во всех встречах. Вступает в силу после перезапуска приложения.";
 "Quit and reopen the app to apply." = "Закройте и снова откройте приложение, чтобы применить.";
+"Runs on the Neural Engine: barely uses the processor. First start takes a few seconds" = "Работает на Neural Engine и почти не нагружает процессор. Первый запуск занимает несколько секунд";
+"Models run on this Mac, on its processor or Neural Engine. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder." = "Модели работают на этом Mac — на процессоре или Neural Engine. Они загружаются с Hugging Face, проверяются по фиксированной контрольной сумме и хранятся в папке приложения.";
+"Russian, with punctuation; runs on the processor" = "Русский, с пунктуацией; работает на процессоре";

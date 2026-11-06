@@ -53,7 +53,10 @@ struct ListenModelCatalog: Decodable, Equatable {
     static let externalKey = "attention.transcribeExternal"
     static let rockKey = "attention.transcribeRock"
     static let modelKey = "attention.listenModel"
-    static let defaultModel = "gigaam-v3-rnnt-punct"
+    /// Neural Engine GigaAM: same accuracy as the CPU models at a fraction of the processor time.
+    static let defaultModel = "gigaam-v3-e2e-rnnt-coreml"
+    /// The default before the Neural Engine model; kept for people who already downloaded it.
+    static let previousDefaultModel = "gigaam-v3-rnnt-punct"
     static let shared = ListenModelStore()
 
     let catalog: ListenModelCatalog
@@ -81,6 +84,12 @@ struct ListenModelCatalog: Decodable, Equatable {
         transcribesRock = defaults.bool(forKey: Self.rockKey)
         selectedID = defaults.string(forKey: Self.modelKey).flatMap { catalog.model($0)?.id } ?? Self.defaultModel
         refresh()
+        // Someone transcribing with the previous default never chose it explicitly; a new
+        // default must not stop their transcription until a 446 MB download. Keep theirs.
+        if defaults.string(forKey: Self.modelKey) == nil, let current = catalog.model(Self.defaultModel), !state(current).installed,
+           let previous = catalog.model(Self.previousDefaultModel), state(previous).installed {
+            selectedID = previous.id
+        }
     }
 
     var selected: ListenModelCatalog.Model? { catalog.model(selectedID) }
@@ -155,6 +164,8 @@ struct ListenModelCatalog: Decodable, Equatable {
                         try? FileManager.default.removeItem(at: temporary); throw ListenModelError.checksum(file.name)
                     }
                     try? FileManager.default.removeItem(at: target)
+                    // Core ML packages are folders: a file name may include subfolders.
+                    try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
                     try FileManager.default.moveItem(at: temporary, to: target)
                 }
                 done += file.size
@@ -181,11 +192,17 @@ struct ListenModelCatalog: Decodable, Equatable {
     }
 
     /// Runtime configuration for the chosen model, when installed.
-    func recognizerModel(threads: Int = 2) -> SherpaRecognizerModel? {
+    func recognizerModel(threads: Int = 2) -> ListenRecognizerModel? {
         guard let model = selected, state(model).installed else { return nil }
         let folder = folder(model)
         func file(_ key: String) -> URL? { model.config[key].map { folder.appendingPathComponent($0) } }
         guard let tokens = file("tokens") else { return nil }
+        if model.kind == Self.coreMLGigaAMKind {
+            guard let encoder = file("encoder"), let decoder = file("decoder"), let joint = file("joint") else { return nil }
+            // Compiled models live beside the downloads and go with them on delete.
+            return .coreMLGigaAM(.init(encoder: encoder, decoder: decoder, joint: joint, tokens: tokens,
+                                       cache: folder.appendingPathComponent("compiled", isDirectory: true)))
+        }
         let kind: SherpaRecognizerModel.Kind
         switch model.kind {
         case "nemo_transducer":
@@ -200,8 +217,10 @@ struct ListenModelCatalog: Decodable, Equatable {
         default:
             return nil
         }
-        return .init(kind: kind, tokens: tokens, featureDimension: model.featureDim ?? 80, threads: threads)
+        return .sherpa(.init(kind: kind, tokens: tokens, featureDimension: model.featureDim ?? 80, threads: threads))
     }
+    /// Native Core ML GigaAM: encoder on the Neural Engine, packages as nested files.
+    static let coreMLGigaAMKind = "coreml_gigaam_rnnt"
 
     var vadURL: URL? {
         guard let vad = catalog.vad, state(vad).installed, let name = vad.config["model"] else { return nil }

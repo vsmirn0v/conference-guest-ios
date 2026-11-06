@@ -149,6 +149,7 @@ import UniformTypeIdentifiers
         let wanted = !closed && connected && localTranscriptionAllowed && !localTranscriptionPaused &&
             guestFeatures.transcriptionStatus != .active
         if wanted, localTranscriber == nil, let model = listenStore.recognizerModel(), let vad = listenStore.vadURL {
+            LocalSpeechRecognizer.shared.prepare(model)   // loads before the first utterance
             let transcriber = MeetingTranscriber(model: model, vadModel: vad) { [weak self] line in self?.receiveLocalLine(line) }
             localTranscriber = transcriber
             engine.setTranscriptionAudioHandler { [weak self, weak transcriber] sources in

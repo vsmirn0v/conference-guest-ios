@@ -68,6 +68,13 @@ struct SpeakingTimeline: Equatable {
     }
 }
 
+/// A listen model ready to run: through sherpa-onnx on the CPU, or as native Core ML
+/// (the encoder on the Neural Engine).
+enum ListenRecognizerModel: Equatable, Sendable {
+    case sherpa(SherpaRecognizerModel)
+    case coreMLGigaAM(CoreMLGigaAMModel)
+}
+
 /// One recognizer for every meeting. Utterances run one at a time on a utility
 /// queue; when more than `maxPendingSeconds` of speech waits, new speech is
 /// dropped and counted instead of falling ever further behind.
@@ -77,11 +84,11 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "attention.listen.recognizer", qos: .utility)
     private let lock = NSLock()
     private var pending = 0.0
-    private var recognizer: SherpaOfflineRecognizer?
-    private var loaded: SherpaRecognizerModel?
+    private var recognizer: (([Float]) throws -> String)?
+    private var loaded: ListenRecognizerModel?
 
     /// Calls `completion` on the recognizer queue: text, or nil when dropped or failed.
-    func transcribe(_ samples: [Float], model: SherpaRecognizerModel, completion: @escaping (String?, TimeInterval) -> Void) {
+    func transcribe(_ samples: [Float], model: ListenRecognizerModel, completion: @escaping (String?, TimeInterval) -> Void) {
         let seconds = Double(samples.count) / 16_000
         let admitted: Bool = { lock.lock(); defer { lock.unlock() }
             guard pending + seconds <= Self.maxPendingSeconds else { return false }
@@ -89,19 +96,52 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
         guard admitted else { completion(nil, 0); return }
         queue.async { [self] in
             defer { lock.lock(); pending -= seconds; lock.unlock() }
-            if loaded != model {
-                recognizer = nil; loaded = nil
-                do { recognizer = try SherpaOfflineRecognizer(model); loaded = model }
-                catch { probeLog("local-transcription-load-failed", [:]); completion(nil, 0); return }
-            }
+            guard load(model) else { completion(nil, 0); return }
             let started = ProcessInfo.processInfo.systemUptime
-            let text = recognizer?.transcribe(samples)
+            let text: String?
+            do { text = try recognizer?(samples) } catch {
+                probeLog("local-transcription-decode-failed", ["error": String(describing: error)]); text = nil
+            }
             completion(text, ProcessInfo.processInfo.systemUptime - started)
         }
     }
 
+    /// Loads the model ahead of the first utterance (the Neural Engine model takes
+    /// seconds to load; the first launch also compiles it).
+    func prepare(_ model: ListenRecognizerModel) { queue.async { [self] in _ = load(model) } }
+
     /// Frees the model's memory when no meeting transcribes.
     func unload() { queue.async { [self] in recognizer = nil; loaded = nil } }
+
+    /// On the queue. True when `model` is the loaded one.
+    private func load(_ model: ListenRecognizerModel) -> Bool {
+        if loaded == model, recognizer != nil { return true }
+        recognizer = nil; loaded = nil
+        let started = ProcessInfo.processInfo.systemUptime
+        do {
+            switch model {
+            case .sherpa(let configuration):
+                let engine = try SherpaOfflineRecognizer(configuration)
+                recognizer = { engine.transcribe($0) }
+            case .coreMLGigaAM(let configuration):
+                let engine = try CoreMLGigaAMRecognizer(configuration)
+                recognizer = { try engine.transcribe($0) }
+            }
+            loaded = model
+            probeLog("local-transcription-loaded", ["engine": model.engineName,
+                "seconds": ProcessInfo.processInfo.systemUptime - started])
+            return true
+        } catch {
+            probeLog("local-transcription-load-failed", ["engine": model.engineName, "error": String(describing: error)])
+            return false
+        }
+    }
+}
+
+extension ListenRecognizerModel {
+    var engineName: String {
+        switch self { case .sherpa: "sherpa-onnx"; case .coreMLGigaAM: "coreml" }
+    }
 }
 
 /// Transcribes one meeting: one tap per remote participant track, resampled to
@@ -124,7 +164,7 @@ final class MeetingTranscriber: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "attention.listen.meeting", qos: .utility)
     private let recognizer: LocalSpeechRecognizer
-    private let model: SherpaRecognizerModel
+    private let model: ListenRecognizerModel
     private let vadModel: URL
     private let onLine: @MainActor (Line) -> Void
     // Main actor: attached sinks by source id.
@@ -143,7 +183,7 @@ final class MeetingTranscriber: @unchecked Sendable {
         init(detector: SherpaVoiceActivityDetector) { self.detector = detector }
     }
 
-    init(model: SherpaRecognizerModel, vadModel: URL, recognizer: LocalSpeechRecognizer = .shared,
+    init(model: ListenRecognizerModel, vadModel: URL, recognizer: LocalSpeechRecognizer = .shared,
          onLine: @escaping @MainActor (Line) -> Void) {
         self.model = model; self.vadModel = vadModel; self.recognizer = recognizer; self.onLine = onLine
     }

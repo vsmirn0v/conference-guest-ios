@@ -1727,3 +1727,6 @@
 "One audio engine for all meetings (experimental)" = "One audio engine for all meetings (experimental)";
 "Guest meetings share one microphone and speaker setup: moving your microphone needs no device restart and echo cancellation covers every meeting. Takes effect after you quit and reopen the app." = "Guest meetings share one microphone and speaker setup: moving your microphone needs no device restart and echo cancellation covers every meeting. Takes effect after you quit and reopen the app.";
 "Quit and reopen the app to apply." = "Quit and reopen the app to apply.";
+"Runs on the Neural Engine: barely uses the processor. First start takes a few seconds" = "Runs on the Neural Engine: barely uses the processor. First start takes a few seconds";
+"Models run on this Mac, on its processor or Neural Engine. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder." = "Models run on this Mac, on its processor or Neural Engine. They are downloaded from Hugging Face, checked against a fixed checksum, and stored in this app's folder.";
+"Russian, with punctuation; runs on the processor" = "Russian, with punctuation; runs on the processor";

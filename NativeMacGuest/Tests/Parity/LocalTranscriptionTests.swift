@@ -24,10 +24,13 @@ import XCTest
                               || url.contains("/releases/download/"), "\(file.name) is not pinned to a revision")
             }
             let keys: [String: [String]] = ["nemo_transducer": ["encoder", "decoder", "joiner", "tokens"],
-                "nemo_ctc": ["model", "tokens"], "whisper": ["encoder", "decoder", "tokens"], "silero_vad": ["model"]]
+                "nemo_ctc": ["model", "tokens"], "whisper": ["encoder", "decoder", "tokens"], "silero_vad": ["model"],
+                ListenModelStore.coreMLGigaAMKind: ["encoder", "decoder", "joint", "tokens"]]
             for key in try XCTUnwrap(keys[model.kind], model.kind) {
                 let name = try XCTUnwrap(model.config[key], "\(model.id) misses \(key)")
-                XCTAssertTrue(model.files.contains { $0.name == name }, "\(model.id): \(key) names a file it does not download")
+                // A Core ML package is a folder: its files are downloaded under its name.
+                XCTAssertTrue(model.files.contains { $0.name == name || $0.name.hasPrefix(name + "/") },
+                              "\(model.id): \(key) names a file it does not download")
             }
         }
     }
@@ -57,7 +60,9 @@ import XCTest
         for _ in 0..<200 where !(store.state(listen).installed && store.state(vad).installed) { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(store.state(listen), .installed); XCTAssertEqual(store.state(vad), .installed, "The VAD comes with a listen model")
         XCTAssertTrue(store.ready)
-        guard case .nemoCTC = try XCTUnwrap(store.recognizerModel()).kind else { return XCTFail("CTC configuration") }
+        guard case .sherpa(let configuration) = try XCTUnwrap(store.recognizerModel()), case .nemoCTC = configuration.kind else {
+            return XCTFail("CTC configuration")
+        }
         XCTAssertNotNil(store.vadURL)
         let reloaded = ListenModelStore(catalog: store.catalog, root: store.root, defaults: defaults)
         XCTAssertTrue(reloaded.ready, "Installed state and choice survive a restart")
@@ -148,9 +153,9 @@ import XCTest
         try file.read(into: buffer)
         let speech = Array(UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength)))
         let lines = Lines()
-        let transcriber = MeetingTranscriber(model: .init(kind: .nemoTransducer(
+        let transcriber = MeetingTranscriber(model: .sherpa(.init(kind: .nemoTransducer(
             encoder: folder.appendingPathComponent("encoder.int8.onnx"), decoder: folder.appendingPathComponent("decoder.onnx"),
-            joiner: folder.appendingPathComponent("joiner.onnx")), tokens: folder.appendingPathComponent("tokens.txt"), featureDimension: 64),
+            joiner: folder.appendingPathComponent("joiner.onnx")), tokens: folder.appendingPathComponent("tokens.txt"), featureDimension: 64)),
             vadModel: vad, recognizer: LocalSpeechRecognizer()) { lines.value.append($0) }
         return ([Float](repeating: 0, count: 16_000) + speech + [Float](repeating: 0, count: 16_000), transcriber, lines)
     }
