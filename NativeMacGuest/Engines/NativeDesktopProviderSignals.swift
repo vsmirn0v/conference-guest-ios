@@ -71,7 +71,7 @@ extension NativeDesktopExternalSession {
         try check(attempt)
         switch kind {
         case "serverHello":
-            if let config = body["rtcConfiguration"] as? [String: Any] { try subscriber?.configure(config); try publisher?.configure(config) }
+            if let config = body["rtcConfiguration"] as? [String: Any] { try await subscriber?.configure(config); try await publisher?.configure(config) }
             ready = true; scheduleMedia()
         case "subscriberSdpOffer":
             guard let subscriber, let telemost else { throw TelemostError.disconnected }
@@ -155,7 +155,7 @@ extension NativeDesktopExternalSession {
             case "offer":
                 let answer = try await publisher.answer(body); try check(attempt)
                 try await sendTrueConfMedia(["type": "answer", "sdp": answer["sdp"] ?? "", "browser": "RockNRoll Native"]); try check(attempt)
-                publisher.localSDPSent(); try publisher.enablePublishing(); ready = true
+                publisher.localSDPSent(); try await publisher.enablePublishing(); ready = true
                 try await transport.send(["method": "ManageLayout", "func": "Get"]); try check(attempt); scheduleMedia()
             case "answer":
                 do { try await publisher.accept(body); try check(attempt); pendingAnswer?.finish(.success(())); markConnected() }
@@ -179,7 +179,7 @@ extension NativeDesktopExternalSession {
                 }
             }
         case "stopContentSharing":
-            screenTrack = nil; try publisher?.setScreenTrack(nil); snapshot.sharing = false; scheduleMedia(); publish()
+            screenTrack = nil; try await publisher?.setScreenTrack(nil); snapshot.sharing = false; scheduleMedia(); publish()
         default: break
         }
     }

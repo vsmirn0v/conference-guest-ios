@@ -312,7 +312,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
     func setScreenTrack(_ track: LKRTCVideoTrack?) async throws {
         guard [.connecting, .connected, .reconnecting].contains(snapshot.phase) else { throw NativeDesktopRTCError.closed }
         screenTrack = track
-        try publisher?.setScreenTrack(track)
+        try await publisher?.setScreenTrack(track)
         if track == nil { snapshot.sharing = false; publish() }
         scheduleMedia(); await mediaTask?.value
     }
@@ -372,7 +372,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         guard await audio.setMicrophoneMuted(!mic) else { throw NativeDesktopRTCError.invalidResponse }
         try check(attempt)
         publisher.setMicrophone(microphoneIntent && mic)
-        try publisher.setScreenTrack(screenTrack)
+        try await publisher.setScreenTrack(screenTrack)
         let offer = try await publisher.offer(); try check(attempt)
         let completion = GuestCompletion<Void>(); pendingAnswer = completion
         do {

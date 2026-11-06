@@ -5,13 +5,16 @@ import LiveKitWebRTC
 enum NativeDesktopRTCError: Error, Equatable { case closed, invalidResponse, cleanupFailed, permissionDenied }
 
 /// A peer borrows one session-owned native audio factory. It never initializes
-/// the iOS audio session or starts a second audio device.
+/// the iOS audio session or starts a second audio device. Every call into the
+/// native objects after creation runs on `native`, never on the main thread
+/// (WebRTC can be stuck for seconds behind the audio device).
 @MainActor
 final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
     enum Topology { case split, composite }
     let target: String
     let topology: Topology
     let factory: LKRTCPeerConnectionFactory
+    let native: GuestNativeCalls
     private let audioProfile: GuestAudioProfile
     private(set) var connection: LKRTCPeerConnection!
     var onCandidate: (([String: Any]) -> Void)?
@@ -55,13 +58,14 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
          audioProfile: GuestAudioProfile = .speech) throws {
         self.target = target; self.factory = factory; self.topology = topology; self.audioProfile = audioProfile
         sequence = target == "PUBLISHER" ? 1 : 0
+        native = GuestNativeCalls(label: "external-\(target.lowercased())")
         super.init()
         let config = LKRTCConfiguration(); config.sdpSemantics = .unifiedPlan
         config.iceServers = Self.servers(ice)
         connection = factory.peerConnection(with: config,
             constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
         guard connection != nil else { throw NativeDesktopRTCError.invalidResponse }
-        if target == "PUBLISHER" { try enablePublishing() }
+        if target == "PUBLISHER" { try installPublishing(Self.makePublishing(factory: factory, connection: connection, audioProfile: audioProfile)) }
     }
     private static func servers(_ values: [[String: Any]]) -> [LKRTCIceServer] {
         values.compactMap { value in
@@ -70,38 +74,63 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
             return .init(urlStrings: urls, username: value["username"] as? String, credential: value["credential"] as? String)
         }
     }
-    func configure(_ fields: [String: Any]) throws {
+    func configure(_ fields: [String: Any]) async throws {
         try check()
         guard let values = fields["iceServers"] as? [[String: Any]] else { return }
-        let config = connection.configuration; config.iceServers = Self.servers(values)
-        guard connection.setConfiguration(config) else { throw NativeDesktopRTCError.invalidResponse }
+        let connection = connection!, servers = Self.servers(values)
+        let applied = try await native.run("set-configuration") { () -> Bool in
+            let config = connection.configuration; config.iceServers = servers
+            return connection.setConfiguration(config)
+        }
+        guard applied else { throw NativeDesktopRTCError.invalidResponse }
     }
-    /// TrueConf must answer its receive offer before appending send transceivers.
-    func enablePublishing() throws {
-        try check(); guard audioTransceiver == nil else { return }
+    private typealias Publishing = (track: LKRTCAudioTrack, audio: LKRTCRtpTransceiver, video: LKRTCRtpTransceiver)
+    /// Creates the disabled microphone track and the send transceivers. Native queue (or creation) only.
+    nonisolated private static func makePublishing(factory: LKRTCPeerConnectionFactory, connection: LKRTCPeerConnection,
+                                                   audioProfile: GuestAudioProfile) throws -> Publishing {
         let options = LKRTCRtpTransceiverInit(); options.direction = .sendOnly
         let source = factory.audioSource(with: LKRTCMediaConstraints(mandatoryConstraints: audioProfile.audioConstraints, optionalConstraints: nil))
         let track = factory.audioTrack(with: source, trackId: "microphone"); track.isEnabled = false
         guard let audio = connection.addTransceiver(with: track, init: options),
               let video = connection.addTransceiver(of: .video, init: options) else { throw NativeDesktopRTCError.invalidResponse }
-        audioTrack = track; audioTransceiver = audio; videoTransceiver = video
-        preferH264(video)
-        onMicrophoneTrack?(track)
+        preferH264(video, factory: factory)
+        return (track, audio, video)
+    }
+    private func installPublishing(_ value: Publishing) {
+        audioTrack = value.track; audioTransceiver = value.audio; videoTransceiver = value.video
+        onMicrophoneTrack?(value.track)
+    }
+    /// TrueConf must answer its receive offer before appending send transceivers.
+    func enablePublishing() async throws {
+        try check(); guard audioTransceiver == nil else { return }
+        let factory = factory, connection = connection!, profile = audioProfile
+        let value = try await native.run("enable-publishing") {
+            try Self.makePublishing(factory: factory, connection: connection, audioProfile: profile)
+        }
+        try check(); guard audioTransceiver == nil else { return }
+        installPublishing(value)
     }
     /// The microphone track once publishing is enabled (created disabled).
     var microphoneTrack: LKRTCAudioTrack? { audioTrack }
     /// Called when publishing creates the microphone track after the peer was handed out.
     var onMicrophoneTrack: ((LKRTCAudioTrack) -> Void)?
-    private func preferH264(_ transceiver: LKRTCRtpTransceiver) {
+    nonisolated private static func preferH264(_ transceiver: LKRTCRtpTransceiver, factory: LKRTCPeerConnectionFactory) {
         let codecs = factory.rtpSenderCapabilities(forKind: "video").codecs
         try? transceiver.setCodecPreferences(codecs.filter { $0.name == "H264" } + codecs.filter { $0.name != "H264" }, error: ())
     }
-    func setMicrophone(_ enabled: Bool) { audioTrack?.isEnabled = enabled && !closed }
-    var microphoneSending: Bool { !closed && audioTrack?.isEnabled == true }
+    /// Queued in order with every other native call; a later `false` always wins.
+    func setMicrophone(_ enabled: Bool) {
+        let enabled = enabled && !closed, track = audioTrack
+        microphoneEnabled = enabled
+        native.post(enabled ? "enable-microphone" : "disable-microphone") { track?.isEnabled = enabled }
+    }
+    private var microphoneEnabled = false
+    var microphoneSending: Bool { !closed && audioTrack != nil && microphoneEnabled }
     func microphoneLevel() async -> Float? {
         guard microphoneSending, let sender = audioTransceiver?.sender else { return nil }
-        let report: LKRTCStatisticsReport? = try? await guestAwait(timeout: 2) { [connection] done in
-            connection?.statistics(for: sender) { done(.success($0)) }
+        let connection = connection!
+        let report: LKRTCStatisticsReport? = try? await native.call("microphone-statistics", timeout: 2) { done in
+            connection.statistics(for: sender) { done(.success($0)) }
         }
         guard !closed else { return nil }
         return report?.statistics.values.compactMap { row -> Float? in
@@ -113,7 +142,9 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
         guard !closed || !enabled else { throw NativeDesktopRTCError.closed }
         if enabled && captureCleanupFailed { throw NativeDesktopRTCError.cleanupFailed }
         if !enabled {
-            cameraRevision &+= 1; videoTrack?.isEnabled = false; videoTrack = nil
+            cameraRevision &+= 1
+            let track = videoTrack; native.post("disable-camera-track") { track?.isEnabled = false }
+            videoTrack = nil
             applyVideo(); onLocalCamera?(nil)
             if let capture = camera {
                 camera = nil; capture.cancel()
@@ -126,13 +157,18 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
         let revision = cameraRevision
         guard await cameraStop?.value != false else { throw NativeDesktopRTCError.cleanupFailed }
         try check(); guard cameraRevision == revision else { throw CancellationError() }
-        let source = factory.videoSource(); source.adaptOutputFormat(toWidth: 1280, height: 720, fps: 30)
+        let factory = factory
+        let source = try await native.run("camera-source") { () -> LKRTCVideoSource in
+            let source = factory.videoSource(); source.adaptOutputFormat(toWidth: 1280, height: 720, fps: 30); return source
+        }
+        try check(); guard cameraRevision == revision else { throw CancellationError() }
         let selected = UserDefaults.standard.string(forKey: "nativeDesktop.cameraID").flatMap { $0.isEmpty ? nil : $0 }
         let capture = GuestCamera(source: source, deviceID: selected); camera = capture
         do {
             _ = try await capture.start()
             try check(); guard cameraRevision == revision, camera === capture else { throw CancellationError() }
-            let track = factory.videoTrack(with: source, trackId: "camera")
+            let track = try await native.run("camera-track") { factory.videoTrack(with: source, trackId: "camera") }
+            try check(); guard cameraRevision == revision, camera === capture else { throw CancellationError() }
             videoTrack = track; applyVideo(); onLocalCamera?(track)
         } catch {
             capture.cancel()
@@ -142,52 +178,76 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
             throw error
         }
     }
-    private func applyVideo() { videoTransceiver?.sender.track = topology == .composite ? (shareTrack ?? videoTrack) : videoTrack }
-    func setScreenTrack(_ track: LKRTCVideoTrack?) throws {
+    private func applyVideo() {
+        let transceiver = videoTransceiver, track = topology == .composite ? (shareTrack ?? videoTrack) : videoTrack
+        native.post("apply-video") { transceiver?.sender.track = track }
+    }
+    func setScreenTrack(_ track: LKRTCVideoTrack?) async throws {
         if track != nil { try check() }
         if topology == .composite {
             shareTrack = track; applyVideo()
-            configureSender(videoTransceiver?.sender, sharing: track != nil)
+            configureSender(videoTransceiver, sharing: track != nil)
             return
         }
         if track != nil, shareTransceiver == nil {
-            let options = LKRTCRtpTransceiverInit(); options.direction = .sendOnly
-            guard let value = connection.addTransceiver(of: .video, init: options) else { throw NativeDesktopRTCError.invalidResponse }
-            shareTransceiver = value; preferH264(value)
+            let connection = connection!, factory = factory
+            let value = try await native.run("add-share-transceiver") { () -> LKRTCRtpTransceiver in
+                let options = LKRTCRtpTransceiverInit(); options.direction = .sendOnly
+                guard let value = connection.addTransceiver(of: .video, init: options) else { throw NativeDesktopRTCError.invalidResponse }
+                Self.preferH264(value, factory: factory); return value
+            }
+            if track != nil { try check() }
+            if shareTransceiver == nil { shareTransceiver = value }
         }
-        shareTrack = track; shareTransceiver?.sender.track = track
-        configureSender(shareTransceiver?.sender, sharing: true)
+        shareTrack = track
+        let transceiver = shareTransceiver
+        native.post("set-share-track") { transceiver?.sender.track = track }
+        configureSender(transceiver, sharing: true)
     }
-    private func configureSender(_ sender: LKRTCRtpSender?, sharing: Bool) {
-        guard let sender else { return }
-        let parameters = sender.parameters
-        for encoding in parameters.encodings {
-            encoding.maxBitrateBps = NSNumber(value: sharing ? 18_000_000 : 2_500_000)
-            encoding.maxFramerate = 30
+    private func configureSender(_ transceiver: LKRTCRtpTransceiver?, sharing: Bool) {
+        guard let transceiver else { return }
+        native.post("configure-sender") {
+            let sender = transceiver.sender
+            let parameters = sender.parameters
+            for encoding in parameters.encodings {
+                encoding.maxBitrateBps = NSNumber(value: sharing ? 18_000_000 : 2_500_000)
+                encoding.maxFramerate = 30
+            }
+            parameters.degradationPreference = NSNumber(value: (sharing ? LKRTCDegradationPreference.maintainResolution : .balanced).rawValue)
+            sender.parameters = parameters
         }
-        parameters.degradationPreference = NSNumber(value: (sharing ? LKRTCDegradationPreference.maintainResolution : .balanced).rawValue)
-        sender.parameters = parameters
     }
     func answer(_ fields: [String: Any]) async throws -> [String: Any] {
         try check(); localSent = false
-        guard let sdp = fields["sdp"] as? String, let seq = fields["pcSeq"] as? Int ?? (topology == .composite ? 0 : nil),
-              seq == sequence || connection.remoteDescription == nil else { throw NativeDesktopRTCError.invalidResponse }
+        guard let sdp = fields["sdp"] as? String, let seq = fields["pcSeq"] as? Int ?? (topology == .composite ? 0 : nil)
+        else { throw NativeDesktopRTCError.invalidResponse }
+        let connection = connection!
+        let hasRemote = try await native.run("has-remote-description") { connection.remoteDescription != nil }
+        try check()
+        guard seq == sequence || !hasRemote else { throw NativeDesktopRTCError.invalidResponse }
         sequence = seq
         try await setDescription(.init(type: .offer, sdp: sdp), local: false)
         let answer = try await description(offer: false)
         try await setDescription(answer, local: true)
-        for transceiver in connection.transceivers { reportTrack(transceiver) }
+        let reports = try await native.run("received-tracks") { connection.transceivers.compactMap(Self.trackReport) }
+        try check(); reports.forEach(deliver)
         try await flushRemote()
         return ["sdp": answer.sdp, "pcSeq": sequence]
     }
     func offer() async throws -> [String: Any] {
         try check(); localSent = false
         let value = try await description(offer: true); try await setDescription(value, local: true)
-        var tracks: [[String: Any]] = []
-        for (transceiver, kind) in [(audioTransceiver, "AUDIO"), (videoTransceiver, "VIDEO"), (shareTransceiver, "DISPLAY_VIDEO")] {
-            guard let transceiver, transceiver.sender.track != nil else { continue }
-            tracks.append(["mid": transceiver.mid, "transceiverMid": transceiver.mid, "kind": kind,
-                "priority": 0, "label": kind, "codecs": [:], "groupId": 1, "description": ""])
+        let senders = [(audioTransceiver, "AUDIO"), (videoTransceiver, "VIDEO"), (shareTransceiver, "DISPLAY_VIDEO")]
+        let sending = try await native.run("sending-tracks") { () -> [(String, String)] in
+            senders.compactMap { transceiver, kind in
+                guard let transceiver, transceiver.sender.track != nil else { return nil }
+                return (transceiver.mid, kind)
+            }
+        }
+        try check()
+        let tracks: [[String: Any]] = sending.map { mid, kind in
+            ["mid": mid, "transceiverMid": mid, "kind": kind,
+             "priority": 0, "label": kind, "codecs": [:] as [String: Any], "groupId": 1, "description": ""]
         }
         return ["sdp": value.sdp, "pcSeq": sequence, "tracks": tracks]
     }
@@ -195,25 +255,27 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
         try check()
         guard let sdp = fields["sdp"] as? String, topology == .composite || fields["pcSeq"] as? Int == sequence else { throw NativeDesktopRTCError.invalidResponse }
         try await setDescription(.init(type: .answer, sdp: sdp), local: false); try await flushRemote()
-        if shareTrack != nil { configureSender(topology == .composite ? videoTransceiver?.sender : shareTransceiver?.sender, sharing: true) }
+        if shareTrack != nil { configureSender(topology == .composite ? videoTransceiver : shareTransceiver, sharing: true) }
     }
     private func description(offer: Bool) async throws -> LKRTCSessionDescription {
-        let value: LKRTCSessionDescription = try await guestAwait { [connection] done in
+        let connection = connection!
+        let value: LKRTCSessionDescription = try await native.call(offer ? "create-offer" : "create-answer") { done in
             let callback: @Sendable (LKRTCSessionDescription?, Error?) -> Void = { value, error in
                 if let error { done(.failure(error)) } else if let value { done(.success(value)) }
                 else { done(.failure(NativeDesktopRTCError.invalidResponse)) }
             }
             let options = LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
-            if offer { connection?.offer(for: options, completionHandler: callback) }
-            else { connection?.answer(for: options, completionHandler: callback) }
+            if offer { connection.offer(for: options, completionHandler: callback) }
+            else { connection.answer(for: options, completionHandler: callback) }
         }
         try check(); return value
     }
     private func setDescription(_ value: LKRTCSessionDescription, local: Bool) async throws {
-        try await guestAwait { [connection] (done: @escaping (Result<Void, Error>) -> Void) in
+        let connection = connection!
+        try await native.call(local ? "set-local-description" : "set-remote-description") { (done: @escaping (Result<Void, Error>) -> Void) in
             let callback: @Sendable (Error?) -> Void = { error in done(error.map(Result.failure) ?? .success(())) }
-            if local { connection?.setLocalDescription(value, completionHandler: callback) }
-            else { connection?.setRemoteDescription(value, completionHandler: callback) }
+            if local { connection.setLocalDescription(value, completionHandler: callback) }
+            else { connection.setRemoteDescription(value, completionHandler: callback) }
         }
         try check()
     }
@@ -223,14 +285,18 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
               let sdp = fields["candidate"] as? String,
               let index = fields["sdpMlineIndex"] as? Int, (0...64).contains(index) else { return }
         let value = LKRTCIceCandidate(sdp: sdp, sdpMLineIndex: Int32(index), sdpMid: fields["sdpMid"] as? String)
-        if connection.remoteDescription == nil {
+        let connection = connection!
+        let hasRemote = try await native.run("has-remote-description") { connection.remoteDescription != nil }
+        try check()
+        if !hasRemote {
             guard remoteCandidates.count < 256 else { throw NativeDesktopRTCError.invalidResponse }
             remoteCandidates.append(value)
         } else { try await add(value) }
     }
     private func add(_ value: LKRTCIceCandidate) async throws {
-        try await guestAwait { [connection] (done: @escaping (Result<Void, Error>) -> Void) in
-            connection?.add(value) { error in done(error.map(Result.failure) ?? .success(())) }
+        let connection = connection!
+        try await native.call("add-candidate") { (done: @escaping (Result<Void, Error>) -> Void) in
+            connection.add(value) { error in done(error.map(Result.failure) ?? .success(())) }
         }; try check()
     }
     private func flushRemote() async throws {
@@ -244,19 +310,31 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
     }
     private func check() throws { if closed || Task.isCancelled { throw CancellationError() } }
     func close() async -> Bool {
-        closed = true; audioTrack?.isEnabled = false; shareTrack = nil; applyVideo()
+        closed = true; microphoneEnabled = false
+        let microphone = audioTrack; native.post("close-microphone") { microphone?.isEnabled = false }
+        shareTrack = nil; applyVideo()
         onCandidate = nil; onTrack = nil; onAudioTrack = nil; onState = nil
         var clean = true
         do { try await setCamera(false) } catch { clean = false }
-        onLocalCamera = nil; connection.close(); localCandidates = []; remoteCandidates = []
+        onLocalCamera = nil; localCandidates = []; remoteCandidates = []
+        let connection = connection!; native.post("close") { connection.close() }
         return clean && !captureCleanupFailed
     }
-    private func reportTrack(_ transceiver: LKRTCRtpTransceiver) {
-        guard !closed, !transceiver.mid.isEmpty else { return }
-        if let track = transceiver.receiver.track as? LKRTCVideoTrack { onTrack?(transceiver.mid, track) }
-        else if let track = transceiver.receiver.track as? LKRTCAudioTrack, transceiver.direction != .sendOnly,
-                transceiver.direction != .inactive {
-            onAudioTrack?(transceiver.mid, track)
+    /// A received track by mid, read on a WebRTC or native thread, never on main.
+    private enum TrackReport { case video(String, LKRTCVideoTrack), audio(String, LKRTCAudioTrack) }
+    nonisolated private static func trackReport(_ transceiver: LKRTCRtpTransceiver) -> TrackReport? {
+        let mid = transceiver.mid
+        guard !mid.isEmpty else { return nil }
+        if let track = transceiver.receiver.track as? LKRTCVideoTrack { return .video(mid, track) }
+        if let track = transceiver.receiver.track as? LKRTCAudioTrack, transceiver.direction != .sendOnly,
+           transceiver.direction != .inactive { return .audio(mid, track) }
+        return nil
+    }
+    private func deliver(_ report: TrackReport) {
+        guard !closed else { return }
+        switch report {
+        case .video(let mid, let track): onTrack?(mid, track)
+        case .audio(let mid, let track): onAudioTrack?(mid, track)
         }
     }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didChange stateChanged: LKRTCSignalingState) {}
@@ -280,12 +358,16 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didRemove candidates: [LKRTCIceCandidate]) {}
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didOpen dataChannel: LKRTCDataChannel) {}
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didAdd receiver: LKRTCRtpReceiver, streams: [LKRTCMediaStream]) {
+        // Delegate callbacks run on WebRTC's signaling thread: native reads happen here.
+        let id = receiver.receiverId
+        let reports = pc.transceivers.filter { $0.receiver.receiverId == id }.compactMap(Self.trackReport)
         Task { @MainActor [weak self] in
             guard let self, !closed else { return }
-            for value in pc.transceivers where value.receiver.receiverId == receiver.receiverId { reportTrack(value) }
+            reports.forEach(deliver)
         }
     }
     nonisolated func peerConnection(_ pc: LKRTCPeerConnection, didStartReceivingOn transceiver: LKRTCRtpTransceiver) {
-        Task { @MainActor [weak self] in self?.reportTrack(transceiver) }
+        let report = Self.trackReport(transceiver)
+        Task { @MainActor [weak self] in if let report { self?.deliver(report) } }
     }
 }

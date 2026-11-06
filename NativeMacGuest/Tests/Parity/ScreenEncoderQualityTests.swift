@@ -97,11 +97,12 @@ final class ScreenEncoderQualityTests: XCTestCase {
             let peer = try NativeDesktopRTCPeer(target: "PUBLISHER", factory: factory, ice: [], topology: topology)
             let source = factory.videoSource(forScreenCast: true)
             let track = factory.videoTrack(with: source, trackId: UUID().uuidString)
-            try peer.setScreenTrack(track)
+            try await peer.setScreenTrack(track)
+            _ = try await peer.native.run("drain") { 0 }   // sender configuration is queued
             let sender = try XCTUnwrap(peer.connection.senders.first { $0.track?.trackId == track.trackId })
             XCTAssertEqual(sender.parameters.degradationPreference, NSNumber(value: LKRTCDegradationPreference.maintainResolution.rawValue))
             XCTAssertEqual(sender.parameters.encodings.first?.maxBitrateBps, 18_000_000)
-            try peer.setScreenTrack(nil)
+            try await peer.setScreenTrack(nil)
             let closed = await peer.close(); XCTAssertTrue(closed)
         }
     }

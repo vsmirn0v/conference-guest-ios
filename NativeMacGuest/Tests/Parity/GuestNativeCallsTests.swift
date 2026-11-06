@@ -68,4 +68,33 @@ import XCTest
         let recovered = await peer.stats()
         XCTAssertNotNil(recovered, "The peer works again once WebRTC recovers")
     }
+
+    /// Telemost and TrueConf share the same rule through their own peer.
+    func testStuckExternalPeerKeepsMainResponsiveAndEndsMuted() async throws {
+        let audio = GuestSyntheticAudio(); defer { XCTAssertTrue(audio.terminateDevice()) }
+        let factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
+            decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioDevice: audio)
+        let peer = try NativeDesktopRTCPeer(target: "PUBLISHER", factory: factory, ice: [])
+        let microphone = try XCTUnwrap(peer.microphoneTrack)
+        peer.native.timeoutOverrideForTesting = 0.3
+
+        let release = peer.native.blockForTesting()
+        let ticks = try await mainTicks {
+            do { try await peer.configure(["iceServers": [] as [[String: Any]]]); XCTFail("Configuration must time out") }
+            catch GuestNativeCallError.timedOut {}
+            peer.setMicrophone(true)
+            XCTAssertTrue(peer.microphoneSending)
+            peer.setMicrophone(false)
+            XCTAssertFalse(peer.microphoneSending)
+            let level = await peer.microphoneLevel()
+            XCTAssertNil(level)
+        }
+        XCTAssertGreaterThan(ticks, 10, "The main thread kept running while the peer was stuck")
+        release()
+        peer.native.timeoutOverrideForTesting = nil
+        let enabled = try await peer.native.run("read") { microphone.isEnabled }
+        XCTAssertFalse(enabled, "The later mute wins once WebRTC recovers")
+        try await peer.configure(["iceServers": [] as [[String: Any]]])
+        let closed = await peer.close(); XCTAssertTrue(closed)
+    }
 }
