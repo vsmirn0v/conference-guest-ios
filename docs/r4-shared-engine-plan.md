@@ -167,6 +167,22 @@ Known limits until later steps: voice replies reach only the talk meeting (they 
 input graph and sender); Telemost/TrueConf (S3) and Rock (S4) still use their own engines, so
 with the flag on a Guest meeting beside them still means two engines.
 
+## S3 status (6 Nov 2026): Telemost and TrueConf on the shared engine behind the flag
+
+- `NativeDesktopExternalSession` attaches through the same `SharedGuestMeetingAudio` when the
+  flag is on (first meeting to connect takes the talk role, as for Guest).
+- The publisher's microphone track is registered with the owner when publishing is enabled
+  (at peer creation, or later for TrueConf via `onMicrophoneTrack`). The session already mutes
+  through the owner before toggling the track, so a meeting without the talk role fails at the
+  owner exactly as with a withdrawn permit today.
+- These services have no per-track gain of their own: their received tracks are registered
+  with the attachment, so sound off and meeting volume act on this meeting's tracks only.
+- A retiring connection generation (recovery, leave) drops its tracks synchronously, so a
+  replacement generation's tracks are never touched by it.
+- Telemost's own "speaking" flag for you shows only while your microphone is on in that
+  meeting; TrueConf reports none for you. Whether a disabled sender's silence ever makes either
+  service flag you as speaking still needs a live check (S6).
+
 ## Risks
 
 - Our M156 fork must accept new peer connections on a running module with VPIO active, and send

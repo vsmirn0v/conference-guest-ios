@@ -86,7 +86,12 @@ final class NativeDesktopRTCPeer: NSObject, LKRTCPeerConnectionDelegate {
               let video = connection.addTransceiver(of: .video, init: options) else { throw NativeDesktopRTCError.invalidResponse }
         audioTrack = track; audioTransceiver = audio; videoTransceiver = video
         preferH264(video)
+        onMicrophoneTrack?(track)
     }
+    /// The microphone track once publishing is enabled (created disabled).
+    var microphoneTrack: LKRTCAudioTrack? { audioTrack }
+    /// Called when publishing creates the microphone track after the peer was handed out.
+    var onMicrophoneTrack: ((LKRTCAudioTrack) -> Void)?
     private func preferH264(_ transceiver: LKRTCRtpTransceiver) {
         let codecs = factory.rtpSenderCapabilities(forKind: "video").codecs
         try? transceiver.setCodecPreferences(codecs.filter { $0.name == "H264" } + codecs.filter { $0.name != "H264" }, error: ())

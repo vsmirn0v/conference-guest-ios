@@ -222,7 +222,9 @@ extension NativeDesktopExternalSession {
         people.sort { $0.id < $1.id }
         people.insert(.init(id: localID.isEmpty ? "local" : localID, name: name, isLocal: true,
             microphoneOn: snapshot.microphoneOn, cameraOn: snapshot.cameraOn, sharing: snapshot.sharing,
-            speaking: kind == .telemost && speaking.contains(localID) ? true : nil), at: 0)
+            // You speak here only while your microphone is on here (with one shared engine
+            // another meeting may hold it while this sender sends silence).
+            speaking: kind == .telemost && snapshot.microphoneOn && speaking.contains(localID) ? true : nil), at: 0)
         if kind == .telemost {
             for track in tracks.values {
                 let owners = video.filter { $0.track.isEqual(track) }.map(\.participantID)

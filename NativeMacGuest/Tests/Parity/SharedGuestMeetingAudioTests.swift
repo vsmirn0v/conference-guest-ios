@@ -71,6 +71,30 @@ import XCTest
         ok(await daily.shutdown()); ok(await infra.shutdown())
     }
 
+    /// Telemost/TrueConf: received tracks follow this meeting's sound and volume only.
+    func testReceivedTracksFollowTheirMeetingAndRetireWithTheirGeneration() async throws {
+        let engine = SharedAudioEngine.live()
+        let telemost = try await SharedGuestMeetingAudio.attach(to: engine)
+        let trueconf = try await SharedGuestMeetingAudio.attach(to: engine)
+        let factory = telemost.factory
+        // Volume applies only to received (remote) sources, so record what is written.
+        var anna = -1.0, boris = -1.0
+        telemost.addReceived(id: "0") { anna = $0 }; trueconf.addReceived(id: "0") { boris = $0 }
+        XCTAssertEqual(anna, 0, "Sound starts off"); XCTAssertEqual(boris, 0)
+        ok(await telemost.setPlayoutEnabled(true, expectedEpoch: nil))
+        XCTAssertEqual(anna, 1); XCTAssertEqual(boris, 0, "Other meeting stays silent")
+        XCTAssertTrue(telemost.setMeetingVolume(0.5))
+        XCTAssertEqual(anna, 0.5, accuracy: 1e-6)
+
+        let microphone = factory.audioTrack(with: factory.audioSource(with: nil), trackId: "microphone")
+        telemost.registerMicrophoneTrack(microphone)
+        telemost.retireTracks()
+        XCTAssertFalse(microphone.isEnabled)
+        XCTAssertTrue(telemost.setMeetingVolume(1))
+        XCTAssertEqual(anna, 0.5, accuracy: 1e-6, "A retired generation's track is no longer managed")
+        ok(await telemost.shutdown()); ok(await trueconf.shutdown())
+    }
+
     /// Records which path this test process runs (`R4_SHARED_AUDIO_ENGINE`).
     func testReportsWhetherTheSharedEngineIsOn() {
         print("R4-SHARED-AUDIO-ENGINE=\(SharedAudioEngine.enabledAtLaunch)")

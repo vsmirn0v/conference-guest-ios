@@ -41,6 +41,7 @@ import LiveKitWebRTC
     func beginPrivateInputCheck(timeout: TimeInterval?) async -> Bool
     func endPrivateInputCheck(timeout: TimeInterval) async -> Bool
     func setInputTranscriptionSink(_ sink: ((AVAudioPCMBuffer) -> Void)?)
+    func setPrivateInputMeterEnabled(_ enabled: Bool)
     func setMicrophoneGate(open: Bool) -> Bool
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool
     func shutdown(timeout: TimeInterval) async -> Bool

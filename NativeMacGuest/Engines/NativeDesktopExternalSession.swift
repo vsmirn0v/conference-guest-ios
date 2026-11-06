@@ -28,7 +28,10 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         guard [.connecting, .connected, .reconnecting].contains(snapshot.phase) else { return nil }
         return audio?.factory
     }
-    var audio: GuestSystemAudio?
+    var audio: (any GuestMeetingAudio)?
+    /// R4: with one engine for all meetings, the session attaches instead of owning audio.
+    private let sharedAudio: SharedAudioEngine?
+    private var sharedMeeting: SharedGuestMeetingAudio? { audio as? SharedGuestMeetingAudio }
     private var localAudioSink: ((AVAudioPCMBuffer) -> Void)?
     func setLocalAudioSink(_ sink: ((AVAudioPCMBuffer) -> Void)?) {
         localAudioSink = sink; audio?.setInputTranscriptionSink(sink)
@@ -110,7 +113,9 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
     var lastSlotConfiguration: Data?
     var slotUpdateTask: Task<Void, Never>?
     var slotUpdateDirty = false
-    init(kind: Kind) { self.kind = kind }
+    init(kind: Kind, sharedAudio: SharedAudioEngine? = SharedAudioEngine.enabledAtLaunch ? SharedAudioEngine.shared : nil) {
+        self.kind = kind; self.sharedAudio = sharedAudio
+    }
     func connect(invitation: URL, name: String, quiet: Bool = false) async throws {
         guard [.idle, .left, .failed].contains(snapshot.phase), cleanupSucceeded,
               shutdownTask == nil, connectionRetirementTask == nil else { throw NativeDesktopRTCError.cleanupFailed }
@@ -123,15 +128,26 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         accessoryCapturePrepared = false
         audioProfile = .saved
         snapshot = .init(phase: .connecting, playoutOn: !quiet); publish()
-        var admittedAudio: GuestSystemAudio?
+        var admittedAudio: (any GuestMeetingAudio)?
         do {
-            let owner = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: !quiet, profile: audioProfile,
+            let owner: any GuestMeetingAudio
+            if let sharedAudio {
+                let meeting = try await SharedGuestMeetingAudio.attach(to: sharedAudio)
+                guard epoch == attempt, snapshot.phase == .connecting else { _ = await meeting.shutdown(); throw CancellationError() }
+                guard await meeting.beginAttempt(sound: !quiet) else { _ = await meeting.shutdown(); throw NativeDesktopRTCError.cleanupFailed }
+                owner = meeting
+            } else {
+                owner = try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: !quiet, profile: audioProfile,
                                                           concurrent: concurrentAudio)
+            }
             guard epoch == attempt, snapshot.phase == .connecting else { _ = await owner.shutdown(); throw CancellationError() }
             audio = owner; admittedAudio = owner
             _ = owner.setMeetingVolume(meetingVolume)
             owner.setInputTranscriptionSink(localAudioSink)
             if transcriptionOutputDemand { _ = await owner.setTranscriptionOutput(true) }
+            // On the shared engine the first meeting to connect takes the talk role.
+            if inputPermitted, let sharedAudio, sharedAudio.talkMeetingID == nil,
+               !(await owner.setInputPermitted(true)) { throw NativeDesktopRTCError.cleanupFailed }
             if !inputPermitted, !(await owner.setInputPermitted(false)) { throw NativeDesktopRTCError.cleanupFailed }
             try await startConnection(attempt)
             try check(attempt)
@@ -399,6 +415,12 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         guard let factory else { throw NativeDesktopRTCError.closed }
         let peer = try NativeDesktopRTCPeer(target: target, factory: factory, ice: ice, topology: topology, audioProfile: audioProfile)
         let attempt = epoch
+        // The owner enables the microphone track only while this meeting may be heard.
+        if let track = peer.microphoneTrack { audio?.registerMicrophoneTrack(track) }
+        peer.onMicrophoneTrack = { [weak self] track in
+            guard let self, epoch == attempt else { track.isEnabled = false; return }
+            audio?.registerMicrophoneTrack(track)
+        }
         peer.onCandidate = { [weak self] value in
             Task { @MainActor in
                 guard let self, self.epoch == attempt else { return }
@@ -420,6 +442,7 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         peer.onAudioTrack = { [weak self] mid, track in
             guard let self, epoch == attempt, remoteAudioTracks[mid] !== track else { return }
             remoteAudioTracks[mid] = track; transcriptionHandler?(audioSources)
+            sharedMeeting?.addReceivedTrack(track, id: mid)
         }
         peer.onLocalCamera = { [weak self] track in
             guard let self, epoch == attempt else { return }; onLocalCamera?(track)
@@ -505,6 +528,8 @@ class NativeDesktopExternalSession: NativeDesktopMeetingEngine {
         localID = ""; cid = ""; streamID = ""; telemostBootstrap = nil
         incomingVideo = []; onVideo?([]); onLocalCamera?(nil)
         if !remoteAudioTracks.isEmpty { remoteAudioTracks = [:]; transcriptionHandler?([]) }
+        // The retiring generation's tracks: off, then forgotten by the shared engine.
+        sharedMeeting?.retireTracks()
         let retirement = UUID(); connectionRetirementID = retirement
         let task = Task { [self] in
             // Audio remains owned until both camera/peer stops and media work

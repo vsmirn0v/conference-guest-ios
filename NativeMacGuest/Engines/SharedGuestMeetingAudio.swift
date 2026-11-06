@@ -96,8 +96,28 @@ import LiveKitWebRTC
     func sharedPlayoutIsOpen(expected: UUID?) -> Bool { true }
     func setMeetingVolume(_ volume: Double) -> Bool {
         meetingLevel = volume.isFinite ? min(1, max(0, volume)) : 1
+        attachment.setMeetingVolume(meetingLevel)
         onLevelChange?()
         return true
+    }
+    func setPrivateInputMeterEnabled(_ enabled: Bool) { owner.setPrivateInputMeterEnabled(enabled) }
+
+    // MARK: Received audio (services without their own per-track gain: Telemost, TrueConf)
+
+    /// The track's volume follows this meeting's sound and volume (0 with sound off).
+    func addReceivedTrack(_ track: LKRTCAudioTrack, id: String) {
+        addReceived(id: id) { [weak track] volume in track?.source.volume = volume }
+    }
+    func addReceived(id: String, setVolume: @escaping (Double) -> Void) {
+        attachment.addReceived(id: id, setVolume: setVolume)
+    }
+    func removeAllReceivedTracks() { attachment.removeAllReceived() }
+    /// A connection generation retires: its tracks are off and forgotten at once, so a
+    /// replacement generation's tracks (registered later, disabled) are never touched;
+    /// the module mute follows in order and the next unmute re-applies the intent.
+    func retireTracks() {
+        attachment.removeAllSenders(); attachment.removeAllReceived()
+        attachment.suppress()
     }
     func refreshSnapshot(timeout: TimeInterval) async -> Bool { await owner.refreshSnapshot(timeout: timeout) }
     func beginPrivateInputCheck(timeout: TimeInterval?) async -> Bool { await engine.beginPrivateCheck() }
