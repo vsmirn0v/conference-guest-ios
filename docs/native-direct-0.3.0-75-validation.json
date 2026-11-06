@@ -1,0 +1,31 @@
+{
+  "version": "0.3.0",
+  "build": "75",
+  "channel": "beta",
+  "sourceCommit": "25ffb66",
+  "changes": [
+    "Attention modes: each meeting is Off, Mentions or Watch, from your choice for it (until you leave or 30 min), else its instructions (every time), else the situation default (Off on screen, Watch in the background, Mentions when silenced). Mentions judges at once on your name or a question to you, otherwise every 2 min and only an urgent now >= 0.8 shows; Off replaces the per-meeting pause. Chip in each sidebar row, Assistant button in the meeting control bar (Ctrl-Option-A), Attention by situation in Settings → Intelligence, Attention picker in a meeting's instructions (25ffb66)"
+  ],
+  "frameworkBinarySHA256": "522b222f89e53aa63a378c4edce1c08a9c8f9a19e1808726fe7d5a884198f85b",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-75-arm64.dmg",
+    "sha256": "dc1c92d48042a4bb5c8fdf040dee01caba3aff4ba5127c95e5aa1698bb0bd023",
+    "length": 26619034
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-75-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "suites": "AttentionTests (40, including mode resolution and Mentions gating), VoiceCloneTests and DesktopParityTests: 122 tests pass"
+  },
+  "notVerified": [
+    "the mode chip, switch popover and Assistant button in the running app",
+    "Mentions behaviour in a real silenced meeting",
+    "Sparkle update of an installed app to 75",
+    "beta 74's cloned voice end to end"
+  ]
+}
