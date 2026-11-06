@@ -902,6 +902,10 @@ final class NativeGuestEngine {
         }
         startupReport?.decision = startupDecision
         startupConnected = true
+        // Release builds logged this only on timeout; a slow successful start (about 4 s
+        // when alone in the room, beta 71) needs the same timeline. In-memory state only.
+        probeLog("startup-audio-ready", ["client": probeClient, "report": startupReport?.dictionary ?? [:],
+            "audio": systemAudio?.snapshot ?? [:]])
         return true
     }
 

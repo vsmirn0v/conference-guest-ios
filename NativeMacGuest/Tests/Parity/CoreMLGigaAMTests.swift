@@ -44,6 +44,18 @@ import XCTest
         return samples
     }
 
+    /// The launch warm-up relies on this: once the Neural Engine model was loaded in this
+    /// process, loading it again after it was freed is fast.
+    func testReloadAfterFreeingIsFast() throws {
+        let configuration = try model(.cpuAndNeuralEngine, cache: temporaryFolder())
+        var first: CoreMLGigaAMRecognizer? = try CoreMLGigaAMRecognizer(configuration)
+        let firstSeconds = first!.loadSeconds
+        first = nil
+        let second = try CoreMLGigaAMRecognizer(configuration)
+        print("COREML-LOAD first \(firstSeconds) s, after freeing \(second.loadSeconds) s")
+        XCTAssertLessThan(second.loadSeconds, 2)
+    }
+
     func testTokensBecomeTextWithWordStartsAndByteFallback() {
         let pieces = ["▁При", "вет", ",", "▁мир", "<0xE2>", "<0x80>", "<0x94>", "!"]
         XCTAssertEqual(CoreMLGigaAMRecognizer.detokenize([0, 1, 2, 3], pieces: pieces), "Привет, мир")

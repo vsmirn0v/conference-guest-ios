@@ -56,6 +56,9 @@ import XCTest
         XCTAssertEqual(recognizer.userCount, 0)
         recognizer.release()
         XCTAssertEqual(recognizer.userCount, 0, "an extra release never goes negative")
+        recognizer.warmUp(model)
+        XCTAssertFalse(recognizer.isLoaded, "a warm-up with no meeting keeps nothing loaded")
+        XCTAssertEqual(recognizer.userCount, 0)
     }
 
     func testSignedCatalogVerification() throws {

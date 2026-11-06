@@ -115,6 +115,20 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
     /// seconds to load; the first launch also compiles it).
     func prepare(_ model: ListenRecognizerModel) { queue.async { [self] in _ = load(model) } }
 
+    /// Loads the model once, off every meeting's path, then frees it unless a meeting
+    /// started transcribing meanwhile. The first Neural Engine load after launch takes
+    /// about 12 s (beta 71 log); later loads in the same run take about 0.1 s, so the
+    /// first meeting's transcript starts at once without the model holding memory idle.
+    func warmUp(_ model: ListenRecognizerModel) {
+        queue.async { [self] in
+            let started = ProcessInfo.processInfo.systemUptime
+            guard load(model) else { return }
+            lock.lock(); let idle = users == 0; lock.unlock()
+            probeLog("local-transcription-warmed", ["seconds": ProcessInfo.processInfo.systemUptime - started, "kept": !idle])
+            if idle { recognizer = nil; loaded = nil }
+        }
+    }
+
     /// A meeting starts transcribing: the model loads ahead of its first utterance.
     func acquire(_ model: ListenRecognizerModel) {
         lock.lock(); users += 1; lock.unlock()

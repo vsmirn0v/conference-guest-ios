@@ -149,6 +149,14 @@ struct NativeGuestApplication {
         Task.detached(priority: .utility) { await ListenModelCatalog.refreshRemote() }
         #endif
         launched = true
+        // The speech model's first load after launch is slow (Neural Engine preparation);
+        // doing it now, after the window is up, makes the first meeting's transcript start at once.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            let listen = ListenModelStore.shared
+            guard listen.ready, let model = listen.recognizerModel() else { return }
+            LocalSpeechRecognizer.shared.warmUp(model)
+        }
         NativeDesktopForegroundMedia.shared.start()
         accept()
         if !launchURLs.isEmpty { let urls = launchURLs; launchURLs.removeAll(); application(NSApp, open: urls) }
