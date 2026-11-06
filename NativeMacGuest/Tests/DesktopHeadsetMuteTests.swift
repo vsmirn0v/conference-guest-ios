@@ -9,7 +9,9 @@ import LiveKitWebRTC
         reentrantRegistrationFailure()
         delayedMuteAndAtomicOpen()
         await deinitialization()
+        stalledOptInBreaker()
         print("PASS: headset intent/confirmation epochs, stale callbacks, metadata, programmatic/failed writes, owner replacement and deinit; no physical capture")
+        print("PASS: off unless chosen; a stalled or failed opt-in turns the integration off for later meetings")
         if CommandLine.arguments.contains("--registration") {
             let live = NativeDesktopHeadsetMute()
             guard live.begin(onRequestedMute: { _ in }) else {
@@ -21,6 +23,33 @@ import LiveKitWebRTC
             precondition(LKRTCApplicationCaptureMuted() == 1 && LKRTCApplicationInputMuteReconfiguring() == 0)
             print("PASS: actual macOS AVAudioApplication handler registration/unregistration with native gate closed; no physical media")
         }
+    }
+
+    /// macOS 27.2: the audio session service hung on the opt-in for 9 s at most meeting
+    /// starts. A slow or failing opt-in turns the integration off for later meetings.
+    static func stalledOptInBreaker() {
+        let slow = Fake(); slow.installSeconds = 9
+        precondition(NativeDesktopHeadsetMute(platform: slow.platform).begin(onRequestedMute: { _ in }),
+                     "this meeting keeps its registration, failing closed")
+        precondition(slow.disabled == ["opt-in took 9 s"])
+        let fast = Fake(); fast.installSeconds = 0.2
+        precondition(NativeDesktopHeadsetMute(platform: fast.platform).begin(onRequestedMute: { _ in }))
+        precondition(fast.disabled.isEmpty)
+        let failing = Fake(); failing.failInstall = true
+        precondition(!NativeDesktopHeadsetMute(platform: failing.platform).begin(onRequestedMute: { _ in }))
+        precondition(failing.disabled == ["opt-in failed"])
+
+        let suite = "headset-mute-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        precondition(!NativeDesktopHeadsetMute.Platform.live(defaults: defaults).available, "off unless chosen")
+        defaults.set(true, forKey: NativeDesktopHeadsetMute.Platform.enabledKey)
+        let platform = NativeDesktopHeadsetMute.Platform.live(defaults: defaults)
+        precondition(platform.available)
+        platform.disable("opt-in took 9 s")
+        precondition(!defaults.bool(forKey: NativeDesktopHeadsetMute.Platform.enabledKey))
+        precondition(defaults.string(forKey: NativeDesktopHeadsetMute.Platform.disabledReasonKey)?.hasPrefix("opt-in took 9 s (macOS ") == true)
+        precondition(!NativeDesktopHeadsetMute.Platform.live(defaults: defaults).available)
     }
 
     static func latestConfirmationOnly() {
@@ -177,6 +206,7 @@ import LiveKitWebRTC
         let gate: Gate
         var muted = false, failWrites = false, failInstall = false, reconfiguring = false
         var intent: Int32 = -1, unregistered = 0
+        var disabled: [String] = [], clock: TimeInterval = 0, installSeconds: TimeInterval = 0
         var handlers: [@Sendable (Bool) -> Bool] = []
         var observers: [@MainActor (Bool) -> Void] = []
         init(gate: Gate = Gate()) { self.gate = gate }
@@ -186,12 +216,14 @@ import LiveKitWebRTC
                 self.muted = $0
                 precondition(self.handlers.last?($0) == true)
             }, install: {
+                self.clock += self.installSeconds
                 if self.failInstall { throw NSError(domain: "FixtureInstall", code: 1) }
                 self.handlers.append($0)
             }, uninstall: { self.unregistered += 1 }, observe: { self.observers.append($0); return NSObject() },
             removeObserver: { _ in }, setCaptureMuted: { [gate] in gate.set($0) },
             captureState: { [gate] in gate.state }, unmuteIfState: { [gate] in gate.unmuteIfState($0) },
-            setIntent: { self.intent = $0 }, isReconfiguring: { self.reconfiguring })
+            setIntent: { self.intent = $0 }, isReconfiguring: { self.reconfiguring },
+            disable: { self.disabled.append($0) }, uptime: { self.clock })
         }
         func gesture(_ muted: Bool) {
             self.muted = muted

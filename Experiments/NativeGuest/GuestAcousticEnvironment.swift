@@ -1,4 +1,5 @@
 import CoreAudio
+import Foundation
 
 /// Read-only calibration guard: never selects routes or changes the user's volume.
 struct GuestAcousticEnvironment: Equatable {
@@ -73,5 +74,43 @@ struct GuestAcousticEnvironment: Equatable {
             return value
         }
         return ["input": device(kAudioHardwarePropertyDefaultInputDevice), "output": device(kAudioHardwarePropertyDefaultOutputDevice)]
+    }
+
+    /// `route(names:)` that never holds up the caller. CoreAudio property reads wait on
+    /// the device's lock, which stays taken for minutes when the system audio service
+    /// stalls (beta 70 froze its main thread here after a startup-audio timeout). The
+    /// read runs on its own queue; after `timeout` the caller gets
+    /// `["unavailable": "timeout"]`, and while an earlier read is still stuck, `"busy"`.
+    static func boundedRoute(names: Bool = false, timeout: TimeInterval = 1,
+                             read: @escaping (Bool) -> [String: Any] = { route(names: $0) }) async -> [String: Any] {
+        guard RouteRead.begin() else { return ["unavailable": "busy"] }
+        return await withCheckedContinuation { continuation in
+            let once = RouteRead.Once(continuation)
+            RouteRead.queue.async {
+                let value = read(names)
+                RouteRead.end()
+                once.resume(value)
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) { once.resume(["unavailable": "timeout"]) }
+        }
+    }
+}
+
+/// One route read at a time, off every caller's thread.
+private enum RouteRead {
+    static let queue = DispatchQueue(label: "NativeGuest.audio-route", qos: .utility)
+    private static let lock = NSLock()
+    private static var reading = false
+    static func begin() -> Bool { lock.lock(); defer { lock.unlock() }; if reading { return false }; reading = true; return true }
+    static func end() { lock.lock(); reading = false; lock.unlock() }
+
+    final class Once: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<[String: Any], Never>?
+        init(_ continuation: CheckedContinuation<[String: Any], Never>) { self.continuation = continuation }
+        func resume(_ value: [String: Any]) {
+            lock.lock(); let pending = continuation; continuation = nil; lock.unlock()
+            pending?.resume(returning: value)
+        }
     }
 }

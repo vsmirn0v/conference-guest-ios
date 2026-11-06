@@ -29,18 +29,45 @@ struct TalkHandoverRecord: Equatable {
 /// A spoken test clip from the macOS system voice, for trying voice replies
 /// before any voice model is installed.
 enum VoiceReplySample {
+    /// The system reports the end of synthesis only with an empty buffer; when a voice
+    /// asset is missing or Personal Voice access is withdrawn mid-way it may never send
+    /// one, so the wait ends after `timeout` with nothing (a card would otherwise stay
+    /// "speaking" forever).
     static func make(text: String, language: String = Locale.preferredLanguages.first ?? "en-US",
-                     voice: AVSpeechSynthesisVoice? = nil) async -> AVAudioPCMBuffer? {
+                     voice: AVSpeechSynthesisVoice? = nil, timeout: TimeInterval = 30) async -> AVAudioPCMBuffer? {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voice ?? AVSpeechSynthesisVoice(language: language) ?? AVSpeechSynthesisVoice(language: "en-US")
         let synthesizer = AVSpeechSynthesizer()
         let collected = Collected()
-        return await withCheckedContinuation { continuation in
+        return await bounded(timeout: timeout, cancel: { synthesizer.stopSpeaking(at: .immediate) }) { finish in
             synthesizer.write(utterance) { buffer in
                 guard let pcm = buffer as? AVAudioPCMBuffer else { return }
-                if pcm.frameLength == 0 { continuation.resume(returning: collected.joined()); _ = synthesizer; return }
+                if pcm.frameLength == 0 { finish(collected.joined()); _ = synthesizer; return }
                 collected.append(pcm)
             }
+        }
+    }
+
+    /// Runs `start`, which calls `finish` once with the result; nil after `timeout`.
+    static func bounded(timeout: TimeInterval, cancel: @escaping () -> Void = {},
+                        _ start: (@escaping (AVAudioPCMBuffer?) -> Void) -> Void) async -> AVAudioPCMBuffer? {
+        let once = Once()
+        return await withCheckedContinuation { continuation in
+            once.continuation = continuation
+            start { once.resume($0) }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
+                if once.resume(nil) { cancel() }
+            }
+        }
+    }
+
+    private final class Once: @unchecked Sendable {
+        private let lock = NSLock()
+        var continuation: CheckedContinuation<AVAudioPCMBuffer?, Never>?
+        @discardableResult func resume(_ value: AVAudioPCMBuffer?) -> Bool {
+            lock.lock(); let pending = continuation; continuation = nil; lock.unlock()
+            pending?.resume(returning: value)
+            return pending != nil
         }
     }
 

@@ -835,6 +835,9 @@ final class NativeGuestEngine {
                         onSubscriberStall?()
                     }
                     let observation = owner.startupAudioObservation
+                    // Off this thread and bounded: the device lock this read needs is the one
+                    // a stalled system audio service holds when startup audio times out.
+                    let route = await GuestAcousticEnvironment.boundedRoute(timeout: 0.5)
                     probeLog("startup-audio-timeout", ["client": probeClient, "inputRequired": startupRequiresInput,
                         "supports": observation.supports(input: startupRequiresInput),
                         "outputSupported": observation.supports(input: false),
@@ -842,7 +845,7 @@ final class NativeGuestEngine {
                         "receiveTransportConnected": receive.transportConnected,
                         "soundEnabled": gain.soundEnabled, "hasSources": gain.hasSources,
                         "microphoneAuthorization": AVCaptureDevice.authorizationStatus(for: .audio).rawValue,
-                        "graph": observation.summary, "route": GuestAcousticEnvironment.route(),
+                        "graph": observation.summary, "route": route,
                         "report": startupReport?.dictionary ?? [:]])
                     // Separate so an unexpected value cannot suppress the event above.
                     probeLog("startup-audio-owner", ["client": probeClient, "owner": owner.snapshot])

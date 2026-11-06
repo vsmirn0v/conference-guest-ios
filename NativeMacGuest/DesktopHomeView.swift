@@ -444,6 +444,8 @@ struct NativeDesktopSettingsView: View {
     @AppStorage(NativeDesktopMeetingModel.keepMicrophoneWarmKey) private var keepMicrophoneWarm = false
     @AppStorage(GuestSystemAudio.voiceRepliesKey) private var voiceReplies = false
     @AppStorage(SharedAudioEngine.flagKey) private var sharedAudioEngine = false
+    @AppStorage(NativeDesktopHeadsetMute.Platform.enabledKey) private var headsetMute = false
+    @AppStorage(NativeDesktopHeadsetMute.Platform.disabledReasonKey) private var headsetMuteDisabledReason = ""
     var body: some View {
         TabView(selection: $tab) {
             Form {
@@ -463,6 +465,15 @@ struct NativeDesktopSettingsView: View {
                     Toggle(L("Voice replies (experimental)"), isOn: $voiceReplies)
                     Text(L("Lets the app play a spoken reply into a meeting while your own microphone is held back. Applies to meetings joined after turning it on. Try it from a meeting's More menu."))
                         .font(.caption).foregroundStyle(.secondary)
+                    Toggle(L("Mute with AirPods and headset buttons"), isOn: Binding(get: { headsetMute }, set: { on in
+                        headsetMute = on; if on { headsetMuteDisabledReason = "" }
+                    }))
+                    Text(L("Pressing the stem or the headset button mutes or unmutes your microphone in the meeting that holds it. On some macOS versions turning this on makes the system audio service stop responding when a meeting starts; the app then turns it off again. Applies to meetings joined after turning it on."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !headsetMute && !headsetMuteDisabledReason.isEmpty {
+                        Text(L("Turned off after the system audio service stopped responding: %@.", headsetMuteDisabledReason))
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                     Toggle(L("One audio engine for all meetings (experimental)"), isOn: $sharedAudioEngine)
                     Text(L("Guest meetings share one microphone and speaker setup: moving your microphone needs no device restart and echo cancellation covers every meeting. Takes effect after you quit and reopen the app."))
                         .font(.caption).foregroundStyle(.secondary)

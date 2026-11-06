@@ -44,10 +44,13 @@ struct AttentionProvider: Codable, Equatable, Sendable {
     var configured: Bool { kind == .apple || endpoint != nil && !model.trimmed.isEmpty }
 }
 
-/// The judge's API key, kept in the login keychain for this app only.
+/// API keys, kept in the login keychain for this app only: one account per provider
+/// kind, so a judge, writer and escalation at different providers each send their own.
 struct AttentionKeychain: Sendable {
     var service = "dev.vsmirn0v.conferenceguest.attention"
+    /// Before beta 71 a single key served every provider.
     var account = "judge-api-key"
+    func kind(_ kind: AttentionProvider.Kind) -> Self { var copy = self; copy.account = "judge-api-key." + kind.rawValue; return copy }
     private var query: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
     }
@@ -71,12 +74,16 @@ struct AttentionKeychain: Sendable {
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
     }
+    /// The legacy key and every provider kind's key.
+    func deleteAll() { delete(); for kind in AttentionProvider.Kind.allCases { self.kind(kind).delete() } }
 }
 
 /// One judged window and what you did with it; replayed to tune prompts.
 struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     enum Outcome: String, Codable, Sendable {
         case belowThreshold, shown, opened, dismissed, declined, failed
+        /// Qualified, but two more urgent cards (or one you are replying from) held the screen.
+        case crowdedOut
         /// A reply was drafted for the card (`decisionID`), or drafting failed.
         case drafted, draftFailed
         /// You sent the card's chat reply or a reaction from it.
@@ -156,7 +163,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// The escalation judge to ask for this verdict, or nil.
     func escalation(for verdict: AttentionVerdict) -> AttentionProvider? {
         guard let strong = escalationProvider, strong != provider, Self.escalationBand.contains(verdict.probability),
-              strong.configured, !strong.needsKey || hasKey else { return nil }
+              strong.configured, !strong.needsKey || hasKey(for: strong) else { return nil }
         return strong
     }
 
@@ -174,14 +181,18 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// Cards can draft with the writer.
     var draftsAllowed: Bool {
         let writer = effectiveWriter
-        return draftReplies && writer.configured && (!writer.onThisMac || localDrafts) && (!writer.needsKey || hasKey)
+        return draftReplies && writer.configured && (!writer.onThisMac || localDrafts) && (!writer.needsKey || hasKey(for: writer))
     }
     @Published var provider: AttentionProvider {
         didSet { if let data = try? JSONEncoder().encode(provider) { defaults.set(data, forKey: Self.providerKey) } }
     }
     @Published var profile: AttentionProfile { didSet { if profile != oldValue { save() } } }
     @Published private(set) var presets: [MeetingPreset] = []
-    @Published private(set) var hasKey: Bool
+    /// Provider kinds with a key in the keychain.
+    @Published private(set) var keyedKinds: Set<AttentionProvider.Kind> = []
+    /// The judge's provider has its key.
+    var hasKey: Bool { hasKey(for: provider) }
+    func hasKey(for provider: AttentionProvider) -> Bool { keyedKinds.contains(provider.kind) }
     @Published private(set) var persistenceWarning: String?
     let root: URL
     private let defaults: UserDefaults
@@ -204,8 +215,13 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         voiceBaseURL = defaults.string(forKey: Self.voiceBaseURLKey) ?? AttentionProvider.defaults[.rapidMLX]!.baseURL
         provider = defaults.data(forKey: Self.providerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
             ?? AttentionProvider.defaults[.openAI]!
-        hasKey = keychain.read()?.isEmpty == false
         profile = AttentionProfile()
+        // The single pre-beta-71 key belonged to the judge's provider at the time.
+        if let legacy = keychain.read(), !legacy.trimmed.isEmpty {
+            if keychain.kind(provider.kind).read() == nil { keychain.kind(provider.kind).write(legacy) }
+            keychain.delete()
+        }
+        keyedKinds = Set(AttentionProvider.Kind.allCases.filter { keychain.kind($0).read()?.trimmed.isEmpty == false })
         load()
     }
 
@@ -233,11 +249,15 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     // MARK: Key
 
     /// Only for building the request; the key is never logged or exported.
-    func apiKey() -> String? { keychain.read().flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed } }
-    @discardableResult func setAPIKey(_ value: String) -> Bool {
-        let clean = value.trimmed
-        let saved = clean.isEmpty ? keychain.delete() : keychain.write(clean)
-        hasKey = apiKey() != nil
+    func apiKey() -> String? { apiKey(for: provider) }
+    func apiKey(for provider: AttentionProvider) -> String? {
+        keychain.kind(provider.kind).read().flatMap { $0.trimmed.isEmpty ? nil : $0.trimmed }
+    }
+    @discardableResult func setAPIKey(_ value: String) -> Bool { setAPIKey(value, for: provider) }
+    @discardableResult func setAPIKey(_ value: String, for provider: AttentionProvider) -> Bool {
+        let clean = value.trimmed, account = keychain.kind(provider.kind)
+        let saved = clean.isEmpty ? account.delete() : account.write(clean)
+        if apiKey(for: provider) != nil { keyedKinds.insert(provider.kind) } else { keyedKinds.remove(provider.kind) }
         return saved
     }
     var ready: Bool { enabled && provider.configured && (!provider.needsKey || hasKey) }

@@ -19,6 +19,29 @@ import XCTest
         return ticks
     }
 
+    /// Beta 70: a startup-audio timeout read the audio route on the main thread while
+    /// the system audio service held the device lock, and the app froze. The bounded
+    /// read gives up, keeps the main thread running and never piles up stuck reads.
+    func testStuckAudioRouteReadTimesOutWithoutBlockingMain() async throws {
+        let release = DispatchSemaphore(value: 0)
+        var answer: [String: Any] = [:]
+        let ticks = await mainTicks {
+            answer = await GuestAcousticEnvironment.boundedRoute(timeout: 0.3) { _ in release.wait(); return ["read": true] }
+        }
+        XCTAssertEqual(answer["unavailable"] as? String, "timeout")
+        XCTAssertGreaterThan(ticks, 5, "the main thread kept running")
+        let busy = await GuestAcousticEnvironment.boundedRoute(timeout: 0.3) { _ in ["read": true] }
+        XCTAssertEqual(busy["unavailable"] as? String, "busy", "a second read does not queue behind the stuck one")
+        release.signal()
+        var fresh: [String: Any] = [:]
+        for _ in 0..<50 {
+            fresh = await GuestAcousticEnvironment.boundedRoute(timeout: 0.3) { _ in ["read": true] }
+            if fresh["read"] != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(fresh["read"] as? Bool, true, "reads resume once the stuck one returns")
+    }
+
     func testBlockedQueueTimesOutWithoutBlockingMainAndKeepsOrder() async throws {
         let calls = GuestNativeCalls(label: "test")
         var order: [String] = []

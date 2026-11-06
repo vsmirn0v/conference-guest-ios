@@ -149,7 +149,7 @@ import UniformTypeIdentifiers
         let wanted = !closed && connected && localTranscriptionAllowed && !localTranscriptionPaused &&
             guestFeatures.transcriptionStatus != .active
         if wanted, localTranscriber == nil, let model = listenStore.recognizerModel(), let vad = listenStore.vadURL {
-            LocalSpeechRecognizer.shared.prepare(model)   // loads before the first utterance
+            LocalSpeechRecognizer.shared.acquire(model)   // loads before the first utterance
             let transcriber = MeetingTranscriber(model: model, vadModel: vad) { [weak self] line in self?.receiveLocalLine(line) }
             localTranscriber = transcriber
             engine.setTranscriptionAudioHandler { [weak self, weak transcriber] sources in
@@ -168,6 +168,7 @@ import UniformTypeIdentifiers
             engine.setTranscriptionAudioHandler(nil)
             engine.setLocalAudioSink(nil)
             transcriber.stop()
+            LocalSpeechRecognizer.shared.release()
             let summary = transcriber.currentSummary
             probeLog("local-transcription-stop", ["utterances": summary.utterances, "lines": summary.lines,
                 "audioSeconds": summary.audioSeconds.rounded(), "decodeSeconds": summary.decodeSeconds.rounded(),
@@ -658,6 +659,7 @@ import UniformTypeIdentifiers
             probeLog("headset-mute-platform-error", ["error": failure.localizedDescription,
                 "phase": String(describing: self?.snapshot.phase)])
         }
+        headset.onDisable = { reason in probeLog("headset-mute-disabled", ["reason": reason]) }
         let headsetReady = ownsMicrophone ? headset.begin { [weak self] muted in self?.setMicrophoneEnabled(!muted) } : true
         guard await NativeDesktopDeviceModel.stopPrivatePreview() else { throw NativeDesktopRTCError.cleanupFailed }
         try Task.checkCancellation()

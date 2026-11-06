@@ -473,6 +473,8 @@ struct NativeDesktopIntelligenceSettings: View {
     @ObservedObject var store: AttentionStore
     @ObservedObject var attention: AttentionCoordinator
     @State private var key = ""
+    @State private var writerKey = ""
+    @State private var escalationKey = ""
     @State private var aliases = ""
     @State private var testing = false
     @State private var testResult: String?
@@ -500,6 +502,17 @@ struct NativeDesktopIntelligenceSettings: View {
                 .padding(.horizontal, 7).padding(.vertical, 2)
                 .foregroundStyle(local ? Color.green : Color.blue)
                 .overlay(Capsule().stroke(local ? Color.green : Color.blue, lineWidth: 1))
+        }
+    }
+    /// The key for another role's provider, when it is not the judge's kind.
+    @ViewBuilder private func keyField(for provider: AttentionProvider, text: Binding<String>) -> some View {
+        if provider.needsKey && provider.kind != store.provider.kind {
+            HStack {
+                SecureField(store.hasKey(for: provider) ? L("Saved in the keychain") : L("API key for %@", provider.title), text: text)
+                Button(L("Save")) { store.setAPIKey(text.wrappedValue, for: provider); text.wrappedValue = "" }
+                    .disabled(text.wrappedValue.trimmed.isEmpty)
+                if store.hasKey(for: provider) { Button(L("Remove")) { store.setAPIKey("", for: provider) } }
+            }
         }
     }
     private var voiceTitle: String {
@@ -581,8 +594,9 @@ struct NativeDesktopIntelligenceSettings: View {
                         TextField(L("Model to ask"), text: Binding(get: { store.escalationProvider?.model ?? "" },
                                                                    set: { store.escalationProvider?.model = $0 }))
                     }
-                    if strong.needsKey && !store.hasKey {
-                        Text(L("Asking needs the API key saved above.")).font(.caption).foregroundStyle(.orange)
+                    keyField(for: strong, text: $escalationKey)
+                    if strong.needsKey && !store.hasKey(for: strong) {
+                        Text(L("Asking needs an API key for %@.", strong.title)).font(.caption).foregroundStyle(.orange)
                     }
                     Text(L("When the first judge's probability is between 0.35 and 0.65, the same text goes to this one and its answer decides the card. The decision log keeps both answers.")).font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -608,8 +622,9 @@ struct NativeDesktopIntelligenceSettings: View {
                     TextField(L("Writer model"), text: Binding(get: { store.writerProvider?.model ?? "" },
                                                               set: { store.writerProvider?.model = $0 }))
                         .disabled(!store.draftReplies)
-                    if store.effectiveWriter.needsKey && !store.hasKey {
-                        Text(L("The writer needs the API key saved above.")).font(.caption).foregroundStyle(.orange)
+                    keyField(for: store.effectiveWriter, text: $writerKey)
+                    if store.effectiveWriter.needsKey && !store.hasKey(for: store.effectiveWriter) {
+                        Text(L("The writer needs an API key for %@.", store.effectiveWriter.title)).font(.caption).foregroundStyle(.orange)
                     }
                 }
                 if store.effectiveWriter.onThisMac {

@@ -252,16 +252,16 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         do {
             var result: JudgeResult
             var judgedBy = provider, first: (verdict: AttentionVerdict, model: String)?
-            do { result = try await makeJudge(provider, store.apiKey()).judge(request) }
+            do { result = try await makeJudge(provider, store.apiKey(for: provider)).judge(request) }
             catch is CancellationError { throw CancellationError() }
             catch {
                 // The first judge failed outright (e.g. the system model is unavailable):
                 // the escalation judge, when set, decides instead of leaving the window unjudged.
                 guard let strong = store.escalationProvider, strong != provider, strong.configured,
-                      !strong.needsKey || store.hasKey else { throw error }
+                      !strong.needsKey || store.hasKey(for: strong) else { throw error }
                 probeLog("attention-judge-fallback", ["error": String(describing: error)])
                 calls.append(now())
-                result = try await makeJudge(strong, store.apiKey()).judge(request)
+                result = try await makeJudge(strong, store.apiKey(for: strong)).judge(request)
                 judgedBy = strong
             }
             // An unsure first judge hands the same window to the stronger one.
@@ -269,7 +269,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                calls.filter({ now().timeIntervalSince($0) <= 60 }).count < callsPerMinuteLimit {
                 calls.append(now())
                 do {
-                    let second = try await makeJudge(strong, store.apiKey()).judge(request)
+                    let second = try await makeJudge(strong, store.apiKey(for: strong)).judge(request)
                     first = (result.verdict, provider.model)
                     result = .init(verdict: second.verdict, latency: result.latency + second.latency)
                     judgedBy = strong
@@ -286,7 +286,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 seriesID: model.calendarSeriesID, verdict: result.verdict, window: window, presetID: preset?.id, threshold: threshold,
                 provider: judgedBy.host, model: judgedBy.model, latency: result.latency, createdAt: now(), channels: channels,
                 canDraft: store.draftsAllowed, canSpeak: store.draftReplies && (preset?.repliesAllowed ?? true) && voiceAvailable(model))
-            let shown = apply(card, state: &state)
+            let outcome = apply(card, state: &state), shown = outcome == .shown
             // The judge suggests answering in writing: have a draft ready on the card.
             if shown, card.canDraft, [.chat, .reaction].contains(result.verdict.action), !channels.isEmpty,
                calls.filter({ now().timeIntervalSince($0) <= 60 }).count < callsPerMinuteLimit {
@@ -295,11 +295,11 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             states[id] = state
             store.log(.init(id: decisionID, at: now(), meetingTitle: model.title, presetID: preset?.id, window: window, verdict: result.verdict,
                 provider: judgedBy.host, model: judgedBy.model, latencyMilliseconds: Int(result.latency * 1000),
-                outcome: shown ? .shown : .belowThreshold, messages: AttentionPrompt.messages(request), threshold: threshold,
+                outcome: outcome, messages: AttentionPrompt.messages(request), threshold: threshold,
                 firstVerdict: first?.verdict, firstModel: first?.model))
             probeLog("attention-verdict", ["level": result.verdict.level.rawValue, "probability": result.verdict.probability,
                 "lines": window.lines.count, "latencyMs": Int(result.latency * 1000), "shown": shown,
-                "escalated": first != nil, "firstProbability": first?.verdict.probability ?? -1])
+                "escalated": first != nil, "firstProbability": first?.verdict.probability ?? -1, "outcome": outcome.rawValue])
         } catch is CancellationError {
             return
         } catch {
@@ -313,28 +313,29 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
 
     /// Shows, keeps or removes this meeting's card. "Now" holds for two minutes
-    /// unless you act; a card never repeats for evidence already shown.
-    private func apply(_ card: Card, state: inout MeetingState) -> Bool {
+    /// unless you act; a card never repeats for evidence already shown. A card that
+    /// qualifies but loses to two more urgent ones changes nothing and is logged as
+    /// `crowdedOut`, so its evidence can still raise a card later.
+    private func apply(_ card: Card, state: inout MeetingState) -> AttentionDecisionRecord.Outcome {
         let verdict = card.verdict, current = card.createdAt
         let existing = cards.first { $0.meetingID == card.meetingID }
-        // A card you are replying from stays until you send, dismiss or decline it.
-        if existing?.engaged == true { return false }
-        let held = existing?.verdict.level == .now && (state.heldUntil ?? .distantPast) > current
         let qualifies = verdict.level != .no && verdict.probability >= card.threshold
+        // A card you are replying from stays until you send, dismiss or decline it.
+        if existing?.engaged == true { return qualifies ? .crowdedOut : .belowThreshold }
+        let held = existing?.verdict.level == .now && (state.heldUntil ?? .distantPast) > current
         let repeated = !verdict.evidence.isEmpty && Set(verdict.evidence).isSubset(of: state.shownEvidence)
         guard qualifies, !repeated else {
             if existing != nil, !held { cards.removeAll { $0.meetingID == card.meetingID } }
-            return false
+            return .belowThreshold
         }
-        if held && verdict.level < .now { return false }
-        cards.removeAll { $0.meetingID == card.meetingID }
-        cards.append(card)
+        if held && verdict.level < .now { return .crowdedOut }
+        var proposed = cards.filter { $0.meetingID != card.meetingID } + [card]
+        proposed.sort { $0.verdict.level == $1.verdict.level ? $0.createdAt > $1.createdAt : $0.verdict.level > $1.verdict.level }
+        guard proposed.prefix(Self.maxCards).contains(where: { $0.id == card.id }) else { return .crowdedOut }
+        cards = Array(proposed.prefix(Self.maxCards))
         state.shownEvidence.formUnion(verdict.evidence)
-        if verdict.level == .now { state.heldUntil = current.addingTimeInterval(Self.holdNow) }
-        cards.sort { $0.verdict.level == $1.verdict.level ? $0.createdAt > $1.createdAt : $0.verdict.level > $1.verdict.level }
-        if cards.count > Self.maxCards { cards.removeLast(cards.count - Self.maxCards) }
-        if verdict.level == .now, cards.contains(where: { $0.id == card.id }) { notify(card) }
-        return cards.contains { $0.id == card.id }
+        if verdict.level == .now { state.heldUntil = current.addingTimeInterval(Self.holdNow); notify(card) }
+        return .shown
     }
 
     // MARK: Your decisions
@@ -368,7 +369,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         if card.canSpeak { channels.chat = true }
         let request = ReplyRequest(judge: JudgeRequest(window: card.window, preset: preset, profile: store.profile,
             yourName: model.displayName, language: language, replyChannels: channels), verdict: card.verdict)
-        let provider = store.effectiveWriter, writer = makeWriter(provider, store.apiKey())
+        let provider = store.effectiveWriter, writer = makeWriter(provider, store.apiKey(for: provider))
         Task { @MainActor [weak self] in
             do {
                 let result = try await writer.draft(request)

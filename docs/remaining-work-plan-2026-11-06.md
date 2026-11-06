@@ -99,6 +99,24 @@ Effort is one person; each item ends in a beta. Items marked *gated* wait on you
   ModelManagerError 1013 "CriticalMemoryPressure"; the real-model test skips in that state.
   Personal Voice speaks only the languages the user's voice was recorded in.
 
+### Beta 70 join hang and review fixes (for beta 71)
+
+- **Hang.** On macOS 27.2 (26B123) the audio session service (`audiomxd`) deadlocked on
+  this app's AirPods/headset-mute opt-in (`PrefersBluetoothAccessoryMuting`) at four of
+  five meeting starts today, killed itself after 9 s and left CoreAudio stalled: the
+  meeting's audio never started (buttons stayed inactive). The startup-audio timeout then
+  read the audio route on the main thread and blocked on the same CoreAudio lock. Fixed:
+  route reads are off the main thread and bounded (timeout log and Help → Copy/Export
+  Diagnostics); headset-button mute is a setting, off by default, and turns itself off for
+  later meetings when the opt-in fails or takes over 2 s.
+- **Review findings 1–5 fixed:** API keys per provider kind (the old key moves to the
+  judge's provider); the speech model unloads when no meeting transcribes; line times
+  re-anchor to each buffer's arrival (a playout stall no longer dates lines early); a
+  card crowded out by two more urgent ones changes nothing and is logged `crowdedOut`;
+  system/Personal Voice synthesis gives up after 30 s.
+- Not verified: a live meeting on beta 71, and whether the headset opt-in deadlock
+  reproduces on other macOS builds.
+
 ### 6. Deferred, with the reason
 
 | Item | Why deferred |

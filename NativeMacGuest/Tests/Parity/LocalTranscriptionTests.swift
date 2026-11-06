@@ -38,6 +38,26 @@ import XCTest
     /// Downloads from local files: verified, marked installed, ready only with the VAD.
     /// A downloaded catalog counts only with the update key's signature over its exact
     /// bytes, the same schema and runtime, a higher revision and pinned files.
+    /// Review finding 2: the speech model stayed loaded for the app's life. It is freed
+    /// once the last transcribing meeting stops, and not while another still runs.
+    func testRecognizerUnloadsOnlyWhenTheLastMeetingStops() {
+        let recognizer = LocalSpeechRecognizer()
+        let missing = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("no-model-\(UUID().uuidString)")
+        // Missing files: loading fails in Swift (no native runtime is touched).
+        let model = ListenRecognizerModel.coreMLGigaAM(.init(encoder: missing, decoder: missing, joint: missing, tokens: missing, cache: missing))
+        recognizer.acquire(model); recognizer.acquire(model)
+        XCTAssertEqual(recognizer.userCount, 2)
+        recognizer.release()
+        XCTAssertFalse(recognizer.isLoaded)
+        XCTAssertEqual(recognizer.unloads, 0, "another meeting still transcribes")
+        recognizer.release()
+        _ = recognizer.isLoaded   // drains the queue
+        XCTAssertEqual(recognizer.unloads, 1)
+        XCTAssertEqual(recognizer.userCount, 0)
+        recognizer.release()
+        XCTAssertEqual(recognizer.userCount, 0, "an extra release never goes negative")
+    }
+
     func testSignedCatalogVerification() throws {
         let key = Curve25519.Signing.PrivateKey(), publicKey = key.publicKey.rawRepresentation.base64EncodedString()
         let current = ListenModelCatalog(schemaVersion: 1, runtime: "sherpa-onnx 2.0.1", revision: 3, models: [])
@@ -161,6 +181,37 @@ import XCTest
         XCTAssertEqual(lines.value.count, 1, "One spoken sentence is one line")
         XCTAssertGreaterThanOrEqual(transcriber.currentSummary.microphoneUtterances, 1)
         XCTAssertGreaterThan(transcriber.currentSummary.microphoneSeconds, 1)
+        transcriber.stop()
+    }
+
+    /// Review finding 3: lines were dated from the first buffer plus a sample count, so a
+    /// playout stall dated every later line early by the gap and pushed it out of the
+    /// judge's three-minute window. Each buffer now re-anchors to its arrival time.
+    func testLineTimesFollowTheWallClockAcrossAPlayoutStall() async throws {
+        let (audio, transcriber, lines) = try await speechFixture()
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+        let start = Date(timeIntervalSince1970: 1_793_000_000)
+        final class Clock: @unchecked Sendable { var value: Date; init(_ value: Date) { self.value = value } }
+        let clock = Clock(start)
+        transcriber.now = { clock.value }
+        transcriber.setLocalCapture(true)
+        func feed(_ samples: ArraySlice<Float>) {
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))!
+            buffer.frameLength = AVAudioFrameCount(samples.count)
+            for (i, s) in samples.enumerated() { buffer.floatChannelData![0][i] = s }
+            transcriber.waitForTesting()
+            clock.value += Double(samples.count) / 16_000
+            transcriber.feedLocal(buffer)
+        }
+        for offset in stride(from: 0, to: 16_000, by: 160) { feed(audio[offset..<offset + 160]) }
+        transcriber.waitForTesting()
+        clock.value += 300   // no audio for five minutes
+        for offset in stride(from: 16_000, to: audio.count, by: 160) { feed(audio[offset..<min(audio.count, offset + 160)]) }
+        transcriber.setLocalCapture(false)
+        for _ in 0..<300 where lines.value.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        let line = try XCTUnwrap(lines.value.first)
+        XCTAssertGreaterThanOrEqual(line.start.timeIntervalSince(start), 300, "dated after the stall, not before it")
+        XCTAssertLessThan(line.end.timeIntervalSince(start), 301 + Double(audio.count) / 16_000)
         transcriber.stop()
     }
 

@@ -19,9 +19,22 @@ import LiveKitWebRTC
         var unmuteIfState: @Sendable (UInt64) -> Bool
         var setIntent: (Int32) -> Void
         var isReconfiguring: () -> Bool
+        /// Turns the integration off for later meetings, with the reason (see `begin`).
+        var disable: (String) -> Void = { _ in }
+        var uptime: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 
-        static func live() -> Self {
-            if #available(macOS 14.0, *) {
+        /// Settings → Meetings → "Mute with AirPods and headset buttons". Off unless chosen:
+        /// on macOS 27.2 the system audio session service (audiomxd) deadlocked on this
+        /// app's opt-in at four of five meeting starts, killed itself after 9 s, and left
+        /// CoreAudio stalled so the meeting's audio never started.
+        static let enabledKey = "nativeDesktop.headsetMuteControls"
+        /// Set when the opt-in failed or stalled; names the macOS version it happened on.
+        static let disabledReasonKey = "nativeDesktop.headsetMuteDisabledReason"
+        /// An opt-in slower than this means the audio session service is stuck.
+        static let stallSeconds: TimeInterval = 2
+
+        static func live(defaults: UserDefaults = .standard) -> Self {
+            if #available(macOS 14.0, *), defaults.bool(forKey: enabledKey) {
                 let application = AVAudioApplication.shared
                 return .init(available: true, readMuted: { application.isInputMuted },
                     writeMuted: { try application.setInputMuted($0) },
@@ -41,7 +54,11 @@ import LiveKitWebRTC
                     captureState: { LKRTCApplicationCaptureState() },
                     unmuteIfState: { LKRTCUnmuteApplicationCaptureIfState($0) },
                     setIntent: { LKRTCSetApplicationInputMuteIntent($0) },
-                    isReconfiguring: { LKRTCApplicationInputMuteReconfiguring() != 0 })
+                    isReconfiguring: { LKRTCApplicationInputMuteReconfiguring() != 0 },
+                    disable: { reason in
+                        defaults.set(false, forKey: enabledKey)
+                        defaults.set(reason + " (macOS " + ProcessInfo.processInfo.operatingSystemVersionString + ")", forKey: disabledReasonKey)
+                    })
             }
             return .init(available: false, readMuted: { true }, writeMuted: { _ in }, install: { _ in },
                 uninstall: {}, observe: { _ in NSObject() }, removeObserver: { _ in },
@@ -68,6 +85,8 @@ import LiveKitWebRTC
     private var requested: (@MainActor (Bool) -> Void)?
     private(set) var lastError: String?
     var onError: ((Error) -> Void)?
+    /// The integration was turned off for later meetings, with the reason.
+    var onDisable: ((String) -> Void)?
     var isActive: Bool { owner != nil && Self.current === self }
 
     init(platform: Platform? = nil) { self.platform = platform ?? .live() }
@@ -99,6 +118,7 @@ import LiveKitWebRTC
         platformSynchronized = true
         platform.setCaptureMuted(true); platform.setIntent(1)
         let gate = platform.setCaptureMuted
+        let started = platform.uptime()
         do {
             try platform.install { muted in
                 guard lifetime.active else { return false }
@@ -110,10 +130,18 @@ import LiveKitWebRTC
         } catch {
             invalidate(unregister: true)
             record(error)
+            disable("opt-in failed")
             return false
         }
         observer = platform.observe { [weak self] muted in self?.receive(muted, owner: token) }
-        synchronizePlatform(muted: true)
+        let synchronized = synchronizePlatform(muted: true)
+        // A stalled opt-in means the system audio session service hung on it (and may
+        // restart, taking CoreAudio with it). Later meetings skip the integration; this
+        // one keeps the registration it has, failing closed as before.
+        let seconds = platform.uptime() - started
+        if seconds > Platform.stallSeconds || !synchronized {
+            disable(seconds > Platform.stallSeconds ? "opt-in took \(Int(seconds.rounded())) s" : "mute write failed at opt-in")
+        }
         return isActive && owner == token
     }
 
@@ -212,6 +240,7 @@ import LiveKitWebRTC
     private func accepts(_ request: Request) -> Bool {
         isActive && owner == request.owner && requestRevision == request.revision
     }
+    private func disable(_ reason: String) { platform.disable(reason); onDisable?(reason) }
     private func record(_ error: Error) { lastError = error.localizedDescription; onError?(error) }
 }
 

@@ -1757,3 +1757,13 @@
 "Personal Voice needs macOS 14 or later." = "Personal Voice needs macOS 14 or later.";
 "Allow this app to use your Personal Voice in System Settings → Privacy & Security → Personal Voice." = "Allow this app to use your Personal Voice in System Settings → Privacy & Security → Personal Voice.";
 "No Personal Voice found. Create one in System Settings → Accessibility → Personal Voice." = "No Personal Voice found. Create one in System Settings → Accessibility → Personal Voice.";
+
+/* Headset mute setting */
+"Mute with AirPods and headset buttons" = "Mute with AirPods and headset buttons";
+"Pressing the stem or the headset button mutes or unmutes your microphone in the meeting that holds it. On some macOS versions turning this on makes the system audio service stop responding when a meeting starts; the app then turns it off again. Applies to meetings joined after turning it on." = "Pressing the stem or the headset button mutes or unmutes your microphone in the meeting that holds it. On some macOS versions turning this on makes the system audio service stop responding when a meeting starts; the app then turns it off again. Applies to meetings joined after turning it on.";
+"Turned off after the system audio service stopped responding: %@." = "Turned off after the system audio service stopped responding: %@.";
+
+/* API keys per provider */
+"API key for %@" = "API key for %@";
+"Asking needs an API key for %@." = "Asking needs an API key for %@.";
+"The writer needs an API key for %@." = "The writer needs an API key for %@.";

@@ -106,12 +106,39 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
         }
     }
 
+    private var users = 0
+    private var unloadCounter = 0
+    /// Times the model was freed, for tests.
+    var unloads: Int { lock.lock(); defer { lock.unlock() }; return unloadCounter }
+
     /// Loads the model ahead of the first utterance (the Neural Engine model takes
     /// seconds to load; the first launch also compiles it).
     func prepare(_ model: ListenRecognizerModel) { queue.async { [self] in _ = load(model) } }
 
-    /// Frees the model's memory when no meeting transcribes.
-    func unload() { queue.async { [self] in recognizer = nil; loaded = nil } }
+    /// A meeting starts transcribing: the model loads ahead of its first utterance.
+    func acquire(_ model: ListenRecognizerModel) {
+        lock.lock(); users += 1; lock.unlock()
+        prepare(model)
+    }
+    /// A meeting stopped. When none transcribes, the model's memory is freed (the Core ML
+    /// encoder otherwise stays resident for the app's life, beside the judge's models).
+    func release() {
+        lock.lock(); users = max(0, users - 1); let idle = users == 0; lock.unlock()
+        if idle { unload() }
+    }
+    var userCount: Int { lock.lock(); defer { lock.unlock() }; return users }
+
+    /// Frees the model's memory. Speech already queued finishes first; a later utterance reloads.
+    func unload() {
+        queue.async { [self] in
+            lock.lock(); let stillIdle = users == 0; lock.unlock()
+            guard stillIdle else { return }
+            if loaded != nil { probeLog("local-transcription-unloaded", [:]) }
+            recognizer = nil; loaded = nil
+            lock.lock(); unloadCounter += 1; lock.unlock()
+        }
+    }
+    var isLoaded: Bool { queue.sync { loaded != nil } }
 
     /// On the queue. True when `model` is the loaded one.
     private func load(_ model: ListenRecognizerModel) -> Bool {
@@ -174,12 +201,16 @@ final class MeetingTranscriber: @unchecked Sendable {
     private var stopped = false
     private var localCapture = false
     private(set) var summary = Summary()
+    /// Wall clock for line times; replaced in tests.
+    var now: () -> Date = Date.init
 
     private final class Speaker {
         let detector: SherpaVoiceActivityDetector
         var converter: AVAudioConverter?
         var inputFormat: AVAudioFormat?
         var origin: Date?
+        /// 16 kHz samples given to the detector so far (its segment indices count these).
+        var fed: Int64 = 0
         init(detector: SherpaVoiceActivityDetector) { self.detector = detector }
     }
 
@@ -247,7 +278,11 @@ final class MeetingTranscriber: @unchecked Sendable {
     }
     private func receiveOnQueue(_ trackID: String, _ buffer: AVAudioPCMBuffer) {
         guard !stopped, let speaker = speaker(trackID), let samples = convert(buffer, speaker) else { return }
-        if speaker.origin == nil { speaker.origin = Date().addingTimeInterval(-Double(buffer.frameLength) / buffer.format.sampleRate) }
+        // Sample counts advance only while audio flows; a playout stall (device change,
+        // audio service restart) would date every later line early by the gap. Each
+        // buffer re-anchors the timeline to the wall clock at its arrival.
+        speaker.fed += Int64(samples.count)
+        speaker.origin = now().addingTimeInterval(-Double(speaker.fed) / 16_000)
         let seconds = Double(samples.count) / 16_000
         summary.audioSeconds += seconds
         if trackID == Self.localTrackID { summary.microphoneSeconds += seconds }

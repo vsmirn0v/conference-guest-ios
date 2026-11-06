@@ -1755,3 +1755,13 @@
 "Personal Voice needs macOS 14 or later." = "Для личного голоса нужна macOS 14 или новее.";
 "Allow this app to use your Personal Voice in System Settings → Privacy & Security → Personal Voice." = "Разрешите приложению использовать личный голос: Системные настройки → Конфиденциальность и безопасность → Личный голос.";
 "No Personal Voice found. Create one in System Settings → Accessibility → Personal Voice." = "Личный голос не найден. Создайте его: Системные настройки → Универсальный доступ → Личный голос.";
+
+/* Headset mute setting */
+"Mute with AirPods and headset buttons" = "Выключать микрофон кнопками AirPods и гарнитуры";
+"Pressing the stem or the headset button mutes or unmutes your microphone in the meeting that holds it. On some macOS versions turning this on makes the system audio service stop responding when a meeting starts; the app then turns it off again. Applies to meetings joined after turning it on." = "Нажатие на ножку AirPods или кнопку гарнитуры выключает и включает микрофон во встрече, которая его использует. В некоторых версиях macOS с этой настройкой системная служба звука перестаёт отвечать при начале встречи; тогда приложение снова выключает настройку. Действует для встреч, к которым вы подключитесь после включения.";
+"Turned off after the system audio service stopped responding: %@." = "Выключено, потому что системная служба звука перестала отвечать: %@.";
+
+/* API keys per provider */
+"API key for %@" = "API-ключ для %@";
+"Asking needs an API key for %@." = "Чтобы спрашивать, нужен API-ключ для %@.";
+"The writer needs an API key for %@." = "Автору ответов нужен API-ключ для %@.";

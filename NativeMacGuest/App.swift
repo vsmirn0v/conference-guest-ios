@@ -256,11 +256,16 @@ struct NativeGuestApplication {
     #endif
     @objc private func openHome() { showJoin() }
     @objc private func copyDiagnostics() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(NativeDesktopDiagnostics.report(), forType: .string)
-        let alert = NSAlert(); alert.messageText = L("Diagnostics copied")
-        alert.informativeText = L("Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content.")
-        alert.runModal()
+        Task { @MainActor in
+            // Audio devices are read off the main thread and bounded: a stalled system
+            // audio service must not freeze the app while you ask for help with it.
+            let route = await GuestAcousticEnvironment.boundedRoute(names: true)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(NativeDesktopDiagnostics.report(route: route), forType: .string)
+            let alert = NSAlert(); alert.messageText = L("Diagnostics copied")
+            alert.informativeText = L("Paste them into your message to support. They include the app and macOS versions, audio devices and recent connection events, but no meeting content.")
+            alert.runModal()
+        }
     }
     @objc private func exportDiagnostics() {
         let stamp = DateFormatter(); stamp.locale = Locale(identifier: "en_US_POSIX"); stamp.dateFormat = "yyyy-MM-dd HH.mm"
@@ -269,13 +274,16 @@ struct NativeGuestApplication {
         panel.allowedContentTypes = [.zip]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         NativeDiagnosticsLog.shared.flush()
-        do {
-            try NativeDiagnosticsArchive.make(report: NativeDesktopDiagnostics.report(), logs: NativeDiagnosticsLog.shared.files,
-                reports: NativeDiagnosticReports.shared.files, destination: url)
-            NSWorkspace.shared.activateFileViewerSelecting([url])
-        } catch {
-            let alert = NSAlert(); alert.messageText = L("Unable to export diagnostics")
-            alert.informativeText = error.localizedDescription; alert.runModal()
+        Task { @MainActor in
+            let route = await GuestAcousticEnvironment.boundedRoute(names: true)
+            do {
+                try NativeDiagnosticsArchive.make(report: NativeDesktopDiagnostics.report(route: route), logs: NativeDiagnosticsLog.shared.files,
+                    reports: NativeDiagnosticReports.shared.files, destination: url)
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } catch {
+                let alert = NSAlert(); alert.messageText = L("Unable to export diagnostics")
+                alert.informativeText = error.localizedDescription; alert.runModal()
+            }
         }
     }
 }
@@ -288,7 +296,9 @@ struct NativeGuestApplication {
     static var homeDirectory: String {
         getpwuid(getuid()).flatMap { $0.pointee.pw_dir.map { String(cString: $0) } } ?? NSHomeDirectory()
     }
-    static func report(now: Date = Date()) -> String {
+    /// `route` is the audio devices as `GuestAcousticEnvironment.boundedRoute` read them;
+    /// nothing here touches CoreAudio, so the report never waits on the audio service.
+    static func report(now: Date = Date(), route: [String: Any] = ["unavailable": "not read"]) -> String {
         func string(_ key: String, _ bundle: Bundle) -> String { bundle.object(forInfoDictionaryKey: key) as? String ?? "?" }
         func version(_ bundle: Bundle) -> String { "\(string("CFBundleShortVersionString", bundle)) (\(string("CFBundleVersion", bundle)))" }
         func path(_ value: String) -> String {
@@ -317,7 +327,7 @@ struct NativeGuestApplication {
             "macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)",
             "Mac: \(hardware)", "Language: \(Locale.preferredLanguages.first ?? "?")",
             "Microphone: \(access(.audio)); camera: \(access(.video)); screen recording: \(CGPreflightScreenCaptureAccess() ? "allowed" : "not allowed")",
-            "Audio devices: \(json(GuestAcousticEnvironment.route(names: true)))",
+            "Audio devices: \(json(route))",
             "Installed copies:"]
         let copies = Bundle.main.bundleIdentifier.map { NSWorkspace.shared.urlsForApplications(withBundleIdentifier: $0) } ?? []
         lines += copies.prefix(8).map { url in "  \(path(url.path)) \(Bundle(url: url).map(version) ?? "?")" }

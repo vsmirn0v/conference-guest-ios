@@ -15,7 +15,7 @@ import XCTest
     private func store() -> AttentionStore {
         let defaults = UserDefaults(suiteName: "attention-\(UUID())")!
         let keychain = AttentionKeychain(service: "dev.vsmirn0v.conferenceguest.attention.tests.\(UUID().uuidString)")
-        addTeardownBlock { keychain.delete() }
+        addTeardownBlock { keychain.deleteAll() }
         return AttentionStore(root: folder(), defaults: defaults, keychain: keychain)
     }
     private func message(_ id: String, _ who: String, _ text: String, _ at: Date, own: Bool = false) -> GuestMeetingMessage {
@@ -95,7 +95,7 @@ import XCTest
     func testEscalationOnlyForUnsureVerdictsAndAConfiguredOtherJudge() {
         let root = folder(), defaults = UserDefaults(suiteName: "attention-\(UUID())")!
         let keychain = AttentionKeychain(service: "dev.vsmirn0v.conferenceguest.attention.tests.\(UUID().uuidString)")
-        addTeardownBlock { keychain.delete() }
+        addTeardownBlock { keychain.deleteAll() }
         let store = AttentionStore(root: root, defaults: defaults, keychain: keychain)
         store.provider = AttentionProvider.defaults[.apple]!
         func verdict(_ probability: Double) -> AttentionVerdict {
@@ -105,6 +105,8 @@ import XCTest
         store.escalationProvider = AttentionProvider.defaults[.openAI]
         XCTAssertNil(store.escalation(for: verdict(0.5)), "The API judge needs its key first")
         store.setAPIKey("sk-test")
+        XCTAssertNil(store.escalation(for: verdict(0.5)), "The judge's key belongs to the judge's provider")
+        store.setAPIKey("sk-test", for: AttentionProvider.defaults[.openAI]!)
         XCTAssertEqual(store.escalation(for: verdict(0.5))?.kind, .openAI)
         XCTAssertEqual(store.escalation(for: verdict(0.35))?.kind, .openAI)
         XCTAssertNil(store.escalation(for: verdict(0.8)), "A confident judge decides alone")
@@ -113,6 +115,30 @@ import XCTest
         XCTAssertNil(store.escalation(for: verdict(0.5)), "Never ask the same judge again")
         let reloaded = AttentionStore(root: root, defaults: defaults, keychain: keychain)
         XCTAssertEqual(reloaded.escalationProvider?.kind, .apple)
+    }
+
+    /// Review finding 1: one key used to go to every provider, so an OpenRouter writer
+    /// or escalation received the OpenAI key. Each provider kind has its own now.
+    func testEachProviderKindSendsItsOwnKeyAndTheOldKeyMovesToTheJudge() {
+        let root = folder(), defaults = UserDefaults(suiteName: "attention-\(UUID())")!
+        let keychain = AttentionKeychain(service: "dev.vsmirn0v.conferenceguest.attention.tests.\(UUID().uuidString)")
+        addTeardownBlock { keychain.deleteAll() }
+        let openAI = AttentionProvider.defaults[.openAI]!, openRouter = AttentionProvider.defaults[.openRouter]!
+        let first = AttentionStore(root: root, defaults: defaults, keychain: keychain)
+        first.provider = openRouter
+        keychain.write("sk-legacy")   // as a pre-beta-71 install left it
+        let store = AttentionStore(root: root, defaults: defaults, keychain: keychain)
+        XCTAssertNil(keychain.read(), "The single old key is moved, not kept")
+        XCTAssertEqual(store.apiKey(for: openRouter), "sk-legacy", "It belonged to the judge's provider")
+        XCTAssertNil(store.apiKey(for: openAI))
+        XCTAssertFalse(store.hasKey(for: openAI))
+        store.setAPIKey("sk-openai", for: openAI)
+        XCTAssertEqual(store.apiKey(for: openAI), "sk-openai")
+        XCTAssertEqual(store.apiKey(), "sk-legacy", "The judge keeps its own key")
+        store.writerProvider = openAI; store.draftReplies = true
+        XCTAssertTrue(store.draftsAllowed)
+        store.setAPIKey("", for: openAI)
+        XCTAssertFalse(store.draftsAllowed, "The writer's key, not the judge's, decides")
     }
 
     func testAppleWriterCanDraftWhenLocalDraftsAreAllowed() {
@@ -421,6 +447,40 @@ import XCTest
         let decisions = try store.decisionFiles().map { try String(contentsOf: $0, encoding: .utf8) }.joined()
         for outcome in ["shown", "belowThreshold", "declined", "opened"] { XCTAssertTrue(decisions.contains("\"\(outcome)\""), outcome) }
         XCTAssertTrue(decisions.contains("\"messages\""), "Verdicts keep the exact prompt for replay")
+    }
+
+    /// Review finding 4: a qualifying card that lost to two more urgent ones still marked
+    /// its evidence as shown (so it never came back) and was logged as below threshold.
+    func testCrowdedOutCardLeavesItsEvidenceForLaterAndIsLoggedAsSuch() async throws {
+        let store = store()
+        store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+        let (a, _) = try await meeting("a"), (b, _) = try await meeting("b"), (c, _) = try await meeting("c")
+        let judge = FakeJudge()
+        var clock = Date()
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [a, b, c] }
+        coordinator.hasTranscript = { _ in true }
+        coordinator.makeJudge = { _, _ in judge }
+        coordinator.now = { clock }
+        for (model, id) in [(a, "a1"), (b, "b1"), (c, "c1")] {
+            model.receiveLocalLineForTesting(.init(id: id, trackID: "t", text: "Виталий, нужен ответ", start: clock, end: clock))
+        }
+        judge.next = .init(level: .now, probability: 0.9, reason: "Waiting.", evidence: ["L1"], action: .open)
+        await coordinator.tick(); await coordinator.tick()
+        XCTAssertNotNil(coordinator.card(for: a.sessionID)); XCTAssertNotNil(coordinator.card(for: b.sessionID))
+        judge.next = .init(level: .soon, probability: 0.9, reason: "Soon.", evidence: ["L1"], action: .open)
+        await coordinator.tick()
+        XCTAssertEqual(judge.lastTitle, "c")
+        XCTAssertNil(coordinator.card(for: c.sessionID), "two 'now' cards hold the screen")
+        XCTAssertEqual(coordinator.cards.count, 2)
+
+        coordinator.dismiss(try XCTUnwrap(coordinator.card(for: a.sessionID)))
+        clock += 30
+        c.receiveLocalLineForTesting(.init(id: "c2", trackID: "t", text: "Ждём", start: clock, end: clock))
+        await coordinator.tick()
+        XCTAssertNotNil(coordinator.card(for: c.sessionID), "the crowded-out lines can still raise a card")
+        let decisions = try store.decisionFiles().map { try String(contentsOf: $0, encoding: .utf8) }.joined()
+        XCTAssertTrue(decisions.contains("\"crowdedOut\""))
     }
 
     func testCoordinatorWaitsWhenOffPausedOrOnBatteryAndReportsFailures() async throws {
@@ -769,6 +829,25 @@ import XCTest
         XCTAssertEqual(store.preset(room: trueconf.invitation)?.examples.last?.decision, .approved)
         let log = try store.decisionFiles().map { try String(contentsOf: $0, encoding: .utf8) }.joined()
         XCTAssertTrue(log.contains("\"spoken\""))
+    }
+
+    /// Review finding 5: system synthesis that never signals its end left the card
+    /// "speaking" forever. The wait gives up after its timeout and cancels synthesis.
+    func testSpeechSynthesisThatNeverFinishesGivesUp() async {
+        var cancelled = false
+        let started = Date()
+        let silent = await VoiceReplySample.bounded(timeout: 0.2, cancel: { cancelled = true }) { _ in }
+        XCTAssertNil(silent)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(cancelled)
+        let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 10)!
+        var lateCancel = false
+        let spoken = await VoiceReplySample.bounded(timeout: 0.2, cancel: { lateCancel = true }) { finish in finish(buffer) }
+        XCTAssertTrue(spoken === buffer)
+        try? await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(lateCancel, "a finished synthesis is not cancelled by the timer")
     }
 
     func testRapidMLXVoiceRequestAndWAVDecoding() async throws {
