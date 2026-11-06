@@ -36,6 +36,21 @@ func probeLog(_ event: String, _ fields: [String: Any] = [:]) {
     FileHandle.standardOutput.write(Data([10]))
 }
 
+/// `value` with anything JSON cannot hold replaced: non-finite numbers become -1 and
+/// other types their description, so a diagnostic event built from live state is
+/// never dropped by `probeLog`'s validity check.
+func probeSafe(_ value: Any) -> Any {
+    switch value {
+    case let dictionary as [String: Any]: return dictionary.mapValues(probeSafe)
+    case let array as [Any]: return array.map(probeSafe)
+    case let number as Double: return number.isFinite ? number : -1
+    case let number as Float: return number.isFinite ? Double(number) : -1
+    case is String, is Int, is Bool, is NSNull, is Int64, is UInt64, is Int32, is UInt32: return value
+    case let number as NSNumber: return number.doubleValue.isFinite ? number : -1
+    default: return String(describing: value)
+    }
+}
+
 /// Oldest first.
 func probeLogHistory() -> [String] {
     outputLock.lock(); defer { outputLock.unlock() }

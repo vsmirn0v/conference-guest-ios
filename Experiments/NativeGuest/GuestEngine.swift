@@ -904,8 +904,9 @@ final class NativeGuestEngine {
         startupConnected = true
         // Release builds logged this only on timeout; a slow successful start (about 4 s
         // when alone in the room, beta 71) needs the same timeline. In-memory state only.
-        probeLog("startup-audio-ready", ["client": probeClient, "report": startupReport?.dictionary ?? [:],
-            "audio": systemAudio?.snapshot ?? [:]])
+        // probeSafe: beta 72 never showed this event; live state must not make it invalid JSON.
+        probeLog("startup-audio-ready", ["client": probeClient, "report": probeSafe(startupReport?.dictionary ?? [:]),
+            "audio": probeSafe(systemAudio?.snapshot ?? [:])])
         return true
     }
 

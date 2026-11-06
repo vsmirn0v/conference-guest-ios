@@ -1412,6 +1412,18 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertFalse(report.contains(NativeDesktopDiagnostics.homeDirectory + "/"), "home paths are abbreviated")
     }
 
+    /// startup-audio-ready logs live audio state; values JSON cannot hold must not drop it.
+    func testProbeSafeKeepsEventsWithNonFiniteAndForeignValues() {
+        let marker = UUID().uuidString
+        probeLog("probe-safe-test", ["marker": marker, "state": probeSafe(["rate": Double.nan, "gain": Float.infinity,
+            "nested": [["at": Date(timeIntervalSince1970: 0)]], "ok": 1, "on": true, "id": UUID()])])
+        let line = probeLogHistory().last { $0.contains(marker) }
+        XCTAssertNotNil(line, "the event was not dropped")
+        XCTAssertTrue(line?.contains("\"rate\":-1") == true)
+        XCTAssertTrue(line?.contains("\"gain\":-1") == true)
+        XCTAssertTrue(line?.contains("\"ok\":1") == true)
+    }
+
     func testProbeHistoryIsBoundedSkipsKeepAlivesAndDropsInvalidValues() {
         for index in 0..<450 { probeLog("history-fill", ["index": index]) }
         probeLog("rtc-pong")
