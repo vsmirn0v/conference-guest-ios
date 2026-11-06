@@ -1,0 +1,33 @@
+{
+  "version": "0.3.0",
+  "build": "64",
+  "channel": "beta",
+  "sourceCommit": "04fbbae",
+  "changes": [
+    "Attention Phase 4: judge on this Mac via Rapid-MLX (preset, status check, JSON mode, 60 s timeout), separate reply writer, local drafts opt-in; 10 s checks when plugged in and cool, pauses on heat, Low Power Mode or memory pressure; per-meeting threshold tuning from your choices, rewritten drafts and repeated declines in the prompts (04fbbae)",
+    "Attention Phase 7: Say it on cards speaks the reply into the meeting with the macOS voice or Qwen3-TTS through Rapid-MLX; Listen preview in Settings (04fbbae)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-64-arm64.dmg",
+    "sha256": "1304458850366f77e05c510fde70c9b66f1f402b5a6eed68dfaabb0d922f2f79",
+    "length": 26113937
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-64-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "localJudgeScenarios": "6/6 correct, median 3.6 s (qwen3.5-4b-4bit, JSON mode, M4 16 GB)",
+    "ttsWarm": "5.6 s of Russian speech in 2.6 s (qwen3-tts-voicedesign-4bit), transcribed back correctly"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 64",
+    "Say it in a live meeting",
+    "threshold tuning and writer examples on real decisions",
+    "Compare models with the local judge on your saved decisions"
+  ]
+}
