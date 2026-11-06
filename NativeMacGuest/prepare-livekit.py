@@ -12,6 +12,8 @@ from native_dependencies import (SDK_REVISION, ensure_framework, ensure_livekit_
 
 
 REPOSITORY = pathlib.Path(__file__).resolve().parents[1]
+# Rock'N'Roll changes to the pinned SDK (shared WebRTC factory for one audio engine).
+PATCHES = REPOSITORY / "Dependencies/native-macos/livekit-patches"
 MANIFEST_DEPENDENCY = '.package(url: "https://github.com/livekit/webrtc-xcframework.git", exact: "150.7871.02")'
 
 
@@ -46,8 +48,10 @@ def prepare(source, framework, destination):
     if len(mac) != 1:
         raise SystemExit("Expected exactly one native arm64 macOS framework slice.")
     binary = framework / mac[0]["LibraryIdentifier"] / mac[0]["LibraryPath"] / "LiveKitWebRTC"
-    marker = {"schema": 1, "sdk_revision": revision, "framework": str(framework),
-              "framework_sha256": digest(binary), "source_package_sha256": digest(source / "Package.swift")}
+    patches = sorted(PATCHES.glob("*.patch"))
+    marker = {"schema": 2, "sdk_revision": revision, "framework": str(framework),
+              "framework_sha256": digest(binary), "source_package_sha256": digest(source / "Package.swift"),
+              "patches": {path.name: digest(path) for path in patches}}
     destination.mkdir(parents=True, exist_ok=True)
     sdk = destination / "client-sdk-swift"
     marker_path = destination / "native-livekit.json"
@@ -56,6 +60,10 @@ def prepare(source, framework, destination):
             raise SystemExit(f"Refusing to overwrite an unrelated or stale SDK copy: {sdk}")
     else:
         shutil.copytree(source, sdk, ignore=shutil.ignore_patterns(".git", ".build", ".swiftpm", ".DS_Store"))
+        # Our reviewed changes to the pinned SDK, applied in name order to the copy only;
+        # the source checkout stays clean. A patch that does not apply exactly stops the build.
+        for path in patches:
+            subprocess.run(["patch", "-p1", "--forward", "--batch", "--quiet", "-d", str(sdk), "-i", str(path)], check=True)
         marker_path.write_text(json.dumps(marker, indent=2) + "\n")
     # SwiftPM selects a version-specific manifest on recent toolchains.
     for name, original in manifests.items():

@@ -1,0 +1,126 @@
+# R4: one audio engine for every meeting, Rock included — implementation plan
+
+Decided 6 Nov 2026: build R4 in full, with Rock on the same engine (supersedes decision 2 in
+`microphone-bus-design.md`, "Rock stays on its own engine"). The design, review outcome and
+guarantees in that document still apply; this file is the work breakdown.
+
+## Where things are today
+
+| Meeting | Audio owner | Created by |
+|---|---|---|
+| First Guest meeting | `GuestSystemAudio` (exclusive, `sharedNativeOwner`) | `NativeDesktopSharedMedia.reserveRoom/attach` |
+| More Guest meetings | own `GuestSystemAudio` (`concurrent` lease) | `makeConcurrentGuestMedia` |
+| Telemost, TrueConf | own `GuestSystemAudio` per meeting | `NativeDesktopExternalSession.connect` |
+| Rock | LiveKit's process-wide `RTC.peerConnectionFactory` and `AudioManager.shared` | LiveKit SDK (`Core/RTC.swift`, a lazy `static let`) |
+
+Each `GuestSystemAudio` owns one `LKRTCPeerConnectionFactory`, its audio device module (one
+`AVAudioEngine` with Voice Processing I/O), the module observer (input graph: transcription tap,
+voice-reply gate and player; playout meters and meeting volume), mute mode, availability and
+the per-meeting talk permit. All native work runs through `GuestAudioEngineGate` (beta 59).
+
+The LiveKit SDK is copied from a clean checkout at a pinned revision by
+`NativeMacGuest/prepare-livekit.py` (it refuses local changes). Its factory is created on first
+use and lives for the process; `AudioManager` installs its own observer on that module.
+
+## Target
+
+One process-wide **shared engine**: one factory, one module, one VPIO unit, one observer.
+
+- Every meeting gets a **meeting attachment** on it instead of its own owner: its peer
+  connections are created on the shared factory; it owns its microphone *sender track* and its
+  *received tracks*.
+- **Talk role = which attachment's sender is enabled.** Moving the microphone disables one
+  sender and enables another on a running engine. The module is unmuted only while the talk
+  meeting is unmuted; unmute is compare-and-set on a talk epoch so a stale meeting cannot unmute.
+- **Sound** per meeting = volume on its received tracks (meeting volume × participant volume;
+  0 when sound is off). Playout runs while any meeting wants sound or transcription.
+- **Echo cancellation covers every meeting**, since all playout goes through the one VPIO unit.
+- **Rock**: the LiveKit SDK is patched so `RTC.peerConnectionFactory` takes the shared factory
+  supplied by the app before the first jam, and `AudioManager` does not replace the module's
+  observer (the shared observer forwards what the SDK needs). Rock's local track records from
+  the shared module; its mute is its sender; its remote tracks play through the shared output
+  with `RemoteAudioTrack.volume`. Rock voice replies use the shared input graph instead of
+  LiveKit's app-audio mixer.
+- **Recovery** restarts the shared module's engine (never the factory, which the SDK holds for
+  the process). During recovery every sender is disabled; each meeting re-confirms its mute state
+  before its sender can be enabled again.
+- **Feature flag** "One audio engine for all meetings (experimental)", off by default until
+  measured. With it off, today's code paths run unchanged. The flag is read at launch (Rock's
+  factory is fixed for the process), so changing it asks for a relaunch.
+
+## Guarantees (from the design, with how each is proven)
+
+1. Muted means silent — per meeting: sender disabled or module muted; test on the shared module
+   with offline rendering, one sender enabled at a time.
+2. Only the talk meeting can be heard — all other senders disabled before the module unmutes, in
+   one serial queue; test with two and four attachments.
+3. Headset mute and the menu-bar indicator follow the talk meeting (unchanged API).
+4. Private microphone check: only while no sender is enabled, as a tap on the shared input.
+5. Cleanup failures quarantine (`GuestAudioOwnerLease.reportFailedStop`) — lease moves to the
+   shared engine; a failed detach blocks new attachments.
+6. No updates during meetings (unchanged).
+7. Transcription: input tap (yours) and per-track sinks (others), several meetings at once.
+8. Meeting volume, participant volume, sound off keep their meaning (track volumes).
+9. Device changes, sleep/wake, AirPods: engine restart with all senders disabled until re-confirmed.
+10. Up to four meetings, any mix of services including Rock.
+
+## Steps
+
+| Step | Scope | Effort | Done when |
+|---|---|---:|---|
+| **S0** | Spike, go/no-go | 3–4 days | (a) Tests on our WebRTC build: two loopback call pairs on one factory, the second attached while the engine runs with VPIO; enabling/disabling sender tracks switches which call carries input without an engine restart; per-track receive volume. (b) The LiveKit patch compiles from `prepare-livekit.py`, and a Rock room on a local `livekit-server --dev` publishes audio recorded by the injected module. Stop and report if either fails. |
+| S1 | Shared engine + attachment API | 1 week | `SharedAudioEngine` and `MeetingAudioAttachment` with the `GuestSystemAudio` surface the engines use (mute, permit, activation, playout, volume, transcription, voice reply, snapshot, shutdown). Behind the flag. Unit tests for guarantees 1, 2, 4, 5. |
+| S2 | Guest on the shared engine | 1 week | `NativeDesktopSharedMedia` holds many rooms; `relinquish/assumeMicrophone` toggle senders. Parity, shared-media, session and move tests pass with the flag on and off. |
+| S3 | Telemost and TrueConf | 3–4 days | External sessions attach to the shared engine. TrueConf shows no "speaking" for a disabled sender's silence. |
+| S4 | Rock | 1 week | SDK patch applied by `prepare-livekit.py` (checked-in patch file, revision-pinned); factory injected at launch when the flag is on; Rock's `AudioManager` calls map to its attachment; voice replies and transcription through the shared graph. |
+| S5 | Recovery and edge cases | 3–4 days | Device change, sleep/wake, AirPods route change, engine failure: senders disabled until re-confirmed; four mixed meetings; private check. |
+| S6 | Beta behind the flag, then default | — | Live checks: move times (expect ≈ service round trip only), echo across meetings on speakers, CPU vs separate engines. Flag on by default only after that. |
+
+Total ≈ 4–5 weeks. Each step lands behind the flag and keeps the existing suites green with the
+flag off, so betas can ship between steps.
+
+## S0 result (6 Nov 2026): go
+
+Tests: `NativeMacGuest/Tests/Parity/SharedEngineSpikeTests.swift` (S0a) and
+`SharedEngineRockSpikeTests.swift` (S0b, opt-in `R4_ROCK_SPIKE=1` with
+`livekit-server --dev --bind 127.0.0.1 --node-ip 127.0.0.1`). SDK patch:
+`Dependencies/native-macos/livekit-patches/shared-factory.patch`, applied by `prepare-livekit.py`.
+
+| Check | Result |
+|---|---|
+| Second call attaches to a running engine | 34–40 ms; engine created and started once |
+| Sender switch, no engine restart | ≈ 0.1 s until the far side receives the tone; created/started counts unchanged |
+| Talking vs silent sender | 3.5–4.1 KB/s vs 0.15–1.8 KB/s (Opus DTX/comfort noise) |
+| Rock room on the injected factory | listener receives 11.4–11.7 KB/s; muted 0; a Guest-style call beside it takes the input in 0.1 s; one engine; SDK observer kept |
+| Release compile with the patched SDK | passes; the patch file is not in the app bundle |
+| Full suite with the spikes | spikes pass; session scenarios (31) pass |
+
+Not covered: the hardware VPIO variant (`testTwoCallsShareOneVoiceProcessingEngineOnHardware`)
+skips because the Debug test host has no microphone permission. It runs once that host is
+allowed the microphone, or in S6 live checks.
+
+Findings that shape S1–S4:
+
+- **The SDK needs its own APM and codec factories.** LiveKit publish waits for a processed local
+  frame through its `audioProcessingModule`'s capture delegate, so the shared factory is built
+  with `SharedPeerConnectionFactory.audioProcessingModule`, `.videoEncoderFactory` and
+  `.videoDecoderFactory`.
+- **The shared observer forwards every module event** to
+  `AudioManager.shared.sdkAudioDeviceModuleObserver` before doing its own work (the patch stops
+  `AudioManager` from replacing the observer while a shared factory is installed).
+- **The capture gate is process-wide.** `NativeDesktopHeadsetMute` closes WebRTC's
+  application capture gate (`LKRTCSetApplicationCaptureMuted(1)`) when a meeting ends and fails
+  closed; it zeroes the input of every engine in the process. Today each meeting re-opens it for
+  itself; with one engine the gate must belong to the shared engine and follow the talk
+  attachment (guarantee 3), and ending a non-talk meeting must not close it. (Found because
+  earlier tests' meetings left it closed and silenced the spike.)
+
+## Risks
+
+- Our M156 fork must accept new peer connections on a running module with VPIO active, and send
+  from several senders off one recording stream (S0a).
+- The LiveKit SDK's internals assume they own the module (observer, recording-prepared mode,
+  `AudioManager` state). The patch must keep the SDK's own tests building; anything it relies on
+  that we cannot forward blocks S4 (S0b checks the main path).
+- One failure interrupts audio in every meeting (accepted 5 Nov).
+- One processing profile for all meetings (speech/music, VPIO on/off): the talk meeting's wins.

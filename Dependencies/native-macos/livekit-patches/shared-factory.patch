@@ -1,0 +1,94 @@
+--- a/Sources/LiveKit/Audio/Manager/AudioManager.swift
++++ b/Sources/LiveKit/Audio/Manager/AudioManager.swift
+@@ -564,7 +564,11 @@
+         #endif
+         _state = StateSync(State(engineObservers: engineObservers))
+         _admDelegateAdapter.audioManager = self
+-        RTC.audioDeviceModule.observer = _admDelegateAdapter
++        // With the app's shared factory, the app's observer owns the audio module; it forwards
++        // what the SDK needs through ``sdkAudioDeviceModuleObserver``.
++        if !SharedPeerConnectionFactory.isInstalled {
++            RTC.audioDeviceModule.observer = _admDelegateAdapter
++        }
+     }
+ }
+ 
+@@ -648,4 +652,10 @@
+             throw LiveKitError(.audioEngine, message: "Audio engine returned error code: \(code)")
+         }
+     }
++}
++
++public extension AudioManager {
++    /// The SDK's own module observer, for an app that installed a shared factory and forwards
++    /// module events to the SDK (an `LKRTCAudioDeviceModuleDelegate`).
++    var sdkAudioDeviceModuleObserver: AnyObject { _admDelegateAdapter }
+ }
+--- a/Sources/LiveKit/Core/RTC.swift
++++ b/Sources/LiveKit/Core/RTC.swift
+@@ -133,6 +133,11 @@
+ 
+     static let pcFactoryState = StateSync(PeerConnectionFactoryState())
+ 
++    /// Rock'N'Roll for Mac: a factory the app supplies before the SDK first uses WebRTC, so
++    /// LiveKit rooms run on the app's shared audio engine. Set through
++    /// ``SharedPeerConnectionFactory/install(_:)`` only, before any room or track exists.
++    nonisolated(unsafe) static var injectedPeerConnectionFactory: LKRTCPeerConnectionFactory?
++
+     // global properties are already lazy
+ 
+     static let encoderFactory: LKRTCVideoEncoderFactory & Sendable = {
+@@ -150,6 +155,12 @@
+     static let audioSenderCapabilities = peerConnectionFactory.rtpSenderCapabilities(forKind: kLKRTCMediaStreamTrackKindAudio)
+ 
+     static let peerConnectionFactory: LKRTCPeerConnectionFactory = {
++        if let injected = injectedPeerConnectionFactory {
++            pcFactoryState.mutate { $0.isInitialized = true }
++            Room.log("Using the app's shared PeerConnectionFactory")
++            return injected
++        }
++
+         // Update pc init lock
+         let (admType, bypassVoiceProcessing) = pcFactoryState.mutate {
+             $0.isInitialized = true
+--- a/Sources/LiveKit/Core/SharedPeerConnectionFactory.swift
++++ b/Sources/LiveKit/Core/SharedPeerConnectionFactory.swift
+@@ -0,0 +1,38 @@
++/*
++ * Rock'N'Roll for Mac patch (Dependencies/native-macos/livekit-patches/shared-factory.patch).
++ * Licensed under the Apache License, Version 2.0, like the rest of this SDK.
++ */
++
++import Foundation
++
++internal import LiveKitWebRTC
++
++/// Lets an app run LiveKit rooms on a WebRTC factory (and its audio device module) that it
++/// also uses for other calls, so every call shares one audio engine and echo canceller.
++public enum SharedPeerConnectionFactory {
++    /// Hands the SDK the app's `LKRTCPeerConnectionFactory`. Must run before any LiveKit API
++    /// touches WebRTC; returns false when the SDK already created its own factory or the
++    /// object is not a factory.
++    @discardableResult
++    public static func install(_ factory: AnyObject) -> Bool {
++        guard let factory = factory as? LKRTCPeerConnectionFactory else { return false }
++        return RTC.pcFactoryState.mutate { state -> Bool in
++            guard !state.isInitialized, RTC.injectedPeerConnectionFactory == nil else { return false }
++            RTC.injectedPeerConnectionFactory = factory
++            return true
++        }
++    }
++
++    /// The SDK runs on a factory the app supplied.
++    public static var isInstalled: Bool { RTC.injectedPeerConnectionFactory != nil }
++
++    /// The SDK's audio processing module (an `LKRTCDefaultAudioProcessingModule`). Create the
++    /// shared factory with it, so LiveKit's capture and render hooks (the local frame watcher
++    /// that publishing waits for, custom processing) see the shared audio.
++    public static var audioProcessingModule: AnyObject { RTC.audioProcessingModule }
++
++    /// The SDK's video encoder factory (simulcast) and decoder factory, so LiveKit rooms on the
++    /// shared factory publish and receive video exactly as on the SDK's own.
++    public static var videoEncoderFactory: AnyObject { RTC.encoderFactory }
++    public static var videoDecoderFactory: AnyObject { RTC.decoderFactory }
++}
