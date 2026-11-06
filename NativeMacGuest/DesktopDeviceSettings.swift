@@ -61,10 +61,14 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
          suspendReadiness: (() async throws -> ((Bool) -> Void))? = nil) {
         self.authorizeAudio = authorizeAudio ?? { try await GuestCaptureAuthorization.request(.audio) }
         self.createAudioOwner = createAudioOwner ?? {
+            // R4: once LiveKit holds the shared owner it lives for the process; the check borrows it.
+            if SharedAudioEngine.enabledAtLaunch, SharedAudioEngine.shared.pinnedForProcess {
+                return SharedPrivateAudioCheck(engine: SharedAudioEngine.shared)
+            }
             // Same native setup as the meeting owner: without its media context the
             // M156 audio engine blocks in start-recording (measured > 8 s, no buffers).
-            try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, profile: .saved,
-                                              privateCheckOnly: true, exclusive: true)
+            return try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, profile: .saved,
+                                                     privateCheckOnly: true, exclusive: true)
         }
         self.suspendReadiness = suspendReadiness ?? {
             let token = try await NativeDesktopMediaService.shared.suspend()

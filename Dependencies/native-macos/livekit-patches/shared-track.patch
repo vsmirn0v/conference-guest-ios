@@ -1,0 +1,15 @@
+--- /dev/null
++++ b/Sources/LiveKit/Track/Track+SharedEngine.swift
+@@ -0,0 +1,12 @@
++import Foundation
++
++public extension Track {
++    /// Whether the underlying WebRTC track sends. An app running several meetings on one
++    /// shared audio engine (SharedPeerConnectionFactory) enables only the talk meeting's
++    /// microphone sender. Blocks briefly on the RTC executor, like the SDK's own sync APIs.
++    var sharedEngineSenderEnabled: Bool {
++        get { mediaTrack.blocking { $0.isEnabled } }
++        set { mediaTrack.blocking { $0.isEnabled = newValue } }
++    }
++}
++

@@ -5,7 +5,10 @@ import Foundation
 /// releases the caller immediately; a later system reply cannot revive it.
 @MainActor enum GuestCaptureAuthorization {
     static func request(_ type: AVMediaType) async throws -> Bool {
-        try await request(status: { AVCaptureDevice.authorizationStatus(for: type) },
+#if DEBUG
+        if type == .audio, let forced = GuestSystemAudio.microphoneAuthorizationOverrideForTesting { return forced }
+#endif
+        return try await request(status: { AVCaptureDevice.authorizationStatus(for: type) },
                           prompt: { AVCaptureDevice.requestAccess(for: type, completionHandler: $0) })
     }
 

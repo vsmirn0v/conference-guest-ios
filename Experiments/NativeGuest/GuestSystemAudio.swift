@@ -328,6 +328,27 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     static let voiceRepliesKey = "nativeDesktop.voiceReplies"
     static var voiceRepliesEnabled: Bool { UserDefaults.standard.bool(forKey: voiceRepliesKey) }
     private var voiceReply: GuestVoiceReplyGraph?
+    /// Tests only (manual rendering): set once at creation, before any native work.
+    private var manualRenderingMode = false
+    /// Microphone permission as every check here sees it (debug tests may override it,
+    /// together with manual rendering, to run without the test host's permission).
+    static var microphoneAuthorized: Bool {
+#if DEBUG
+        if let microphoneAuthorizationOverrideForTesting { return microphoneAuthorizationOverrideForTesting }
+#endif
+        return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+#if DEBUG
+    nonisolated(unsafe) static var microphoneAuthorizationOverrideForTesting: Bool?
+#endif
+    /// R4: another observer of this module (LiveKit's, when its factory is shared) receives
+    /// every module event first. While set, that observer wires the input graph, so this
+    /// owner only taps it and builds no voice-reply graph of its own.
+    private weak var forwardObserverStorage: LKRTCAudioDeviceModuleDelegate?
+    var forwardObserver: LKRTCAudioDeviceModuleDelegate? {
+        get { locked { forwardObserverStorage } }
+        set { locked { forwardObserverStorage = newValue } }
+    }
     /// Survives engine rebuilds: a graph built during a reply starts closed.
     private var microphoneGateOpen = true
     private var ownedFactory: LKRTCPeerConnectionFactory?
@@ -400,7 +421,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         let value = snapshot
         return value["inputPermitted"] as? Bool != false &&
             (value["microphoneOptIn"] as? Bool == true || value["deferredActivation"] as? Bool == true) &&
-            AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            GuestSystemAudio.microphoneAuthorized
     }
     var privateInputLevel: Float? { locked { inputMeterEnabled } ? inputMeter.level : nil }
     var privateInputMeterEvidence: [String: Any] { meterEvidence(inputMeter).merging(["enabled": locked { inputMeterEnabled }]) { _, new in new } }
@@ -488,21 +509,26 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     static func create(microphoneEnabled: Bool, playoutEnabled: Bool,
                        voiceProcessingEnabled: Bool = true, profile: GuestAudioProfile = .speech,
                        privateCheckOnly: Bool = false, exclusive: Bool = false, concurrent: Bool = false,
+                       manualRendering: Bool = false,
+                       makeFactory: ((_ voiceProcessing: Bool) -> LKRTCPeerConnectionFactory)? = nil,
                        timeout: TimeInterval = 3) async throws -> GuestSystemAudio {
         NativeScreenEncoderQuality.prepare()
         if exclusive || concurrent { _ = LKRTCInitializeSSL() }
-        if microphoneEnabled && AVCaptureDevice.authorizationStatus(for: .audio) != .authorized {
+        if microphoneEnabled && !GuestSystemAudio.microphoneAuthorized {
             throw GuestSystemAudioError.microphonePermissionRequired
         }
         guard let lease = GuestAudioOwnerLease(privateCheck: privateCheckOnly, exclusive: exclusive,
                                                concurrent: concurrent) else { throw GuestSystemAudioError.physicalOwnerBusy }
         let owner = GuestSystemAudio(microphoneEnabled: microphoneEnabled, playoutEnabled: playoutEnabled,
             profile: profile, lease: lease, sharedNativeOwner: exclusive)
-        let voiceProcessingEnabled = voiceProcessingEnabled && profile.usesPlatformVoiceProcessing
+        // Manual rendering (tests) has no device for the platform's voice processing to run on.
+        let voiceProcessingEnabled = voiceProcessingEnabled && profile.usesPlatformVoiceProcessing && !manualRendering
         let success = await owner.perform("create", timeout: timeout) {
-            let factory = owner.nativeCall("create-factory") { LKRTCPeerConnectionFactory(audioDeviceModuleType: .audioEngine,
-                bypassVoiceProcessing: !voiceProcessingEnabled, encoderFactory: LKRTCDefaultVideoEncoderFactory(),
-                decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioProcessingModule: nil) }
+            let factory = owner.nativeCall("create-factory") {
+                makeFactory?(voiceProcessingEnabled) ?? LKRTCPeerConnectionFactory(audioDeviceModuleType: .audioEngine,
+                    bypassVoiceProcessing: !voiceProcessingEnabled, encoderFactory: LKRTCDefaultVideoEncoderFactory(),
+                    decoderFactory: LKRTCDefaultVideoDecoderFactory(), audioProcessingModule: nil)
+            }
             owner.locked { owner.ownedFactory = factory }
             if exclusive || concurrent {
                 // The first media peer initializes WebRtcVoiceEngine and binds
@@ -527,7 +553,14 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             }
             let module = factory.audioDeviceModule
             owner.nativeCall("set-observer") { module.observer = owner }
-            guard owner.nativeCall("set-platform-processing", { module.setPlatformVoiceProcessingAllowed(voiceProcessingEnabled) }) == 0 else { return false }
+            if manualRendering {
+                // Tests only: the engine renders offline, so no device is opened. Its render
+                // thread pulls the output side, which therefore always stays available.
+                guard owner.nativeCall("set-manual-rendering", { module.setManualRenderingMode(true) }) == 0 else { return false }
+                owner.manualRenderingMode = true
+                owner.update(["manualRendering": true])
+            }
+            guard owner.nativeCall("set-platform-processing", { module.setPlatformVoiceProcessingAllowed(voiceProcessingEnabled && !manualRendering) }) == 0 else { return false }
             owner.update(["voiceProcessingRequested": voiceProcessingEnabled])
             let prepared = owner.nativeCall("set-recording-prepared", { module.setRecordingAlwaysPreparedMode(false) }) == 0
             let muteMode = owner.nativeCall("set-mute-mode", { module.setMuteMode(.inputMixer) }) == 0
@@ -550,7 +583,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         setPrivateInputMeterEnabled(true)
         let success = await perform("private-input-check", timeout: timeout) {
             guard !self.closed, self.ownerLease?.privateCheck == true, let module = self.currentModule,
-                  AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
+                  GuestSystemAudio.microphoneAuthorized else { return false }
             self.inputActivation.beginCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable
             let success = GuestMutedInputPreparation.start(
                 mute: { self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0 },
@@ -568,7 +601,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     func beginPrivateInputCheck(timeout: TimeInterval? = nil) async -> Bool {
         let success = await perform("private-input-borrow", timeout: timeout ?? inputStartupBudget) {
             guard !self.closed, self.inputPermitted, let module = self.currentModule,
-                  AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
+                  GuestSystemAudio.microphoneAuthorized else { return false }
             self.inputActivation.beginCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable
             let success = self.applyAvailability(module)
             if !success { self.inputActivation.endCheck(); self.microphoneOptIn = self.inputActivation.inputAvailable; _ = self.applyAvailability(module) }
@@ -590,7 +623,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         guard remaining > 0 else { return false }
         return await perform("foreground-input-prepare", timeout: remaining) {
             guard !self.closed, self.inputPermitted, let module = self.currentModule,
-                  AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
+                  GuestSystemAudio.microphoneAuthorized else { return false }
             self.inputActivation = .init(persistent: true); self.microphoneOptIn = true
             self.playoutEnabled = false
             let success = GuestMutedInputPreparation.start(
@@ -613,7 +646,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             // A new room or recovery attempt starts permitted; the meeting reapplies
             // its own withdrawal before any session can activate input.
             self.inputPermitted = true
-            let input = preparedInput && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            let input = preparedInput && GuestSystemAudio.microphoneAuthorized
             self.inputActivation = .init(persistent: input); self.microphoneOptIn = input
             self.deferredActivation = false; self.update(["deferredActivation": false, "inputPermitted": true])
             self.playoutEnabled = playout
@@ -648,7 +681,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     func activateMicrophone(timeout: TimeInterval? = nil) async -> Bool {
         await perform("microphone-activate", timeout: timeout ?? inputStartupBudget) {
             guard !self.closed, let module = self.currentModule,
-                  AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+                  GuestSystemAudio.microphoneAuthorized else {
                 self.update(["lastRejectedOperation": "microphone-not-authorized"]); return false
             }
             // Another meeting holds the microphone: remember the request without input.
@@ -687,7 +720,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                 self.update(["lastRejectedOperation": "microphone-input-not-permitted"]); return false
             }
             if !muted, !self.microphoneOptIn, self.deferredActivation,
-               AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
+               GuestSystemAudio.microphoneAuthorized {
                 let wasActivated = self.inputActivation
                 self.inputActivation.activate(); self.microphoneOptIn = self.inputActivation.inputAvailable
                 guard self.applyAvailability(module) else {
@@ -697,7 +730,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
                 self.deferredActivation = false
                 self.update(["deferredActivation": false, "microphoneOptIn": self.microphoneOptIn])
             }
-            guard muted || (self.microphoneOptIn && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized) else {
+            guard muted || (self.microphoneOptIn && GuestSystemAudio.microphoneAuthorized) else {
                 self.update(["lastRejectedOperation": "microphone-not-authorized"]); return false
             }
             self.update(["microphoneMutedRequested": muted])
@@ -749,7 +782,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     func prewarmInput(timeout: TimeInterval = 8) async -> Bool {
         await perform("input-prewarm", timeout: timeout) {
             guard !self.closed, let module = self.currentModule, !self.inputPermitted,
-                  AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
+                  GuestSystemAudio.microphoneAuthorized else { return false }
             if self.microphoneOptIn { return module.isMicrophoneMuted }
             self.update(["microphoneMutedRequested": true])
             guard self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0,
@@ -876,7 +909,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             playoutRequested: playoutEnabled, sharedNativeOwner: sharedNativeOwner, transcription: transcriptionOutput)
         var availability = LKRTCAudioEngineAvailability()
         availability.isInputAvailable = ObjCBool(physical.input)
-        availability.isOutputAvailable = ObjCBool(physical.output)
+        availability.isOutputAvailable = ObjCBool(physical.output || manualRenderingMode)
         return nativeCall("set-engine-availability", { module.setEngineAvailability(availability) }) == 0
     }
 
@@ -944,26 +977,38 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     // Observer callbacks run on the native audio worker. They only update small cached values;
     // they must not call the blocking ADM API or synchronously dispatch to audioQueue.
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, didReceiveSpeechActivityEvent event: LKRTCSpeechActivityEvent) {
+        forwardObserver?.audioDeviceModule(audioDeviceModule, didReceiveSpeechActivityEvent: event)
         update(["speechActivityEvent": event.rawValue])
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, didCreateEngine engine: AVAudioEngine) -> Int {
-        locked { cached["enginesCreated"] = (cached["enginesCreated"] as? Int ?? 0) + 1 }; return 0
+        let forwarded = forwardObserver?.audioDeviceModule(audioDeviceModule, didCreateEngine: engine) ?? 0
+        locked { cached["enginesCreated"] = (cached["enginesCreated"] as? Int ?? 0) + 1 }; return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, willEnableEngine engine: AVAudioEngine,
                            isPlayoutEnabled: Bool, isRecordingEnabled: Bool, isVoiceProcessingEnabled: Bool) -> Int {
-        update(["voiceProcessingEnabled": isVoiceProcessingEnabled]); return 0
+        let forwarded = forwardObserver?.audioDeviceModule?(audioDeviceModule, willEnableEngine: engine, isPlayoutEnabled: isPlayoutEnabled,
+            isRecordingEnabled: isRecordingEnabled, isVoiceProcessingEnabled: isVoiceProcessingEnabled) ?? 0
+        update(["voiceProcessingEnabled": isVoiceProcessingEnabled]); return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, willStartEngine engine: AVAudioEngine,
                            isPlayoutEnabled: Bool, isRecordingEnabled: Bool) -> Int {
-        locked { cached["engineStarts"] = (cached["engineStarts"] as? Int ?? 0) + 1 }; return 0
+        let forwarded = forwardObserver?.audioDeviceModule(audioDeviceModule, willStartEngine: engine,
+            isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled) ?? 0
+        locked { cached["engineStarts"] = (cached["engineStarts"] as? Int ?? 0) + 1 }; return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, didStopEngine engine: AVAudioEngine,
                            isPlayoutEnabled: Bool, isRecordingEnabled: Bool) -> Int {
-        locked { cached["engineStops"] = (cached["engineStops"] as? Int ?? 0) + 1 }; return 0
+        let forwarded = forwardObserver?.audioDeviceModule(audioDeviceModule, didStopEngine: engine,
+            isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled) ?? 0
+        locked { cached["engineStops"] = (cached["engineStops"] as? Int ?? 0) + 1 }; return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, didDisableEngine engine: AVAudioEngine,
-                           isPlayoutEnabled: Bool, isRecordingEnabled: Bool) -> Int { 0 }
+                           isPlayoutEnabled: Bool, isRecordingEnabled: Bool) -> Int {
+        forwardObserver?.audioDeviceModule(audioDeviceModule, didDisableEngine: engine,
+            isPlayoutEnabled: isPlayoutEnabled, isRecordingEnabled: isRecordingEnabled) ?? 0
+    }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, willReleaseEngine engine: AVAudioEngine) -> Int {
+        let forwarded = forwardObserver?.audioDeviceModule(audioDeviceModule, willReleaseEngine: engine) ?? 0
         if let tappedInput, tappedEngine === engine {
             tappedInput.removeTap(onBus: 0); self.tappedInput = nil; tappedEngine = nil
         }
@@ -977,11 +1022,15 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             voiceReply = nil; return current
         }
         graph?.detach()
-        locked { cached["enginesReleased"] = (cached["enginesReleased"] as? Int ?? 0) + 1 }; return 0
+        locked { cached["enginesReleased"] = (cached["enginesReleased"] as? Int ?? 0) + 1 }; return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, engine: AVAudioEngine,
                            configureInputFromSource source: AVAudioNode?, toDestination destination: AVAudioNode,
                            format: AVAudioFormat, context: [AnyHashable: Any]) -> Int {
+        // The other observer wires the input first; this owner then only taps the source.
+        let forwarding = forwardObserver
+        let forwarded = forwarding?.audioDeviceModule(audioDeviceModule, engine: engine, configureInputFromSource: source,
+            toDestination: destination, format: format, context: context) ?? 0
         update(["inputSampleRate": format.sampleRate, "inputChannels": Int(format.channelCount), "inputASBD": Self.signature(format)])
         if let source, source !== tappedInput, format.sampleRate > 0, format.channelCount > 0 {
             tappedInput?.removeTap(onBus: 0)
@@ -1003,7 +1052,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         }
         // Voice replies: microphone → gate → input mixer ← player. Built only
         // when the experimental setting is on; otherwise the default wiring stays.
-        if Self.voiceRepliesEnabled, let inputMixer = context[kLKRTCAudioEngineInputMixerNodeKey] as? AVAudioMixerNode {
+        if forwarding == nil, Self.voiceRepliesEnabled, let inputMixer = context[kLKRTCAudioEngineInputMixerNodeKey] as? AVAudioMixerNode {
             let graph: GuestVoiceReplyGraph = locked {
                 if let existing = voiceReply, existing.engine === engine { return existing }
                 let created = GuestVoiceReplyGraph(engine: engine, gateOpen: microphoneGateOpen)
@@ -1012,11 +1061,14 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             let connected = graph.connect(source: source, inputMixer: inputMixer, format: format)
             update(["voiceReplyGraph": connected, "microphoneGateOpen": graph.gateOpen])
         }
-        return 0
+        return forwarded
     }
     func audioDeviceModule(_ audioDeviceModule: LKRTCAudioDeviceModule, engine: AVAudioEngine,
                            configureOutputFromSource source: AVAudioNode, toDestination destination: AVAudioNode?,
                            format: AVAudioFormat, context: [AnyHashable: Any]) -> Int {
+        let forwarded = forwardObserver?.audioDeviceModule(audioDeviceModule, engine: engine, configureOutputFromSource: source,
+            toDestination: destination, format: format, context: context) ?? 0
+        guard forwarded == 0 else { return forwarded }
         if sharedNativeOwner {
             guard let mixer = source as? AVAudioMixerNode,
                   sharedPlayoutGate.bind(identity: ObjectIdentifier(mixer), setGain: { [weak mixer] value in
@@ -1041,6 +1093,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         return 0
     }
     func audioDeviceModuleDidUpdateDevices(_ audioDeviceModule: LKRTCAudioDeviceModule) {
+        forwardObserver?.audioDeviceModuleDidUpdateDevices(audioDeviceModule)
         locked { cached["deviceUpdates"] = (cached["deviceUpdates"] as? Int ?? 0) + 1 }
     }
     private static func signature(_ format: AVAudioFormat) -> [Double] {

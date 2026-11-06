@@ -67,9 +67,20 @@ struct NativeRockLiveMediaEvidence {
     private var audioLease: GuestAudioOwnerLease?
     private var concurrentAudio = false
     private var inputPermitted = true
+    /// R4: with one engine for all meetings, Rock's LiveKit factory is the shared owner's
+    /// and this room is one attachment on it; its microphone track is the attachment's sender.
+    private let sharedAudio: SharedAudioEngine?
+    private var attachment: MeetingAudioAttachment?
+#if DEBUG
+    /// Tests: admission against a local LiveKit dev server (plain ws, no Jam service).
+    var admissionForTesting: (() async throws -> (server: String, token: String, title: String))?
+    var sharedAttachmentForTesting: MeetingAudioAttachment? { attachment }
+#endif
 
-    init(service: JamService = JamService(), chat: ChatStore? = nil, collectStatistics: Bool = false) {
+    init(service: JamService = JamService(), chat: ChatStore? = nil, collectStatistics: Bool = false,
+         sharedAudio: SharedAudioEngine? = SharedAudioEngine.enabledAtLaunch ? SharedAudioEngine.shared : nil) {
         self.service = service; self.chat = chat ?? ChatStore(); self.collectStatistics = collectStatistics
+        self.sharedAudio = sharedAudio
         super.init()
         subscriptions.onError = { [weak self] error in
             guard let self else { return }
@@ -81,7 +92,7 @@ struct NativeRockLiveMediaEvidence {
         try await connect(invitation: invitation, name: name, quiet: quiet, resetChat: true)
     }
     private func connect(invitation: URL, name: String, quiet: Bool, resetChat: Bool) async throws {
-        guard !ownsPreparedCapture, audioLease == nil else { throw NativeDesktopRockError.cleanupFailed }
+        guard !ownsPreparedCapture, audioLease == nil, attachment == nil else { throw NativeDesktopRockError.cleanupFailed }
         guard room == nil else { throw NativeDesktopRockError.staleOperation }
         let target = try JamTarget.parseCompatibleInvitation(invitation.absoluteString)
         let token = UUID(); revision = token
@@ -90,10 +101,24 @@ struct NativeRockLiveMediaEvidence {
         snapshot = .init(phase: .connecting, playoutOn: !quiet)
         emit()
         do {
+            let admitted: (server: String, token: String, title: String)
+#if DEBUG
+            if let admissionForTesting { admitted = try await admissionForTesting() } else {
+                let credentials = try await service.join(target, name: name)
+                admitted = (credentials.serverURL.absoluteString, credentials.participantToken, credentials.jam.title)
+            }
+#else
             let credentials = try await service.join(target, name: name)
+            admitted = (credentials.serverURL.absoluteString, credentials.participantToken, credentials.jam.title)
+#endif
             guard revision == token, !Task.isCancelled else { throw CancellationError() }
-            guard let lease = GuestAudioOwnerLease(privateCheck: false, concurrent: concurrentAudio) else { throw NativeDesktopRockError.audioOwnerBusy }
-            audioLease = lease
+            if let shared = await attachSharedAudio(quiet: quiet) {
+                attachment = shared
+                guard revision == token, !Task.isCancelled else { throw CancellationError() }
+            } else {
+                guard let lease = GuestAudioOwnerLease(privateCheck: false, concurrent: concurrentAudio) else { throw NativeDesktopRockError.audioOwnerBusy }
+                audioLease = lease
+            }
             if renderFactory == nil {
                 renderFactory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(),
                     decoderFactory: LKRTCDefaultVideoDecoderFactory())
@@ -103,13 +128,13 @@ struct NativeRockLiveMediaEvidence {
                 suspendLocalVideoTracksInBackground: false, reportRemoteTrackStatistics: collectStatistics))
             self.room = room
             // No automatic microphone publication and no receive-audio race for quiet joins.
-            try await room.connect(url: credentials.serverURL.absoluteString, token: credentials.participantToken,
+            try await room.connect(url: admitted.server, token: admitted.token,
                 connectOptions: ConnectOptions(autoSubscribe: false, enableMicrophone: false))
             guard revision == token, self.room === room, !Task.isCancelled else {
                 await room.disconnect(); throw CancellationError()
             }
             snapshot.phase = .connected
-            onTitle?(credentials.jam.title)
+            onTitle?(admitted.title)
             chat.canSend = true
             chat.onSend = { [weak self] in self?.sendChat($0) }
             chat.onRetry = { [weak self] in self?.publishChat(id: $0.id, text: $0.text) }
@@ -144,9 +169,62 @@ struct NativeRockLiveMediaEvidence {
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
             try Task.checkCancellation()
         }
+        if let attachment, let sharedAudio {
+            try await setSharedMicrophone(enabled, room: room, attachment: attachment, engine: sharedAudio, token: token)
+            refresh(room); return
+        }
         _ = try await room.localParticipant.setMicrophone(enabled: enabled, captureOptions: NativeRockAudioPolicy.captureOptions(audioProfile))
         guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
         refresh(room)
+    }
+
+    // MARK: Shared audio engine (R4)
+
+    /// Attaches to the shared engine and hands LiveKit its factory. Nil keeps Rock on its
+    /// own engine (flag off, or LiveKit already made its own factory in this process).
+    private func attachSharedAudio(quiet: Bool) async -> MeetingAudioAttachment? {
+        guard let sharedAudio, let attached = try? await sharedAudio.attach(meetingID: UUID()) else { return nil }
+        guard sharedAudio.installIntoLiveKit() else {
+            probeLog("rock-shared-audio-unavailable", ["reason": "liveKitFactoryAlreadyCreated"])
+            _ = await attached.detach(); return nil
+        }
+        _ = await attached.setSound(!quiet)
+        if inputPermitted, sharedAudio.talkMeetingID == nil { _ = await attached.assumeTalk() }
+        return attached
+    }
+
+    /// Input is activated and the module unmuted before LiveKit publishes (publishing waits
+    /// for a captured frame); the published track is then this room's sender, enabled only
+    /// by the engine. Muting turns the sender off at once, then LiveKit and the module.
+    private func setSharedMicrophone(_ enabled: Bool, room: Room, attachment: MeetingAudioAttachment,
+                                     engine: SharedAudioEngine, token: UUID) async throws {
+        guard enabled else {
+            attachment.suppress()
+            _ = try await room.localParticipant.setMicrophone(enabled: false)
+            _ = await attachment.setMuted(true)
+            guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
+            return
+        }
+        guard attachment.isTalk, await engine.activateInput(for: attachment), await attachment.setMuted(false) else {
+            throw GuestSystemAudioError.microphoneActivationFailure(authorization: AVCaptureDevice.authorizationStatus(for: .audio))
+        }
+        guard revision == token, self.room === room else { attachment.suppress(); throw NativeDesktopRockError.staleOperation }
+        do {
+            _ = try await room.localParticipant.setMicrophone(enabled: true, captureOptions: NativeRockAudioPolicy.captureOptions(audioProfile))
+        } catch { attachment.suppress(); throw error }
+        registerMicrophoneSender(room, attachment: attachment)
+        guard revision == token, self.room === room, await attachment.setMuted(false) else {
+            attachment.suppress(); _ = try? await room.localParticipant.setMicrophone(enabled: false)
+            throw NativeDesktopRockError.staleOperation
+        }
+    }
+
+    private func registerMicrophoneSender(_ room: Room, attachment: MeetingAudioAttachment) {
+        attachment.removeAllSenders()
+        for publication in room.localParticipant.audioTracks where publication.source == .microphone {
+            guard let track = publication.track as? LocalAudioTrack else { continue }
+            attachment.addSender(NativeRockMicrophoneSender(track: track))
+        }
     }
     func setCamera(_ enabled: Bool) async throws {
         let room = try connectedRoom(), token = revision
@@ -193,6 +271,11 @@ struct NativeRockLiveMediaEvidence {
             throw NativeDesktopRockError.microphoneAccessRequired
         }
         if let audioPreparation { try await audioPreparation.value; return }
+        // Shared engine: the talk meeting's input starts muted there; nothing is published.
+        if let attachment, let sharedAudio {
+            guard await sharedAudio.activateInput(for: attachment) else { throw NativeDesktopRockError.microphoneAccessRequired }
+            return
+        }
         let task = Task { @MainActor in
             let previous = await Task.detached { AudioManager.shared.isRecordingAlwaysPreparedMode }.value
             guard !previous else { return }
@@ -216,6 +299,7 @@ struct NativeRockLiveMediaEvidence {
         let room = try connectedRoom(), token = revision, previous = playoutIntent
         playoutIntent = enabled
         do {
+            if let attachment { _ = await attachment.setSound(enabled) }
             await applyVolume(room)
             try await subscribe(room)
             guard revision == token, self.room === room else { throw NativeDesktopRockError.staleOperation }
@@ -237,7 +321,11 @@ struct NativeRockLiveMediaEvidence {
             try? await subscribe(room); refresh(room)
         }
     }
-    func setTranscriptionOutput(_ keep: Bool) async -> Bool { setTranscriptionRequested(keep); return true }
+    func setTranscriptionOutput(_ keep: Bool) async -> Bool {
+        setTranscriptionRequested(keep)
+        // On the shared engine output must run (silenced) for transcription while sound is off.
+        return await attachment?.setTranscriptionOutput(keep) ?? true
+    }
     // Voice replies go through LiveKit's own input mixer: its microphone volume
     // is the gate, and app audio is mixed into what the room receives.
     var supportsVoiceReply: Bool { GuestSystemAudio.voiceRepliesEnabled && room != nil }
@@ -340,7 +428,10 @@ struct NativeRockLiveMediaEvidence {
     /// microphone and any prepared capture it owns, so it sends and holds nothing.
     func setPhysicalInputPermitted(_ permitted: Bool) async -> Bool {
         inputPermitted = permitted
+        if permitted, let attachment { return await attachment.assumeTalk() }
         guard !permitted, let room else { return true }
+        // The sender is off before LiveKit unpublishes it.
+        attachment?.suppress()
         var clean = true
         do { _ = try await room.localParticipant.setMicrophone(enabled: false) } catch { clean = false }
         for publication in room.localParticipant.audioTracks where publication.source == .microphone {
@@ -353,6 +444,10 @@ struct NativeRockLiveMediaEvidence {
                 try await Task.detached { try await AudioManager.shared.setRecordingAlwaysPreparedMode(false) }.value
                 ownsPreparedCapture = false
             } catch { clean = false }
+        }
+        if let attachment {
+            attachment.removeAllSenders()
+            clean = await attachment.relinquishTalk() && clean
         }
         if self.room === room { refresh(room) }
         return clean
@@ -386,7 +481,13 @@ struct NativeRockLiveMediaEvidence {
                 ownsPreparedCapture = false
             } catch { preparedStopped = false; snapshot.lastError = error.localizedDescription }
         }
-        let clean = preparedStopped && (room == nil || room?.connectionState == .disconnected)
+        var clean = preparedStopped && (room == nil || room?.connectionState == .disconnected)
+        if let attachment {
+            // The shared engine quarantines itself if the release fails.
+            self.attachment = nil
+            clean = await attachment.detach() && clean
+            return clean
+        }
         if clean { audioLease = nil } else { GuestAudioOwnerLease.reportFailedStop() }
         return clean
     }

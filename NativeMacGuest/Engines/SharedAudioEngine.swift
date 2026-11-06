@@ -92,12 +92,20 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
         self.timeouts = timeouts; self.reportFailedStop = reportFailedStop; self.makeModule = makeModule
     }
 
-    /// The app's engine: one non-exclusive `GuestSystemAudio` owner.
-    static func live() -> SharedAudioEngine {
+    /// The app's engine: one non-exclusive `GuestSystemAudio` owner whose factory
+    /// LiveKit can adopt (Rock, `installIntoLiveKit`).
+    static func live(manualRenderingForTesting: Bool = false) -> SharedAudioEngine {
         SharedAudioEngine {
-            try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, concurrent: true)
+            try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, concurrent: true,
+                manualRendering: manualRenderingForTesting,
+                makeFactory: { SharedAudioEngine.liveKitFactory(voiceProcessing: $0) })
         }
     }
+
+    /// Set once LiveKit holds the owner's factory: the owner then lives for the process
+    /// and the last meeting out only idles it (devices and output off).
+    private(set) var pinnedForProcess = false
+    func pinForProcess() { pinnedForProcess = true }
 
     var factory: LKRTCPeerConnectionFactory? { module?.factory }
     /// The physical owner when it is the app's `GuestSystemAudio` (diagnostics, snapshots).
@@ -137,7 +145,10 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
             if talkMeetingID == attachment.meetingID { success = await releaseTalkLocked() && success }
             attachments[attachment.meetingID] = nil; order.removeAll { $0 == attachment.meetingID }
             attachment.markDetached()
-            if attachments.isEmpty, let module {
+            if attachments.isEmpty, pinnedForProcess {
+                // LiveKit holds the factory: idle (the talk role already released input).
+                success = await applyOutputLocked() && success
+            } else if attachments.isEmpty, let module {
                 inputSink.set(nil)
                 let stopped = await module.shutdown(timeout: timeouts.shutdown)
                 self.module = nil
@@ -227,7 +238,12 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
         await work.run { [self] in
             guard let module, !privateCheckActive, moduleMuted,
                   attachments.values.allSatisfy({ !$0.anySenderEnabled }) else { return false }
-            guard await module.beginPrivateInputCheck(timeout: nil) else { return false }
+            // Without a talk meeting input is withdrawn; the check permits it for itself.
+            if talkMeetingID == nil, !(await module.setInputPermitted(true, keepWarm: false, timeout: timeouts.mute)) { return false }
+            guard await module.beginPrivateInputCheck(timeout: nil) else {
+                if talkMeetingID == nil { _ = await module.setInputPermitted(false, keepWarm: false, timeout: timeouts.activation) }
+                return false
+            }
             privateCheckActive = true
             return true
         }
@@ -237,7 +253,9 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
         await work.run { [self] in
             guard privateCheckActive, let module else { return true }
             privateCheckActive = false
-            return await module.endPrivateInputCheck(timeout: timeouts.mute)
+            let ended = await module.endPrivateInputCheck(timeout: timeouts.mute)
+            guard talkMeetingID == nil else { return ended }
+            return await module.setInputPermitted(false, keepWarm: false, timeout: timeouts.activation) && ended
         }
     }
 

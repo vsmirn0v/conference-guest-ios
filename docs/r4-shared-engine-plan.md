@@ -183,6 +183,34 @@ with the flag on a Guest meeting beside them still means two engines.
   meeting; TrueConf reports none for you. Whether a disabled sender's silence ever makes either
   service flag you as speaking still needs a live check (S6).
 
+## S4 status (6 Nov 2026): Rock on the shared engine behind the flag
+
+- The shared owner's factory is built with LiveKit's audio processing module and codec
+  factories (`SharedAudioEngine.liveKitFactory`). On Rock's first connect it is handed to
+  LiveKit (`installIntoLiveKit`, refused if LiveKit already made its own; Rock then keeps its
+  separate engine) and every module event is forwarded to the SDK first. From then on the owner
+  is pinned for the process: the last meeting out idles it (devices and output off) instead of
+  shutting it down, and the prejoin microphone check borrows it (`SharedPrivateAudioCheck`).
+- While forwarding, LiveKit's mixer observer wires the input graph; the owner only taps it and
+  builds no voice-reply graph of its own. Rock's voice replies keep using LiveKit's app-audio
+  mixer; other meetings' voice replies are unavailable while Rock is installed.
+- Second patch `shared-track.patch`: `Track.sharedEngineSenderEnabled` (through the SDK's
+  blocking RTC hop) so Rock's published microphone is the attachment's sender.
+- Rock unmute: activate input and unmute the module first (LiveKit's publish waits for a
+  captured frame), publish, register the track as the sender, enable it through the engine.
+  Mute and losing the talk role turn the sender off before LiveKit unpublishes. Sound and
+  transcription output go through the attachment; Rock's per-track volumes are unchanged.
+- Test seams (debug only): `GuestSystemAudio` manual rendering (voice processing bypassed,
+  output kept available for the render thread) and a microphone-authorization override;
+  `NativeDesktopRockEngine.admissionForTesting` for a local LiveKit dev server.
+
+`SharedEngineRockEngineTests` (opt-in `R4_ROCK_ENGINE=1`, local `livekit-server --dev`, run
+alone; two runs): the app's Rock engine on the real shared owner beside another attachment —
+listener receives 8.7–9.4 KB/s with Rock talking (silence 0.08–0.35 KB/s), 0 and unpublished
+after the talk role moves away, 9.3–9.4 KB/s after it moves back; unmute 18–22 ms, move 5 ms.
+The engine is recreated once on the move back (input is released without "keep microphone
+warm"), as planned for a non-warm move.
+
 ## Risks
 
 - Our M156 fork must accept new peer connections on a running module with VPIO active, and send
