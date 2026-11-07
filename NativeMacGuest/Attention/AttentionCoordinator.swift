@@ -1,6 +1,7 @@
 import AVFoundation
 import ConferenceCore
 import Foundation
+import UserNotifications
 
 /// The system's memory pressure, so a judge on this Mac can step aside.
 final class AttentionMemoryPressure: @unchecked Sendable {
@@ -47,6 +48,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         var canDraft = true
         /// The meeting can play a spoken reply ("Say it").
         var canSpeak = false
+        /// Historical evidence only: no open, delivery, or learning controls.
+        var readOnly = false
         var speaking = false
         var drafting = false
         var draftError: String?
@@ -109,6 +112,12 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     static let localCallsPerMinute = 12
 
     @Published private(set) var cards: [Card] = []
+    /// A Moment selected in Assistant; deliberately separate from the overlay.
+    @Published var selectedCard: Card?
+    @Published var requestedMomentID: UUID?
+    @Published private(set) var summaryByMoment: [UUID: String] = [:]
+    @Published private(set) var summarizing: UUID?
+    @Published private(set) var summaryError: String?
     @Published private(set) var states: [UUID: MeetingState] = [:]
     @Published private(set) var lastError: String?
     @Published private(set) var judging: UUID?
@@ -132,6 +141,20 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     var notify: (Card) -> Void = { _ in }
     var makeJudge: (AttentionProvider, String?) -> any AttentionJudge = { $0.client(key: $1) }
     var makeWriter: (AttentionProvider, String?) -> any ReplyWriter = { $0.client(key: $1) }
+    var makeSummarizer: (AttentionProvider, String?) -> any MomentSummarizer = {
+        ($0.client(key: $1) as? any MomentSummarizer)!
+    }
+    var scheduleReminder: (AttentionMoment, Date) async throws -> Void = { moment, at in
+        let content = UNMutableNotificationContent()
+        content.title = L("Reminder: %@", moment.meetingTitle)
+        content.body = moment.verdict.reason
+        content.categoryIdentifier = CalendarReminderBroker.attentionCategory
+        content.userInfo = ["momentID": moment.id.uuidString]
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: "attention-reminder-" + moment.id.uuidString,
+            content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(1, at.timeIntervalSinceNow), repeats: false))
+        try await UNUserNotificationCenter.current().add(request)
+    }
     /// What the meeting accepts from you right now.
     var replyChannels: (NativeDesktopMeetingModel) -> ReplyChannels = { model in
         ReplyChannels(chat: model.chat.canSend, reactions: model.canReact ? MeetingReaction.allCases : [])
@@ -212,7 +235,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             store.setMeetingMode(mode, room: model.invitation, series: model.calendarSeriesID, title: model.title)
             states[id]?.override = nil
         }
-        if mode == .off { cards.removeAll { $0.meetingID == id } }
+        if mode == .off { for card in cards where card.meetingID == id { miss(card) } }
         probeLog("attention-mode", ["mode": mode.rawValue, "scope": String(describing: scope)])
     }
     /// Drops your choice for this meeting (and its series' mode, when `series`), back to the defaults.
@@ -221,7 +244,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         if series, store.preset(room: model.invitation, series: model.calendarSeriesID)?.mode != nil {
             store.setMeetingMode(nil, room: model.invitation, series: model.calendarSeriesID, title: model.title)
         }
-        if resolvedMode(model).mode == .off { cards.removeAll { $0.meetingID == model.sessionID } }
+        if resolvedMode(model).mode == .off { for card in cards where card.meetingID == model.sessionID { miss(card) } }
     }
     /// Off → Mentions → Watch → Off, for this meeting until you leave.
     func cycleMode(for model: NativeDesktopMeetingModel) {
@@ -267,9 +290,11 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         states = states.filter { ids.contains($0.key) }
         // A mode chosen for a while returns to the defaults when its time is up.
         for (id, state) in states where (state.override?.until ?? .distantFuture) <= current { states[id]?.override = nil }
-        cards.removeAll { card in
-            guard let model = list.first(where: { $0.sessionID == card.meetingID }) else { return true }
-            return model.isClosed || resolvedMode(model).mode == .off
+        for card in cards {
+            guard let model = list.first(where: { $0.sessionID == card.meetingID }),
+                  !model.isClosed, resolvedMode(model).mode != .off else { miss(card); continue }
+            if card.verdict.level == .now, let held = states[card.meetingID]?.heldUntil,
+               held <= current, !card.engaged { miss(card) }
         }
         for model in list { observeParticipants(model, now: current) }
         guard judging == nil else { return }
@@ -383,7 +408,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 draftReply(decisionID)
             }
             states[id] = state
-            store.log(.init(id: decisionID, at: now(), meetingTitle: model.title, presetID: preset?.id, window: window, verdict: result.verdict,
+            store.log(.init(id: decisionID, at: now(), meetingTitle: model.title, meetingID: id, invitation: model.invitation,
+                seriesID: model.calendarSeriesID, presetID: preset?.id, window: window, verdict: result.verdict,
                 provider: judgedBy.host, model: judgedBy.model, latencyMilliseconds: Int(result.latency * 1000),
                 outcome: outcome, messages: AttentionPrompt.messages(request), threshold: threshold,
                 firstVerdict: first?.verdict, firstModel: first?.model, mode: mode, mentioned: mentioned))
@@ -420,14 +446,16 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         let held = existing?.verdict.level == .now && (state.heldUntil ?? .distantPast) > current
         let repeated = !verdict.evidence.isEmpty && Set(verdict.evidence).isSubset(of: state.shownEvidence)
         guard qualifies, !repeated else {
-            if existing != nil, !held { cards.removeAll { $0.meetingID == card.meetingID } }
+            if let existing, !held { miss(existing) }
             return .belowThreshold
         }
         if held && verdict.level < .now { return .crowdedOut }
         var proposed = cards.filter { $0.meetingID != card.meetingID } + [card]
         proposed.sort { $0.verdict.level == $1.verdict.level ? $0.createdAt > $1.createdAt : $0.verdict.level > $1.verdict.level }
         guard proposed.prefix(Self.maxCards).contains(where: { $0.id == card.id }) else { return .crowdedOut }
-        cards = Array(proposed.prefix(Self.maxCards))
+        let retained = Array(proposed.prefix(Self.maxCards))
+        for old in cards where !retained.contains(where: { $0.id == old.id }) { miss(old) }
+        cards = retained
         state.shownEvidence.formUnion(verdict.evidence)
         if verdict.level == .now { state.heldUntil = current.addingTimeInterval(Self.holdNow); notify(card) }
         return .shown
@@ -447,16 +475,107 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         feedback(card, decision: .declined, reason: reason, note: note, outcome: .declined)
     }
 
+    // MARK: Moments
+
+    /// Resolves legacy Moments only when exactly one open meeting matches.
+    func meeting(for moment: AttentionMoment) -> NativeDesktopMeetingModel? {
+        let list = meetings()
+        if let id = moment.meetingID { return list.first { $0.sessionID == id } }
+        if let invitation = moment.invitation {
+            let matches = list.filter { $0.invitation == invitation }
+            if matches.count == 1 { return matches[0] }
+        }
+        if let presetID = moment.presetID {
+            let matches = list.filter { store.preset(room: $0.invitation, series: $0.calendarSeriesID)?.id == presetID }
+            if matches.count == 1 { return matches[0] }
+        }
+        let matches = list.filter { $0.title.caseInsensitiveCompare(moment.meetingTitle) == .orderedSame }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    func showMoment(_ id: UUID) {
+        requestedMomentID = id
+        if let moment = store.momentHistory.moment(id) { selectMoment(moment) }
+    }
+
+    func selectMoment(_ moment: AttentionMoment) {
+        if let card = cards.first(where: { $0.id == moment.id }) { selectedCard = card; return }
+        let model = meeting(for: moment)
+        let preset = moment.presetID.flatMap(store.preset(id:)) ?? model.flatMap { store.preset(room: $0.invitation, series: $0.calendarSeriesID) }
+        let allowed = model.map { store.draftReplies && (preset?.repliesAllowed ?? true) && !$0.isClosed } ?? false
+        selectedCard = Card(id: moment.id, meetingID: model?.sessionID ?? moment.meetingID ?? UUID(), meetingTitle: moment.meetingTitle,
+            invitation: model?.invitation ?? moment.invitation ?? URL(string: "about:blank")!, seriesID: model?.calendarSeriesID ?? moment.seriesID,
+            verdict: moment.verdict, window: moment.window ?? AttentionWindow(meetingTitle: moment.meetingTitle, lines: [], reactions: [],
+                joined: [], left: [], participantCount: model?.participants.count ?? 0, microphoneOn: model?.snapshot.microphoneOn ?? false,
+                soundOn: model?.snapshot.playoutOn ?? false, builtAt: moment.createdAt),
+            presetID: moment.presetID, threshold: moment.threshold, provider: moment.provider, model: moment.model,
+            latency: moment.latency, createdAt: moment.createdAt,
+            channels: model.map { allowed ? replyChannels($0) : ReplyChannels() } ?? ReplyChannels(), draft: moment.draft,
+            canDraft: allowed && store.draftsAllowed, canSpeak: allowed && (model.map(voiceAvailable) ?? false),
+            readOnly: model?.isClosed ?? true, mode: moment.mode, mentioned: moment.mentioned)
+    }
+
+    func markVisibleMomentsSeen(_ moments: [AttentionMoment]) {
+        store.markMomentsSeen(moments.filter { [.live, .missed].contains($0.state) }.map(\.id), at: now())
+    }
+
+    private func miss(_ card: Card) {
+        guard cards.contains(where: { $0.id == card.id }) else { return }
+        cards.removeAll { $0.id == card.id }
+        states[card.meetingID]?.heldUntil = nil
+        log(card, outcome: .missed, reason: nil)
+    }
+
+    private func currentCard(_ id: UUID) -> Card? { cards.first { $0.id == id } ?? (selectedCard?.id == id ? selectedCard : nil) }
+    private func updateCard(_ id: UUID, _ change: (inout Card) -> Void) {
+        if let index = cards.firstIndex(where: { $0.id == id }) { change(&cards[index]) }
+        if selectedCard?.id == id { change(&selectedCard!) }
+    }
+
+    func remind(_ moment: AttentionMoment) {
+        let at = now().addingTimeInterval(600)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await scheduleReminder(moment, at)
+                store.log(.init(at: now(), meetingTitle: moment.meetingTitle, meetingID: moment.meetingID,
+                    invitation: moment.invitation, seriesID: moment.seriesID, presetID: moment.presetID,
+                    provider: moment.provider, model: moment.model, outcome: .reminded, decisionID: moment.id))
+            } catch { summaryError = error.localizedDescription }
+        }
+    }
+
+    func summarize(_ moment: AttentionMoment) async {
+        guard summarizing == nil else { return }
+        summaryError = nil
+        guard let model = meeting(for: moment), !model.isClosed else {
+            summaryError = L("The meeting is not open, so there is no later conversation to summarize."); return
+        }
+        let window = AttentionWindowBuilder.build(.init(title: model.title, transcript: model.transcript,
+            chat: model.chat.items, reactions: [], participantCount: model.participants.count,
+            yourNames: store.profile.names(fallback: model.displayName), microphoneOn: model.snapshot.microphoneOn,
+            soundOn: model.snapshot.playoutOn, now: now(), after: moment.createdAt))
+        guard !window.lines.isEmpty else { summaryByMoment[moment.id] = L("No later transcript or chat yet."); return }
+        summarizing = moment.id
+        defer { summarizing = nil }
+        let provider = store.effectiveWriter
+        do {
+            let summary = try await makeSummarizer(provider, store.apiKey(for: provider)).summarize(.init(moment: moment, window: window, language: language))
+            try Task.checkCancellation()
+            summaryByMoment[moment.id] = summary
+        } catch is CancellationError { return }
+        catch { summaryError = error.localizedDescription }
+    }
+
     // MARK: Replies
 
     /// Drafts a chat reply or reaction for a card. Nothing is sent: you send,
     /// edit or discard the draft on the card.
     func draftReply(_ cardID: UUID) {
-        guard let index = cards.firstIndex(where: { $0.id == cardID }), cards[index].canDraft, !cards[index].drafting,
-              !cards[index].channels.isEmpty || cards[index].canSpeak,
-              let model = meetings().first(where: { $0.sessionID == cards[index].meetingID }), !model.isClosed else { return }
-        let card = cards[index]
-        cards[index].drafting = true; cards[index].draftError = nil
+        guard let card = currentCard(cardID), card.canDraft, !card.drafting,
+              !card.channels.isEmpty || card.canSpeak,
+              let model = meetings().first(where: { $0.sessionID == card.meetingID }), !model.isClosed else { return }
+        updateCard(cardID) { $0.drafting = true; $0.draftError = nil }
         calls.append(now())
         let preset = card.presetID.flatMap(store.preset(id:))
         // A reply that can be spoken is written like a chat message.
@@ -468,20 +587,22 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         Task { @MainActor [weak self] in
             do {
                 let result = try await writer.draft(request)
-                guard let self, let index = cards.firstIndex(where: { $0.id == cardID }) else { return }
-                cards[index].drafting = false; cards[index].draft = result.draft
-                store.log(.init(at: now(), meetingTitle: card.meetingTitle, presetID: card.presetID, window: nil, verdict: nil,
-                    provider: provider.host, model: provider.model, latencyMilliseconds: Int(result.latency * 1000), outcome: .drafted,
-                    decisionID: cardID, replyMessages: ReplyPrompt.messages(request), draft: result.draft))
+                guard let self, currentCard(cardID) != nil else { return }
+                updateCard(cardID) { $0.drafting = false; $0.draft = result.draft }
+                store.log(.init(at: now(), meetingTitle: card.meetingTitle, meetingID: card.meetingID, invitation: card.invitation,
+                    seriesID: card.seriesID, presetID: card.presetID, provider: provider.host, model: provider.model,
+                    latencyMilliseconds: Int(result.latency * 1000), outcome: .drafted, decisionID: cardID,
+                    replyMessages: ReplyPrompt.messages(request), draft: result.draft))
                 probeLog("attention-draft", ["chat": !result.draft.chat.isEmpty, "reaction": result.draft.reaction != nil,
                     "latencyMs": Int(result.latency * 1000)])
             } catch {
-                guard let self, let index = cards.firstIndex(where: { $0.id == cardID }) else { return }
-                cards[index].drafting = false
+                guard let self, currentCard(cardID) != nil else { return }
+                updateCard(cardID) { $0.drafting = false }
                 if error is CancellationError { return }
-                cards[index].draftError = error.localizedDescription
-                store.log(.init(at: now(), meetingTitle: card.meetingTitle, presetID: card.presetID, window: nil, verdict: nil,
-                    provider: provider.host, model: provider.model, outcome: .draftFailed, error: String(describing: error), decisionID: cardID))
+                updateCard(cardID) { $0.draftError = error.localizedDescription }
+                store.log(.init(at: now(), meetingTitle: card.meetingTitle, meetingID: card.meetingID, invitation: card.invitation,
+                    seriesID: card.seriesID, presetID: card.presetID, provider: provider.host, model: provider.model,
+                    outcome: .draftFailed, error: String(describing: error), decisionID: cardID))
                 probeLog("attention-draft-failed", ["error": String(describing: error)])
             }
         }
@@ -520,11 +641,11 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     /// back while it plays; counts as an approval once it has played.
     func sayReply(_ card: Card, text: String) {
         let clean = text.trimmed
-        guard let index = cards.firstIndex(where: { $0.id == card.id }), card.canSpeak, !clean.isEmpty, !cards[index].speaking,
+        guard let current = currentCard(card.id), current.canSpeak, !clean.isEmpty, !current.speaking,
               let model = meetings().first(where: { $0.sessionID == card.meetingID }), !model.isClosed else {
             setDraftError(L("This meeting cannot play a spoken reply now. Open the meeting to answer."), card: card); return
         }
-        cards[index].speaking = true; cards[index].draftError = nil
+        updateCard(card.id) { $0.speaking = true; $0.draftError = nil }
         Task { @MainActor [weak self] in
             guard let self else { return }
             let started = ProcessInfo.processInfo.systemUptime
@@ -534,12 +655,13 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 try await deliverVoice(model, buffer)
                 probeLog("attention-spoken", ["voice": store.voiceEngine.rawValue, "seconds": Double(buffer.frameLength) / buffer.format.sampleRate,
                     "synthesisMs": Int((synthesized - started) * 1000)])
-                feedback(card, decision: .approved, reason: nil, note: nil, outcome: .spoken,
-                         sent: clean, reaction: nil, edited: clean != card.draft?.chat.trimmed)
+                feedback(current, decision: .approved, reason: nil, note: nil, outcome: .spoken,
+                         sent: clean, reaction: nil, edited: clean != current.draft?.chat.trimmed)
             } catch {
-                guard let index = cards.firstIndex(where: { $0.id == card.id }) else { return }
-                cards[index].speaking = false
-                if !(error is CancellationError) { cards[index].draftError = error.localizedDescription }
+                updateCard(card.id) {
+                    $0.speaking = false
+                    if !(error is CancellationError) { $0.draftError = error.localizedDescription }
+                }
             }
         }
     }
@@ -555,9 +677,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         }
     }
 
-    private func setDraftError(_ message: String, card: Card) {
-        if let index = cards.firstIndex(where: { $0.id == card.id }) { cards[index].draftError = message }
-    }
+    private func setDraftError(_ message: String, card: Card) { updateCard(card.id) { $0.draftError = message } }
 
     private func feedback(_ card: Card, decision: PresetExample.Decision, reason: PresetExample.DeclineReason?, note: String?,
                           outcome: AttentionDecisionRecord.Outcome, sent: String? = nil, reaction: MeetingReaction? = nil, edited: Bool? = nil) {
@@ -571,13 +691,14 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
     private func remove(_ card: Card) {
         cards.removeAll { $0.id == card.id }
+        if selectedCard?.id == card.id { selectedCard = nil }
         states[card.meetingID]?.heldUntil = nil
     }
     private func log(_ card: Card, outcome: AttentionDecisionRecord.Outcome, reason: PresetExample.DeclineReason?,
                      sent: String? = nil, reaction: MeetingReaction? = nil, edited: Bool? = nil) {
-        store.log(.init(at: now(), meetingTitle: card.meetingTitle, presetID: card.presetID, window: nil, verdict: nil,
-            provider: card.provider, model: card.model, outcome: outcome, declineReason: reason, decisionID: card.id,
-            sent: sent, reaction: reaction, edited: edited))
+        store.log(.init(at: now(), meetingTitle: card.meetingTitle, meetingID: card.meetingID, invitation: card.invitation,
+            seriesID: card.seriesID, presetID: card.presetID, provider: card.provider, model: card.model,
+            outcome: outcome, declineReason: reason, decisionID: card.id, sent: sent, reaction: reaction, edited: edited))
     }
 
     // MARK: Settings test

@@ -41,7 +41,7 @@ struct AttentionCardView: View {
                     (Text(line.speaker).fontWeight(.semibold) + Text(" — " + line.text)).font(.callout).foregroundStyle(.secondary).lineLimit(3)
                 }.fixedSize(horizontal: false, vertical: true)
             }
-            if (!card.channels.isEmpty || card.canSpeak) && !declining { AttentionReplyView(attention: attention, card: card) }
+            if !card.readOnly, (!card.channels.isEmpty || card.canSpeak) && !declining { AttentionReplyView(attention: attention, card: card) }
             if declining {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(L("Why not?")).font(.caption).foregroundStyle(.secondary)
@@ -58,12 +58,14 @@ struct AttentionCardView: View {
                 }
             } else {
                 HStack(spacing: 8) {
-                    Button(L("Open meeting")) { attention.open(card) }.buttonStyle(.borderedProminent)
-                        .keyboardShortcut(card.draft == nil ? .defaultAction : nil)
+                    if !card.readOnly {
+                        Button(L("Open meeting")) { attention.open(card) }.buttonStyle(.borderedProminent)
+                            .keyboardShortcut(card.draft == nil ? .defaultAction : nil)
+                    }
                     Button(L("Why")) { attention.inspecting = card }
                     Spacer(minLength: 4)
-                    if card.verdict.level == .soon { Button(L("Dismiss")) { attention.dismiss(card) }.buttonStyle(.borderless) }
-                    Button(L("Decline")) { declining = true }.buttonStyle(.borderless).foregroundStyle(.red)
+                    if !card.readOnly, card.verdict.level == .soon { Button(L("Dismiss")) { attention.dismiss(card) }.buttonStyle(.borderless) }
+                    if !card.readOnly { Button(L("Decline")) { declining = true }.buttonStyle(.borderless).foregroundStyle(.red) }
                 }
             }
         }
@@ -199,9 +201,11 @@ struct AttentionInspector: View {
                 Text(L("This meeting has no instructions yet. The judge used only your profile.")).font(.callout).foregroundStyle(.secondary)
             }
             HStack {
-                Button(L("Edit instructions")) {
-                    attention.inspecting = nil
-                    attention.editingPreset = .init(invitation: card.invitation, seriesID: card.seriesID, title: card.meetingTitle)
+                if !card.readOnly {
+                    Button(L("Edit instructions")) {
+                        attention.inspecting = nil
+                        attention.editingPreset = .init(invitation: card.invitation, seriesID: card.seriesID, title: card.meetingTitle)
+                    }
                 }
                 Button(L("Copy for support")) { copyForSupport() }
                 Spacer()

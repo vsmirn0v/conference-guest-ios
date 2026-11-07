@@ -90,10 +90,16 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         case replied, reacted
         /// You had the reply spoken into the meeting.
         case spoken
+        /// Retained in Assistant, marked read, or scheduled for a reminder.
+        case missed, seen, reminded
     }
     var id = UUID()
     var at: Date
     var meetingTitle: String
+    /// Stable identity added for Moments; old journal entries decode with nil.
+    var meetingID: UUID? = nil
+    var invitation: URL? = nil
+    var seriesID: String? = nil
     var presetID: UUID?
     var window: AttentionWindow?
     var verdict: AttentionVerdict?
@@ -209,6 +215,11 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     private let defaults: UserDefaults
     private let keychain: AttentionKeychain
     private var loading = false
+    @Published private(set) var momentHistory = AttentionMomentHistory()
+    @Published private(set) var momentsLoaded = false
+    private var loadingMoments = false
+    private var momentBuffer: [AttentionDecisionRecord] = []
+    private var momentLoadTask: Task<Void, Never>?
 
     init(root: URL? = nil, defaults: UserDefaults = .standard, keychain: AttentionKeychain = .init()) {
         self.root = root ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
@@ -238,6 +249,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         }
         keyedKinds = Set(AttentionProvider.Kind.allCases.filter { keychain.kind($0).read()?.trimmed.isEmpty == false })
         load()
+        momentLoadTask = Task { @MainActor [weak self] in await self?.loadMoments() }
     }
 
     private var documentURL: URL { root.appendingPathComponent("presets.json") }
@@ -319,6 +331,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
 
     /// Appends one JSON line to today's file and removes files older than 30 days.
     func log(_ record: AttentionDecisionRecord) {
+        if loadingMoments { momentBuffer.append(record) } else { momentHistory.apply(record) }
         do {
             try FileManager.default.createDirectory(at: decisionsFolder, withIntermediateDirectories: true)
             let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"; day.locale = Locale(identifier: "en_US_POSIX")
@@ -331,6 +344,31 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
             pruneDecisions(now: record.at)
         } catch { probeLog("attention-log-failed", [:]) }
     }
+
+    private func loadMoments() async {
+        guard !momentsLoaded, !loadingMoments else { return }
+        loadingMoments = true
+        let root = root
+        let restored = await Task.detached(priority: .utility) {
+            AttentionDecisionJournal.reduce(AttentionDecisionJournal.read(root: root))
+        }.value
+        var merged = restored
+        for record in momentBuffer { merged.apply(record) }
+        momentBuffer.removeAll()
+        momentHistory = merged
+        loadingMoments = false
+        momentsLoaded = true
+    }
+
+    /// Awaits launch restoration in tests and before an explicit history action.
+    func waitForMoments() async { await momentLoadTask?.value }
+
+    /// Marks exactly the visible unread Moments as seen and journals the change.
+    func markMomentsSeen(_ ids: [UUID], at: Date = Date()) {
+        let records = momentHistory.markSeen(ids, at: at)
+        for record in records { log(record) }
+    }
+
     func decisionFiles() -> [URL] {
         ((try? FileManager.default.contentsOfDirectory(at: decisionsFolder, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "jsonl" }.sorted { $0.lastPathComponent < $1.lastPathComponent }

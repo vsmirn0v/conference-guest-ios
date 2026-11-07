@@ -72,7 +72,7 @@ extension AttentionProvider {
 
 /// Any OpenAI-compatible chat completions endpoint with JSON-schema output.
 /// The same provider judges meetings and drafts replies.
-struct OpenAIChatJudge: AttentionJudge, ReplyWriter {
+struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer {
     let provider: AttentionProvider
     let key: String?
     var session: URLSession = .shared
@@ -100,6 +100,12 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter {
         let (content, latency) = try await complete(requestBody(messages: messages, name: ReplyPrompt.schemaName,
                                                                 schema: ReplyPrompt.schema(channels), hint: ReplyPrompt.jsonHint(channels)))
         return .init(draft: try ReplyPrompt.draft(from: content, channels: channels), latency: latency)
+    }
+
+    func summarize(_ request: MomentSummaryRequest) async throws -> String {
+        let (content, _) = try await complete(requestBody(messages: MomentSummaryPrompt.messages(request),
+            name: MomentSummaryPrompt.schemaName, schema: MomentSummaryPrompt.schema, hint: MomentSummaryPrompt.hint))
+        return try MomentSummaryPrompt.parse(content)
     }
 
     /// Providers elsewhere get the strict schema. A model on this Mac gets JSON mode with

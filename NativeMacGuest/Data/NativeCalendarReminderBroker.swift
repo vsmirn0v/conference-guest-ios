@@ -6,7 +6,9 @@ import UserNotifications
 final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
     static let shared = CalendarReminderBroker()
     static let category = "MEETING_REMINDER"
+    static let attentionCategory = "ATTENTION_MOMENT"
     static let join = "REMINDER_JOIN", snooze = "REMINDER_SNOOZE", skip = "REMINDER_SKIP"
+    @MainActor var onAttention: (UUID) -> Void = { _ in }
     @MainActor private var coordinator: CalendarReminderCoordinator?
     @MainActor private var queued: [(String, Bool)] = []
     @MainActor var sharedCoordinator: CalendarReminderCoordinator {
@@ -45,6 +47,11 @@ final class CalendarReminderBroker: NSObject, UNUserNotificationCenterDelegate {
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.notification.request.content.categoryIdentifier == Self.attentionCategory,
+           let id = (response.notification.request.content.userInfo["momentID"] as? String).flatMap(UUID.init(uuidString:)) {
+            Task { @MainActor in onAttention(id); completionHandler() }
+            return
+        }
         guard response.notification.request.content.categoryIdentifier == Self.category,
               let reference = response.notification.request.content.userInfo["reference"] as? String else {
             completionHandler(); return

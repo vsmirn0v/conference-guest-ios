@@ -1841,3 +1841,23 @@
 "Off for every occurrence of this meeting." = "Off for every occurrence of this meeting.";
 "Off for meetings in the background." = "Off for meetings in the background.";
 "Off for silenced meetings." = "Off for silenced meetings.";
+
+"Missed" = "Missed";
+"Answered" = "Answered";
+"Dismissed" = "Dismissed";
+"Filter" = "Filter";
+"All" = "All";
+"Remind me" = "Remind me";
+"Reminder set" = "Reminder set";
+"Remind me in 10 minutes" = "Remind me in 10 minutes";
+"Reminder: %@" = "Reminder: %@";
+"Since then" = "Since then";
+"Summarizing…" = "Summarizing…";
+"No later transcript or chat yet." = "No later transcript or chat yet.";
+"The meeting is not open, so there is no later conversation to summarize." = "The meeting is not open, so there is no later conversation to summarize.";
+"Choose a Moment" = "Choose a Moment";
+"Live, missed and answered decisions stay here for 30 days." = "Live, missed and answered decisions stay here for 30 days.";
+"No Moments in this view." = "No Moments in this view.";
+"%ld quiet checks · latest %@" = "%ld quiet checks · latest %@";
+"This meeting is not open. The Moment is read-only; join it again to answer." = "This meeting is not open. The Moment is read-only; join it again to answer.";
+"%@ · %@" = "%@ · %@";

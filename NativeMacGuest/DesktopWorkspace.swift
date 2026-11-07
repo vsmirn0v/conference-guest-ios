@@ -6,10 +6,10 @@ import UserNotifications
 
 @MainActor final class NativeDesktopWorkspace: NSObject, ObservableObject, NSWindowDelegate {
     enum Section: String, CaseIterable, Identifiable {
-        case home = "Home", favorites = "Favorites", calendar = "Calendar", recent = "Recent meetings", settings = "Settings"
+        case home = "Home", assistant = "Assistant", favorites = "Favorites", calendar = "Calendar", recent = "Recent meetings", settings = "Settings"
         var id: Self { self }
         var symbol: String {
-            switch self { case .home: "house"; case .favorites: "star"; case .calendar: "calendar"; case .recent: "clock"; case .settings: "gearshape" }
+            switch self { case .home: "house"; case .assistant: "tray"; case .favorites: "star"; case .calendar: "calendar"; case .recent: "clock"; case .settings: "gearshape" }
         }
     }
     let library: NativeDesktopLibrary
@@ -126,6 +126,9 @@ import UserNotifications
         library.continuation.onActivityChanged = { [weak self] in self?.publishHandoff(self?.continuationSnapshot()) }
         CalendarReminderBroker.shared.install()
         CalendarReminderBroker.shared.attach(library.calendar.reminders)
+        CalendarReminderBroker.shared.onAttention = { [weak self] id in
+            self?.attention.showMoment(id); self?.show(section: .assistant)
+        }
         library.calendar.reminders.activeRoom = { [weak self] in self?.meeting.flatMap { MeetingRoomIdentity($0.invitation, engine: $0.kind) } }
         library.calendar.reminders.scene = { [weak self] in
             let active = self?.meeting.flatMap { MeetingRoomIdentity($0.invitation, engine: $0.kind) }
@@ -143,6 +146,7 @@ import UserNotifications
         self.attention.openMeeting = { [weak self] id in self?.openFromAttention(id) }
         self.attention.notify = { card in NativeDesktopWorkspace.postAttentionNotification(card) }
         self.attention.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+        self.attention.store.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         self.attention.start()
     }
 

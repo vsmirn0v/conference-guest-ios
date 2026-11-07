@@ -11,7 +11,7 @@ import Translation
 /// Measured on 43 labelled Russian meetings (Experiments/AttentionBench): translated
 /// input with `extraRules` was right on 41, with no missed "now"; Russian given to the
 /// model as is was markedly worse.
-struct AppleOnDeviceJudge: AttentionJudge, ReplyWriter {
+struct AppleOnDeviceJudge: AttentionJudge, ReplyWriter, MomentSummarizer {
     func judge(_ request: JudgeRequest) async throws -> JudgeResult {
         guard #available(macOS 26.0, *) else { throw OnDeviceJudgeError.unsupportedSystem }
         return try await AppleOnDevice.judge(request)
@@ -21,6 +21,11 @@ struct AppleOnDeviceJudge: AttentionJudge, ReplyWriter {
         guard !request.judge.replyChannels.isEmpty else { throw ReplyDraftError.unavailable }
         guard #available(macOS 26.0, *) else { throw OnDeviceJudgeError.unsupportedSystem }
         return try await AppleOnDevice.draft(request)
+    }
+
+    func summarize(_ request: MomentSummaryRequest) async throws -> String {
+        guard #available(macOS 26.0, *) else { throw OnDeviceJudgeError.unsupportedSystem }
+        return try await AppleOnDevice.summarize(request)
     }
 
     /// Why the on-device judge cannot run here, or nil when it can.
@@ -199,6 +204,29 @@ enum AppleOnDevice {
             .init(name: "action", schema: DynamicGenerationSchema(name: "Action", anyOf: AttentionAction.allCases.map(\.rawValue))),
         ])
         return try GenerationSchema(root: root, dependencies: [])
+    }
+
+    static func summarize(_ request: MomentSummaryRequest) async throws -> String {
+        try checkModel()
+        var translated = request
+        let (english, source) = try await englishRequest(JudgeRequest(window: request.window, profile: AttentionProfile(),
+            yourName: "", language: request.language))
+        translated.window = english.window; translated.language = "en"
+        if source != nil {
+            translated.moment.verdict.reason = (try? await OnDeviceTranslator.shared.translate([request.moment.verdict.reason],
+                from: Locale.Language(identifier: request.language), to: Self.english, cache: false))?[request.moment.verdict.reason]
+                ?? request.moment.verdict.reason
+        }
+        let messages = MomentSummaryPrompt.messages(translated)
+        let schema = try GenerationSchema(root: DynamicGenerationSchema(name: "MomentSummary", properties: [
+            .init(name: "summary", description: "At most three short factual sentences.", schema: DynamicGenerationSchema(type: String.self))
+        ]), dependencies: [])
+        let content = try await respond(instructions: messages[0]["content"]!, prompt: messages[1]["content"]!, schema: schema)
+        var summary = try MomentSummaryPrompt.parse(try json(content, ["summary"]))
+        if let source {
+            summary = try await OnDeviceTranslator.shared.translate([summary], from: Self.english, to: source, cache: false)[summary] ?? summary
+        }
+        return summary
     }
 
     static func replySchema(_ channels: ReplyChannels) throws -> GenerationSchema {

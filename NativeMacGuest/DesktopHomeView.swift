@@ -59,7 +59,15 @@ struct NativeDesktopHomeView: View {
                 }
                 Section {
                     ForEach(NativeDesktopWorkspace.Section.allCases) { item in
-                        Label(L(item.rawValue), systemImage: item.symbol).tag(NativeDesktopSidebarItem.section(item))
+                        HStack {
+                            Label(L(item.rawValue), systemImage: item.symbol)
+                            if item == .assistant, workspace.attention.store.momentHistory.unreadCount > 0 {
+                                Spacer()
+                                Text(workspace.attention.store.momentHistory.unreadCount, format: .number)
+                                    .font(.caption2.weight(.bold)).padding(.horizontal, 6).padding(.vertical, 1)
+                                    .background(Color.orange, in: Capsule())
+                            }
+                        }.tag(NativeDesktopSidebarItem.section(item))
                     }
                 }
                 if !library.favorites.isEmpty {
@@ -89,6 +97,7 @@ struct NativeDesktopHomeView: View {
                         case .favorites: roomList(library.favorites, title: L("Favorites"), reorder: true)
                         case .recent: roomList(library.recent, title: L("Recent meetings"))
                         case .calendar: agenda
+                        case .assistant: AttentionMomentsView(attention: workspace.attention, store: workspace.attention.store)
                         case .home: home
                         }
                     }.frame(maxWidth: .infinity, maxHeight: .infinity)

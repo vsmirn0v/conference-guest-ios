@@ -207,22 +207,24 @@ enum AttentionWindowBuilder {
         var microphoneOn: Bool
         var soundOn: Bool
         var now = Date()
+        /// For an explicit Since then request; nil keeps the usual rolling window.
+        var after: Date? = nil
     }
 
     /// The last three minutes of speech and chat in spoken order, at most 60
     /// lines, with the lines that contain one of your names marked.
     static func build(_ input: Input) -> AttentionWindow {
-        let since = input.now.addingTimeInterval(-span)
+        let since = input.after ?? input.now.addingTimeInterval(-span)
         var items: [(Date, Int, AttentionWindow.Line)] = []
         var order = 0, last = Date.distantPast
         for message in input.transcript {
             let time = NativeDesktopMeetingModel.spokenAt(message); last = time ?? last
-            guard last >= since, !message.text.trimmed.isEmpty else { continue }
+            guard (input.after == nil ? last >= since : last > since), !message.text.trimmed.isEmpty else { continue }
             items.append((last, order, .init(id: message.id, ref: "", source: .speech, speaker: message.participantName,
                 isYou: message.isOwn, text: message.text.trimmed, at: time, mentionsYou: mentions(message.text, input.yourNames))))
             order += 1
         }
-        for entry in input.chat where entry.sentAt >= since && !entry.text.trimmed.isEmpty {
+        for entry in input.chat where (input.after == nil ? entry.sentAt >= since : entry.sentAt > since) && !entry.text.trimmed.isEmpty {
             items.append((entry.sentAt, order, .init(id: "chat-" + entry.id, ref: "", source: .chat, speaker: entry.sender,
                 isYou: entry.isOwn, text: entry.text.trimmed, at: entry.sentAt, mentionsYou: mentions(entry.text, input.yourNames))))
             order += 1

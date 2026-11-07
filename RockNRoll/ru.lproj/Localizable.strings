@@ -1839,3 +1839,23 @@
 "Off for every occurrence of this meeting." = "Выключено для всех встреч этой серии.";
 "Off for meetings in the background." = "Выключено для встреч в фоне.";
 "Off for silenced meetings." = "Выключено для встреч без звука.";
+
+"Missed" = "Пропущено";
+"Answered" = "Отвечено";
+"Dismissed" = "Скрыто";
+"Filter" = "Фильтр";
+"All" = "Все";
+"Remind me" = "Напомнить";
+"Reminder set" = "Напоминание создано";
+"Remind me in 10 minutes" = "Напомнить через 10 минут";
+"Reminder: %@" = "Напоминание: %@";
+"Since then" = "С тех пор";
+"Summarizing…" = "Создаю сводку…";
+"No later transcript or chat yet." = "Позже в транскрипте и чате ничего не появилось.";
+"The meeting is not open, so there is no later conversation to summarize." = "Встреча не открыта, поэтому более позднего разговора для сводки нет.";
+"Choose a Moment" = "Выберите момент";
+"Live, missed and answered decisions stay here for 30 days." = "Актуальные, пропущенные и отвеченные решения хранятся здесь 30 дней.";
+"No Moments in this view." = "В этом представлении нет моментов.";
+"%ld quiet checks · latest %@" = "Спокойных проверок: %ld · последняя %@";
+"This meeting is not open. The Moment is read-only; join it again to answer." = "Встреча не открыта. Момент доступен только для чтения; чтобы ответить, подключитесь снова.";
+"%@ · %@" = "%@ · %@";

@@ -1038,9 +1038,93 @@ import XCTest
         XCTAssertEqual(comparison.draftRows.first?.candidate?.chat, "Посмотрю и отвечу.")
     }
 
+    func testMissedMomentRetainsDraftAndAnswersWithoutOverlay() async throws {
+        let store = store()
+        store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
+        let (infra, _) = try await meeting("infra")
+        let judge = FakeJudge(), writer = FakeWriter()
+        var sent: [String] = [], clock = Date()
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [infra] }; coordinator.hasTranscript = { _ in true }; coordinator.now = { clock }
+        coordinator.makeJudge = { _, _ in judge }; coordinator.makeWriter = { _, _ in writer }
+        coordinator.replyChannels = { _ in .init(chat: true, reactions: [.like]) }
+        coordinator.deliverChat = { _, text in sent.append(text); return true }
+        infra.receiveLocalLineForTesting(.init(id: "i1", trackID: "a", text: "Vitalii, ready?", start: clock, end: clock))
+        judge.next = .init(level: .now, probability: 0.9, reason: "Waiting.", evidence: ["L1"], action: .chat)
+        await coordinator.tick()
+        let card = try XCTUnwrap(coordinator.card(for: infra.sessionID))
+        try await spin { coordinator.card(for: infra.sessionID)?.draft != nil }
+        coordinator.setMode(.off, for: infra)
+        XCTAssertTrue(coordinator.cards.isEmpty)
+        let moment = try XCTUnwrap(store.momentHistory.moment(card.id))
+        XCTAssertEqual(moment.state, .missed); XCTAssertNotNil(moment.draft)
+        coordinator.setMode(.mentions, for: infra); coordinator.selectMoment(moment)
+        let selected = try XCTUnwrap(coordinator.selectedCard)
+        XCTAssertTrue(coordinator.sendReply(selected, text: selected.draft?.chat ?? ""))
+        XCTAssertEqual(sent.count, 1); XCTAssertTrue(coordinator.cards.isEmpty)
+        XCTAssertEqual(store.momentHistory.moment(card.id)?.state, .answered)
+    }
+
+    func testClosedMeetingRefusesMissedDelivery() async throws {
+        let store = store(); store.enabled = true
+        store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
+        let (infra, _) = try await meeting("closed")
+        let judge = FakeJudge(), coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [infra] }; coordinator.hasTranscript = { _ in true }; coordinator.makeJudge = { _, _ in judge }
+        coordinator.replyChannels = { _ in .init(chat: true, reactions: []) }
+        infra.receiveLocalLineForTesting(.init(id: "i1", trackID: "a", text: "Vitalii?", start: Date(), end: Date()))
+        judge.next = .init(level: .now, probability: 0.9, reason: "Waiting.", evidence: ["L1"], action: .chat)
+        await coordinator.tick()
+        let card = try XCTUnwrap(coordinator.cards.first)
+        coordinator.setMode(.off, for: infra)
+        _ = await infra.leave()
+        coordinator.selectMoment(try XCTUnwrap(store.momentHistory.moment(card.id)))
+        let selected = try XCTUnwrap(coordinator.selectedCard)
+        XCTAssertFalse(selected.channels.chat)
+        XCTAssertFalse(coordinator.sendReply(selected, text: "late"))
+        XCTAssertEqual(store.momentHistory.moment(card.id)?.state, .missed)
+    }
+
+    func testNowCardExpiresToMissedAndSummaryUsesOnlyLaterLines() async throws {
+        let store = store(); store.enabled = true
+        store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
+        let (infra, _) = try await meeting("summary")
+        let judge = FakeJudge(), summarizer = FakeMomentSummarizer()
+        var clock = Date()
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [infra] }; coordinator.hasTranscript = { _ in true }; coordinator.now = { clock }
+        coordinator.makeJudge = { _, _ in judge }; coordinator.makeSummarizer = { _, _ in summarizer }
+        infra.receiveLocalLineForTesting(.init(id: "q", trackID: "a", text: "Vitalii?", start: clock, end: clock))
+        judge.next = .init(level: .now, probability: 0.9, reason: "Waiting.", evidence: ["L1"], action: .open)
+        await coordinator.tick()
+        let card = try XCTUnwrap(coordinator.cards.first)
+        clock += AttentionCoordinator.holdNow + 1
+        await coordinator.tick()
+        XCTAssertTrue(coordinator.cards.isEmpty)
+        let moment = try XCTUnwrap(store.momentHistory.moment(card.id)); XCTAssertEqual(moment.state, .missed)
+        infra.receiveLocalLineForTesting(.init(id: "answer", trackID: "a", text: "I answered instead.", start: clock, end: clock))
+        await coordinator.summarize(moment)
+        XCTAssertEqual(summarizer.calls, 1); XCTAssertEqual(summarizer.request?.window.lines.map(\.id), ["answer"])
+        XCTAssertEqual(coordinator.summaryByMoment[moment.id], "Someone answered.")
+        let quiet = AttentionMoment(id: UUID(), meetingID: infra.sessionID, meetingTitle: infra.title,
+            invitation: infra.invitation, verdict: moment.verdict, threshold: 0.5, provider: "local", model: "m",
+            latency: 0, createdAt: clock + 1000, updatedAt: clock + 1000, state: .missed)
+        await coordinator.summarize(quiet)
+        XCTAssertEqual(summarizer.calls, 1, "No later lines means no model call")
+        XCTAssertEqual(coordinator.summaryByMoment[quiet.id], L("No later transcript or chat yet."))
+    }
+
     private func spin(_ predicate: () -> Bool) async throws {
         for _ in 0..<200 where !predicate() { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(predicate())
+    }
+}
+
+private final class FakeMomentSummarizer: MomentSummarizer, @unchecked Sendable {
+    var calls = 0
+    var request: MomentSummaryRequest?
+    func summarize(_ request: MomentSummaryRequest) async throws -> String {
+        calls += 1; self.request = request; return "Someone answered."
     }
 }
 
