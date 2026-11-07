@@ -1,0 +1,33 @@
+{
+  "version": "0.3.0",
+  "build": "78",
+  "channel": "beta",
+  "sourceCommit": "3a246ff98c699d8dae0e7c34c2027fccd7e60875",
+  "includesBeta77Commit": "eba0c2df3f87c5ccc8766774b05ea2c345fe6ae3",
+  "changes": [
+    "Neural Engine voice recovery now recognizes reflected GenericObjCError and nilError failures, including failures thrown by AIModel.loadFunction",
+    "Recovery releases model and function references before deleting the unusable Core AI specialization through AIModelCache, then specializes the existing model again and retries once",
+    "Includes all native Mac beta 77 changes from eba0c2d"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "executableSHA256": "f5b3fed536397513fa13f219c987b6d193f4dbac5f897b81d41a0b84ed8568b0",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-78-arm64.dmg",
+    "sha256": "ee5a0947ecc10a2b626000e01836a5678b6834075e18887e4431a281db95a634",
+    "length": 26723156
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-78-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "voiceSuite": "15 tests, 1 skipped, 0 failures; the skipped test is the opt-in real-model generation test"
+  },
+  "notVerified": [
+    "real Neural Engine voice generation and playback after the recovery fix; Apple compiler service remained stuck after disk-full errors",
+    "Sparkle update of an installed app to 78"
+  ]
+}
