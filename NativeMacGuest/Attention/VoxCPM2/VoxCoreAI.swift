@@ -25,8 +25,31 @@ enum VoxCoreAI {
         } catch {
             // An invalid persistent specialization fails with nilError: drop it once and rebuild.
             guard String(reflecting: error).contains("nilError") else { throw error }
-            try AIModelCache.default.deleteEntry(for: resolved, options: options)
-            return try await AIModel.specialize(contentsOf: resolved, options: options, cachePolicy: .persistent)
+            return try await rebuild(resolved)
+        }
+    }
+
+    /// Drops a persistent specialization before compiling it again from the verified asset.
+    static func rebuild(_ url: URL) async throws -> AIModel {
+        let resolved = url.resolvingSymlinksInPath()
+        try AIModelCache.default.deleteEntry(for: resolved, options: options)
+        return try await AIModel.specialize(contentsOf: resolved, options: options, cachePolicy: .persistent)
+    }
+
+    /// MPSGraph reports an unusable cached model through this otherwise unhelpful error.
+    static func isUnusableCacheError(_ error: Error) -> Bool {
+        String(describing: type(of: error)) == "_GenericObjCError" || String(reflecting: error).contains("nilError")
+    }
+
+    /// Rebuilds once when a cached model fails to load at inference time, then retries the same call.
+    static func withCacheRecovery<T: ~Copyable>(rebuild: () async throws -> Void,
+                                                operation: () async throws -> T) async throws -> T {
+        do {
+            return try await operation()
+        } catch {
+            guard isUnusableCacheError(error) else { throw error }
+            try await rebuild()
+            return try await operation()
         }
     }
 
@@ -125,16 +148,27 @@ final class VoxAsset {
         return function
     }
 
+    /// Executes a function, rebuilding this asset's persistent cache once if MPSGraph cannot load it.
+    func execute(_ name: String, inputs: [String: NDArray], output: String = "features") async throws -> NDArray {
+        try await VoxCoreAI.withCacheRecovery(rebuild: {
+            model = try await VoxCoreAI.rebuild(url)
+            functions.removeAll()
+        }, operation: {
+            let function = try function(name)
+            let started = ContinuousClock.now
+            var outputs = try await function.run(inputs: inputs)
+            seconds += (ContinuousClock.now - started).voxSeconds
+            guard let result = outputs.remove(output)?.ndArray else { throw VoxError.engine("missing \(output) output") }
+            return result
+        })
+    }
+
     /// Runs a stateless function on row-major float16 inputs; returns its row-major `output`.
     func run(_ name: String, _ values: [String: [Float16]], output: String = "features") async throws -> [Float16] {
         let function = try function(name)
         var inputs: [String: NDArray] = [:]
         for (key, value) in values { inputs[key] = try VoxCoreAI.input(function, key, value) }
-        let started = ContinuousClock.now
-        var outputs = try await function.run(inputs: inputs)
-        seconds += (ContinuousClock.now - started).voxSeconds
-        guard let result = outputs.remove(output)?.ndArray else { throw VoxError.engine("missing \(output) output") }
-        return VoxCoreAI.flatten(result)
+        return VoxCoreAI.flatten(try await execute(name, inputs: inputs, output: output))
     }
 
     /// A causal stage: grows its key/value cache here and returns only the new hidden rows.
@@ -193,12 +227,9 @@ final class VoxAsset {
             }
             inputs["mask"] = mask
             inputs["cache"] = cache
-            let started = ContinuousClock.now
-            var outputs = try await function.run(inputs: inputs)
-            asset.seconds += (ContinuousClock.now - started).voxSeconds
+            let result = try await asset.execute(name, inputs: inputs)
             // Drop the input's reference before writing the cache's new rows.
             inputs["cache"] = nil
-            guard let result = outputs.remove("features")?.ndArray else { throw VoxError.engine("missing features output") }
             var rows = [Float16](repeating: 0, count: hidden * count)
             let hidden = hidden, channels = channels
             VoxCoreAI.read(result) { source, _, ss in

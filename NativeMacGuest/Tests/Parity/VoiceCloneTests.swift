@@ -142,4 +142,59 @@ import XCTest
         XCTAssertTrue(VoiceEngine.allCases.contains(.cloned))
         XCTAssertFalse(VoiceSynthesisError.clonePreparing.localizedDescription.isEmpty)
     }
+
+#if canImport(CoreAI)
+    private enum _GenericObjCError: Error { case failed }
+
+    @available(macOS 27.0, *)
+    func testUnusableInferenceCacheIsRebuiltAndRetried() async throws {
+        var attempts = 0, rebuilds = 0
+        let result = try await VoxCoreAI.withCacheRecovery(rebuild: {
+            rebuilds += 1
+        }, operation: {
+            attempts += 1
+            if attempts == 1 { throw _GenericObjCError.failed }
+            return "spoken"
+        })
+        XCTAssertEqual(result, "spoken")
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(rebuilds, 1)
+    }
+
+    @available(macOS 27.0, *)
+    func testInferenceCacheRecoveryRetriesOnlyOnce() async {
+        var attempts = 0, rebuilds = 0
+        do {
+            _ = try await VoxCoreAI.withCacheRecovery(rebuild: {
+                rebuilds += 1
+            }, operation: {
+                attempts += 1
+                throw _GenericObjCError.failed
+            }) as Int
+            XCTFail("The second inference failure must be reported")
+        } catch {
+            XCTAssertTrue(error is _GenericObjCError)
+        }
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(rebuilds, 1)
+    }
+
+    @available(macOS 27.0, *)
+    func testUnrelatedInferenceErrorDoesNotRebuildCache() async {
+        var attempts = 0, rebuilds = 0
+        do {
+            _ = try await VoxCoreAI.withCacheRecovery(rebuild: {
+                rebuilds += 1
+            }, operation: {
+                attempts += 1
+                throw VoxError.engine("invalid input")
+            }) as Int
+            XCTFail("The inference error must be preserved")
+        } catch {
+            XCTAssertEqual(error as? VoxError, .engine("invalid input"))
+        }
+        XCTAssertEqual(attempts, 1)
+        XCTAssertEqual(rebuilds, 0)
+    }
+#endif
 }
