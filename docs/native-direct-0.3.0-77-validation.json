@@ -1,0 +1,36 @@
+{
+  "version": "0.3.0",
+  "build": "77",
+  "channel": "beta",
+  "sourceCommit": "eba0c2df3f87c5ccc8766774b05ea2c345fe6ae3",
+  "changes": [
+    "Durable Assistant Moments inbox with Live, Missed, Answered, Dismissed and Not for me states; unread badge, filters, quiet-check summaries, reminders and bounded Since then summaries",
+    "Missed chat, reaction and voice actions use the active meeting while closed or missing meetings remain read-only; journal restoration and legacy record compatibility are preserved",
+    "Notification click-through opens the selected Moment; sidebar updates follow store changes; on-device summaries retain the existing English translation convention"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "executableSHA256": "417966ab6e27c87a0be2cb7e3f454574493d8b16fb69ef109bf1491cb4380763",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-77-arm64.dmg",
+    "sha256": "9bca5fb33f7339e4656b608eed9f5359cd5318c3283699373c3344a97c00a3b3",
+    "length": 26725014
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-77-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "focused": "51 tests, 2 skipped, 0 failures after the final rebase",
+    "regressions": "85 DesktopParityTests and VoiceCloneTests, 0 failures",
+    "releaseTooling": "27 tests, 0 failures",
+    "performance": "10,000-record reducer test passed in approximately 0.025 seconds in its measured run",
+    "fullSuite": "370 tests, 33 skipped, 8 unrelated existing failures in Vision text recognition, native copy UI, capture ownership and voice-model catalog coverage"
+  },
+  "notVerified": [
+    "live-meeting acceptance of Moments replies, reactions, voice and notification reminders",
+    "Sparkle update of an installed app to 77"
+  ]
+}
