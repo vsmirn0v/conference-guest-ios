@@ -145,6 +145,22 @@ import XCTest
 
 #if canImport(CoreAI)
     private enum _GenericObjCError: Error { case failed }
+    private enum __GenericObjCError: Error { case error }
+
+    @available(macOS 27.0, *)
+    func testFoundationGenericObjCErrorTriggersCacheRecovery() async throws {
+        var attempts = 0, rebuilds = 0
+        let result = try await VoxCoreAI.withCacheRecovery(rebuild: {
+            rebuilds += 1
+        }, operation: {
+            attempts += 1
+            if attempts == 1 { throw __GenericObjCError.error }
+            return "spoken"
+        })
+        XCTAssertEqual(result, "spoken")
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(rebuilds, 1)
+    }
 
     @available(macOS 27.0, *)
     func testUnusableInferenceCacheIsRebuiltAndRetried() async throws {
@@ -195,6 +211,16 @@ import XCTest
         }
         XCTAssertEqual(attempts, 1)
         XCTAssertEqual(rebuilds, 0)
+    }
+    @available(macOS 27.0, *)
+    func testInstalledClonedVoiceOnNeuralEngine() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["TEST_RUNNER_REAL_VOICE"] == "1")
+        let inputs = try VoiceCloneStore.shared.synthesisInputs()
+        let samples = try await ClonedVoiceEngine.shared.speak("The Neural Engine voice cache is working.", voice: inputs.voice, folder: inputs.folder)
+        XCTAssertGreaterThan(samples.count, 4_800)
+        XCTAssertTrue(samples.allSatisfy(\.isFinite))
+        XCTAssertTrue(samples.contains(where: { abs($0) > 0.001 }))
+        await ClonedVoiceEngine.shared.unload()
     }
 #endif
 }

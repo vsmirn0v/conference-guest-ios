@@ -24,21 +24,28 @@ enum VoxCoreAI {
             return try await AIModel.specialize(contentsOf: resolved, options: options, cachePolicy: .persistent)
         } catch {
             // An invalid persistent specialization fails with nilError: drop it once and rebuild.
-            guard String(reflecting: error).contains("nilError") else { throw error }
+            guard isUnusableCacheError(error) else { throw error }
             return try await rebuild(resolved)
         }
     }
 
     /// Drops a persistent specialization before compiling it again from the verified asset.
-    static func rebuild(_ url: URL) async throws -> AIModel {
+    /// The caller must release its AIModel and InferenceFunction references before this call.
+    static func rebuild(_ url: URL, bookmark: Data? = nil) async throws -> AIModel {
         let resolved = url.resolvingSymlinksInPath()
-        try AIModelCache.default.deleteEntry(for: resolved, options: options)
+        // Core AI's bookmark is an opaque cache identifier, not a file-system bookmark.
+        if let bookmark {
+            try AIModelCache.deleteEntry(referencedBy: bookmark)
+        } else {
+            try AIModelCache.default.deleteEntries(for: resolved)
+        }
         return try await AIModel.specialize(contentsOf: resolved, options: options, cachePolicy: .persistent)
     }
 
     /// MPSGraph reports an unusable cached model through this otherwise unhelpful error.
     static func isUnusableCacheError(_ error: Error) -> Bool {
-        String(describing: type(of: error)) == "_GenericObjCError" || String(reflecting: error).contains("nilError")
+        let description = String(reflecting: error)
+        return description.contains("GenericObjCError") || description.contains("nilError")
     }
 
     /// Rebuilds once when a cached model fails to load at inference time, then retries the same call.
@@ -132,7 +139,7 @@ enum VoxCoreAI {
 @available(macOS 27.0, *)
 final class VoxAsset {
     let url: URL
-    private var model: AIModel
+    private var model: AIModel?
     private var functions: [String: InferenceFunction] = [:]
     private(set) var seconds = 0.0
 
@@ -141,20 +148,32 @@ final class VoxAsset {
         model = try await VoxCoreAI.load(url)
     }
 
-    func function(_ name: String) throws -> InferenceFunction {
+    private func storedFunction(_ name: String) throws -> InferenceFunction {
         if let function = functions[name] { return function }
+        guard let model else { throw VoxError.engine("model is being rebuilt") }
         guard let function = try model.loadFunction(named: name) else { throw VoxError.engine("missing function \(name)") }
         functions[name] = function
         return function
     }
 
+    private func rebuildModel() async throws {
+        let bookmark = model?.bookmarkData
+        functions.removeAll()
+        model = nil
+        model = try await VoxCoreAI.rebuild(url, bookmark: bookmark)
+    }
+
+    /// Loading a function can be the first operation that touches the compiled model.
+    func function(_ name: String) async throws -> InferenceFunction {
+        try await VoxCoreAI.withCacheRecovery(rebuild: rebuildModel, operation: {
+            try storedFunction(name)
+        })
+    }
+
     /// Executes a function, rebuilding this asset's persistent cache once if MPSGraph cannot load it.
     func execute(_ name: String, inputs: [String: NDArray], output: String = "features") async throws -> NDArray {
-        try await VoxCoreAI.withCacheRecovery(rebuild: {
-            model = try await VoxCoreAI.rebuild(url)
-            functions.removeAll()
-        }, operation: {
-            let function = try function(name)
+        try await VoxCoreAI.withCacheRecovery(rebuild: rebuildModel, operation: {
+            let function = try await function(name)
             let started = ContinuousClock.now
             var outputs = try await function.run(inputs: inputs)
             seconds += (ContinuousClock.now - started).voxSeconds
@@ -165,7 +184,7 @@ final class VoxAsset {
 
     /// Runs a stateless function on row-major float16 inputs; returns its row-major `output`.
     func run(_ name: String, _ values: [String: [Float16]], output: String = "features") async throws -> [Float16] {
-        let function = try function(name)
+        let function = try await function(name)
         var inputs: [String: NDArray] = [:]
         for (key, value) in values { inputs[key] = try VoxCoreAI.input(function, key, value) }
         return VoxCoreAI.flatten(try await execute(name, inputs: inputs, output: output))
@@ -209,7 +228,7 @@ final class VoxAsset {
         /// Runs `name` on `values` whose first `count` columns are real; returns hidden × count row-major.
         func run(_ name: String, count: Int, values: [String: [Float16]]) async throws -> [Float16] {
             guard let spec = functions.first(where: { $0.name == name }) else { throw VoxError.engine("unknown function \(name)") }
-            let function = try asset.function(name)
+            let function = try await asset.function(name)
             try grow(to: spec.capacity, function: function)
             var inputs: [String: NDArray] = [:]
             for (key, value) in values { inputs[key] = try VoxCoreAI.input(function, key, value) }
