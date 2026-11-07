@@ -1,0 +1,29 @@
+{
+  "version": "0.3.0",
+  "build": "76",
+  "channel": "beta",
+  "sourceCommit": "042c099",
+  "changes": [
+    "Neural Engine voice cloning recovers from an unusable persistent Core AI specialization by deleting it, specializing the existing model again and retrying inference once; unrelated errors do not trigger a rebuild (042c099)"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-76-arm64.dmg",
+    "sha256": "69b9b78907fbf05e5484e16210229131a01e1df952f7b22df0066d00ad5c11df",
+    "length": 26620600
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-76-arm64.dmg",
+  "httpsVerified": true,
+  "measured": {
+    "suites": "VoiceCloneTests: 13 tests pass, including cache rebuild/retry, single-retry and unrelated-error coverage; full Debug suite: 359 tests, 33 skipped, 9 unrelated camera/UI/model-catalog failures"
+  },
+  "notVerified": [
+    "cloned voice playback with the real cached Neural Engine model",
+    "Sparkle update of an installed app to 76"
+  ]
+}
