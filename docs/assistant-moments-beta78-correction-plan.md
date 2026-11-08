@@ -1,8 +1,8 @@
 # Assistant Moments — beta 78 correction plan
 
-Status: implemented and reviewed in the detached `assistant-moments` worktree. Focused, parity, and live headphone acceptance are complete; not committed or published.
+Status: implemented, reviewed, rebased onto beta 78, and published as native Mac beta **0.3.0 (79)**. Release source: `1a9d22a03077405c5d406e6985108fa0a3557566`; validation record: `docs/native-direct-0.3.0-79-validation.json`.
 
-Base: beta 77, implementation commit `eba0c2d` and publication record `e0ee217`.
+Base: beta 77, implementation commit `eba0c2d` and publication record `e0ee217`; final source also includes beta 78 commits `3a246ff` and `71be05a`.
 
 ## Objective
 
@@ -139,9 +139,10 @@ The working tree matches the reviewed step-2 interaction contract: overflow is d
 - Distribution tooling: Python compilation passed and **27 tests, 0 failures** passed after supplying the account variables required by XcodeGen (`distribution-tests.log`). The read-only publication fixture inside those tests did not publish anything.
 - The earlier local direct **0.3.0 (78)** Release archive succeeded and its **58 archive hashes** matched `build-evidence.json`, but it predates the final UI fixes and does not validate the current source. It was not Developer ID export, notarization, Gatekeeper acceptance, or distribution evidence (`release-archive.log`).
 
-### Still required before any beta publication
+### Beta 79 publication — 2026-11-08
 
-- Resolve or explicitly disposition the two unrelated complete-suite failures in an appropriate separate thread.
-- Only after a release decision: archive the current source, export, notarize, package, validate the immutable DMG and beta feed/inventory, and confirm the stable target is unchanged.
-
-No commit or beta publication has been performed.
+- Final source `1a9d22a03077405c5d406e6985108fa0a3557566` includes the beta 78 Neural Engine recovery fix. Focused Assistant, voice, audio, update, and parity gates: **206 tests, 0 failures, 3 skipped**. English/Russian UI acceptance: **0 failures in each language**; live VoiceOver sessions also completed without interaction failures.
+- Direct Release archive **0.3.0 (79)** was Developer ID exported, notarized, stapled, Gatekeeper-validated, packaged, and revalidated from its mounted DMG. The outer DMG is not separately notarized.
+- Immutable `RockNRoll-0.3.0-79-arm64.dmg`: **26,974,695 bytes**, SHA-256 `e090e5c66a372cdc8c9d06feb6c5bc64715b2fc134720d6972ca52a4b30f865a`.
+- The publisher installed the files but its first HTTPS verification timed out. Direct readback subsequently matched the immutable artifact, beta alias, signed feed, and inventory exactly. Stable remains **0.3.0 (53)**, SHA-256 `0eb305ed22fcfb2e8de2d6bb53fdb76cfce7b31d88faaf4e8b2e7f5f5641a009`.
+- Full evidence and the disposition of the two unrelated earlier complete-suite failures are in `docs/native-direct-0.3.0-79-validation.json`.

@@ -1,0 +1,39 @@
+{
+  "version": "0.3.0",
+  "build": "79",
+  "channel": "beta",
+  "sourceCommit": "1a9d22a03077405c5d406e6985108fa0a3557566",
+  "changes": [
+    "Complete Assistant Moments overflow navigation, truthful read-only terminal details, per-Moment errors and rendered-row read state",
+    "Notification click-through reveals and retains the selected Moment without recency reordering; repeated terminal actions cannot deliver content twice",
+    "English and Russian 900 x 560 layouts, accessibility actions and live VoiceOver navigation reviewed; Russian filter clipping and stale decline editing fixed",
+    "Retains beta 78 Neural Engine voice function load recovery and the reviewed Assistant audio, commands, outcomes and Talk implementation"
+  ],
+  "frameworkBinarySHA256": "7cf82ec731fbffbb5a2ca0b6794ac8bb9fab0f7acf206651bf3fd6e015ccdb00",
+  "executableSHA256": "43346529fded53bc30fc2a45092d077c66f4bdc6cb16c89cd3687802f035bb19",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-79-arm64.dmg",
+    "sha256": "e090e5c66a372cdc8c9d06feb6c5bc64715b2fc134720d6972ca52a4b30f865a",
+    "length": 26974695
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-79-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "The publisher installed all files atomically but its first HTTPS verification timed out. Direct readback then matched the immutable DMG, beta alias, signed feed and inventory byte-for-byte; stable remained on build 53.",
+  "measured": {
+    "focusedAndRegressions": "206 tests, 3 skipped, 0 failures; includes VoiceClone, DesktopParity, audio, update admission and Attention suites",
+    "localizedUI": "English and Russian: 4 tests each, 1 explicit auditory-only test skipped, 0 failures; all 3 automated acceptance tests passed per language",
+    "voiceOver": "Live English and Russian spoken-navigation sessions: 1 test each, 0 failures; speech output activity confirmed",
+    "releaseTooling": "27 tests, 0 failures; all six English/Russian strings and stringsdict resources passed lint",
+    "fullSuiteDisposition": "The earlier complete Debug run had two unrelated existing failures in native text-selection UI and voice-model catalog coverage; neither was changed by this release and the focused release gates are green"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 79",
+    "Independent transcription and subjective assessment of every spoken VoiceOver phrase",
+    "The outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted"
+  ]
+}
