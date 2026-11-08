@@ -15,29 +15,59 @@ struct AttentionMomentsView: View {
     @ObservedObject var store: AttentionStore
     @State private var filter: AttentionMoment.State?
     @State private var selectedID: UUID?
+    @State private var area = 0
 
     private var moments: [AttentionMoment] { store.momentHistory.moments(filter: filter) }
     private var selected: AttentionMoment? { selectedID.flatMap(store.momentHistory.moment(_:)) }
 
     var body: some View {
+        VStack(spacing: 0) {
+            Picker(L("Assistant section"), selection: $area) {
+                Text(L("Moments")).tag(0); Text(L("Outcomes")).tag(1); Text(L("Talk")).tag(2)
+            }.pickerStyle(.segmented).labelsHidden().padding(12)
+            Divider()
+            switch area {
+            case 1: AssistantOutcomesView(attention: attention)
+            case 2: AssistantTalkView(attention: attention)
+            default: momentsView
+            }
+        }.navigationTitle(L("Assistant"))
+        .onChange(of: filter) { _ in selectedID = nil; attention.selectedCard = nil }
+        .onChange(of: store.momentsLoaded) { _ in
+            if let id = attention.requestedMomentID, let moment = store.momentHistory.moment(id) {
+                filter = nil; selectedID = id; attention.selectMoment(moment)
+            }
+        }
+        .onChange(of: attention.requestedMomentID) { id in
+            guard let id, let moment = store.momentHistory.moment(id) else { return }
+            area = 0; filter = nil; selectedID = id; attention.selectMoment(moment)
+        }
+    }
+
+    private var momentsView: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 Picker(L("Filter"), selection: $filter) {
                     Text(L("All")).tag(AttentionMoment.State?.none)
                     ForEach([AttentionMoment.State.live, .missed, .answered], id: \.self) { Text($0.title).tag(Optional($0)) }
-                }.pickerStyle(.segmented).labelsHidden().padding(12)
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        if filter == nil {
-                            ForEach(store.momentHistory.quietChecks.sorted { $0.latestAt > $1.latestAt }) { quiet in
-                                Label(L("%ld quiet checks · latest %@", quiet.count, quiet.latestAt.formatted(date: .abbreviated, time: .shortened)),
-                                      systemImage: "moon")
-                                    .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(10).help(quiet.meetingTitle)
+                }.pickerStyle(.segmented).labelsHidden().controlSize(.small).padding(12)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 2) {
+                            if filter == nil {
+                                ForEach(store.momentHistory.quietChecks.sorted { $0.latestAt > $1.latestAt }) { quiet in
+                                    Label(L("%ld quiet checks · latest %@", quiet.count, quiet.latestAt.formatted(date: .abbreviated, time: .shortened)),
+                                          systemImage: "moon")
+                                        .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(10).help(quiet.meetingTitle)
+                                }
                             }
-                        }
-                        ForEach(moments) { moment in row(moment) }
-                    }.padding(.horizontal, 8)
+                            ForEach(moments) { moment in row(moment) }
+                        }.padding(.horizontal, 8)
+                    }
+                    .onAppear { scrollToRequested(proxy) }
+                    .onChange(of: attention.requestedMomentID) { _ in scrollToRequested(proxy) }
+                    .onChange(of: store.momentsLoaded) { _ in scrollToRequested(proxy) }
                 }
                 if !store.momentsLoaded { ProgressView().controlSize(.small).padding(8) }
                 if moments.isEmpty && store.momentsLoaded {
@@ -46,19 +76,12 @@ struct AttentionMomentsView: View {
             }.frame(width: 330).background(Color(nsColor: .controlBackgroundColor))
             Divider()
             detail.frame(maxWidth: .infinity, maxHeight: .infinity)
-        }.navigationTitle(L("Assistant"))
-        .onAppear { seen() }
-        .onChange(of: filter) { _ in selectedID = nil; attention.selectedCard = nil; seen() }
-        .onChange(of: store.momentsLoaded) { _ in
-            seen()
-            if let id = attention.requestedMomentID, let moment = store.momentHistory.moment(id) {
-                filter = nil; selectedID = id; attention.selectMoment(moment)
-            }
         }
-        .onChange(of: attention.requestedMomentID) { id in
-            guard let id, let moment = store.momentHistory.moment(id) else { return }
-            filter = nil; selectedID = id; attention.selectMoment(moment)
-        }
+    }
+
+    private func scrollToRequested(_ proxy: ScrollViewProxy) {
+        guard let id = attention.requestedMomentID, moments.contains(where: { $0.id == id }) else { return }
+        proxy.scrollTo(id, anchor: .center)
     }
 
     private func row(_ moment: AttentionMoment) -> some View {
@@ -77,10 +100,12 @@ struct AttentionMomentsView: View {
             }.padding(9).frame(maxWidth: .infinity, alignment: .leading)
             .background(selectedID == moment.id ? Color.accentColor.opacity(0.13) : Color.clear, in: RoundedRectangle(cornerRadius: 7))
         }.buttonStyle(.plain).accessibilityIdentifier("attention.moment")
+        .id(moment.id).onAppear { attention.markVisibleMomentsSeen([moment]) }
     }
 
     @ViewBuilder private var detail: some View {
         if let moment = selected {
+            let terminal = [.answered, .dismissed, .notForMe].contains(moment.state)
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack {
@@ -101,24 +126,30 @@ struct AttentionMomentsView: View {
                     if let summary = attention.summaryByMoment[moment.id] {
                         GroupBox(L("Since then")) { Text(summary).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
                     }
-                    if let error = attention.summaryError { Text(error).font(.caption).foregroundStyle(.red) }
+                    if let error = attention.summaryErrorByMoment[moment.id] { Text(error).font(.caption).foregroundStyle(.red) }
+                    if let error = attention.reminderErrorByMoment[moment.id] { Text(error).font(.caption).foregroundStyle(.red) }
+                    if let sent = moment.sent, !sent.isEmpty {
+                        GroupBox(L("Your answer")) { Text(sent).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                    }
+                    if let reaction = moment.reaction {
+                        Label(L("You reacted with %@", reaction.emoji), systemImage: "face.smiling")
+                    }
                     if let card = attention.selectedCard, card.id == moment.id {
-                        if card.readOnly {
+                        if !terminal, card.readOnly {
                             Text(L("This meeting is not open. The Moment is read-only; join it again to answer."))
                                 .font(.callout).foregroundStyle(.secondary)
                         }
                         AttentionCardView(attention: attention, card: card).shadow(radius: 0)
                     } else {
-                        Text(L("This meeting is not open. The Moment is read-only; join it again to answer."))
-                            .font(.callout).foregroundStyle(.secondary)
+                        if !terminal {
+                            Text(L("This meeting is not open. The Moment is read-only; join it again to answer."))
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
                         Text(moment.verdict.reason).textSelection(.enabled)
                         ForEach(moment.evidence, id: \.id) { line in
                             Text("\(line.speaker): \(line.text)").font(.callout).foregroundStyle(.secondary)
                         }
                     }
-                    Button(L("Why")) {
-                        if let card = attention.selectedCard { attention.inspecting = card }
-                    }.disabled(attention.selectedCard?.id != moment.id)
                 }.padding(24).frame(maxWidth: 700, alignment: .leading)
             }
         } else {
@@ -129,6 +160,4 @@ struct AttentionMomentsView: View {
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
-
-    private func seen() { attention.markVisibleMomentsSeen(moments) }
 }

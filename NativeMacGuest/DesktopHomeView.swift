@@ -122,7 +122,7 @@ struct NativeDesktopHomeView: View {
                         .navigationTitle(selected.title)
                         .navigationSubtitle(meetingSubtitle(selected))
                 }
-                AttentionCardStack(attention: workspace.attention)
+                AttentionCardStack(attention: workspace.attention, openAssistant: { workspace.show(section: .assistant) })
             }
             .sheet(item: Binding(get: { workspace.attention.inspecting }, set: { workspace.attention.inspecting = $0 })) { card in
                 AttentionInspector(attention: workspace.attention, card: card)
@@ -360,6 +360,10 @@ struct NativeDesktopHomeView: View {
                 Button { workspace.settingsTab = 3; workspace.selection = .settings } label: { Label(L("Camera & sound"), systemImage: "slider.horizontal.3") }
             }
             Label(L("Microphone and camera start off"), systemImage: "mic.slash").font(.caption).foregroundStyle(.secondary)
+            if let destination = try? library.normalizedDestination(workspace.invitation),
+               let outcome = workspace.attention.store.assistant.latestOutcome(invitation: destination.invitationURL, before: Date()) {
+                LastTimeView(outcome: outcome)
+            }
         }.padding(18).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 16))
     }
     private func sectionTitle(_ title: String, action: @escaping () -> Void) -> some View {
@@ -372,10 +376,13 @@ struct NativeDesktopHomeView: View {
                     Text(room.displayTitle).font(.headline).lineLimit(1)
                     Text(library.calendar.subtitle(for: room) ?? room.lastVisit.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? L("Saved meeting")).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(height: 16)
                     Text(roomDetail(room.joinURL, engine: room.engine)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    if let outcome = workspace.attention.store.assistant.latestOutcome(invitation: room.invitationURL, before: Date()) {
+                        LastTimeView(outcome: outcome)
+                    }
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
             Button { library.toggleFavorite(room) } label: { Image(systemName: room.isStarred ? "star.fill" : "star") }.buttonStyle(.borderless).foregroundStyle(.orange)
-        }.padding(14).frame(height: 82).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 14)).contextMenu { roomMenu(room) }
+        }.padding(14).frame(minHeight: 82).background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 14)).contextMenu { roomMenu(room) }
     }
     private func roomRow(_ room: RecentRoom) -> some View { roomCard(room) }
     private func roomList(_ rooms: [RecentRoom], title: String, reorder: Bool = false) -> some View {
@@ -408,6 +415,10 @@ struct NativeDesktopHomeView: View {
                 Text(item.title).font(.headline).lineLimit(2)
                 Text(CalendarMeetingPresentation.subtitle(item, at: library.calendar.now, roomTitle: item.title)).foregroundStyle(.secondary)
                 Text(item.invitation.map { roomDetail($0, engine: item.engine) } ?? "").font(.caption).foregroundStyle(.secondary)
+                if let outcome = workspace.attention.store.assistant.latestOutcome(invitation: item.invitation,
+                    series: item.seriesID, before: item.start) {
+                    LastTimeView(outcome: outcome)
+                }
             }.frame(maxWidth: .infinity, alignment: .leading)
             Button {
                 if let url = item.invitation {
@@ -529,7 +540,7 @@ struct NativeDesktopSettingsView: View {
             NativeDesktopTranscriptionSettings(store: .shared).tabItem { Label(L("Transcription"), systemImage: "text.bubble") }.tag(5)
             if let attention {
                 NativeDesktopIntelligenceSettings(store: attention.store, attention: attention)
-                    .tabItem { Label(L("Intelligence"), systemImage: "sparkles") }.tag(6)
+                    .tabItem { Label(L("Assistant"), systemImage: "sparkles") }.tag(6)
             }
             #if NATIVE_DIRECT_UPDATES
             if let updates { NativeDesktopUpdatesView(updates: updates).tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag(4) }

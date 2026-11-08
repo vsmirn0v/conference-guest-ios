@@ -27,6 +27,7 @@ struct AttentionMoment: Identifiable, Equatable, Sendable {
     var sent: String?
     var reaction: MeetingReaction?
     var reminderAt: Date?
+    var memory: [AssistantMemoryExcerpt] = []
     var evidence: [AttentionWindow.Line] { verdict.evidence.compactMap { window?.line(id: $0) } }
 }
 
@@ -82,6 +83,7 @@ struct AttentionMomentHistory: Equatable, Sendable {
             if record.outcome == .crowdedOut { moment.seen = false }
             moment.mode = record.mode ?? moment.mode
             moment.mentioned = record.mentioned ?? moment.mentioned
+            moment.memory = record.memory ?? moment.memory
             momentsByID[decisionID] = moment
         case .missed:
             update(decisionID, record: record) { $0.state = .missed }
@@ -95,11 +97,12 @@ struct AttentionMomentHistory: Equatable, Sendable {
         case .declined:
             update(decisionID, record: record) { $0.state = .notForMe; $0.seen = true }
         case .seen:
-            update(decisionID, record: record) { $0.seen = true }
+            guard var moment = momentsByID[decisionID] else { return }
+            moment.seen = true; momentsByID[decisionID] = moment
         case .drafted:
             update(decisionID, record: record) { $0.draft = record.draft ?? $0.draft }
         case .reminded:
-            update(decisionID, record: record) { $0.reminderAt = record.at.addingTimeInterval(600) }
+            update(decisionID, record: record) { $0.reminderAt = record.reminderAt ?? record.at.addingTimeInterval(600) }
         case .belowThreshold:
             let key = record.meetingID?.uuidString ?? record.invitation?.absoluteString ?? record.seriesID ?? record.meetingTitle.lowercased()
             var quiet = quietByMeeting[key] ?? AttentionQuietChecks(id: key, meetingID: record.meetingID, meetingTitle: record.meetingTitle)
@@ -123,7 +126,7 @@ struct AttentionMomentHistory: Equatable, Sendable {
     mutating func markSeen(_ ids: [UUID], at: Date) -> [AttentionDecisionRecord] {
         ids.compactMap { id in
             guard var moment = momentsByID[id], !moment.seen else { return nil }
-            moment.seen = true; moment.updatedAt = at; momentsByID[id] = moment
+            moment.seen = true; momentsByID[id] = moment
             return AttentionDecisionRecord(id: UUID(), at: at, meetingTitle: moment.meetingTitle,
                 meetingID: moment.meetingID, invitation: moment.invitation, seriesID: moment.seriesID,
                 presetID: moment.presetID, provider: moment.provider, model: moment.model,

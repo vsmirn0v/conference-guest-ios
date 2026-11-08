@@ -41,6 +41,19 @@ import XCTest
         XCTAssertEqual(history.moments(filter: nil).count, 1)
     }
 
+    func testSeenDoesNotChangeRecencyOrdering() throws {
+        var history = AttentionMomentHistory()
+        let id = UUID(), seenAt = at.addingTimeInterval(300)
+        history.apply(record(.shown, id: id))
+        let originalUpdate = try XCTUnwrap(history.moment(id)?.updatedAt)
+        let records = history.markSeen([id], at: seenAt)
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records.first?.at, seenAt)
+        XCTAssertEqual(history.moment(id)?.updatedAt, originalUpdate)
+        history.apply(try XCTUnwrap(records.first))
+        XCTAssertEqual(history.moment(id)?.updatedAt, originalUpdate, "Journal replay must also preserve recency")
+    }
+
     func testCrowdedOutDismissDeclineAndQuietAggregation() {
         var history = AttentionMomentHistory()
         let crowded = UUID(), dismissed = UUID(), declined = UUID(), meeting = UUID()

@@ -473,6 +473,9 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         let graph = locked { () -> GuestVoiceReplyGraph? in microphoneGateOpen = open; return voiceReply }
         graph?.setGate(open: open)
         update(["microphoneGateOpen": open])
+#if DEBUG
+        if let graph { update(["voiceReplyTopology": graph.evidence]) }
+#endif
         return graph.map { $0.gateOpen == open } ?? true
     }
     /// Plays a reply into what the meeting receives. False without an input graph.

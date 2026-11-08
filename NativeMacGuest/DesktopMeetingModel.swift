@@ -184,7 +184,7 @@ import UniformTypeIdentifiers
     /// Your microphone is transcribed only on confirmed state: the setting is on,
     /// this meeting holds the microphone and the engine confirmed it unmuted.
     var transcribesMicrophone: Bool {
-        localTranscriber != nil && listenStore.includesMicrophone && ownsMicrophone && snapshot.microphoneOn && !voiceReplyActive
+        localTranscriber != nil && listenStore.includesMicrophone && ownsMicrophone && snapshot.microphoneOn && !voiceReplyActive && !assistantCaptureActive
     }
     private func updateLocalMicrophoneCapture() { localTranscriber?.setLocalCapture(transcribesMicrophone) }
     private func receiveLocalLine(_ line: MeetingTranscriber.Line) {
@@ -342,17 +342,42 @@ import UniformTypeIdentifiers
     }
     /// A reply is being played into this meeting; your own microphone is held back.
     @Published private(set) var voiceReplyActive = false
+    /// Push-to-talk captures locally while the meeting's send gate is closed.
+    @Published private(set) var assistantCaptureActive = false
     /// The mute after a reply was not confirmed, so the gate stays closed until it is.
     private var voiceReplyGateHeld = false
     /// What you chose with the microphone button during a reply; it wins afterwards.
     private var voiceReplyUserChoice: Bool?
     var supportsVoiceReply: Bool { connected && engine.supportsVoiceReply }
 
+    /// Closes only the meeting send gate; Assistant uses a separate AVAudioEngine tap
+    /// whose samples go to LocalSpeechRecognizer and never into the meeting graph.
+    func holdMicrophoneForAssistant() async -> Bool {
+        guard !assistantCaptureActive, !voiceReplyActive, connected, !closed, !transferHeld else { return false }
+        if !ownsMicrophone {
+            guard let arbiter = microphoneArbiter, await arbiter(self), ownsMicrophone else { return false }
+        }
+        assistantCaptureActive = true; updateLocalMicrophoneCapture()
+        guard await engine.setMicrophoneGate(open: false) else {
+            assistantCaptureActive = false; updateLocalMicrophoneCapture()
+            if !voiceReplyGateHeld { _ = await engine.setMicrophoneGate(open: true) }
+            return false
+        }
+        return true
+    }
+
+    /// Idempotent release for key-up, cancellation, window loss and capture errors.
+    func releaseMicrophoneForAssistant() async {
+        guard assistantCaptureActive else { return }
+        assistantCaptureActive = false; updateLocalMicrophoneCapture()
+        if !voiceReplyActive && !voiceReplyGateHeld { _ = await engine.setMicrophoneGate(open: true) }
+    }
+
     /// Plays `buffer` into this meeting with your microphone held back:
     /// the gate closes before anything unmutes, and reopens only once the
     /// meeting is muted again (or was live before the reply).
     func speak(_ buffer: AVAudioPCMBuffer) async throws {
-        guard supportsVoiceReply, !voiceReplyActive, !closed, !transferHeld else { throw VoiceReplyError.unavailable }
+        guard supportsVoiceReply, !voiceReplyActive, !assistantCaptureActive, !closed, !transferHeld else { throw VoiceReplyError.unavailable }
         if !ownsMicrophone {
             guard let arbiter = microphoneArbiter, await arbiter(self), ownsMicrophone else { throw VoiceReplyError.notTalkMeeting }
         }
@@ -361,7 +386,8 @@ import UniformTypeIdentifiers
         let wasLive = snapshot.microphoneOn
         probeLog("voice-reply-start", ["service": kind.rawValue, "seconds": Double(buffer.frameLength) / buffer.format.sampleRate, "wasLive": wasLive])
         guard await engine.setMicrophoneGate(open: false) else {
-            _ = await engine.setMicrophoneGate(open: true); throw VoiceReplyError.gate
+            if !voiceReplyGateHeld { _ = await engine.setMicrophoneGate(open: true) }
+            throw VoiceReplyError.gate
         }
         // The gate's volume ramps down; let it reach silence before anything unmutes.
         try? await Task.sleep(for: .milliseconds(GuestVoiceReplyGraph.gateSettleMilliseconds))
@@ -829,6 +855,7 @@ import UniformTypeIdentifiers
     }
     func toggleMicrophone() {
         let enabled = !(requestedMicrophone ?? snapshot.microphoneOn)
+        guard !assistantCaptureActive || !enabled else { return }
         if voiceReplyActive { voiceReplyUserChoice = enabled }
         else if enabled, voiceReplyGateHeld {
             voiceReplyGateHeld = false

@@ -611,6 +611,46 @@ import XCTest
         XCTAssertEqual(reactions?["enum"] as? [String], ["none", "like", "thanks"], "Only the meeting's reactions are offered")
     }
 
+    func testReplyVariantsAreBoundedRankedAndLegacyRepliesStayDecodable() throws {
+        let channels = ReplyChannels(chat: true, reactions: [.like])
+        let content = #"{"chat":"Yes, DNS is ready.","reaction":"like","variants":[{"stance":"confirm","text":"Yes, DNS is ready."},{"stance":"ask for time","text":"I need five minutes."},{"stance":"confirm","text":"Yes, DNS is ready."},{"stance":"decline","text":"I cannot confirm yet."},{"stance":"extra","text":"This must be dropped."}]}"#
+        let parsed = try ReplyPrompt.draft(from: content, channels: channels)
+        XCTAssertEqual(parsed.variants?.count, 3)
+        XCTAssertEqual(parsed.variants?.map(\.stance), ["confirm", "ask for time", "decline"])
+        XCTAssertEqual(parsed.chat, "Yes, DNS is ready.")
+        XCTAssertNil(try ReplyPrompt.draft(from: #"{"chat":"Legacy","reaction":"none"}"#, channels: channels).variants)
+        XCTAssertThrowsError(try ReplyPrompt.draft(from: #"{"chat":"Voice","reaction":"none","variants":[{"stance":"confirm","text":"Voice"}]}"#,
+                                                  channels: .init(chat: false))) { XCTAssertEqual($0 as? ReplyDraftError, .empty) }
+
+        let edits = [ReplyEdit(at: Date(), draft: "I will check", sent: "I need five minutes to check DNS")]
+        let ranked = parsed.ranked(preferredStance: nil, edits: edits)
+        XCTAssertEqual(ranked.variants?.first?.stance, "ask for time", "Actual sent wording breaks a tie")
+        let preferred = parsed.ranked(preferredStance: "decline", edits: edits)
+        XCTAssertEqual(preferred.variants?.first?.stance, "decline", "A recorded stance pick ranks first")
+        XCTAssertEqual(preferred.chat, "I cannot confirm yet.")
+        XCTAssertEqual(parsed.ranked(preferredStance: nil, edits: []).variants?.map(\.id), parsed.variants?.map(\.id),
+                       "Equal scores retain model order")
+    }
+
+    func testSelectingAVariantOnlyChangesTheDraftAndRecordsPreference() throws {
+        let coordinator = AttentionCoordinator(store: store())
+        var sent: [String] = []
+        coordinator.deliverChat = { _, text in sent.append(text); return true }
+        let window = sampleWindow()
+        let first = ReplyVariant(stance: "confirm", text: "Yes")
+        let second = ReplyVariant(stance: "decline", text: "Not yet")
+        let card = AttentionCoordinator.Card(id: UUID(), meetingID: UUID(), meetingTitle: "Infra",
+            invitation: URL(string: "https://example.test/infra")!, seriesID: nil,
+            verdict: .init(level: .now, probability: 0.9, reason: "Asked", evidence: [], action: .chat),
+            window: window, presetID: nil, threshold: 0.55, provider: "local", model: "m", latency: 0.1, createdAt: Date(),
+            channels: .init(chat: true), draft: .init(chat: first.text, reaction: nil, variants: [first, second]))
+        coordinator.selectedCard = card
+        coordinator.selectVariant(second, for: card)
+        XCTAssertEqual(coordinator.selectedCard?.draft?.chat, second.text)
+        XCTAssertEqual(coordinator.store.assistant.preferredStance(), "decline")
+        XCTAssertTrue(sent.isEmpty, "Choosing a stance never sends it")
+    }
+
     func testReplyPromptCarriesDecisionStyleAndChannels() {
         var profile = AttentionProfile(name: "Vitalii"); profile.replyStyle = "Brief, informal"
         let window = sampleWindow()
@@ -626,6 +666,9 @@ import XCTest
         XCTAssertTrue(AttentionPrompt.userContent(judge).contains("can answer here without joining: chat and reactions"))
         var none = judge; none.replyChannels = .init()
         XCTAssertTrue(AttentionPrompt.userContent(none).contains("cannot answer here without joining"))
+        let redraft = ReplyPrompt.userContent(.init(judge: judge, verdict: verdict, redraftHint: "Shorter, in English"))
+        XCTAssertTrue(redraft.contains("Redraft direction from the user"))
+        XCTAssertTrue(redraft.contains("Shorter, in English"))
     }
 
     func testCoordinatorDraftsAReplyAndSendsOnlyWhatYouApprove() async throws {
@@ -1063,6 +1106,59 @@ import XCTest
         XCTAssertTrue(coordinator.sendReply(selected, text: selected.draft?.chat ?? ""))
         XCTAssertEqual(sent.count, 1); XCTAssertTrue(coordinator.cards.isEmpty)
         XCTAssertEqual(store.momentHistory.moment(card.id)?.state, .answered)
+        XCTAssertEqual(store.momentHistory.moment(card.id)?.sent, sent[0])
+        let terminal = try XCTUnwrap(coordinator.selectedCard)
+        XCTAssertTrue(terminal.readOnly); XCTAssertFalse(terminal.channels.chat); XCTAssertFalse(terminal.canSpeak)
+        coordinator.selectMoment(try XCTUnwrap(store.momentHistory.moment(card.id)))
+        XCTAssertTrue(coordinator.selectedCard?.readOnly == true, "Reselecting an answered Moment cannot deliver twice")
+    }
+
+    func testOverflowTracksOnlyDisplacedLiveMomentsAndClearsAtCycleEnd() async throws {
+        let store = store()
+        store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
+        let (a, _) = try await meeting("overflow-a"), (b, _) = try await meeting("overflow-b"), (c, _) = try await meeting("overflow-c")
+        let judge = FakeJudge(), coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [a, b, c] }; coordinator.hasTranscript = { _ in true }; coordinator.makeJudge = { _, _ in judge }
+        for (model, id) in [(a, "a1"), (b, "b1"), (c, "c1")] {
+            model.receiveLocalLineForTesting(.init(id: id, trackID: "t", text: "Vitalii?", start: Date(), end: Date()))
+        }
+        judge.next = .init(level: .now, probability: 0.9, reason: "Waiting.", evidence: ["L1"], action: .open)
+        await coordinator.tick(); await coordinator.tick(); await coordinator.tick()
+        XCTAssertEqual(coordinator.cards.count, 2)
+        let overflowID = try XCTUnwrap(coordinator.overflowMomentIDs.first)
+        let overflow = try XCTUnwrap(store.momentHistory.moment(overflowID))
+        XCTAssertEqual(overflow.meetingTitle, "overflow-a", "The two newest cards stay visible")
+        XCTAssertEqual(store.momentHistory.moment(overflow.id)?.state, .missed, "A displaced card remains answerable in Assistant")
+        coordinator.selectMoment(overflow)
+        coordinator.dismiss(try XCTUnwrap(coordinator.selectedCard))
+        XCTAssertTrue(coordinator.overflowMomentIDs.isEmpty)
+        XCTAssertEqual(store.momentHistory.moment(overflow.id)?.state, .dismissed)
+
+        // Historical unread records never contribute to the overlay count.
+        XCTAssertGreaterThan(store.momentHistory.unreadCount, 0)
+        XCTAssertTrue(coordinator.overflowMomentIDs.isEmpty)
+        for card in coordinator.cards { coordinator.dismiss(card) }
+        XCTAssertTrue(coordinator.overflowMomentIDs.isEmpty)
+        let relaunched = AttentionCoordinator(store: store)
+        XCTAssertTrue(relaunched.overflowMomentIDs.isEmpty)
+    }
+
+    func testMomentErrorsAreScopedAndRetryClearsOnlyTheirOwnError() async throws {
+        let store = store()
+        let (infra, _) = try await meeting("errors")
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [infra] }
+        let first = AttentionMoment(id: UUID(), meetingID: UUID(), meetingTitle: "first", verdict: .init(level: .now, probability: 0.9, reason: "one", evidence: [], action: .open), threshold: 0.5, provider: "p", model: "m", latency: 0, createdAt: Date(), updatedAt: Date(), state: .missed)
+        let second = AttentionMoment(id: UUID(), meetingID: UUID(), meetingTitle: "second", verdict: first.verdict, threshold: 0.5, provider: "p", model: "m", latency: 0, createdAt: Date(), updatedAt: Date(), state: .missed)
+        await coordinator.summarize(first)
+        XCTAssertNotNil(coordinator.summaryErrorByMoment[first.id]); XCTAssertNil(coordinator.summaryErrorByMoment[second.id])
+        coordinator.scheduleReminder = { _, _ in throw NSError(domain: "test", code: 1) }
+        coordinator.remind(second)
+        try await spin { coordinator.reminderErrorByMoment[second.id] != nil }
+        XCTAssertNil(coordinator.reminderErrorByMoment[first.id]); XCTAssertNotNil(coordinator.summaryErrorByMoment[first.id])
+        coordinator.scheduleReminder = { _, _ in }
+        coordinator.remind(second)
+        XCTAssertNil(coordinator.reminderErrorByMoment[second.id], "A retry immediately clears its previous error")
     }
 
     func testClosedMeetingRefusesMissedDelivery() async throws {
@@ -1114,9 +1210,276 @@ import XCTest
         XCTAssertEqual(coordinator.summaryByMoment[quiet.id], L("No later transcript or chat yet."))
     }
 
+    // MARK: Outcomes and local assistant data
+
+    func testOutcomeParsingAndSnapshotBounds() throws {
+        let due = Date(timeIntervalSince1970: 1_800_000_000)
+        let json = """
+        {"summary":"  Release moved.  ","decisions":["Ship Monday","Ship Monday",""],
+        "tasks":[{"text":"Update DNS","owner":"Anna","due_at":"\(ISO8601DateFormatter().string(from: due))"},
+        {"text":" ","owner":"Nobody","due_at":""}],"open_questions":["Who owns rollback?"]}
+        """
+        let parsed = try MeetingOutcomePrompt.parse(json)
+        XCTAssertEqual(parsed.summary, "Release moved.")
+        XCTAssertEqual(parsed.decisions, ["Ship Monday"])
+        XCTAssertEqual(parsed.tasks.count, 1)
+        XCTAssertEqual(parsed.tasks[0].dueAt, due)
+        XCTAssertEqual(parsed.openQuestions, ["Who owns rollback?"])
+
+        let now = Date()
+        let transcript = (0..<300).map { message("t\($0)", "Anna", "line \($0)", now.addingTimeInterval(Double($0))) }
+        let window = MeetingOutcomePrompt.window(title: "infra", transcript: transcript, chat: [], yourName: "Vitalii", now: now)
+        XCTAssertEqual(window.lines.count, 240)
+        XCTAssertEqual(window.lines.first?.id, "t60")
+        XCTAssertEqual(window.lines.last?.ref, "L240")
+    }
+
+    func testAssistantDataPersistsEditsAndFindsLastTime() async throws {
+        let root = folder(), data = AssistantDataStore(root: root)
+        await data.waitForLoad()
+        let invitation = URL(string: "https://example.test/calls/infra")!
+        let outcome = MeetingOutcome(meetingTitle: "Infra", invitation: invitation, seriesID: "series", endedAt: Date().addingTimeInterval(-60),
+            summary: "We agreed to migrate.", decisions: ["Migrate"], tasks: [.init(text: "Check DNS")], openQuestions: [])
+        data.addOutcome(outcome)
+        data.remember("I prefer concise replies", kind: .you)
+        await data.waitForSave()
+        XCTAssertEqual(data.latestOutcome(invitation: invitation)?.id, outcome.id)
+        XCTAssertEqual(data.seriesOutcomes(series: "series").count, 1)
+        XCTAssertTrue(data.retrieve(meetingTitle: "Infra", invitation: invitation, series: "series", people: []).count <= 5)
+
+        let restored = AssistantDataStore(root: root)
+        await restored.waitForLoad()
+        XCTAssertEqual(restored.outcomes.first?.summary, "We agreed to migrate.")
+        XCTAssertEqual(restored.memories.first?.text, "I prefer concise replies")
+        var edited = try XCTUnwrap(restored.outcomes.first)
+        edited.summary = "Edited"; edited.tasks[0].done = true
+        restored.updateOutcome(edited)
+        await restored.waitForSave()
+        let again = AssistantDataStore(root: root)
+        await again.waitForLoad()
+        XCTAssertEqual(again.outcomes.first?.summary, "Edited")
+        XCTAssertTrue(again.outcomes.first?.tasks[0].done == true)
+        let exported = try XCTUnwrap(String(data: restored.exportData(), encoding: .utf8))
+        XCTAssertTrue(exported.contains("I prefer concise replies"))
+        restored.deleteAll(); await restored.waitForSave()
+        XCTAssertTrue(restored.outcomes.isEmpty && restored.memories.isEmpty)
+    }
+
+    func testAssistantMutationDuringInitialLoadIsNotOverwrittenByStaleBytes() async throws {
+        let root = folder(), seed = AssistantDataStore(root: root)
+        await seed.waitForLoad()
+        seed.remember("Old value")
+        await seed.waitForSave()
+        let stale = try Data(contentsOf: root.appendingPathComponent("assistant.json"))
+        let gate = GuestCompletion<Data>()
+        let data = AssistantDataStore(root: root, readData: { _ in
+            try await withCheckedThrowingContinuation { gate.install($0, timeout: 5) }
+        })
+        data.remember("New value")
+        gate.finish(.success(stale))
+        await data.waitForLoad()
+        XCTAssertEqual(data.memories.map(\.text), ["New value"])
+        await data.waitForSave()
+        let restored = AssistantDataStore(root: root)
+        await restored.waitForLoad()
+        XCTAssertEqual(restored.memories.map(\.text), ["New value"])
+    }
+
+    func testOutcomeCaptureDoesNotWaitForWriterAndRunsOnce() async throws {
+        let store = store()
+        store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+        let (infra, _) = try await meeting("outcome")
+        infra.calendarSeriesID = "infra-series"
+        infra.receiveLocalLineForTesting(.init(id: "line", trackID: "a", text: "Anna will update DNS.", start: Date(), end: Date()))
+        let writer = FakeOutcomeWriter(), coordinator = AttentionCoordinator(store: store)
+        coordinator.makeOutcomeWriter = { _, _ in writer }
+        coordinator.captureOutcome(for: infra)
+        XCTAssertTrue(store.assistant.outcomes.isEmpty, "Capture returns without awaiting the writer")
+        try await spin { store.assistant.outcomes.count == 1 }
+        XCTAssertEqual(writer.calls, 1)
+        XCTAssertEqual(writer.request?.window.lines.map(\.id), ["line"])
+        XCTAssertEqual(store.assistant.outcomes.first?.seriesID, "infra-series")
+        coordinator.captureOutcome(for: infra)
+        XCTAssertEqual(writer.calls, 1)
+        XCTAssertTrue(store.assistant.outcomes.first?.shareText.contains("Update DNS") == true)
+    }
+
+    func testOutcomeReminderIsRecordedOnlyAfterScheduling() async throws {
+        let store = store(); await store.assistant.waitForLoad()
+        let outcome = MeetingOutcome(meetingTitle: "Infra", endedAt: Date(), summary: "Summary", tasks: [.init(text: "Check DNS")])
+        store.assistant.addOutcome(outcome)
+        let coordinator = AttentionCoordinator(store: store)
+        var scheduled = false
+        coordinator.scheduleOutcomeReminder = { _, _, _ in scheduled = true }
+        coordinator.remind(outcome.tasks[0], in: outcome)
+        try await spin { scheduled && store.assistant.outcomes.first?.tasks[0].reminderAt != nil }
+        XCTAssertTrue(scheduled)
+    }
+
+    func testAssistantCommandSchemaParsesEveryActionAndRejectsUnknownIDs() throws {
+        let meeting = UUID(), moment = UUID(), now = Date()
+        let context = AssistantCommandContext(meetings: [.init(id: meeting, title: "Infra", invitation: nil, active: true)],
+            moments: [.init(id: moment, meetingTitle: "Infra", reason: "DNS question")], now: now)
+        let future = ISO8601DateFormatter().string(from: now.addingTimeInterval(900))
+        for action in AssistantCommandAction.allCases {
+            var object: [String: Any] = ["action": action.rawValue, "meeting": "", "moment": "", "mode": "", "scope": "untilLeave",
+                "text": "", "fact": "", "reaction": "", "n": 5, "minutes": 10, "at": ""]
+            switch action {
+            case .setAttention: object["meeting"] = meeting.uuidString; object["mode"] = "mentions"
+            case .join, .leave, .mute, .readChat, .catchUp: object["meeting"] = meeting.uuidString
+            case .sendChat, .say: object["meeting"] = meeting.uuidString; object["text"] = "I will check"
+            case .react: object["meeting"] = meeting.uuidString; object["reaction"] = "like"
+            case .remind: object["moment"] = moment.uuidString; object["at"] = future
+            case .remember: object["fact"] = "I prefer concise replies"
+            }
+            let data = try JSONSerialization.data(withJSONObject: object)
+            let command = try AssistantCommandPrompt.parse(String(decoding: data, as: UTF8.self), context: context)
+            XCTAssertEqual(command.action, action)
+            XCTAssertEqual(command.needsConfirmation, [.sendChat, .say, .react, .leave].contains(action))
+        }
+        let unknown = #"{"action":"join","meeting":"\#(UUID().uuidString)","moment":"","mode":"","scope":"","text":"","fact":"","reaction":"","n":5,"minutes":10,"at":""}"#
+        XCTAssertThrowsError(try AssistantCommandPrompt.parse(unknown, context: context)) {
+            XCTAssertEqual($0 as? AssistantCommandError, .unknownMeeting)
+        }
+        XCTAssertThrowsError(try AssistantCommandPrompt.parse("not json", context: context))
+        let prompt = AssistantCommandPrompt.messages(.init(input: "switch Infra to mentions", context: context))
+        XCTAssertTrue(prompt[1]["content"]!.contains(meeting.uuidString))
+        XCTAssertTrue(prompt[1]["content"]!.contains(moment.uuidString))
+        let schema = AssistantCommandPrompt.schema(context)
+        let properties = try XCTUnwrap(schema["properties"] as? [String: Any])
+        XCTAssertTrue(((properties["meeting"] as? [String: Any])?["enum"] as? [String])?.contains(meeting.uuidString) == true)
+    }
+
+    func testAssistantCommandsConfirmOutwardActionsAndScopeSendBypass() async throws {
+        let store = store(); store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
+        let (infra, _) = try await meeting("infra")
+        infra.chat.canSend = true
+        let coordinator = AttentionCoordinator(store: store); coordinator.meetings = { [infra] }
+        var sent: [String] = [], interpreted: [AssistantCommandRequest] = []
+        coordinator.deliverChat = { _, text in sent.append(text); return true }
+        let talk = coordinator.talk
+        talk.interpretOverride = { request in
+            interpreted.append(request)
+            return .init(action: .sendChat, meetingID: infra.sessionID, text: "I will check")
+        }
+        await talk.run("send that I will check")
+        XCTAssertEqual(talk.pending?.command.action, .sendChat)
+        XCTAssertTrue(sent.isEmpty, "The model decision alone never sends")
+        talk.cancelPending(); XCTAssertNil(talk.pending); XCTAssertTrue(sent.isEmpty)
+
+        await talk.run("send that I will check")
+        talk.confirmPending()
+        try await spin { sent.count == 1 }
+        XCTAssertEqual(sent, ["I will check"])
+        XCTAssertEqual(interpreted.last?.context.meetings.first?.id, infra.sessionID)
+
+        talk.setDirectSend(true, for: infra.sessionID)
+        await talk.run("send that I will check")
+        try await spin { sent.count == 2 }
+        XCTAssertNil(talk.pending, "The bypass applies to this meeting's outward sends")
+        talk.interpretOverride = { _ in .init(action: .leave) }
+        talk.targetMeetingID = infra.sessionID
+        await talk.run("leave")
+        XCTAssertEqual(talk.pending?.command.action, .leave, "Leave still confirms when send bypass is on")
+        XCTAssertEqual(talk.pending?.command.meetingID, infra.sessionID, "Confirmation binds the meeting chosen when it was rendered")
+        talk.targetMeetingID = UUID()
+        XCTAssertEqual(talk.pending?.command.meetingID, infra.sessionID, "Changing the picker cannot retarget a pending leave")
+        talk.cancelPending()
+    }
+
+    func testAssistantCommandsExecuteReadsMemoryModeMuteAndCustomReminder() async throws {
+        let store = store(); await store.assistant.waitForLoad()
+        let (infra, engine) = try await meeting("infra")
+        var clock = Date()
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [infra] }; coordinator.now = { clock }
+        coordinator.scheduleReminder = { _, _ in }
+        var features = GuestMeetingSnapshot()
+        features.messages = [message("chat", "Anna", "DNS is ready", clock.addingTimeInterval(-30))]
+        infra.receiveFeaturesForTesting(features)
+        infra.receiveLocalLineForTesting(.init(id: "line", trackID: "anna", text: "The migration is Monday",
+            start: clock.addingTimeInterval(-20), end: clock.addingTimeInterval(-19)))
+        let talk = coordinator.talk
+
+        talk.perform(.init(action: .remember, text: "I prefer concise replies"))
+        try await spin { store.assistant.memories.contains { $0.text == "I prefer concise replies" } }
+        talk.perform(.init(action: .readChat, meetingID: infra.sessionID, count: 1))
+        try await spin { talk.entries.last?.text.contains("Anna: DNS is ready") == true }
+        talk.perform(.init(action: .catchUp, meetingID: infra.sessionID, minutes: 10))
+        try await spin { talk.entries.last?.text.contains("The migration is Monday") == true }
+        XCTAssertTrue(talk.entries.last?.text.contains(L("%@ (chat): %@", "Anna", "DNS is ready")) == true)
+
+        talk.perform(.init(action: .setAttention, meetingID: infra.sessionID, mode: .mentions, scope: .untilLeave))
+        try await spin { coordinator.resolvedMode(infra).mode == .mentions }
+        try await engine.setMicrophone(true)
+        talk.perform(.init(action: .mute, meetingID: infra.sessionID))
+        try await spin { !infra.snapshot.microphoneOn }
+
+        let verdict = AttentionVerdict(level: .now, probability: 0.9, reason: "DNS question", evidence: [], action: .open)
+        let record = AttentionDecisionRecord(at: clock, meetingTitle: infra.title, meetingID: infra.sessionID,
+            invitation: infra.invitation, verdict: verdict, provider: "local", model: "m", outcome: .shown)
+        store.log(record)
+        let reminderAt = clock.addingTimeInterval(900)
+        talk.perform(.init(action: .remind, momentID: record.id, at: reminderAt))
+        try await spin { store.momentHistory.moment(record.id)?.reminderAt == reminderAt }
+        clock += 60
+        XCTAssertEqual(store.momentHistory.moment(record.id)?.reminderAt, reminderAt)
+    }
+
+    func testAssistantTalkBackRequiresARealHeadphoneDataSource() {
+        XCTAssertTrue(AssistantHeadphoneRoute.isHeadphoneSource(0x6864706e))
+        XCTAssertFalse(AssistantHeadphoneRoute.isHeadphoneSource(0x73706b72), "Built-in speakers never qualify")
+        XCTAssertFalse(AssistantHeadphoneRoute.isHeadphoneSource(0), "Unknown output routes fail closed")
+        XCTAssertTrue(AssistantHeadphoneRoute.isBluetoothHeadphone(name: "Виталий’s AirPods Pro",
+            transport: AssistantHeadphoneRoute.bluetoothTransport))
+        XCTAssertTrue(AssistantHeadphoneRoute.isBluetoothHeadphone(name: "Wireless Headset",
+            transport: AssistantHeadphoneRoute.bluetoothTransport))
+        XCTAssertFalse(AssistantHeadphoneRoute.isBluetoothHeadphone(name: "Bluetooth Speaker",
+            transport: AssistantHeadphoneRoute.bluetoothTransport), "Unknown Bluetooth speakers stay fail-closed")
+        XCTAssertFalse(AssistantHeadphoneRoute.isBluetoothHeadphone(name: "AirPods", transport: 0),
+            "A headphone-like name on a non-Bluetooth route is not sufficient")
+    }
+
+    func testMemoryIsBoundedRelevantAndInspectableInHistory() async throws {
+        let data = AssistantDataStore(root: folder()); await data.waitForLoad()
+        let invitation = URL(string: "https://example.test/calls/infra")!
+        data.remember("Anna owns the DNS migration", kind: .people, people: ["Anna"])
+        data.remember("The infra sync decided to migrate on Monday", kind: .meetings, invitation: invitation, series: "infra")
+        for index in 0..<8 { data.remember("General preference \(index)", kind: .you) }
+        let excerpts = data.retrieve(meetingTitle: "Infra sync", invitation: invitation, series: "infra", people: ["Anna"])
+        XCTAssertEqual(excerpts.count, 5)
+        XCTAssertTrue(excerpts.contains { $0.text.contains("decided to migrate") })
+        let request = JudgeRequest(window: sampleWindow(), profile: .init(), yourName: "Vitalii", language: "en", memory: excerpts)
+        let prompt = try XCTUnwrap(AttentionPrompt.messages(request).first?["content"])
+        XCTAssertTrue(AttentionPrompt.userContent(request).contains("decided to migrate"))
+        XCTAssertFalse(prompt.contains("decided to migrate"), "Evidence belongs in the user content, not system instructions")
+
+        let verdict = AttentionVerdict(level: .now, probability: 0.9, reason: "Asked", evidence: [], action: .chat)
+        let record = AttentionDecisionRecord(at: Date(), meetingTitle: "Infra", invitation: invitation, verdict: verdict,
+            provider: "local", model: "m", outcome: .shown, memory: excerpts)
+        var history = AttentionMomentHistory(); history.apply(record)
+        XCTAssertEqual(history.moment(record.id)?.memory, excerpts)
+        let encoded = try JSONEncoder.attention.encode(record)
+        let legacy = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+        var object = legacy; object["memory"] = nil
+        let decoded = try JSONDecoder.attention.decode(AttentionDecisionRecord.self,
+            from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(decoded.memory)
+    }
+
     private func spin(_ predicate: () -> Bool) async throws {
         for _ in 0..<200 where !predicate() { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(predicate())
+    }
+}
+
+private final class FakeOutcomeWriter: MeetingOutcomeWriter, @unchecked Sendable {
+    var calls = 0
+    var request: MeetingOutcomeRequest?
+    func outcome(_ request: MeetingOutcomeRequest) async throws -> MeetingOutcomeContent {
+        calls += 1; self.request = request
+        try? await Task.sleep(for: .milliseconds(30))
+        return .init(summary: "DNS migration reviewed.", decisions: ["Migrate"], tasks: [.init(text: "Update DNS", owner: "Anna")], openQuestions: [])
     }
 }
 

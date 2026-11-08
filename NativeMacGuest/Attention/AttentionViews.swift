@@ -10,9 +10,17 @@ extension AttentionLevel {
 /// Cards for meetings that need you, over the main window's content.
 struct AttentionCardStack: View {
     @ObservedObject var attention: AttentionCoordinator
+    var openAssistant: () -> Void
     var body: some View {
         VStack(alignment: .trailing, spacing: 10) {
             ForEach(attention.cards) { card in AttentionCardView(attention: attention, card: card) }
+            if !attention.overflowMomentIDs.isEmpty {
+                Button(action: openAssistant) {
+                    Label(L("+%ld in Assistant", attention.overflowMomentIDs.count), systemImage: "tray.full")
+                        .font(.callout.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 8)
+                        .background(.regularMaterial, in: Capsule())
+                }.buttonStyle(.plain).accessibilityIdentifier("attention.overflow")
+            }
         }
         .padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         .animation(.easeOut(duration: 0.2), value: attention.cards.map(\.id))
@@ -75,20 +83,30 @@ struct AttentionCardView: View {
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.08)))
         .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
         .accessibilityElement(children: .contain).accessibilityIdentifier("attention.card")
+        .onChange(of: card.id) { _ in declining = false; note = "" }
+        .onChange(of: card.readOnly) { readOnly in if readOnly { declining = false; note = "" } }
     }
 }
 
-/// A drafted chat reply and reaction on a card. Nothing is sent until you press
-/// Send or a reaction; you can edit the text first.
+/// Ranked drafted replies and a reaction on a card. Choosing a stance only puts
+/// its text in the editor; Send, Say it, or a reaction is always a separate act.
 struct AttentionReplyView: View {
     @ObservedObject var attention: AttentionCoordinator
     let card: AttentionCoordinator.Card
     @State private var text = ""
     @State private var edited = false
+    @State private var customHint = ""
+    @State private var showsCustomHint = false
 
     /// A text field when there is a draft, or when you can only write or speak the reply yourself.
     private var showsField: Bool {
         card.draft != nil || (!card.canDraft && (card.channels.chat || card.canSpeak))
+    }
+    private var variants: [ReplyVariant] { Array(card.draft?.availableVariants.prefix(3) ?? []) }
+    private var usual: ReplyVariant? {
+        guard let preferred = attention.store.assistant.preferredStance(), let first = variants.first,
+              preferred.caseInsensitiveCompare(first.stance) == .orderedSame else { return nil }
+        return first
     }
 
     var body: some View {
@@ -99,6 +117,11 @@ struct AttentionReplyView: View {
                     Text(card.speaking ? L("Speaking the reply into the meeting…") : L("Drafting a reply…")).font(.caption).foregroundStyle(.secondary)
                 }
             } else {
+                if variants.count > 1 {
+                    HStack(spacing: 5) {
+                        ForEach(variants) { variant in variantButton(variant) }
+                    }
+                }
                 if showsField {
                     TextField(card.channels.chat ? L("Reply in the meeting chat") : L("Reply to say in the meeting"), text: $text, axis: .vertical)
                         .lineLimit(1...4).textFieldStyle(.roundedBorder).accessibilityIdentifier("attention.reply")
@@ -108,11 +131,14 @@ struct AttentionReplyView: View {
                     if showsField && card.channels.chat {
                         Button(L("Send")) { attention.sendReply(card, text: text) }
                             .buttonStyle(.borderedProminent).disabled(text.trimmed.isEmpty)
+                            .accessibilityLabel(L("Send")).accessibilityIdentifier("attention.reply.send")
                             .keyboardShortcut(.return, modifiers: .command).help(L("Send this message to the meeting chat (⌘↩)"))
                     }
                     if showsField && card.canSpeak {
                         Button { attention.sayReply(card, text: text) } label: { Label(L("Say it"), systemImage: "speaker.wave.2") }
-                            .disabled(text.trimmed.isEmpty).help(L("Speak this reply into the meeting; your microphone is held back while it plays"))
+                            .disabled(text.trimmed.isEmpty)
+                            .keyboardShortcut(.return, modifiers: .option)
+                            .help(L("Speak this reply into the meeting; your microphone is held back while it plays (⌥↩)"))
                     }
                     if let reaction = card.draft?.reaction {
                         Button(reaction.emoji) { attention.sendReaction(card, reaction) }.help(L("Send this reaction"))
@@ -124,8 +150,24 @@ struct AttentionReplyView: View {
                             Button(card.channels.chat || card.canSpeak ? L("Draft a reply") : L("Suggest a reaction")) { attention.draftReply(card.id) }
                                 .controlSize(.small)
                         } else {
-                            Button(L("Redraft")) { edited = false; attention.draftReply(card.id) }.buttonStyle(.borderless).controlSize(.small)
+                            Menu {
+                                Button(L("Shorter")) { redraft(L("Make it shorter.")) }
+                                Button(L("Firmer")) { redraft(L("Make it firmer and more direct.")) }
+                                Button(L("In English")) { redraft(L("Write the reply in English.")) }
+                                Button(L("Custom direction…")) { showsCustomHint.toggle() }
+                                Divider()
+                                Button(L("Redraft")) { redraft(nil) }
+                            } label: { Text(L("More…")) }
+                                .menuStyle(.borderlessButton).fixedSize().controlSize(.small)
                         }
+                    }
+                }
+                if showsCustomHint && card.canDraft {
+                    HStack(spacing: 6) {
+                        TextField(L("How should the reply change?"), text: $customHint)
+                            .textFieldStyle(.roundedBorder).controlSize(.small)
+                            .onSubmit { redraft(customHint) }
+                        Button(L("Redraft")) { redraft(customHint) }.controlSize(.small).disabled(customHint.trimmed.isEmpty)
                     }
                 }
             }
@@ -135,13 +177,35 @@ struct AttentionReplyView: View {
         .onChange(of: card.draft) { draft in if !edited { text = draft?.chat ?? "" } }
     }
 
+    private func variantButton(_ variant: ReplyVariant) -> some View {
+        Button {
+            edited = false; text = variant.text
+            attention.selectVariant(variant, for: card)
+        } label: {
+            HStack(spacing: 4) {
+                Text(variant.stance).lineLimit(1)
+                if variant.id == usual?.id { Text(L("Your usual")).font(.caption2).foregroundStyle(.secondary) }
+            }
+        }
+        .buttonStyle(.bordered)
+        .background(variant.text == card.draft?.chat ? Color.accentColor.opacity(0.16) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 6))
+        .controlSize(.small).accessibilityIdentifier("attention.reply.variant")
+    }
+
+    private func redraft(_ hint: String?) {
+        edited = false; showsCustomHint = false
+        attention.draftReply(card.id, hint: hint)
+    }
+
     private var reactionMenu: some View {
         Menu {
             ForEach(card.channels.reactions, id: \.self) { reaction in
                 Button(reaction.emoji) { attention.sendReaction(card, reaction) }
             }
         } label: { Image(systemName: "face.smiling") }
-            .menuStyle(.borderlessButton).fixedSize().help(L("Send a reaction"))
+            .menuStyle(.borderlessButton).fixedSize()
+            .accessibilityLabel(L("Send a reaction")).help(L("Send a reaction"))
     }
 }
 
@@ -180,6 +244,17 @@ struct AttentionInspector: View {
                        card.verdict.probability, card.threshold, card.latency)).font(.caption).foregroundStyle(.secondary)
             }
             GroupBox(L("Reason")) { Text(card.verdict.reason).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
+            GroupBox(L("Memory used")) {
+                VStack(alignment: .leading, spacing: 5) {
+                    if card.memory.isEmpty {
+                        Text(L("No local memory excerpts were included.")).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(card.memory) { excerpt in
+                            Text("\(excerpt.kind.title): \(excerpt.text)").font(.callout).textSelection(.enabled)
+                        }
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
             GroupBox(L("What the judge read")) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
@@ -476,7 +551,7 @@ struct AttentionModelPicker: View {
     }
 }
 
-/// Settings → Intelligence: the judge, your profile and what leaves this Mac.
+/// Settings → Assistant: attention, models, memory, voice and what leaves this Mac.
 struct NativeDesktopIntelligenceSettings: View {
     @ObservedObject var store: AttentionStore
     @ObservedObject var attention: AttentionCoordinator
@@ -535,11 +610,15 @@ struct NativeDesktopIntelligenceSettings: View {
 
     var body: some View {
         Form {
-            Section {
+            Section(L("Attention")) {
                 Toggle(L("Tell me when a meeting needs me"), isOn: $store.enabled).accessibilityIdentifier("attention.enabled")
                 Text(L("While you are in several meetings, a judge model reads the last three minutes of each meeting you are not looking at and shows a card when one needs you. It needs a transcript: turn on Transcription, or use the meeting's own.")).font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Toggle(L("Pause on battery power"), isOn: $store.pauseOnBattery)
+                Toggle(L("Create a meeting outcome when I leave"), isOn: $store.generateOutcomes)
+                    .accessibilityIdentifier("assistant.outcomes")
+                Text(L("Outcomes keep an editable summary, decisions, tasks and open questions on this Mac. Nothing is shared automatically."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 if let error = attention.lastError { Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
             }
             Section {
@@ -564,7 +643,7 @@ struct NativeDesktopIntelligenceSettings: View {
                     .onSubmit(saveAliases).onChange(of: aliases) { _ in saveAliases() }
                 TextField(L("Your role"), text: $store.profile.role, prompt: Text(L("For example: infrastructure lead, owns DNS and certificates")))
             }
-            Section(L("Judge")) {
+            Section(L("Models")) {
                 Picker(L("Provider"), selection: Binding(get: { store.provider.kind }, set: { kind in
                     if kind != store.provider.kind { store.provider = AttentionProvider.defaults[kind] ?? store.provider }
                 })) { ForEach(AttentionProvider.Kind.allCases, id: \.self) { Text(AttentionProvider.defaults[$0]?.title ?? $0.rawValue).tag($0) } }
@@ -649,7 +728,18 @@ struct NativeDesktopIntelligenceSettings: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            Section(L("Memory")) {
+                AssistantMemorySettings(attention: attention)
+            }
             Section(L("Voice")) {
+                Toggle(L("Hold ⌥Space to talk to Assistant"), isOn: $store.pushToTalk)
+                    .accessibilityIdentifier("assistant.pushToTalk")
+                Text(L("While held, your microphone is held back from the meeting and speech is recognized only on this Mac. You can also type every command."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Toggle(L("Speak Assistant answers in headphones"), isOn: $store.talkBack)
+                    .accessibilityIdentifier("assistant.talkBack")
+                Text(L("Off by default. Answers play only when the Mac's output is explicitly a headphone data source, never into a meeting."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Picker(L("Speak replies with"), selection: $store.voiceEngine) {
                     Text(L("The macOS voice")).tag(VoiceEngine.system)
                     Text(L("Rapid-MLX on this Mac")).tag(VoiceEngine.rapidMLX)
@@ -698,6 +788,17 @@ struct NativeDesktopIntelligenceSettings: View {
                     } else {
                         Label(L("Drafting a reply sends the same meeting text and the judge's reason to %@. What you send goes to the meeting, as if you typed it.", store.effectiveWriter.host), systemImage: "text.bubble")
                     }
+                }
+                Label(L("Judge and reply requests include up to five relevant excerpts from the Memory shown above; they go to the configured provider."), systemImage: "brain")
+                if store.generateOutcomes {
+                    if store.effectiveWriter.onThisMac {
+                        Label(L("Meeting outcomes and Since then summaries are created on this Mac."), systemImage: "doc.text")
+                    } else {
+                        Label(L("Creating a meeting outcome or Since then summary sends the meeting transcript and chat to %@.", store.effectiveWriter.host), systemImage: "arrow.up.forward")
+                    }
+                }
+                if !store.provider.onThisMac {
+                    Label(L("Typed and locally recognized commands send your request and current meeting and Moment names to %@.", store.provider.host), systemImage: "arrow.up.forward")
                 }
                 Label(L("Audio never leaves this Mac."), systemImage: "lock")
                 Label(L("Decisions are kept on this Mac for 30 days so you can see why a card appeared."), systemImage: "clock")

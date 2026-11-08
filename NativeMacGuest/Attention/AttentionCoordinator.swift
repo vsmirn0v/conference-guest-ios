@@ -48,6 +48,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         var canDraft = true
         /// The meeting can play a spoken reply ("Say it").
         var canSpeak = false
+        /// Exact local excerpts given to this Moment's judge and writer.
+        var memory: [AssistantMemoryExcerpt] = []
         /// Historical evidence only: no open, delivery, or learning controls.
         var readOnly = false
         var speaking = false
@@ -112,15 +114,19 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     static let localCallsPerMinute = 12
 
     @Published private(set) var cards: [Card] = []
+    /// Current qualifying cards displaced by the two-card overlay, never historical unread items.
+    @Published private(set) var overflowMomentIDs: Set<UUID> = []
     /// A Moment selected in Assistant; deliberately separate from the overlay.
     @Published var selectedCard: Card?
     @Published var requestedMomentID: UUID?
     @Published private(set) var summaryByMoment: [UUID: String] = [:]
     @Published private(set) var summarizing: UUID?
-    @Published private(set) var summaryError: String?
+    @Published private(set) var summaryErrorByMoment: [UUID: String] = [:]
+    @Published private(set) var reminderErrorByMoment: [UUID: String] = [:]
     @Published private(set) var states: [UUID: MeetingState] = [:]
     @Published private(set) var lastError: String?
     @Published private(set) var judging: UUID?
+    @Published private(set) var outcomeStatus: [UUID: String] = [:]
 
     let store: AttentionStore
     var meetings: () -> [NativeDesktopMeetingModel] = { [] }
@@ -143,6 +149,18 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     var makeWriter: (AttentionProvider, String?) -> any ReplyWriter = { $0.client(key: $1) }
     var makeSummarizer: (AttentionProvider, String?) -> any MomentSummarizer = {
         ($0.client(key: $1) as? any MomentSummarizer)!
+    }
+    var makeOutcomeWriter: (AttentionProvider, String?) -> any MeetingOutcomeWriter = {
+        ($0.client(key: $1) as? any MeetingOutcomeWriter)!
+    }
+    var scheduleOutcomeReminder: (MeetingOutcome, MeetingOutcomeTask, Date) async throws -> Void = { outcome, task, at in
+        let content = UNMutableNotificationContent()
+        content.title = L("Task from %@", outcome.meetingTitle)
+        content.body = task.text
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: "meeting-task-" + task.id.uuidString,
+            content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(1, at.timeIntervalSinceNow), repeats: false))
+        try await UNUserNotificationCenter.current().add(request)
     }
     var scheduleReminder: (AttentionMoment, Date) async throws -> Void = { moment, at in
         let content = UNMutableNotificationContent()
@@ -169,9 +187,11 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     var synthesizeOverride: ((String) async throws -> AVAudioPCMBuffer)?
     var now: () -> Date = Date.init
     var language: String = Bundle.main.preferredLocalizations.first ?? "en"
+    lazy var talk = AssistantTalkController(attention: self)
 
     private var loop: Task<Void, Never>?
     private var calls: [Date] = []
+    private var outcomeCaptures: Set<UUID> = []
 
     init(store: AttentionStore = .shared) { self.store = store }
 
@@ -236,6 +256,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             states[id]?.override = nil
         }
         if mode == .off { for card in cards where card.meetingID == id { miss(card) } }
+        store.assistant.observeModeChange(mode, meetingTitle: model.title, invitation: model.invitation, series: model.calendarSeriesID, now: now())
         probeLog("attention-mode", ["mode": mode.rawValue, "scope": String(describing: scope)])
     }
     /// Drops your choice for this meeting (and its series' mode, when `series`), back to the defaults.
@@ -255,7 +276,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     /// Why a meeting is not judged right now, or nil when it is.
     func waitingReason(_ model: NativeDesktopMeetingModel) -> String? {
         if !store.enabled { return L("Attention is off.") }
-        if !store.ready { return L("Finish setting up the judge in Settings → Intelligence.") }
+        if !store.ready { return L("Finish setting up the judge in Settings → Assistant.") }
         let resolved = resolvedMode(model)
         if resolved.mode == .off {
             switch resolved.source {
@@ -280,6 +301,69 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         return nil
     }
     func eligible(_ model: NativeDesktopMeetingModel) -> Bool { !model.isClosed && waitingReason(model) == nil }
+
+    // MARK: Outcomes and controlled learning
+
+    /// Snapshots the conversation synchronously, then writes the outcome after leave.
+    /// No model call, file I/O or await is placed on the leave-critical path.
+    func captureOutcome(for model: NativeDesktopMeetingModel) {
+        let id = model.sessionID
+        guard store.generateOutcomes, store.writerConfigured, !outcomeCaptures.contains(id) else { return }
+        let window = MeetingOutcomePrompt.window(title: model.title, transcript: model.transcript,
+            chat: model.chat.items, yourName: model.displayName, now: now())
+        guard !window.lines.isEmpty else { return }
+        outcomeCaptures.insert(id)
+        let meetingID = id, title = model.title, invitation = model.invitation, series = model.calendarSeriesID
+        let provider = store.effectiveWriter, writer = makeOutcomeWriter(provider, store.apiKey(for: provider))
+        outcomeStatus[id] = L("Preparing the meeting outcome…")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let ended = now()
+                let content = try await writer.outcome(.init(meetingTitle: title, endedAt: ended, window: window, language: language))
+                try Task.checkCancellation()
+                store.assistant.addOutcome(.init(meetingID: meetingID, meetingTitle: title, invitation: invitation,
+                    seriesID: series, endedAt: ended, summary: content.summary, decisions: content.decisions,
+                    tasks: content.tasks, openQuestions: content.openQuestions))
+                outcomeStatus[id] = nil
+                probeLog("assistant-outcome", ["lines": window.lines.count, "decisions": content.decisions.count, "tasks": content.tasks.count])
+            } catch is CancellationError {
+                outcomeStatus[id] = nil
+            } catch {
+                outcomeStatus[id] = error.localizedDescription
+                probeLog("assistant-outcome-failed", ["error": String(describing: error)])
+            }
+        }
+    }
+
+    func remind(_ task: MeetingOutcomeTask, in outcome: MeetingOutcome) {
+        let at = task.dueAt ?? now().addingTimeInterval(3600)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await scheduleOutcomeReminder(outcome, task, at)
+                guard var current = store.assistant.outcomes.first(where: { $0.id == outcome.id }),
+                      let index = current.tasks.firstIndex(where: { $0.id == task.id }) else { return }
+                current.tasks[index].reminderAt = at
+                store.assistant.updateOutcome(current)
+            } catch { outcomeStatus[outcome.id] = error.localizedDescription }
+        }
+    }
+
+    func keepSuggestion(_ id: UUID, editedText: String? = nil) {
+        guard let suggestion = store.assistant.suggestions.first(where: { $0.id == id }) else { return }
+        if suggestion.kind == .meetingMode, let mode = suggestion.mode, let invitation = suggestion.invitation {
+            store.setMeetingMode(mode, room: invitation, series: suggestion.seriesID, title: suggestion.text)
+        } else if suggestion.kind == .replyStyle {
+            store.profile.replyStyle = editedText?.trimmed.isEmpty == false ? editedText : suggestion.proposedText
+        }
+        store.assistant.keepSuggestion(id, editedText: editedText)
+    }
+
+    @discardableResult func sendOutcome(_ outcome: MeetingOutcome) -> Bool {
+        guard let model = meetings().first(where: { !$0.isClosed && $0.invitation == outcome.invitation && $0.chat.canSend }) else { return false }
+        return deliverChat(model, outcome.shareText)
+    }
 
     // MARK: Ticking
 
@@ -359,8 +443,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         defer { judging = nil }
         let preset = store.preset(room: model.invitation, series: model.calendarSeriesID)
         let channels = store.draftReplies && (preset?.repliesAllowed ?? true) ? replyChannels(model) : ReplyChannels()
+        let memory = store.assistant.retrieve(meetingTitle: model.title, invitation: model.invitation,
+            series: model.calendarSeriesID, people: model.participants.filter { !$0.isLocal }.map(\.name))
         let request = JudgeRequest(window: window, preset: preset, profile: store.profile, yourName: model.displayName,
-                                   language: language, replyChannels: channels)
+                                   language: language, replyChannels: channels, memory: memory)
         let provider = store.provider
         let decisionID = UUID()
         do {
@@ -400,7 +486,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 seriesID: model.calendarSeriesID, verdict: result.verdict, window: window, presetID: preset?.id, threshold: threshold,
                 provider: judgedBy.host, model: judgedBy.model, latency: result.latency, createdAt: now(), channels: channels,
                 canDraft: store.draftsAllowed, canSpeak: store.draftReplies && (preset?.repliesAllowed ?? true) && voiceAvailable(model),
-                mode: mode, mentioned: mentioned)
+                memory: memory, mode: mode, mentioned: mentioned)
             let outcome = apply(card, state: &state), shown = outcome == .shown
             // The judge suggests answering in writing: have a draft ready on the card.
             if shown, card.canDraft, [.chat, .reaction].contains(result.verdict.action), !channels.isEmpty,
@@ -412,7 +498,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 seriesID: model.calendarSeriesID, presetID: preset?.id, window: window, verdict: result.verdict,
                 provider: judgedBy.host, model: judgedBy.model, latencyMilliseconds: Int(result.latency * 1000),
                 outcome: outcome, messages: AttentionPrompt.messages(request), threshold: threshold,
-                firstVerdict: first?.verdict, firstModel: first?.model, mode: mode, mentioned: mentioned))
+                firstVerdict: first?.verdict, firstModel: first?.model, mode: mode, mentioned: mentioned, memory: memory))
             probeLog("attention-verdict", ["level": result.verdict.level.rawValue, "probability": result.verdict.probability,
                 "mode": mode.rawValue, "mentioned": mentioned,
                 "lines": window.lines.count, "latencyMs": Int(result.latency * 1000), "shown": shown,
@@ -442,19 +528,29 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             qualifies = qualifies && verdict.level == .now && verdict.probability >= Self.mentionsUrgency
         }
         // A card you are replying from stays until you send, dismiss or decline it.
-        if existing?.engaged == true { return qualifies ? .crowdedOut : .belowThreshold }
+        if existing?.engaged == true {
+            if qualifies { overflowMomentIDs.insert(card.id) }
+            return qualifies ? .crowdedOut : .belowThreshold
+        }
         let held = existing?.verdict.level == .now && (state.heldUntil ?? .distantPast) > current
         let repeated = !verdict.evidence.isEmpty && Set(verdict.evidence).isSubset(of: state.shownEvidence)
         guard qualifies, !repeated else {
             if let existing, !held { miss(existing) }
             return .belowThreshold
         }
-        if held && verdict.level < .now { return .crowdedOut }
+        if held && verdict.level < .now {
+            overflowMomentIDs.insert(card.id)
+            return .crowdedOut
+        }
         var proposed = cards.filter { $0.meetingID != card.meetingID } + [card]
         proposed.sort { $0.verdict.level == $1.verdict.level ? $0.createdAt > $1.createdAt : $0.verdict.level > $1.verdict.level }
-        guard proposed.prefix(Self.maxCards).contains(where: { $0.id == card.id }) else { return .crowdedOut }
+        guard proposed.prefix(Self.maxCards).contains(where: { $0.id == card.id }) else {
+            overflowMomentIDs.insert(card.id)
+            return .crowdedOut
+        }
+        overflowMomentIDs.remove(card.id)
         let retained = Array(proposed.prefix(Self.maxCards))
-        for old in cards where !retained.contains(where: { $0.id == old.id }) { miss(old) }
+        for old in cards where !retained.contains(where: { $0.id == old.id }) { miss(old, overflow: true) }
         cards = retained
         state.shownEvidence.formUnion(verdict.evidence)
         if verdict.level == .now { state.heldUntil = current.addingTimeInterval(Self.holdNow); notify(card) }
@@ -473,6 +569,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
     func decline(_ card: Card, reason: PresetExample.DeclineReason, note: String? = nil) {
         feedback(card, decision: .declined, reason: reason, note: note, outcome: .declined)
+        if reason == .alreadyKnown {
+            let topic = note?.trimmed.isEmpty == false ? note! : card.verdict.reason
+            store.assistant.suggestKnownTopic(topic, meetingTitle: card.meetingTitle, invitation: card.invitation, series: card.seriesID)
+        }
     }
 
     // MARK: Moments
@@ -501,8 +601,9 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     func selectMoment(_ moment: AttentionMoment) {
         if let card = cards.first(where: { $0.id == moment.id }) { selectedCard = card; return }
         let model = meeting(for: moment)
+        let terminal = [.answered, .dismissed, .notForMe].contains(moment.state)
         let preset = moment.presetID.flatMap(store.preset(id:)) ?? model.flatMap { store.preset(room: $0.invitation, series: $0.calendarSeriesID) }
-        let allowed = model.map { store.draftReplies && (preset?.repliesAllowed ?? true) && !$0.isClosed } ?? false
+        let allowed = !terminal && (model.map { store.draftReplies && (preset?.repliesAllowed ?? true) && !$0.isClosed } ?? false)
         selectedCard = Card(id: moment.id, meetingID: model?.sessionID ?? moment.meetingID ?? UUID(), meetingTitle: moment.meetingTitle,
             invitation: model?.invitation ?? moment.invitation ?? URL(string: "about:blank")!, seriesID: model?.calendarSeriesID ?? moment.seriesID,
             verdict: moment.verdict, window: moment.window ?? AttentionWindow(meetingTitle: moment.meetingTitle, lines: [], reactions: [],
@@ -512,17 +613,19 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             latency: moment.latency, createdAt: moment.createdAt,
             channels: model.map { allowed ? replyChannels($0) : ReplyChannels() } ?? ReplyChannels(), draft: moment.draft,
             canDraft: allowed && store.draftsAllowed, canSpeak: allowed && (model.map(voiceAvailable) ?? false),
-            readOnly: model?.isClosed ?? true, mode: moment.mode, mentioned: moment.mentioned)
+            memory: moment.memory, readOnly: terminal || (model?.isClosed ?? true), mode: moment.mode, mentioned: moment.mentioned)
     }
 
     func markVisibleMomentsSeen(_ moments: [AttentionMoment]) {
         store.markMomentsSeen(moments.filter { [.live, .missed].contains($0.state) }.map(\.id), at: now())
     }
 
-    private func miss(_ card: Card) {
+    private func miss(_ card: Card, overflow: Bool = false) {
         guard cards.contains(where: { $0.id == card.id }) else { return }
         cards.removeAll { $0.id == card.id }
         states[card.meetingID]?.heldUntil = nil
+        if cards.isEmpty { overflowMomentIDs.removeAll() }
+        if overflow { overflowMomentIDs.insert(card.id) }
         log(card, outcome: .missed, reason: nil)
     }
 
@@ -533,23 +636,26 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
 
     func remind(_ moment: AttentionMoment) {
-        let at = now().addingTimeInterval(600)
+        reminderErrorByMoment[moment.id] = nil
         Task { @MainActor [weak self] in
             guard let self else { return }
-            do {
-                try await scheduleReminder(moment, at)
-                store.log(.init(at: now(), meetingTitle: moment.meetingTitle, meetingID: moment.meetingID,
-                    invitation: moment.invitation, seriesID: moment.seriesID, presetID: moment.presetID,
-                    provider: moment.provider, model: moment.model, outcome: .reminded, decisionID: moment.id))
-            } catch { summaryError = error.localizedDescription }
+            do { try await remind(moment, at: now().addingTimeInterval(600)) }
+            catch { reminderErrorByMoment[moment.id] = error.localizedDescription }
         }
+    }
+
+    func remind(_ moment: AttentionMoment, at: Date) async throws {
+        try await scheduleReminder(moment, at)
+        store.log(.init(at: now(), meetingTitle: moment.meetingTitle, meetingID: moment.meetingID,
+            invitation: moment.invitation, seriesID: moment.seriesID, presetID: moment.presetID,
+            provider: moment.provider, model: moment.model, outcome: .reminded, decisionID: moment.id, reminderAt: at))
     }
 
     func summarize(_ moment: AttentionMoment) async {
         guard summarizing == nil else { return }
-        summaryError = nil
+        summaryErrorByMoment[moment.id] = nil
         guard let model = meeting(for: moment), !model.isClosed else {
-            summaryError = L("The meeting is not open, so there is no later conversation to summarize."); return
+            summaryErrorByMoment[moment.id] = L("The meeting is not open, so there is no later conversation to summarize."); return
         }
         let window = AttentionWindowBuilder.build(.init(title: model.title, transcript: model.transcript,
             chat: model.chat.items, reactions: [], participantCount: model.participants.count,
@@ -564,14 +670,14 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             try Task.checkCancellation()
             summaryByMoment[moment.id] = summary
         } catch is CancellationError { return }
-        catch { summaryError = error.localizedDescription }
+        catch { summaryErrorByMoment[moment.id] = error.localizedDescription }
     }
 
     // MARK: Replies
 
-    /// Drafts a chat reply or reaction for a card. Nothing is sent: you send,
-    /// edit or discard the draft on the card.
-    func draftReply(_ cardID: UUID) {
+    /// Drafts ranked replies or a reaction for a card. Nothing is sent: you choose,
+    /// edit and send a variant, or explicitly discard it.
+    func draftReply(_ cardID: UUID, hint: String? = nil) {
         guard let card = currentCard(cardID), card.canDraft, !card.drafting,
               !card.channels.isEmpty || card.canSpeak,
               let model = meetings().first(where: { $0.sessionID == card.meetingID }), !model.isClosed else { return }
@@ -582,19 +688,21 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         var channels = card.channels
         if card.canSpeak { channels.chat = true }
         let request = ReplyRequest(judge: JudgeRequest(window: card.window, preset: preset, profile: store.profile,
-            yourName: model.displayName, language: language, replyChannels: channels), verdict: card.verdict)
+            yourName: model.displayName, language: language, replyChannels: channels, memory: card.memory),
+            verdict: card.verdict, redraftHint: hint)
         let provider = store.effectiveWriter, writer = makeWriter(provider, store.apiKey(for: provider))
         Task { @MainActor [weak self] in
             do {
                 let result = try await writer.draft(request)
                 guard let self, currentCard(cardID) != nil else { return }
-                updateCard(cardID) { $0.drafting = false; $0.draft = result.draft }
+                let ranked = result.draft.ranked(preferredStance: store.assistant.preferredStance(), edits: preset?.replyEdits ?? [])
+                updateCard(cardID) { $0.drafting = false; $0.draft = ranked }
                 store.log(.init(at: now(), meetingTitle: card.meetingTitle, meetingID: card.meetingID, invitation: card.invitation,
                     seriesID: card.seriesID, presetID: card.presetID, provider: provider.host, model: provider.model,
                     latencyMilliseconds: Int(result.latency * 1000), outcome: .drafted, decisionID: cardID,
-                    replyMessages: ReplyPrompt.messages(request), draft: result.draft))
-                probeLog("attention-draft", ["chat": !result.draft.chat.isEmpty, "reaction": result.draft.reaction != nil,
-                    "latencyMs": Int(result.latency * 1000)])
+                    replyMessages: ReplyPrompt.messages(request), draft: ranked, memory: card.memory))
+                probeLog("attention-draft", ["chat": !ranked.chat.isEmpty, "reaction": ranked.reaction != nil,
+                    "variants": ranked.variants?.count ?? 0, "latencyMs": Int(result.latency * 1000)])
             } catch {
                 guard let self, currentCard(cardID) != nil else { return }
                 updateCard(cardID) { $0.drafting = false }
@@ -606,6 +714,15 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 probeLog("attention-draft-failed", ["error": String(describing: error)])
             }
         }
+    }
+
+    /// Chooses which variant the editable field contains. Selection never sends it.
+    func selectVariant(_ variant: ReplyVariant, for card: Card) {
+        guard let draft = currentCard(card.id)?.draft, draft.availableVariants.contains(where: { $0.id == variant.id }) else { return }
+        updateCard(card.id) { card in
+            card.draft?.chat = variant.text
+        }
+        store.assistant.observeVariant(variant.stance)
     }
 
     /// Sends the text you approved into the meeting's chat and counts as an approval.
@@ -691,7 +808,16 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
     private func remove(_ card: Card) {
         cards.removeAll { $0.id == card.id }
-        if selectedCard?.id == card.id { selectedCard = nil }
+        overflowMomentIDs.remove(card.id)
+        if cards.isEmpty { overflowMomentIDs.removeAll() }
+        if selectedCard?.id == card.id {
+            selectedCard?.channels = ReplyChannels()
+            selectedCard?.canDraft = false
+            selectedCard?.canSpeak = false
+            selectedCard?.readOnly = true
+            selectedCard?.drafting = false
+            selectedCard?.speaking = false
+        }
         states[card.meetingID]?.heldUntil = nil
     }
     private func log(_ card: Card, outcome: AttentionDecisionRecord.Outcome, reason: PresetExample.DeclineReason?,

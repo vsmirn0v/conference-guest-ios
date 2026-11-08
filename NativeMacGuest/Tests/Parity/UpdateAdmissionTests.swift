@@ -131,7 +131,7 @@ private final class UpdateAdmissionNoNetwork: URLProtocol {
         }, makeMeeting: { destination, name, title, quiet in
             calls.models += 1
             return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: engine)
-        })
+        }, attention: desktopTestAttention())
         return Fixture(workspace: workspace, library: library, engine: engine, calls: calls)
     }
 

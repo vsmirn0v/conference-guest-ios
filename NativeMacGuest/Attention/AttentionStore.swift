@@ -128,6 +128,10 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     var sent: String? = nil
     var reaction: MeetingReaction? = nil
     var edited: Bool? = nil
+    /// Local memory excerpts in the exact judge/writer prompt; nil on legacy records.
+    var memory: [AssistantMemoryExcerpt]? = nil
+    /// Actual custom reminder time; legacy reminders used ten minutes after `at`.
+    var reminderAt: Date? = nil
 }
 
 /// Presets, your profile, the judge settings and the decision log. Everything is
@@ -194,11 +198,19 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     static let voiceDescriptionKey = "attention.voice.description", voiceBaseURLKey = "attention.voice.baseURL"
     static let defaultVoiceModel = "qwen3-tts-voicedesign-4bit"
     static let defaultVoiceDescription = "A calm, clear adult voice speaking at a natural pace, like a colleague in a work call."
+    @Published var generateOutcomes: Bool { didSet { defaults.set(generateOutcomes, forKey: Self.outcomesKey) } }
+    @Published var pushToTalk: Bool { didSet { defaults.set(pushToTalk, forKey: Self.pushToTalkKey) } }
+    @Published var talkBack: Bool { didSet { defaults.set(talkBack, forKey: Self.talkBackKey) } }
+    static let outcomesKey = "attention.outcomes.enabled", pushToTalkKey = "attention.commands.pushToTalk"
+    static let talkBackKey = "attention.commands.talkBack"
     var effectiveWriter: AttentionProvider { writerProvider ?? provider }
+    var writerConfigured: Bool {
+        let writer = effectiveWriter
+        return writer.configured && (!writer.needsKey || hasKey(for: writer))
+    }
     /// Cards can draft with the writer.
     var draftsAllowed: Bool {
-        let writer = effectiveWriter
-        return draftReplies && writer.configured && (!writer.onThisMac || localDrafts) && (!writer.needsKey || hasKey(for: writer))
+        draftReplies && writerConfigured && (!effectiveWriter.onThisMac || localDrafts)
     }
     @Published var provider: AttentionProvider {
         didSet { if let data = try? JSONEncoder().encode(provider) { defaults.set(data, forKey: Self.providerKey) } }
@@ -212,6 +224,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     func hasKey(for provider: AttentionProvider) -> Bool { keyedKinds.contains(provider.kind) }
     @Published private(set) var persistenceWarning: String?
     let root: URL
+    let assistant: AssistantDataStore
     private let defaults: UserDefaults
     private let keychain: AttentionKeychain
     private var loading = false
@@ -222,8 +235,9 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     private var momentLoadTask: Task<Void, Never>?
 
     init(root: URL? = nil, defaults: UserDefaults = .standard, keychain: AttentionKeychain = .init()) {
-        self.root = root ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
+        let root = root ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
             FileManager.default.temporaryDirectory).appendingPathComponent("Attention", isDirectory: true)
+        self.root = root; assistant = AssistantDataStore(root: root)
         self.defaults = defaults; self.keychain = keychain
         enabled = defaults.bool(forKey: Self.enabledKey)
         pauseOnBattery = defaults.bool(forKey: Self.batteryKey)
@@ -239,6 +253,9 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         voiceModel = defaults.string(forKey: Self.voiceModelKey) ?? Self.defaultVoiceModel
         voiceDescription = defaults.string(forKey: Self.voiceDescriptionKey) ?? Self.defaultVoiceDescription
         voiceBaseURL = defaults.string(forKey: Self.voiceBaseURLKey) ?? AttentionProvider.defaults[.rapidMLX]!.baseURL
+        generateOutcomes = defaults.object(forKey: Self.outcomesKey) as? Bool ?? true
+        pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? true
+        talkBack = defaults.bool(forKey: Self.talkBackKey)
         provider = defaults.data(forKey: Self.providerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
             ?? AttentionProvider.defaults[.openAI]!
         profile = AttentionProfile()

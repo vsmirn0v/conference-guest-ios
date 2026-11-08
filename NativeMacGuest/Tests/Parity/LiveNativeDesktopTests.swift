@@ -80,6 +80,176 @@ import XCTest
         }
     }
 
+    /// Opt-in physical acceptance for the Assistant command and audio paths.
+    /// The peer is a real independent receiver; muted/reply evidence is decoded PCM,
+    /// not just local control state. No speech is recorded or persisted.
+    func testGuestAssistantVoiceAndMicrophoneSafety() async throws {
+        guard let raw = ProcessInfo.processInfo.environment["NATIVE_DESKTOP_LIVE_GUEST_INVITE"],
+              let url = URL(string: raw), !raw.isEmpty else {
+            throw XCTSkip("Set NATIVE_DESKTOP_LIVE_GUEST_INVITE to run live Assistant acceptance.")
+        }
+        let mutedOnly = ProcessInfo.processInfo.environment["NATIVE_DESKTOP_LIVE_ASSISTANT_MUTED_ONLY"] == "1"
+        if !mutedOnly {
+            print("ASSISTANT_LIVE_PERMISSION_REQUEST")
+            fflush(stdout)
+            if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+                let granted: Bool = try await guestAwait(timeout: 30) { done in
+                    AVCaptureDevice.requestAccess(for: .audio) { done(.success($0)) }
+                }
+                XCTAssertTrue(granted)
+            }
+            guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+                throw XCTSkip("The app host needs microphone authorization for live Assistant acceptance.")
+            }
+        }
+        executionTimeAllowance = 150
+        let deadline = Date().addingTimeInterval(140)
+        let artifactRoot = URL(fileURLWithPath: ProcessInfo.processInfo.environment["NATIVE_DESKTOP_LIVE_ASSISTANT_ARTIFACTS"]
+            ?? ".build/native-attention/live-assistant", relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).absoluteURL
+        let defaultsName = "assistant-live-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: defaultsName)!
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let store = AttentionStore(root: artifactRoot.appendingPathComponent("store", isDirectory: true), defaults: defaults,
+            keychain: AttentionKeychain(service: "assistant-live-" + UUID().uuidString))
+        await store.assistant.waitForLoad()
+        store.voiceEngine = .system
+        let coordinator = AttentionCoordinator(store: store)
+        let peer = NativeGuestEngine(label: "Assistant live independent receiver", verifyReceivedPixels: false)
+        let adapter = NativeDesktopGuestEngine()
+        let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest),
+            name: "Assistant acceptance", title: "Assistant acceptance", engine: adapter)
+        coordinator.meetings = { [model] }
+        coordinator.talk.targetMeetingID = model.sessionID
+        func measure(_ seconds: UInt64 = 2) async -> (samples: Int, rms: Double) {
+            let before = peer.mediaSnapshot
+            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            let audio = peer.mediaSnapshot.audio.since(before.audio)
+            return (audio.samples, audio.rms)
+        }
+        let headphoneRoute = AssistantHeadphoneRoute.isConnected
+        var evidence: [String: Any] = [
+            "headphoneRoute": headphoneRoute,
+            "pushToTalkModelInstalled": ListenModelStore.shared.recognizerModel() != nil
+        ]
+        do {
+            try await peer.join(try GuestInvitation.parse(url))
+            try await peer.publishPattern(codec: "h264", audioMuted: true, videoMuted: false)
+            try await model.connect()
+            try await wait("Assistant live connection", deadline: deadline) { model.connected && peer.mediaSnapshot.connected }
+            let initial = await measure()
+            XCTAssertLessThan(initial.rms, 0.0002, "A newly joined microphone must be silent at the receiver")
+            evidence["initial"] = ["samples": initial.samples, "rms": initial.rms]
+
+            // Talk-back is local-only: headphones must play it successfully, while
+            // speakers must refuse before synthesis. Neither path may leak to the peer.
+            store.talkBack = true
+            coordinator.talk.perform(.init(action: .readChat, meetingID: model.sessionID, count: 1))
+            if headphoneRoute {
+                let answer = L("No chat messages in “%@”.", model.title)
+                try await wait("Headphone talk-back answer", deadline: deadline) {
+                    coordinator.talk.entries.contains { $0.text == answer }
+                }
+                let talkBack = await measure()
+                XCTAssertNil(coordinator.talk.audioError, "A recognized headphone route must allow local playback")
+                XCTAssertLessThan(talkBack.rms, 0.0002, "Local headphone talk-back must not leak into the meeting")
+                evidence["headphoneTalkBack"] = ["samples": talkBack.samples, "rms": talkBack.rms, "played": true]
+            } else {
+                try await wait("Speaker talk-back refusal", deadline: deadline) { coordinator.talk.audioError != nil }
+                let talkBack = await measure()
+                XCTAssertLessThan(talkBack.rms, 0.0002, "Refused local talk-back must not leak into the meeting")
+                evidence["speakerTalkBack"] = ["error": coordinator.talk.audioError ?? "missing", "samples": talkBack.samples, "rms": talkBack.rms]
+            }
+            store.talkBack = false
+            if mutedOnly {
+                let clean = await model.leave(), peerClean = await peer.leave()
+                XCTAssertTrue(clean); XCTAssertTrue(peerClean)
+                evidence["cleanLeave"] = clean && peerClean
+                let data = try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys])
+                print("ASSISTANT_LIVE_MUTED_EVIDENCE " + String(decoding: data, as: UTF8.self))
+                return
+            }
+
+            model.toggleMicrophone()
+            try await wait("Physical microphone live", deadline: deadline) { model.snapshot.microphoneOn }
+            let held = await model.holdMicrophoneForAssistant()
+            XCTAssertTrue(held)
+            let heldNative = try XCTUnwrap(adapter.currentNativeEngine)
+            let heldAudio = await measure()
+            if heldAudio.rms >= 0.0002 {
+                evidence["assistantHoldNative"] = await heldNative.evidence()["physicalAudio"] ?? [:]
+            }
+            XCTAssertLessThan(heldAudio.rms, 0.0002, "Assistant capture must hold back all meeting microphone PCM")
+            evidence["assistantHold"] = ["samples": heldAudio.samples, "rms": heldAudio.rms]
+            await model.releaseMicrophoneForAssistant()
+            let restoredAudio = await measure()
+            let restoredNative = try XCTUnwrap(adapter.currentNativeEngine)
+            let restoredEvidence = await restoredNative.evidence()
+            let physical = restoredEvidence["physicalAudio"] as? [String: Any] ?? [:]
+            XCTAssertTrue(model.snapshot.microphoneOn)
+            XCTAssertEqual(physical["microphoneMuted"] as? Bool, false)
+            XCTAssertEqual(LKRTCApplicationCaptureMuted(), 0)
+            XCTAssertGreaterThan(restoredAudio.samples, 48_000, "Gate release must restore microphone RTP clocks")
+            evidence["assistantRelease"] = ["samples": restoredAudio.samples, "rms": restoredAudio.rms,
+                "microphoneMuted": physical["microphoneMuted"] as? Bool ?? true]
+
+            // Use the real local AVAudioEngine tap, not only the model's gate methods.
+            // Any accidental recognition is discarded by this isolated test interpreter.
+            coordinator.talk.interpretOverride = { _ in throw CancellationError() }
+            store.pushToTalk = true
+            coordinator.talk.startPushToTalk()
+            try await wait("Push-to-talk local capture", timeout: 20, deadline: deadline) {
+                coordinator.talk.listening || coordinator.talk.audioError != nil
+            }
+            XCTAssertTrue(coordinator.talk.listening, coordinator.talk.audioError ?? "Push-to-talk did not start")
+            let pushAudio = await measure()
+            if pushAudio.rms >= 0.0002 {
+                evidence["pushToTalkNative"] = await restoredNative.evidence()["physicalAudio"] ?? [:]
+            }
+            XCTAssertLessThan(pushAudio.rms, 0.0002, "Local Assistant capture must remain silent to the peer")
+            evidence["pushToTalk"] = ["samples": pushAudio.samples, "rms": pushAudio.rms]
+            coordinator.talk.stopPushToTalk()
+            try await wait("Push-to-talk gate release", deadline: deadline) {
+                !coordinator.talk.listening && !model.assistantCaptureActive
+            }
+            XCTAssertTrue(model.snapshot.microphoneOn)
+            XCTAssertFalse(coordinator.talk.listening)
+
+            // Exercise the same confirmed structured .say command as typed/voice input,
+            // with the real macOS voice and the real meeting voice-reply graph.
+            let replyBefore = peer.mediaSnapshot
+            coordinator.talk.perform(.init(action: .say, meetingID: model.sessionID,
+                text: "This is a live Assistant voice reply acceptance test."))
+            try await wait("Voice reply confirmation", deadline: deadline) { coordinator.talk.pending?.command.action == .say }
+            coordinator.talk.confirmPending()
+            let spokenConfirmation = L("Spoken into “%@”.", model.title)
+            try await wait("Confirmed macOS voice reply", timeout: 45, deadline: deadline) {
+                coordinator.talk.entries.contains { $0.text == spokenConfirmation }
+            }
+            let replyAudio = peer.mediaSnapshot.audio.since(replyBefore.audio)
+            XCTAssertGreaterThan(replyAudio.samples, 48_000)
+            XCTAssertGreaterThan(replyAudio.rms, 0.001, "The independent receiver must decode the synthesized reply")
+            XCTAssertTrue(model.snapshot.microphoneOn, "A reply made while live restores the prior live state")
+            XCTAssertFalse(model.voiceReplyActive)
+            evidence["voiceReply"] = ["samples": replyAudio.samples, "rms": replyAudio.rms,
+                "microphoneRestored": model.snapshot.microphoneOn]
+
+            let clean = await model.leave(), peerClean = await peer.leave()
+            XCTAssertTrue(clean); XCTAssertTrue(peerClean)
+            evidence["cleanLeave"] = clean && peerClean
+            let data = try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys])
+            print("ASSISTANT_LIVE_EVIDENCE " + String(decoding: data, as: UTF8.self))
+        } catch {
+            evidence["failure"] = String(describing: error)
+            if let data = try? JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]) {
+                print("ASSISTANT_LIVE_FAILURE " + String(decoding: data, as: UTF8.self))
+            }
+            let clean = await model.leave(), peerClean = await peer.leave()
+            XCTAssertTrue(clean, "App cleanup after failed live Assistant acceptance")
+            XCTAssertTrue(peerClean, "Peer cleanup after failed live Assistant acceptance")
+            throw error
+        }
+    }
+
     private func exercisePresenterCanvas(_ model: NativeDesktopMeetingModel, adapter: NativeDesktopGuestEngine,
                                          peer: NativeGuestEngine, deadline: Date) async throws {
         let camera = model.localCamera, presenter = model.presenter

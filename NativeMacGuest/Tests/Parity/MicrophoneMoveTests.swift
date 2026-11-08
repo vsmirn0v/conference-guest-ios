@@ -157,6 +157,11 @@ import XCTest
         engine.connect(inputMixer, to: engine.mainMixerNode, format: format)
         let graph = GuestVoiceReplyGraph(engine: engine, gateOpen: true)
         XCTAssertTrue(graph.connect(source: microphone, inputMixer: inputMixer, format: format))
+        let gateInputs = (0..<graph.gate.numberOfInputs).compactMap {
+            engine.inputConnectionPoint(for: graph.gate, inputBus: $0)?.node
+        }
+        XCTAssertEqual(gateInputs.count, 2,
+                       "The VPIO microphone gate must remain a mixer, as in LiveKit's own input graph")
         try engine.start()
         defer { engine.stop() }
 
@@ -228,6 +233,20 @@ import XCTest
         engine.forceMicrophone(false)
         for _ in 0..<50 where !engine.events.contains("gate:true") { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(engine.events.last, "gate:true", "Once muted, the gate reopens")
+        _ = await model.leave()
+    }
+
+    func testPushToTalkGateFailureDoesNotUndoFailedReplyMute() async throws {
+        let engine = VoiceTestEngine()
+        let model = try await meeting(engine)
+        engine.failMute = true
+        do { try await model.speak(Self.tone(seconds: 0.2, frequency: 300, amplitude: 0.2)); XCTFail("mute failed") }
+        catch { XCTAssertEqual(error as? NativeDesktopMeetingModel.VoiceReplyError, .mute) }
+        engine.events = []; engine.failGate = true
+        let held = await model.holdMicrophoneForAssistant()
+        XCTAssertFalse(held)
+        XCTAssertEqual(engine.events, ["gate:false"], "A failed local-capture hold must not reopen the safety gate")
+        engine.failGate = false; engine.failMute = false; engine.forceMicrophone(false)
         _ = await model.leave()
     }
 
@@ -306,6 +325,7 @@ import XCTest
     var events: [String] = []
     var voiceReply = true
     var failMute = false
+    var failGate = false
     var playResult = true
 
     func connect(invitation: URL, name: String, quiet: Bool) async throws {
@@ -328,7 +348,7 @@ import XCTest
     }
     func prewarmInput() async -> Bool { events.append("prewarm"); return true }
     var supportsVoiceReply: Bool { voiceReply }
-    func setMicrophoneGate(open: Bool) async -> Bool { events.append("gate:\(open)"); return true }
+    func setMicrophoneGate(open: Bool) async -> Bool { events.append("gate:\(open)"); return !failGate }
     func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { events.append("play"); return playResult }
     func leave() async -> Bool { snapshot.phase = .left; onState?(snapshot); return true }
 }

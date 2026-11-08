@@ -129,6 +129,15 @@ private final class DesktopActivitySpy: NSUserActivity {
     override func invalidate() { invalidations += 1 }
 }
 
+/// Workspace fixtures must not read the developer's real Attention keychain or files.
+@MainActor func desktopTestAttention() -> AttentionCoordinator {
+    let id = UUID().uuidString
+    return AttentionCoordinator(store: AttentionStore(
+        root: FileManager.default.temporaryDirectory.appendingPathComponent("desktop-attention-" + id, isDirectory: true),
+        defaults: UserDefaults(suiteName: "desktop-attention-" + id)!,
+        keychain: AttentionKeychain(service: "desktop-attention-tests-" + id)))
+}
+
 @MainActor final class DesktopParityTests: XCTestCase {
     private let url = URL(string: "https://example.test/calls/native-parity")!
     private func model(_ engine: DesktopTestEngine) throws -> NativeDesktopMeetingModel {
@@ -242,7 +251,7 @@ private final class DesktopActivitySpy: NSUserActivity {
                     return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet,
                         engine: created == 1 ? engine : DesktopTestEngine(), joinReadiness: .init(microphone: .off, camera: .off),
                         joinTimeout: created == 1 ? 0.5 : 45, power: joinTestPower())
-                })
+                }, attention: desktopTestAttention())
             workspace.join(url, engine: .guest)
             // The deadline leaves room for the main window to render the joining meeting.
             let timedOut = try await waitUpTo(5) { startupReply != nil && cleanupReply != nil }
@@ -275,7 +284,10 @@ private final class DesktopActivitySpy: NSUserActivity {
         let model = NativeDesktopMeetingModel(destination: try .verified(url, engine: .guest), name: "Metadata fixture", title: nil,
             engine: engine, joinReadiness: .init(microphone: .off, camera: .whenPluggedIn),
             joinCameraPrime: .init(authorized: { false }), cameraMetadata: metadata, power: joinTestPower())
-        let warming = Task { try await metadata.prepare(eligible: { true }, deviceID: nil) }
+        // Warm the same cache key used by the join; a saved camera selection must not
+        // turn this barrier test into an unrelated second, unreleased metadata read.
+        let selection = UserDefaults.standard.string(forKey: "nativeDesktop.cameraID")
+        let warming = Task { try await metadata.prepare(eligible: { true }, deviceID: selection) }
         try await spin { release != nil }
         let connecting = Task { try await model.connect() }
         await Task.yield(); await Task.yield()
@@ -804,7 +816,7 @@ private final class DesktopActivitySpy: NSUserActivity {
                 }, makeHandoffActivity: { _ in
                     let value = DesktopActivitySpy(activityType: NativeDesktopHandoff.activityType)
                     activities.append(value); return value
-                })
+                }, attention: desktopTestAttention())
             library.continuation.setCloudAccount("fixture-account")
             workspace.join(url)
             try await spin { workspace.meeting?.connected == true && !workspace.preparing && activities.last?.advertisements == 1 }
@@ -840,7 +852,7 @@ private final class DesktopActivitySpy: NSUserActivity {
                     joinedName = name
                     return NativeDesktopMeetingModel(destination: destination, name: name, title: title,
                         quiet: quiet, engine: DesktopTestEngine())
-                })
+                }, attention: desktopTestAttention())
             let source = ActiveJam(deviceID: "source-phone", sessionID: UUID(), invitation: url,
                 title: "Transfer fixture", name: "Source session name", deviceLabel: "iPhone")
             XCTAssertNotNil(workspace.library.continuation.onJoinTarget?(source, false))
@@ -862,7 +874,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         }, makeMeeting: { destination, name, title, quiet in
             modelsCreated += 1
             return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: DesktopTestEngine())
-        })
+        }, attention: desktopTestAttention())
         workspace.join(url)
         XCTAssertTrue(workspace.preparing)
         let stopped = await workspace.leave(); XCTAssertTrue(stopped)
@@ -1074,7 +1086,7 @@ private final class DesktopActivitySpy: NSUserActivity {
                 let engine = engines[created]; created += 1
                 return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: engine,
                     joinReadiness: .init(microphone: .off, camera: .off), power: joinTestPower(), sharedMedia: media)
-            }, multipleMeetings: { true })
+            }, multipleMeetings: { true }, attention: desktopTestAttention())
     }
     private func room(_ index: Int) -> URL { URL(string: "https://example.test/calls/multi-\(index)")! }
     private func join(_ workspace: NativeDesktopWorkspace, _ index: Int) async throws {
@@ -1122,7 +1134,7 @@ private final class DesktopActivitySpy: NSUserActivity {
             let engine = engines[created]; created += 1
             return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: engine,
                 joinReadiness: .init(microphone: .off, camera: .off), power: joinTestPower(), sharedMedia: media)
-        }, multipleMeetings: { true })
+        }, multipleMeetings: { true }, attention: desktopTestAttention())
         workspace.join(room(1))
         try await spin { detecting != nil }
         workspace.join(room(2))
@@ -1580,7 +1592,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         }, makeMeeting: { destination, name, title, quiet in
             modelsCreated += 1
             return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: DesktopTestEngine())
-        })
+        }, attention: desktopTestAttention())
         workspace.join(url); try await spin { detections == 1 }
         let leaving = Task { await workspace.leave() }
         try await Task.sleep(for: .milliseconds(20))
@@ -1608,7 +1620,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         let workspace = NativeDesktopWorkspace(library: library, detect: { _ in .verified(.guest(endpoint: self.url)) },
             makeMeeting: { destination, name, title, quiet in
                 NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: engine)
-            })
+            }, attention: desktopTestAttention())
         workspace.join(url, engine: .guest, scheduled: request)
         try await spin { !workspace.preparing }
         XCTAssertEqual(engine.leaves, 1); XCTAssertNil(workspace.meeting)

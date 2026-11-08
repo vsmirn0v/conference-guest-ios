@@ -18,7 +18,8 @@ final class SharedEngineSpikeTests: XCTestCase {
     }
 
     /// The same on real hardware with Apple Voice Processing I/O: the real microphone opens
-    /// (tone mixed on top), speakers stay off. Skipped without microphone access.
+    /// (tone mixed on top), the required output leg stays active but its mixer is silent.
+    /// Skipped without microphone access.
     func testTwoCallsShareOneVoiceProcessingEngineOnHardware() async throws {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
             throw XCTSkip("The test host has no microphone access")
@@ -37,6 +38,11 @@ final class SharedEngineSpikeTests: XCTestCase {
         let factory = LKRTCPeerConnectionFactory(audioDeviceModuleType: .audioEngine, bypassVoiceProcessing: !hardware,
             encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory(),
             audioProcessingModule: nil)
+        // Bind WebRtcVoiceEngine to the audio transport before hardware availability
+        // can start VPIO, matching the production shared owner's media context.
+        let mediaContext = factory.peerConnection(with: LKRTCConfiguration(),
+            constraints: LKRTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: nil)
+        defer { mediaContext?.close() }
         let module = factory.audioDeviceModule
         let observer = SpikeToneObserver()
         module.observer = observer
@@ -48,7 +54,9 @@ final class SharedEngineSpikeTests: XCTestCase {
         XCTAssertEqual(module.setMuteMode(.inputMixer), 0)
         XCTAssertEqual(module.setMicrophoneMuted(false), 0)
         var availability = LKRTCAudioEngineAvailability()
-        availability.isInputAvailable = true; availability.isOutputAvailable = ObjCBool(!hardware)
+        // VPIO needs its output leg for a valid render reference. The observer
+        // silences the output mixer, so keeping it available cannot play the tone.
+        availability.isInputAvailable = true; availability.isOutputAvailable = true
         XCTAssertEqual(module.setEngineAvailability(availability), 0)
 
         let callA = try await SpikeLoopCall.connect(factory: factory, name: "A")
@@ -157,6 +165,13 @@ final class SpikeToneObserver: NSObject, LKRTCAudioDeviceModuleDelegate, @unchec
                                                    format: format, context: context) ?? 0
         let mixer = context[kLKRTCAudioEngineInputMixerNodeKey] as? AVAudioMixerNode
         let target: AVAudioNode = mixer ?? destination
+        // Directly adding a second input beside AVAudioInputNode can leave VPIO's
+        // sink unrendered. Mix the microphone and tone upstream, as the production
+        // voice-reply graph does, and give WebRTC's input mixer one source.
+        let inputStage = AVAudioMixerNode()
+        engine.attach(inputStage)
+        if let source { engine.connect(source, to: inputStage, format: format) }
+        engine.connect(inputStage, to: target, format: format)
         let step = 2 * Double.pi * 440 / format.sampleRate
         let tone = AVAudioSourceNode(format: format) { [weak self] _, _, frames, list in
             guard let self else { return noErr }
@@ -168,14 +183,16 @@ final class SpikeToneObserver: NSObject, LKRTCAudioDeviceModuleDelegate, @unchec
             return noErr
         }
         engine.attach(tone)
-        let bus = (target as? AVAudioMixerNode)?.nextAvailableInputBus ?? 0
-        engine.connect(tone, to: target, fromBus: 0, toBus: bus, format: format)
+        engine.connect(tone, to: inputStage, format: format)
         return forwarded
     }
     func audioDeviceModule(_ module: LKRTCAudioDeviceModule, engine: AVAudioEngine, configureOutputFromSource source: AVAudioNode,
                            toDestination destination: AVAudioNode?, format: AVAudioFormat, context: [AnyHashable: Any]) -> Int {
-        forward?.audioDeviceModule(module, engine: engine, configureOutputFromSource: source, toDestination: destination,
-                                   format: format, context: context) ?? 0
+        let forwarded = forward?.audioDeviceModule(module, engine: engine, configureOutputFromSource: source, toDestination: destination,
+                                                   format: format, context: context) ?? 0
+        // The loopback tone is test input, not something to play over speakers.
+        (source as? AVAudioMixerNode)?.outputVolume = 0
+        return forwarded
     }
     func audioDeviceModuleDidUpdateDevices(_ module: LKRTCAudioDeviceModule) { forward?.audioDeviceModuleDidUpdateDevices(module) }
 }

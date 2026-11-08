@@ -25,9 +25,9 @@ enum AttentionJudgeError: LocalizedError, Equatable {
     case transport, emptyAnswer, refused, verdict(AttentionVerdictError)
     var errorDescription: String? {
         switch self {
-        case .notConfigured: L("Set the judge's address and model in Settings → Intelligence.")
-        case .missingKey: L("Add an API key in Settings → Intelligence.")
-        case .unauthorized(let message): Self.with(L("The provider rejected the API key. Check it in Settings → Intelligence."), message)
+        case .notConfigured: L("Set the judge's address and model in Settings → Assistant.")
+        case .missingKey: L("Add an API key in Settings → Assistant.")
+        case .unauthorized(let message): Self.with(L("The provider rejected the API key. Check it in Settings → Assistant."), message)
         case .rateLimited(let message): Self.with(L("The provider is limiting requests. The judge will try again shortly."), message)
         case .quota(let message): Self.with(L("The provider account has no credit or quota left for this key."), message)
         case .http(let code, let message): Self.with(L("The provider answered with error %ld.", code), message)
@@ -72,7 +72,7 @@ extension AttentionProvider {
 
 /// Any OpenAI-compatible chat completions endpoint with JSON-schema output.
 /// The same provider judges meetings and drafts replies.
-struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer {
+struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOutcomeWriter {
     let provider: AttentionProvider
     let key: String?
     var session: URLSession = .shared
@@ -108,6 +108,12 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer {
         return try MomentSummaryPrompt.parse(content)
     }
 
+    func outcome(_ request: MeetingOutcomeRequest) async throws -> MeetingOutcomeContent {
+        let (content, _) = try await complete(requestBody(messages: MeetingOutcomePrompt.messages(request),
+            name: MeetingOutcomePrompt.schemaName, schema: MeetingOutcomePrompt.schema, hint: MeetingOutcomePrompt.hint))
+        return try MeetingOutcomePrompt.parse(content)
+    }
+
     /// Providers elsewhere get the strict schema. A model on this Mac gets JSON mode with
     /// the shape in its instructions: Rapid-MLX's strict schema lengthens the prompt,
     /// loses its prompt cache and halves decode speed, and every answer is validated here anyway.
@@ -118,7 +124,8 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer {
         if let index = adjusted.firstIndex(where: { $0["role"] == "system" }), !(adjusted[index]["content"] ?? "").contains(hint) {
             adjusted[index]["content"] = (adjusted[index]["content"] ?? "") + hint
         }
-        var body: [String: Any] = ["model": model, "messages": adjusted, "temperature": 0, "max_tokens": 400,
+        let outputLimit = name == ReplyPrompt.schemaName || name == MeetingOutcomePrompt.schemaName ? 1000 : 400
+        var body: [String: Any] = ["model": model, "messages": adjusted, "temperature": 0, "max_tokens": outputLimit,
                                    "response_format": ["type": "json_object"]]
         // Qwen-family models would otherwise think first; the verdict needs no reasoning pass.
         if provider.kind == .rapidMLX { body["chat_template_kwargs"] = ["enable_thinking": false] }
@@ -143,7 +150,7 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer {
     }
 
     /// The model's answer text and how long the successful attempt took.
-    private func complete(_ object: [String: Any]) async throws -> (String, TimeInterval) {
+    func complete(_ object: [String: Any]) async throws -> (String, TimeInterval) {
         guard let endpoint = provider.endpoint, !provider.model.trimmed.isEmpty else { throw AttentionJudgeError.notConfigured }
         if provider.needsKey && (key ?? "").isEmpty { throw AttentionJudgeError.missingKey }
         let body = try JSONSerialization.data(withJSONObject: object)

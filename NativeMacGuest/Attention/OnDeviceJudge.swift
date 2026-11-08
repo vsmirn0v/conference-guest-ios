@@ -1,3 +1,4 @@
+import ConferenceCore
 import Foundation
 import FoundationModels
 import NaturalLanguage
@@ -11,7 +12,7 @@ import Translation
 /// Measured on 43 labelled Russian meetings (Experiments/AttentionBench): translated
 /// input with `extraRules` was right on 41, with no missed "now"; Russian given to the
 /// model as is was markedly worse.
-struct AppleOnDeviceJudge: AttentionJudge, ReplyWriter, MomentSummarizer {
+struct AppleOnDeviceJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOutcomeWriter, AssistantCommandInterpreter {
     func judge(_ request: JudgeRequest) async throws -> JudgeResult {
         guard #available(macOS 26.0, *) else { throw OnDeviceJudgeError.unsupportedSystem }
         return try await AppleOnDevice.judge(request)
@@ -26,6 +27,16 @@ struct AppleOnDeviceJudge: AttentionJudge, ReplyWriter, MomentSummarizer {
     func summarize(_ request: MomentSummaryRequest) async throws -> String {
         guard #available(macOS 26.0, *) else { throw OnDeviceJudgeError.unsupportedSystem }
         return try await AppleOnDevice.summarize(request)
+    }
+
+    func outcome(_ request: MeetingOutcomeRequest) async throws -> MeetingOutcomeContent {
+        guard #available(macOS 26.0, *) else { throw OnDeviceJudgeError.unsupportedSystem }
+        return try await AppleOnDevice.outcome(request)
+    }
+
+    func interpret(_ request: AssistantCommandRequest) async throws -> AssistantCommand {
+        guard #available(macOS 26.0, *) else { throw OnDeviceJudgeError.unsupportedSystem }
+        return try await AppleOnDevice.interpret(request)
     }
 
     /// Why the on-device judge cannot run here, or nil when it can.
@@ -108,11 +119,31 @@ enum AppleOnDevice {
                 ?? verdict.reason
         }
         let channels = request.judge.replyChannels
-        let messages = ReplyPrompt.messages(ReplyRequest(judge: englishJudge, verdict: verdict))
+        let messages = ReplyPrompt.messages(ReplyRequest(judge: englishJudge, verdict: verdict, redraftHint: request.redraftHint))
         let content = try await respond(instructions: messages[0]["content"]!, prompt: messages[1]["content"]!,
                                         schema: replySchema(channels))
-        var draft = try ReplyPrompt.draft(from: json(content, ["chat", "reaction"]), channels: channels)
-        if let source, !draft.chat.isEmpty {
+        // Parse the two bounded arrays while they are still structured English output;
+        // never ask Translation to preserve a delimiter or JSON syntax.
+        let stances = try content.value([String].self, forProperty: "stances")
+        let texts = try content.value([String].self, forProperty: "texts")
+        let variants = zip(stances, texts).prefix(3).map { ["stance": $0.0, "text": $0.1] }
+        let object: [String: Any] = [
+            "chat": try content.value(String.self, forProperty: "chat"),
+            "reaction": try content.value(String.self, forProperty: "reaction"),
+            "variants": variants,
+        ]
+        var draft = try ReplyPrompt.draft(from: String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self),
+                                          channels: channels)
+        if let source, let generated = draft.variants, !generated.isEmpty {
+            let values = generated.flatMap { [$0.stance, $0.text] }
+            let translated = try await OnDeviceTranslator.shared.translate(values, from: english, to: source, cache: false)
+            for index in draft.variants!.indices {
+                let old = draft.variants![index]
+                draft.variants![index].stance = translated[old.stance] ?? old.stance
+                draft.variants![index].text = translated[old.text] ?? old.text
+            }
+            draft.chat = draft.variants?.first?.text ?? ""
+        } else if let source, !draft.chat.isEmpty {
             draft.chat = try await OnDeviceTranslator.shared.translate([draft.chat], from: english, to: source, cache: false)[draft.chat]
                 ?? draft.chat
         }
@@ -152,6 +183,7 @@ enum AppleOnDevice {
         guard let source = meetingLanguage(request.window), needsTranslation(source) else { return (out, nil) }
         var texts = [request.window.meetingTitle, request.profile.name, request.profile.role] + request.profile.aliases
         texts += request.window.lines.flatMap { [$0.speaker, $0.text] }
+        texts += request.memory.map(\.text)
         if let preset = request.preset {
             texts += [preset.about, preset.matters, preset.never] + preset.people
             texts += preset.promptExamples.flatMap { [$0.excerpt, $0.reason, $0.note ?? ""] }
@@ -174,6 +206,7 @@ enum AppleOnDevice {
         out.profile.name = t(request.profile.name)
         out.profile.role = t(request.profile.role)
         out.profile.aliases = request.profile.aliases.map(t)
+        out.memory = request.memory.map { .init(id: $0.id, kind: $0.kind, text: t($0.text), sourceID: $0.sourceID) }
         if var preset = request.preset {
             preset.about = t(preset.about); preset.matters = t(preset.matters); preset.never = t(preset.never)
             preset.people = preset.people.map(t)
@@ -229,13 +262,97 @@ enum AppleOnDevice {
         return summary
     }
 
+    static func outcome(_ request: MeetingOutcomeRequest) async throws -> MeetingOutcomeContent {
+        try checkModel()
+        var translated = request
+        let (english, source) = try await englishRequest(JudgeRequest(window: request.window, profile: AttentionProfile(),
+            yourName: "", language: request.language))
+        translated.window = english.window; translated.language = "en"
+        let messages = MeetingOutcomePrompt.messages(translated)
+        let taskText = DynamicGenerationSchema(type: String.self)
+        let schema = try GenerationSchema(root: DynamicGenerationSchema(name: "MeetingOutcome", properties: [
+            .init(name: "summary", description: "At most four short factual sentences.", schema: DynamicGenerationSchema(type: String.self)),
+            .init(name: "decisions", schema: DynamicGenerationSchema(arrayOf: DynamicGenerationSchema(type: String.self))),
+            .init(name: "tasks", description: "Each item: task text | owner | ISO due date or empty. Use no vertical bars inside fields.",
+                  schema: DynamicGenerationSchema(arrayOf: taskText)),
+            .init(name: "open_questions", schema: DynamicGenerationSchema(arrayOf: DynamicGenerationSchema(type: String.self))),
+        ]), dependencies: [])
+        let content = try await respond(instructions: messages[0]["content"]!,
+            prompt: messages[1]["content"]! + "\nFor tasks return strings formatted as task | owner | due_at.", schema: schema)
+        var summary = try content.value(String.self, forProperty: "summary")
+        var decisions = try content.value([String].self, forProperty: "decisions")
+        var open = try content.value([String].self, forProperty: "open_questions")
+        let rawTasks = try content.value([String].self, forProperty: "tasks")
+        let iso = ISO8601DateFormatter()
+        var tasks = rawTasks.compactMap { raw -> MeetingOutcomeTask? in
+            let fields = raw.components(separatedBy: "|").map(\.trimmed)
+            guard let text = fields.first, !text.isEmpty else { return nil }
+            return .init(text: text, owner: fields.indices.contains(1) ? fields[1] : "",
+                dueAt: fields.indices.contains(2) ? iso.date(from: fields[2]) : nil)
+        }
+        if let source {
+            let values = [summary] + decisions + open + tasks.map(\.text) + tasks.map(\.owner)
+            let map = try await OnDeviceTranslator.shared.translate(values, from: Self.english, to: source, cache: false)
+            summary = map[summary] ?? summary
+            decisions = decisions.map { map[$0] ?? $0 }; open = open.map { map[$0] ?? $0 }
+            // Translate human-readable fields only; separators and ISO dates stay intact.
+            for index in tasks.indices {
+                tasks[index].text = map[tasks[index].text] ?? tasks[index].text
+                tasks[index].owner = map[tasks[index].owner] ?? tasks[index].owner
+            }
+        }
+        // Apply the same bounds, deduplication and field validation as remote writers.
+        let object: [String: Any] = ["summary": summary, "decisions": decisions, "open_questions": open,
+            "tasks": tasks.map { ["text": $0.text, "owner": $0.owner,
+                "due_at": $0.dueAt.map(iso.string(from:)) ?? ""] }]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return try MeetingOutcomePrompt.parse(String(decoding: data, as: UTF8.self))
+    }
+
+    static func interpret(_ request: AssistantCommandRequest) async throws -> AssistantCommand {
+        try checkModel()
+        let context = request.context
+        func field(_ name: String, _ values: [String]) -> DynamicGenerationSchema {
+            DynamicGenerationSchema(name: name, anyOf: values)
+        }
+        let free = DynamicGenerationSchema(type: String.self)
+        let root = DynamicGenerationSchema(name: "AssistantCommand", properties: [
+            .init(name: "action", schema: field("Action", ["none"] + AssistantCommandAction.allCases.map(\.rawValue))),
+            .init(name: "meeting", schema: field("Meeting", [""] + context.meetings.map(\.id.uuidString))),
+            .init(name: "moment", schema: field("Moment", [""] + context.moments.map(\.id.uuidString))),
+            .init(name: "mode", schema: field("Mode", [""] + AttentionMode.allCases.map(\.rawValue))),
+            .init(name: "scope", schema: field("Scope", ["", "untilLeave", "minutes30", "series"])),
+            .init(name: "text", schema: free), .init(name: "fact", schema: free),
+            .init(name: "reaction", schema: field("Reaction", [""] + MeetingReaction.allCases.map(\.rawValue))),
+            .init(name: "n", schema: DynamicGenerationSchema(type: Int.self, guides: [.range(1...20)])),
+            .init(name: "minutes", schema: DynamicGenerationSchema(type: Int.self, guides: [.range(1...180)])),
+            .init(name: "at", schema: free),
+        ])
+        let messages = AssistantCommandPrompt.messages(request)
+        let content = try await respond(instructions: messages[0]["content"]!, prompt: messages[1]["content"]!,
+            schema: try GenerationSchema(root: root, dependencies: []))
+        var object: [String: Any] = [:]
+        for key in ["action", "meeting", "moment", "mode", "scope", "text", "fact", "reaction", "at"] {
+            object[key] = try content.value(String.self, forProperty: key)
+        }
+        object["n"] = try content.value(Int.self, forProperty: "n")
+        object["minutes"] = try content.value(Int.self, forProperty: "minutes")
+        return try AssistantCommandPrompt.parse(String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self), context: context)
+    }
+
     static func replySchema(_ channels: ReplyChannels) throws -> GenerationSchema {
+        let shortText = DynamicGenerationSchema(type: String.self)
+        let stance = DynamicGenerationSchema(type: String.self)
         let root = DynamicGenerationSchema(name: "MeetingReply", properties: [
             .init(name: "chat", description: channels.chat
-                  ? "The chat message the user would send, or an empty string when a reaction alone is better."
-                  : "Always an empty string: this meeting has no chat.", schema: DynamicGenerationSchema(type: String.self)),
+                  ? "The first variant's text, or an empty string when a reaction alone is better."
+                  : "Always an empty string: this meeting has no chat.", schema: shortText),
             .init(name: "reaction", description: "An emoji reaction that alone answers, or none.",
                   schema: DynamicGenerationSchema(name: "Reaction", anyOf: ["none"] + channels.reactions.map(\.rawValue))),
+            .init(name: "stances", description: "Up to three short stance labels, aligned by index with texts.", schema:
+                  DynamicGenerationSchema(arrayOf: stance, minimumElements: 0, maximumElements: 3)),
+            .init(name: "texts", description: "Up to three genuinely different reply texts, aligned by index with stances.", schema:
+                  DynamicGenerationSchema(arrayOf: shortText, minimumElements: 0, maximumElements: 3)),
         ])
         return try GenerationSchema(root: root, dependencies: [])
     }

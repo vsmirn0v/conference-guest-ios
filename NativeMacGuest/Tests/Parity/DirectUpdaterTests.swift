@@ -104,7 +104,7 @@ private actor DirectUpdaterCalendar: CalendarReading {
         var detections = 0
         let workspace = NativeDesktopWorkspace(library: library, detect: { url in
             detections += 1; return .verified(.guest(endpoint: url))
-        })
+        }, attention: desktopTestAttention())
         workspace.mayAdmitMeeting = { updates.mayStartMeeting }
         updates.busy = { workspace.busyForUpdate }
         XCTAssertTrue(library.canAutomaticallyJoin())

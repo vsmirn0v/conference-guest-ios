@@ -111,7 +111,7 @@ struct AttentionModePicker: View {
                 }
             }
             if !attention.store.enabled {
-                Text(L("Attention is off in Settings → Intelligence.")).font(.caption).foregroundStyle(.orange)
+                Text(L("Attention is off in Settings → Assistant.")).font(.caption).foregroundStyle(.orange)
             }
         }
         .padding(12).frame(width: 290)

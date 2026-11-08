@@ -145,8 +145,16 @@ import UserNotifications
         self.attention.isOnScreen = { [weak self] in self?.isOnScreen($0) ?? false }
         self.attention.openMeeting = { [weak self] id in self?.openFromAttention(id) }
         self.attention.notify = { card in NativeDesktopWorkspace.postAttentionNotification(card) }
+        self.attention.talk.joinMeeting = { [weak self] ref in
+            guard let self, let invitation = ref.invitation else { return false }
+            join(invitation, title: ref.title); return true
+        }
+        self.attention.talk.leaveMeeting = { [weak self] model in await self?.leave(model) ?? false }
+        // Push-to-talk is app-wide, not tied to the Talk tab's visibility.
+        self.attention.talk.installHotKey()
         self.attention.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         self.attention.store.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+        self.attention.store.assistant.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
         self.attention.start()
     }
 
@@ -368,6 +376,7 @@ import UserNotifications
         if let task = meetingLeaves[id] { return await task.value }
         for (joinID, owner) in joinModels where owner == ObjectIdentifier(model) { joinTasks[joinID]?.cancel() }
         let task = Task { @MainActor () -> Bool in
+            attention.captureOutcome(for: model)
             let clean = await model.leave()
             guard self.meetings.contains(where: { $0 === model }) else { return clean }
             if clean {
