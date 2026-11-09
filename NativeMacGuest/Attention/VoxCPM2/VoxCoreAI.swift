@@ -30,47 +30,40 @@ enum VoxCacheRecovery {
     }
 }
 
-/// One rebuild for a failure. Concurrent callers wait for that rebuild instead of skipping it.
+/// One rebuild for a failure. The in-flight task is published under the lock, so a
+/// concurrent caller cannot miss the wakeup between the check and the wait.
 final class VoxRecoverySession: @unchecked Sendable {
+    private final class Attempt {
+        let task: Task<Void, Error>
+        init(_ task: Task<Void, Error>) { self.task = task }
+    }
     private let lock = NSLock()
-    private var rebuilding = false
-    private var waiters: [CheckedContinuation<Result<Void, Error>, Never>] = []
+    private var attempt: Attempt?
 
-    func perform<T>(operation: () async throws -> T, rebuild: () async throws -> Void) async throws -> T {
+    func perform<T>(operation: () async throws -> T, rebuild: @escaping () async throws -> Void) async throws -> T {
         do { return try await operation() }
         catch {
             guard VoxCacheRecovery.isUnusableCacheError(error) else { throw error }
-            try await joinRebuild(rebuild)
+            try await sharedRebuild(rebuild)
             return try await operation()
         }
     }
 
-    private func joinRebuild(_ rebuild: () async throws -> Void) async throws {
-        let lead: Bool = {
+    private func sharedRebuild(_ rebuild: @escaping () async throws -> Void) async throws {
+        let current: Attempt = {
             lock.lock(); defer { lock.unlock() }
-            if rebuilding { return false }
-            rebuilding = true
-            return true
+            if let attempt { return attempt }
+            let created = Attempt(Task { try await rebuild() })
+            attempt = created
+            return created
         }()
-        if !lead {
-            let result: Result<Void, Error> = await withCheckedContinuation { continuation in
-                lock.lock(); waiters.append(continuation); lock.unlock()
-            }
-            try result.get()
-            return
+        do {
+            try await current.task.value
+            lock.lock(); if attempt === current { attempt = nil }; lock.unlock()
+        } catch {
+            lock.lock(); if attempt === current { attempt = nil }; lock.unlock()
+            throw error
         }
-        var failure: Error?
-        do { try await rebuild() } catch { failure = error }
-        let pending: [CheckedContinuation<Result<Void, Error>, Never>] = {
-            lock.lock(); defer { lock.unlock() }
-            rebuilding = false
-            let copy = waiters
-            waiters.removeAll()
-            return copy
-        }()
-        let result: Result<Void, Error> = failure.map { .failure($0) } ?? .success(())
-        for waiter in pending { waiter.resume(returning: result) }
-        if let failure { throw failure }
     }
 }
 

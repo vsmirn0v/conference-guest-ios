@@ -110,7 +110,8 @@ enum MeetingOutcomePrompt {
                     if readingKey { pendingKey = stringBody; readingKey = false }
                     else {
                         if pendingKey == "summary" { summaryClosed = true }
-                        markGood()
+                        // A string inside an unfinished task or array is not a complete value.
+                        if stack.count == 1 { markGood() }
                     }
                     stringBody = ""
                 } else { stringBody.append(character) }
@@ -144,7 +145,6 @@ enum MeetingOutcomePrompt {
             default:
                 if !character.isWhitespace { readingKey = false }
                 out.append(character)
-                if character.isNumber { markGood() }
             }
         }
         guard goodSummary else { return nil }
@@ -200,18 +200,25 @@ enum MeetingOutcomePrompt {
                 chosen = chronological
             } else {
                 var head = 0, tail = chronological.count - 1, used = 0
-                var picked: [Item] = []
+                var headItems: [Item] = [], tailItems: [Item] = []
                 var takeHead = true
-                while head <= tail, picked.count < lineCap {
+                while head <= tail, headItems.count + tailItems.count < lineCap {
                     let item = takeHead ? chronological[head] : chronological[tail]
                     let cost = item.line.text.count
                     if used > 0, used + cost > charCap { break }
-                    picked.append(item)
+                    if takeHead { headItems.append(item); head += 1 } else { tailItems.append(item); tail -= 1 }
                     used += cost
-                    if takeHead { head += 1 } else { tail -= 1 }
                     takeHead.toggle()
                 }
-                chosen = picked.sorted { ($0.at, $0.order) < ($1.at, $1.order) }
+                let omitted = chronological.count - headItems.count - tailItems.count
+                var combined = headItems
+                if omitted > 0 {
+                    combined.append(.init(at: headItems.last?.at ?? .distantPast, order: order, line: .init(
+                        id: "omitted", ref: "", source: .speech, speaker: "", isYou: false,
+                        text: L("%ld lines omitted", omitted), at: nil, mentionsYou: false)))
+                }
+                combined.append(contentsOf: tailItems.reversed())
+                chosen = combined
             }
         }
         let lines = chosen.enumerated().map { index, item in

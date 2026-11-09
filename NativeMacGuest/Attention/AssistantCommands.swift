@@ -189,17 +189,16 @@ enum AssistantTime {
         }
         var candidates = [raw]
         if raw.contains(" ") { candidates.append(raw.replacingOccurrences(of: " ", with: "T")) }
-        func withSeconds(_ value: String) -> String? {
-            guard value.range(of: #"T\d{2}:\d{2}$"#, options: .regularExpression) != nil else { return nil }
-            return value + ":00"
-        }
+        var expanded: [String] = []
         for candidate in candidates {
-            if let expanded = withSeconds(candidate) { candidates.append(expanded) }
+            if let zone = candidate.range(of: #"(Z|[+-]\d{2}:?\d{2})$"#, options: .regularExpression),
+               candidate[..<zone.lowerBound].range(of: #"T\d{2}:\d{2}$"#, options: .regularExpression) != nil {
+                expanded.append(String(candidate[..<zone.lowerBound]) + ":00" + String(candidate[zone]))
+            } else if candidate.range(of: #"T\d{2}:\d{2}$"#, options: .regularExpression) != nil {
+                expanded.append(candidate + ":00")
+            }
         }
-        if let zone = raw.range(of: #"(Z|[+-]\d{2}:?\d{2})$"#, options: .regularExpression),
-           raw[..<zone.lowerBound].range(of: #"T\d{2}:\d{2}$"#, options: .regularExpression) != nil {
-            candidates.append(String(raw[..<zone.lowerBound]) + ":00" + String(raw[zone]))
-        }
+        candidates.append(contentsOf: expanded)
         let timed: [ISO8601DateFormatter.Options] = [
             [.withInternetDateTime, .withFractionalSeconds],
             [.withInternetDateTime],

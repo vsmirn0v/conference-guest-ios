@@ -1258,6 +1258,11 @@ import XCTest
         XCTAssertEqual(remote.lines.first?.id, "t0")
         XCTAssertEqual(remote.lines.last?.id, "t299")
         XCTAssertGreaterThan(remote.lines.count, window.lines.count)
+        let long = (0..<80).map { message("L\($0)", "Anna", String(repeating: "x", count: 2_000), now.addingTimeInterval(Double($0))) }
+        let clipped = MeetingOutcomePrompt.window(title: "infra", transcript: long, chat: [], yourName: "Vitalii", now: now)
+        XCTAssertEqual(clipped.lines.first?.id, "L0")
+        XCTAssertEqual(clipped.lines.last?.id, "L79")
+        XCTAssertTrue(clipped.lines.contains { $0.id == "omitted" }, "A gap between the kept ends is marked so they are not read as continuous")
     }
 
     func testAssistantDataPersistsEditsAndFindsLastTime() async throws {
@@ -1534,6 +1539,8 @@ import XCTest
         XCTAssertEqual(repaired.summary, "Release moved.")
         XCTAssertEqual(repaired.decisions, ["Ship"])
         XCTAssertTrue(repaired.tasks.isEmpty, "A value cut in the middle is dropped, not closed into a fake task")
+        let ownerCut = try MeetingOutcomePrompt.parse(#"{"summary":"Kept","tasks":[{"text":"a","owner":"#)
+        XCTAssertTrue(ownerCut.tasks.isEmpty, "A task cut after a finished field is dropped, not kept as a partial object")
         XCTAssertThrowsError(try MeetingOutcomePrompt.parse(#"{"summary":"Rel"#))
         let dangling = try MeetingOutcomePrompt.parse(#"{"summary":"Kept","decis"#)
         XCTAssertEqual(dangling.summary, "Kept")
@@ -1566,7 +1573,14 @@ import XCTest
         XCTAssertTrue(again.memories.contains { $0.text == "Added after repair" })
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("assistant.recovered.json").path))
         XCTAssertNotEqual(try Data(contentsOf: root.appendingPathComponent("assistant.recovered.json")), try Data(contentsOf: root.appendingPathComponent("assistant.json")))
-        _ = before
+        let firstBackup = try Data(contentsOf: root.appendingPathComponent("assistant.recovered.json"))
+        let damagedAgain = AssistantDataStore(root: root)
+        await damagedAgain.waitForLoad()
+        try JSONSerialization.data(withJSONObject: ["memories": [NSNull()]]).write(to: root.appendingPathComponent("assistant.json"))
+        let secondDamage = AssistantDataStore(root: root)
+        await secondDamage.waitForLoad()
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("assistant.recovered.json")), firstBackup,
+            "A later damaged load keeps the first backup")
 
         let (first, _) = try await meeting("rejoin")
         let coordinator = AttentionCoordinator(store: fresh)
@@ -1629,8 +1643,13 @@ import XCTest
         XCTAssertEqual(reminderParts.hour, 15)
         XCTAssertEqual(reminderParts.minute, 0)
         let spaced = calendar.dateComponents([.hour, .minute], from: try XCTUnwrap(AssistantTime.parse("2030-01-02 15:30")))
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(secondsFromGMT: 0)!
+        let zoned = utc.dateComponents([.hour, .minute], from: try XCTUnwrap(AssistantTime.parse("2030-01-02 15:00Z")))
         XCTAssertEqual(spaced.hour, 15)
         XCTAssertEqual(spaced.minute, 30)
+        XCTAssertEqual(zoned.hour, 15)
+        XCTAssertEqual(zoned.minute, 0)
         let dayOnly = calendar.dateComponents([.hour, .minute], from: try XCTUnwrap(AssistantTime.parse("2030-01-02")))
         XCTAssertEqual(dayOnly.hour, 0)
         XCTAssertEqual(dayOnly.minute, 0)
@@ -1679,6 +1698,22 @@ import XCTest
         XCTAssertFalse(try String(contentsOf: root.appendingPathComponent("assistant.json"), encoding: .utf8).contains("Typed"))
         await data.waitForSave()
         XCTAssertTrue(try String(contentsOf: root.appendingPathComponent("assistant.json"), encoding: .utf8).contains("Typed"))
+        let untouched = try Data(contentsOf: root.appendingPathComponent("assistant.json"))
+        data.flushOutcomeEditsSynchronously()
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("assistant.json")), untouched,
+            "Quit does not rewrite the file when no edit is waiting")
+        var pending = edited
+        pending.summary = "Quit save"
+        data.updateOutcome(pending)
+        data.flushOutcomeEditsSynchronously()
+        XCTAssertTrue(try String(contentsOf: root.appendingPathComponent("assistant.json"), encoding: .utf8).contains("Quit save"))
+        let quitRoot = folder()
+        let sentinel = Data("kept".utf8)
+        try sentinel.write(to: quitRoot.appendingPathComponent("assistant.json"))
+        let early = AssistantDataStore(root: quitRoot)
+        early.flushOutcomeEditsSynchronously()
+        XCTAssertEqual(try Data(contentsOf: quitRoot.appendingPathComponent("assistant.json")), sentinel,
+            "Quit before load does not replace assistant.json with an empty document")
     }
 
     private func spin(_ predicate: () -> Bool) async throws {

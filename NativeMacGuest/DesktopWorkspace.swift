@@ -219,7 +219,7 @@ import UserNotifications
     }
     func windowDidChangeOcclusionState(_ notification: Notification) { synchronizeMeetingPresentationSoon() }
     func windowWillClose(_ notification: Notification) {
-        attention.store.assistant.flushOutcomeEditsSynchronously()
+        attention.store.assistant.flushOutcomeEdits()
         synchronizeMeetingPresentationSoon()
     }
     /// Window callbacks can arrive inside a SwiftUI update; media state changes after it.

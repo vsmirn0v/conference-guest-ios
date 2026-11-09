@@ -556,6 +556,32 @@ struct AttentionModelPicker: View {
     }
 }
 
+private struct PushToTalkWarning: View {
+    @ObservedObject var talk: AssistantTalkController
+    var body: some View {
+        if let warning = talk.hotKeyWarning {
+            Text(warning).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct HeadphoneApproval: View {
+    @ObservedObject var store: AttentionStore
+    var output: AssistantHeadphoneRoute.Snapshot?
+    var body: some View {
+        if let output {
+            if AssistantHeadphoneRoute.isHeadphoneSource(output.source) {
+                Text(L("Headphones detected.")).font(.caption).foregroundStyle(.secondary)
+            } else if AssistantHeadphoneRoute.isPeripheralTransport(output.transport) {
+                Toggle(L("This is a headphone"), isOn: Binding(get: { store.headphoneUIDs.contains(output.uid) },
+                                                              set: { store.setHeadphoneApproved(output.uid, $0) }))
+                Text(L("For a headset macOS does not report as a headphone jack. Built-in and external speakers cannot be marked."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 /// Settings → Assistant: attention, models, memory, voice and what leaves this Mac.
 struct NativeDesktopIntelligenceSettings: View {
     @ObservedObject var store: AttentionStore
@@ -574,6 +600,7 @@ struct NativeDesktopIntelligenceSettings: View {
     @State private var voiceFailed = false
     @ObservedObject private var listen = ListenModelStore.shared
     @ObservedObject private var clone = VoiceCloneStore.shared
+    @StateObject private var headphones = HeadphoneOutputMonitor()
 
     /// Provider and model as one line; the Apple judge has no model name to show.
     private func describe(_ provider: AttentionProvider) -> String {
@@ -755,19 +782,14 @@ struct NativeDesktopIntelligenceSettings: View {
             Section(L("Voice")) {
                 Toggle(L("Hold ⌥Space to talk to Assistant"), isOn: $store.pushToTalk)
                     .accessibilityIdentifier("assistant.pushToTalk")
-                Text(L("Hold it in this app or while another app is in front. The shortcut is not typed into the other app. The microphone is held back from the meeting and speech is recognized on this Mac only while the key is held, and listening stops within 30 seconds if the key release is missed. You can also type every command."))
+                Text(L("Hold it in this app or while another app is in front. While it is on, ⌥Space is not typed into any app, including as a non-breaking space. The microphone is held back from the meeting and speech is recognized on this Mac only while the key is held, and listening stops within 30 seconds if the key release is missed. You can also type every command."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                PushToTalkWarning(talk: attention.talk)
                 Toggle(L("Speak Assistant answers in headphones"), isOn: $store.talkBack)
                     .accessibilityIdentifier("assistant.talkBack")
                 Text(L("Off by default. Answers play for a headphone jack, or for a Bluetooth or USB device you mark below. Speakers stay off, and sound never goes into a meeting."))
-                if let device = AssistantHeadphoneRoute.outputDevice() {
-                    Toggle(L("This is a headphone"), isOn: Binding(get: { store.headphoneUIDs.contains(device.uid) },
-                                                                  set: { store.setHeadphoneApproved(device.uid, $0) }))
-                        .disabled(AssistantHeadphoneRoute.isSpeakerSource(device.source))
-                    Text(L("For a headset macOS does not report as a headphone jack. Built-in and external speakers cannot be marked."))
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                HeadphoneApproval(store: store, output: headphones.output)
                 Picker(L("Speak replies with"), selection: $store.voiceEngine) {
                     Text(L("The macOS voice")).tag(VoiceEngine.system)
                     Text(L("Rapid-MLX on this Mac")).tag(VoiceEngine.rapidMLX)

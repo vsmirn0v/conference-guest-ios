@@ -256,8 +256,6 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     private var momentLoadTask: Task<Void, Never>?
     /// Every journal append, from the main thread and from seen-marks, runs here in order.
     private let journalQueue = DispatchQueue(label: "attention.journal.append")
-    /// Test hook invoked on the queue that appends seen-marks, so file IO can be asserted off the main thread.
-    var journalHook: (@Sendable () -> Void)?
 
     init(root: URL? = nil, defaults: UserDefaults = .standard, keychain: AttentionKeychain = .init()) {
         let root = root ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
@@ -444,13 +442,15 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
 
     private func writeJournal(_ lines: [(Data, String)], wait: Bool) {
         let folder = decisionsFolder
-        let hook = journalHook
-        let work = {
-            hook?()
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            for (line, day) in lines {
-                let url = folder.appendingPathComponent(day + ".jsonl")
-                try? AttentionStore.appendLine(line, to: url)
+        let work: @Sendable () -> Void = {
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                for (line, day) in lines {
+                    let url = folder.appendingPathComponent(day + ".jsonl")
+                    try AttentionStore.appendLine(line, to: url)
+                }
+            } catch {
+                probeLog("attention-log-failed", ["lines": lines.count])
             }
         }
         if wait { journalQueue.sync(execute: work) } else { journalQueue.async(execute: work) }

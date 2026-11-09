@@ -319,7 +319,9 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         let id = model.sessionID
         guard store.shouldCaptureOutcome, !outcomeCaptures.contains(id) else { return }
         let window = MeetingOutcomePrompt.window(title: model.title, transcript: model.transcript,
-            chat: model.chat.items, yourName: model.displayName, now: now(), onDevice: store.effectiveWriter.onThisMac)
+            chat: model.chat.items, yourName: model.displayName, now: now(),
+            // Rapid-MLX is on this Mac but has a large context, so only the Apple model gets the compact window.
+            onDevice: store.effectiveWriter.kind == .apple)
         guard !window.lines.isEmpty else { return }
         outcomeCaptures.insert(id)
         let meetingID = id, title = model.title, invitation = model.invitation, series = model.calendarSeriesID

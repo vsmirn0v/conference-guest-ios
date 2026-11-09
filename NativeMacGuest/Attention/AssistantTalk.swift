@@ -43,12 +43,12 @@ import SwiftUI
     var headphoneRoute: () -> Bool = { false }
     var hotKeyMonitorCount: Int { monitors.count }
     var globalHotKeyInstalled: Bool { carbonHotKey != nil }
+    @Published var hotKeyWarning: String?
     private var pushToTalkTicket: AnyCancellable?
     nonisolated(unsafe) private var carbonHotKey: EventHotKeyRef?
     nonisolated(unsafe) private var carbonHandler: EventHandlerRef?
     /// Read by the local event callback without hopping to the main actor.
     nonisolated(unsafe) private var textFocusedCache = false
-    private var hotKeySafety: Task<Void, Never>?
     private var textFieldFocused: Bool {
         guard NSApp.isActive, let responder = NSApp.keyWindow?.firstResponder else { return false }
         return responder is NSTextView || responder is NSTextField
@@ -64,6 +64,8 @@ import SwiftUI
     deinit {
         if let carbonHotKey { UnregisterEventHotKey(carbonHotKey) }
         if let carbonHandler { RemoveEventHandler(carbonHandler) }
+        for monitor in monitors { NSEvent.removeMonitor(monitor) }
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
     }
 
     func submit(_ text: String) {
@@ -307,7 +309,9 @@ import SwiftUI
             }
             return event
         }) { monitors.append(monitor) }
-        for name in [NSText.didBeginEditingNotification, NSText.didEndEditingNotification, NSApplication.didBecomeActiveNotification] {
+        for name in [NSText.didBeginEditingNotification, NSText.didEndEditingNotification,
+                     NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+                     NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.refreshTextFocus() }
             })
@@ -335,34 +339,48 @@ import SwiftUI
         guard let event, let user else { return OSStatus(eventNotHandledErr) }
         let talk = Unmanaged<AssistantTalkController>.fromOpaque(user).takeUnretainedValue()
         let kind = GetEventKind(event)
-        let down = kind == EventKind(kEventHotKeyPressed)
-        let up = kind == EventKind(kEventHotKeyReleased)
+        let down = kind == UInt32(kEventHotKeyPressed)
+        let up = kind == UInt32(kEventHotKeyReleased)
         guard down || up else { return OSStatus(eventNotHandledErr) }
         Task { @MainActor in talk.carbonPressed(down) }
         return noErr
     }
 
     private func registerCarbonHotKey() {
-        var specs = [
+        let specs = [
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
         ]
         var handler: EventHandlerRef?
         let user = Unmanaged.passUnretained(self).toOpaque()
         let installed = specs.withUnsafeBufferPointer { buffer in
-            InstallEventHandler(GetApplicationEventTarget(), Self.carbonCallback, UInt32(buffer.count), buffer.baseAddress, user, &handler)
+            InstallEventHandler(GetApplicationEventTarget(), Self.carbonCallback, buffer.count, buffer.baseAddress, user, &handler)
         }
-        guard installed == noErr, let handler else { return }
+        guard installed == noErr, let handler else {
+            noteHotKeyFailure(installed)
+            return
+        }
         carbonHandler = handler
-        var hotKeyID = EventHotKeyID(signature: 0x50545431, id: 1) // 'PTT1'
+        let hotKeyID = EventHotKeyID(signature: 0x50545431, id: 1) // 'PTT1'
         var hotKey: EventHotKeyRef?
         let status = RegisterEventHotKey(UInt32(kVK_Space), UInt32(optionKey), hotKeyID, GetApplicationEventTarget(), 0, &hotKey)
         guard status == noErr, let hotKey else {
             RemoveEventHandler(handler)
             carbonHandler = nil
+            noteHotKeyFailure(status)
             return
         }
         carbonHotKey = hotKey
+        hotKeyWarning = nil
+    }
+
+    private func noteHotKeyFailure(_ status: OSStatus) {
+        probeLog("assistant-hotkey-failed", ["status": Int(status)])
+        if status == eventHotKeyExistsErr {
+            hotKeyWarning = L("⌥Space is used by another app, so it works only in this app.")
+        } else {
+            hotKeyWarning = L("Background ⌥Space could not be installed (%ld). It works only in this app.", Int(status))
+        }
     }
 
     private func unregisterCarbonHotKey() {
@@ -377,21 +395,13 @@ import SwiftUI
         if down {
             guard !textFieldFocused else { return }
             startPushToTalk()
-            hotKeySafety?.cancel()
-            hotKeySafety = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(30))
-                self?.stopPushToTalk()
-            }
         } else {
-            hotKeySafety?.cancel()
-            hotKeySafety = nil
             stopPushToTalk()
         }
     }
 
     func removeHotKey() {
-        hotKeySafety?.cancel()
-        hotKeySafety = nil
+        hotKeyWarning = nil
         stopPushToTalk()
         unregisterCarbonHotKey()
         for monitor in monitors { NSEvent.removeMonitor(monitor) }; monitors = []
@@ -524,7 +534,12 @@ enum AssistantHeadphoneRoute {
         if isSpeakerSource(source) { return false }
         return isPeripheralTransport(transport) && !deviceUID.isEmpty && approved.contains(deviceUID)
     }
-    static func outputDevice() -> (uid: String, source: UInt32, transport: UInt32)? {
+    struct Snapshot: Equatable {
+        var uid: String
+        var source: UInt32
+        var transport: UInt32
+    }
+    static func outputDevice() -> Snapshot? {
         var device = AudioDeviceID(0), size = UInt32(MemoryLayout<AudioDeviceID>.size)
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
@@ -543,11 +558,36 @@ enum AssistantHeadphoneRoute {
         address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceUID,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &unmanaged) == noErr, let unmanaged else { return nil }
-        return (unmanaged.takeRetainedValue() as String, source, transport)
+        return Snapshot(uid: unmanaged.takeRetainedValue() as String, source: source, transport: transport)
     }
     static func isConnected(approved: Set<String>) -> Bool {
         guard let device = outputDevice() else { return false }
         return accepts(source: device.source, transport: device.transport, deviceUID: device.uid, approved: approved)
+    }
+}
+
+/// Refreshes the settings row when the default output device changes.
+@MainActor final class HeadphoneOutputMonitor: ObservableObject {
+    @Published private(set) var output: AssistantHeadphoneRoute.Snapshot?
+    private var block: AudioObjectPropertyListenerBlock?
+    private var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+        mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+
+    init() {
+        refresh()
+        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            Task { @MainActor in self?.refresh() }
+        }
+        block = listener
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main, listener)
+    }
+
+    func refresh() { output = AssistantHeadphoneRoute.outputDevice() }
+
+    deinit {
+        if let block {
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main, block)
+        }
     }
 }
 

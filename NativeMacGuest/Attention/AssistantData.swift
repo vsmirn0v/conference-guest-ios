@@ -298,17 +298,11 @@ private struct AssistantDataDocument: Codable {
             do {
                 let document = try JSONDecoder.attention.decode(AssistantDataDocument.self, from: data)
                 guard document.degraded else { return (document, nil, 0, true) }
-                let backup = url.deletingLastPathComponent().appendingPathComponent("assistant.recovered.json")
-                do {
-                    try data.write(to: backup, options: .atomic)
-                    return (document, nil, document.droppedItems, true)
-                } catch { return (document, nil, document.droppedItems, false) }
+                let saved = writeAssistantBackup(data, nextTo: url, name: "assistant.recovered.json")
+                return (document, nil, document.droppedItems, saved)
             } catch {
-                let backup = url.deletingLastPathComponent().appendingPathComponent("assistant.corrupt.json")
-                do {
-                    try data.write(to: backup, options: .atomic)
-                    return (nil, error.localizedDescription, 0, true)
-                } catch { return (nil, error.localizedDescription, 0, false) }
+                let saved = writeAssistantBackup(data, nextTo: url, name: "assistant.corrupt.json")
+                return (nil, error.localizedDescription, 0, saved)
             }
         }.value
         loading = true
@@ -365,24 +359,27 @@ private struct AssistantDataDocument: Codable {
         persist()
     }
 
-    /// Quit and window close cannot wait for the debounced task.
+    /// Quit cannot wait for the debounce. Does nothing until load has finished and an edit is waiting,
+    /// and never writes the empty pre-load document over the file.
     func flushOutcomeEditsSynchronously() {
+        guard loaded, pendingOutcomeSave != nil, !retainOriginalFile else { return }
         pendingOutcomeSave?.cancel()
         pendingOutcomeSave = nil
-        guard !retainOriginalFile else { return }
         document.outcomes = outcomes
         document.memories = memories
         document.suggestions = suggestions
         document.retentionDays = retentionDays
+        let generation = fileWrites.bump()
+        saveGeneration = generation
         let snapshot = document, url = self.url
-        do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder.attention.encode(snapshot).write(to: url, options: .atomic)
+        if let error = fileWrites.syncIfCurrent(generation, { try writeAssistantDocument(snapshot, to: url) }) {
+            saveWarning = L("Assistant memory could not be saved. %@", error)
+        } else {
             saveWarning = nil
-        } catch {
-            saveWarning = L("Assistant memory could not be saved. %@", error.localizedDescription)
         }
     }
+
+    private let fileWrites = AssistantFileWrites()
 
     private func scheduleOutcomePersist() {
         pendingOutcomeSave?.cancel()
@@ -405,24 +402,15 @@ private struct AssistantDataDocument: Codable {
         document.memories = memories
         document.suggestions = suggestions
         document.retentionDays = retentionDays
-        saveGeneration += 1
-        let generation = saveGeneration, snapshot = document, url = self.url
+        let generation = fileWrites.bump()
+        saveGeneration = generation
+        let snapshot = document, url = self.url
         let previous = saveTask
         saveTask = Task { @MainActor [weak self] in
-            // Chain writes in snapshot order. Cancelling a detached file write cannot
-            // undo bytes already written, so the newest snapshot must always run last.
             await previous?.value
-            let error = await Task.detached(priority: .utility) { () -> String? in
-                do {
-                    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try JSONEncoder.attention.encode(snapshot).write(to: url, options: .atomic)
-                    return nil
-                } catch {
-                    probeLog("assistant-data-save-failed", ["generation": generation])
-                    return error.localizedDescription
-                }
-            }.value
             guard let self, self.saveGeneration == generation else { return }
+            let error = await self.fileWrites.write(generation: generation, snapshot: snapshot, url: url)
+            guard self.saveGeneration == generation else { return }
             self.saveWarning = error.map { L("Assistant memory could not be saved. %@", $0) }
             probeLog("assistant-data-saved", ["generation": generation, "failed": error != nil])
         }
@@ -610,5 +598,71 @@ private struct AssistantDataDocument: Codable {
                     invitation: outcome.invitation, seriesID: outcome.seriesID), at: 0)
             }
         }
+    }
+}
+
+private func writeAssistantDocument(_ snapshot: AssistantDataDocument, to url: URL) throws {
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try JSONEncoder.attention.encode(snapshot).write(to: url, options: .atomic)
+}
+
+/// Keeps the first backup. A later, different failure is stored beside it with a timestamp.
+private func writeAssistantBackup(_ data: Data, nextTo url: URL, name: String) -> Bool {
+    let folder = url.deletingLastPathComponent()
+    let primary = folder.appendingPathComponent(name)
+    let destination: URL
+    if FileManager.default.fileExists(atPath: primary.path) {
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let base = (name as NSString).deletingPathExtension
+        destination = folder.appendingPathComponent(base + "-" + stamp + ".json")
+        if FileManager.default.fileExists(atPath: destination.path) { return true }
+    } else {
+        destination = primary
+    }
+    do { try data.write(to: destination, options: .atomic); return true }
+    catch { return false }
+}
+
+/// Serializes assistant.json writes so a quit snapshot cannot be replaced by an older save.
+private final class AssistantFileWrites: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "assistant-data-file")
+    private let lock = NSLock()
+    private var generation = 0
+
+    func bump() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        generation += 1
+        return generation
+    }
+
+    func write(generation: Int, snapshot: AssistantDataDocument, url: URL) async -> String? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                guard self.isCurrent(generation) else { continuation.resume(returning: nil); return }
+                do {
+                    try writeAssistantDocument(snapshot, to: url)
+                    continuation.resume(returning: nil)
+                } catch {
+                    probeLog("assistant-data-save-failed", ["generation": generation])
+                    continuation.resume(returning: error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    func syncIfCurrent(_ generation: Int, _ body: () throws -> Void) -> String? {
+        queue.sync {
+            guard isCurrent(generation) else { return nil }
+            do { try body(); return nil }
+            catch {
+                probeLog("assistant-data-save-failed", ["generation": generation])
+                return error.localizedDescription
+            }
+        }
+    }
+
+    private func isCurrent(_ generation: Int) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return self.generation == generation
     }
 }
