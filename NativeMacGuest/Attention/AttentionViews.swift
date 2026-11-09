@@ -704,7 +704,7 @@ struct NativeDesktopIntelligenceSettings: View {
                     if store.provider.endpoint == nil { Text(L("Enter an http or https address.")).font(.caption).foregroundStyle(.red) }
                     HStack {
                         TextField(L("Model"), text: Binding(get: { store.provider.model },
-                            set: { store.provider.adopt(model: $0, contextLength: nil) }))
+                            set: { store.provider.adoptTyped($0) }))
                         Button(L("Choose…")) { choosingModel = true }.disabled(store.provider.endpoint == nil)
                             .help(L("Pick from the models this provider offers"))
                     }
@@ -764,7 +764,7 @@ struct NativeDesktopIntelligenceSettings: View {
                 }.disabled(!store.draftReplies)
                 if let kind = store.writerProvider?.kind, kind != .apple {
                     TextField(L("Writer model"), text: Binding(get: { store.writerProvider?.model ?? "" },
-                                                              set: { store.writerProvider?.adopt(model: $0, contextLength: nil) }))
+                                                              set: { store.writerProvider?.adoptTyped($0) }))
                         .disabled(!store.draftReplies)
                     keyField(for: store.effectiveWriter, text: $writerKey)
                     if store.effectiveWriter.needsKey && !store.hasKey(for: store.effectiveWriter) {

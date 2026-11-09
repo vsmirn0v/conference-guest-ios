@@ -179,17 +179,25 @@ enum AssistantCommandPrompt {
 enum AssistantTime {
     static func parse(_ text: String) -> Date? {
         let raw = text.trimmed
-        guard !raw.isEmpty else { return nil }
-        guard let normalized = normalize(raw) else { return nil }
+        guard !raw.isEmpty, let fields = fields(in: raw) else { return nil }
         // A date-only value is midnight in the local zone. It is only produced when the
         // input had no time, so it cannot swallow the prefix of a date-time.
-        if !normalized.contains("T") { return dateOnly(normalized) }
-        return timed(normalized)
+        let date = fields.hour == nil ? dateOnly(fields.normalized) : timed(fields.normalized)
+        guard let date, matches(date, fields) else { return nil }
+        return date
+    }
+
+    private struct Fields {
+        var year, month, day: Int
+        var hour: Int?
+        var minute: Int?
+        var zone: String
+        var normalized: String
     }
 
     /// Pads each field so `2030-1-2` and `2030-01-2T9:05` match the stock formatter.
-    /// A missing time stays date-only. A missing seconds field becomes `:00`.
-    private static func normalize(_ raw: String) -> String? {
+    /// A missing time stays date-only. A time that is present but out of range is rejected.
+    private static func fields(in raw: String) -> Fields? {
         let pattern = #"^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2})(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
@@ -202,15 +210,43 @@ enum AssistantTime {
         guard let year = group(1).flatMap(Int.init), let month = group(2).flatMap(Int.init),
               let day = group(3).flatMap(Int.init), (1...12).contains(month), (1...31).contains(day) else { return nil }
         let date = String(format: "%04d-%02d-%02d", year, month, day)
+        guard group(4) != nil else { return Fields(year: year, month: month, day: day, hour: nil, minute: nil, zone: "", normalized: date) }
         guard let hour = group(4).flatMap(Int.init), let minute = group(5).flatMap(Int.init),
-              (0...23).contains(hour), (0...59).contains(minute) else { return date }
+              (0...23).contains(hour), (0...59).contains(minute) else { return nil }
         let second = group(6).flatMap(Int.init) ?? 0
         guard (0...60).contains(second) else { return nil }
         var zone = group(8) ?? ""
         if zone.count == 5, zone.first == "+" || zone.first == "-" {
             zone.insert(":", at: zone.index(zone.startIndex, offsetBy: 3))
         }
-        return String(format: "%@T%02d:%02d:%02d%@%@", date, hour, minute, second, group(7) ?? "", zone)
+        let normalized = String(format: "%@T%02d:%02d:%02d%@%@", date, hour, minute, second, group(7) ?? "", zone)
+        return Fields(year: year, month: month, day: day, hour: hour, minute: minute, zone: zone, normalized: normalized)
+    }
+
+    /// The formatter accepts 30 February by rolling into March. Reject that.
+    private static func matches(_ date: Date, _ fields: Fields) -> Bool {
+        guard let zone = timeZone(for: fields.zone) else { return false }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        guard parts.year == fields.year, parts.month == fields.month, parts.day == fields.day else { return false }
+        if let hour = fields.hour, parts.hour != hour || parts.minute != fields.minute { return false }
+        return true
+    }
+
+    private static func timeZone(for zone: String) -> TimeZone? {
+        if zone.isEmpty { return .current }
+        if zone == "Z" { return TimeZone(secondsFromGMT: 0) }
+        let pattern = #"^([+-])(\d{2}):(\d{2})$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: zone, range: NSRange(zone.startIndex..., in: zone)),
+              match.numberOfRanges == 4,
+              let signRange = Range(match.range(at: 1), in: zone),
+              let hourRange = Range(match.range(at: 2), in: zone),
+              let minuteRange = Range(match.range(at: 3), in: zone),
+              let hours = Int(zone[hourRange]), let minutes = Int(zone[minuteRange]) else { return nil }
+        let sign = zone[signRange] == "-" ? -1 : 1
+        return TimeZone(secondsFromGMT: sign * (hours * 3600 + minutes * 60))
     }
 
     private static func dateOnly(_ value: String) -> Date? {

@@ -359,24 +359,26 @@ private struct AssistantDataDocument: Codable {
         persist()
     }
 
-    /// Quit cannot wait for the debounce. Does nothing until load has finished and an edit is waiting,
-    /// and never writes the empty pre-load document over the file.
+    /// Quit cannot wait for the debounce. A pending edit is written only after load has finished.
+    /// Queued saves are always allowed to finish, and the empty pre-load document is never written.
     func flushOutcomeEditsSynchronously() {
-        guard loaded, pendingOutcomeSave != nil, !retainOriginalFile else { return }
-        pendingOutcomeSave?.cancel()
-        pendingOutcomeSave = nil
-        document.outcomes = outcomes
-        document.memories = memories
-        document.suggestions = suggestions
-        document.retentionDays = retentionDays
-        let generation = fileWrites.bump()
-        saveGeneration = generation
-        let snapshot = document, url = self.url
-        if let error = fileWrites.syncIfCurrent(generation, { try writeAssistantDocument(snapshot, to: url) }) {
-            saveWarning = L("Assistant memory could not be saved. %@", error)
-        } else {
-            saveWarning = nil
+        if loaded, pendingOutcomeSave != nil, !retainOriginalFile {
+            pendingOutcomeSave?.cancel()
+            pendingOutcomeSave = nil
+            document.outcomes = outcomes
+            document.memories = memories
+            document.suggestions = suggestions
+            document.retentionDays = retentionDays
+            let generation = fileWrites.bump()
+            saveGeneration = generation
+            let snapshot = document, url = self.url
+            if let error = fileWrites.syncIfCurrent(generation, { try writeAssistantDocument(snapshot, to: url) }) {
+                saveWarning = L("Assistant memory could not be saved. %@", error)
+            } else {
+                saveWarning = nil
+            }
         }
+        fileWrites.drain()
     }
 
     private let fileWrites = AssistantFileWrites()
@@ -606,14 +608,24 @@ private func writeAssistantDocument(_ snapshot: AssistantDataDocument, to url: U
     try JSONEncoder.attention.encode(snapshot).write(to: url, options: .atomic)
 }
 
-/// Keeps the first backup. A later, different failure is stored beside it with a timestamp.
+/// Keeps the first backup. A later failure with different bytes is stored beside it.
+/// The same damaged bytes on a later launch do not add another copy.
 private func writeAssistantBackup(_ data: Data, nextTo url: URL, name: String) -> Bool {
     let folder = url.deletingLastPathComponent()
     let primary = folder.appendingPathComponent(name)
+    if (try? Data(contentsOf: primary)) == data { return true }
+    let base = (name as NSString).deletingPathExtension
+    let siblings = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+    let stamped = siblings.filter { $0.lastPathComponent.hasPrefix(base + "-") && $0.pathExtension == "json" }
+    let newest = stamped.max { lhs, rhs in
+        let left = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        let right = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        return left < right
+    }
+    if let newest, (try? Data(contentsOf: newest)) == data { return true }
     let destination: URL
     if FileManager.default.fileExists(atPath: primary.path) {
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let base = (name as NSString).deletingPathExtension
         destination = folder.appendingPathComponent(base + "-" + stamp + ".json")
         if FileManager.default.fileExists(atPath: destination.path) { return true }
     } else {
@@ -649,6 +661,9 @@ private final class AssistantFileWrites: @unchecked Sendable {
             }
         }
     }
+
+    /// Waits until every save already on the queue has finished.
+    func drain() { queue.sync {} }
 
     func syncIfCurrent(_ generation: Int, _ body: () throws -> Void) -> String? {
         queue.sync {

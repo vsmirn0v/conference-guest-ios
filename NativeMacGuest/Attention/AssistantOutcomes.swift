@@ -45,7 +45,8 @@ enum MeetingOutcomePrompt {
     static func messages(_ request: MeetingOutcomeRequest) -> [[String: String]] {
         let language = request.language.hasPrefix("ru") ? "Russian" : "English"
         let clock = ISO8601DateFormatter()
-        let lines = request.window.lines.map { line in
+        let lines = request.window.lines.map { line -> String in
+            if line.source == .note { return line.text }
             let time = line.at.map(clock.string(from:)) ?? ""
             return "\(time) \(line.speaker)\(line.isYou ? " (the user)" : "")\(line.source == .chat ? " [chat]" : ""): \(line.text)"
         }.joined(separator: "\n")
@@ -110,8 +111,9 @@ enum MeetingOutcomePrompt {
                     if readingKey { pendingKey = stringBody; readingKey = false }
                     else {
                         if pendingKey == "summary" { summaryClosed = true }
-                        // A string inside an unfinished task or array is not a complete value.
-                        if stack.count == 1 { markGood() }
+                        // A finished string in the root object, or a finished element of an array.
+                        // A string inside an unfinished task object (stack ends in "}") is not complete.
+                        if stack.count == 1 || stack.last == "]" { markGood() }
                     }
                     stringBody = ""
                 } else { stringBody.append(character) }
@@ -230,16 +232,22 @@ enum MeetingOutcomePrompt {
                 var combined = headItems
                 if omitted > 0 {
                     combined.append(.init(at: headItems.last?.at ?? .distantPast, order: order, line: .init(
-                        id: "omitted", ref: "", source: .speech, speaker: "", isYou: false,
-                        text: L("%ld lines omitted", omitted), at: nil, mentionsYou: false)))
+                        id: "omitted", ref: "", source: .note, speaker: "", isYou: false,
+                        text: "[… \(omitted) lines omitted …]", at: nil, mentionsYou: false)))
                 }
                 combined.append(contentsOf: tailItems.reversed())
                 chosen = combined
             }
         }
-        let lines = chosen.enumerated().map { index, item in
+        var number = 0
+        let lines = chosen.map { item -> AttentionWindow.Line in
             let line = item.line
-            return AttentionWindow.Line(id: line.id, ref: "L\(index + 1)", source: line.source, speaker: line.speaker,
+            if line.source == .note {
+                return AttentionWindow.Line(id: line.id, ref: "", source: .note, speaker: "", isYou: false,
+                    text: line.text, at: nil, mentionsYou: false)
+            }
+            number += 1
+            return AttentionWindow.Line(id: line.id, ref: "L\(number)", source: line.source, speaker: line.speaker,
                 isYou: line.isYou, text: line.text, at: line.at, mentionsYou: line.mentionsYou)
         }
         return .init(meetingTitle: title, lines: lines, reactions: [], joined: [], left: [], participantCount: 0,

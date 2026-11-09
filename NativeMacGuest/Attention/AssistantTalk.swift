@@ -46,6 +46,8 @@ import SwiftUI
     var hotKeyMonitorCount: Int { monitors.count }
     var globalHotKeyInstalled: Bool { carbonHotKey != nil }
     @Published var hotKeyWarning: String?
+    /// Set when Carbon registration fails. Keystrokes must not retry until install or the app becomes active.
+    private var lastHotKeyFailure: OSStatus?
     private var pushToTalkTicket: AnyCancellable?
     nonisolated(unsafe) private var carbonHotKey: EventHotKeyRef?
     nonisolated(unsafe) private var carbonHandler: EventHandlerRef?
@@ -293,10 +295,10 @@ import SwiftUI
 
     func installHotKey(enabled: Bool? = nil) {
         let on = enabled ?? (attention?.store.pushToTalk == true)
+        lastHotKeyFailure = nil
         removeHotKey()
         guard on else { return }
-        refreshTextFocus()
-        syncCarbonHotKey(enabled: true)
+        refreshTextFocus(retryRegistration: true)
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged], handler: { [weak self] event in
             guard let self else { return event }
             self.scheduleFocusRefresh()
@@ -315,8 +317,9 @@ import SwiftUI
         for name in [NSText.didBeginEditingNotification, NSText.didEndEditingNotification,
                      NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
                      NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
-            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.refreshTextFocus() }
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let retry = note.name == NSApplication.didBecomeActiveNotification
+                Task { @MainActor in self?.refreshTextFocus(retryRegistration: retry) }
             })
         }
     }
@@ -325,8 +328,9 @@ import SwiftUI
         Task { @MainActor [weak self] in self?.refreshTextFocus() }
     }
 
-    private func refreshTextFocus() {
+    private func refreshTextFocus(retryRegistration: Bool = false) {
         textFocusedCache = textFieldFocused
+        if retryRegistration { lastHotKeyFailure = nil }
         syncCarbonHotKey(enabled: attention?.store.pushToTalk == true)
     }
 
@@ -334,7 +338,8 @@ import SwiftUI
     /// `enabled` is passed in from the publisher because that fires before the property changes.
     private func syncCarbonHotKey(enabled: Bool) {
         let want = enabled && !textFocusedCache
-        if want, carbonHotKey == nil { registerCarbonHotKey() }
+        // A failed registration stays failed until install or the app becomes active.
+        if want, carbonHotKey == nil, lastHotKeyFailure == nil { registerCarbonHotKey() }
         if !want { unregisterCarbonHotKey() }
     }
 
@@ -374,16 +379,19 @@ import SwiftUI
             return
         }
         carbonHotKey = hotKey
-        hotKeyWarning = nil
+        lastHotKeyFailure = nil
+        if hotKeyWarning != nil { hotKeyWarning = nil }
     }
 
     private func noteHotKeyFailure(_ status: OSStatus) {
+        let previous = lastHotKeyFailure
+        lastHotKeyFailure = status
+        guard previous != status else { return }
         probeLog("assistant-hotkey-failed", ["status": Int(status)])
-        if status == eventHotKeyExistsErr {
-            hotKeyWarning = L("⌥Space is used by another app, so it works only in this app.")
-        } else {
-            hotKeyWarning = L("Background ⌥Space could not be installed (%ld). It works only in this app.", Int(status))
-        }
+        let warning = status == eventHotKeyExistsErr
+            ? L("⌥Space is used by another app, so it works only in this app.")
+            : L("Background ⌥Space could not be installed (%ld). It works only in this app.", Int(status))
+        if hotKeyWarning != warning { hotKeyWarning = warning }
     }
 
     private func unregisterCarbonHotKey() {
@@ -568,6 +576,7 @@ enum AssistantHeadphoneRoute {
         return isPeripheralTransport(transport) && !deviceUID.isEmpty && approved.contains(deviceUID)
     }
     struct Snapshot: Equatable {
+        var deviceID: AudioDeviceID
         var uid: String
         var source: UInt32
         var transport: UInt32
@@ -591,7 +600,7 @@ enum AssistantHeadphoneRoute {
         address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceUID,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &unmanaged) == noErr, let unmanaged else { return nil }
-        return Snapshot(uid: unmanaged.takeRetainedValue() as String, source: source, transport: transport)
+        return Snapshot(deviceID: device, uid: unmanaged.takeRetainedValue() as String, source: source, transport: transport)
     }
     static func isConnected(approved: Set<String>) -> Bool {
         guard let device = outputDevice() else { return false }
@@ -599,27 +608,47 @@ enum AssistantHeadphoneRoute {
     }
 }
 
-/// Refreshes the settings row when the default output device changes.
+/// Refreshes the settings row when the default output device changes, and when that device's jack changes.
 @MainActor final class HeadphoneOutputMonitor: ObservableObject {
     @Published private(set) var output: AssistantHeadphoneRoute.Snapshot?
-    private var block: AudioObjectPropertyListenerBlock?
-    private var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+    private var listener: AudioObjectPropertyListenerBlock?
+    private var defaultAddress = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
         mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    private var sourceAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDataSource,
+        mScope: kAudioDevicePropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
+    private var watchedDevice: AudioDeviceID = 0
 
     init() {
-        refresh()
-        let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             Task { @MainActor in self?.refresh() }
         }
-        block = listener
-        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main, listener)
+        listener = block
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &defaultAddress, DispatchQueue.main, block)
+        refresh()
     }
 
-    func refresh() { output = AssistantHeadphoneRoute.outputDevice() }
+    func refresh() {
+        let next = AssistantHeadphoneRoute.outputDevice()
+        if output != next { output = next }
+        watchSource(of: next?.deviceID ?? 0)
+    }
+
+    private func watchSource(of device: AudioDeviceID) {
+        guard let listener else { return }
+        if watchedDevice != 0, watchedDevice != device {
+            AudioObjectRemovePropertyListenerBlock(watchedDevice, &sourceAddress, DispatchQueue.main, listener)
+            watchedDevice = 0
+        }
+        guard device != 0, device != watchedDevice else { return }
+        AudioObjectAddPropertyListenerBlock(device, &sourceAddress, DispatchQueue.main, listener)
+        watchedDevice = device
+    }
 
     deinit {
-        if let block {
-            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main, block)
+        guard let listener else { return }
+        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &defaultAddress, DispatchQueue.main, listener)
+        if watchedDevice != 0 {
+            AudioObjectRemovePropertyListenerBlock(watchedDevice, &sourceAddress, DispatchQueue.main, listener)
         }
     }
 }

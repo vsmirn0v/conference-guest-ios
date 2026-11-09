@@ -146,7 +146,7 @@ struct AttentionProfile: Codable, Equatable, Sendable {
 /// What the judge reads for one meeting: its recent conversation and your state.
 struct AttentionWindow: Equatable, Sendable, Codable {
     struct Line: Equatable, Sendable, Codable {
-        enum Source: String, Codable, Sendable { case speech, chat }
+        enum Source: String, Codable, Sendable { case speech, chat, note }
         /// Stable id of the transcript line or chat message.
         let id: String
         /// Short reference the judge cites, such as "L3".

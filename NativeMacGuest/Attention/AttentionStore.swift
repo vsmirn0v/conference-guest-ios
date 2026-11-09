@@ -25,6 +25,36 @@ struct AttentionProvider: Codable, Equatable, Sendable {
         self.contextLength = contextLength
     }
 
+    /// A text field writing the same string back must not drop a catalogued length.
+    mutating func adoptTyped(_ text: String) {
+        guard text != model else { return }
+        model = text
+        contextLength = nil
+    }
+
+    /// Context windows OpenAI's model list does not report. More specific ids are listed first.
+    static let openAIFallbackContextTokens = 128_000
+    static func knownContextLength(model: String) -> Int? {
+        let bare = model.lowercased().split(separator: "/").last.map(String.init) ?? model.lowercased()
+        let table: [(String, Int)] = [
+            ("gpt-4.1", 1_047_576),
+            ("gpt-4o", 128_000),
+            ("gpt-4-turbo", 128_000),
+            ("gpt-4-32k", 32_768),
+            ("gpt-3.5-turbo", 16_385),
+            ("gpt-4", 8_192),
+            ("o4-mini", 200_000),
+            ("o3-mini", 200_000),
+            ("o3", 200_000),
+            ("o1-mini", 128_000),
+            ("o1", 200_000),
+        ]
+        for (prefix, tokens) in table where bare == prefix || bare.hasPrefix(prefix + "-") {
+            return tokens
+        }
+        return nil
+    }
+
     static let rapidMLXModel = "qwen3.5-4b-4bit"
     static let defaults: [Kind: AttentionProvider] = [
         .openAI: .init(kind: .openAI, baseURL: "https://api.openai.com/v1", model: "gpt-4.1-mini"),
@@ -262,7 +292,9 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     var outcomeContextTokens: Int? {
         let writer = effectiveWriter
         if let length = writer.contextLength { return length }
-        if writer.model == provider.model { return provider.contextLength }
+        if writer.model == provider.model, let length = provider.contextLength { return length }
+        if let known = AttentionProvider.knownContextLength(model: writer.model) { return known }
+        if writer.kind == .openAI { return AttentionProvider.openAIFallbackContextTokens }
         return nil
     }
     var writerConfigured: Bool {
@@ -319,7 +351,9 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         voiceBaseURL = defaults.string(forKey: Self.voiceBaseURLKey) ?? AttentionProvider.defaults[.rapidMLX]!.baseURL
         generateOutcomes = defaults.object(forKey: Self.outcomesKey) as? Bool ?? true
         remoteOutcomes = defaults.bool(forKey: Self.remoteOutcomesKey)
-        // Off until chosen. A global hotkey can open the microphone while another app is in front.
+        // Off until chosen. A stored on or off value is unchanged. Someone who used the old implicit
+        // default never wrote this key, and nothing else records that they held the shortcut, so an
+        // upgrade stays off. The release note says so.
         pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? false
         talkBack = defaults.bool(forKey: Self.talkBackKey)
         headphoneUIDs = Set(defaults.stringArray(forKey: Self.headphoneUIDsKey) ?? [])

@@ -164,6 +164,7 @@ struct ComparisonScore: Equatable {
     @Published private(set) var done = 0
     @Published private(set) var total = 0
     @Published private(set) var candidateModel = ""
+    @Published private(set) var candidateContext: Int?
 
     var judge: (AttentionProvider, String?, [[String: String]], AttentionWindow) async throws -> JudgeResult = {
         try await OpenAIChatJudge(provider: $0, key: $1).judge(messages: $2, window: $3)
@@ -195,11 +196,13 @@ struct ComparisonScore: Equatable {
 
     /// Runs up to `limit` decisions and `draftLimit` drafts through `model` at
     /// the configured provider, one request at a time.
-    func run(model: String, provider: AttentionProvider, key: String?, limit: Int, draftLimit: Int) {
+    func run(model: String, provider: AttentionProvider, key: String?, limit: Int, draftLimit: Int, contextLength: Int? = nil) {
         task?.cancel()
-        var candidate = provider; candidate.model = model.trimmed
+        var candidate = provider
+        candidate.adopt(model: model.trimmed, contextLength: contextLength)
         let chosen = Array(cases.prefix(limit)), chosenDrafts = Array(drafts.prefix(draftLimit))
         candidateModel = candidate.model
+        candidateContext = contextLength
         rows = chosen.map { Row(item: $0) }; draftRows = chosenDrafts.map { DraftRow(item: $0) }
         done = 0; total = chosen.count + chosenDrafts.count; running = total > 0
         guard running else { return }

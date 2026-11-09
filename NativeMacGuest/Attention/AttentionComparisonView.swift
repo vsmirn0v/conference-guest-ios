@@ -8,6 +8,7 @@ struct AttentionComparisonView: View {
     @StateObject private var comparison = ModelComparison()
     @Environment(\.dismiss) private var dismiss
     @State private var model = ""
+    @State private var modelContext: Int?
     @State private var limit = 30
     @State private var draftLimit = 10
     @State private var choosingModel = false
@@ -26,7 +27,7 @@ struct AttentionComparisonView: View {
             HStack {
                 if !comparison.running, comparison.candidateScore.judged > 0, comparison.candidateModel != store.provider.model {
                     Button(L("Use %@ for the judge", comparison.candidateModel)) {
-                        store.provider.adopt(model: comparison.candidateModel, contextLength: nil)
+                        store.provider.adopt(model: comparison.candidateModel, contextLength: comparison.candidateContext)
                     }
                 }
                 Spacer()
@@ -35,7 +36,10 @@ struct AttentionComparisonView: View {
         }
         .padding(20).frame(width: 720, height: 680)
         .onAppear { comparison.load(from: store) }
-        .sheet(isPresented: $choosingModel) { AttentionModelPicker(store: store, chosen: model, onSelect: { model = $0.id }) }
+        .sheet(isPresented: $choosingModel) { AttentionModelPicker(store: store, chosen: model, onSelect: { picked in
+            model = picked.id
+            modelContext = picked.contextLength
+        }) }
     }
 
     private var setup: some View {
@@ -45,7 +49,10 @@ struct AttentionComparisonView: View {
                 Text(L("%ld saved decisions, %ld of them with your choice; %ld drafted replies.",
                        comparison.cases.count, labelled, comparison.drafts.count)).font(.callout)
                 HStack {
-                    TextField(L("Model to compare"), text: $model, prompt: Text(store.provider.model))
+                    TextField(L("Model to compare"), text: Binding(get: { model }, set: { newValue in
+                        if newValue != model { modelContext = nil }
+                        model = newValue
+                    }), prompt: Text(store.provider.model))
                     Button(L("Choose…")) { choosingModel = true }
                 }
                 HStack(spacing: 16) {
@@ -56,7 +63,7 @@ struct AttentionComparisonView: View {
                         Button(L("Stop")) { comparison.cancel() }
                     } else {
                         Button(L("Compare")) {
-                            comparison.run(model: model, provider: store.provider, key: store.apiKey(), limit: limit, draftLimit: draftLimit)
+                            comparison.run(model: model, provider: store.provider, key: store.apiKey(), limit: limit, draftLimit: draftLimit, contextLength: modelContext)
                         }.buttonStyle(.borderedProminent)
                             .disabled(model.trimmed.isEmpty || comparison.cases.isEmpty && comparison.drafts.isEmpty)
                     }
