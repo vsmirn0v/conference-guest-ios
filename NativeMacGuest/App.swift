@@ -227,6 +227,7 @@ struct NativeGuestApplication {
         return .terminateLater
     }
     func applicationWillTerminate(_ notification: Notification) {
+        workspace?.attention.store.assistant.flushOutcomeEditsSynchronously()
         #if NATIVE_DIRECT_UPDATES
         updates?.willTerminate()
         #endif

@@ -5,6 +5,7 @@ struct AssistantOutcomesView: View {
     @ObservedObject var attention: AttentionCoordinator
     @ObservedObject private var data: AssistantDataStore
     @State private var selectedID: UUID?
+    @State private var pendingSend: (outcome: UUID, meeting: UUID)?
 
     init(attention: AttentionCoordinator) {
         self.attention = attention
@@ -54,6 +55,7 @@ struct AssistantOutcomesView: View {
             }
         }
         .onAppear { if selectedID == nil { selectedID = data.outcomes.first?.id } }
+        .onDisappear { data.flushOutcomeEdits() }
         .onChange(of: data.outcomes.map(\.id)) { ids in
             if let selectedID, !ids.contains(selectedID) { self.selectedID = ids.first }
             else if self.selectedID == nil { self.selectedID = ids.first }
@@ -74,10 +76,33 @@ struct AssistantOutcomesView: View {
                     Button(L("Copy as text")) {
                         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(outcome.shareText, forType: .string)
                     }
-                    Button(L("Send to meeting chat")) { _ = attention.sendOutcome(outcome) }
-                        .disabled(!attention.meetings().contains { !$0.isClosed && $0.invitation == outcome.invitation && $0.chat.canSend })
+                    Button(L("Send to meeting chat")) {
+                        if let target = attention.outcomeChatTarget(outcome) {
+                            pendingSend = (outcome.id, target.sessionID)
+                        }
+                    }
+                    .disabled(attention.outcomeChatTarget(outcome) == nil)
                 }
-                if let error = attention.outcomeStatus[outcome.id] ?? outcome.meetingID.flatMap({ attention.outcomeStatus[$0] }) {
+                if pendingSend?.outcome == outcome.id, let meetingID = pendingSend?.meeting,
+                   let target = attention.meetings().first(where: { $0.sessionID == meetingID && !$0.isClosed }) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(L("Send this outcome to the chat of “%@”?", target.title)).font(.headline)
+                        if target.sessionID != outcome.meetingID {
+                            Text(L("This is the meeting open now. The outcome is from an earlier occurrence."))
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        Text(outcome.summary).font(.callout).foregroundStyle(.secondary).lineLimit(4)
+                        HStack {
+                            Button(L("Confirm")) {
+                                pendingSend = nil
+                                _ = attention.sendOutcome(outcome, to: meetingID)
+                            }.buttonStyle(.borderedProminent).accessibilityIdentifier("assistant.outcome.confirm")
+                            Button(L("Cancel"), role: .cancel) { pendingSend = nil }
+                        }
+                    }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                }
+                if let error = attention.outcomeError[outcome.id] ?? outcome.meetingID.flatMap({ attention.outcomeError[$0] }) {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
                 GroupBox(L("Summary")) {
@@ -157,6 +182,20 @@ struct AssistantOutcomesView: View {
                 }
                 Button(L("Add line")) { values.wrappedValue.append("") }
             }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// "Last time" on the home screen. Observes assistant data on its own.
+struct AssistantLastOutcome: View {
+    @ObservedObject var assistant: AssistantDataStore
+    var invitation: URL?
+    var series: String?
+    var before: Date
+
+    var body: some View {
+        if let outcome = assistant.latestOutcome(invitation: invitation, series: series, before: before) {
+            LastTimeView(outcome: outcome)
         }
     }
 }

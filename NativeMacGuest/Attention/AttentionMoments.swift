@@ -84,15 +84,20 @@ struct AttentionMomentHistory: Equatable, Sendable {
             moment.provider = record.provider
             moment.model = record.model
             moment.latency = TimeInterval(record.latencyMilliseconds ?? 0) / 1000
-            moment.updatedAt = record.at
-            moment.state = record.outcome == .shown ? .live : .missed
-            if record.outcome == .crowdedOut { moment.seen = false }
+            if record.at >= moment.updatedAt { moment.updatedAt = record.at }
+            // A later card must not turn an answered, dismissed, or declined Moment back into Missed.
+            if ![.answered, .dismissed, .notForMe].contains(moment.state) {
+                moment.state = record.outcome == .shown ? .live : .missed
+            }
+            if record.outcome == .crowdedOut, moment.state != .answered { moment.seen = false }
             moment.mode = record.mode ?? moment.mode
             moment.mentioned = record.mentioned ?? moment.mentioned
             moment.memory = record.memory ?? moment.memory
             momentsByID[decisionID] = moment
         case .missed:
-            update(decisionID, record: record) { $0.state = .missed }
+            update(decisionID, record: record) {
+                if ![.answered, .dismissed, .notForMe].contains($0.state) { $0.state = .missed }
+            }
         case .opened, .replied, .reacted, .spoken:
             update(decisionID, record: record) {
                 $0.state = .answered; $0.seen = true
@@ -123,6 +128,11 @@ struct AttentionMomentHistory: Equatable, Sendable {
         }
     }
 
+    mutating func drop(olderThan cutoff: Date) {
+        momentsByID = momentsByID.filter { $0.value.updatedAt >= cutoff || $0.value.createdAt >= cutoff }
+        quietByMeeting = quietByMeeting.filter { $0.value.latestAt >= cutoff }
+    }
+
     /// Old overlays cannot survive a process restart, so unresolved Live items
     /// are retained as Missed when history is restored.
     mutating func settleHistoricalLive() {
@@ -146,34 +156,38 @@ struct AttentionMomentHistory: Equatable, Sendable {
 
     private mutating func update(_ id: UUID, record: AttentionDecisionRecord, _ change: (inout AttentionMoment) -> Void) {
         guard var moment = momentsByID[id] else { return }
-        change(&moment); moment.updatedAt = record.at; momentsByID[id] = moment
+        let updatedAt = moment.updatedAt
+        change(&moment)
+        if record.outcome != .seen, record.at >= updatedAt { moment.updatedAt = record.at }
+        momentsByID[id] = moment
     }
 }
 
 /// File IO is deliberately outside the MainActor store and performed only at launch.
 enum AttentionDecisionJournal {
-    static func read(root: URL) -> [AttentionDecisionRecord] {
+    static func read(root: URL) -> (records: [AttentionDecisionRecord], dropped: Int) {
         let folder = root.appendingPathComponent("decisions", isDirectory: true)
         let files = ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "jsonl" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
         let decoder = JSONDecoder.attention
         var records: [AttentionDecisionRecord] = []
+        var dropped = 0
         for url in files {
             guard let data = try? Data(contentsOf: url) else { continue }
             let text = String(decoding: data, as: UTF8.self)
             for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
                 if let record = try? decoder.decode(AttentionDecisionRecord.self, from: Data(line.utf8)) { records.append(record) }
+                else { dropped += 1 }
             }
         }
-        return records
+        return (records, dropped)
     }
 
+    /// Replays the journal in file order. Sorting by `at` would move a same-second
+    /// follow-up ahead of the decision that created the Moment when the clock has no fractions.
     static func reduce(_ records: [AttentionDecisionRecord]) -> AttentionMomentHistory {
         var history = AttentionMomentHistory()
-        let ordered = records.enumerated().sorted {
-            $0.element.at == $1.element.at ? $0.offset < $1.offset : $0.element.at < $1.element.at
-        }
-        for (_, record) in ordered { history.apply(record) }
+        for record in records { history.apply(record) }
         history.settleHistoricalLive()
         return history
     }

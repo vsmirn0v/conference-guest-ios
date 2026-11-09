@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import ConferenceCore
 import LiveKitWebRTC
@@ -1248,10 +1249,69 @@ import XCTest
 
         let now = Date()
         let transcript = (0..<300).map { message("t\($0)", "Anna", "line \($0)", now.addingTimeInterval(Double($0))) }
-        let window = MeetingOutcomePrompt.window(title: "infra", transcript: transcript, chat: [], yourName: "Vitalii", now: now)
-        XCTAssertEqual(window.lines.count, 240)
-        XCTAssertEqual(window.lines.first?.id, "t60")
-        XCTAssertEqual(window.lines.last?.ref, "L240")
+        let window = MeetingOutcomePrompt.window(title: "infra", transcript: transcript, chat: [], yourName: "Vitalii", now: now, onDevice: true)
+        XCTAssertEqual(window.lines.count, MeetingOutcomePrompt.maxLines)
+        XCTAssertEqual(window.lines.first?.id, "t240")
+        XCTAssertEqual(window.lines.last?.ref, "L60")
+        XCTAssertLessThanOrEqual(window.lines.reduce(0) { $0 + $1.text.count }, MeetingOutcomePrompt.maxCharacters)
+        let remote = MeetingOutcomePrompt.window(title: "infra", transcript: transcript, chat: [], yourName: "Vitalii", now: now)
+        XCTAssertEqual(remote.lines.first?.id, "t0")
+        XCTAssertEqual(remote.lines.last?.id, "t299")
+        XCTAssertGreaterThan(remote.lines.count, window.lines.count)
+        XCTAssertEqual(MeetingOutcomePrompt.remoteCharacterBudget(contextTokens: nil),
+            MeetingOutcomePrompt.remoteCharacterBudget(contextTokens: MeetingOutcomePrompt.unknownContextTokens))
+        XCTAssertLessThan(MeetingOutcomePrompt.remoteCharacterBudget(contextTokens: nil), 20_000,
+            "An unknown model is given a small window, not the 80,000-character ceiling")
+        XCTAssertEqual(MeetingOutcomePrompt.remoteCharacterBudget(contextTokens: 128_000), MeetingOutcomePrompt.maxRemoteCharacters)
+        let long = (0..<80).map { message("L\($0)", "Anna", String(repeating: "x", count: 2_000), now.addingTimeInterval(Double($0))) }
+        let clipped = MeetingOutcomePrompt.window(title: "infra", transcript: long, chat: [], yourName: "Vitalii", now: now)
+        XCTAssertEqual(clipped.lines.first?.id, "L0")
+        XCTAssertEqual(clipped.lines.last?.id, "L79")
+        XCTAssertTrue(clipped.lines.contains { $0.id == "omitted" }, "A gap between the kept ends is marked so they are not read as continuous")
+        let marker = try XCTUnwrap(clipped.lines.first { $0.id == "omitted" })
+        XCTAssertEqual(marker.ref, "", "The gap is not a citable line")
+        XCTAssertEqual(marker.source, .note)
+        XCTAssertTrue(marker.text.hasPrefix("[… ") && marker.text.hasSuffix(" lines omitted …]"))
+        let prompt = MeetingOutcomePrompt.messages(.init(meetingTitle: "infra", endedAt: now, window: clipped, language: "en"))
+            .first { $0["role"] == "user" }?["content"] ?? ""
+        XCTAssertTrue(prompt.contains(marker.text))
+        XCTAssertFalse(prompt.contains(": " + marker.text), "The gap is not labelled as someone's speech")
+        let smallBudget = MeetingOutcomePrompt.remoteCharacterBudget(contextTokens: 4_096)
+        let small = MeetingOutcomePrompt.window(title: "infra", transcript: long, chat: [], yourName: "Vitalii", now: now, contextTokens: 4_096)
+        let wide = MeetingOutcomePrompt.window(title: "infra", transcript: long, chat: [], yourName: "Vitalii", now: now, contextTokens: 128_000)
+        XCTAssertEqual(small.lines.first?.id, "L0")
+        XCTAssertEqual(small.lines.last?.id, "L79")
+        XCTAssertTrue(small.lines.contains { $0.id == "omitted" })
+        XCTAssertLessThanOrEqual(small.lines.filter { $0.id != "omitted" }.reduce(0) { $0 + $1.text.count }, smallBudget)
+        XCTAssertLessThan(small.lines.filter { $0.id != "omitted" }.count, wide.lines.filter { $0.id != "omitted" }.count)
+        let tight = MeetingOutcomePrompt.window(title: "infra", transcript: transcript, chat: [], yourName: "Vitalii", now: now, contextTokens: 3_300)
+        XCTAssertEqual(tight.lines.first?.id, "t0")
+        XCTAssertEqual(tight.lines.last?.id, "t299")
+        XCTAssertTrue(tight.lines.contains { $0.id == "omitted" })
+        let legacy = #"{"kind":"openRouter","baseURL":"https://openrouter.ai/api/v1","model":"small"}"#
+        let decoded = try JSONDecoder().decode(AttentionProvider.self, from: Data(legacy.utf8))
+        XCTAssertNil(decoded.contextLength, "A saved provider without a catalog length still loads")
+        let fresh = store()
+        XCTAssertEqual(fresh.outcomeContextTokens, 1_047_576, "gpt-4.1-mini is a known large OpenAI context, not the 8k default")
+        fresh.provider.adopt(model: "gpt-4", contextLength: nil)
+        XCTAssertEqual(fresh.outcomeContextTokens, 8_192)
+        fresh.provider.adopt(model: "mystery-model", contextLength: nil)
+        XCTAssertEqual(fresh.outcomeContextTokens, AttentionProvider.openAIFallbackContextTokens)
+        fresh.provider = AttentionProvider(kind: .openRouter, baseURL: "https://openrouter.ai/api/v1", model: "mystery-model")
+        XCTAssertNil(fresh.outcomeContextTokens, "An unknown OpenRouter model keeps the small default")
+        fresh.provider.adopt(model: "small", contextLength: 4_096)
+        var typed = fresh.provider
+        typed.adoptTyped("small")
+        XCTAssertEqual(typed.contextLength, 4_096, "Writing the same model text back keeps the catalogued length")
+        typed.adoptTyped("typed-by-hand")
+        XCTAssertNil(typed.contextLength)
+        XCTAssertEqual(fresh.outcomeContextTokens, 4_096)
+        fresh.writerProvider = AttentionProvider(kind: .openRouter, baseURL: "https://openrouter.ai/api/v1", model: "other")
+        XCTAssertNil(fresh.outcomeContextTokens, "A different writer with no catalog length uses the conservative default")
+        fresh.writerProvider?.adopt(model: "small", contextLength: nil)
+        XCTAssertEqual(fresh.outcomeContextTokens, 4_096, "The same model id reuses the length stored for the judge")
+        XCTAssertEqual(AssistantCaptureLimit.sampleLimit, AssistantCaptureLimit.holdSeconds * AssistantCaptureLimit.sampleRate)
+        XCTAssertEqual(AssistantCaptureLimit.holdSeconds, 30)
     }
 
     func testAssistantDataPersistsEditsAndFindsLastTime() async throws {
@@ -1375,7 +1435,7 @@ import XCTest
             let data = try JSONSerialization.data(withJSONObject: object)
             let command = try AssistantCommandPrompt.parse(String(decoding: data, as: UTF8.self), context: context)
             XCTAssertEqual(command.action, action)
-            XCTAssertEqual(command.needsConfirmation, [.sendChat, .say, .react, .leave].contains(action))
+            XCTAssertEqual(command.needsConfirmation, [.sendChat, .say, .react, .leave, .join].contains(action))
         }
         let unknown = #"{"action":"join","meeting":"\#(UUID().uuidString)","moment":"","mode":"","scope":"","text":"","fact":"","reaction":"","n":5,"minutes":10,"at":""}"#
         XCTAssertThrowsError(try AssistantCommandPrompt.parse(unknown, context: context)) {
@@ -1470,14 +1530,13 @@ import XCTest
         XCTAssertTrue(AssistantHeadphoneRoute.isHeadphoneSource(0x6864706e))
         XCTAssertFalse(AssistantHeadphoneRoute.isHeadphoneSource(0x73706b72), "Built-in speakers never qualify")
         XCTAssertFalse(AssistantHeadphoneRoute.isHeadphoneSource(0), "Unknown output routes fail closed")
-        XCTAssertTrue(AssistantHeadphoneRoute.isBluetoothHeadphone(name: "Виталий’s AirPods Pro",
-            transport: AssistantHeadphoneRoute.bluetoothTransport))
-        XCTAssertTrue(AssistantHeadphoneRoute.isBluetoothHeadphone(name: "Wireless Headset",
-            transport: AssistantHeadphoneRoute.bluetoothTransport))
-        XCTAssertFalse(AssistantHeadphoneRoute.isBluetoothHeadphone(name: "Bluetooth Speaker",
-            transport: AssistantHeadphoneRoute.bluetoothTransport), "Unknown Bluetooth speakers stay fail-closed")
-        XCTAssertFalse(AssistantHeadphoneRoute.isBluetoothHeadphone(name: "AirPods", transport: 0),
-            "A headphone-like name on a non-Bluetooth route is not sufficient")
+        XCTAssertTrue(AssistantHeadphoneRoute.accepts(source: AssistantHeadphoneRoute.headphonesDataSource, transport: 0, deviceUID: "jack", approved: []))
+        XCTAssertFalse(AssistantHeadphoneRoute.accepts(source: 0, transport: AssistantHeadphoneRoute.bluetoothTransport, deviceUID: "airpods", approved: []),
+            "Bluetooth stays closed until this device is marked")
+        XCTAssertTrue(AssistantHeadphoneRoute.accepts(source: 0, transport: AssistantHeadphoneRoute.bluetoothTransport, deviceUID: "airpods", approved: ["airpods"]))
+        XCTAssertTrue(AssistantHeadphoneRoute.accepts(source: 0, transport: AssistantHeadphoneRoute.usbTransport, deviceUID: "usb-headset", approved: ["usb-headset"]))
+        XCTAssertFalse(AssistantHeadphoneRoute.accepts(source: AssistantHeadphoneRoute.internalSpeaker, transport: 0, deviceUID: "speakers", approved: ["speakers"]),
+            "Built-in speakers cannot be opted in")
     }
 
     func testMemoryIsBoundedRelevantAndInspectableInHistory() async throws {
@@ -1505,6 +1564,249 @@ import XCTest
         let decoded = try JSONDecoder.attention.decode(AttentionDecisionRecord.self,
             from: JSONSerialization.data(withJSONObject: object))
         XCTAssertNil(decoded.memory)
+    }
+
+    func testReviewFixesForPrivacyDecodeJournalAndPushToTalk() async throws {
+        let fresh = store()
+        XCTAssertFalse(fresh.pushToTalk, "A global hotkey stays off until the person turns it on")
+        fresh.provider = AttentionProvider.defaults[.openAI]!
+        XCTAssertTrue(fresh.setAPIKey("sk-test"))
+        fresh.generateOutcomes = true
+        fresh.enabled = false
+        XCTAssertFalse(fresh.shouldCaptureOutcome, "Attention off never sends a transcript to a remote writer")
+        fresh.enabled = true
+        XCTAssertFalse(fresh.remoteOutcomes)
+        XCTAssertFalse(fresh.shouldCaptureOutcome, "Remote outcome generation is off until an explicit opt-in")
+        fresh.remoteOutcomes = true
+        XCTAssertTrue(fresh.shouldCaptureOutcome)
+        fresh.provider = AttentionProvider.defaults[.apple]!
+        fresh.enabled = false
+        XCTAssertTrue(fresh.shouldCaptureOutcome, "On-device outcomes still run while Attention is off")
+
+        let partial = #"{"summary":"Release moved.","decisions":["Ship"],"tasks":[{"text":"Update"#
+        let repaired = try MeetingOutcomePrompt.parse(partial)
+        XCTAssertEqual(repaired.summary, "Release moved.")
+        XCTAssertEqual(repaired.decisions, ["Ship"])
+        XCTAssertTrue(repaired.tasks.isEmpty, "A value cut in the middle is dropped, not closed into a fake task")
+        let ownerCut = try MeetingOutcomePrompt.parse(#"{"summary":"Kept","tasks":[{"text":"a","owner":"#)
+        XCTAssertTrue(ownerCut.tasks.isEmpty, "A task cut after a finished field is dropped, not kept as a partial object")
+        let cutDecisions = try MeetingOutcomePrompt.parse(#"{"summary":"ok","decisions":["a","b"#)
+        XCTAssertEqual(cutDecisions.decisions, ["a"], "A finished array element is kept when the next one is cut")
+        let cutQuestions = try MeetingOutcomePrompt.parse(#"{"summary":"ok","open_questions":["Who?","Wh"#)
+        XCTAssertEqual(cutQuestions.openQuestions, ["Who?"])
+        XCTAssertThrowsError(try MeetingOutcomePrompt.parse(#"{"summary":"Rel"#))
+        let dangling = try MeetingOutcomePrompt.parse(#"{"summary":"Kept","decis"#)
+        XCTAssertEqual(dangling.summary, "Kept")
+        XCTAssertTrue(dangling.decisions.isEmpty)
+
+        let root = folder(), data = AssistantDataStore(root: root)
+        await data.waitForLoad()
+        data.remember("Kept fact")
+        await data.waitForSave()
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: root.appendingPathComponent("assistant.json"))) as? [String: Any])
+        var memories = try XCTUnwrap(object["memories"] as? [Any])
+        memories.insert(NSNull(), at: 0)
+        memories.append("scalar")
+        memories.append([1, 2])
+        object["memories"] = memories
+        object["outcomes"] = [["summary": "Missing end", "meetingTitle": "Infra"]]
+        try JSONSerialization.data(withJSONObject: object).write(to: root.appendingPathComponent("assistant.json"))
+        let loaded = AssistantDataStore(root: root)
+        await loaded.waitForLoad()
+        XCTAssertEqual(loaded.memories.map(\.text), ["Kept fact"])
+        XCTAssertTrue(loaded.outcomes.isEmpty, "An outcome without endedAt is not given a fabricated date")
+        XCTAssertNotNil(loaded.loadWarning)
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("assistant.recovered.json")), try Data(contentsOf: root.appendingPathComponent("assistant.json")))
+        let sameDamage = AssistantDataStore(root: root)
+        await sameDamage.waitForLoad()
+        let recoveredNames = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .map(\.lastPathComponent).filter { $0.contains("recovered") }
+        XCTAssertEqual(recoveredNames, ["assistant.recovered.json"], "The same damaged bytes are not copied again on the next launch")
+        loaded.remember("Added after repair")
+        await loaded.waitForSave()
+        XCTAssertNotNil(loaded.loadWarning)
+        let again = AssistantDataStore(root: root)
+        await again.waitForLoad()
+        XCTAssertTrue(again.memories.contains { $0.text == "Kept fact" })
+        XCTAssertTrue(again.memories.contains { $0.text == "Added after repair" })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("assistant.recovered.json").path))
+        XCTAssertNotEqual(try Data(contentsOf: root.appendingPathComponent("assistant.recovered.json")), try Data(contentsOf: root.appendingPathComponent("assistant.json")))
+        let firstBackup = try Data(contentsOf: root.appendingPathComponent("assistant.recovered.json"))
+        let damagedAgain = AssistantDataStore(root: root)
+        await damagedAgain.waitForLoad()
+        try JSONSerialization.data(withJSONObject: ["memories": [NSNull()]]).write(to: root.appendingPathComponent("assistant.json"))
+        let secondDamage = AssistantDataStore(root: root)
+        await secondDamage.waitForLoad()
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("assistant.recovered.json")), firstBackup,
+            "A later damaged load keeps the first backup")
+
+        let (first, _) = try await meeting("rejoin")
+        let coordinator = AttentionCoordinator(store: fresh)
+        await fresh.waitForMoments()
+        let verdict = AttentionVerdict(level: .now, probability: 0.9, reason: "Asked", evidence: [], action: .open)
+        let shownID = UUID()
+        fresh.log(.init(id: shownID, at: Date(), meetingTitle: first.title, meetingID: first.sessionID, invitation: first.invitation,
+            presetID: nil, window: nil, verdict: verdict, provider: "local", model: "m", outcome: .shown))
+        let moment = try XCTUnwrap(fresh.momentHistory.moment(shownID))
+        coordinator.meetings = { [first] }
+        XCTAssertEqual(coordinator.meeting(for: moment)?.sessionID, first.sessionID)
+        _ = await first.leave()
+        let (second, _) = try await meeting("rejoin")
+        coordinator.meetings = { [second] }
+        XCTAssertEqual(coordinator.meeting(for: moment)?.sessionID, second.sessionID, "A rejoined room is not stuck read-only")
+
+        var sent: [String] = []
+        coordinator.meetings = { [second] }
+        coordinator.deliverChat = { _, text in sent.append(text); return true }
+        let outcome = MeetingOutcome(meetingID: first.sessionID, meetingTitle: "rejoin", invitation: first.invitation, endedAt: Date(), summary: "Done")
+        XCTAssertEqual(coordinator.outcomeChatTarget(outcome)?.sessionID, second.sessionID)
+        XCTAssertFalse(coordinator.sendOutcome(outcome, to: UUID()))
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertTrue(coordinator.sendOutcome(outcome, to: second.sessionID))
+        XCTAssertEqual(sent.count, 1)
+
+        let talk = coordinator.talk
+        talk.observePushToTalk()
+        XCTAssertEqual(talk.hotKeyMonitorCount, 0)
+        XCTAssertFalse(talk.globalHotKeyInstalled)
+        fresh.pushToTalk = true
+        XCTAssertGreaterThanOrEqual(talk.hotKeyMonitorCount, 1, "Enabling through $pushToTalk installs immediately, not after relaunch")
+        fresh.pushToTalk = false
+        XCTAssertEqual(talk.hotKeyMonitorCount, 0)
+        XCTAssertFalse(talk.globalHotKeyInstalled, "Disabling removes the global hotkey as well as the in-app monitor")
+        XCTAssertEqual(AssistantPushToTalkHotKey.action(type: .keyDown, keyCode: 49, option: true, isRepeat: false,
+            enabled: true, appActive: true, textFocused: true, listening: false), .ignore)
+        XCTAssertEqual(AssistantPushToTalkHotKey.action(type: .keyDown, keyCode: 49, option: true, isRepeat: false,
+            enabled: true, appActive: false, textFocused: false, listening: false), .start)
+        XCTAssertEqual(AssistantPushToTalkHotKey.action(type: .keyDown, keyCode: 49, option: true, isRepeat: false,
+            enabled: false, appActive: false, textFocused: false, listening: false), .ignore)
+        XCTAssertEqual(AssistantPushToTalkHotKey.action(type: .keyUp, keyCode: 49, option: false, isRepeat: false,
+            enabled: true, appActive: false, textFocused: false, listening: true), .stop)
+        XCTAssertEqual(AssistantPushToTalkHotKey.action(type: .keyDown, keyCode: 0, option: true, isRepeat: false,
+            enabled: true, appActive: false, textFocused: false, listening: false), .ignore)
+
+        let meetingID = UUID(), momentID = UUID(), now = Date()
+        let context = AssistantCommandContext(meetings: [.init(id: meetingID, title: "Infra", invitation: nil, active: true)],
+            moments: [.init(id: momentID, meetingTitle: "Infra", reason: "DNS")], now: now)
+        let remembered = #"{"action":"remember","meeting":"","moment":"","mode":"","scope":"","text":"do not store this","fact":"keep this fact","reaction":"","n":5,"minutes":10,"at":""}"#
+        let rememberedCommand = try AssistantCommandPrompt.parse(remembered, context: context)
+        XCTAssertEqual(rememberedCommand.text, "keep this fact")
+        let leaked = #"{"action":"sendChat","meeting":"\#(meetingID.uuidString)","moment":"","mode":"","scope":"","text":"","fact":"secret","reaction":"","n":5,"minutes":10,"at":""}"#
+        XCTAssertThrowsError(try AssistantCommandPrompt.parse(leaked, context: context))
+        let zonaless = #"{"action":"remind","meeting":"","moment":"\#(momentID.uuidString)","mode":"","scope":"","text":"","fact":"","reaction":"","n":5,"minutes":10,"at":"2030-01-02T15:00"}"#
+        let reminder = try AssistantCommandPrompt.parse(zonaless, context: context)
+        func parts(_ text: String, utc: Bool = false) throws -> DateComponents {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = utc ? TimeZone(secondsFromGMT: 0)! : .current
+            return calendar.dateComponents([.year, .month, .day, .hour, .minute], from: try XCTUnwrap(AssistantTime.parse(text)))
+        }
+        let reminderParts = try parts("2030-01-02T15:00")
+        XCTAssertEqual(reminderParts.year, 2030)
+        XCTAssertEqual(reminderParts.month, 1)
+        XCTAssertEqual(reminderParts.day, 2)
+        XCTAssertEqual(reminderParts.hour, 15)
+        XCTAssertEqual(reminderParts.minute, 0)
+        XCTAssertEqual(reminder.at, AssistantTime.parse("2030-01-02T15:00"))
+        let spaced = try parts("2030-01-02 15:30")
+        XCTAssertEqual(spaced.year, 2030)
+        XCTAssertEqual(spaced.month, 1)
+        XCTAssertEqual(spaced.day, 2)
+        XCTAssertEqual(spaced.hour, 15)
+        XCTAssertEqual(spaced.minute, 30)
+        let zoned = try parts("2030-01-02 15:00Z", utc: true)
+        XCTAssertEqual(zoned.year, 2030)
+        XCTAssertEqual(zoned.month, 1)
+        XCTAssertEqual(zoned.day, 2)
+        XCTAssertEqual(zoned.hour, 15)
+        XCTAssertEqual(zoned.minute, 0)
+        let dayOnly = try parts("2030-01-02")
+        XCTAssertEqual(dayOnly.year, 2030)
+        XCTAssertEqual(dayOnly.month, 1)
+        XCTAssertEqual(dayOnly.day, 2)
+        XCTAssertEqual(dayOnly.hour, 0)
+        XCTAssertEqual(dayOnly.minute, 0)
+        let unpadded = try parts("2030-1-2")
+        XCTAssertEqual(unpadded.year, 2030)
+        XCTAssertEqual(unpadded.month, 1)
+        XCTAssertEqual(unpadded.day, 2)
+        XCTAssertEqual(unpadded.hour, 0)
+        XCTAssertEqual(unpadded.minute, 0)
+        let unpaddedTime = try parts("2030-1-2 15:00")
+        XCTAssertEqual(unpaddedTime.year, 2030)
+        XCTAssertEqual(unpaddedTime.month, 1)
+        XCTAssertEqual(unpaddedTime.day, 2)
+        XCTAssertEqual(unpaddedTime.hour, 15)
+        XCTAssertEqual(unpaddedTime.minute, 0)
+        let shortHour = try parts("2030-01-2T9:05")
+        XCTAssertEqual(shortHour.year, 2030)
+        XCTAssertEqual(shortHour.month, 1)
+        XCTAssertEqual(shortHour.day, 2)
+        XCTAssertEqual(shortHour.hour, 9)
+        XCTAssertEqual(shortHour.minute, 5)
+        XCTAssertNil(AssistantTime.parse("2030-01-02T24:00"), "An impossible hour is rejected, not turned into midnight")
+        XCTAssertNil(AssistantTime.parse("2030-01-02T15:75"))
+        XCTAssertNil(AssistantTime.parse("2030-02-30"))
+        XCTAssertEqual(reminder.needsConfirmation, false)
+        let joining = #"{"action":"join","meeting":"\#(meetingID.uuidString)","moment":"","mode":"","scope":"","text":"","fact":"","reaction":"","n":5,"minutes":10,"at":""}"#
+        XCTAssertTrue(try AssistantCommandPrompt.parse(joining, context: context).needsConfirmation)
+
+        fresh.assistant.observeVariant("Подтвердить")
+        XCTAssertEqual(fresh.assistant.preferredStance(), "confirm")
+        let ranked = ReplyDraft(chat: "Да", reaction: nil, variants: [
+            .init(stance: "подтвердить", text: "Да"), .init(stance: "decline", text: "Нет")
+        ]).ranked(preferredStance: fresh.assistant.preferredStance(), edits: [])
+        XCTAssertEqual(ranked.variants?.first?.stance, "подтвердить")
+
+        for _ in 0..<3 {
+            fresh.assistant.observeModeChange(.watch, meetingTitle: "Infra sync", invitation: first.invitation, series: nil)
+        }
+        let suggestion = try XCTUnwrap(fresh.assistant.suggestions.first { $0.kind == .meetingMode })
+        coordinator.keepSuggestion(suggestion.id)
+        XCTAssertEqual(fresh.preset(room: first.invitation)?.title, "Infra sync")
+        struct NotTheCacheError: Error {}
+        XCTAssertFalse(VoxCacheRecovery.isUnusableCacheError(NotTheCacheError()))
+        enum CacheProbe: Error { case nilError }
+        XCTAssertTrue(VoxCacheRecovery.isUnusableCacheError(CacheProbe.nilError))
+        let recovered = await VoxModelRecovery.recover { () async throws -> Int in throw NotTheCacheError() }
+        XCTAssertNil(recovered)
+
+        let journal = store(); await journal.waitForMoments()
+        journal.log(.init(at: Date(), meetingTitle: "Day", presetID: nil, window: nil, verdict: verdict, provider: "local", model: "m", outcome: .shown))
+        journal.log(.init(at: Date(), meetingTitle: "Day", presetID: nil, window: nil, verdict: nil, provider: "local", model: "m", outcome: .belowThreshold))
+        let lines = try String(contentsOf: journal.decisionFiles()[0], encoding: .utf8).split(separator: "\n", omittingEmptySubsequences: false)
+        XCTAssertEqual(lines.filter { !$0.isEmpty }.count, 2)
+        XCTAssertFalse(lines.contains(""), "A repaired line ending does not insert a blank record")
+    }
+
+    func testOutcomeEditsAreNotWrittenOnEveryKeystroke() async throws {
+        let root = folder(), data = AssistantDataStore(root: root)
+        await data.waitForLoad()
+        let outcome = MeetingOutcome(meetingTitle: "Infra", endedAt: Date(), summary: "Original")
+        data.addOutcome(outcome)
+        await data.waitForSave()
+        var edited = outcome
+        edited.summary = "Typed"
+        data.updateOutcome(edited)
+        try await Task.sleep(for: .milliseconds(40))
+        XCTAssertFalse(try String(contentsOf: root.appendingPathComponent("assistant.json"), encoding: .utf8).contains("Typed"))
+        await data.waitForSave()
+        XCTAssertTrue(try String(contentsOf: root.appendingPathComponent("assistant.json"), encoding: .utf8).contains("Typed"))
+        let untouched = try Data(contentsOf: root.appendingPathComponent("assistant.json"))
+        data.flushOutcomeEditsSynchronously()
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("assistant.json")), untouched,
+            "Quit does not rewrite the file when no edit is waiting")
+        var pending = edited
+        pending.summary = "Quit save"
+        data.updateOutcome(pending)
+        data.flushOutcomeEditsSynchronously()
+        XCTAssertTrue(try String(contentsOf: root.appendingPathComponent("assistant.json"), encoding: .utf8).contains("Quit save"))
+        let quitRoot = folder()
+        let sentinel = Data("kept".utf8)
+        try sentinel.write(to: quitRoot.appendingPathComponent("assistant.json"))
+        let early = AssistantDataStore(root: quitRoot)
+        early.flushOutcomeEditsSynchronously()
+        XCTAssertEqual(try Data(contentsOf: quitRoot.appendingPathComponent("assistant.json")), sentinel,
+            "Quit before load does not replace assistant.json with an empty document")
     }
 
     private func spin(_ predicate: () -> Bool) async throws {

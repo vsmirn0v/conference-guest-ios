@@ -110,7 +110,7 @@ struct AttentionReplyView: View {
     private var variants: [ReplyVariant] { Array(card.draft?.availableVariants.prefix(3) ?? []) }
     private var usual: ReplyVariant? {
         guard let preferred = attention.store.assistant.preferredStance(), let first = variants.first,
-              preferred.caseInsensitiveCompare(first.stance) == .orderedSame else { return nil }
+              ReplyStance.normalize(preferred) == ReplyStance.normalize(first.stance) else { return nil }
         return first
     }
 
@@ -188,7 +188,7 @@ struct AttentionReplyView: View {
             attention.selectVariant(variant, for: card)
         } label: {
             HStack(spacing: 4) {
-                Text(variant.stance).lineLimit(1)
+                Text(variant.stanceTitle).lineLimit(1)
                 if variant.id == usual?.id { Text(L("Your usual")).font(.caption2).foregroundStyle(.secondary) }
             }
         }
@@ -492,7 +492,7 @@ struct AttentionModelPicker: View {
     @ObservedObject var store: AttentionStore
     /// The model shown as chosen and what a pick does; by default it becomes the judge's model.
     var chosen: String? = nil
-    var onSelect: ((String) -> Void)? = nil
+    var onSelect: ((AttentionModelInfo) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var models: [AttentionModelInfo] = []
     @State private var query = ""
@@ -515,7 +515,7 @@ struct AttentionModelPicker: View {
                     let shown = AttentionModelCatalog.filter(models, query: query)
                     List(shown) { model in
                         Button {
-                            if let onSelect { onSelect(model.id) } else { store.provider.model = model.id }
+                            if let onSelect { onSelect(model) } else { store.provider.adopt(model: model.id, contextLength: model.contextLength) }
                             dismiss()
                         } label: { row(model) }.buttonStyle(.plain)
                     }.overlay { if shown.isEmpty { Text(L("No models match.")).foregroundStyle(.secondary) } }
@@ -556,6 +556,32 @@ struct AttentionModelPicker: View {
     }
 }
 
+private struct PushToTalkWarning: View {
+    @ObservedObject var talk: AssistantTalkController
+    var body: some View {
+        if let warning = talk.hotKeyWarning {
+            Text(warning).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct HeadphoneApproval: View {
+    @ObservedObject var store: AttentionStore
+    var output: AssistantHeadphoneRoute.Snapshot?
+    var body: some View {
+        if let output {
+            if AssistantHeadphoneRoute.isHeadphoneSource(output.source) {
+                Text(L("Headphones detected.")).font(.caption).foregroundStyle(.secondary)
+            } else if AssistantHeadphoneRoute.isPeripheralTransport(output.transport) {
+                Toggle(L("This is a headphone"), isOn: Binding(get: { store.headphoneUIDs.contains(output.uid) },
+                                                              set: { store.setHeadphoneApproved(output.uid, $0) }))
+                Text(L("For a headset macOS does not report as a headphone jack. Built-in and external speakers cannot be marked."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 /// Settings → Assistant: attention, models, memory, voice and what leaves this Mac.
 struct NativeDesktopIntelligenceSettings: View {
     @ObservedObject var store: AttentionStore
@@ -574,6 +600,7 @@ struct NativeDesktopIntelligenceSettings: View {
     @State private var voiceFailed = false
     @ObservedObject private var listen = ListenModelStore.shared
     @ObservedObject private var clone = VoiceCloneStore.shared
+    @StateObject private var headphones = HeadphoneOutputMonitor()
 
     /// Provider and model as one line; the Apple judge has no model name to show.
     private func describe(_ provider: AttentionProvider) -> String {
@@ -604,6 +631,13 @@ struct NativeDesktopIntelligenceSettings: View {
             }
         }
     }
+    private var outcomeSharingCaption: String {
+        if !store.enabled { return L("Attention is off, so a meeting outcome is not sent.") }
+        if !store.remoteOutcomes || !store.generateOutcomes {
+            return L("The transcript is sent only when Attention is on and you allow it here.")
+        }
+        return L("When you leave, the transcript and chat are sent to %@.", store.effectiveWriter.host)
+    }
     private var voiceTitle: String {
         switch store.voiceEngine {
         case .system: L("The macOS voice")
@@ -622,8 +656,17 @@ struct NativeDesktopIntelligenceSettings: View {
                 Toggle(L("Pause on battery power"), isOn: $store.pauseOnBattery)
                 Toggle(L("Create a meeting outcome when I leave"), isOn: $store.generateOutcomes)
                     .accessibilityIdentifier("assistant.outcomes")
-                Text(L("Outcomes keep an editable summary, decisions, tasks and open questions on this Mac. Nothing is shared automatically."))
+                Text(L("Outcomes keep an editable summary, decisions, tasks and open questions on this Mac."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if store.effectiveWriter.onThisMac {
+                    Text(L("They are written on this Mac. Nothing is sent."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Toggle(L("Allow sending the transcript to %@ when I leave", store.effectiveWriter.host), isOn: $store.remoteOutcomes)
+                        .disabled(!store.enabled || !store.generateOutcomes)
+                        .accessibilityIdentifier("assistant.outcomes.remote")
+                    Text(outcomeSharingCaption).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 if let error = attention.lastError { Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
             }
             Section {
@@ -660,7 +703,8 @@ struct NativeDesktopIntelligenceSettings: View {
                     TextField(L("Address"), text: $store.provider.baseURL)
                     if store.provider.endpoint == nil { Text(L("Enter an http or https address.")).font(.caption).foregroundStyle(.red) }
                     HStack {
-                        TextField(L("Model"), text: $store.provider.model)
+                        TextField(L("Model"), text: Binding(get: { store.provider.model },
+                            set: { store.provider.adoptTyped($0) }))
                         Button(L("Choose…")) { choosingModel = true }.disabled(store.provider.endpoint == nil)
                             .help(L("Pick from the models this provider offers"))
                     }
@@ -720,7 +764,7 @@ struct NativeDesktopIntelligenceSettings: View {
                 }.disabled(!store.draftReplies)
                 if let kind = store.writerProvider?.kind, kind != .apple {
                     TextField(L("Writer model"), text: Binding(get: { store.writerProvider?.model ?? "" },
-                                                              set: { store.writerProvider?.model = $0 }))
+                                                              set: { store.writerProvider?.adoptTyped($0) }))
                         .disabled(!store.draftReplies)
                     keyField(for: store.effectiveWriter, text: $writerKey)
                     if store.effectiveWriter.needsKey && !store.hasKey(for: store.effectiveWriter) {
@@ -739,12 +783,14 @@ struct NativeDesktopIntelligenceSettings: View {
             Section(L("Voice")) {
                 Toggle(L("Hold ⌥Space to talk to Assistant"), isOn: $store.pushToTalk)
                     .accessibilityIdentifier("assistant.pushToTalk")
-                Text(L("While held, your microphone is held back from the meeting and speech is recognized only on this Mac. You can also type every command."))
+                Text(L("Hold it in this app or while another app is in front. While it is on, ⌥Space is not typed into any app, including as a non-breaking space. The microphone is held back from the meeting and speech is recognized on this Mac only while the key is held, and listening stops within 30 seconds if the key release is missed. You can also type every command."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                PushToTalkWarning(talk: attention.talk)
                 Toggle(L("Speak Assistant answers in headphones"), isOn: $store.talkBack)
                     .accessibilityIdentifier("assistant.talkBack")
-                Text(L("Off by default. Answers play only when the Mac's output is explicitly a headphone data source, never into a meeting."))
+                Text(L("Off by default. Answers play for a headphone jack, or for a Bluetooth or USB device you mark below. Speakers stay off, and sound never goes into a meeting."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                HeadphoneApproval(store: store, output: headphones.output)
                 Picker(L("Speak replies with"), selection: $store.voiceEngine) {
                     Text(L("The macOS voice")).tag(VoiceEngine.system)
                     Text(L("Rapid-MLX on this Mac")).tag(VoiceEngine.rapidMLX)
@@ -795,12 +841,16 @@ struct NativeDesktopIntelligenceSettings: View {
                     }
                 }
                 Label(L("Judge and reply requests include up to five relevant excerpts from the Memory shown above; they go to the configured provider."), systemImage: "brain")
-                if store.generateOutcomes {
-                    if store.effectiveWriter.onThisMac {
+                if store.effectiveWriter.onThisMac {
+                    if store.generateOutcomes {
                         Label(L("Meeting outcomes and Since then summaries are created on this Mac."), systemImage: "doc.text")
                     } else {
-                        Label(L("Creating a meeting outcome or Since then summary sends the meeting transcript and chat to %@.", store.effectiveWriter.host), systemImage: "arrow.up.forward")
+                        Label(L("Meeting outcomes are off. Since then summaries are created on this Mac."), systemImage: "doc.text")
                     }
+                } else if store.shouldCaptureOutcome {
+                    Label(L("Creating a meeting outcome or Since then summary sends the meeting transcript and chat to %@.", store.effectiveWriter.host), systemImage: "arrow.up.forward")
+                } else {
+                    Label(L("Since then sends the transcript and chat to %@ when you ask. Leaving a meeting does not.", store.effectiveWriter.host), systemImage: "arrow.up.forward")
                 }
                 if !store.provider.onThisMac {
                     Label(L("Typed and locally recognized commands send your request and current meeting and Moment names to %@.", store.provider.host), systemImage: "arrow.up.forward")

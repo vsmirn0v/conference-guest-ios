@@ -151,10 +151,12 @@ import UserNotifications
         }
         self.attention.talk.leaveMeeting = { [weak self] model in await self?.leave(model) ?? false }
         // Push-to-talk is app-wide, not tied to the Talk tab's visibility.
-        self.attention.talk.installHotKey()
+        // The publisher emits in willSet, so the controller must use the emitted value.
+        self.attention.talk.installHotKey(enabled: self.attention.store.pushToTalk)
+        self.attention.talk.observePushToTalk()
         self.attention.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
-        self.attention.store.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
-        self.attention.store.assistant.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+        // Store and assistant publishes (a seen-mark, a keystroke in an outcome) must not
+        // invalidate the whole workspace. Views that read them observe those objects.
         self.attention.start()
     }
 
@@ -216,7 +218,10 @@ import UserNotifications
         library.calendar.showingMacSettings = selection == .settings; synchronizeMeetingPresentationSoon()
     }
     func windowDidChangeOcclusionState(_ notification: Notification) { synchronizeMeetingPresentationSoon() }
-    func windowWillClose(_ notification: Notification) { synchronizeMeetingPresentationSoon() }
+    func windowWillClose(_ notification: Notification) {
+        attention.store.assistant.flushOutcomeEdits()
+        synchronizeMeetingPresentationSoon()
+    }
     /// Window callbacks can arrive inside a SwiftUI update; media state changes after it.
     private func synchronizeMeetingPresentationSoon() {
         DispatchQueue.main.async { [weak self] in self?.synchronizeMeetingPresentation() }

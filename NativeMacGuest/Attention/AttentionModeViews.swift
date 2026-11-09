@@ -65,8 +65,16 @@ struct AttentionModeChip: View {
 /// Choose how closely the assistant follows this meeting, and for how long.
 struct AttentionModePicker: View {
     @ObservedObject var attention: AttentionCoordinator
+    @ObservedObject private var store: AttentionStore
     @ObservedObject var model: NativeDesktopMeetingModel
     var close: () -> Void = {}
+
+    init(attention: AttentionCoordinator, model: NativeDesktopMeetingModel, close: @escaping () -> Void = {}) {
+        self.attention = attention
+        self.model = model
+        self.close = close
+        _store = ObservedObject(wrappedValue: attention.store)
+    }
 
     var body: some View {
         let resolved = attention.resolvedMode(model)
@@ -110,7 +118,7 @@ struct AttentionModePicker: View {
                         .buttonStyle(.borderless).font(.caption)
                 }
             }
-            if !attention.store.enabled {
+            if !store.enabled {
                 Text(L("Attention is off in Settings → Assistant.")).font(.caption).foregroundStyle(.orange)
             }
         }
@@ -181,6 +189,53 @@ struct AttentionControlButton: View {
         .accessibilityLabel(L("Assistant")).accessibilityValue(mode.title)
         .popover(isPresented: $open, arrowEdge: .top) {
             AttentionModePicker(attention: attention, model: model) { open = false }
+        }
+    }
+}
+
+/// Shows the mode chip only while Attention is on, without making the sidebar observe the store.
+struct AttentionModeChipGate: View {
+    @ObservedObject var attention: AttentionCoordinator
+    @ObservedObject private var store: AttentionStore
+    @ObservedObject var model: NativeDesktopMeetingModel
+
+    init(attention: AttentionCoordinator, model: NativeDesktopMeetingModel) {
+        self.attention = attention
+        self.model = model
+        _store = ObservedObject(wrappedValue: attention.store)
+    }
+
+    var body: some View {
+        if store.enabled { AttentionModeChip(attention: attention, model: model) }
+    }
+}
+
+/// The meeting control bar's Assistant button, present only while Attention is on.
+struct AttentionControlButtonGate: View {
+    @ObservedObject var attention: AttentionCoordinator
+    @ObservedObject private var store: AttentionStore
+    @ObservedObject var model: NativeDesktopMeetingModel
+
+    init(attention: AttentionCoordinator, model: NativeDesktopMeetingModel) {
+        self.attention = attention
+        self.model = model
+        _store = ObservedObject(wrappedValue: attention.store)
+    }
+
+    var body: some View {
+        if store.enabled { AttentionControlButton(attention: attention, model: model) }
+    }
+}
+
+/// The sidebar count of unread Moments. Observes the store so a seen-mark does not redraw the workspace.
+struct AssistantUnreadBadge: View {
+    @ObservedObject var store: AttentionStore
+    var body: some View {
+        if store.momentHistory.unreadCount > 0 {
+            Spacer()
+            Text(store.momentHistory.unreadCount, format: .number)
+                .font(.caption2.weight(.bold)).padding(.horizontal, 6).padding(.vertical, 1)
+                .background(Color.orange, in: Capsule())
         }
     }
 }

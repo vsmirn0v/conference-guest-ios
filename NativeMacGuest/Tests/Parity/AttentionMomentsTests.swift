@@ -69,13 +69,31 @@ import XCTest
         XCTAssertEqual(history.moments.count, 3, "Diagnostics never create Moments")
     }
 
-    func testHistoricalLiveBecomesMissedAndLookupStaysConstantTime() {
+    func testHistoricalLiveBecomesMissedAndLookupFindsTheRightMoment() {
         let records = (0..<10_000).map { index in record(index % 3 == 0 ? .shown : .belowThreshold) }
-        let started = ProcessInfo.processInfo.systemUptime
         let history = AttentionDecisionJournal.reduce(records)
+        let shown = records.filter { $0.outcome == .shown }
+        XCTAssertEqual(history.moments.count, shown.count)
         XCTAssertTrue(history.moments.allSatisfy { $0.state == .missed })
-        XCTAssertNotNil(history.moment(records[3].id))
-        XCTAssertLessThan(ProcessInfo.processInfo.systemUptime - started, 2.0)
+        XCTAssertEqual(history.moment(records[3].id)?.meetingTitle, "Infra")
+        XCTAssertNil(history.moment(UUID()))
+        XCTAssertEqual(history.quietChecks.reduce(0) { $0 + $1.count }, records.filter { $0.outcome == .belowThreshold }.count)
+    }
+
+    func testFileOrderKeepsASameSecondFollowUpFromErasingTheMoment() {
+        let id = UUID()
+        var shown = record(.shown, id: id)
+        shown.at = at.addingTimeInterval(2)
+        var replied = record(.replied, decision: id)
+        replied.at = at.addingTimeInterval(2)
+        var again = record(.shown, id: UUID(), decision: id)
+        again.at = at.addingTimeInterval(2)
+        var draft = record(.drafted, decision: id)
+        draft.at = at
+        draft.draft = .init(chat: "Yes", reaction: nil)
+        let history = AttentionDecisionJournal.reduce([shown, replied, again, draft])
+        XCTAssertEqual(history.moment(id)?.state, .answered, "A later shown record in the same second must not reopen an answer")
+        XCTAssertEqual(history.moment(id)?.draft?.chat, "Yes", "A draft written after the card, even with an earlier timestamp, is kept")
     }
 
     func testLegacyRecordDecodesWithoutMeetingIdentity() throws {

@@ -9,6 +9,51 @@ struct AttentionProvider: Codable, Equatable, Sendable {
     var kind: Kind
     var baseURL: String
     var model: String
+    /// Tokens the catalog reported for `model`. Nil when the model was typed or the catalog omitted it.
+    var contextLength: Int?
+
+    init(kind: Kind, baseURL: String, model: String, contextLength: Int? = nil) {
+        self.kind = kind
+        self.baseURL = baseURL
+        self.model = model
+        self.contextLength = contextLength
+    }
+
+    /// Remembers a catalog choice. A typed model name clears the length, because it may be a different model.
+    mutating func adopt(model: String, contextLength: Int?) {
+        self.model = model
+        self.contextLength = contextLength
+    }
+
+    /// A text field writing the same string back must not drop a catalogued length.
+    mutating func adoptTyped(_ text: String) {
+        guard text != model else { return }
+        model = text
+        contextLength = nil
+    }
+
+    /// Context windows OpenAI's model list does not report. More specific ids are listed first.
+    static let openAIFallbackContextTokens = 128_000
+    static func knownContextLength(model: String) -> Int? {
+        let bare = model.lowercased().split(separator: "/").last.map(String.init) ?? model.lowercased()
+        let table: [(String, Int)] = [
+            ("gpt-4.1", 1_047_576),
+            ("gpt-4o", 128_000),
+            ("gpt-4-turbo", 128_000),
+            ("gpt-4-32k", 32_768),
+            ("gpt-3.5-turbo", 16_385),
+            ("gpt-4", 8_192),
+            ("o4-mini", 200_000),
+            ("o3-mini", 200_000),
+            ("o3", 200_000),
+            ("o1-mini", 128_000),
+            ("o1", 200_000),
+        ]
+        for (prefix, tokens) in table where bare == prefix || bare.hasPrefix(prefix + "-") {
+            return tokens
+        }
+        return nil
+    }
 
     static let rapidMLXModel = "qwen3.5-4b-4bit"
     static let defaults: [Kind: AttentionProvider] = [
@@ -42,6 +87,24 @@ struct AttentionProvider: Codable, Equatable, Sendable {
     var host: String { kind == .apple ? L("this Mac") : URL(string: baseURL.trimmed)?.host ?? baseURL }
     /// Has what a call needs, apart from a key.
     var configured: Bool { kind == .apple || endpoint != nil && !model.trimmed.isEmpty }
+
+    private enum CodingKeys: String, CodingKey { case kind, baseURL, model, contextLength }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        baseURL = try container.decode(String.self, forKey: .baseURL)
+        model = try container.decode(String.self, forKey: .model)
+        contextLength = try container.decodeIfPresent(Int.self, forKey: .contextLength) ?? nil
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(baseURL, forKey: .baseURL)
+        try container.encode(model, forKey: .model)
+        try container.encodeIfPresent(contextLength, forKey: .contextLength)
+    }
 }
 
 /// API keys, kept in the login keychain for this app only: one account per provider
@@ -199,11 +262,41 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     static let defaultVoiceModel = "qwen3-tts-voicedesign-4bit"
     static let defaultVoiceDescription = "A calm, clear adult voice speaking at a natural pace, like a colleague in a work call."
     @Published var generateOutcomes: Bool { didSet { defaults.set(generateOutcomes, forKey: Self.outcomesKey) } }
+    /// A writer outside this Mac receives the transcript only after this explicit opt-in.
+    @Published var remoteOutcomes: Bool { didSet { defaults.set(remoteOutcomes, forKey: Self.remoteOutcomesKey) } }
     @Published var pushToTalk: Bool { didSet { defaults.set(pushToTalk, forKey: Self.pushToTalkKey) } }
     @Published var talkBack: Bool { didSet { defaults.set(talkBack, forKey: Self.talkBackKey) } }
-    static let outcomesKey = "attention.outcomes.enabled", pushToTalkKey = "attention.commands.pushToTalk"
+    /// Output-device UIDs the person marked with "This is a headphone".
+    @Published private(set) var headphoneUIDs: Set<String>
+    static let outcomesKey = "attention.outcomes.enabled", remoteOutcomesKey = "attention.outcomes.remote"
+    static let pushToTalkKey = "attention.commands.pushToTalk"
     static let talkBackKey = "attention.commands.talkBack"
+    static let headphoneUIDsKey = "attention.voice.headphones"
+    /// On-device writers run whenever outcome generation is on. A remote writer also needs
+    /// Attention on and `remoteOutcomes`, so a saved key cannot send a transcript by itself.
+    func setHeadphoneApproved(_ uid: String, _ approved: Bool) {
+        let clean = uid.trimmed
+        guard !clean.isEmpty else { return }
+        if approved { headphoneUIDs.insert(clean) } else { headphoneUIDs.remove(clean) }
+        defaults.set(Array(headphoneUIDs).sorted(), forKey: Self.headphoneUIDsKey)
+    }
+
+    var shouldCaptureOutcome: Bool {
+        guard generateOutcomes, writerConfigured else { return false }
+        if effectiveWriter.onThisMac { return true }
+        return enabled && remoteOutcomes
+    }
     var effectiveWriter: AttentionProvider { writerProvider ?? provider }
+    /// Context of the model that writes outcomes. A separate writer with the same model id
+    /// reuses the length learned for the judge. A different, uncatalogued model stays unknown.
+    var outcomeContextTokens: Int? {
+        let writer = effectiveWriter
+        if let length = writer.contextLength { return length }
+        if writer.model == provider.model, let length = provider.contextLength { return length }
+        if let known = AttentionProvider.knownContextLength(model: writer.model) { return known }
+        if writer.kind == .openAI { return AttentionProvider.openAIFallbackContextTokens }
+        return nil
+    }
     var writerConfigured: Bool {
         let writer = effectiveWriter
         return writer.configured && (!writer.needsKey || hasKey(for: writer))
@@ -223,6 +316,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     var hasKey: Bool { hasKey(for: provider) }
     func hasKey(for provider: AttentionProvider) -> Bool { keyedKinds.contains(provider.kind) }
     @Published private(set) var persistenceWarning: String?
+    @Published private(set) var journalWarning: String?
     let root: URL
     let assistant: AssistantDataStore
     private let defaults: UserDefaults
@@ -233,6 +327,8 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     private var loadingMoments = false
     private var momentBuffer: [AttentionDecisionRecord] = []
     private var momentLoadTask: Task<Void, Never>?
+    /// Every journal append, from the main thread and from seen-marks, runs here in order.
+    private let journalQueue = DispatchQueue(label: "attention.journal.append")
 
     init(root: URL? = nil, defaults: UserDefaults = .standard, keychain: AttentionKeychain = .init()) {
         let root = root ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
@@ -254,8 +350,13 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         voiceDescription = defaults.string(forKey: Self.voiceDescriptionKey) ?? Self.defaultVoiceDescription
         voiceBaseURL = defaults.string(forKey: Self.voiceBaseURLKey) ?? AttentionProvider.defaults[.rapidMLX]!.baseURL
         generateOutcomes = defaults.object(forKey: Self.outcomesKey) as? Bool ?? true
-        pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? true
+        remoteOutcomes = defaults.bool(forKey: Self.remoteOutcomesKey)
+        // Off until chosen. A stored on or off value is unchanged. Someone who used the old implicit
+        // default never wrote this key, and nothing else records that they held the shortcut, so an
+        // upgrade stays off. The release note says so.
+        pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? false
         talkBack = defaults.bool(forKey: Self.talkBackKey)
+        headphoneUIDs = Set(defaults.stringArray(forKey: Self.headphoneUIDsKey) ?? [])
         provider = defaults.data(forKey: Self.providerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
             ?? AttentionProvider.defaults[.openAI]!
         profile = AttentionProfile()
@@ -350,46 +451,37 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.calendar = Calendar(identifier: .gregorian)
         return formatter
     }()
     private var lastPrunedDay: String?
 
     /// Appends one JSON line to today's file and removes files older than 30 days.
     func log(_ record: AttentionDecisionRecord) {
-        if loadingMoments { momentBuffer.append(record) } else { momentHistory.apply(record) }
-        do {
-            try FileManager.default.createDirectory(at: decisionsFolder, withIntermediateDirectories: true)
-            let dayString = Self.dayFormatter.string(from: record.at)
-            let url = decisionsFolder.appendingPathComponent(dayString + ".jsonl")
-            var line = try JSONEncoder.attention.encode(record); line.append(0x0A)
-            if let handle = try? FileHandle(forWritingTo: url) {
-                defer { try? handle.close() }
-                let length = try handle.seekToEnd()
-                if length > 0 {
-                    try handle.seek(toOffset: length - 1)
-                    if (try? handle.read(upToCount: 1))?.first != 0x0A {
-                        try handle.seekToEnd()
-                        try handle.write(contentsOf: [0x0A])
-                    } else {
-                        try handle.seekToEnd()
-                    }
-                }
-                try handle.write(contentsOf: line)
-            } else { try line.write(to: url, options: .atomic) }
-            if lastPrunedDay != dayString {
-                lastPrunedDay = dayString
-                pruneDecisions(now: record.at)
-            }
-        } catch { probeLog("attention-log-failed", [:]) }
+        if loadingMoments { momentBuffer.append(record) }
+        momentHistory.apply(record)
+        let dayString = Self.dayFormatter.string(from: record.at)
+        guard var line = try? JSONEncoder.attention.encode(record) else { return }
+        line.append(0x0A)
+        writeJournal([(line, dayString)], wait: true)
+        if lastPrunedDay != dayString {
+            lastPrunedDay = dayString
+            pruneDecisions(now: record.at)
+        }
     }
 
     private func loadMoments() async {
         guard !momentsLoaded, !loadingMoments else { return }
         loadingMoments = true
         let root = root
-        let restored = await Task.detached(priority: .utility) {
-            AttentionDecisionJournal.reduce(AttentionDecisionJournal.read(root: root))
+        let (restored, dropped) = await Task.detached(priority: .utility) { () -> (AttentionMomentHistory, Int) in
+            let read = AttentionDecisionJournal.read(root: root)
+            return (AttentionDecisionJournal.reduce(read.records), read.dropped)
         }.value
+        if dropped > 0 {
+            journalWarning = L("Part of the decision journal could not be read. %ld lines were skipped.", dropped)
+        }
         var merged = restored
         for record in momentBuffer { merged.apply(record) }
         momentBuffer.removeAll()
@@ -401,10 +493,65 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// Awaits launch restoration in tests and before an explicit history action.
     func waitForMoments() async { await momentLoadTask?.value }
 
-    /// Marks exactly the visible unread Moments as seen and journals the change.
+    /// Marks exactly the visible unread Moments as seen. The in-memory change is immediate;
+    /// the journal lines are appended off the main thread.
     func markMomentsSeen(_ ids: [UUID], at: Date = Date()) {
         let records = momentHistory.markSeen(ids, at: at)
-        for record in records { log(record) }
+        guard !records.isEmpty else { return }
+        // A load that finishes after this call replaces momentHistory from the disk snapshot plus momentBuffer.
+        if loadingMoments { momentBuffer.append(contentsOf: records) }
+        let lines: [(Data, String)] = records.compactMap { record in
+            guard var line = try? JSONEncoder.attention.encode(record) else { return nil }
+            line.append(0x0A)
+            return (line, Self.dayFormatter.string(from: record.at))
+        }
+        writeJournal(lines, wait: false)
+    }
+
+    /// Awaits journal appends queued by `markMomentsSeen`.
+    func waitForJournal() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            journalQueue.async { continuation.resume() }
+        }
+    }
+
+    private func writeJournal(_ lines: [(Data, String)], wait: Bool) {
+        let folder = decisionsFolder
+        let work: @Sendable () -> Void = {
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                for (line, day) in lines {
+                    let url = folder.appendingPathComponent(day + ".jsonl")
+                    try AttentionStore.appendLine(line, to: url)
+                }
+            } catch {
+                probeLog("attention-log-failed", ["lines": lines.count])
+            }
+        }
+        if wait { journalQueue.sync(execute: work) } else { journalQueue.async(execute: work) }
+    }
+
+    /// Opens the day file for reading and writing. Write-only handles cannot see the
+    /// previous byte, so a torn last line was "repaired" by inserting a blank line every time.
+    nonisolated private static func appendLine(_ line: Data, to url: URL) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            // A failed handle must not fall through to an atomic rewrite of the whole day.
+            let handle = try FileHandle(forUpdating: url)
+            defer { try? handle.close() }
+            let length = try handle.seekToEnd()
+            if length > 0 {
+                try handle.seek(toOffset: length - 1)
+                if (try? handle.read(upToCount: 1))?.first != 0x0A {
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: [0x0A])
+                } else {
+                    try handle.seekToEnd()
+                }
+            }
+            try handle.write(contentsOf: line)
+        } else {
+            try line.write(to: url, options: .atomic)
+        }
     }
 
     func decisionFiles() -> [URL] {
@@ -412,11 +559,15 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
             .filter { $0.pathExtension == "jsonl" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
     private func pruneDecisions(now: Date) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = Self.dayFormatter.timeZone
         for url in decisionFiles() {
             guard let date = Self.dayFormatter.date(from: url.deletingPathExtension().lastPathComponent),
-                  now.timeIntervalSince(date) > Self.decisionRetention else { continue }
+                  let days = calendar.dateComponents([.day], from: date, to: now).day, days > 30 else { continue }
             try? FileManager.default.removeItem(at: url)
         }
+        let cutoff = now.addingTimeInterval(-Self.decisionRetention)
+        momentHistory.drop(olderThan: cutoff)
     }
 }
 

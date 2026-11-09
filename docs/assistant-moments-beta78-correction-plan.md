@@ -106,11 +106,13 @@ Move seen marking from whole-filter `onAppear` / filter-change handlers to each 
 6. Run localization lint, `git diff --check`, Release archive validation, and all distribution-tool tests.
 7. Publish as the next beta only after the focused and regression suites pass; verify immutable DMG bytes, beta feed/inventory, and unchanged stable target.
 
-## Explicitly out of scope
+## Explicitly out of scope for the beta 78 correction
+
+These were out of scope for that correction. Later commits on main added reply variants, typed commands, meeting outcomes, local memory, and Neural Engine voice-cache recovery; this plan does not describe them.
 
 - Historical **Since then** generation after a meeting's in-memory transcript is gone.
-- Reply variants, typed/voice assistant commands, Roadie persona, meeting outcomes, long-term memory, and Settings reorganization.
-- Neural Engine voice-cache work or unrelated full-suite failures.
+- Roadie persona and a Settings reorganization beyond what those later commits shipped.
+- Unrelated full-suite failures.
 
 ## Acceptance result
 

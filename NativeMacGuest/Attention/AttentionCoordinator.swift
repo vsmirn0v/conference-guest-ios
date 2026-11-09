@@ -127,6 +127,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     @Published private(set) var lastError: String?
     @Published private(set) var judging: UUID?
     @Published private(set) var outcomeStatus: [UUID: String] = [:]
+    @Published private(set) var outcomeError: [UUID: String] = [:]
 
     let store: AttentionStore
     var meetings: () -> [NativeDesktopMeetingModel] = { [] }
@@ -147,11 +148,11 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     var notify: (Card) -> Void = { _ in }
     var makeJudge: (AttentionProvider, String?) -> any AttentionJudge = { $0.client(key: $1) }
     var makeWriter: (AttentionProvider, String?) -> any ReplyWriter = { $0.client(key: $1) }
-    var makeSummarizer: (AttentionProvider, String?) -> any MomentSummarizer = {
-        ($0.client(key: $1) as? any MomentSummarizer)!
+    var makeSummarizer: (AttentionProvider, String?) -> any MomentSummarizer = { provider, key in
+        provider.client(key: key) as any MomentSummarizer
     }
-    var makeOutcomeWriter: (AttentionProvider, String?) -> any MeetingOutcomeWriter = {
-        ($0.client(key: $1) as? any MeetingOutcomeWriter)!
+    var makeOutcomeWriter: (AttentionProvider, String?) -> any MeetingOutcomeWriter = { provider, key in
+        provider.client(key: key) as any MeetingOutcomeWriter
     }
     var scheduleOutcomeReminder: (MeetingOutcome, MeetingOutcomeTask, Date) async throws -> Void = { outcome, task, at in
         let content = UNMutableNotificationContent()
@@ -316,9 +317,13 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     /// No model call, file I/O or await is placed on the leave-critical path.
     func captureOutcome(for model: NativeDesktopMeetingModel) {
         let id = model.sessionID
-        guard store.generateOutcomes, store.writerConfigured, !outcomeCaptures.contains(id) else { return }
+        guard store.shouldCaptureOutcome, !outcomeCaptures.contains(id) else { return }
         let window = MeetingOutcomePrompt.window(title: model.title, transcript: model.transcript,
-            chat: model.chat.items, yourName: model.displayName, now: now())
+            chat: model.chat.items, yourName: model.displayName, now: now(),
+            // Only Apple's on-device model uses the compact window. Rapid-MLX and other writers use the remote window,
+            // sized from the catalogued context length, or from a small default when that length was never stored.
+            onDevice: store.effectiveWriter.kind == .apple,
+            contextTokens: store.outcomeContextTokens)
         guard !window.lines.isEmpty else { return }
         outcomeCaptures.insert(id)
         let meetingID = id, title = model.title, invitation = model.invitation, series = model.calendarSeriesID
@@ -334,11 +339,13 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                     seriesID: series, endedAt: ended, summary: content.summary, decisions: content.decisions,
                     tasks: content.tasks, openQuestions: content.openQuestions))
                 outcomeStatus[id] = nil
+                outcomeError[id] = nil
                 probeLog("assistant-outcome", ["lines": window.lines.count, "decisions": content.decisions.count, "tasks": content.tasks.count])
             } catch is CancellationError {
                 outcomeStatus[id] = nil
             } catch {
-                outcomeStatus[id] = error.localizedDescription
+                outcomeStatus[id] = nil
+                outcomeError[id] = error.localizedDescription
                 probeLog("assistant-outcome-failed", ["error": String(describing: error)])
             }
         }
@@ -354,22 +361,37 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                       let index = current.tasks.firstIndex(where: { $0.id == task.id }) else { return }
                 current.tasks[index].reminderAt = at
                 store.assistant.updateOutcome(current)
-            } catch { outcomeStatus[outcome.id] = error.localizedDescription }
+            } catch { outcomeError[outcome.id] = error.localizedDescription }
         }
     }
 
     func keepSuggestion(_ id: UUID, editedText: String? = nil) {
         guard let suggestion = store.assistant.suggestions.first(where: { $0.id == id }) else { return }
         if suggestion.kind == .meetingMode, let mode = suggestion.mode, let invitation = suggestion.invitation {
-            store.setMeetingMode(mode, room: invitation, series: suggestion.seriesID, title: suggestion.text)
+            let title = suggestion.meetingTitle?.trimmed.isEmpty == false ? suggestion.meetingTitle! : (invitation.host ?? L("Meeting"))
+            store.setMeetingMode(mode, room: invitation, series: suggestion.seriesID, title: title)
         } else if suggestion.kind == .replyStyle {
             store.profile.replyStyle = editedText?.trimmed.isEmpty == false ? editedText : suggestion.proposedText
         }
         store.assistant.keepSuggestion(id, editedText: editedText)
     }
 
-    @discardableResult func sendOutcome(_ outcome: MeetingOutcome) -> Bool {
-        guard let model = meetings().first(where: { !$0.isClosed && $0.invitation == outcome.invitation && $0.chat.canSend }) else { return false }
+    /// The open meeting this outcome may be posted to. The session that produced it wins.
+    /// A later occurrence of the same room is offered only when it is the sole open match,
+    /// and the caller confirms before anything is sent.
+    func outcomeChatTarget(_ outcome: MeetingOutcome) -> NativeDesktopMeetingModel? {
+        let open = meetings().filter { !$0.isClosed && $0.chat.canSend }
+        if let id = outcome.meetingID, let exact = open.first(where: { $0.sessionID == id }) { return exact }
+        guard let invitation = outcome.invitation else { return nil }
+        let sameRoom = open.filter { $0.invitation == invitation }
+        return sameRoom.count == 1 ? sameRoom[0] : nil
+    }
+
+    @discardableResult func sendOutcome(_ outcome: MeetingOutcome, to meetingID: UUID) -> Bool {
+        guard let model = meetings().first(where: { $0.sessionID == meetingID && !$0.isClosed && $0.chat.canSend }) else { return false }
+        let sameSession = outcome.meetingID == model.sessionID
+        let soleLater = !sameSession && outcomeChatTarget(outcome)?.sessionID == model.sessionID
+        guard sameSession || soleLater else { return false }
         return deliverChat(model, outcome.shareText)
     }
 
@@ -613,8 +635,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 
     /// Resolves legacy Moments only when exactly one open meeting matches.
     func meeting(for moment: AttentionMoment) -> NativeDesktopMeetingModel? {
-        let list = meetings()
-        if let id = moment.meetingID { return list.first { $0.sessionID == id } }
+        let list = meetings().filter { !$0.isClosed }
+        if let id = moment.meetingID, let exact = list.first(where: { $0.sessionID == id }) { return exact }
         if let invitation = moment.invitation {
             let matches = list.filter { $0.invitation == invitation }
             if matches.count == 1 { return matches[0] }
@@ -650,8 +672,26 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             memory: moment.memory, readOnly: terminal || (model?.isClosed ?? true), mode: moment.mode, mentioned: moment.mentioned)
     }
 
+    private var pendingSeenIDs: [UUID] = []
+    private var seenCoalesce: Task<Void, Never>?
+
+    /// Rows appear together as the list scrolls. One journal update covers the burst,
+    /// instead of a file write and a workspace refresh per row.
     func markVisibleMomentsSeen(_ moments: [AttentionMoment]) {
-        store.markMomentsSeen(moments.filter { [.live, .missed].contains($0.state) }.map(\.id), at: now())
+        for moment in moments where [.live, .missed].contains(moment.state) {
+            if store.momentHistory.moment(moment.id)?.seen == true { continue }
+            if !pendingSeenIDs.contains(moment.id) { pendingSeenIDs.append(moment.id) }
+        }
+        guard !pendingSeenIDs.isEmpty, seenCoalesce == nil else { return }
+        seenCoalesce = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard let self else { return }
+            self.seenCoalesce = nil
+            let ids = self.pendingSeenIDs
+            self.pendingSeenIDs.removeAll()
+            guard !ids.isEmpty else { return }
+            self.store.markMomentsSeen(ids, at: self.now())
+        }
     }
 
     private func insertOverflow(_ id: UUID, meetingID: UUID) {
@@ -832,9 +872,17 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 try await deliverVoice(model, buffer)
                 probeLog("attention-spoken", ["voice": store.voiceEngine.rawValue, "seconds": Double(buffer.frameLength) / buffer.format.sampleRate,
                     "synthesisMs": Int((synthesized - started) * 1000)])
-                guard let finished = actionableCard(current) else { return }
-                feedback(finished, decision: .approved, reason: nil, note: nil, outcome: .spoken,
-                         sent: clean, reaction: nil, edited: clean != finished.draft?.chat.trimmed)
+                // Playback already happened. If the card was closed or dismissed while it played,
+                // still record the spoken reply and clear `speaking`.
+                if let finished = actionableCard(current) {
+                    feedback(finished, decision: .approved, reason: nil, note: nil, outcome: .spoken,
+                             sent: clean, reaction: nil, edited: clean != finished.draft?.chat.trimmed)
+                } else {
+                    let finished = currentCard(card.id) ?? current
+                    updateCard(finished.id) { $0.speaking = false }
+                    log(finished, outcome: .spoken, reason: nil, sent: clean, reaction: nil,
+                        edited: clean != finished.draft?.chat.trimmed)
+                }
             } catch {
                 updateCard(card.id) {
                     $0.speaking = false
