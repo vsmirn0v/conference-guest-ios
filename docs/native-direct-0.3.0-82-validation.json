@@ -1,0 +1,42 @@
+{
+  "version": "0.3.0",
+  "build": "82",
+  "channel": "beta",
+  "sourceCommit": "13f14b6",
+  "changes": [
+    "Warm SharedAudioEngine in the foreground before any meeting starts so the macOS microphone indicator appears on app launch and the first meeting adopts the running engine immediately",
+    "Keep the silent output leg available alongside active input in SharedAudioEngine.live() so enabling playout on first meeting join does not tear down and restart AVAudioEngine",
+    "Start muted recording during pre-join microphone activation on prepared media contexts and preserve already-running warm input in prepareIdleInput without transient unmuting or restarts",
+    "Fix the active transcription info popover in AttentionToolbarStrip from auto-closing on periodic audio telemetry updates by decoupling the popover button from status-text identity"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "executableSHA256": "88ff1f6d7a2871b33db3d113a2945dc4ed77568ad378bdc6fde15942835b4777",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-82-arm64.dmg",
+    "sha256": "221bf059041695a58396c98c88c4c66d867d85e374e31964a216aad8cc311bb0",
+    "length": 27154291
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-82-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "Fixes commits 88844c5, 9875625, and 13f14b6 are on origin/main. The publisher verified the immutable DMG, beta alias, signed appcast and inventory over HTTPS byte-for-byte.",
+  "measured": {
+    "focusedAppTests": "NativeDesktopTests SharedAudioEngineTests, SharedGuestMeetingAudioTests, SharedPlayoutGateTests, and SharedMediaTests: 66 tests, 0 failures",
+    "distributionTooling": "NativeMacGuest/distribution unittest suite passed (27 tests); py_compile passed",
+    "archive": "direct Release archive 0.3.0 (82) succeeded; 58 archive artifact hashes recorded in build-evidence.json; app-group IO and one-use ticket check passed",
+    "export": "Developer ID export with Xcode cloud-managed notarization; app stapled and Gatekeeper-accepted (Notarized Developer ID)",
+    "package": "DMG created and revalidated read-only from its mount; contained app accepted as Notarized Developer ID",
+    "publish": "read-only SSH preflight passed; atomic publication and HTTPS readback matched the immutable DMG, beta alias, signed appcast and inventory",
+    "appcastStateSHA256": "42fd13fa3038f0926b2424e2826901ab58bf711546a60328b18c703bc4feb7e6",
+    "inventoryStateSHA256": "bf5a0e42337998bfe369a0494784d0919cc2cde85657c950442fdf522d406153"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 82",
+    "live-meeting acceptance of foreground shared audio warmup and first-meeting join latency on physical hardware",
+    "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted"
+  ]
+}
