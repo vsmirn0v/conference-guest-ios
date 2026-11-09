@@ -25,7 +25,9 @@ struct AttentionComparisonView: View {
             Spacer(minLength: 0)
             HStack {
                 if !comparison.running, comparison.candidateScore.judged > 0, comparison.candidateModel != store.provider.model {
-                    Button(L("Use %@ for the judge", comparison.candidateModel)) { store.provider.model = comparison.candidateModel }
+                    Button(L("Use %@ for the judge", comparison.candidateModel)) {
+                        store.provider.adopt(model: comparison.candidateModel, contextLength: nil)
+                    }
                 }
                 Spacer()
                 Button(L("Close")) { comparison.cancel(); dismiss() }.keyboardShortcut(.cancelAction)
@@ -33,7 +35,7 @@ struct AttentionComparisonView: View {
         }
         .padding(20).frame(width: 720, height: 680)
         .onAppear { comparison.load(from: store) }
-        .sheet(isPresented: $choosingModel) { AttentionModelPicker(store: store, chosen: model, onSelect: { model = $0 }) }
+        .sheet(isPresented: $choosingModel) { AttentionModelPicker(store: store, chosen: model, onSelect: { model = $0.id }) }
     }
 
     private var setup: some View {

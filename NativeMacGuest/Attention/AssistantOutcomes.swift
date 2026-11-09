@@ -159,14 +159,30 @@ enum MeetingOutcomePrompt {
     static let maxLineCharacters = 400
     static let maxCharacters = 8_000
     static let remoteMaxLines = 400
-    static let remoteMaxCharacters = 80_000
+    /// Ceiling for a model whose context is large enough. Smaller contexts get less.
+    static let maxRemoteCharacters = 80_000
+    /// Tokens kept aside for the outcome instructions and the JSON reply (`max_tokens` is 2,000).
+    static let promptReserveTokens = 1_200
+    static let responseReserveTokens = 2_000
+    /// A model whose catalog entry has no context length. Small enough for an 8k OpenRouter model.
+    static let unknownContextTokens = 8_192
+    /// Fewer characters than tokens, so a mixed-language transcript is not counted as English.
+    static let charactersPerToken = 3
+
+    /// How much transcript a remote model can be given. Unknown context uses `unknownContextTokens`.
+    static func remoteCharacterBudget(contextTokens: Int?) -> Int {
+        let context = contextTokens ?? unknownContextTokens
+        let room = context - promptReserveTokens - responseReserveTokens
+        let transcriptTokens = max(300, room)
+        return min(maxRemoteCharacters, max(1_000, transcriptTokens * charactersPerToken))
+    }
 
     /// The leave path snapshots bounded value types; no live model is retained by a writer.
-    static func window(title: String, transcript: [GuestMeetingMessage], chat: [ChatEntry], yourName: String, now: Date, onDevice: Bool = false) -> AttentionWindow {
+    static func window(title: String, transcript: [GuestMeetingMessage], chat: [ChatEntry], yourName: String, now: Date, onDevice: Bool = false, contextTokens: Int? = nil) -> AttentionWindow {
         struct Item { var at: Date; var order: Int; var line: AttentionWindow.Line }
         let lineCap = onDevice ? maxLines : remoteMaxLines
-        let charCap = onDevice ? maxCharacters : remoteMaxCharacters
-        let perLine = onDevice ? maxLineCharacters : 1_200
+        let charCap = onDevice ? maxCharacters : remoteCharacterBudget(contextTokens: contextTokens)
+        let perLine = onDevice ? maxLineCharacters : min(1_200, max(200, charCap / 8))
         let scan = onDevice ? 240 : 2_000
         var items: [Item] = [], order = 0, last = Date.distantPast
         for message in transcript.suffix(scan) {

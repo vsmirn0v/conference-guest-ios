@@ -320,8 +320,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         guard store.shouldCaptureOutcome, !outcomeCaptures.contains(id) else { return }
         let window = MeetingOutcomePrompt.window(title: model.title, transcript: model.transcript,
             chat: model.chat.items, yourName: model.displayName, now: now(),
-            // Rapid-MLX is on this Mac but has a large context, so only the Apple model gets the compact window.
-            onDevice: store.effectiveWriter.kind == .apple)
+            // Only Apple's on-device model uses the compact window. Rapid-MLX and other writers use the remote window,
+            // sized from the catalogued context length, or from a small default when that length was never stored.
+            onDevice: store.effectiveWriter.kind == .apple,
+            contextTokens: store.outcomeContextTokens)
         guard !window.lines.isEmpty else { return }
         outcomeCaptures.insert(id)
         let meetingID = id, title = model.title, invitation = model.invitation, series = model.calendarSeriesID

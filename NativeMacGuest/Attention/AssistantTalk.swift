@@ -35,6 +35,8 @@ import SwiftUI
     private var captureSamples: AssistantCaptureBuffer?
     private var captureRecognizerAcquired = false
     private var captureGeneration = UUID()
+    /// Wall-clock limit for one hold. Cancelled on release, disable, and unregister.
+    private var holdLimit: Task<Void, Never>?
     private var monitors: [Any] = []
     private var observers: [NSObjectProtocol] = []
     var joinMeeting: (AssistantMeetingReference) -> Bool = { _ in false }
@@ -62,6 +64,7 @@ import SwiftUI
     }
 
     deinit {
+        holdLimit?.cancel()
         if let carbonHotKey { UnregisterEventHotKey(carbonHotKey) }
         if let carbonHandler { RemoveEventHandler(carbonHandler) }
         for monitor in monitors { NSEvent.removeMonitor(monitor) }
@@ -388,6 +391,8 @@ import SwiftUI
         carbonHotKey = nil
         if let carbonHandler { RemoveEventHandler(carbonHandler) }
         carbonHandler = nil
+        // A release will not arrive after the hotkey is gone, so end any hold now.
+        stopPushToTalk()
     }
 
     private func carbonPressed(_ down: Bool) {
@@ -413,6 +418,7 @@ import SwiftUI
         guard let model = ListenModelStore.shared.recognizerModel() else {
             append(.assistant, L("Install a local transcription model in Settings → Assistant → Models first.")); return
         }
+        armHoldLimit()
         let generation = UUID(); captureGeneration = generation; audioError = nil
         captureTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -460,7 +466,10 @@ import SwiftUI
     }
 
     func stopPushToTalk() {
+        cancelHoldLimit()
         captureGeneration = UUID()
+        // A buffer limit and the wall-clock limit can both ask to stop. The first one
+        // clears this state, so the second returns without starting another transcription.
         guard captureEngine != nil || captureMeeting != nil || captureTask != nil else { return }
         captureTask?.cancel(); captureTask = nil
         captureEngine?.inputNode.removeTap(onBus: 0); captureEngine?.stop(); captureEngine = nil
@@ -487,12 +496,36 @@ import SwiftUI
         audioError = error.localizedDescription
         stopPushToTalk()
     }
+
+    /// One timer per hold. A repeated key-down does not extend it.
+    private func armHoldLimit() {
+        guard holdLimit == nil else { return }
+        let seconds = AssistantCaptureLimit.holdSeconds
+        holdLimit = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard let self, !Task.isCancelled else { return }
+            self.stopPushToTalk()
+        }
+    }
+
+    private func cancelHoldLimit() {
+        holdLimit?.cancel()
+        holdLimit = nil
+    }
+}
+
+/// How long one push-to-talk hold may last. The sample cap and the wall-clock timer use the same duration,
+/// so a stall that never fills the buffer still ends the hold.
+enum AssistantCaptureLimit {
+    static let holdSeconds = 30
+    static let sampleRate = 16_000
+    static var sampleLimit: Int { holdSeconds * sampleRate }
 }
 
 private final class AssistantCaptureBuffer: @unchecked Sendable {
     private let lock = NSLock(); private var storage: [Float] = []
     private var reportedFull = false
-    private let limit = 30 * 16_000
+    private let limit = AssistantCaptureLimit.sampleLimit
     func append(_ samples: UnsafePointer<Float>, count: Int) -> Bool {
         lock.lock(); defer { lock.unlock() }
         storage.append(contentsOf: UnsafeBufferPointer(start: samples, count: min(count, max(0, limit - storage.count))))

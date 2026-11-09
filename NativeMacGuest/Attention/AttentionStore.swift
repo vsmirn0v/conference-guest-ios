@@ -9,6 +9,21 @@ struct AttentionProvider: Codable, Equatable, Sendable {
     var kind: Kind
     var baseURL: String
     var model: String
+    /// Tokens the catalog reported for `model`. Nil when the model was typed or the catalog omitted it.
+    var contextLength: Int?
+
+    init(kind: Kind, baseURL: String, model: String, contextLength: Int? = nil) {
+        self.kind = kind
+        self.baseURL = baseURL
+        self.model = model
+        self.contextLength = contextLength
+    }
+
+    /// Remembers a catalog choice. A typed model name clears the length, because it may be a different model.
+    mutating func adopt(model: String, contextLength: Int?) {
+        self.model = model
+        self.contextLength = contextLength
+    }
 
     static let rapidMLXModel = "qwen3.5-4b-4bit"
     static let defaults: [Kind: AttentionProvider] = [
@@ -42,6 +57,24 @@ struct AttentionProvider: Codable, Equatable, Sendable {
     var host: String { kind == .apple ? L("this Mac") : URL(string: baseURL.trimmed)?.host ?? baseURL }
     /// Has what a call needs, apart from a key.
     var configured: Bool { kind == .apple || endpoint != nil && !model.trimmed.isEmpty }
+
+    private enum CodingKeys: String, CodingKey { case kind, baseURL, model, contextLength }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        baseURL = try container.decode(String.self, forKey: .baseURL)
+        model = try container.decode(String.self, forKey: .model)
+        contextLength = try container.decodeIfPresent(Int.self, forKey: .contextLength) ?? nil
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(baseURL, forKey: .baseURL)
+        try container.encode(model, forKey: .model)
+        try container.encodeIfPresent(contextLength, forKey: .contextLength)
+    }
 }
 
 /// API keys, kept in the login keychain for this app only: one account per provider
@@ -224,6 +257,14 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         return enabled && remoteOutcomes
     }
     var effectiveWriter: AttentionProvider { writerProvider ?? provider }
+    /// Context of the model that writes outcomes. A separate writer with the same model id
+    /// reuses the length learned for the judge. A different, uncatalogued model stays unknown.
+    var outcomeContextTokens: Int? {
+        let writer = effectiveWriter
+        if let length = writer.contextLength { return length }
+        if writer.model == provider.model { return provider.contextLength }
+        return nil
+    }
     var writerConfigured: Bool {
         let writer = effectiveWriter
         return writer.configured && (!writer.needsKey || hasKey(for: writer))

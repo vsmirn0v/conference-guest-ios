@@ -492,7 +492,7 @@ struct AttentionModelPicker: View {
     @ObservedObject var store: AttentionStore
     /// The model shown as chosen and what a pick does; by default it becomes the judge's model.
     var chosen: String? = nil
-    var onSelect: ((String) -> Void)? = nil
+    var onSelect: ((AttentionModelInfo) -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var models: [AttentionModelInfo] = []
     @State private var query = ""
@@ -515,7 +515,7 @@ struct AttentionModelPicker: View {
                     let shown = AttentionModelCatalog.filter(models, query: query)
                     List(shown) { model in
                         Button {
-                            if let onSelect { onSelect(model.id) } else { store.provider.model = model.id }
+                            if let onSelect { onSelect(model) } else { store.provider.adopt(model: model.id, contextLength: model.contextLength) }
                             dismiss()
                         } label: { row(model) }.buttonStyle(.plain)
                     }.overlay { if shown.isEmpty { Text(L("No models match.")).foregroundStyle(.secondary) } }
@@ -703,7 +703,8 @@ struct NativeDesktopIntelligenceSettings: View {
                     TextField(L("Address"), text: $store.provider.baseURL)
                     if store.provider.endpoint == nil { Text(L("Enter an http or https address.")).font(.caption).foregroundStyle(.red) }
                     HStack {
-                        TextField(L("Model"), text: $store.provider.model)
+                        TextField(L("Model"), text: Binding(get: { store.provider.model },
+                            set: { store.provider.adopt(model: $0, contextLength: nil) }))
                         Button(L("Choose…")) { choosingModel = true }.disabled(store.provider.endpoint == nil)
                             .help(L("Pick from the models this provider offers"))
                     }
@@ -763,7 +764,7 @@ struct NativeDesktopIntelligenceSettings: View {
                 }.disabled(!store.draftReplies)
                 if let kind = store.writerProvider?.kind, kind != .apple {
                     TextField(L("Writer model"), text: Binding(get: { store.writerProvider?.model ?? "" },
-                                                              set: { store.writerProvider?.model = $0 }))
+                                                              set: { store.writerProvider?.adopt(model: $0, contextLength: nil) }))
                         .disabled(!store.draftReplies)
                     keyField(for: store.effectiveWriter, text: $writerKey)
                     if store.effectiveWriter.needsKey && !store.hasKey(for: store.effectiveWriter) {
