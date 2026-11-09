@@ -246,18 +246,55 @@ struct AttentionSituationDefaults: View {
 
     var body: some View {
         ForEach(AttentionSituation.allCases, id: \.self) { situation in
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(situation.title)
-                    Text(situation.detail).font(.caption).foregroundStyle(.secondary)
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center) {
+                    description(situation)
+                    Spacer(minLength: 12)
+                    segmentedPicker(situation).layoutPriority(1)
                 }
-                Spacer(minLength: 12)
-                Picker(situation.title, selection: Binding(get: { store.mode(for: situation) },
-                                                           set: { store.situationModes[situation] = $0 })) {
-                    ForEach(AttentionMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                VStack(alignment: .leading, spacing: 8) {
+                    description(situation)
+                    segmentedPicker(situation)
                 }
-                .labelsHidden().pickerStyle(.segmented).frame(width: 240)
+                VStack(alignment: .leading, spacing: 8) {
+                    description(situation)
+                    menuPicker(situation)
+                }
             }
+            .accessibilityIdentifier("attention.situation.\(situation.rawValue)")
         }
+    }
+
+    private func description(_ situation: AttentionSituation) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(situation.title)
+            Text(situation.detail).font(.caption).foregroundStyle(.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private func segmentedPicker(_ situation: AttentionSituation) -> some View {
+        Picker(situation.title, selection: modeBinding(situation)) {
+            ForEach(AttentionMode.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityIdentifier("attention.mode.\(situation.rawValue)")
+    }
+
+    @ViewBuilder private func menuPicker(_ situation: AttentionSituation) -> some View {
+        Picker(situation.title, selection: modeBinding(situation)) {
+            ForEach(AttentionMode.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("attention.mode.\(situation.rawValue)")
+    }
+
+    private func modeBinding(_ situation: AttentionSituation) -> Binding<AttentionMode> {
+        Binding(get: { store.mode(for: situation) },
+                set: { store.situationModes[situation] = $0 })
     }
 }

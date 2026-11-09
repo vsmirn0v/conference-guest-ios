@@ -75,13 +75,13 @@ import XCTest
         XCTAssertTrue(predicate())
     }
 
-    private func present<V: View>(_ view: V, size: NSSize, name: String) async -> Rendered {
+    private func present<V: View>(_ view: V, size: NSSize, name: String, minSize: NSSize? = nil) async -> Rendered {
         let hosting = NSHostingView(rootView: AnyView(view))
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.title = "Assistant acceptance \(UUID().uuidString)"
         window.isReleasedWhenClosed = false
-        window.minSize = NSSize(width: 900, height: 560)
+        window.minSize = minSize ?? NSSize(width: 900, height: 560)
         window.contentView = hosting
         window.setContentSize(size)
         window.orderFrontRegardless()
@@ -89,6 +89,43 @@ import XCTest
         await settle()
         addTeardownBlock { window.close() }
         return Rendered(window: window, hosting: hosting, name: name)
+    }
+
+    private func views(_ root: NSView) -> [NSView] {
+        [root] + root.subviews.flatMap(views)
+    }
+
+    /// The Debug host intentionally resets launch preferences. Route localization
+    /// through a temporary Bundle subclass so this test always renders Russian.
+    private final class RussianBundleForTesting: Bundle, @unchecked Sendable {
+        override var preferredLocalizations: [String] { ["ru"] }
+        override func localizedString(forKey key: String, value: String?, table tableName: String?) -> String {
+            guard let path = Bundle.main.path(forResource: "ru", ofType: "lproj"),
+                  let bundle = Bundle(path: path) else { return super.localizedString(forKey: key, value: value, table: tableName) }
+            return bundle.localizedString(forKey: key, value: value, table: tableName)
+        }
+    }
+
+    private func withRussianBundle<T>(_ body: () async throws -> T) async throws -> T {
+        let original = object_getClass(Bundle.main)
+        let russianPath = try XCTUnwrap(Bundle.main.path(forResource: "ru", ofType: "lproj"))
+        XCTAssertTrue(Bundle(path: russianPath)?.localizedString(forKey: "Mentions", value: nil, table: nil) == "Упоминания",
+            "The Russian fixture must load the app's resources")
+        XCTAssertNotNil(original)
+        XCTAssertNotNil(object_setClass(Bundle.main, RussianBundleForTesting.self))
+        defer { object_setClass(Bundle.main, original!) }
+        return try await body()
+    }
+
+    private func requiredWidth(of control: NSSegmentedControl) -> CGFloat {
+        let labels = (0..<control.segmentCount).compactMap { control.label(forSegment: $0) }
+        let measuring = NSSegmentedControl(labels: labels, trackingMode: control.trackingMode,
+            target: nil, action: nil)
+        measuring.controlSize = control.controlSize
+        measuring.segmentStyle = control.segmentStyle
+        if let font = control.font { measuring.font = font }
+        measuring.sizeToFit()
+        return measuring.frame.width
     }
 
     private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
@@ -190,6 +227,50 @@ import XCTest
         XCTAssertFalse(containsText(rendered, L("Why not?")), "Terminal detail must leave decline editing")
         XCTAssertNil(element(rendered, identifier: "attention.reply.send"))
         if why { XCTAssertNotNil(button(rendered, L("Why")), "Terminal detail keeps its inspector entry") }
+    }
+
+    func testRussianSituationDefaultsDoNotCropSegmentedControls() async throws {
+        try await withRussianBundle {
+            XCTAssertEqual(language, "ru", "The test host must render the Russian resources")
+            XCTAssertEqual(AttentionMode.off.title, "Выключено")
+            XCTAssertEqual(AttentionMode.mentions.title, "Упоминания")
+            XCTAssertEqual(AttentionMode.watch.title, "Следить")
+
+            let store = store()
+            let cases: [(size: NSSize, segmented: Int, name: String)] = [
+                (NSSize(width: 760, height: 360), 3, "wide"),
+                (NSSize(width: 460, height: 420), 3, "stacked"),
+                (NSSize(width: 280, height: 520), 0, "menu"),
+            ]
+            for fixture in cases {
+                let view = Form {
+                    Section { AttentionSituationDefaults(store: store) }
+                }
+                .formStyle(.grouped)
+                .padding(20)
+                let rendered = await present(view, size: fixture.size,
+                    name: "situation-defaults-\(fixture.name)", minSize: fixture.size)
+                await settle()
+
+                for situation in AttentionSituation.allCases {
+                    XCTAssertNotNil(element(rendered, identifier: "attention.situation.\(situation.rawValue)"),
+                        "\(fixture.name) retains the \(situation.rawValue) row")
+                }
+                let segmentedControls = views(rendered.hosting).compactMap { $0 as? NSSegmentedControl }
+                XCTAssertEqual(segmentedControls.count, fixture.segmented,
+                    "\(fixture.name) uses the expected attention-control presentation")
+                for control in segmentedControls {
+                    let requiredWidth = requiredWidth(of: control)
+                    XCTAssertGreaterThan(requiredWidth, 240,
+                        "The Russian fixture must prove that the previous fixed width cropped the control")
+                    XCTAssertLessThanOrEqual(requiredWidth, control.frame.width + 0.5,
+                        "The segmented control is wide enough for every Russian segment")
+                    XCTAssertLessThanOrEqual(control.frame.maxX, rendered.hosting.frame.width + 0.5,
+                        "The segmented control stays inside its window")
+                }
+                try capture(rendered)
+            }
+        }
     }
 
     func testOverflowButtonUsesAccessibilityActionWithoutDelivery() async throws {
