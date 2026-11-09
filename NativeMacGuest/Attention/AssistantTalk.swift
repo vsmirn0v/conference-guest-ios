@@ -1,7 +1,7 @@
 import AppKit
 import AVFoundation
+import Carbon.HIToolbox
 import CoreAudio
-import IOKit.hid
 import SwiftUI
 
 @MainActor final class AssistantTalkController: ObservableObject {
@@ -40,17 +40,31 @@ import SwiftUI
     var joinMeeting: (AssistantMeetingReference) -> Bool = { _ in false }
     var leaveMeeting: (NativeDesktopMeetingModel) async -> Bool = { _ in false }
     var interpretOverride: ((AssistantCommandRequest) async throws -> AssistantCommand)?
-    var headphoneRoute: () -> Bool = { AssistantHeadphoneRoute.isConnected }
-    /// Tests substitute this. Production asks macOS for Accessibility and Input Monitoring.
-    var globalHotKeyTrusted: () -> Bool = { AssistantPushToTalkHotKey.systemTrusted() }
-    var promptForGlobalHotKey: () -> Void = { AssistantPushToTalkHotKey.promptForTrust() }
+    var headphoneRoute: () -> Bool = { false }
     var hotKeyMonitorCount: Int { monitors.count }
+    var globalHotKeyInstalled: Bool { carbonHotKey != nil }
+    private var pushToTalkTicket: AnyCancellable?
+    nonisolated(unsafe) private var carbonHotKey: EventHotKeyRef?
+    nonisolated(unsafe) private var carbonHandler: EventHandlerRef?
+    /// Read by the local event callback without hopping to the main actor.
+    nonisolated(unsafe) private var textFocusedCache = false
+    private var hotKeySafety: Task<Void, Never>?
     private var textFieldFocused: Bool {
         guard NSApp.isActive, let responder = NSApp.keyWindow?.firstResponder else { return false }
         return responder is NSTextView || responder is NSTextField
     }
 
-    init(attention: AttentionCoordinator) { self.attention = attention }
+    init(attention: AttentionCoordinator) {
+        self.attention = attention
+        headphoneRoute = { [weak attention] in
+            AssistantHeadphoneRoute.isConnected(approved: attention?.store.headphoneUIDs ?? [])
+        }
+    }
+
+    deinit {
+        if let carbonHotKey { UnregisterEventHotKey(carbonHotKey) }
+        if let carbonHandler { RemoveEventHandler(carbonHandler) }
+    }
 
     func submit(_ text: String) {
         let clean = text.trimmed
@@ -265,54 +279,121 @@ import SwiftUI
 
     // MARK: Push to talk
 
-    func installHotKey(promptIfNeeded: Bool = false) {
-        removeHotKey()
-        guard attention?.store.pushToTalk == true else { return }
-        func decide(_ event: NSEvent) -> AssistantPushToTalkHotKey.Action {
-            AssistantPushToTalkHotKey.action(type: event.type, keyCode: event.keyCode,
-                option: event.modifierFlags.contains(.option), isRepeat: event.isARepeat,
-                enabled: true, appActive: NSApp.isActive, textFocused: textFieldFocused, listening: listening)
+    /// `$pushToTalk` emits in willSet, so the value in the sink is the new setting and the property is still the old one.
+    func observePushToTalk() {
+        pushToTalkTicket = attention?.store.$pushToTalk.dropFirst().sink { [weak self] enabled in
+            self?.installHotKey(enabled: enabled)
         }
-        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged], handler: { event in
-            MainActor.assumeIsolated {
-                let action = decide(event)
-                if action == .start { Task { @MainActor [weak self] in self?.performHotKey(.start) }; return nil }
-                if action == .stop { Task { @MainActor [weak self] in self?.performHotKey(.stop) } }
-                return event
-            }
-        }) { monitors.append(monitor) }
-        if globalHotKeyTrusted() {
-            if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged], handler: { event in
-                let keyCode = event.keyCode, option = event.modifierFlags.contains(.option), kind = event.type, repeated = event.isARepeat
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    let action = AssistantPushToTalkHotKey.action(type: kind, keyCode: keyCode, option: option, isRepeat: repeated,
-                        enabled: true, appActive: NSApp.isActive, textFocused: self.textFieldFocused, listening: self.listening)
-                    self.performHotKey(action)
-                }
-            }) { monitors.append(monitor) }
-        } else if promptIfNeeded {
-            promptForGlobalHotKey()
-            audioError = L("Background ⌥Space needs Accessibility and Input Monitoring in System Settings. Until macOS allows them, the shortcut works only in this app.")
-        }
-        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, !self.listening, self.attention?.store.pushToTalk == true else { return }
-                self.installHotKey()
-            }
-        })
     }
 
-    private func performHotKey(_ action: AssistantPushToTalkHotKey.Action) {
-        switch action {
-        case .start: startPushToTalk()
-        case .stop: stopPushToTalk()
-        case .ignore: break
+    func installHotKey(enabled: Bool? = nil) {
+        let on = enabled ?? (attention?.store.pushToTalk == true)
+        removeHotKey()
+        guard on else { return }
+        refreshTextFocus()
+        syncCarbonHotKey(enabled: true)
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged], handler: { [weak self] event in
+            guard let self else { return event }
+            self.scheduleFocusRefresh()
+            let hot = event.type == .keyDown && event.keyCode == AssistantPushToTalkHotKey.space &&
+                event.modifierFlags.contains(.option) && !event.isARepeat
+            if hot && self.textFocusedCache { return event }
+            if hot && self.carbonHotKey == nil {
+                Task { @MainActor [weak self] in self?.carbonPressed(true) }
+                return nil
+            }
+            if event.type == .keyUp && event.keyCode == AssistantPushToTalkHotKey.space && self.carbonHotKey == nil {
+                Task { @MainActor [weak self] in self?.carbonPressed(false) }
+            }
+            return event
+        }) { monitors.append(monitor) }
+        for name in [NSText.didBeginEditingNotification, NSText.didEndEditingNotification, NSApplication.didBecomeActiveNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.refreshTextFocus() }
+            })
+        }
+    }
+
+    private func scheduleFocusRefresh() {
+        Task { @MainActor [weak self] in self?.refreshTextFocus() }
+    }
+
+    private func refreshTextFocus() {
+        textFocusedCache = textFieldFocused
+        syncCarbonHotKey(enabled: attention?.store.pushToTalk == true)
+    }
+
+    /// Carbon consumes Option-Space, including from other apps, and reports both press and release.
+    /// `enabled` is passed in from the publisher because that fires before the property changes.
+    private func syncCarbonHotKey(enabled: Bool) {
+        let want = enabled && !textFocusedCache
+        if want, carbonHotKey == nil { registerCarbonHotKey() }
+        if !want { unregisterCarbonHotKey() }
+    }
+
+    private static let carbonCallback: EventHandlerUPP = { _, event, user in
+        guard let event, let user else { return OSStatus(eventNotHandledErr) }
+        let talk = Unmanaged<AssistantTalkController>.fromOpaque(user).takeUnretainedValue()
+        let kind = GetEventKind(event)
+        let down = kind == EventKind(kEventHotKeyPressed)
+        let up = kind == EventKind(kEventHotKeyReleased)
+        guard down || up else { return OSStatus(eventNotHandledErr) }
+        Task { @MainActor in talk.carbonPressed(down) }
+        return noErr
+    }
+
+    private func registerCarbonHotKey() {
+        var specs = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+        ]
+        var handler: EventHandlerRef?
+        let user = Unmanaged.passUnretained(self).toOpaque()
+        let installed = specs.withUnsafeBufferPointer { buffer in
+            InstallEventHandler(GetApplicationEventTarget(), Self.carbonCallback, UInt32(buffer.count), buffer.baseAddress, user, &handler)
+        }
+        guard installed == noErr, let handler else { return }
+        carbonHandler = handler
+        var hotKeyID = EventHotKeyID(signature: 0x50545431, id: 1) // 'PTT1'
+        var hotKey: EventHotKeyRef?
+        let status = RegisterEventHotKey(UInt32(kVK_Space), UInt32(optionKey), hotKeyID, GetApplicationEventTarget(), 0, &hotKey)
+        guard status == noErr, let hotKey else {
+            RemoveEventHandler(handler)
+            carbonHandler = nil
+            return
+        }
+        carbonHotKey = hotKey
+    }
+
+    private func unregisterCarbonHotKey() {
+        if let carbonHotKey { UnregisterEventHotKey(carbonHotKey) }
+        carbonHotKey = nil
+        if let carbonHandler { RemoveEventHandler(carbonHandler) }
+        carbonHandler = nil
+    }
+
+    private func carbonPressed(_ down: Bool) {
+        guard attention?.store.pushToTalk == true else { stopPushToTalk(); return }
+        if down {
+            guard !textFieldFocused else { return }
+            startPushToTalk()
+            hotKeySafety?.cancel()
+            hotKeySafety = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(30))
+                self?.stopPushToTalk()
+            }
+        } else {
+            hotKeySafety?.cancel()
+            hotKeySafety = nil
+            stopPushToTalk()
         }
     }
 
     func removeHotKey() {
+        hotKeySafety?.cancel()
+        hotKeySafety = nil
         stopPushToTalk()
+        unregisterCarbonHotKey()
         for monitor in monitors { NSEvent.removeMonitor(monitor) }; monitors = []
         for observer in observers { NotificationCenter.default.removeObserver(observer) }; observers = []
     }
@@ -423,32 +504,50 @@ enum AssistantCaptureError: LocalizedError {
     }
 }
 
-/// Fail-closed headphone check for local talk-back. In particular, the default
-/// output being built-in speakers, a display, or an unknown Bluetooth route is not enough.
+/// Fail-closed headphone check for local talk-back. Speakers stay closed. A headphone
+/// jack is enough; Bluetooth and USB count only after the person marks that device.
 enum AssistantHeadphoneRoute {
     static let headphonesDataSource: UInt32 = 0x6864706e // 'hdpn'
+    static let internalSpeaker: UInt32 = 0x6973706b // 'ispk'
+    static let externalSpeaker: UInt32 = 0x6573706b // 'espk'
     static let bluetoothTransport: UInt32 = 0x626c7565 // 'blue'
+    static let bluetoothLETransport: UInt32 = 0x626c6561 // 'blea'
+    static let usbTransport: UInt32 = 0x75736220 // 'usb '
     static func isHeadphoneSource(_ source: UInt32) -> Bool { source == headphonesDataSource }
-    /// A headphone data source is required. Bluetooth transport and product names do not qualify.
-    static func accepts(source: UInt32, transport: UInt32) -> Bool {
-        _ = transport
-        return isHeadphoneSource(source)
+    static func isSpeakerSource(_ source: UInt32) -> Bool { source == internalSpeaker || source == externalSpeaker }
+    static func isPeripheralTransport(_ transport: UInt32) -> Bool {
+        transport == bluetoothTransport || transport == bluetoothLETransport || transport == usbTransport
     }
-    static var isConnected: Bool {
+    /// `approved` holds device UIDs the person marked with "This is a headphone". Names are never read.
+    static func accepts(source: UInt32, transport: UInt32, deviceUID: String, approved: Set<String>) -> Bool {
+        if isHeadphoneSource(source) { return true }
+        if isSpeakerSource(source) { return false }
+        return isPeripheralTransport(transport) && !deviceUID.isEmpty && approved.contains(deviceUID)
+    }
+    static func outputDevice() -> (uid: String, source: UInt32, transport: UInt32)? {
         var device = AudioDeviceID(0), size = UInt32(MemoryLayout<AudioDeviceID>.size)
         var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr,
-              device != kAudioObjectUnknown else { return false }
+              device != kAudioObjectUnknown else { return nil }
         var source = UInt32(0); size = UInt32(MemoryLayout<UInt32>.size)
         address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDataSource,
             mScope: kAudioDevicePropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
-        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &source) == noErr else { return false }
+        _ = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &source)
         var transport = UInt32(0); size = UInt32(MemoryLayout<UInt32>.size)
         address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyTransportType,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
         _ = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport)
-        return accepts(source: source, transport: transport)
+        var unmanaged: Unmanaged<CFString>?
+        size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &unmanaged) == noErr, let unmanaged else { return nil }
+        return (unmanaged.takeRetainedValue() as String, source, transport)
+    }
+    static func isConnected(approved: Set<String>) -> Bool {
+        guard let device = outputDevice() else { return false }
+        return accepts(source: device.source, transport: device.transport, deviceUID: device.uid, approved: approved)
     }
 }
 
@@ -466,16 +565,6 @@ enum AssistantPushToTalkHotKey {
         if type == .keyUp, keyCode == space { return .stop }
         if type == .flagsChanged, !option, listening { return .stop }
         return .ignore
-    }
-    /// Accessibility and Input Monitoring. Missing either one means the global shortcut stays off.
-    static func systemTrusted() -> Bool {
-        guard AXIsProcessTrusted() else { return false }
-        return IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
-    }
-    static func promptForTrust() {
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
-        IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
     }
 }
 

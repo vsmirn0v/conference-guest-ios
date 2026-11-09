@@ -180,30 +180,35 @@ enum AssistantTime {
     static func parse(_ text: String) -> Date? {
         let raw = text.trimmed
         guard !raw.isEmpty else { return nil }
+        // A date-only pattern also matches the prefix of a date-time and returns midnight.
+        if raw.count == 10, raw.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withFullDate, .withDashSeparatorInDate]
+            formatter.timeZone = .current
+            return formatter.date(from: raw)
+        }
         var candidates = [raw]
-        if raw.range(of: #"T\d{2}:\d{2}$"#, options: .regularExpression) != nil { candidates.append(raw + ":00") }
+        if raw.contains(" ") { candidates.append(raw.replacingOccurrences(of: " ", with: "T")) }
+        func withSeconds(_ value: String) -> String? {
+            guard value.range(of: #"T\d{2}:\d{2}$"#, options: .regularExpression) != nil else { return nil }
+            return value + ":00"
+        }
+        for candidate in candidates {
+            if let expanded = withSeconds(candidate) { candidates.append(expanded) }
+        }
         if let zone = raw.range(of: #"(Z|[+-]\d{2}:?\d{2})$"#, options: .regularExpression),
            raw[..<zone.lowerBound].range(of: #"T\d{2}:\d{2}$"#, options: .regularExpression) != nil {
             candidates.append(String(raw[..<zone.lowerBound]) + ":00" + String(raw[zone]))
         }
-        let zoned: [ISO8601DateFormatter.Options] = [
+        let timed: [ISO8601DateFormatter.Options] = [
             [.withInternetDateTime, .withFractionalSeconds],
             [.withInternetDateTime],
-        ]
-        let local: [ISO8601DateFormatter.Options] = [
             [.withFullDate, .withTime, .withDashSeparatorInDate, .withColonSeparatorInTime, .withFractionalSeconds],
             [.withFullDate, .withTime, .withDashSeparatorInDate, .withColonSeparatorInTime],
-            [.withFullDate, .withDashSeparatorInDate],
+            [.withFullDate, .withTime, .withDashSeparatorInDate, .withColonSeparatorInTime, .withSpaceBetweenDateAndTime],
         ]
         for candidate in candidates {
-            for option in zoned {
-                let formatter = ISO8601DateFormatter()
-                formatter.formatOptions = option
-                if let date = formatter.date(from: candidate) { return date }
-            }
-            let hasZone = candidate.hasSuffix("Z") || candidate.range(of: #"[+-]\d{2}:?\d{2}$"#, options: .regularExpression) != nil
-            if hasZone { continue }
-            for option in local {
+            for option in timed {
                 let formatter = ISO8601DateFormatter()
                 formatter.formatOptions = option
                 formatter.timeZone = .current

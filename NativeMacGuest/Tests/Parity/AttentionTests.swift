@@ -1249,11 +1249,15 @@ import XCTest
 
         let now = Date()
         let transcript = (0..<300).map { message("t\($0)", "Anna", "line \($0)", now.addingTimeInterval(Double($0))) }
-        let window = MeetingOutcomePrompt.window(title: "infra", transcript: transcript, chat: [], yourName: "Vitalii", now: now)
+        let window = MeetingOutcomePrompt.window(title: "infra", transcript: transcript, chat: [], yourName: "Vitalii", now: now, onDevice: true)
         XCTAssertEqual(window.lines.count, MeetingOutcomePrompt.maxLines)
         XCTAssertEqual(window.lines.first?.id, "t240")
         XCTAssertEqual(window.lines.last?.ref, "L60")
         XCTAssertLessThanOrEqual(window.lines.reduce(0) { $0 + $1.text.count }, MeetingOutcomePrompt.maxCharacters)
+        let remote = MeetingOutcomePrompt.window(title: "infra", transcript: transcript, chat: [], yourName: "Vitalii", now: now)
+        XCTAssertEqual(remote.lines.first?.id, "t0")
+        XCTAssertEqual(remote.lines.last?.id, "t299")
+        XCTAssertGreaterThan(remote.lines.count, window.lines.count)
     }
 
     func testAssistantDataPersistsEditsAndFindsLastTime() async throws {
@@ -1472,10 +1476,13 @@ import XCTest
         XCTAssertTrue(AssistantHeadphoneRoute.isHeadphoneSource(0x6864706e))
         XCTAssertFalse(AssistantHeadphoneRoute.isHeadphoneSource(0x73706b72), "Built-in speakers never qualify")
         XCTAssertFalse(AssistantHeadphoneRoute.isHeadphoneSource(0), "Unknown output routes fail closed")
-        XCTAssertTrue(AssistantHeadphoneRoute.accepts(source: AssistantHeadphoneRoute.headphonesDataSource, transport: 0))
-        XCTAssertFalse(AssistantHeadphoneRoute.accepts(source: 0, transport: AssistantHeadphoneRoute.bluetoothTransport),
-            "Bluetooth without a headphone data source stays closed, whatever the product name is")
-        XCTAssertFalse(AssistantHeadphoneRoute.accepts(source: 0x73706b72, transport: AssistantHeadphoneRoute.bluetoothTransport))
+        XCTAssertTrue(AssistantHeadphoneRoute.accepts(source: AssistantHeadphoneRoute.headphonesDataSource, transport: 0, deviceUID: "jack", approved: []))
+        XCTAssertFalse(AssistantHeadphoneRoute.accepts(source: 0, transport: AssistantHeadphoneRoute.bluetoothTransport, deviceUID: "airpods", approved: []),
+            "Bluetooth stays closed until this device is marked")
+        XCTAssertTrue(AssistantHeadphoneRoute.accepts(source: 0, transport: AssistantHeadphoneRoute.bluetoothTransport, deviceUID: "airpods", approved: ["airpods"]))
+        XCTAssertTrue(AssistantHeadphoneRoute.accepts(source: 0, transport: AssistantHeadphoneRoute.usbTransport, deviceUID: "usb-headset", approved: ["usb-headset"]))
+        XCTAssertFalse(AssistantHeadphoneRoute.accepts(source: AssistantHeadphoneRoute.internalSpeaker, transport: 0, deviceUID: "speakers", approved: ["speakers"]),
+            "Built-in speakers cannot be opted in")
     }
 
     func testMemoryIsBoundedRelevantAndInspectableInHistory() async throws {
@@ -1526,7 +1533,11 @@ import XCTest
         let repaired = try MeetingOutcomePrompt.parse(partial)
         XCTAssertEqual(repaired.summary, "Release moved.")
         XCTAssertEqual(repaired.decisions, ["Ship"])
-        XCTAssertEqual(repaired.tasks.first?.text, "Update")
+        XCTAssertTrue(repaired.tasks.isEmpty, "A value cut in the middle is dropped, not closed into a fake task")
+        XCTAssertThrowsError(try MeetingOutcomePrompt.parse(#"{"summary":"Rel"#))
+        let dangling = try MeetingOutcomePrompt.parse(#"{"summary":"Kept","decis"#)
+        XCTAssertEqual(dangling.summary, "Kept")
+        XCTAssertTrue(dangling.decisions.isEmpty)
 
         let root = folder(), data = AssistantDataStore(root: root)
         await data.waitForLoad()
@@ -1545,14 +1556,17 @@ import XCTest
         XCTAssertEqual(loaded.memories.map(\.text), ["Kept fact"])
         XCTAssertTrue(loaded.outcomes.isEmpty, "An outcome without endedAt is not given a fabricated date")
         XCTAssertNotNil(loaded.loadWarning)
-        let preserved = try Data(contentsOf: root.appendingPathComponent("assistant.json"))
-        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("assistant.recovered.json")), preserved)
-        let before = preserved
-        loaded.remember("Must not overwrite")
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("assistant.recovered.json")), try Data(contentsOf: root.appendingPathComponent("assistant.json")))
+        loaded.remember("Added after repair")
         await loaded.waitForSave()
-        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("assistant.json")), before)
         XCTAssertNotNil(loaded.loadWarning)
-        XCTAssertNotNil(loaded.saveWarning)
+        let again = AssistantDataStore(root: root)
+        await again.waitForLoad()
+        XCTAssertTrue(again.memories.contains { $0.text == "Kept fact" })
+        XCTAssertTrue(again.memories.contains { $0.text == "Added after repair" })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("assistant.recovered.json").path))
+        XCTAssertNotEqual(try Data(contentsOf: root.appendingPathComponent("assistant.recovered.json")), try Data(contentsOf: root.appendingPathComponent("assistant.json")))
+        _ = before
 
         let (first, _) = try await meeting("rejoin")
         let coordinator = AttentionCoordinator(store: fresh)
@@ -1580,15 +1594,14 @@ import XCTest
         XCTAssertEqual(sent.count, 1)
 
         let talk = coordinator.talk
-        talk.globalHotKeyTrusted = { false }
-        coordinator.store.pushToTalk = false
-        talk.installHotKey()
+        talk.observePushToTalk()
         XCTAssertEqual(talk.hotKeyMonitorCount, 0)
-        coordinator.store.pushToTalk = true
-        talk.installHotKey()
-        XCTAssertEqual(talk.hotKeyMonitorCount, 1, "Without permission only the in-app monitor is installed")
-        talk.removeHotKey()
+        XCTAssertFalse(talk.globalHotKeyInstalled)
+        fresh.pushToTalk = true
+        XCTAssertGreaterThanOrEqual(talk.hotKeyMonitorCount, 1, "Enabling through $pushToTalk installs immediately, not after relaunch")
+        fresh.pushToTalk = false
         XCTAssertEqual(talk.hotKeyMonitorCount, 0)
+        XCTAssertFalse(talk.globalHotKeyInstalled, "Disabling removes the global hotkey as well as the in-app monitor")
         XCTAssertEqual(AssistantPushToTalkHotKey.action(type: .keyDown, keyCode: 49, option: true, isRepeat: false,
             enabled: true, appActive: true, textFocused: true, listening: false), .ignore)
         XCTAssertEqual(AssistantPushToTalkHotKey.action(type: .keyDown, keyCode: 49, option: true, isRepeat: false,
@@ -1610,7 +1623,17 @@ import XCTest
         XCTAssertThrowsError(try AssistantCommandPrompt.parse(leaked, context: context))
         let zonaless = #"{"action":"remind","meeting":"","moment":"\#(momentID.uuidString)","mode":"","scope":"","text":"","fact":"","reaction":"","n":5,"minutes":10,"at":"2030-01-02T15:00"}"#
         let reminder = try AssistantCommandPrompt.parse(zonaless, context: context)
-        XCTAssertNotNil(reminder.at)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let reminderParts = calendar.dateComponents([.hour, .minute], from: try XCTUnwrap(reminder.at))
+        XCTAssertEqual(reminderParts.hour, 15)
+        XCTAssertEqual(reminderParts.minute, 0)
+        let spaced = calendar.dateComponents([.hour, .minute], from: try XCTUnwrap(AssistantTime.parse("2030-01-02 15:30")))
+        XCTAssertEqual(spaced.hour, 15)
+        XCTAssertEqual(spaced.minute, 30)
+        let dayOnly = calendar.dateComponents([.hour, .minute], from: try XCTUnwrap(AssistantTime.parse("2030-01-02")))
+        XCTAssertEqual(dayOnly.hour, 0)
+        XCTAssertEqual(dayOnly.minute, 0)
         XCTAssertEqual(reminder.needsConfirmation, false)
         let joining = #"{"action":"join","meeting":"\#(meetingID.uuidString)","moment":"","mode":"","scope":"","text":"","fact":"","reaction":"","n":5,"minutes":10,"at":""}"#
         XCTAssertTrue(try AssistantCommandPrompt.parse(joining, context: context).needsConfirmation)
@@ -1628,6 +1651,12 @@ import XCTest
         let suggestion = try XCTUnwrap(fresh.assistant.suggestions.first { $0.kind == .meetingMode })
         coordinator.keepSuggestion(suggestion.id)
         XCTAssertEqual(fresh.preset(room: first.invitation)?.title, "Infra sync")
+        struct NotTheCacheError: Error {}
+        XCTAssertFalse(VoxCacheRecovery.isUnusableCacheError(NotTheCacheError()))
+        enum CacheProbe: Error { case nilError }
+        XCTAssertTrue(VoxCacheRecovery.isUnusableCacheError(CacheProbe.nilError))
+        let recovered = await VoxModelRecovery.recover { () async throws -> Int in throw NotTheCacheError() }
+        XCTAssertNil(recovered)
 
         let journal = store(); await journal.waitForMoments()
         journal.log(.init(at: Date(), meetingTitle: "Day", presetID: nil, window: nil, verdict: verdict, provider: "local", model: "m", outcome: .shown))

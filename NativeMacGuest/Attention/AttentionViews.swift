@@ -755,11 +755,18 @@ struct NativeDesktopIntelligenceSettings: View {
             Section(L("Voice")) {
                 Toggle(L("Hold ⌥Space to talk to Assistant"), isOn: $store.pushToTalk)
                     .accessibilityIdentifier("assistant.pushToTalk")
-                Text(L("Hold it in this app or while another app is in front. macOS must allow Accessibility and Input Monitoring; without that, the shortcut works only in this app. The microphone is held back from the meeting and speech is recognized on this Mac only while the key is held. You can also type every command."))
+                Text(L("Hold it in this app or while another app is in front. The shortcut is not typed into the other app. The microphone is held back from the meeting and speech is recognized on this Mac only while the key is held, and listening stops within 30 seconds if the key release is missed. You can also type every command."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Toggle(L("Speak Assistant answers in headphones"), isOn: $store.talkBack)
                     .accessibilityIdentifier("assistant.talkBack")
-                Text(L("Off by default. Answers play only when the Mac's output is explicitly a headphone data source, never into a meeting."))
+                Text(L("Off by default. Answers play for a headphone jack, or for a Bluetooth or USB device you mark below. Speakers stay off, and sound never goes into a meeting."))
+                if let device = AssistantHeadphoneRoute.outputDevice() {
+                    Toggle(L("This is a headphone"), isOn: Binding(get: { store.headphoneUIDs.contains(device.uid) },
+                                                                  set: { store.setHeadphoneApproved(device.uid, $0) }))
+                        .disabled(AssistantHeadphoneRoute.isSpeakerSource(device.source))
+                    Text(L("For a headset macOS does not report as a headphone jack. Built-in and external speakers cannot be marked."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Picker(L("Speak replies with"), selection: $store.voiceEngine) {
                     Text(L("The macOS voice")).tag(VoiceEngine.system)

@@ -79,7 +79,8 @@ enum MeetingOutcomePrompt {
             tasks: tasks, openQuestions: clean(raw.open_questions ?? []))
     }
 
-    /// Closes a JSON object cut off by a token limit so the fields that were finished still decode.
+    /// Closes a JSON object cut off by a token limit. A cut inside `summary`, or after a key
+    /// with no finished value, is rejected. Only values that were already closed are kept.
     static func repairTruncatedJSON(_ text: String) -> String? {
         guard let start = text.firstIndex(of: "{") else { return nil }
         let source = text[start...]
@@ -87,72 +88,133 @@ enum MeetingOutcomePrompt {
         var stack: [Character] = []
         var inString = false
         var escape = false
+        var stringBody = ""
+        var pendingKey = ""
+        var readingKey = true
+        var summaryClosed = false
+        var good = ""
+        var goodStack: [Character] = []
+        var goodSummary = false
+        func markGood() {
+            good = out
+            goodStack = stack
+            goodSummary = summaryClosed
+        }
         for character in source {
             if inString {
                 out.append(character)
                 if escape { escape = false; continue }
                 if character == "\\" { escape = true; continue }
-                if character == "\"" { inString = false }
+                if character == "\"" {
+                    inString = false
+                    if readingKey { pendingKey = stringBody; readingKey = false }
+                    else {
+                        if pendingKey == "summary" { summaryClosed = true }
+                        markGood()
+                    }
+                    stringBody = ""
+                } else { stringBody.append(character) }
                 continue
             }
             switch character {
             case "\"":
                 inString = true
+                stringBody = ""
                 out.append(character)
             case "{":
                 stack.append("}")
+                readingKey = true
                 out.append(character)
             case "[":
                 stack.append("]")
+                readingKey = false
                 out.append(character)
             case "}", "]":
                 guard stack.last == character else { continue }
                 stack.removeLast()
                 out.append(character)
-            default:
+                readingKey = stack.last == "}"
+                markGood()
+            case ":":
+                readingKey = false
                 out.append(character)
+            case ",":
+                readingKey = stack.last == "}"
+                out.append(character)
+            default:
+                if !character.isWhitespace { readingKey = false }
+                out.append(character)
+                if character.isNumber { markGood() }
             }
         }
-        if escape, !out.isEmpty { out.removeLast() }
-        if inString { out.append("\"") }
-        while let last = out.last, last == "," || last == ":" || last.isWhitespace { out.removeLast() }
-        guard !stack.isEmpty || inString else { return nil }
-        for closer in stack.reversed() { out.append(closer) }
-        return out
+        guard goodSummary else { return nil }
+        var repaired = good
+        while let last = repaired.last, last == "," || last == ":" || last.isWhitespace { repaired.removeLast() }
+        for closer in goodStack.reversed() { repaired.append(closer) }
+        return repaired == out ? nil : repaired
     }
 
-    /// Recent lines kept for an outcome. The on-device model’s context is a few thousand tokens,
-    /// so the snapshot is a line cap and a character budget, newest lines first.
+    /// The on-device model only sees the newest slice. A remote writer keeps the start and the end.
     static let maxLines = 60
     static let maxLineCharacters = 400
     static let maxCharacters = 8_000
+    static let remoteMaxLines = 400
+    static let remoteMaxCharacters = 80_000
 
     /// The leave path snapshots bounded value types; no live model is retained by a writer.
-    static func window(title: String, transcript: [GuestMeetingMessage], chat: [ChatEntry], yourName: String, now: Date) -> AttentionWindow {
+    static func window(title: String, transcript: [GuestMeetingMessage], chat: [ChatEntry], yourName: String, now: Date, onDevice: Bool = false) -> AttentionWindow {
         struct Item { var at: Date; var order: Int; var line: AttentionWindow.Line }
+        let lineCap = onDevice ? maxLines : remoteMaxLines
+        let charCap = onDevice ? maxCharacters : remoteMaxCharacters
+        let perLine = onDevice ? maxLineCharacters : 1_200
+        let scan = onDevice ? 240 : 2_000
         var items: [Item] = [], order = 0, last = Date.distantPast
-        for message in transcript.suffix(240) {
+        for message in transcript.suffix(scan) {
             let time = NativeDesktopMeetingModel.spokenAt(message); last = time ?? last
             guard !message.text.trimmed.isEmpty else { continue }
             items.append(.init(at: last, order: order, line: .init(id: message.id, ref: "", source: .speech,
-                speaker: message.participantName, isYou: message.isOwn, text: String(message.text.trimmed.prefix(maxLineCharacters)),
+                speaker: message.participantName, isYou: message.isOwn, text: String(message.text.trimmed.prefix(perLine)),
                 at: time, mentionsYou: false))); order += 1
         }
-        for entry in chat.suffix(240) where !entry.text.trimmed.isEmpty {
+        for entry in chat.suffix(scan) where !entry.text.trimmed.isEmpty {
             items.append(.init(at: entry.sentAt, order: order, line: .init(id: "chat-" + entry.id, ref: "", source: .chat,
-                speaker: entry.sender, isYou: entry.isOwn, text: String(entry.text.trimmed.prefix(maxLineCharacters)),
+                speaker: entry.sender, isYou: entry.isOwn, text: String(entry.text.trimmed.prefix(perLine)),
                 at: entry.sentAt, mentionsYou: false))); order += 1
         }
-        var chosen: [Item] = []
-        var used = 0
-        for item in items.sorted(by: { ($0.at, $0.order) > ($1.at, $1.order) }) {
-            if chosen.count >= maxLines { break }
-            let cost = item.line.text.count
-            if used > 0, used + cost > maxCharacters { break }
-            chosen.append(item)
-            used += cost
+        let chronological = items.sorted { ($0.at, $0.order) < ($1.at, $1.order) }
+        let chosen: [Item]
+        if onDevice {
+            var newest: [Item] = []
+            var used = 0
+            for item in chronological.reversed() {
+                if newest.count >= lineCap { break }
+                let cost = item.line.text.count
+                if used > 0, used + cost > charCap { break }
+                newest.append(item)
+                used += cost
+            }
+            chosen = newest.reversed()
+        } else {
+            let total = chronological.reduce(0) { $0 + $1.line.text.count }
+            if chronological.count <= lineCap && total <= charCap {
+                chosen = chronological
+            } else {
+                var head = 0, tail = chronological.count - 1, used = 0
+                var picked: [Item] = []
+                var takeHead = true
+                while head <= tail, picked.count < lineCap {
+                    let item = takeHead ? chronological[head] : chronological[tail]
+                    let cost = item.line.text.count
+                    if used > 0, used + cost > charCap { break }
+                    picked.append(item)
+                    used += cost
+                    if takeHead { head += 1 } else { tail -= 1 }
+                    takeHead.toggle()
+                }
+                chosen = picked.sorted { ($0.at, $0.order) < ($1.at, $1.order) }
+            }
         }
-        let lines = chosen.reversed().enumerated().map { index, item in
+        let lines = chosen.enumerated().map { index, item in
             let line = item.line
             return AttentionWindow.Line(id: line.id, ref: "L\(index + 1)", source: line.source, speaker: line.speaker,
                 isYou: line.isYou, text: line.text, at: line.at, mentionsYou: line.mentionsYou)
@@ -160,4 +222,5 @@ enum MeetingOutcomePrompt {
         return .init(meetingTitle: title, lines: lines, reactions: [], joined: [], left: [], participantCount: 0,
             microphoneOn: false, soundOn: false, builtAt: now)
     }
+
 }

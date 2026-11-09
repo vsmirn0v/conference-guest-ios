@@ -203,11 +203,21 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     @Published var remoteOutcomes: Bool { didSet { defaults.set(remoteOutcomes, forKey: Self.remoteOutcomesKey) } }
     @Published var pushToTalk: Bool { didSet { defaults.set(pushToTalk, forKey: Self.pushToTalkKey) } }
     @Published var talkBack: Bool { didSet { defaults.set(talkBack, forKey: Self.talkBackKey) } }
+    /// Output-device UIDs the person marked with "This is a headphone".
+    @Published private(set) var headphoneUIDs: Set<String>
     static let outcomesKey = "attention.outcomes.enabled", remoteOutcomesKey = "attention.outcomes.remote"
     static let pushToTalkKey = "attention.commands.pushToTalk"
     static let talkBackKey = "attention.commands.talkBack"
+    static let headphoneUIDsKey = "attention.voice.headphones"
     /// On-device writers run whenever outcome generation is on. A remote writer also needs
     /// Attention on and `remoteOutcomes`, so a saved key cannot send a transcript by itself.
+    func setHeadphoneApproved(_ uid: String, _ approved: Bool) {
+        let clean = uid.trimmed
+        guard !clean.isEmpty else { return }
+        if approved { headphoneUIDs.insert(clean) } else { headphoneUIDs.remove(clean) }
+        defaults.set(Array(headphoneUIDs).sorted(), forKey: Self.headphoneUIDsKey)
+    }
+
     var shouldCaptureOutcome: Bool {
         guard generateOutcomes, writerConfigured else { return false }
         if effectiveWriter.onThisMac { return true }
@@ -244,7 +254,8 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     private var loadingMoments = false
     private var momentBuffer: [AttentionDecisionRecord] = []
     private var momentLoadTask: Task<Void, Never>?
-    private var journalTask: Task<Void, Never>?
+    /// Every journal append, from the main thread and from seen-marks, runs here in order.
+    private let journalQueue = DispatchQueue(label: "attention.journal.append")
     /// Test hook invoked on the queue that appends seen-marks, so file IO can be asserted off the main thread.
     var journalHook: (@Sendable () -> Void)?
 
@@ -272,6 +283,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         // Off until chosen. A global hotkey can open the microphone while another app is in front.
         pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? false
         talkBack = defaults.bool(forKey: Self.talkBackKey)
+        headphoneUIDs = Set(defaults.stringArray(forKey: Self.headphoneUIDsKey) ?? [])
         provider = defaults.data(forKey: Self.providerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
             ?? AttentionProvider.defaults[.openAI]!
         profile = AttentionProfile()
@@ -376,17 +388,14 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     func log(_ record: AttentionDecisionRecord) {
         if loadingMoments { momentBuffer.append(record) }
         momentHistory.apply(record)
-        do {
-            try FileManager.default.createDirectory(at: decisionsFolder, withIntermediateDirectories: true)
-            let dayString = Self.dayFormatter.string(from: record.at)
-            let url = decisionsFolder.appendingPathComponent(dayString + ".jsonl")
-            var line = try JSONEncoder.attention.encode(record); line.append(0x0A)
-            try Self.appendLine(line, to: url)
-            if lastPrunedDay != dayString {
-                lastPrunedDay = dayString
-                pruneDecisions(now: record.at)
-            }
-        } catch { probeLog("attention-log-failed", [:]) }
+        let dayString = Self.dayFormatter.string(from: record.at)
+        guard var line = try? JSONEncoder.attention.encode(record) else { return }
+        line.append(0x0A)
+        writeJournal([(line, dayString)], wait: true)
+        if lastPrunedDay != dayString {
+            lastPrunedDay = dayString
+            pruneDecisions(now: record.at)
+        }
     }
 
     private func loadMoments() async {
@@ -416,25 +425,36 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     func markMomentsSeen(_ ids: [UUID], at: Date = Date()) {
         let records = momentHistory.markSeen(ids, at: at)
         guard !records.isEmpty else { return }
-        let folder = decisionsFolder
-        let hook = journalHook
-        let previous = journalTask
-        let lines: [(Data, URL)] = records.compactMap { record in
+        // A load that finishes after this call replaces momentHistory from the disk snapshot plus momentBuffer.
+        if loadingMoments { momentBuffer.append(contentsOf: records) }
+        let lines: [(Data, String)] = records.compactMap { record in
             guard var line = try? JSONEncoder.attention.encode(record) else { return nil }
             line.append(0x0A)
-            let day = Self.dayFormatter.string(from: record.at)
-            return (line, folder.appendingPathComponent(day + ".jsonl"))
+            return (line, Self.dayFormatter.string(from: record.at))
         }
-        journalTask = Task.detached(priority: .utility) {
-            await previous?.value
-            hook?()
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            for (line, url) in lines { try? AttentionStore.appendLine(line, to: url) }
+        writeJournal(lines, wait: false)
+    }
+
+    /// Awaits journal appends queued by `markMomentsSeen`.
+    func waitForJournal() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            journalQueue.async { continuation.resume() }
         }
     }
 
-    /// Awaits seen-mark journal writes started by `markMomentsSeen`.
-    func waitForJournal() async { await journalTask?.value }
+    private func writeJournal(_ lines: [(Data, String)], wait: Bool) {
+        let folder = decisionsFolder
+        let hook = journalHook
+        let work = {
+            hook?()
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            for (line, day) in lines {
+                let url = folder.appendingPathComponent(day + ".jsonl")
+                try? AttentionStore.appendLine(line, to: url)
+            }
+        }
+        if wait { journalQueue.sync(execute: work) } else { journalQueue.async(execute: work) }
+    }
 
     /// Opens the day file for reading and writing. Write-only handles cannot see the
     /// previous byte, so a torn last line was "repaired" by inserting a blank line every time.

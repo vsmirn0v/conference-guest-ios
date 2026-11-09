@@ -128,13 +128,13 @@ struct AttentionMomentHistory: Equatable, Sendable {
         }
     }
 
-    /// Old overlays cannot survive a process restart, so unresolved Live items
-    /// are retained as Missed when history is restored.
     mutating func drop(olderThan cutoff: Date) {
         momentsByID = momentsByID.filter { $0.value.updatedAt >= cutoff || $0.value.createdAt >= cutoff }
         quietByMeeting = quietByMeeting.filter { $0.value.latestAt >= cutoff }
     }
 
+    /// Old overlays cannot survive a process restart, so unresolved Live items
+    /// are retained as Missed when history is restored.
     mutating func settleHistoricalLive() {
         for (id, var moment) in momentsByID where moment.state == .live {
             moment.state = .missed; momentsByID[id] = moment

@@ -3,11 +3,14 @@ import Foundation
 /// Decides which inference failures mean the Neural Engine specialization cache cannot be reused.
 enum VoxCacheRecovery {
     static func isUnusableCacheError(_ error: Error) -> Bool {
-        let typeName = String(describing: type(of: error))
-        // MPSGraph surfaces this Swift overlay type. A substring match also hits unrelated
-        // errors whose text merely contains "GenericObjCError".
-        if typeName == "_GenericObjCError" || typeName == "__GenericObjCError" { return true }
-        return containsToken(String(reflecting: error), token: "nilError")
+        let described = String(describing: type(of: error))
+        let reflected = String(reflecting: error)
+        // Match the MPSGraph overlay type even when the module name is prefixed.
+        // A bare "GenericObjCError" substring is not this type.
+        for name in ["_GenericObjCError", "__GenericObjCError"] {
+            if described == name || described.hasSuffix("." + name) || containsToken(reflected, token: name) { return true }
+        }
+        return containsToken(reflected, token: "nilError")
     }
 
     static func containsToken(_ text: String, token: String) -> Bool {
@@ -27,34 +30,54 @@ enum VoxCacheRecovery {
     }
 }
 
-/// One rebuild for a failure, including when the operation calls back into a recovering method.
+/// One rebuild for a failure. Concurrent callers wait for that rebuild instead of skipping it.
 final class VoxRecoverySession: @unchecked Sendable {
     private let lock = NSLock()
-    private var depth = 0
+    private var rebuilding = false
+    private var waiters: [CheckedContinuation<Result<Void, Error>, Never>] = []
 
-    func perform<T: Sendable>(operation: () async throws -> T, rebuild: () async throws -> Void) async throws -> T {
-        let outer: Bool = {
-            lock.lock(); defer { lock.unlock() }
-            if depth > 0 { return false }
-            depth += 1
-            return true
-        }()
-        if !outer { return try await operation() }
-        defer { lock.lock(); depth -= 1; lock.unlock() }
+    func perform<T>(operation: () async throws -> T, rebuild: () async throws -> Void) async throws -> T {
         do { return try await operation() }
         catch {
             guard VoxCacheRecovery.isUnusableCacheError(error) else { throw error }
-            try await rebuild()
+            try await joinRebuild(rebuild)
             return try await operation()
         }
     }
+
+    private func joinRebuild(_ rebuild: () async throws -> Void) async throws {
+        let lead: Bool = {
+            lock.lock(); defer { lock.unlock() }
+            if rebuilding { return false }
+            rebuilding = true
+            return true
+        }()
+        if !lead {
+            let result: Result<Void, Error> = await withCheckedContinuation { continuation in
+                lock.lock(); waiters.append(continuation); lock.unlock()
+            }
+            try result.get()
+            return
+        }
+        var failure: Error?
+        do { try await rebuild() } catch { failure = error }
+        let pending: [CheckedContinuation<Result<Void, Error>, Never>] = {
+            lock.lock(); defer { lock.unlock() }
+            rebuilding = false
+            let copy = waiters
+            waiters.removeAll()
+            return copy
+        }()
+        let result: Result<Void, Error> = failure.map { .failure($0) } ?? .success(())
+        for waiter in pending { waiter.resume(returning: result) }
+        if let failure { throw failure }
+    }
 }
 
-/// After a rebuild throws, keep a model that later calls can use.
+/// A failed rebuild must not put the broken model back. Nil means the next call specializes again.
 enum VoxModelRecovery {
-    static func recover<T>(previous: T?, reload: () async throws -> T) async -> T? {
-        if let model = try? await reload() { return model }
-        return previous
+    static func recover<T>(reload: () async throws -> T) async -> T? {
+        try? await reload()
     }
 }
 
@@ -220,15 +243,13 @@ final class VoxAsset {
 
     private func rebuildModel() async throws {
         let bookmark = model?.bookmarkData
-        let previous = model
         functions.removeAll()
         model = nil
         do {
             model = try await VoxCoreAI.rebuild(url, bookmark: bookmark)
         } catch {
-            // Do not compile a second time here. Restore the previous model, or leave nil so the next
-            // call lazily specializes. Callers must not still be holding function or input references.
-            model = await VoxModelRecovery.recover(previous: previous) { throw error }
+            // Leave the model unset. Restoring the instance whose cache just failed retries the same error.
+            model = nil
             throw error
         }
     }

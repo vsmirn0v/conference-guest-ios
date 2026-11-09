@@ -319,7 +319,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         let id = model.sessionID
         guard store.shouldCaptureOutcome, !outcomeCaptures.contains(id) else { return }
         let window = MeetingOutcomePrompt.window(title: model.title, transcript: model.transcript,
-            chat: model.chat.items, yourName: model.displayName, now: now())
+            chat: model.chat.items, yourName: model.displayName, now: now(), onDevice: store.effectiveWriter.onThisMac)
         guard !window.lines.isEmpty else { return }
         outcomeCaptures.insert(id)
         let meetingID = id, title = model.title, invitation = model.invitation, series = model.calendarSeriesID

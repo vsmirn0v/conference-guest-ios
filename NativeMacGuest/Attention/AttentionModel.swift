@@ -280,14 +280,14 @@ enum ReplyStance {
             "подтвердить": "confirm", "подтверждаю": "confirm", "согласие": "confirm", "согласен": "confirm",
             "ask for time": "askForTime", "askfortime": "askForTime", "delay": "askForTime", "later": "askForTime",
             "попросить время": "askForTime", "нужно время": "askForTime", "позже": "askForTime",
-            "hand off": "handOff", "handoff": "handOff", "handOff": "handOff", "delegate": "handOff",
+            "hand off": "handOff", "handoff": "handOff", "delegate": "handOff",
             "передать": "handOff", "делегировать": "handOff",
             "decline": "decline", "refuse": "decline", "no": "decline",
             "отказать": "decline", "отказаться": "decline", "отклонить": "decline",
             "reply": "reply", "ответ": "reply",
         ]
         if let id = exact[folded] { return id }
-        if folded.contains("time") || folded.contains("время") || folded.contains("позже") { return "askForTime" }
+        if folded.contains("for time") || folded.contains("ask time") || folded.contains("время") || folded.contains("позже") { return "askForTime" }
         if folded.contains("declin") || folded.contains("refus") || folded.contains("отказ") { return "decline" }
         if folded.contains("confirm") || folded.contains("подтвер") || folded.contains("соглас") { return "confirm" }
         if folded.contains("hand") || folded.contains("delegat") || folded.contains("переда") { return "handOff" }

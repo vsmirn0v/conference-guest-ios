@@ -293,28 +293,32 @@ private struct AssistantDataDocument: Codable {
 
     private func load() async {
         let url = self.url, readData = self.readData
-        let (restored, corruptError, dropped) = await Task.detached(priority: .utility) { () -> (AssistantDataDocument?, String?, Int) in
-            guard let data = try? await readData(url), !data.isEmpty else { return (nil, nil, 0) }
+        let (restored, corruptError, dropped, backupSaved) = await Task.detached(priority: .utility) { () -> (AssistantDataDocument?, String?, Int, Bool) in
+            guard let data = try? await readData(url), !data.isEmpty else { return (nil, nil, 0, true) }
             do {
                 let document = try JSONDecoder.attention.decode(AssistantDataDocument.self, from: data)
-                if document.degraded {
-                    let backup = url.deletingLastPathComponent().appendingPathComponent("assistant.recovered.json")
-                    try? data.write(to: backup, options: .atomic)
-                }
-                return (document, nil, document.droppedItems)
+                guard document.degraded else { return (document, nil, 0, true) }
+                let backup = url.deletingLastPathComponent().appendingPathComponent("assistant.recovered.json")
+                do {
+                    try data.write(to: backup, options: .atomic)
+                    return (document, nil, document.droppedItems, true)
+                } catch { return (document, nil, document.droppedItems, false) }
             } catch {
                 let backup = url.deletingLastPathComponent().appendingPathComponent("assistant.corrupt.json")
-                try? data.write(to: backup, options: .atomic)
-                return (nil, error.localizedDescription, 0)
+                do {
+                    try data.write(to: backup, options: .atomic)
+                    return (nil, error.localizedDescription, 0, true)
+                } catch { return (nil, error.localizedDescription, 0, false) }
             }
         }.value
         loading = true
         if let corruptError {
-            retainOriginalFile = true
+            // The original stays untouched only when its backup could not be written.
+            retainOriginalFile = !backupSaved
             loadWarning = L("Assistant memory could not be read. A copy was kept. %@", corruptError)
             probeLog("assistant-data-corrupt", [:])
         } else if let restored, restored.degraded || dropped > 0 {
-            retainOriginalFile = true
+            retainOriginalFile = !backupSaved
             loadWarning = L("Assistant memory was partly unreadable. %ld items were copied to assistant.recovered.json.", max(dropped, 1))
             probeLog("assistant-data-recovered", ["dropped": dropped])
         }
@@ -351,12 +355,33 @@ private struct AssistantDataDocument: Codable {
         if !retainOriginalFile, mutatedDuringLoad, restored != nil, !clearedDuringLoad { persist() }
     }
 
+    func dismissLoadWarning() { loadWarning = nil }
+
     /// Keystrokes update memory at once and reach disk shortly after typing pauses.
     func flushOutcomeEdits() {
         guard pendingOutcomeSave != nil else { return }
         pendingOutcomeSave?.cancel()
         pendingOutcomeSave = nil
         persist()
+    }
+
+    /// Quit and window close cannot wait for the debounced task.
+    func flushOutcomeEditsSynchronously() {
+        pendingOutcomeSave?.cancel()
+        pendingOutcomeSave = nil
+        guard !retainOriginalFile else { return }
+        document.outcomes = outcomes
+        document.memories = memories
+        document.suggestions = suggestions
+        document.retentionDays = retentionDays
+        let snapshot = document, url = self.url
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder.attention.encode(snapshot).write(to: url, options: .atomic)
+            saveWarning = nil
+        } catch {
+            saveWarning = L("Assistant memory could not be saved. %@", error.localizedDescription)
+        }
     }
 
     private func scheduleOutcomePersist() {
