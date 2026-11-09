@@ -3,7 +3,7 @@ import SwiftUI
 
 extension AttentionMoment.State {
     var title: String {
-        switch self { case .live: L("Live"); case .missed: L("Missed"); case .answered: L("Answered")
+        switch self { case .live: L("Current moment"); case .missed: L("Missed"); case .answered: L("Answered")
         case .dismissed: L("Dismissed"); case .notForMe: L("Not for me") }
     }
 }

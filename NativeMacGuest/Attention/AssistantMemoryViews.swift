@@ -27,7 +27,8 @@ struct AssistantMemorySettings: View {
                 Spacer()
                 Button(L("Add memory")) { adding = true }
             }
-            if let warning = data.persistenceWarning { Label(warning, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+            if let warning = data.loadWarning { Label(warning, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
+            if let warning = data.saveWarning { Label(warning, systemImage: "exclamationmark.triangle").foregroundStyle(.orange) }
             if let notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
 
             GroupBox(L("This week I noticed")) {

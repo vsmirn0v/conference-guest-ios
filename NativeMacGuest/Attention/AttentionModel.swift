@@ -269,10 +269,46 @@ struct ReplyChannels: Equatable, Sendable {
     var isEmpty: Bool { !chat && reactions.isEmpty }
 }
 
+/// Stable reply-stance ids. Model labels are free-form and often localized, so preference
+/// matching folds known English and Russian wordings onto these ids.
+enum ReplyStance {
+    static func normalize(_ raw: String) -> String {
+        let folded = raw.trimmed.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "ru")).lowercased()
+        guard !folded.isEmpty else { return "" }
+        let exact: [String: String] = [
+            "confirm": "confirm", "yes": "confirm", "accept": "confirm", "agree": "confirm",
+            "подтвердить": "confirm", "подтверждаю": "confirm", "согласие": "confirm", "согласен": "confirm",
+            "ask for time": "askForTime", "askfortime": "askForTime", "delay": "askForTime", "later": "askForTime",
+            "попросить время": "askForTime", "нужно время": "askForTime", "позже": "askForTime",
+            "hand off": "handOff", "handoff": "handOff", "handOff": "handOff", "delegate": "handOff",
+            "передать": "handOff", "делегировать": "handOff",
+            "decline": "decline", "refuse": "decline", "no": "decline",
+            "отказать": "decline", "отказаться": "decline", "отклонить": "decline",
+            "reply": "reply", "ответ": "reply",
+        ]
+        if let id = exact[folded] { return id }
+        if folded.contains("time") || folded.contains("время") || folded.contains("позже") { return "askForTime" }
+        if folded.contains("declin") || folded.contains("refus") || folded.contains("отказ") { return "decline" }
+        if folded.contains("confirm") || folded.contains("подтвер") || folded.contains("соглас") { return "confirm" }
+        if folded.contains("hand") || folded.contains("delegat") || folded.contains("переда") { return "handOff" }
+        return folded
+    }
+}
+
 struct ReplyVariant: Codable, Identifiable, Equatable, Sendable {
     var id = UUID()
     var stance: String
     var text: String
+    var stanceTitle: String {
+        switch ReplyStance.normalize(stance) {
+        case "confirm": L("Confirm")
+        case "askForTime": L("Ask for time")
+        case "handOff": L("Hand off")
+        case "decline": L("Decline")
+        case "reply": L("Reply")
+        default: stance
+        }
+    }
 }
 
 /// A reply drafted for a card: ranked editable variants and an optional reaction.
@@ -294,7 +330,8 @@ struct ReplyDraft: Codable, Equatable, Sendable {
         }
         let edited = edits.suffix(5).map { words($0.sent) }
         func score(_ variant: ReplyVariant) -> Int {
-            let stance = preferredStance?.caseInsensitiveCompare(variant.stance) == .orderedSame ? 1000 : 0
+            let stance = ReplyStance.normalize(preferredStance ?? "") == ReplyStance.normalize(variant.stance) &&
+                !(preferredStance ?? "").trimmed.isEmpty ? 1000 : 0
             let tokens = words(variant.text)
             let similarity = edited.map { $0.intersection(tokens).count }.max() ?? 0
             return stance + similarity

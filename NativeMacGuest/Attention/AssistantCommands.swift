@@ -51,7 +51,7 @@ struct AssistantCommand: Equatable, Sendable {
     var minutes = 10
     var at: Date?
 
-    var needsConfirmation: Bool { [.sendChat, .say, .react, .leave].contains(action) }
+    var needsConfirmation: Bool { [.sendChat, .say, .react, .leave, .join].contains(action) }
     /// The meeting-scoped bypass covers only outward meeting contributions, never leave.
     var sendBypassAllowed: Bool { [.sendChat, .say, .react].contains(action) }
 }
@@ -146,12 +146,12 @@ enum AssistantCommandPrompt {
         let reaction = (raw.reaction ?? "").isEmpty ? nil : MeetingReaction(rawValue: raw.reaction ?? "")
         let count = min(20, max(1, raw.n ?? 5)), minutes = min(180, max(1, raw.minutes ?? 10))
         let atText = (raw.at ?? "").trimmed
-        let iso = ISO8601DateFormatter()
-        let fractional = ISO8601DateFormatter(); fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let at = atText.isEmpty ? nil : (iso.date(from: atText) ?? fractional.date(from: atText))
+        let at = atText.isEmpty ? nil : AssistantTime.parse(atText)
         let scope = AssistantCommandScope(rawValue: raw.scope ?? "") ?? .untilLeave
+        // Remember stores `fact`. Other actions must not send `fact` when `text` is empty.
+        let storedText = action == .remember ? fact : text
         let command = AssistantCommand(action: action, meetingID: meetingID, momentID: momentID, mode: mode, scope: scope,
-            text: text.isEmpty ? fact : text, reaction: reaction, count: count, minutes: minutes, at: at)
+            text: storedText, reaction: reaction, count: count, minutes: minutes, at: at)
         switch action {
         case .setAttention: guard meetingID != nil, mode != nil else { throw AssistantCommandError.missingField }
         case .join: guard meetingID != nil else { throw AssistantCommandError.missingField }
@@ -172,6 +172,45 @@ enum AssistantCommandPrompt {
         guard let id = UUID(uuidString: text) else { throw AssistantCommandError.malformed }
         guard valid.contains(id) else { throw error }
         return id
+    }
+}
+
+/// ISO 8601 instants, including values the stock formatter rejects: no seconds, no time zone.
+enum AssistantTime {
+    static func parse(_ text: String) -> Date? {
+        let raw = text.trimmed
+        guard !raw.isEmpty else { return nil }
+        var candidates = [raw]
+        if raw.range(of: #"T\d{2}:\d{2}$"#, options: .regularExpression) != nil { candidates.append(raw + ":00") }
+        if let zone = raw.range(of: #"(Z|[+-]\d{2}:?\d{2})$"#, options: .regularExpression),
+           raw[..<zone.lowerBound].range(of: #"T\d{2}:\d{2}$"#, options: .regularExpression) != nil {
+            candidates.append(String(raw[..<zone.lowerBound]) + ":00" + String(raw[zone]))
+        }
+        let zoned: [ISO8601DateFormatter.Options] = [
+            [.withInternetDateTime, .withFractionalSeconds],
+            [.withInternetDateTime],
+        ]
+        let local: [ISO8601DateFormatter.Options] = [
+            [.withFullDate, .withTime, .withDashSeparatorInDate, .withColonSeparatorInTime, .withFractionalSeconds],
+            [.withFullDate, .withTime, .withDashSeparatorInDate, .withColonSeparatorInTime],
+            [.withFullDate, .withDashSeparatorInDate],
+        ]
+        for candidate in candidates {
+            for option in zoned {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = option
+                if let date = formatter.date(from: candidate) { return date }
+            }
+            let hasZone = candidate.hasSuffix("Z") || candidate.range(of: #"[+-]\d{2}:?\d{2}$"#, options: .regularExpression) != nil
+            if hasZone { continue }
+            for option in local {
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = option
+                formatter.timeZone = .current
+                if let date = formatter.date(from: candidate) { return date }
+            }
+        }
+        return nil
     }
 }
 

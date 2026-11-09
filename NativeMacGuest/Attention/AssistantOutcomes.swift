@@ -54,23 +54,78 @@ enum MeetingOutcomePrompt {
     }
 
     static func parse(_ content: String) throws -> MeetingOutcomeContent {
-        struct RawTask: Decodable { var text: String; var owner: String; var due_at: String }
-        struct Raw: Decodable { var summary: String; var decisions: [String]; var tasks: [RawTask]; var open_questions: [String] }
-        guard let data = content.jsonPayload.data(using: .utf8), let raw = try? JSONDecoder().decode(Raw.self, from: data),
-              !raw.summary.trimmed.isEmpty else { throw AttentionJudgeError.emptyAnswer }
+        let payload = content.jsonPayload
+        if let parsed = decode(payload) { return parsed }
+        if let repaired = repairTruncatedJSON(payload), let parsed = decode(repaired) { return parsed }
+        throw AttentionJudgeError.emptyAnswer
+    }
+
+    private static func decode(_ payload: String) -> MeetingOutcomeContent? {
+        struct RawTask: Decodable { var text: String?; var owner: String?; var due_at: String? }
+        struct Raw: Decodable { var summary: String?; var decisions: [String]?; var tasks: [RawTask]?; var open_questions: [String]? }
+        guard let data = payload.data(using: .utf8), let raw = try? JSONDecoder().decode(Raw.self, from: data),
+              let summary = raw.summary?.trimmed, !summary.isEmpty else { return nil }
         func clean(_ values: [String]) -> [String] {
             var seen = Set<String>()
             return values.map { String($0.trimmed.prefix(500)) }.filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }.prefix(20).map { $0 }
         }
-        let iso = ISO8601DateFormatter()
-        let tasks = raw.tasks.prefix(20).compactMap { raw -> MeetingOutcomeTask? in
-            let text = String(raw.text.trimmed.prefix(500)); guard !text.isEmpty else { return nil }
-            return .init(text: text, owner: String(raw.owner.trimmed.prefix(120)),
-                dueAt: raw.due_at.trimmed.isEmpty ? nil : iso.date(from: raw.due_at))
+        let tasks = (raw.tasks ?? []).prefix(20).compactMap { raw -> MeetingOutcomeTask? in
+            let text = String((raw.text ?? "").trimmed.prefix(500)); guard !text.isEmpty else { return nil }
+            let due = raw.due_at?.trimmed ?? ""
+            return .init(text: text, owner: String((raw.owner ?? "").trimmed.prefix(120)),
+                dueAt: due.isEmpty ? nil : AssistantTime.parse(due))
         }
-        return .init(summary: String(raw.summary.trimmed.prefix(1600)), decisions: clean(raw.decisions),
-            tasks: tasks, openQuestions: clean(raw.open_questions))
+        return .init(summary: String(summary.prefix(1600)), decisions: clean(raw.decisions ?? []),
+            tasks: tasks, openQuestions: clean(raw.open_questions ?? []))
     }
+
+    /// Closes a JSON object cut off by a token limit so the fields that were finished still decode.
+    static func repairTruncatedJSON(_ text: String) -> String? {
+        guard let start = text.firstIndex(of: "{") else { return nil }
+        let source = text[start...]
+        var out = ""
+        var stack: [Character] = []
+        var inString = false
+        var escape = false
+        for character in source {
+            if inString {
+                out.append(character)
+                if escape { escape = false; continue }
+                if character == "\\" { escape = true; continue }
+                if character == "\"" { inString = false }
+                continue
+            }
+            switch character {
+            case "\"":
+                inString = true
+                out.append(character)
+            case "{":
+                stack.append("}")
+                out.append(character)
+            case "[":
+                stack.append("]")
+                out.append(character)
+            case "}", "]":
+                guard stack.last == character else { continue }
+                stack.removeLast()
+                out.append(character)
+            default:
+                out.append(character)
+            }
+        }
+        if escape, !out.isEmpty { out.removeLast() }
+        if inString { out.append("\"") }
+        while let last = out.last, last == "," || last == ":" || last.isWhitespace { out.removeLast() }
+        guard !stack.isEmpty || inString else { return nil }
+        for closer in stack.reversed() { out.append(closer) }
+        return out
+    }
+
+    /// Recent lines kept for an outcome. The on-device model’s context is a few thousand tokens,
+    /// so the snapshot is a line cap and a character budget, newest lines first.
+    static let maxLines = 60
+    static let maxLineCharacters = 400
+    static let maxCharacters = 8_000
 
     /// The leave path snapshots bounded value types; no live model is retained by a writer.
     static func window(title: String, transcript: [GuestMeetingMessage], chat: [ChatEntry], yourName: String, now: Date) -> AttentionWindow {
@@ -80,18 +135,27 @@ enum MeetingOutcomePrompt {
             let time = NativeDesktopMeetingModel.spokenAt(message); last = time ?? last
             guard !message.text.trimmed.isEmpty else { continue }
             items.append(.init(at: last, order: order, line: .init(id: message.id, ref: "", source: .speech,
-                speaker: message.participantName, isYou: message.isOwn, text: String(message.text.trimmed.prefix(1200)),
+                speaker: message.participantName, isYou: message.isOwn, text: String(message.text.trimmed.prefix(maxLineCharacters)),
                 at: time, mentionsYou: false))); order += 1
         }
         for entry in chat.suffix(240) where !entry.text.trimmed.isEmpty {
             items.append(.init(at: entry.sentAt, order: order, line: .init(id: "chat-" + entry.id, ref: "", source: .chat,
-                speaker: entry.sender, isYou: entry.isOwn, text: String(entry.text.trimmed.prefix(1200)),
+                speaker: entry.sender, isYou: entry.isOwn, text: String(entry.text.trimmed.prefix(maxLineCharacters)),
                 at: entry.sentAt, mentionsYou: false))); order += 1
         }
-        let lines = items.sorted { ($0.at, $0.order) < ($1.at, $1.order) }.suffix(240).enumerated().map { index, item in
-            var line = item.line; line = .init(id: line.id, ref: "L\(index + 1)", source: line.source, speaker: line.speaker,
+        var chosen: [Item] = []
+        var used = 0
+        for item in items.sorted(by: { ($0.at, $0.order) > ($1.at, $1.order) }) {
+            if chosen.count >= maxLines { break }
+            let cost = item.line.text.count
+            if used > 0, used + cost > maxCharacters { break }
+            chosen.append(item)
+            used += cost
+        }
+        let lines = chosen.reversed().enumerated().map { index, item in
+            let line = item.line
+            return AttentionWindow.Line(id: line.id, ref: "L\(index + 1)", source: line.source, speaker: line.speaker,
                 isYou: line.isYou, text: line.text, at: line.at, mentionsYou: line.mentionsYou)
-            return line
         }
         return .init(meetingTitle: title, lines: lines, reactions: [], joined: [], left: [], participantCount: 0,
             microphoneOn: false, soundOn: false, builtAt: now)

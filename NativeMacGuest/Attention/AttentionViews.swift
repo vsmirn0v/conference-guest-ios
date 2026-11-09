@@ -110,7 +110,7 @@ struct AttentionReplyView: View {
     private var variants: [ReplyVariant] { Array(card.draft?.availableVariants.prefix(3) ?? []) }
     private var usual: ReplyVariant? {
         guard let preferred = attention.store.assistant.preferredStance(), let first = variants.first,
-              preferred.caseInsensitiveCompare(first.stance) == .orderedSame else { return nil }
+              ReplyStance.normalize(preferred) == ReplyStance.normalize(first.stance) else { return nil }
         return first
     }
 
@@ -188,7 +188,7 @@ struct AttentionReplyView: View {
             attention.selectVariant(variant, for: card)
         } label: {
             HStack(spacing: 4) {
-                Text(variant.stance).lineLimit(1)
+                Text(variant.stanceTitle).lineLimit(1)
                 if variant.id == usual?.id { Text(L("Your usual")).font(.caption2).foregroundStyle(.secondary) }
             }
         }
@@ -604,6 +604,13 @@ struct NativeDesktopIntelligenceSettings: View {
             }
         }
     }
+    private var outcomeSharingCaption: String {
+        if !store.enabled { return L("Attention is off, so a meeting outcome is not sent.") }
+        if !store.remoteOutcomes || !store.generateOutcomes {
+            return L("The transcript is sent only when Attention is on and you allow it here.")
+        }
+        return L("When you leave, the transcript and chat are sent to %@.", store.effectiveWriter.host)
+    }
     private var voiceTitle: String {
         switch store.voiceEngine {
         case .system: L("The macOS voice")
@@ -622,8 +629,17 @@ struct NativeDesktopIntelligenceSettings: View {
                 Toggle(L("Pause on battery power"), isOn: $store.pauseOnBattery)
                 Toggle(L("Create a meeting outcome when I leave"), isOn: $store.generateOutcomes)
                     .accessibilityIdentifier("assistant.outcomes")
-                Text(L("Outcomes keep an editable summary, decisions, tasks and open questions on this Mac. Nothing is shared automatically."))
+                Text(L("Outcomes keep an editable summary, decisions, tasks and open questions on this Mac."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if store.effectiveWriter.onThisMac {
+                    Text(L("They are written on this Mac. Nothing is sent."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Toggle(L("Allow sending the transcript to %@ when I leave", store.effectiveWriter.host), isOn: $store.remoteOutcomes)
+                        .disabled(!store.enabled || !store.generateOutcomes)
+                        .accessibilityIdentifier("assistant.outcomes.remote")
+                    Text(outcomeSharingCaption).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 if let error = attention.lastError { Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange) }
             }
             Section {
@@ -739,7 +755,7 @@ struct NativeDesktopIntelligenceSettings: View {
             Section(L("Voice")) {
                 Toggle(L("Hold ⌥Space to talk to Assistant"), isOn: $store.pushToTalk)
                     .accessibilityIdentifier("assistant.pushToTalk")
-                Text(L("While held, your microphone is held back from the meeting and speech is recognized only on this Mac. You can also type every command."))
+                Text(L("Hold it in this app or while another app is in front. macOS must allow Accessibility and Input Monitoring; without that, the shortcut works only in this app. The microphone is held back from the meeting and speech is recognized on this Mac only while the key is held. You can also type every command."))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Toggle(L("Speak Assistant answers in headphones"), isOn: $store.talkBack)
                     .accessibilityIdentifier("assistant.talkBack")
@@ -795,12 +811,16 @@ struct NativeDesktopIntelligenceSettings: View {
                     }
                 }
                 Label(L("Judge and reply requests include up to five relevant excerpts from the Memory shown above; they go to the configured provider."), systemImage: "brain")
-                if store.generateOutcomes {
-                    if store.effectiveWriter.onThisMac {
+                if store.effectiveWriter.onThisMac {
+                    if store.generateOutcomes {
                         Label(L("Meeting outcomes and Since then summaries are created on this Mac."), systemImage: "doc.text")
                     } else {
-                        Label(L("Creating a meeting outcome or Since then summary sends the meeting transcript and chat to %@.", store.effectiveWriter.host), systemImage: "arrow.up.forward")
+                        Label(L("Meeting outcomes are off. Since then summaries are created on this Mac."), systemImage: "doc.text")
                     }
+                } else if store.shouldCaptureOutcome {
+                    Label(L("Creating a meeting outcome or Since then summary sends the meeting transcript and chat to %@.", store.effectiveWriter.host), systemImage: "arrow.up.forward")
+                } else {
+                    Label(L("Since then sends the transcript and chat to %@ when you ask. Leaving a meeting does not.", store.effectiveWriter.host), systemImage: "arrow.up.forward")
                 }
                 if !store.provider.onThisMac {
                     Label(L("Typed and locally recognized commands send your request and current meeting and Moment names to %@.", store.provider.host), systemImage: "arrow.up.forward")

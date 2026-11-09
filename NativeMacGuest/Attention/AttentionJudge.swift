@@ -65,7 +65,7 @@ enum AttentionJudgeError: LocalizedError, Equatable {
 
 extension AttentionProvider {
     /// The client that judges and drafts for this provider.
-    func client(key: String?) -> any AttentionJudge & ReplyWriter {
+    func client(key: String?) -> any AttentionJudge & ReplyWriter & MomentSummarizer & MeetingOutcomeWriter {
         kind == .apple ? AppleOnDeviceJudge() : OpenAIChatJudge(provider: self, key: key)
     }
 }
@@ -124,7 +124,7 @@ struct OpenAIChatJudge: AttentionJudge, ReplyWriter, MomentSummarizer, MeetingOu
         if let index = adjusted.firstIndex(where: { $0["role"] == "system" }), !(adjusted[index]["content"] ?? "").contains(hint) {
             adjusted[index]["content"] = (adjusted[index]["content"] ?? "") + hint
         }
-        let outputLimit = name == ReplyPrompt.schemaName || name == MeetingOutcomePrompt.schemaName ? 1000 : 400
+        let outputLimit = name == MeetingOutcomePrompt.schemaName ? 2000 : name == ReplyPrompt.schemaName ? 1000 : 400
         var body: [String: Any] = ["model": model, "messages": adjusted, "temperature": 0, "max_tokens": outputLimit,
                                    "response_format": ["type": "json_object"]]
         // Qwen-family models would otherwise think first; the verdict needs no reasoning pass.

@@ -1,6 +1,65 @@
+import Foundation
+
+/// Decides which inference failures mean the Neural Engine specialization cache cannot be reused.
+enum VoxCacheRecovery {
+    static func isUnusableCacheError(_ error: Error) -> Bool {
+        let typeName = String(describing: type(of: error))
+        // MPSGraph surfaces this Swift overlay type. A substring match also hits unrelated
+        // errors whose text merely contains "GenericObjCError".
+        if typeName == "_GenericObjCError" || typeName == "__GenericObjCError" { return true }
+        return containsToken(String(reflecting: error), token: "nilError")
+    }
+
+    static func containsToken(_ text: String, token: String) -> Bool {
+        var rest = Substring(text)
+        while let range = rest.range(of: token) {
+            let before = range.lowerBound == text.startIndex ? nil : text[text.index(before: range.lowerBound)]
+            let after = range.upperBound == text.endIndex ? nil : text[range.upperBound]
+            if !isIdentifier(before) && !isIdentifier(after) { return true }
+            rest = text[range.upperBound...]
+        }
+        return false
+    }
+
+    private static func isIdentifier(_ character: Character?) -> Bool {
+        guard let character else { return false }
+        return character.isLetter || character.isNumber || character == "_"
+    }
+}
+
+/// One rebuild for a failure, including when the operation calls back into a recovering method.
+final class VoxRecoverySession: @unchecked Sendable {
+    private let lock = NSLock()
+    private var depth = 0
+
+    func perform<T: Sendable>(operation: () async throws -> T, rebuild: () async throws -> Void) async throws -> T {
+        let outer: Bool = {
+            lock.lock(); defer { lock.unlock() }
+            if depth > 0 { return false }
+            depth += 1
+            return true
+        }()
+        if !outer { return try await operation() }
+        defer { lock.lock(); depth -= 1; lock.unlock() }
+        do { return try await operation() }
+        catch {
+            guard VoxCacheRecovery.isUnusableCacheError(error) else { throw error }
+            try await rebuild()
+            return try await operation()
+        }
+    }
+}
+
+/// After a rebuild throws, keep a model that later calls can use.
+enum VoxModelRecovery {
+    static func recover<T>(previous: T?, reload: () async throws -> T) async -> T? {
+        if let model = try? await reload() { return model }
+        return previous
+    }
+}
+
 #if canImport(CoreAI)
 import CoreAI
-import Foundation
 
 // In-process Core AI stages for the VoxCPM2 bundle, ported from tinkerbox-ane's Swift host
 // (host.swift and cached.swift, Apache-2.0). Only public Core AI API is used: the first load
@@ -43,10 +102,7 @@ enum VoxCoreAI {
     }
 
     /// MPSGraph reports an unusable cached model through this otherwise unhelpful error.
-    static func isUnusableCacheError(_ error: Error) -> Bool {
-        let description = String(reflecting: error)
-        return description.contains("GenericObjCError") || description.contains("nilError")
-    }
+    static func isUnusableCacheError(_ error: Error) -> Bool { VoxCacheRecovery.isUnusableCacheError(error) }
 
     /// Rebuilds once when a cached model fails to load at inference time, then retries the same call.
     static func withCacheRecovery<T: ~Copyable>(rebuild: () async throws -> Void,
@@ -141,6 +197,7 @@ final class VoxAsset {
     let url: URL
     private var model: AIModel?
     private var functions: [String: InferenceFunction] = [:]
+    private let recovery = VoxRecoverySession()
     private(set) var seconds = 0.0
 
     init(url: URL) async throws {
@@ -148,8 +205,13 @@ final class VoxAsset {
         model = try await VoxCoreAI.load(url)
     }
 
-    private func storedFunction(_ name: String) throws -> InferenceFunction {
+    /// Loads `name` from the current model. A failed rebuild leaves `model` nil; the next call compiles again
+    /// instead of failing forever with "model is being rebuilt".
+    private func storedFunction(_ name: String) async throws -> InferenceFunction {
         if let function = functions[name] { return function }
+        if model == nil {
+            model = try await AIModel.specialize(contentsOf: url.resolvingSymlinksInPath(), options: VoxCoreAI.options, cachePolicy: .persistent)
+        }
         guard let model else { throw VoxError.engine("model is being rebuilt") }
         guard let function = try model.loadFunction(named: name) else { throw VoxError.engine("missing function \(name)") }
         functions[name] = function
@@ -158,36 +220,50 @@ final class VoxAsset {
 
     private func rebuildModel() async throws {
         let bookmark = model?.bookmarkData
+        let previous = model
         functions.removeAll()
         model = nil
-        model = try await VoxCoreAI.rebuild(url, bookmark: bookmark)
+        do {
+            model = try await VoxCoreAI.rebuild(url, bookmark: bookmark)
+        } catch {
+            // Do not compile a second time here. Restore the previous model, or leave nil so the next
+            // call lazily specializes. Callers must not still be holding function or input references.
+            model = await VoxModelRecovery.recover(previous: previous) { throw error }
+            throw error
+        }
+    }
+
+    private func evaluate(_ function: InferenceFunction, inputs: [String: NDArray], output: String) async throws -> NDArray {
+        let started = ContinuousClock.now
+        var outputs = try await function.run(inputs: inputs)
+        seconds += (ContinuousClock.now - started).voxSeconds
+        guard let result = outputs.remove(output)?.ndArray else { throw VoxError.engine("missing \(output) output") }
+        return result
     }
 
     /// Loading a function can be the first operation that touches the compiled model.
     func function(_ name: String) async throws -> InferenceFunction {
-        try await VoxCoreAI.withCacheRecovery(rebuild: rebuildModel, operation: {
-            try storedFunction(name)
-        })
+        try await recovery.perform(operation: { try await self.storedFunction(name) }, rebuild: rebuildModel)
     }
 
     /// Executes a function, rebuilding this asset's persistent cache once if MPSGraph cannot load it.
+    /// The function reference lives only inside the attempt, so a rebuild does not run while it is held.
     func execute(_ name: String, inputs: [String: NDArray], output: String = "features") async throws -> NDArray {
-        try await VoxCoreAI.withCacheRecovery(rebuild: rebuildModel, operation: {
-            let function = try await function(name)
-            let started = ContinuousClock.now
-            var outputs = try await function.run(inputs: inputs)
-            seconds += (ContinuousClock.now - started).voxSeconds
-            guard let result = outputs.remove(output)?.ndArray else { throw VoxError.engine("missing \(output) output") }
-            return result
-        })
+        try await recovery.perform(operation: {
+            let function = try await self.storedFunction(name)
+            return try await self.evaluate(function, inputs: inputs, output: output)
+        }, rebuild: rebuildModel)
     }
 
     /// Runs a stateless function on row-major float16 inputs; returns its row-major `output`.
     func run(_ name: String, _ values: [String: [Float16]], output: String = "features") async throws -> [Float16] {
-        let function = try await function(name)
-        var inputs: [String: NDArray] = [:]
-        for (key, value) in values { inputs[key] = try VoxCoreAI.input(function, key, value) }
-        return VoxCoreAI.flatten(try await execute(name, inputs: inputs, output: output))
+        try await recovery.perform(operation: {
+            let function = try await self.storedFunction(name)
+            var inputs: [String: NDArray] = [:]
+            for (key, value) in values { inputs[key] = try VoxCoreAI.input(function, key, value) }
+            let array = try await self.evaluate(function, inputs: inputs, output: output)
+            return VoxCoreAI.flatten(array)
+        }, rebuild: rebuildModel)
     }
 
     /// A causal stage: grows its key/value cache here and returns only the new hidden rows.
@@ -226,45 +302,47 @@ final class VoxAsset {
         }
 
         /// Runs `name` on `values` whose first `count` columns are real; returns hidden × count row-major.
+        /// Function and input references stay inside one recovery attempt, and are released before a rebuild.
         func run(_ name: String, count: Int, values: [String: [Float16]]) async throws -> [Float16] {
             guard let spec = functions.first(where: { $0.name == name }) else { throw VoxError.engine("unknown function \(name)") }
-            let function = try await asset.function(name)
-            try grow(to: spec.capacity, function: function)
-            var inputs: [String: NDArray] = [:]
-            for (key, value) in values { inputs[key] = try VoxCoreAI.input(function, key, value) }
-            var mask = NDArray(descriptor: try VoxCoreAI.descriptor(function.descriptor.inputDescriptor(of: "mask"), "mask"))
-            let filled = position, capacity = capacity
-            VoxCoreAI.write(&mask) { target, shape, strides in
-                VoxCoreAI.forEachBlock(shape, strides) { _, offset, count in
-                    target.advanced(by: offset).update(repeating: Float16(-30000), count: count)
+            return try await asset.recovery.perform(operation: {
+                let function = try await asset.storedFunction(name)
+                try grow(to: spec.capacity, function: function)
+                var inputs: [String: NDArray] = [:]
+                for (key, value) in values { inputs[key] = try VoxCoreAI.input(function, key, value) }
+                var mask = NDArray(descriptor: try VoxCoreAI.descriptor(function.descriptor.inputDescriptor(of: "mask"), "mask"))
+                let filled = position, capacity = capacity
+                VoxCoreAI.write(&mask) { target, shape, strides in
+                    VoxCoreAI.forEachBlock(shape, strides) { _, offset, count in
+                        target.advanced(by: offset).update(repeating: Float16(-30000), count: count)
+                    }
+                    for row in 0..<spec.width {
+                        let offset = row * strides[2]
+                        for index in 0..<filled { target[offset + index * strides[3]] = 0 }
+                        for index in 0..<min(row + 1, count) { target[offset + (capacity + index) * strides[3]] = 0 }
+                    }
                 }
-                for row in 0..<spec.width {
-                    let offset = row * strides[2]
-                    for index in 0..<filled { target[offset + index * strides[3]] = 0 }
-                    for index in 0..<min(row + 1, count) { target[offset + (capacity + index) * strides[3]] = 0 }
-                }
-            }
-            inputs["mask"] = mask
-            inputs["cache"] = cache
-            let result = try await asset.execute(name, inputs: inputs)
-            // Drop the input's reference before writing the cache's new rows.
-            inputs["cache"] = nil
-            var rows = [Float16](repeating: 0, count: hidden * count)
-            let hidden = hidden, channels = channels
-            VoxCoreAI.read(result) { source, _, ss in
-                for channel in 0..<hidden {
-                    for index in 0..<count { rows[channel * count + index] = source[channel * ss[1] + index * ss[3]] }
-                }
-                VoxCoreAI.write(&cache!) { target, _, ts in
-                    for channel in 0..<channels {
-                        for index in 0..<count {
-                            target[channel * ts[1] + (filled + index) * ts[3]] = source[(hidden + channel) * ss[1] + index * ss[3]]
+                inputs["mask"] = mask
+                inputs["cache"] = cache
+                let result = try await asset.evaluate(function, inputs: inputs, output: "features")
+                inputs["cache"] = nil
+                var rows = [Float16](repeating: 0, count: hidden * count)
+                let hidden = hidden, channels = channels
+                VoxCoreAI.read(result) { source, _, ss in
+                    for channel in 0..<hidden {
+                        for index in 0..<count { rows[channel * count + index] = source[channel * ss[1] + index * ss[3]] }
+                    }
+                    VoxCoreAI.write(&cache!) { target, _, ts in
+                        for channel in 0..<channels {
+                            for index in 0..<count {
+                                target[channel * ts[1] + (filled + index) * ts[3]] = source[(hidden + channel) * ss[1] + index * ss[3]]
+                            }
                         }
                     }
                 }
-            }
-            position += count
-            return rows
+                position += count
+                return rows
+            }, rebuild: { try await asset.rebuildModel() })
         }
     }
 }

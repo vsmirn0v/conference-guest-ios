@@ -51,7 +51,8 @@ struct MeetingOutcome: Codable, Identifiable, Equatable, Sendable {
         meetingTitle = try c.decodeIfPresent(String.self, forKey: .meetingTitle) ?? ""
         invitation = try c.decodeIfPresent(URL.self, forKey: .invitation)
         seriesID = try c.decodeIfPresent(String.self, forKey: .seriesID)
-        endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt) ?? .distantPast
+        // A missing end time used to become distantPast, and the next prune deleted the outcome.
+        endedAt = try c.decode(Date.self, forKey: .endedAt)
         summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
         decisions = try c.decodeIfPresent([String].self, forKey: .decisions) ?? []
         tasks = try c.decodeIfPresent([MeetingOutcomeTask].self, forKey: .tasks) ?? []
@@ -97,8 +98,8 @@ struct AssistantMemoryItem: Codable, Identifiable, Equatable, Sendable {
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         kind = try c.decodeIfPresent(AssistantMemoryKind.self, forKey: .kind) ?? .you
         text = try c.decode(String.self, forKey: .text)
-        let now = Date()
-        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? now
+        // Do not invent "now": a fabricated createdAt would survive retention and replace the file.
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
         invitation = try c.decodeIfPresent(URL.self, forKey: .invitation)
         seriesID = try c.decodeIfPresent(String.self, forKey: .seriesID)
@@ -133,18 +134,21 @@ struct AssistantSuggestion: Codable, Identifiable, Equatable, Sendable {
     var invitation: URL?
     var seriesID: String?
     var mode: AttentionMode?
+    /// The meeting the suggestion is about. The sentence in `text` is localized and is not a title.
+    var meetingTitle: String?
 
     init(id: UUID = UUID(), createdAt: Date, text: String, kind: AssistantSuggestionKind, proposedText: String,
-         memoryKind: AssistantMemoryKind = .you, invitation: URL? = nil, seriesID: String? = nil, mode: AttentionMode? = nil) {
+         memoryKind: AssistantMemoryKind = .you, invitation: URL? = nil, seriesID: String? = nil, mode: AttentionMode? = nil,
+         meetingTitle: String? = nil) {
         self.id = id; self.createdAt = createdAt; self.text = text; self.kind = kind
         self.proposedText = proposedText; self.memoryKind = memoryKind
-        self.invitation = invitation; self.seriesID = seriesID; self.mode = mode
+        self.invitation = invitation; self.seriesID = seriesID; self.mode = mode; self.meetingTitle = meetingTitle
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
         text = try c.decode(String.self, forKey: .text)
         kind = try c.decodeIfPresent(AssistantSuggestionKind.self, forKey: .kind) ?? .memory
         proposedText = try c.decodeIfPresent(String.self, forKey: .proposedText) ?? text
@@ -152,19 +156,25 @@ struct AssistantSuggestion: Codable, Identifiable, Equatable, Sendable {
         invitation = try c.decodeIfPresent(URL.self, forKey: .invitation)
         seriesID = try c.decodeIfPresent(String.self, forKey: .seriesID)
         mode = try c.decodeIfPresent(AttentionMode.self, forKey: .mode)
+        meetingTitle = try c.decodeIfPresent(String.self, forKey: .meetingTitle)
     }
 }
 
+/// An empty Decodable. The synthesized init accepts null, numbers, strings and arrays,
+/// so a bad element is consumed and the array index advances. It is not a skip that can stall.
+private struct AnyDecodable: Decodable {}
+
 private struct LossyDecodableArray<Element: Decodable>: Decodable {
-    private struct AnyDecodable: Decodable {}
     var elements: [Element] = []
+    var skipped = 0
     init(from decoder: Decoder) throws {
         var container = try decoder.unkeyedContainer()
         while !container.isAtEnd {
             if let element = try? container.decode(Element.self) {
                 elements.append(element)
             } else {
-                _ = try? container.decode(AnyDecodable.self)
+                _ = try container.decode(AnyDecodable.self)
+                skipped += 1
             }
         }
     }
@@ -177,6 +187,9 @@ private struct AssistantDataDocument: Codable {
     var modeChanges: [AssistantModeChange] = []
     var variantPicks: [String: Int] = [:]
     var retentionDays = 90
+    /// Items or collections that could not be read. Not written back.
+    var droppedItems = 0
+    var degraded = false
 
     init(outcomes: [MeetingOutcome] = [], memories: [AssistantMemoryItem] = [], suggestions: [AssistantSuggestion] = [],
          modeChanges: [AssistantModeChange] = [], variantPicks: [String: Int] = [:], retentionDays: Int = 90) {
@@ -186,12 +199,41 @@ private struct AssistantDataDocument: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        outcomes = (try? c.decodeIfPresent(LossyDecodableArray<MeetingOutcome>.self, forKey: .outcomes)?.elements) ?? []
-        memories = (try? c.decodeIfPresent(LossyDecodableArray<AssistantMemoryItem>.self, forKey: .memories)?.elements) ?? []
-        suggestions = (try? c.decodeIfPresent(LossyDecodableArray<AssistantSuggestion>.self, forKey: .suggestions)?.elements) ?? []
-        modeChanges = (try? c.decodeIfPresent(LossyDecodableArray<AssistantModeChange>.self, forKey: .modeChanges)?.elements) ?? []
-        variantPicks = (try? c.decodeIfPresent([String: Int].self, forKey: .variantPicks)) ?? [:]
+        func array<T: Decodable>(_ key: CodingKeys) -> (elements: [T], skipped: Int, damaged: Bool) {
+            guard c.contains(key) else { return ([], 0, false) }
+            do {
+                guard let decoded = try c.decodeIfPresent(LossyDecodableArray<T>.self, forKey: key) else { return ([], 0, true) }
+                return (decoded.elements, decoded.skipped, decoded.skipped > 0)
+            } catch { return ([], 0, true) }
+        }
+        let outcomesDecoded: (elements: [MeetingOutcome], skipped: Int, damaged: Bool) = array(.outcomes)
+        let memoriesDecoded: (elements: [AssistantMemoryItem], skipped: Int, damaged: Bool) = array(.memories)
+        let suggestionsDecoded: (elements: [AssistantSuggestion], skipped: Int, damaged: Bool) = array(.suggestions)
+        let modeChangesDecoded: (elements: [AssistantModeChange], skipped: Int, damaged: Bool) = array(.modeChanges)
+        outcomes = outcomesDecoded.elements
+        memories = memoriesDecoded.elements
+        suggestions = suggestionsDecoded.elements
+        modeChanges = modeChangesDecoded.elements
+        var skipped = outcomesDecoded.skipped + memoriesDecoded.skipped + suggestionsDecoded.skipped + modeChangesDecoded.skipped
+        degraded = outcomesDecoded.damaged || memoriesDecoded.damaged || suggestionsDecoded.damaged || modeChangesDecoded.damaged
+        if c.contains(.variantPicks) {
+            if let picks = try? c.decodeIfPresent([String: Int].self, forKey: .variantPicks) {
+                variantPicks = picks
+            } else { variantPicks = [:]; degraded = true; skipped += 1 }
+        } else { variantPicks = [:] }
+        if degraded && skipped == 0 { skipped = 1 }
+        droppedItems = skipped
         retentionDays = (try? c.decodeIfPresent(Int.self, forKey: .retentionDays)) ?? 90
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(outcomes, forKey: .outcomes)
+        try c.encode(memories, forKey: .memories)
+        try c.encode(suggestions, forKey: .suggestions)
+        try c.encode(modeChanges, forKey: .modeChanges)
+        try c.encode(variantPicks, forKey: .variantPicks)
+        try c.encode(retentionDays, forKey: .retentionDays)
     }
 }
 
@@ -207,7 +249,12 @@ private struct AssistantDataDocument: Codable {
     @Published private(set) var memories: [AssistantMemoryItem] = []
     @Published private(set) var suggestions: [AssistantSuggestion] = []
     @Published private(set) var loaded = false
-    @Published private(set) var persistenceWarning: String?
+    @Published private(set) var loadWarning: String?
+    @Published private(set) var saveWarning: String?
+    /// The load problem stays visible after a later save attempt. A save problem does not replace it.
+    var persistenceWarning: String? { loadWarning ?? saveWarning }
+    /// A degraded file is kept as-is. Saves must not replace the only copy with a partial decode.
+    private var retainOriginalFile = false
     @Published var retentionDays: Int {
         didSet {
             if !loading {
@@ -229,6 +276,7 @@ private struct AssistantDataDocument: Codable {
     private var deletedOutcomeIDs: Set<UUID> = []
     private var deletedMemoryIDs: Set<UUID> = []
     private var deletedSuggestionIDs: Set<UUID> = []
+    private var pendingOutcomeSave: Task<Void, Never>?
 
     init(root: URL, readData: (@Sendable (URL) async throws -> Data)? = nil) {
         url = root.appendingPathComponent("assistant.json")
@@ -238,24 +286,37 @@ private struct AssistantDataDocument: Codable {
     }
 
     func waitForLoad() async { await loadTask?.value }
-    func waitForSave() async { await saveTask?.value }
+    func waitForSave() async {
+        flushOutcomeEdits()
+        await saveTask?.value
+    }
 
     private func load() async {
         let url = self.url, readData = self.readData
-        let (restored, corruptError) = await Task.detached(priority: .utility) { () -> (AssistantDataDocument?, String?) in
-            guard let data = try? await readData(url), !data.isEmpty else { return (nil, nil) }
+        let (restored, corruptError, dropped) = await Task.detached(priority: .utility) { () -> (AssistantDataDocument?, String?, Int) in
+            guard let data = try? await readData(url), !data.isEmpty else { return (nil, nil, 0) }
             do {
-                return (try JSONDecoder.attention.decode(AssistantDataDocument.self, from: data), nil)
+                let document = try JSONDecoder.attention.decode(AssistantDataDocument.self, from: data)
+                if document.degraded {
+                    let backup = url.deletingLastPathComponent().appendingPathComponent("assistant.recovered.json")
+                    try? data.write(to: backup, options: .atomic)
+                }
+                return (document, nil, document.droppedItems)
             } catch {
                 let backup = url.deletingLastPathComponent().appendingPathComponent("assistant.corrupt.json")
                 try? data.write(to: backup, options: .atomic)
-                return (nil, error.localizedDescription)
+                return (nil, error.localizedDescription, 0)
             }
         }.value
         loading = true
         if let corruptError {
-            persistenceWarning = L("Assistant memory could not be saved. %@", corruptError)
+            retainOriginalFile = true
+            loadWarning = L("Assistant memory could not be read. A copy was kept. %@", corruptError)
             probeLog("assistant-data-corrupt", [:])
+        } else if let restored, restored.degraded || dropped > 0 {
+            retainOriginalFile = true
+            loadWarning = L("Assistant memory was partly unreadable. %ld items were copied to assistant.recovered.json.", max(dropped, 1))
+            probeLog("assistant-data-recovered", ["dropped": dropped])
         }
         let mutatedDuringLoad = saveGeneration > 0
         if saveGeneration == 0 {
@@ -287,10 +348,34 @@ private struct AssistantDataDocument: Codable {
         loading = false
         loaded = true
         prune()
-        if mutatedDuringLoad, restored != nil, !clearedDuringLoad { persist() }
+        if !retainOriginalFile, mutatedDuringLoad, restored != nil, !clearedDuringLoad { persist() }
+    }
+
+    /// Keystrokes update memory at once and reach disk shortly after typing pauses.
+    func flushOutcomeEdits() {
+        guard pendingOutcomeSave != nil else { return }
+        pendingOutcomeSave?.cancel()
+        pendingOutcomeSave = nil
+        persist()
+    }
+
+    private func scheduleOutcomePersist() {
+        pendingOutcomeSave?.cancel()
+        pendingOutcomeSave = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard let self, !Task.isCancelled else { return }
+            self.pendingOutcomeSave = nil
+            self.persist()
+        }
     }
 
     private func persist() {
+        pendingOutcomeSave?.cancel()
+        pendingOutcomeSave = nil
+        if retainOriginalFile {
+            saveWarning = L("Changes to Assistant memory are not being saved over the incomplete file. The original was kept.")
+            return
+        }
         document.outcomes = outcomes
         document.memories = memories
         document.suggestions = suggestions
@@ -313,7 +398,7 @@ private struct AssistantDataDocument: Codable {
                 }
             }.value
             guard let self, self.saveGeneration == generation else { return }
-            self.persistenceWarning = error.map { L("Assistant memory could not be saved. %@", $0) }
+            self.saveWarning = error.map { L("Assistant memory could not be saved. %@", $0) }
             probeLog("assistant-data-saved", ["generation": generation, "failed": error != nil])
         }
     }
@@ -338,7 +423,9 @@ private struct AssistantDataDocument: Codable {
 
     func updateOutcome(_ outcome: MeetingOutcome) {
         guard let index = outcomes.firstIndex(where: { $0.id == outcome.id }) else { return }
-        outcomes[index] = outcome; persist()
+        outcomes[index] = outcome
+        // A write during the initial load has to be recorded before that load merges disk state.
+        if !loaded { persist() } else { scheduleOutcomePersist() }
     }
 
     func removeOutcome(_ id: UUID) {
@@ -429,7 +516,7 @@ private struct AssistantDataDocument: Codable {
         if matches.count >= 3, !suggestions.contains(where: { $0.kind == .meetingMode && $0.invitation == invitation && $0.mode == mode }) {
             suggestions.insert(.init(createdAt: now, text: L("You chose %@ for “%@” three times this week.", mode.title, meetingTitle),
                 kind: .meetingMode, proposedText: L("Use %@ by default", mode.title), memoryKind: .meetings,
-                invitation: invitation, seriesID: series, mode: mode), at: 0)
+                invitation: invitation, seriesID: series, mode: mode, meetingTitle: meetingTitle), at: 0)
         }
         prune(); persist()
     }
@@ -443,13 +530,18 @@ private struct AssistantDataDocument: Codable {
     }
 
     func observeVariant(_ stance: String) {
-        let clean = stance.trimmed
+        let clean = ReplyStance.normalize(stance)
         guard !clean.isEmpty else { return }
         document.variantPicks[clean, default: 0] += 1
         persist()
     }
 
-    func preferredStance() -> String? { document.variantPicks.max { $0.value < $1.value }?.key }
+    /// The stance id chosen most often. Free-form and localized labels are folded into the same id.
+    func preferredStance() -> String? {
+        var totals: [String: Int] = [:]
+        for (key, count) in document.variantPicks { totals[ReplyStance.normalize(key), default: 0] += count }
+        return totals.max { lhs, rhs in lhs.value == rhs.value ? lhs.key > rhs.key : lhs.value < rhs.value }?.key
+    }
 
     /// Removes a suggestion after the caller has applied its proposed change.
     func keepSuggestion(_ id: UUID, editedText: String? = nil) {
@@ -475,6 +567,8 @@ private struct AssistantDataDocument: Codable {
 
     func deleteAll() {
         if !loaded { clearedDuringLoad = true }
+        retainOriginalFile = false
+        loadWarning = nil
         outcomes = []; memories = []; suggestions = []; document = .init(); document.retentionDays = retentionDays
         persist()
     }

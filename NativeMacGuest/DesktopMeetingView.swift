@@ -395,8 +395,8 @@ struct NativeDesktopMeetingView: View {
                     .contextMenu { Button(L("Meeting volume")) { soundOpen = true } }
                 controlButton("face.smiling", L("Reactions"), selected: reactionsOpen) { reactionsOpen.toggle() }
                     .disabled(!model.canReact).popover(isPresented: $reactionsOpen, arrowEdge: .bottom) { reactionPicker }
-                if let workspace, workspace.attention.store.enabled {
-                    AttentionControlButton(attention: workspace.attention, model: model)
+                if let workspace {
+                    AttentionControlButtonGate(attention: workspace.attention, model: model)
                 }
                 if singleControlRow && !textSelection.isOpen {
                     Menu { viewMenuItems } label: { controlLabel(viewMenuSymbol, L("View")) }
@@ -1126,6 +1126,20 @@ private struct NativeDesktopMeetingRow: View {
             .background(current ? Color.accentColor.opacity(0.12) : hovering ? Color.primary.opacity(0.06) : Color.clear,
                         in: RoundedRectangle(cornerRadius: 8))
             .onHover { hovering = $0 }
+    }
+}
+
+/// A toolbar item in its own glass group. The system glass is its only container:
+/// a capsule drawn inside toolbar glass is cut by the group's rounded edge.
+struct NativeDesktopStandaloneToolbarItem<Content: View>: ToolbarContent {
+    @ViewBuilder let content: () -> Content
+    var body: some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .primaryAction) { content() }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+        } else {
+            ToolbarItem(placement: .primaryAction) { content() }
+        }
     }
 }
 

@@ -209,13 +209,16 @@ import XCTest
         await coordinator.tick(); await coordinator.tick(); await coordinator.tick()
         XCTAssertEqual(coordinator.cards.count, 2)
         XCTAssertEqual(coordinator.overflowMomentIDs.count, 1)
-        var opened = 0
+        var opened = 0, sent: [String] = [], reacted: [MeetingReaction] = []
+        coordinator.deliverChat = { _, text in sent.append(text); return true }
+        coordinator.deliverReaction = { _, reaction in reacted.append(reaction) }
         let rendered = await present(AttentionCardStack(attention: coordinator, openAssistant: { opened += 1 }),
             size: NSSize(width: 430, height: 650), name: "overflow")
         XCTAssertNotNil(element(rendered, identifier: "attention.overflow"))
         try await press(rendered, identifier: "attention.overflow")
         XCTAssertEqual(opened, 1)
         XCTAssertEqual(store.momentHistory.moments(filter: .answered).count, 0)
+        XCTAssertTrue(sent.isEmpty && reacted.isEmpty, "Opening Assistant does not deliver chat or a reaction")
         try capture(rendered)
     }
 
@@ -319,6 +322,9 @@ import XCTest
             size: NSSize(width: 900, height: 560), name: "voiceover-review")
         coordinator.showMoment(id)
         await settle()
+        XCTAssertEqual(coordinator.selectedCard?.draft?.chat, "The release is ready.")
+        XCTAssertTrue(containsText(rendered, "The release is ready."))
+        XCTAssertNotNil(element(rendered, identifier: "attention.moment"))
         rendered.window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         NSLog("VOICEOVER_REVIEW_BEGIN \(self.language)")

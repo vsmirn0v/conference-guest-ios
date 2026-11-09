@@ -152,9 +152,12 @@ import UserNotifications
         self.attention.talk.leaveMeeting = { [weak self] model in await self?.leave(model) ?? false }
         // Push-to-talk is app-wide, not tied to the Talk tab's visibility.
         self.attention.talk.installHotKey()
+        self.attention.store.$pushToTalk.dropFirst().sink { [weak self] enabled in
+            self?.attention.talk.installHotKey(promptIfNeeded: enabled)
+        }.store(in: &subscriptions)
         self.attention.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
-        self.attention.store.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
-        self.attention.store.assistant.objectWillChange.sink { [weak self] in self?.objectWillChange.send() }.store(in: &subscriptions)
+        // Store and assistant publishes (a seen-mark, a keystroke in an outcome) must not
+        // invalidate the whole workspace. Views that read them observe those objects.
         self.attention.start()
     }
 

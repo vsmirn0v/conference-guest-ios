@@ -61,12 +61,7 @@ struct NativeDesktopHomeView: View {
                     ForEach(NativeDesktopWorkspace.Section.allCases) { item in
                         HStack {
                             Label(L(item.rawValue), systemImage: item.symbol)
-                            if item == .assistant, workspace.attention.store.momentHistory.unreadCount > 0 {
-                                Spacer()
-                                Text(workspace.attention.store.momentHistory.unreadCount, format: .number)
-                                    .font(.caption2.weight(.bold)).padding(.horizontal, 6).padding(.vertical, 1)
-                                    .background(Color.orange, in: Capsule())
-                            }
+                            if item == .assistant { AssistantUnreadBadge(store: workspace.attention.store) }
                         }.tag(NativeDesktopSidebarItem.section(item))
                     }
                 }
@@ -218,7 +213,8 @@ struct NativeDesktopHomeView: View {
     /// A meeting shown here puts its status and tools in the window toolbar, beside its title.
     @ToolbarContentBuilder private var mainToolbar: some ToolbarContent {
         if let meeting = embeddedMeeting, meeting.transcriptionIndicator != nil {
-            ToolbarItem(placement: .primaryAction) {
+            // Its own glass group. Sharing the button group's capsule clips this pill.
+            NativeDesktopStandaloneToolbarItem {
                 NativeDesktopTranscriptionPill(model: meeting, compact: true, announcesInline: detailWidth >= Self.inlineAnnouncementWidth)
             }
         }
@@ -360,9 +356,8 @@ struct NativeDesktopHomeView: View {
                 Button { workspace.settingsTab = 3; workspace.selection = .settings } label: { Label(L("Camera & sound"), systemImage: "slider.horizontal.3") }
             }
             Label(L("Microphone and camera start off"), systemImage: "mic.slash").font(.caption).foregroundStyle(.secondary)
-            if let destination = try? library.normalizedDestination(workspace.invitation),
-               let outcome = workspace.attention.store.assistant.latestOutcome(invitation: destination.invitationURL, before: Date()) {
-                LastTimeView(outcome: outcome)
+            if let destination = try? library.normalizedDestination(workspace.invitation) {
+                AssistantLastOutcome(assistant: workspace.attention.store.assistant, invitation: destination.invitationURL, before: Date())
             }
         }.padding(18).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 16))
     }
@@ -376,9 +371,7 @@ struct NativeDesktopHomeView: View {
                     Text(room.displayTitle).font(.headline).lineLimit(1)
                     Text(library.calendar.subtitle(for: room) ?? room.lastVisit.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? L("Saved meeting")).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(height: 16)
                     Text(roomDetail(room.joinURL, engine: room.engine)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    if let outcome = workspace.attention.store.assistant.latestOutcome(invitation: room.invitationURL, before: Date()) {
-                        LastTimeView(outcome: outcome)
-                    }
+                    AssistantLastOutcome(assistant: workspace.attention.store.assistant, invitation: room.invitationURL, before: Date())
                 }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             }.buttonStyle(.plain)
             Button { library.toggleFavorite(room) } label: { Image(systemName: room.isStarred ? "star.fill" : "star") }.buttonStyle(.borderless).foregroundStyle(.orange)
@@ -415,10 +408,8 @@ struct NativeDesktopHomeView: View {
                 Text(item.title).font(.headline).lineLimit(2)
                 Text(CalendarMeetingPresentation.subtitle(item, at: library.calendar.now, roomTitle: item.title)).foregroundStyle(.secondary)
                 Text(item.invitation.map { roomDetail($0, engine: item.engine) } ?? "").font(.caption).foregroundStyle(.secondary)
-                if let outcome = workspace.attention.store.assistant.latestOutcome(invitation: item.invitation,
-                    series: item.seriesID, before: item.start) {
-                    LastTimeView(outcome: outcome)
-                }
+                AssistantLastOutcome(assistant: workspace.attention.store.assistant, invitation: item.invitation,
+                    series: item.seriesID, before: item.start)
             }.frame(maxWidth: .infinity, alignment: .leading)
             Button {
                 if let url = item.invitation {
@@ -636,7 +627,7 @@ struct NativeDesktopSidebarMeetingRow: View {
             }
             Spacer(minLength: 4)
             AttentionBadge(attention: workspace.attention, meetingID: model.sessionID)
-            if workspace.attention.store.enabled { AttentionModeChip(attention: workspace.attention, model: model) }
+            AttentionModeChipGate(attention: workspace.attention, model: model)
             if speaking { Image(systemName: "waveform").font(.caption).foregroundStyle(.secondary).help(L("Someone is speaking")) }
             if workspace.isDetached(model) {
                 Image(systemName: "macwindow").font(.caption).foregroundStyle(.secondary).help(L("This meeting is open in its own window."))

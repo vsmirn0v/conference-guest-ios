@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import CoreAudio
+import IOKit.hid
 import SwiftUI
 
 @MainActor final class AssistantTalkController: ObservableObject {
@@ -40,6 +41,14 @@ import SwiftUI
     var leaveMeeting: (NativeDesktopMeetingModel) async -> Bool = { _ in false }
     var interpretOverride: ((AssistantCommandRequest) async throws -> AssistantCommand)?
     var headphoneRoute: () -> Bool = { AssistantHeadphoneRoute.isConnected }
+    /// Tests substitute this. Production asks macOS for Accessibility and Input Monitoring.
+    var globalHotKeyTrusted: () -> Bool = { AssistantPushToTalkHotKey.systemTrusted() }
+    var promptForGlobalHotKey: () -> Void = { AssistantPushToTalkHotKey.promptForTrust() }
+    var hotKeyMonitorCount: Int { monitors.count }
+    private var textFieldFocused: Bool {
+        guard NSApp.isActive, let responder = NSApp.keyWindow?.firstResponder else { return false }
+        return responder is NSTextView || responder is NSTextField
+    }
 
     init(attention: AttentionCoordinator) { self.attention = attention }
 
@@ -225,6 +234,7 @@ import SwiftUI
     private func confirmationTitle(_ command: AssistantCommand, context: AssistantCommandContext) -> String {
         let title = try? meeting(command.meetingID, context: context)?.title
         switch command.action {
+        case .join: return L("Join “%@”?", title ?? L("this meeting"))
         case .sendChat: return L("Send chat to “%@”?", title ?? L("this meeting"))
         case .say: return L("Speak into “%@”?", title ?? L("this meeting"))
         case .react: return L("Send this reaction to “%@”?", title ?? L("this meeting"))
@@ -255,32 +265,49 @@ import SwiftUI
 
     // MARK: Push to talk
 
-    func installHotKey() {
+    func installHotKey(promptIfNeeded: Bool = false) {
         removeHotKey()
-        func handle(_ event: NSEvent) -> NSEvent? {
-            switch event.type {
-            case .keyDown where event.keyCode == 49 && event.modifierFlags.contains(.option) && !event.isARepeat:
-                guard NSApp.isActive, !(NSApp.keyWindow?.firstResponder is NSTextView) else { return event }
-                Task { @MainActor [weak self] in self?.startPushToTalk() }
-                return nil
-            case .keyUp where event.keyCode == 49:
-                Task { @MainActor [weak self] in self?.stopPushToTalk() }
-            case .flagsChanged where !event.modifierFlags.contains(.option):
-                Task { @MainActor [weak self] in
-                    guard let self, self.listening else { return }
-                    self.stopPushToTalk()
-                }
-            default: break
+        guard attention?.store.pushToTalk == true else { return }
+        func decide(_ event: NSEvent) -> AssistantPushToTalkHotKey.Action {
+            AssistantPushToTalkHotKey.action(type: event.type, keyCode: event.keyCode,
+                option: event.modifierFlags.contains(.option), isRepeat: event.isARepeat,
+                enabled: true, appActive: NSApp.isActive, textFocused: textFieldFocused, listening: listening)
+        }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged], handler: { event in
+            MainActor.assumeIsolated {
+                let action = decide(event)
+                if action == .start { Task { @MainActor [weak self] in self?.performHotKey(.start) }; return nil }
+                if action == .stop { Task { @MainActor [weak self] in self?.performHotKey(.stop) } }
+                return event
             }
-            return event
+        }) { monitors.append(monitor) }
+        if globalHotKeyTrusted() {
+            if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged], handler: { event in
+                let keyCode = event.keyCode, option = event.modifierFlags.contains(.option), kind = event.type, repeated = event.isARepeat
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let action = AssistantPushToTalkHotKey.action(type: kind, keyCode: keyCode, option: option, isRepeat: repeated,
+                        enabled: true, appActive: NSApp.isActive, textFocused: self.textFieldFocused, listening: self.listening)
+                    self.performHotKey(action)
+                }
+            }) { monitors.append(monitor) }
+        } else if promptIfNeeded {
+            promptForGlobalHotKey()
+            audioError = L("Background ⌥Space needs Accessibility and Input Monitoring in System Settings. Until macOS allows them, the shortcut works only in this app.")
         }
-        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged], handler: handle) {
-            monitors.append(monitor)
-        }
-        for name in [NSApplication.didResignActiveNotification, NSWindow.didResignKeyNotification] {
-            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.stopPushToTalk() }
-            })
+        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.listening, self.attention?.store.pushToTalk == true else { return }
+                self.installHotKey()
+            }
+        })
+    }
+
+    private func performHotKey(_ action: AssistantPushToTalkHotKey.Action) {
+        switch action {
+        case .start: startPushToTalk()
+        case .stop: stopPushToTalk()
+        case .ignore: break
         }
     }
 
@@ -402,12 +429,10 @@ enum AssistantHeadphoneRoute {
     static let headphonesDataSource: UInt32 = 0x6864706e // 'hdpn'
     static let bluetoothTransport: UInt32 = 0x626c7565 // 'blue'
     static func isHeadphoneSource(_ source: UInt32) -> Bool { source == headphonesDataSource }
-    static func isBluetoothHeadphone(name: String, transport: UInt32) -> Bool {
-        guard transport == bluetoothTransport else { return false }
-        let name = name.lowercased()
-        // Bluetooth speakers have no headphone data source either. Accept only
-        // explicit headphone product names; unknown Bluetooth routes stay closed.
-        return ["airpods", "headphone", "headset", "earbud", "earphone"].contains { name.contains($0) }
+    /// A headphone data source is required. Bluetooth transport and product names do not qualify.
+    static func accepts(source: UInt32, transport: UInt32) -> Bool {
+        _ = transport
+        return isHeadphoneSource(source)
     }
     static var isConnected: Bool {
         var device = AudioDeviceID(0), size = UInt32(MemoryLayout<AudioDeviceID>.size)
@@ -418,17 +443,39 @@ enum AssistantHeadphoneRoute {
         var source = UInt32(0); size = UInt32(MemoryLayout<UInt32>.size)
         address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDataSource,
             mScope: kAudioDevicePropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
-        if AudioObjectGetPropertyData(device, &address, 0, nil, &size, &source) == noErr,
-           isHeadphoneSource(source) { return true }
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &source) == noErr else { return false }
         var transport = UInt32(0); size = UInt32(MemoryLayout<UInt32>.size)
         address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyTransportType,
             mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport) == noErr else { return false }
-        var name: CFString = "" as CFString; size = UInt32(MemoryLayout<CFString>.size)
-        address = AudioObjectPropertyAddress(mSelector: kAudioObjectPropertyName,
-            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &name) == noErr else { return false }
-        return isBluetoothHeadphone(name: name as String, transport: transport)
+        _ = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport)
+        return accepts(source: source, transport: transport)
+    }
+}
+
+/// Option-Space. The decision looks only at the key code and the Option flag, never at typed characters.
+enum AssistantPushToTalkHotKey {
+    static let space: UInt16 = 49
+    enum Action: Equatable { case start, stop, ignore }
+    static func action(type: NSEvent.EventType, keyCode: UInt16, option: Bool, isRepeat: Bool,
+                       enabled: Bool, appActive: Bool, textFocused: Bool, listening: Bool) -> Action {
+        guard enabled else { return .ignore }
+        if type == .keyDown, keyCode == space, option, !isRepeat {
+            if appActive && textFocused { return .ignore }
+            return .start
+        }
+        if type == .keyUp, keyCode == space { return .stop }
+        if type == .flagsChanged, !option, listening { return .stop }
+        return .ignore
+    }
+    /// Accessibility and Input Monitoring. Missing either one means the global shortcut stays off.
+    static func systemTrusted() -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+        return IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
+    }
+    static func promptForTrust() {
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+        IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
     }
 }
 

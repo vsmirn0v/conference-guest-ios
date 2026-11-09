@@ -199,10 +199,20 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     static let defaultVoiceModel = "qwen3-tts-voicedesign-4bit"
     static let defaultVoiceDescription = "A calm, clear adult voice speaking at a natural pace, like a colleague in a work call."
     @Published var generateOutcomes: Bool { didSet { defaults.set(generateOutcomes, forKey: Self.outcomesKey) } }
+    /// A writer outside this Mac receives the transcript only after this explicit opt-in.
+    @Published var remoteOutcomes: Bool { didSet { defaults.set(remoteOutcomes, forKey: Self.remoteOutcomesKey) } }
     @Published var pushToTalk: Bool { didSet { defaults.set(pushToTalk, forKey: Self.pushToTalkKey) } }
     @Published var talkBack: Bool { didSet { defaults.set(talkBack, forKey: Self.talkBackKey) } }
-    static let outcomesKey = "attention.outcomes.enabled", pushToTalkKey = "attention.commands.pushToTalk"
+    static let outcomesKey = "attention.outcomes.enabled", remoteOutcomesKey = "attention.outcomes.remote"
+    static let pushToTalkKey = "attention.commands.pushToTalk"
     static let talkBackKey = "attention.commands.talkBack"
+    /// On-device writers run whenever outcome generation is on. A remote writer also needs
+    /// Attention on and `remoteOutcomes`, so a saved key cannot send a transcript by itself.
+    var shouldCaptureOutcome: Bool {
+        guard generateOutcomes, writerConfigured else { return false }
+        if effectiveWriter.onThisMac { return true }
+        return enabled && remoteOutcomes
+    }
     var effectiveWriter: AttentionProvider { writerProvider ?? provider }
     var writerConfigured: Bool {
         let writer = effectiveWriter
@@ -223,6 +233,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     var hasKey: Bool { hasKey(for: provider) }
     func hasKey(for provider: AttentionProvider) -> Bool { keyedKinds.contains(provider.kind) }
     @Published private(set) var persistenceWarning: String?
+    @Published private(set) var journalWarning: String?
     let root: URL
     let assistant: AssistantDataStore
     private let defaults: UserDefaults
@@ -233,6 +244,9 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     private var loadingMoments = false
     private var momentBuffer: [AttentionDecisionRecord] = []
     private var momentLoadTask: Task<Void, Never>?
+    private var journalTask: Task<Void, Never>?
+    /// Test hook invoked on the queue that appends seen-marks, so file IO can be asserted off the main thread.
+    var journalHook: (@Sendable () -> Void)?
 
     init(root: URL? = nil, defaults: UserDefaults = .standard, keychain: AttentionKeychain = .init()) {
         let root = root ?? (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ??
@@ -254,7 +268,9 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         voiceDescription = defaults.string(forKey: Self.voiceDescriptionKey) ?? Self.defaultVoiceDescription
         voiceBaseURL = defaults.string(forKey: Self.voiceBaseURLKey) ?? AttentionProvider.defaults[.rapidMLX]!.baseURL
         generateOutcomes = defaults.object(forKey: Self.outcomesKey) as? Bool ?? true
-        pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? true
+        remoteOutcomes = defaults.bool(forKey: Self.remoteOutcomesKey)
+        // Off until chosen. A global hotkey can open the microphone while another app is in front.
+        pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? false
         talkBack = defaults.bool(forKey: Self.talkBackKey)
         provider = defaults.data(forKey: Self.providerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
             ?? AttentionProvider.defaults[.openAI]!
@@ -350,32 +366,22 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.calendar = Calendar(identifier: .gregorian)
         return formatter
     }()
     private var lastPrunedDay: String?
 
     /// Appends one JSON line to today's file and removes files older than 30 days.
     func log(_ record: AttentionDecisionRecord) {
-        if loadingMoments { momentBuffer.append(record) } else { momentHistory.apply(record) }
+        if loadingMoments { momentBuffer.append(record) }
+        momentHistory.apply(record)
         do {
             try FileManager.default.createDirectory(at: decisionsFolder, withIntermediateDirectories: true)
             let dayString = Self.dayFormatter.string(from: record.at)
             let url = decisionsFolder.appendingPathComponent(dayString + ".jsonl")
             var line = try JSONEncoder.attention.encode(record); line.append(0x0A)
-            if let handle = try? FileHandle(forWritingTo: url) {
-                defer { try? handle.close() }
-                let length = try handle.seekToEnd()
-                if length > 0 {
-                    try handle.seek(toOffset: length - 1)
-                    if (try? handle.read(upToCount: 1))?.first != 0x0A {
-                        try handle.seekToEnd()
-                        try handle.write(contentsOf: [0x0A])
-                    } else {
-                        try handle.seekToEnd()
-                    }
-                }
-                try handle.write(contentsOf: line)
-            } else { try line.write(to: url, options: .atomic) }
+            try Self.appendLine(line, to: url)
             if lastPrunedDay != dayString {
                 lastPrunedDay = dayString
                 pruneDecisions(now: record.at)
@@ -387,9 +393,13 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         guard !momentsLoaded, !loadingMoments else { return }
         loadingMoments = true
         let root = root
-        let restored = await Task.detached(priority: .utility) {
-            AttentionDecisionJournal.reduce(AttentionDecisionJournal.read(root: root))
+        let (restored, dropped) = await Task.detached(priority: .utility) { () -> (AttentionMomentHistory, Int) in
+            let read = AttentionDecisionJournal.read(root: root)
+            return (AttentionDecisionJournal.reduce(read.records), read.dropped)
         }.value
+        if dropped > 0 {
+            journalWarning = L("Part of the decision journal could not be read. %ld lines were skipped.", dropped)
+        }
         var merged = restored
         for record in momentBuffer { merged.apply(record) }
         momentBuffer.removeAll()
@@ -401,10 +411,52 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// Awaits launch restoration in tests and before an explicit history action.
     func waitForMoments() async { await momentLoadTask?.value }
 
-    /// Marks exactly the visible unread Moments as seen and journals the change.
+    /// Marks exactly the visible unread Moments as seen. The in-memory change is immediate;
+    /// the journal lines are appended off the main thread.
     func markMomentsSeen(_ ids: [UUID], at: Date = Date()) {
         let records = momentHistory.markSeen(ids, at: at)
-        for record in records { log(record) }
+        guard !records.isEmpty else { return }
+        let folder = decisionsFolder
+        let hook = journalHook
+        let previous = journalTask
+        let lines: [(Data, URL)] = records.compactMap { record in
+            guard var line = try? JSONEncoder.attention.encode(record) else { return nil }
+            line.append(0x0A)
+            let day = Self.dayFormatter.string(from: record.at)
+            return (line, folder.appendingPathComponent(day + ".jsonl"))
+        }
+        journalTask = Task.detached(priority: .utility) {
+            await previous?.value
+            hook?()
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            for (line, url) in lines { try? AttentionStore.appendLine(line, to: url) }
+        }
+    }
+
+    /// Awaits seen-mark journal writes started by `markMomentsSeen`.
+    func waitForJournal() async { await journalTask?.value }
+
+    /// Opens the day file for reading and writing. Write-only handles cannot see the
+    /// previous byte, so a torn last line was "repaired" by inserting a blank line every time.
+    nonisolated private static func appendLine(_ line: Data, to url: URL) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            // A failed handle must not fall through to an atomic rewrite of the whole day.
+            let handle = try FileHandle(forUpdating: url)
+            defer { try? handle.close() }
+            let length = try handle.seekToEnd()
+            if length > 0 {
+                try handle.seek(toOffset: length - 1)
+                if (try? handle.read(upToCount: 1))?.first != 0x0A {
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: [0x0A])
+                } else {
+                    try handle.seekToEnd()
+                }
+            }
+            try handle.write(contentsOf: line)
+        } else {
+            try line.write(to: url, options: .atomic)
+        }
     }
 
     func decisionFiles() -> [URL] {
@@ -412,11 +464,15 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
             .filter { $0.pathExtension == "jsonl" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
     private func pruneDecisions(now: Date) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = Self.dayFormatter.timeZone
         for url in decisionFiles() {
             guard let date = Self.dayFormatter.date(from: url.deletingPathExtension().lastPathComponent),
-                  now.timeIntervalSince(date) > Self.decisionRetention else { continue }
+                  let days = calendar.dateComponents([.day], from: date, to: now).day, days > 30 else { continue }
             try? FileManager.default.removeItem(at: url)
         }
+        let cutoff = now.addingTimeInterval(-Self.decisionRetention)
+        momentHistory.drop(olderThan: cutoff)
     }
 }
 
