@@ -21,12 +21,11 @@ targets:
       testTargets: [NativeDesktopTests]
     sources:
       - path: .
-        # MicrophoneActivationExperiment targets the pre-pull engine test-hook surface
-        # (private-input check paths, `backend`, camera PTS counters) that lives only in
-        # the preserved "pre-pull local work" stash. Excluded until that work lands;
-        # no tracked code references it.
+        # These diagnostic harnesses target experiment-only test hooks and helper
+        # types that have not landed. Exclude them until their dependencies are tracked;
+        # no production code references either harness.
         excludes: ['*.yml', '*.py', '*.md', '*.sh', Tests, __pycache__, NativeGuest.entitlements, Info.plist',
-                   MicrophoneActivationExperiment.swift]
+                   MicrophoneActivationExperiment.swift, AcousticValidationExperiment.swift]
       - path: ../Experiments/NativeGuest
         excludes: [Main.swift, GuestCompanionPeer.swift, '*.py', '*.md', '*.sh', '*.patch', __pycache__]
       - path: ../Shared/NativeGuestCompanionProtocol.swift
