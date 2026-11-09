@@ -29,11 +29,11 @@ enum AttentionMode: String, Codable, CaseIterable, Sendable {
 
 /// Where a meeting is relative to you, which picks its default mode.
 enum AttentionSituation: String, CaseIterable, Sendable {
-    /// You are looking at it.
+    /// You are looking at it with its sound on.
     case onScreen
     /// Its sound plays while something else is in front.
     case background
-    /// Its sound is off.
+    /// Its sound is off, whether or not you are looking at it.
     case silenced
 
     static let defaultModes: [AttentionSituation: AttentionMode] = [.onScreen: .off, .background: .mentions, .silenced: .watch]

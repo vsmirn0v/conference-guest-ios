@@ -23,8 +23,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 }
 
 /// Judges each meeting as closely as its attention mode asks (by default: not the one
-/// you look at, only for your name in the background, closely when silenced) and raises
-/// a card when one needs you. One judge call runs at a time across meetings, at most six a minute.
+/// you look at with sound on, only for your name in the background, closely when silenced)
+/// and raises a card when one needs you. One judge call runs at a time across meetings, at most six a minute.
 @MainActor final class AttentionCoordinator: ObservableObject {
     struct Card: Identifiable, Equatable {
         /// The decision this card shows.
@@ -234,9 +234,11 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 
     // MARK: Modes
 
-    /// On screen beats silenced: a meeting you look at is one you follow yourself.
+    /// Sound off beats on screen: a meeting you look at with its sound off is one you
+    /// rely on the assistant to follow, so it stays judged while visible.
     func situation(_ model: NativeDesktopMeetingModel) -> AttentionSituation {
-        isOnScreen(model) ? .onScreen : model.snapshot.playoutOn ? .background : .silenced
+        if !model.snapshot.playoutOn { return .silenced }
+        return isOnScreen(model) ? .onScreen : .background
     }
     /// Your choice for this meeting, else its series' or room's mode, else the situation's.
     func resolvedMode(_ model: NativeDesktopMeetingModel) -> ResolvedMode {

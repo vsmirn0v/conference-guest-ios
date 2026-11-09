@@ -500,7 +500,10 @@ import XCTest
         try await engine.setPlayout(false)
         XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .watch, source: .situation(.silenced)))
         onScreen = true
-        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .off, source: .situation(.onScreen)), "on screen beats silenced")
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .watch, source: .situation(.silenced)),
+            "sound off beats on screen: a visible muted meeting is still judged")
+        try await engine.setPlayout(true)
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .off, source: .situation(.onScreen)))
         XCTAssertEqual(coordinator.waitingReason(infra), L("You are looking at this meeting."))
         store.situationModes[.onScreen] = .mentions
         XCTAssertEqual(coordinator.resolvedMode(infra).mode, .mentions)
@@ -520,7 +523,7 @@ import XCTest
         XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .off, source: .meeting(until: nil)), "Watch → Off")
         coordinator.resetMode(for: infra, series: true)
         XCTAssertNil(store.preset(room: infra.invitation)?.mode)
-        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .watch, source: .situation(.silenced)))
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .mentions, source: .situation(.background)))
     }
 
     /// Mentions judges a window as soon as you are named, otherwise only every two minutes,
