@@ -784,7 +784,7 @@ struct AssistantTalkView: View {
                             Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundStyle(.secondary)
                         }.padding(.horizontal, 10).padding(.vertical, 6)
                             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-                    }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    }.menuStyle(.borderlessButton).menuIndicator(.hidden)
                         .frame(maxWidth: 250, alignment: .leading)
                         .accessibilityIdentifier("assistant.meeting-target")
                         .accessibilityLabel(L("Assistant meeting context"))

@@ -1878,7 +1878,14 @@
 "Add task" = "Add task";
 "Ask" = "Ask";
 "Ask Assistant to read, remember, join, mute, or draft an action…" = "Ask Assistant to read, remember, join, mute, or draft an action…";
+"Ask about %@ or choose another meeting below." = "Ask about %@ or choose another meeting below.";
+"Ask about %@ or request an action…" = "Ask about %@ or request an action…";
 "Ask for time" = "Ask for time";
+"Assistant meeting context" = "Assistant meeting context";
+"Changes only the meeting Assistant talks about. It does not open the meeting or move microphone or sound." = "Changes only the meeting Assistant talks about. It does not open the meeting or move microphone or sound.";
+"For Assistant: %@" = "For Assistant: %@";
+"%ld meetings connected · switching does not change microphone or sound" = "%ld meetings connected · switching does not change microphone or sound";
+"%ld meetings · Assistant context only" = "%ld meetings · Assistant context only";
 "Assistant memory could not be saved. %@" = "Assistant memory could not be saved. %@";
 "Assistant section" = "Assistant section";
 "Attention for “%@” is now %@." = "Attention for “%@” is now %@.";

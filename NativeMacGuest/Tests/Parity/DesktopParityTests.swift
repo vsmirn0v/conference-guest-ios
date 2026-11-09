@@ -1252,6 +1252,9 @@ private final class DesktopActivitySpy: NSUserActivity {
         workspace.sidebarSelection = .section(.favorites)
         XCTAssertNil(workspace.selectedMeetingID); XCTAssertEqual(workspace.selection, .favorites)
         XCTAssertTrue(workspace.previewMeeting === a, "Browsing the library keeps the meeting in a floating preview")
+        workspace.sidebarSelection = .section(.assistant)
+        XCTAssertNil(workspace.previewMeeting, "Assistant keeps its composer clear of the automatic meeting preview")
+        XCTAssertTrue(workspace.embeddedMeetings.contains { $0 === a }, "Suppressing the preview does not leave or detach the meeting")
         try await join(workspace, 2)
         let b = workspace.meetings[1]
         XCTAssertEqual(workspace.selectedMeetingID, b.sessionID)

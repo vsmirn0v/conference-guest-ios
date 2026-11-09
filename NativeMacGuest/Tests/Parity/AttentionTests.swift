@@ -1569,6 +1569,28 @@ import XCTest
         XCTAssertNil(decoded.memory)
     }
 
+    func testAssistantMeetingTargetDefaultsToMicrophoneOwnerAndPreservesChoice() async throws {
+        let (first, _) = try await meeting("first")
+        let (second, _) = try await meeting("second")
+        first.configureForConcurrentJoin(ownsMicrophone: false)
+        second.configureForConcurrentJoin(ownsMicrophone: true)
+        let coordinator = AttentionCoordinator(store: store())
+        var live = [first, second]
+        coordinator.meetings = { live }
+        let talk = coordinator.talk
+
+        XCTAssertEqual(talk.reconcileMeetingTarget(), second.sessionID, "The microphone owner is the initial Assistant context")
+        talk.targetMeetingID = first.sessionID
+        second.configureForConcurrentJoin(ownsMicrophone: false)
+        first.configureForConcurrentJoin(ownsMicrophone: true)
+        XCTAssertEqual(talk.reconcileMeetingTarget(), first.sessionID, "A valid explicit target survives microphone handover")
+
+        live = [second]
+        XCTAssertEqual(talk.reconcileMeetingTarget(), second.sessionID, "A closed target is repaired to the remaining live meeting")
+        live = []
+        XCTAssertNil(talk.reconcileMeetingTarget(), "No live meeting means no implicit outward target")
+    }
+
     func testReviewFixesForPrivacyDecodeJournalAndPushToTalk() async throws {
         let fresh = store()
         XCTAssertTrue(fresh.pushToTalk, "An upgrade keeps the previous on default until the person turns it off")

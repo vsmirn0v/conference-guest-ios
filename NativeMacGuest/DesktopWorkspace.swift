@@ -447,10 +447,11 @@ import UserNotifications
     var selectedMeeting: NativeDesktopMeetingModel? { meetings.first { $0.sessionID == selectedMeetingID } }
     var embeddedMeetings: [NativeDesktopMeetingModel] { meetings.filter { meetingWindows[$0.sessionID]?.isEmbedded == true } }
     func isDetached(_ model: NativeDesktopMeetingModel) -> Bool { meetingWindows[model.sessionID]?.detached == true }
-    /// While the library is shown, the talk meeting (else the latest) stays in
-    /// view as a small floating preview unless Mini meeting already shows it.
+    /// While most library sections are shown, the talk meeting (else the latest)
+    /// stays in a small floating preview. Assistant keeps its composer unobstructed;
+    /// Mini meeting remains available through the explicit meeting action.
     var previewMeeting: NativeDesktopMeetingModel? {
-        guard selectedMeeting == nil else { return nil }
+        guard selection != .assistant, selectedMeeting == nil else { return nil }
         let candidates = meetings.filter { meetingWindows[$0.sessionID].map { $0.isEmbedded && !$0.isMiniVisible } ?? false }
         return candidates.first { $0.sessionID == talkID } ?? candidates.last
     }

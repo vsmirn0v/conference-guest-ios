@@ -1876,7 +1876,14 @@
 "Add task" = "Добавить задачу";
 "Ask" = "Спросить";
 "Ask Assistant to read, remember, join, mute, or draft an action…" = "Попросите Ассистента прочитать, запомнить, подключиться, выключить микрофон или подготовить действие…";
+"Ask about %@ or choose another meeting below." = "Спросите о встрече «%@» или выберите другую встречу ниже.";
+"Ask about %@ or request an action…" = "Спросите о встрече «%@» или попросите выполнить действие…";
 "Ask for time" = "Попросить время";
+"Assistant meeting context" = "Контекст встречи для Ассистента";
+"Changes only the meeting Assistant talks about. It does not open the meeting or move microphone or sound." = "Меняет только встречу, о которой идёт речь. Не открывает встречу и не переключает микрофон или звук.";
+"For Assistant: %@" = "Для Ассистента: %@";
+"%ld meetings connected · switching does not change microphone or sound" = "Подключено встреч: %ld · переключение не меняет микрофон или звук";
+"%ld meetings · Assistant context only" = "Встреч: %ld · только контекст Ассистента";
 "Assistant memory could not be saved. %@" = "Не удалось сохранить память Ассистента. %@";
 "Assistant section" = "Раздел Ассистента";
 "Attention for “%@” is now %@." = "Внимание к «%@» теперь: %@.";

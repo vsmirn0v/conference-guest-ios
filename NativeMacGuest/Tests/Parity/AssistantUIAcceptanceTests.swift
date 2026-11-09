@@ -20,7 +20,8 @@ import XCTest
     private var language: String { Bundle.main.preferredLocalizations.first ?? "en" }
     private var artifacts: URL {
         let folder = ProcessInfo.processInfo.environment["ASSISTANT_UI_ARTIFACTS"] ?? "assistant-ui-review"
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(folder, isDirectory: true)
+        let url = folder.hasPrefix("/") ? URL(fileURLWithPath: folder, isDirectory: true)
+            : FileManager.default.temporaryDirectory.appendingPathComponent(folder, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
@@ -402,6 +403,54 @@ import XCTest
         coordinator.showMoment(closed.id)
         await settle()
         XCTAssertTrue(containsText(rendered, L("This meeting is not open. The Moment is read-only; join it again to answer.")))
+    }
+
+    func testMultipleMeetingTargetAndComposerRemainUsableInNarrowLayout() async throws {
+        let store = store(); await store.waitForMoments()
+        let models = try await [
+            meeting("Weekly infrastructure planning"),
+            meeting("Daily product review"),
+            meeting("Engineering design and release coordination"),
+        ]
+        models[0].configureForConcurrentJoin(ownsMicrophone: false)
+        models[1].configureForConcurrentJoin(ownsMicrophone: true)
+        models[2].configureForConcurrentJoin(ownsMicrophone: false)
+        let coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { models }
+        var opened = 0
+        coordinator.openMeeting = { _ in opened += 1 }
+        let rendered = await present(AssistantTalkView(attention: coordinator),
+            size: NSSize(width: 760, height: 560), name: "talk-multiple-meetings")
+        try await wait { self.element(rendered, identifier: "assistant.meeting-target") != nil }
+        XCTAssertEqual(coordinator.talk.targetMeetingID, models[1].sessionID)
+        for identifier in ["assistant.meeting-target", "assistant.input", "assistant.ask", "assistant.listen"] {
+            XCTAssertNotNil(element(rendered, identifier: identifier), "Missing usable Assistant control \(identifier)")
+        }
+
+        rendered.window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        await settle()
+        try capture(rendered)
+        coordinator.talk.targetMeetingID = models[2].sessionID
+        await settle()
+        XCTAssertEqual(opened, 0, "Changing Assistant context never opens a meeting")
+        XCTAssertFalse(models[0].ownsMicrophone)
+        XCTAssertFalse(models[2].ownsMicrophone)
+        XCTAssertTrue(models[1].ownsMicrophone, "Changing Assistant context never moves microphone ownership")
+
+        let input = try XCTUnwrap(element(rendered, identifier: "assistant.input"))
+        XCTAssertEqual(AXUIElementSetAttributeValue(input, kAXValueAttribute as CFString, "Remember this selector" as CFTypeRef), .success)
+        await settle()
+        XCTAssertEqual(attribute(input, kAXValueAttribute) as? String, "Remember this selector", "The hosted composer accepts text")
+        try capture(rendered)
+
+        rendered.window.minSize = NSSize(width: 480, height: 420)
+        rendered.window.setContentSize(NSSize(width: 520, height: 480))
+        await settle()
+        for identifier in ["assistant.meeting-target", "assistant.input", "assistant.ask", "assistant.listen"] {
+            XCTAssertNotNil(element(rendered, identifier: identifier), "Narrow layout lost \(identifier)")
+        }
+        try capture(Rendered(window: rendered.window, hosting: rendered.hosting, name: "talk-multiple-meetings-narrow"))
     }
 
     func testTranscriptionPopoverStaysOpenAcrossLocalAndRemoteUpdates() async throws {
