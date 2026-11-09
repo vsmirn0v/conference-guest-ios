@@ -356,7 +356,7 @@ final class VoxAsset {
                 }
                 position += count
                 return rows
-            }, rebuild: { try await asset.rebuildModel() })
+            }, rebuild: { try await self.asset.rebuildModel() })
         }
     }
 }

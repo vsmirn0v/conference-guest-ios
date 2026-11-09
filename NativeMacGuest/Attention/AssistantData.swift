@@ -191,6 +191,10 @@ private struct AssistantDataDocument: Codable {
     var droppedItems = 0
     var degraded = false
 
+    private enum CodingKeys: String, CodingKey {
+        case outcomes, memories, suggestions, modeChanges, variantPicks, retentionDays
+    }
+
     init(outcomes: [MeetingOutcome] = [], memories: [AssistantMemoryItem] = [], suggestions: [AssistantSuggestion] = [],
          modeChanges: [AssistantModeChange] = [], variantPicks: [String: Int] = [:], retentionDays: Int = 90) {
         self.outcomes = outcomes; self.memories = memories; self.suggestions = suggestions
