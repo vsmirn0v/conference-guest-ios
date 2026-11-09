@@ -492,7 +492,7 @@ import XCTest
             detect: { .verified(.guest(endpoint: $0)) },
             makeMeeting: { _, _, _, _ in model }
         )
-        workspace.join(model.invitation, engine: .guest, title: model.title)
+        workspace.join(model.invitation, engine: .guest, title: model.title, nameOverride: "Vitalii")
         try await wait { workspace.selectedMeeting === model && !workspace.preparing }
         workspace.show()
         await settle()
