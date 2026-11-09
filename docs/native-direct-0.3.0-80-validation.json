@@ -1,0 +1,44 @@
+{
+  "version": "0.3.0",
+  "build": "80",
+  "channel": "beta",
+  "sourceCommit": "2da1adb",
+  "changes": [
+    "Assistant review fixes (a5b802f..adbc4e9): remote outcome capture requires Attention on and the person's opt-in; a degraded assistant.json is copied to assistant.recovered.json and never overwritten with a partial decode; an outcome without endedAt is rejected instead of being pruned; journal replay deduplicates and sorts by event time; overflow IDs are scoped per meeting",
+    "Background push-to-talk restored with a Carbon Option-Space hotkey that consumes the key, suppresses while a text field is focused, reports registration failures, and ends a hold after 30 seconds even without audio",
+    "Moments: only open meetings are resolved, with invitation, preset and unique-title fallbacks after a stale meeting ID; sayReply records a delivered utterance and clears speaking when the card closed during playback; all delivery actions guard in-flight speech",
+    "Headphone routing no longer classifies device names: it accepts the CoreAudio headphone source, rejects speakers, and otherwise requires the person to approve the device UID",
+    "Localization: Russian Settings path uses Ассистент; the People memory key exists in both languages; voice-cache recovery matches _GenericObjCError, __GenericObjCError and nilError tokens instead of a bare substring",
+    "Compile fixes on top of the review commits (2da1adb): explicit AssistantDataDocument CodingKeys, Combine import for AnyCancellable, explicit self in the VoxAsset rebuild closure"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "executableSHA256": "328f6b5b7102957bcefbd07c98f5019bd90150263aed9bd9c36a3445045681d1",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-80-arm64.dmg",
+    "sha256": "a1d4758237324cb176bb0a38ddc62a8eedd86eb897caef5f1e4d8bc8ecdc9203",
+    "length": 27142140
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-80-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "Source commit 2da1adb (compile fixes) is local on top of origin/main 83a3769 and was not pushed by the release run. Test-only corrections and this record are later local commits and do not change the app binary. The publisher verified the immutable DMG, beta alias, signed appcast and inventory over HTTPS byte-for-byte.",
+  "measured": {
+    "focusedAppTests": "NativeDesktopTests AttentionTests and AttentionMomentsTests: 70 tests, 2 skipped, 0 failures after three test-only corrections (headphone-route call, chat capability in the rejoin fixture, sentinel directory and trailing-newline assertions)",
+    "distributionTooling": "27 tests, 0 failures (NativeMacGuest/distribution)",
+    "archive": "direct Release archive 0.3.0 (80) succeeded; 58 archive artifact hashes recorded in build-evidence.json; app-group IO and one-use ticket check passed",
+    "export": "Developer ID export with Xcode cloud-managed notarization; app stapled and Gatekeeper-accepted (Notarized Developer ID)",
+    "package": "DMG created and revalidated read-only from its mount; contained app accepted as Notarized Developer ID",
+    "publish": "read-only SSH preflight passed; atomic publication and HTTPS readback matched the immutable DMG, beta alias, signed appcast and inventory",
+    "appcastStateSHA256": "c735c772862c26ba0714b78cfed7002ab3a69bd457ef91cb87e1c0ca3fce4162",
+    "inventoryStateSHA256": "26b21dac9e1a9d429cbcdd467b27723c87d5e15f5e0b98e87d251f498dc3c288"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 80",
+    "live-meeting acceptance of the review fixes (Moments reconnection, spoken-reply terminal path, background push-to-talk)",
+    "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted"
+  ]
+}
