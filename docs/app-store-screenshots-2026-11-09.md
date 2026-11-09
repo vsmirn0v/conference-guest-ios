@@ -3,6 +3,10 @@
 Captured against source `02d74d8`, the current UI of Rock’n’Roll 0.2.0
 (build 114). No production app code changed for this task.
 
+The repository advanced to `2da1adb` (build 115 candidate) after the capture;
+the later diagnostics and Settings additions do not change the four captured
+screens.
+
 ## Capture set
 
 PNG files and SHA-256 hashes are in
