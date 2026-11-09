@@ -1657,6 +1657,7 @@ import XCTest
 
         var sent: [String] = []
         coordinator.meetings = { [second] }
+        second.chat.canSend = true
         coordinator.deliverChat = { _, text in sent.append(text); return true }
         let outcome = MeetingOutcome(meetingID: first.sessionID, meetingTitle: "rejoin", invitation: first.invitation, endedAt: Date(), summary: "Done")
         XCTAssertEqual(coordinator.outcomeChatTarget(outcome)?.sessionID, second.sessionID)
@@ -1775,7 +1776,8 @@ import XCTest
         journal.log(.init(at: Date(), meetingTitle: "Day", presetID: nil, window: nil, verdict: nil, provider: "local", model: "m", outcome: .belowThreshold))
         let lines = try String(contentsOf: journal.decisionFiles()[0], encoding: .utf8).split(separator: "\n", omittingEmptySubsequences: false)
         XCTAssertEqual(lines.filter { !$0.isEmpty }.count, 2)
-        XCTAssertFalse(lines.contains(""), "A repaired line ending does not insert a blank record")
+        XCTAssertFalse((lines.last?.isEmpty == true ? lines.dropLast() : lines).contains(""),
+            "A repaired line ending does not insert a blank record")
     }
 
     func testOutcomeEditsAreNotWrittenOnEveryKeystroke() async throws {
@@ -1801,6 +1803,7 @@ import XCTest
         data.flushOutcomeEditsSynchronously()
         XCTAssertTrue(try String(contentsOf: root.appendingPathComponent("assistant.json"), encoding: .utf8).contains("Quit save"))
         let quitRoot = folder()
+        try FileManager.default.createDirectory(at: quitRoot, withIntermediateDirectories: true)
         let sentinel = Data("kept".utf8)
         try sentinel.write(to: quitRoot.appendingPathComponent("assistant.json"))
         let early = AssistantDataStore(root: quitRoot)

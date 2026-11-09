@@ -126,7 +126,7 @@ import XCTest
             let audio = peer.mediaSnapshot.audio.since(before.audio)
             return (audio.samples, audio.rms)
         }
-        let headphoneRoute = AssistantHeadphoneRoute.isConnected
+        let headphoneRoute = AssistantHeadphoneRoute.isConnected(approved: store.headphoneUIDs)
         var evidence: [String: Any] = [
             "headphoneRoute": headphoneRoute,
             "pushToTalkModelInstalled": ListenModelStore.shared.recognizerModel() != nil
