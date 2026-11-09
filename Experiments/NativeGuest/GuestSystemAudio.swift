@@ -318,6 +318,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private var microphoneOptIn: Bool
     private var inputActivation: GuestInputActivationPolicy
     private let sharedNativeOwner: Bool
+    private let sharedInputOutputDependency: Bool
     private let sharedPlayoutGate: GuestSharedPlayoutGate
     let profile: GuestAudioProfile
     private var ownerLease: GuestAudioOwnerLease?
@@ -485,17 +486,19 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     }
 
     private init(microphoneEnabled: Bool, playoutEnabled: Bool, profile: GuestAudioProfile,
-                 lease: GuestAudioOwnerLease, sharedNativeOwner: Bool) {
+                 lease: GuestAudioOwnerLease, sharedNativeOwner: Bool,
+                 sharedInputOutputDependency: Bool = false) {
         microphoneOptIn = microphoneEnabled
         inputActivation = .init(persistent: microphoneEnabled)
         self.profile = profile; ownerLease = lease
         self.sharedNativeOwner = sharedNativeOwner
+        self.sharedInputOutputDependency = sharedNativeOwner || sharedInputOutputDependency
         sharedPlayoutGate = GuestSharedPlayoutGate(enabled: sharedNativeOwner)
         self.playoutEnabled = playoutEnabled
         cached = ["mode": "system", "module": "audioEngine", "microphoneOptIn": microphoneEnabled,
                   "playoutOptIn": playoutEnabled, "microphoneMutedRequested": !microphoneEnabled,
                   "playoutEnabledRequested": playoutEnabled, "cleanupSucceeded": false,
-                  "sharedInputOutputDependency": sharedNativeOwner,
+                  "sharedInputOutputDependency": self.sharedInputOutputDependency,
                   "microphoneAvailabilityPolicy": "explicit-authorized-activation-until-shutdown",
                   "pcmEvidence": "track-renderer-energy-separate-from-hardware-state"]
         super.init()
@@ -528,7 +531,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     static func create(microphoneEnabled: Bool, playoutEnabled: Bool,
                        voiceProcessingEnabled: Bool = true, profile: GuestAudioProfile = .speech,
                        privateCheckOnly: Bool = false, exclusive: Bool = false, concurrent: Bool = false,
-                       manualRendering: Bool = false,
+                       manualRendering: Bool = false, keepOutputAvailableWithInput: Bool = false,
                        makeFactory: ((_ voiceProcessing: Bool) -> LKRTCPeerConnectionFactory)? = nil,
                        timeout: TimeInterval = 3) async throws -> GuestSystemAudio {
         NativeScreenEncoderQuality.prepare()
@@ -539,7 +542,8 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         guard let lease = GuestAudioOwnerLease(privateCheck: privateCheckOnly, exclusive: exclusive,
                                                concurrent: concurrent) else { throw GuestSystemAudioError.physicalOwnerBusy }
         let owner = GuestSystemAudio(microphoneEnabled: microphoneEnabled, playoutEnabled: playoutEnabled,
-            profile: profile, lease: lease, sharedNativeOwner: exclusive)
+            profile: profile, lease: lease, sharedNativeOwner: exclusive,
+            sharedInputOutputDependency: exclusive || keepOutputAvailableWithInput)
         // Manual rendering (tests) has no device for the platform's voice processing to run on.
         let voiceProcessingEnabled = voiceProcessingEnabled && profile.usesPlatformVoiceProcessing && !manualRendering
         let success = await owner.perform("create", timeout: timeout) {
@@ -641,14 +645,18 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
         let remaining = deadline - ProcessInfo.processInfo.systemUptime
         guard remaining > 0 else { return false }
         return await perform("foreground-input-prepare", timeout: remaining) {
-            guard !self.closed, self.inputPermitted, let module = self.currentModule,
+            guard !self.closed, let module = self.currentModule,
                   GuestSystemAudio.microphoneAuthorized else { return false }
+            self.inputPermitted = true
             self.inputActivation = .init(persistent: true); self.microphoneOptIn = true
+            self.deferredActivation = false
             self.playoutEnabled = false
+            self.update(["inputPermitted": true, "inputKeptWarm": false, "deferredActivation": false,
+                         "microphoneOptIn": true, "playoutEnabledRequested": false])
             let success = GuestMutedInputPreparation.start(
                 mute: { self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0 },
                 makeAvailable: { self.applyAvailability(module) },
-                startRecording: { self.nativeCall("start-recording", { module.initAndStartRecording(audioProcessingOptions: nil) }) == 0 },
+                startRecording: { module.isRecording || self.nativeCall("start-recording", { module.initAndStartRecording(audioProcessingOptions: nil) }) == 0 },
                 isMuted: { module.isMicrophoneMuted })
             self.readSnapshot(module)
             return success
@@ -709,7 +717,18 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             }
             let wasActivated = self.inputActivation
             self.inputActivation.activate(); self.microphoneOptIn = self.inputActivation.inputAvailable
-            let success = self.applyAvailability(module)
+            let success: Bool
+            if !module.isRecording, self.mediaContext != nil || self.manualRenderingMode {
+                let wasMuted = module.isMicrophoneMuted
+                success = GuestMutedInputPreparation.start(
+                    mute: { self.nativeCall("set-microphone-muted", { module.setMicrophoneMuted(true) }) == 0 },
+                    makeAvailable: { self.applyAvailability(module) },
+                    startRecording: { module.isRecording || self.nativeCall("start-recording", { module.initAndStartRecording(audioProcessingOptions: nil) }) == 0 },
+                    isMuted: { module.isMicrophoneMuted }) &&
+                    (wasMuted || self.nativeCall("restore-microphone-unmuted", { module.setMicrophoneMuted(false) }) == 0)
+            } else {
+                success = self.applyAvailability(module)
+            }
             if !success { self.inputActivation = wasActivated; self.microphoneOptIn = self.inputActivation.inputAvailable; _ = self.applyAvailability(module) }
             self.update(["microphoneOptIn": self.microphoneOptIn])
             self.readSnapshot(module)
@@ -925,7 +944,7 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
             mixer?.outputVolume = Float(volume)
         }
         let physical = GuestPhysicalAudioAvailability(input: microphoneOptIn,
-            playoutRequested: playoutEnabled, sharedNativeOwner: sharedNativeOwner, transcription: transcriptionOutput)
+            playoutRequested: playoutEnabled, sharedNativeOwner: sharedInputOutputDependency, transcription: transcriptionOutput)
         var availability = LKRTCAudioEngineAvailability()
         availability.isInputAvailable = ObjCBool(physical.input)
         availability.isOutputAvailable = ObjCBool(physical.output || manualRenderingMode)

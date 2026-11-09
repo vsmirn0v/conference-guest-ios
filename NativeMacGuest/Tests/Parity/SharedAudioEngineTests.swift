@@ -267,6 +267,81 @@ import XCTest
         XCTAssertFalse(sender.isEnabled, "After a failed restore the meeting must unmute itself again")
     }
 
+    func testForegroundReadinessPreparesIdleInputAdoptsIntoFirstMeetingAndRetiresOnBackground() async throws {
+        var created = 0
+        let module = FakeModule()
+        let engine = SharedAudioEngine(grace: .milliseconds(15), authorized: { true }, reportFailedStop: {}) {
+            created += 1; return module
+        }
+        engine.setForeground(true, microphone: true)
+        await engine.waitForWork()
+        XCTAssertEqual(created, 1, "Foreground readiness creates the shared owner")
+        XCTAssertEqual(module.log, ["prepare-idle"])
+        XCTAssertTrue(module.muted && module.active && module.permitted)
+
+        // First meeting attaches to the already-warm module without recreating it.
+        let daily = try await engine.attach(meetingID: UUID())
+        XCTAssertEqual(created, 1)
+        ok(await daily.assumeTalk())
+        ok(await daily.setMuted(false))
+        XCTAssertFalse(module.muted)
+
+        // Leaving while still in the foreground keeps the module warm instead of shutting it down.
+        ok(await daily.detach())
+        XCTAssertFalse(module.log.contains("shutdown"), "Foreground readiness keeps the shared module warm after the meeting leaves")
+        XCTAssertEqual(module.log.last, "prepare-idle")
+        XCTAssertTrue(module.muted && module.active)
+
+        // Moving to the background retires the idle module after the grace period.
+        engine.setForeground(false, microphone: true)
+        try await spin { module.log.contains("shutdown") }
+        await engine.waitForWork()
+        XCTAssertFalse(engine.hasModule)
+    }
+
+    func testLiveForegroundPreparationStartsEngineAndFirstMeetingAdoptsWithoutRestart() async throws {
+        GuestSystemAudio.microphoneAuthorizationOverrideForTesting = true
+        defer { GuestSystemAudio.microphoneAuthorizationOverrideForTesting = nil }
+        let engine = SharedAudioEngine.live(manualRenderingForTesting: true)
+        engine.setForeground(true, microphone: true)
+        await engine.waitForWork()
+
+        let owner = try XCTUnwrap(engine.guestOwner)
+        var snapshot = owner.snapshot
+        XCTAssertEqual(snapshot["inputEnabled"] as? Bool, true)
+        XCTAssertEqual(snapshot["inputRunning"] as? Bool, true)
+        XCTAssertEqual(snapshot["recording"] as? Bool, true)
+        XCTAssertEqual(snapshot["inputAvailable"] as? Bool, true)
+        XCTAssertEqual(snapshot["outputAvailable"] as? Bool, true)
+        XCTAssertEqual(snapshot["microphoneMuted"] as? Bool, true)
+        XCTAssertEqual(snapshot["enginesCreated"] as? Int, 1)
+        XCTAssertEqual(snapshot["engineStarts"] as? Int, 1)
+
+        let meeting = try await SharedGuestMeetingAudio.attach(to: engine)
+        ok(await meeting.beginAttempt(sound: true))
+        ok(await meeting.setInputPermitted(true))
+        ok(await meeting.activateMicrophone())
+        snapshot = owner.snapshot
+        XCTAssertEqual(snapshot["enginesCreated"] as? Int, 1)
+        XCTAssertEqual(snapshot["engineStarts"] as? Int, 1, "Adopting foreground-prepared input into the first meeting must not restart the audio engine")
+        XCTAssertNil(snapshot["engineStops"])
+        XCTAssertEqual(snapshot["inputRunning"] as? Bool, true)
+        XCTAssertEqual(snapshot["recording"] as? Bool, true)
+        XCTAssertEqual(snapshot["microphoneMuted"] as? Bool, true)
+
+        ok(await meeting.shutdown())
+        XCTAssertTrue(engine.guestOwner === owner, "Leaving the meeting while foregrounded keeps the warm owner")
+        snapshot = owner.snapshot
+        XCTAssertEqual(snapshot["engineStarts"] as? Int, 1)
+        XCTAssertNil(snapshot["engineStops"])
+        XCTAssertEqual(snapshot["inputRunning"] as? Bool, true)
+        XCTAssertEqual(snapshot["recording"] as? Bool, true)
+        XCTAssertEqual(snapshot["microphoneMuted"] as? Bool, true)
+
+        ok(await engine.shutdownIdle())
+        XCTAssertNil(engine.guestOwner)
+    }
+
     private func spin(_ condition: @escaping @MainActor () -> Bool, timeout: TimeInterval = 2) async throws {
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
         while !condition() {
@@ -309,6 +384,10 @@ private final class FakeSender: MeetingAudioSender { var isEnabled = true }
     lazy var factory = LKRTCPeerConnectionFactory(encoderFactory: LKRTCDefaultVideoEncoderFactory(), decoderFactory: LKRTCDefaultVideoDecoderFactory())
 
     func deliver(_ buffer: AVAudioPCMBuffer) { sink?(buffer) }
+    func prepareIdleInput(timeout: TimeInterval) async -> Bool {
+        log.append("prepare-idle"); guard !failActivation else { return false }
+        muted = true; permitted = true; active = true; return true
+    }
     func activateMicrophone(timeout: TimeInterval?) async -> Bool {
         log.append("activate"); guard !failActivation, permitted else { return false }; active = true; return true
     }

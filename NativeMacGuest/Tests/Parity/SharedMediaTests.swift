@@ -403,6 +403,7 @@ private final class SharedAudioFixture: NativeDesktopSharedAudioOwner {
         media.setForeground(false, microphone: false, profile: .speech)
         resume?.resume(); resume = nil
         try await spin { audio.shutdowns == 1 }
+        await media.waitForWork()
         XCTAssertEqual(audio.prepares, 0)
         XCTAssertEqual(media.evidence["ownerID"] as? String, "")
     }

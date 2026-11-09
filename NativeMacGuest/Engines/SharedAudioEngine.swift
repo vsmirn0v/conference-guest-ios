@@ -12,6 +12,7 @@ import LiveKitWebRTC
 /// provides it in the app; tests use a fake.
 @MainActor protocol SharedAudioModule: AnyObject {
     var factory: LKRTCPeerConnectionFactory { get }
+    func prepareIdleInput(timeout: TimeInterval) async -> Bool
     func activateMicrophone(timeout: TimeInterval?) async -> Bool
     func setMicrophoneMuted(_ muted: Bool, timeout: TimeInterval) async -> Bool
     func suppressMicrophone()
@@ -73,6 +74,9 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
 
     private let makeModule: @MainActor () async throws -> SharedAudioModule
     private let timeouts: Timeouts
+    private let grace: Duration
+    private let authorized: () -> Bool
+    private let sleep: (Duration) async throws -> Void
     private var module: SharedAudioModule?
     private var attachments: [UUID: MeetingAudioAttachment] = [:]
     private var order: [UUID] = []
@@ -98,21 +102,32 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     /// The talk meeting whose unmute could not be restored after a rebuild (it stays muted).
     var onRecoveryFailed: ((UUID) -> Void)?
     private var sleepObservers: [NSObjectProtocol] = []
+    private(set) var foreground = false
+    private(set) var foregroundMicrophone = false
+    private var foregroundPrepared = false
+    private var idleSuspended = false
+    private var idleRevision = UUID()
+    private var idleDeadline: Task<Void, Never>?
 
     private let reportFailedStop: () -> Void
 
     /// `reportFailedStop` blocks every new physical owner in the process (tests replace it).
-    init(timeouts: Timeouts = .init(), reportFailedStop: @escaping () -> Void = { GuestAudioOwnerLease.reportFailedStop() },
+    init(timeouts: Timeouts = .init(), grace: Duration = .seconds(2),
+         authorized: @escaping () -> Bool = { GuestSystemAudio.microphoneAuthorized },
+         sleep: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+         reportFailedStop: @escaping () -> Void = { GuestAudioOwnerLease.reportFailedStop() },
          makeModule: @escaping @MainActor () async throws -> SharedAudioModule) {
-        self.timeouts = timeouts; self.reportFailedStop = reportFailedStop; self.makeModule = makeModule
+        self.timeouts = timeouts; self.grace = grace; self.authorized = authorized; self.sleep = sleep
+        self.reportFailedStop = reportFailedStop; self.makeModule = makeModule
     }
 
     /// The app's engine: one non-exclusive `GuestSystemAudio` owner whose factory
     /// LiveKit can adopt (Rock, `installIntoLiveKit`).
     static func live(manualRenderingForTesting: Bool = false) -> SharedAudioEngine {
         SharedAudioEngine {
-            try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false, concurrent: true,
-                manualRendering: manualRenderingForTesting,
+            try await GuestSystemAudio.create(microphoneEnabled: false, playoutEnabled: false,
+                profile: manualRenderingForTesting ? .speech : .saved, concurrent: true,
+                manualRendering: manualRenderingForTesting, keepOutputAvailableWithInput: true,
                 makeFactory: { SharedAudioEngine.liveKitFactory(voiceProcessing: $0) })
         }
     }
@@ -125,25 +140,105 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     var factory: LKRTCPeerConnectionFactory? { module?.factory }
     /// The physical owner when it is the app's `GuestSystemAudio` (diagnostics, snapshots).
     var guestOwner: GuestSystemAudio? { module as? GuestSystemAudio }
+    var hasModule: Bool { module != nil }
+    var busy: Bool { !attachments.isEmpty || privateCheckActive || cleanupFailed || idleSuspended }
     var meetingIDs: [UUID] { order }
     func attachment(_ id: UUID) -> MeetingAudioAttachment? { attachments[id] }
+    func waitForWork() async { await work.wait() }
+
+    private var shouldPrepareForegroundInput: Bool {
+        foreground && foregroundMicrophone && !idleSuspended && !cleanupFailed && authorized()
+    }
+
+    // MARK: Foreground readiness
+
+    /// Prepares the muted microphone while the app is active with a visible window,
+    /// and releases the idle owner after `grace` when the app leaves the foreground.
+    func setForeground(_ active: Bool, microphone: Bool) {
+        guard foreground != active || foregroundMicrophone != microphone else { return }
+        foreground = active; foregroundMicrophone = microphone
+        idleRevision = UUID(); idleDeadline?.cancel(); idleDeadline = nil
+        guard attachments.isEmpty, !privateCheckActive, !idleSuspended, !cleanupFailed else { return }
+        if active {
+            scheduleForegroundPreparation()
+        } else {
+            let token = idleRevision
+            idleDeadline = Task { [weak self, sleep, grace] in
+                do { try await sleep(grace) } catch { return }
+                guard let self, self.idleRevision == token, !self.foreground, self.attachments.isEmpty, !self.privateCheckActive else { return }
+                _ = await self.work.run {
+                    guard self.idleRevision == token, !self.foreground, self.attachments.isEmpty, !self.privateCheckActive else { return true }
+                    return await self.retireIdleLocked()
+                }
+            }
+        }
+    }
+
+    private func scheduleForegroundPreparation() {
+        let token = idleRevision
+        work.enqueue { [self] in
+            guard idleRevision == token, foreground, attachments.isEmpty, !privateCheckActive, !idleSuspended, !cleanupFailed else { return true }
+            if shouldPrepareForegroundInput {
+                guard case .success(let module) = await ensureModuleLocked() else { return false }
+                guard idleRevision == token, foreground, attachments.isEmpty, !privateCheckActive, !idleSuspended else {
+                    return await retireIdleLocked()
+                }
+                guard await module.prepareIdleInput(timeout: timeouts.activation) else {
+                    _ = await retireIdleLocked()
+                    return false
+                }
+                foregroundPrepared = true
+                moduleMuted = true
+                return true
+            } else {
+                return await retireIdleLocked()
+            }
+        }
+    }
+
+    /// Suspends idle foreground preparation and releases an unattached, unpinned owner.
+    func suspendIdle() async -> Bool {
+        guard !cleanupFailed, attachments.isEmpty, !privateCheckActive else { return false }
+        idleSuspended = true; idleRevision = UUID(); idleDeadline?.cancel(); idleDeadline = nil
+        return await work.run { [self] in
+            guard attachments.isEmpty, !privateCheckActive else { return false }
+            return await retireIdleLocked()
+        }
+    }
+
+    func suspendIdleIfDrained() -> Bool {
+        guard !cleanupFailed, attachments.isEmpty, !privateCheckActive, module == nil, !idleSuspended else { return false }
+        idleSuspended = true; idleRevision = UUID(); idleDeadline?.cancel(); idleDeadline = nil
+        return true
+    }
+
+    func resumeIdle(clean: Bool) {
+        guard idleSuspended else { return }
+        idleSuspended = false; idleRevision = UUID(); idleDeadline?.cancel(); idleDeadline = nil
+        guard clean else { quarantine(); return }
+        if foreground, attachments.isEmpty, !privateCheckActive, !cleanupFailed {
+            scheduleForegroundPreparation()
+        }
+    }
+
+    func shutdownIdle() async -> Bool {
+        foreground = false; foregroundMicrophone = false; idleSuspended = true
+        idleRevision = UUID(); idleDeadline?.cancel(); idleDeadline = nil
+        guard attachments.isEmpty, !privateCheckActive else { return false }
+        return await work.run { [self] in await retireIdleLocked() }
+    }
 
     // MARK: Attach / detach
 
     func attach(meetingID: UUID) async throws -> MeetingAudioAttachment {
+        idleRevision = UUID(); idleDeadline?.cancel(); idleDeadline = nil
         var result: Result<MeetingAudioAttachment, Error> = .failure(SharedAudioEngineError.setupFailed)
         _ = await work.run { [self] in
             guard !cleanupFailed else { result = .failure(SharedAudioEngineError.cleanupFailed); return false }
             if let existing = attachments[meetingID] { result = .success(existing); return true }
-            if module == nil {
-                do {
-                    let created = try await makeModule()
-                    created.setInputTranscriptionSink { [inputSink] buffer in inputSink.deliver(buffer) }
-                    created.onSpontaneousEngineChange = { [weak self] change in
-                        Task { @MainActor in self?.engineChanged(change) }
-                    }
-                    module = created
-                } catch { result = .failure(error); return false }
+            switch await ensureModuleLocked() {
+            case .success: break
+            case .failure(let error): result = .failure(error); return false
             }
             let attachment = MeetingAudioAttachment(meetingID: meetingID, engine: self)
             attachments[meetingID] = attachment; order.append(meetingID)
@@ -154,24 +249,27 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
     }
 
     /// Senders are disabled and received audio silenced before anything else.
-    /// The last meeting out shuts the module down, which releases the device.
+    /// The last meeting out shuts the module down, which releases the device, unless
+    /// foreground microphone readiness keeps the idle module warm.
     @discardableResult func detach(_ attachment: MeetingAudioAttachment) async -> Bool {
         attachment.disableSenders(); attachment.silenceReceived()
         return await work.run { [self] in
             guard attachments[attachment.meetingID] === attachment else { return true }
             var success = true
-            if talkMeetingID == attachment.meetingID { success = await releaseTalkLocked() && success }
+            let lastAttachment = attachments.count == 1
+            if talkMeetingID == attachment.meetingID {
+                success = await releaseTalkLocked(keepForegroundWarm: lastAttachment && shouldPrepareForegroundInput) && success
+            }
             attachments[attachment.meetingID] = nil; order.removeAll { $0 == attachment.meetingID }
             attachment.markDetached()
-            if attachments.isEmpty, pinnedForProcess {
-                // LiveKit holds the factory: idle (the talk role already released input).
+            if attachments.isEmpty, shouldPrepareForegroundInput, let module {
                 success = await applyOutputLocked() && success
-            } else if attachments.isEmpty, let module {
-                inputSink.set(nil)
-                let stopped = await module.shutdown(timeout: timeouts.shutdown)
-                self.module = nil
-                playoutOn = false; transcriptionOutputOn = false; moduleMuted = true; privateCheckActive = false
-                success = stopped && success
+                let prepared = await module.prepareIdleInput(timeout: timeouts.activation)
+                foregroundPrepared = prepared
+                moduleMuted = true
+                success = prepared && success
+            } else if attachments.isEmpty {
+                success = await retireIdleLocked() && success
             } else {
                 success = await applyOutputLocked() && success
             }
@@ -309,7 +407,8 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
             privateCheckActive = false
             let ended = await module.endPrivateInputCheck(timeout: timeouts.mute)
             guard talkMeetingID == nil else { return ended }
-            return await module.setInputPermitted(false, keepWarm: false, timeout: timeouts.activation) && ended
+            let keepWarm = keepInputWarm || (attachments.isEmpty && shouldPrepareForegroundInput)
+            return await module.setInputPermitted(false, keepWarm: keepWarm, timeout: timeouts.activation) && ended
         }
     }
 
@@ -365,13 +464,51 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
         return true
     }
 
-    private func releaseTalkLocked() async -> Bool {
+    private func ensureModuleLocked() async -> Result<SharedAudioModule, Error> {
+        if let module { return .success(module) }
+        do {
+            let created = try await makeModule()
+            created.setInputTranscriptionSink { [inputSink] buffer in inputSink.deliver(buffer) }
+            created.onSpontaneousEngineChange = { [weak self] change in
+                Task { @MainActor in self?.engineChanged(change) }
+            }
+            module = created
+            return .success(created)
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    private func retireIdleLocked() async -> Bool {
+        guard attachments.isEmpty, !privateCheckActive else { return true }
+        guard let module else { foregroundPrepared = false; return true }
+        inputSink.set(nil)
+        if pinnedForProcess {
+            // LiveKit holds the factory: idle (the talk role already released input,
+            // or foreground preparation must now release input).
+            var success = true
+            if foregroundPrepared {
+                foregroundPrepared = false
+                success = await module.setInputPermitted(false, keepWarm: false, timeout: timeouts.activation) && success
+            }
+            moduleMuted = true
+            return await applyOutputLocked() && success
+        }
+        foregroundPrepared = false
+        let stopped = await module.shutdown(timeout: timeouts.shutdown)
+        self.module = nil
+        playoutOn = false; transcriptionOutputOn = false; moduleMuted = true; privateCheckActive = false
+        if !stopped { quarantine() }
+        return stopped
+    }
+
+    private func releaseTalkLocked(keepForegroundWarm: Bool = false) async -> Bool {
         let muted = await muteEverythingLocked()
         talkUnmuted = false
         talkMeetingID = nil; talkEpoch &+= 1
         inputSink.set(nil)
         guard let module else { return muted }
-        let released = await module.setInputPermitted(false, keepWarm: keepInputWarm, timeout: timeouts.activation)
+        let released = await module.setInputPermitted(false, keepWarm: keepInputWarm || keepForegroundWarm, timeout: timeouts.activation)
         return muted && released
     }
 
@@ -497,15 +634,19 @@ enum SharedAudioEngineError: LocalizedError, Equatable {
 /// Runs the engine's operations one at a time, in call order.
 @MainActor private final class SharedAudioSerialWork {
     private var tail: Task<Bool, Never>?
-    func run(_ body: @escaping @MainActor () async -> Bool) async -> Bool {
+    @discardableResult func enqueue(_ body: @escaping @MainActor () async -> Bool) -> Task<Bool, Never> {
         let previous = tail
         let task = Task { @MainActor in
             _ = await previous?.value
             return await body()
         }
         tail = task
-        return await task.value
+        return task
     }
+    func run(_ body: @escaping @MainActor () async -> Bool) async -> Bool {
+        await enqueue(body).value
+    }
+    func wait() async { _ = await tail?.value }
 }
 
 /// An audio-thread sink that can be swapped from the main thread.

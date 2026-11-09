@@ -71,6 +71,11 @@ extension GuestSystemAudio: NativeDesktopPrivateAudioOwner {
                                                      privateCheckOnly: true, exclusive: true)
         }
         self.suspendReadiness = suspendReadiness ?? {
+            if SharedAudioEngine.enabledAtLaunch {
+                if SharedAudioEngine.shared.pinnedForProcess { return { _ in } }
+                guard await SharedAudioEngine.shared.suspendIdle() else { throw NativeDesktopRTCError.cleanupFailed }
+                return { SharedAudioEngine.shared.resumeIdle(clean: $0) }
+            }
             let token = try await NativeDesktopMediaService.shared.suspend()
             return { NativeDesktopMediaService.shared.resume(token, clean: $0) }
         }

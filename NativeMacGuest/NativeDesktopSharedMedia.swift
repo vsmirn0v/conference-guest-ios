@@ -404,14 +404,20 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
         guard started, !stopped else { return }
         let foreground = foregroundWindowVisible
         let policy = NativeDesktopJoinReadinessPolicy.current(), state = power.snapshot
-        // With one engine for all meetings, an idle prepared owner would be a second engine.
-        NativeDesktopMediaService.shared.setForeground(foreground && !SharedAudioEngine.enabledAtLaunch,
-            microphone: policy.microphone.allows(state), profile: .saved)
-        guard foreground, !NativeDesktopMediaService.shared.busy, policy.camera.allows(state), metadata == nil else { return }
+        let microphone = policy.microphone.allows(state)
+        // With one engine for all meetings, the shared engine itself prepares idle input.
+        if SharedAudioEngine.enabledAtLaunch {
+            SharedAudioEngine.shared.setForeground(foreground, microphone: microphone)
+        } else {
+            NativeDesktopMediaService.shared.setForeground(foreground, microphone: microphone, profile: .saved)
+        }
+        let mediaBusy = SharedAudioEngine.enabledAtLaunch ? SharedAudioEngine.shared.busy : NativeDesktopMediaService.shared.busy
+        guard foreground, !mediaBusy, policy.camera.allows(state), metadata == nil else { return }
         metadata = Task { [weak self] in
             defer { self?.metadata = nil }
             _ = try? await NativeDesktopCameraMetadataPreparation.shared.prepare(eligible: {
-                self?.stopped == false && !NativeDesktopMediaService.shared.busy && self?.foregroundWindowVisible == true &&
+                let busy = SharedAudioEngine.enabledAtLaunch ? SharedAudioEngine.shared.busy : NativeDesktopMediaService.shared.busy
+                return self?.stopped == false && !busy && self?.foregroundWindowVisible == true &&
                     NativeDesktopJoinReadinessPolicy.current().camera.allows(self?.power.snapshot ?? state)
             }, deviceID: UserDefaults.standard.string(forKey: "nativeDesktop.cameraID"))
         }
@@ -419,23 +425,38 @@ extension GuestSystemAudio: NativeDesktopSharedAudioOwner {
     func shutdown() async -> Bool {
         stopped = true; subscriptions.removeAll(); power.stop(); metadata?.cancel()
         if let value = updateSuspension {
-            NativeDesktopMediaService.shared.resume(value.token, clean: true); updateSuspension = nil
+            NativeDesktopMediaService.shared.resume(value.token, clean: true)
+            if SharedAudioEngine.enabledAtLaunch { SharedAudioEngine.shared.resumeIdle(clean: true) }
+            updateSuspension = nil
         }
-        return await NativeDesktopMediaService.shared.shutdown()
+        let sharedClean = SharedAudioEngine.enabledAtLaunch ? await SharedAudioEngine.shared.shutdownIdle() : true
+        return await NativeDesktopMediaService.shared.shutdown() && sharedClean
     }
     func prepareForUpdate(_ id: UUID) async -> Bool {
         if let value = updateSuspension { return value.id == id }
-        do { updateSuspension = (id, try await NativeDesktopMediaService.shared.suspend()); return true }
-        catch { return false }
+        do {
+            let token = try await NativeDesktopMediaService.shared.suspend()
+            if SharedAudioEngine.enabledAtLaunch, !(await SharedAudioEngine.shared.suspendIdle()) {
+                NativeDesktopMediaService.shared.resume(token, clean: true)
+                return false
+            }
+            updateSuspension = (id, token); return true
+        } catch { return false }
     }
     func prepareForUpdateIfDrained(_ id: UUID) -> Bool {
         if let value = updateSuspension { return value.id == id }
         guard let token = NativeDesktopMediaService.shared.suspendIfDrained() else { return false }
+        if SharedAudioEngine.enabledAtLaunch, !SharedAudioEngine.shared.suspendIdleIfDrained() {
+            NativeDesktopMediaService.shared.resume(token, clean: true)
+            return false
+        }
         updateSuspension = (id, token); return true
     }
     func cancelUpdatePreparation(_ id: UUID) {
         if let value = updateSuspension, value.id == id {
-            NativeDesktopMediaService.shared.resume(value.token, clean: true); updateSuspension = nil
+            NativeDesktopMediaService.shared.resume(value.token, clean: true)
+            if SharedAudioEngine.enabledAtLaunch { SharedAudioEngine.shared.resumeIdle(clean: true) }
+            updateSuspension = nil
         }
     }
 }
