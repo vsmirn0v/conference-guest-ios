@@ -354,6 +354,12 @@ import XCTest
         let secondID = seed(store, "Reminder failure", at: now.addingTimeInterval(-90))
         XCTAssertEqual(Set(store.momentHistory.moments.map(\.id)), [firstID, secondID])
         let second = try XCTUnwrap(store.momentHistory.moment(secondID))
+        let quietAt = now.addingTimeInterval(-70)
+        store.log(.init(at: quietAt, meetingTitle: "Quiet diagnostics", provider: "local",
+            model: "fixture", outcome: .belowThreshold))
+        XCTAssertEqual(store.momentHistory.quietChecks.count, 1)
+        let quietText = L("%ld quiet checks · latest %@", 1,
+            quietAt.formatted(date: .abbreviated, time: .shortened))
         for index in 0..<30 { seed(store, "Unread \(index)", at: now.addingTimeInterval(TimeInterval(index))) }
         await coordinator.summarize(first)
         coordinator.scheduleReminder = { _, _ in throw NSError(domain: "AssistantUI", code: 1,
@@ -363,6 +369,8 @@ import XCTest
 
         let rendered = await present(AttentionMomentsView(attention: coordinator, store: store),
             size: NSSize(width: 900, height: 560), name: "errors-first")
+        XCTAssertFalse(containsText(rendered, quietText),
+            "Quiet diagnostics must stay out of the Assistant inbox")
         coordinator.showMoment(first.id)
         await settle()
         XCTAssertTrue(containsText(rendered, first.verdict.reason))

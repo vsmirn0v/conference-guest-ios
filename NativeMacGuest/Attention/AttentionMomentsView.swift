@@ -54,14 +54,6 @@ struct AttentionMomentsView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 2) {
-                            if filter == nil {
-                                ForEach(store.momentHistory.quietChecks.sorted { $0.latestAt > $1.latestAt }) { quiet in
-                                    Label(L("%ld quiet checks · latest %@", quiet.count, quiet.latestAt.formatted(date: .abbreviated, time: .shortened)),
-                                          systemImage: "moon")
-                                        .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(10).help(quiet.meetingTitle)
-                                }
-                            }
                             ForEach(moments) { moment in row(moment) }
                         }.padding(.horizontal, 8)
                     }
