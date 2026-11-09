@@ -214,7 +214,7 @@ struct NativeDesktopHomeView: View {
     @ToolbarContentBuilder private var mainToolbar: some ToolbarContent {
         if let meeting = embeddedMeeting, meeting.transcriptionIndicator != nil {
             // Its own glass group. Sharing the button group's capsule clips this pill.
-            NativeDesktopStandaloneToolbarItem {
+            ToolbarItem(placement: .primaryAction) {
                 NativeDesktopTranscriptionPill(model: meeting, compact: true, announcesInline: detailWidth >= Self.inlineAnnouncementWidth)
             }
         }
