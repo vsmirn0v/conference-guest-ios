@@ -23,7 +23,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 }
 
 /// Judges each meeting as closely as its attention mode asks (by default: not the one
-/// you look at, closely in the background, only for your name when silenced) and raises
+/// you look at, only for your name in the background, closely when silenced) and raises
 /// a card when one needs you. One judge call runs at a time across meetings, at most six a minute.
 @MainActor final class AttentionCoordinator: ObservableObject {
     struct Card: Identifiable, Equatable {

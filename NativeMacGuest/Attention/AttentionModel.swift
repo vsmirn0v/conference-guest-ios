@@ -36,7 +36,7 @@ enum AttentionSituation: String, CaseIterable, Sendable {
     /// Its sound is off.
     case silenced
 
-    static let defaultModes: [AttentionSituation: AttentionMode] = [.onScreen: .off, .background: .watch, .silenced: .mentions]
+    static let defaultModes: [AttentionSituation: AttentionMode] = [.onScreen: .off, .background: .mentions, .silenced: .watch]
 }
 
 /// One approve or decline, shown to the judge as an example on its preset.

@@ -394,6 +394,7 @@ import XCTest
     func testCoordinatorShowsOneCardAndLearnsFromYourDecisions() async throws {
         let store = store()
         store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+        store.situationModes[.background] = .watch // This test exercises the Watch cadence, not the default.
         let (daily, _) = try await meeting("daily"), (infra, _) = try await meeting("infra")
         let judge = FakeJudge()
         var clock = Date(), opened: [UUID] = [], notified = 0
@@ -455,6 +456,7 @@ import XCTest
     func testCrowdedOutCardLeavesItsEvidenceForLaterAndIsLoggedAsSuch() async throws {
         let store = store()
         store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+        store.situationModes[.background] = .watch // This test exercises the Watch cadence, not the default.
         let (a, _) = try await meeting("a"), (b, _) = try await meeting("b"), (c, _) = try await meeting("c")
         let judge = FakeJudge()
         var clock = Date()
@@ -494,9 +496,9 @@ import XCTest
         let coordinator = AttentionCoordinator(store: store)
         coordinator.meetings = { [infra] }; coordinator.now = { clock }; coordinator.isOnScreen = { _ in onScreen }
 
-        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .watch, source: .situation(.background)))
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .mentions, source: .situation(.background)))
         try await engine.setPlayout(false)
-        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .mentions, source: .situation(.silenced)))
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .watch, source: .situation(.silenced)))
         onScreen = true
         XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .off, source: .situation(.onScreen)), "on screen beats silenced")
         XCTAssertEqual(coordinator.waitingReason(infra), L("You are looking at this meeting."))
@@ -518,7 +520,7 @@ import XCTest
         XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .off, source: .meeting(until: nil)), "Watch → Off")
         coordinator.resetMode(for: infra, series: true)
         XCTAssertNil(store.preset(room: infra.invitation)?.mode)
-        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .mentions, source: .situation(.silenced)))
+        XCTAssertEqual(coordinator.resolvedMode(infra), .init(mode: .watch, source: .situation(.silenced)))
     }
 
     /// Mentions judges a window as soon as you are named, otherwise only every two minutes,
@@ -676,6 +678,7 @@ import XCTest
         let store = store()
         // A server elsewhere on the network: drafting with a model on this Mac is opt-in.
         store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
+        store.situationModes[.background] = .watch // This test exercises the Watch cadence, not the default.
         let (infra, _) = try await meeting("infra")
         let judge = FakeJudge(), writer = FakeWriter()
         var sent: [String] = [], reacted: [MeetingReaction] = [], clock = Date()
