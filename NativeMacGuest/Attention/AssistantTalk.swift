@@ -210,6 +210,16 @@ import SwiftUI
         }
     }
 
+    /// Repair only an absent or closed target. A valid explicit choice survives
+    /// microphone handovers because Assistant context never controls media ownership.
+    @discardableResult
+    func reconcileMeetingTarget() -> UUID? {
+        let live = attention?.meetings().filter { !$0.isClosed } ?? []
+        if let targetMeetingID, live.contains(where: { $0.sessionID == targetMeetingID }) { return targetMeetingID }
+        targetMeetingID = (live.first(where: { $0.ownsMicrophone }) ?? live.first)?.sessionID
+        return targetMeetingID
+    }
+
     private func makeContext() -> AssistantCommandContext {
         guard let attention else { return .init(meetings: [], moments: [], now: Date()) }
         let active = attention.meetings().filter { !$0.isClosed }.map {
@@ -222,7 +232,7 @@ import SwiftUI
             moment.meetingID.map { AssistantMeetingReference(id: $0, title: moment.meetingTitle, invitation: moment.invitation, active: false) }
         }
         for ref in historical where refs.count < 20 && !known.contains(ref.id) { known.insert(ref.id); refs.append(ref) }
-        if targetMeetingID == nil { targetMeetingID = active.first?.id }
+        reconcileMeetingTarget()
         let moments = attention.store.momentHistory.moments.sorted { $0.updatedAt > $1.updatedAt }.prefix(20).map {
             AssistantMomentReference(id: $0.id, meetingTitle: $0.meetingTitle, reason: $0.verdict.reason)
         }
@@ -437,12 +447,22 @@ import SwiftUI
                 }
                 guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { throw VoiceSynthesisError.microphoneDenied }
                 guard generation == captureGeneration else { return }
-                // Gate the meeting that owns physical input before opening a separate local tap.
-                guard let meeting = attention.meetings().first(where: { $0.ownsMicrophone && !$0.isClosed }) else {
-                    throw AssistantCaptureError.noMeeting
+                // The microphone owner is the natural host; when nothing owns it
+                // (a stale talk role, a concurrent join that never claimed) fall back
+                // to the explicit target, then any live meeting — holdMicrophoneForAssistant
+                // claims the microphone role when the chosen meeting does not hold it.
+                // With no live meeting the hold is skipped: there is no send gate to close.
+                let live = attention.meetings().filter { !$0.isClosed }
+                let meeting = live.first(where: { $0.ownsMicrophone })
+                    ?? targetMeetingID.flatMap { id in live.first(where: { $0.sessionID == id }) }
+                    ?? live.first
+                if let meeting, !meeting.ownsMicrophone {
+                    probeLog("assistant-capture-claim", ["meeting": meeting.sessionID.uuidString])
                 }
-                guard await meeting.holdMicrophoneForAssistant() else { throw AssistantCaptureError.gate }
-                guard generation == captureGeneration else { await meeting.releaseMicrophoneForAssistant(); return }
+                if let meeting {
+                    guard await meeting.holdMicrophoneForAssistant() else { throw AssistantCaptureError.gate }
+                    guard generation == captureGeneration else { await meeting.releaseMicrophoneForAssistant(); return }
+                }
                 captureMeeting = meeting // from here every failure goes through stopPushToTalk's release
                 let engine = AVAudioEngine(), input = engine.inputNode
                 let inputFormat = input.outputFormat(forBus: 0)
@@ -467,7 +487,7 @@ import SwiftUI
                 engine.prepare(); try engine.start()
                 listening = true
                 LocalSpeechRecognizer.shared.acquire(model); captureRecognizerAcquired = true
-                probeLog("assistant-capture-start", ["meeting": meeting.sessionID.uuidString])
+                probeLog("assistant-capture-start", ["meeting": meeting?.sessionID.uuidString ?? "local"])
             } catch {
                 failCapture(error)
             }
@@ -546,10 +566,9 @@ private final class AssistantCaptureBuffer: @unchecked Sendable {
 }
 
 enum AssistantCaptureError: LocalizedError {
-    case noMeeting, gate, audio
+    case gate, audio
     var errorDescription: String? {
         switch self {
-        case .noMeeting: L("Join a meeting before using push-to-talk.")
         case .gate: L("The meeting microphone could not be held back. Nothing was recorded.")
         case .audio: L("Local microphone capture failed. Nothing was sent to the meeting.")
         }
@@ -685,28 +704,31 @@ struct AssistantTalkView: View {
         _store = ObservedObject(wrappedValue: attention.store)
     }
 
+    private var liveMeetings: [NativeDesktopMeetingModel] { attention.meetings().filter { !$0.isClosed } }
+    private var targetMeeting: NativeDesktopMeetingModel? {
+        liveMeetings.first { $0.sessionID == talk.targetMeetingID }
+    }
+    private var inputPrompt: String {
+        targetMeeting.map { L("Ask about %@ or request an action…", $0.title) }
+            ?? L("Ask Assistant to read, remember, join, mute, or draft an action…")
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Picker(L("Meeting"), selection: $talk.targetMeetingID) {
-                    Text(L("Choose a meeting")).tag(UUID?.none)
-                    ForEach(attention.meetings().filter { !$0.isClosed }, id: \.sessionID) { model in
-                        Text(model.title).tag(UUID?.some(model.sessionID))
-                    }
-                }.labelsHidden().frame(maxWidth: 260)
-                if let id = talk.targetMeetingID {
-                    Toggle(L("Send without asking in this meeting"), isOn: Binding(get: { talk.allowsDirectSend(id) },
-                        set: { talk.setDirectSend($0, for: id) }))
-                        .toggleStyle(.checkbox).help(L("Only chat, spoken replies, and reactions in this active meeting. Leave always asks."))
-                }
+            HStack {
                 Spacer()
                 Menu {
                     if let id = talk.targetMeetingID {
                         Button(L("Read latest chat")) { talk.perform(.init(action: .readChat, meetingID: id)) }
                         Button(L("Catch up for 10 minutes")) { talk.perform(.init(action: .catchUp, meetingID: id)) }
                         Button(L("Mute microphone")) { talk.perform(.init(action: .mute, meetingID: id)) }
+                        Divider()
+                        Toggle(L("Send without asking in this meeting"), isOn: Binding(get: { talk.allowsDirectSend(id) },
+                            set: { talk.setDirectSend($0, for: id) }))
+                            .help(L("Only chat, spoken replies, and reactions in this active meeting. Leave always asks."))
                     }
                 } label: { Label(L("Quick actions"), systemImage: "bolt") }
+                    .disabled(talk.targetMeetingID == nil)
             }.padding(12)
             Divider()
             ScrollView {
@@ -715,6 +737,10 @@ struct AssistantTalkView: View {
                         VStack(spacing: 8) {
                             Image(systemName: "waveform").font(.largeTitle).foregroundStyle(.secondary)
                             Text(L("Talk to Assistant")).font(.title3)
+                            if let targetMeeting {
+                                Text(L("Ask about %@ or choose another meeting below.", targetMeeting.title))
+                                    .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                            }
                             Text(L("Type a request, or hold ⌥Space. Your speech is recognized on this Mac."))
                                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
                         }.frame(maxWidth: .infinity).padding(.vertical, 50)
@@ -743,15 +769,49 @@ struct AssistantTalkView: View {
             if talk.working { ProgressView(L("Interpreting…")).controlSize(.small).padding(6) }
             if talk.listening { Label(L("Listening on this Mac… release ⌥Space to interpret"), systemImage: "mic.fill").foregroundStyle(.teal).padding(6) }
             if let error = talk.audioError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 12) }
+            if !liveMeetings.isEmpty {
+                HStack(spacing: 12) {
+                    Menu {
+                        ForEach(liveMeetings, id: \.sessionID) { model in
+                            Button { talk.targetMeetingID = model.sessionID } label: {
+                                if model.sessionID == talk.targetMeetingID { Label(model.title, systemImage: "checkmark") }
+                                else { Text(model.title) }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(L("For Assistant: %@", targetMeeting?.title ?? L("Choose a meeting"))).lineLimit(1).truncationMode(.middle)
+                            Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundStyle(.secondary)
+                        }.padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                    }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                        .frame(maxWidth: 250, alignment: .leading)
+                        .accessibilityIdentifier("assistant.meeting-target")
+                        .accessibilityLabel(L("Assistant meeting context"))
+                        .help(L("Changes only the meeting Assistant talks about. It does not open the meeting or move microphone or sound."))
+                    Spacer(minLength: 4)
+                    if liveMeetings.count > 1 {
+                        ViewThatFits(in: .horizontal) {
+                            Text(L("%ld meetings connected · switching does not change microphone or sound", liveMeetings.count))
+                            Text(L("%ld meetings · Assistant context only", liveMeetings.count))
+                        }.font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }.padding(.horizontal, 12).padding(.top, 8)
+            }
             HStack(spacing: 8) {
-                TextField(L("Ask Assistant to read, remember, join, mute, or draft an action…"), text: $input)
+                TextField(inputPrompt, text: $input)
                     .textFieldStyle(.roundedBorder).onSubmit { send() }.disabled(talk.working || talk.pending != nil)
+                    .accessibilityIdentifier("assistant.input")
                 Button(L("Ask")) { send() }.buttonStyle(.borderedProminent).disabled(input.trimmed.isEmpty || talk.working || talk.pending != nil)
+                    .accessibilityIdentifier("assistant.ask")
                 Button(talk.listening ? L("Stop") : L("Listen")) {
                     talk.listening ? talk.stopPushToTalk() : talk.startPushToTalk()
                 }.disabled(!store.pushToTalk && !talk.listening)
+                    .accessibilityIdentifier("assistant.listen")
             }.padding(12)
         }
+        .onAppear { talk.reconcileMeetingTarget() }
+        .onChange(of: liveMeetings.map(\.sessionID)) { _ in talk.reconcileMeetingTarget() }
     }
 
     private func send() { let text = input; input = ""; talk.submit(text) }
