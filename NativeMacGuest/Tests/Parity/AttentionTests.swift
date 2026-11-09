@@ -1109,8 +1109,28 @@ import XCTest
         XCTAssertEqual(store.momentHistory.moment(card.id)?.sent, sent[0])
         let terminal = try XCTUnwrap(coordinator.selectedCard)
         XCTAssertTrue(terminal.readOnly); XCTAssertFalse(terminal.channels.chat); XCTAssertFalse(terminal.canSpeak)
+        XCTAssertFalse(coordinator.sendReply(selected, text: selected.draft?.chat ?? ""), "Stale pre-terminal card cannot deliver twice")
+        XCTAssertEqual(sent.count, 1)
         coordinator.selectMoment(try XCTUnwrap(store.momentHistory.moment(card.id)))
         XCTAssertTrue(coordinator.selectedCard?.readOnly == true, "Reselecting an answered Moment cannot deliver twice")
+    }
+
+    func testOverflowClearsWhenDisplacedMeetingGoesOffOrClosesWhileOtherCardsRemain() async throws {
+        let store = store()
+        store.enabled = true; store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
+        let (a, _) = try await meeting("overflow-off-a"), (b, _) = try await meeting("overflow-off-b"), (c, _) = try await meeting("overflow-off-c")
+        let judge = FakeJudge(), coordinator = AttentionCoordinator(store: store)
+        coordinator.meetings = { [a, b, c] }; coordinator.hasTranscript = { _ in true }; coordinator.makeJudge = { _, _ in judge }
+        for (model, id) in [(a, "a1"), (b, "b1"), (c, "c1")] {
+            model.receiveLocalLineForTesting(.init(id: id, trackID: "t", text: "Vitalii?", start: Date(), end: Date()))
+        }
+        judge.next = .init(level: .now, probability: 0.9, reason: "Waiting.", evidence: ["L1"], action: .open)
+        await coordinator.tick(); await coordinator.tick(); await coordinator.tick()
+        XCTAssertEqual(coordinator.cards.count, 2)
+        XCTAssertEqual(coordinator.overflowMomentIDs.count, 1)
+        coordinator.setMode(.off, for: a)
+        XCTAssertTrue(coordinator.overflowMomentIDs.isEmpty, "Turning Off the displaced meeting clears its overflow ID while b and c stay visible")
+        XCTAssertEqual(coordinator.cards.count, 2)
     }
 
     func testOverflowTracksOnlyDisplacedLiveMomentsAndClearsAtCycleEnd() async throws {
@@ -1278,11 +1298,31 @@ import XCTest
         data.remember("New value")
         gate.finish(.success(stale))
         await data.waitForLoad()
-        XCTAssertEqual(data.memories.map(\.text), ["New value"])
+        XCTAssertEqual(data.memories.map(\.text), ["New value", "Old value"])
         await data.waitForSave()
         let restored = AssistantDataStore(root: root)
         await restored.waitForLoad()
-        XCTAssertEqual(restored.memories.map(\.text), ["New value"])
+        XCTAssertEqual(restored.memories.map(\.text), ["New value", "Old value"])
+
+        // An explicit deleteAll during initial load must not let stale disk bytes resurrect.
+        let clearGate = GuestCompletion<Data>()
+        let cleared = AssistantDataStore(root: root, readData: { _ in
+            try await withCheckedThrowingContinuation { clearGate.install($0, timeout: 5) }
+        })
+        cleared.deleteAll()
+        clearGate.finish(.success(stale))
+        await cleared.waitForLoad()
+        XCTAssertTrue(cleared.memories.isEmpty)
+
+        // Corrupt JSON backs up the unreadable bytes and sets persistenceWarning instead of silently losing them.
+        let corruptRoot = folder()
+        try FileManager.default.createDirectory(at: corruptRoot, withIntermediateDirectories: true)
+        let badBytes = Data("{not valid json".utf8)
+        try badBytes.write(to: corruptRoot.appendingPathComponent("assistant.json"))
+        let corruptStore = AssistantDataStore(root: corruptRoot)
+        await corruptStore.waitForLoad()
+        XCTAssertNotNil(corruptStore.persistenceWarning)
+        XCTAssertEqual(try Data(contentsOf: corruptRoot.appendingPathComponent("assistant.corrupt.json")), badBytes)
     }
 
     func testOutcomeCaptureDoesNotWaitForWriterAndRunsOnce() async throws {

@@ -16,6 +16,13 @@ struct AssistantOutcomesView: View {
             VStack(spacing: 0) {
                 ScrollView {
                     LazyVStack(spacing: 3) {
+                        ForEach(Array(attention.outcomeStatus.keys.sorted { $0.uuidString < $1.uuidString }), id: \.self) { id in
+                            if !data.outcomes.contains(where: { $0.id == id || $0.meetingID == id }),
+                               let status = attention.outcomeStatus[id] {
+                                Text(status).font(.caption).foregroundStyle(.secondary)
+                                    .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                         ForEach(data.outcomes) { outcome in
                             Button { selectedID = outcome.id } label: {
                                 VStack(alignment: .leading, spacing: 4) {
@@ -70,7 +77,9 @@ struct AssistantOutcomesView: View {
                     Button(L("Send to meeting chat")) { _ = attention.sendOutcome(outcome) }
                         .disabled(!attention.meetings().contains { !$0.isClosed && $0.invitation == outcome.invitation && $0.chat.canSend })
                 }
-                if let error = attention.outcomeStatus[outcome.id] { Text(error).font(.caption).foregroundStyle(.red) }
+                if let error = attention.outcomeStatus[outcome.id] ?? outcome.meetingID.flatMap({ attention.outcomeStatus[$0] }) {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
                 GroupBox(L("Summary")) {
                     TextField(L("Summary"), text: binding.summary, axis: .vertical).lineLimit(3...8)
                         .textFieldStyle(.plain).frame(maxWidth: .infinity, alignment: .leading)
@@ -79,25 +88,32 @@ struct AssistantOutcomesView: View {
                 GroupBox(L("Tasks")) {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(outcome.tasks) { task in
-                            if let index = outcome.tasks.firstIndex(where: { $0.id == task.id }) {
-                                HStack(alignment: .top, spacing: 8) {
-                                    Toggle("", isOn: binding.tasks[index].done).labelsHidden()
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        TextField(L("Task"), text: binding.tasks[index].text, axis: .vertical).textFieldStyle(.plain)
-                                        HStack {
-                                            TextField(L("Owner"), text: binding.tasks[index].owner).textFieldStyle(.roundedBorder).frame(maxWidth: 160)
-                                            if let due = task.dueAt { Text(L("Due %@", due.formatted(date: .abbreviated, time: .shortened))).font(.caption).foregroundStyle(.secondary) }
-                                        }
-                                    }
-                                    Button(task.reminderAt == nil ? L("Remind me") : L("Reminder set")) { attention.remind(task, in: outcome) }
-                                        .disabled(task.reminderAt != nil)
-                                    Button { var copy = outcome; copy.tasks.removeAll { $0.id == task.id }; data.updateOutcome(copy) } label: {
-                                        Image(systemName: "trash")
-                                    }.buttonStyle(.borderless).help(L("Delete task"))
+                            let taskBinding = Binding<MeetingOutcomeTask>(
+                                get: { binding.wrappedValue.tasks.first { $0.id == task.id } ?? task },
+                                set: { updated in
+                                    var copy = binding.wrappedValue
+                                    guard let idx = copy.tasks.firstIndex(where: { $0.id == task.id }) else { return }
+                                    copy.tasks[idx] = updated
+                                    binding.wrappedValue = copy
                                 }
+                            )
+                            HStack(alignment: .top, spacing: 8) {
+                                Toggle("", isOn: taskBinding.done).labelsHidden()
+                                VStack(alignment: .leading, spacing: 4) {
+                                    TextField(L("Task"), text: taskBinding.text, axis: .vertical).textFieldStyle(.plain)
+                                    HStack {
+                                        TextField(L("Owner"), text: taskBinding.owner).textFieldStyle(.roundedBorder).frame(maxWidth: 160)
+                                        if let due = task.dueAt { Text(L("Due %@", due.formatted(date: .abbreviated, time: .shortened))).font(.caption).foregroundStyle(.secondary) }
+                                    }
+                                }
+                                Button(task.reminderAt == nil ? L("Remind me") : L("Reminder set")) { attention.remind(task, in: outcome) }
+                                    .disabled(task.reminderAt != nil)
+                                Button { var copy = binding.wrappedValue; copy.tasks.removeAll { $0.id == task.id }; data.updateOutcome(copy) } label: {
+                                    Image(systemName: "trash")
+                                }.buttonStyle(.borderless).help(L("Delete task"))
                             }
                         }
-                        Button(L("Add task")) { var copy = outcome; copy.tasks.append(.init(text: L("New task"))); data.updateOutcome(copy) }
+                        Button(L("Add task")) { var copy = binding.wrappedValue; copy.tasks.append(.init(text: L("New task"))); data.updateOutcome(copy) }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }
                 editableLines(L("Open questions"), values: binding.openQuestions)
@@ -122,10 +138,20 @@ struct AssistantOutcomesView: View {
     private func editableLines(_ title: String, values: Binding<[String]>) -> some View {
         GroupBox(title) {
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(values.wrappedValue.indices, id: \.self) { index in
+                ForEach(Array(values.wrappedValue.enumerated()), id: \.offset) { index, current in
+                    let lineBinding = Binding<String>(
+                        get: { values.wrappedValue.indices.contains(index) ? values.wrappedValue[index] : current },
+                        set: { newValue in
+                            guard values.wrappedValue.indices.contains(index) else { return }
+                            values.wrappedValue[index] = newValue
+                        }
+                    )
                     HStack(alignment: .top) {
-                        TextField(title, text: values[index], axis: .vertical).textFieldStyle(.plain)
-                        Button { values.wrappedValue.remove(at: index) } label: { Image(systemName: "minus.circle") }
+                        TextField(title, text: lineBinding, axis: .vertical).textFieldStyle(.plain)
+                        Button {
+                            guard values.wrappedValue.indices.contains(index) else { return }
+                            values.wrappedValue.remove(at: index)
+                        } label: { Image(systemName: "minus.circle") }
                             .buttonStyle(.borderless).help(L("Delete line"))
                     }
                 }

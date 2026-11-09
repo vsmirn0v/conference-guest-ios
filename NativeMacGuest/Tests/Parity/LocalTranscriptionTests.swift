@@ -25,7 +25,12 @@ import XCTest
             }
             let keys: [String: [String]] = ["nemo_transducer": ["encoder", "decoder", "joiner", "tokens"],
                 "nemo_ctc": ["model", "tokens"], "whisper": ["encoder", "decoder", "tokens"], "silero_vad": ["model"],
-                ListenModelStore.coreMLGigaAMKind: ["encoder", "decoder", "joint", "tokens"]]
+                ListenModelStore.coreMLGigaAMKind: ["encoder", "decoder", "joint", "tokens"],
+                VoiceCloneSupport.kind: []]
+            if model.kind == VoiceCloneSupport.kind {
+                XCTAssertNotNil(model.config["architecture"])
+                XCTAssertTrue(model.files.contains { $0.name == "model.json" })
+            }
             for key in try XCTUnwrap(keys[model.kind], model.kind) {
                 let name = try XCTUnwrap(model.config[key], "\(model.id) misses \(key)")
                 // A Core ML package is a folder: its files are downloaded under its name.

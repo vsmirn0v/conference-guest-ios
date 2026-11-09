@@ -397,6 +397,102 @@ import XCTest
         await settle()
         XCTAssertTrue(containsText(rendered, L("This meeting is not open. The Moment is read-only; join it again to answer.")))
     }
+
+    func testTranscriptionPopoverStaysOpenAcrossLocalAndRemoteUpdates() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("listen-ui-\(UUID().uuidString)", isDirectory: true)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("listen-root-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: root)
+        }
+        func makeFile(_ name: String) throws -> ListenModelCatalog.File {
+            let url = source.appendingPathComponent(name)
+            try Data(name.utf8).write(to: url)
+            return .init(name: name, size: Int64(name.utf8.count), url: url, sha256: try ListenModelStore.sha256(of: url))
+        }
+        let vad = ListenModelCatalog.Model(id: "vad", role: "vad", title: "VAD", kind: "silero_vad", featureDim: nil,
+            languages: [], licence: "MIT", source: source, files: [try makeFile("vad.onnx")], config: ["model": "vad.onnx"])
+        let listen = ListenModelCatalog.Model(id: "giga", role: "listen", title: "GigaAM", kind: ListenModelStore.coreMLGigaAMKind,
+            featureDim: 64, languages: ["ru"], licence: "MIT", source: source,
+            files: [try makeFile("encoder"), try makeFile("decoder"), try makeFile("joint"), try makeFile("tokens.txt")],
+            config: ["encoder": "encoder", "decoder": "decoder", "joint": "joint", "tokens": "tokens.txt"])
+        let defaults = UserDefaults(suiteName: "listen-ui-\(UUID().uuidString)")!
+        let listenStore = ListenModelStore(catalog: .init(schemaVersion: 1, runtime: "test", models: [vad, listen]),
+            root: root, defaults: defaults)
+        listenStore.selectedID = "giga"
+        listenStore.enabled = true
+        listenStore.download(listen)
+        try await wait { listenStore.ready }
+
+        let engine = AssistantUIEngine()
+        let model = NativeDesktopMeetingModel(destination: try .verified(
+            URL(string: "https://example.test/calls/\(UUID().uuidString)")!, engine: .guest),
+            name: "Vitalii", title: "Popover stability", engine: engine, listenStore: listenStore)
+        try await model.connect()
+        addTeardownBlock { _ = await model.leave() }
+        XCTAssertEqual(model.transcriptionIndicator, .local)
+
+        let workspace = NativeDesktopWorkspace(
+            detect: { .verified(.guest(endpoint: $0)) },
+            makeMeeting: { _, _, _, _ in model }
+        )
+        workspace.join(model.invitation, engine: .guest, title: model.title)
+        try await wait { workspace.selectedMeeting === model && !workspace.preparing }
+        workspace.show()
+        await settle()
+        addTeardownBlock { _ = await workspace.leave() }
+
+        let app = AXUIElementCreateApplication(getpid())
+        func findIndicator() -> AXUIElement? {
+            children(app).flatMap(nodes).first { (attribute($0, kAXIdentifierAttribute) as? String) == "transcription.indicator" }
+        }
+        func hasPopoverWindow() -> Bool {
+            NSApp.windows.contains { $0.isVisible && $0.className.localizedCaseInsensitiveContains("Popover") }
+        }
+
+        // 1. Local transcription popover remains open across incoming local lines, speaking changes, and workspace updates.
+        let localButton = try XCTUnwrap(findIndicator(), "Missing local transcription indicator in toolbar")
+        XCTAssertEqual(AXUIElementPerformAction(localButton, kAXPressAction as CFString), .success)
+        await settle()
+        XCTAssertTrue(hasPopoverWindow(), "Local transcription popover must open on click")
+
+        for index in 1...3 {
+            model.receiveLocalLineForTesting(.init(id: "local-\(index)", trackID: "anna", text: "Line \(index)", start: Date(), end: Date()))
+            var snap = engine.snapshot
+            snap.participants = [.init(id: "me", name: "Vitalii", isLocal: true), .init(id: "anna", name: "Anna", speaking: index % 2 == 1)]
+            engine.onState?(snap)
+            workspace.objectWillChange.send()
+            await settle()
+            XCTAssertTrue(hasPopoverWindow(), "Local transcription popover must not auto-close on update \(index)")
+        }
+
+        // Close local popover explicitly via button toggle.
+        XCTAssertEqual(AXUIElementPerformAction(try XCTUnwrap(findIndicator()), kAXPressAction as CFString), .success)
+        try await wait { !hasPopoverWindow() }
+
+        // 2. Remote transcription popover remains open across incoming server transcript snapshots and workspace updates.
+        var features = GuestMeetingSnapshot()
+        features.transcriptionStatus = .active
+        model.receiveFeaturesForTesting(features)
+        model.dismissTranscriptionAnnouncement()
+        await settle()
+        XCTAssertEqual(model.transcriptionIndicator, .on)
+
+        let remoteButton = try XCTUnwrap(findIndicator(), "Missing remote transcription indicator in toolbar")
+        XCTAssertEqual(AXUIElementPerformAction(remoteButton, kAXPressAction as CFString), .success)
+        await settle()
+        XCTAssertTrue(hasPopoverWindow(), "Remote transcription popover must open on click")
+
+        for index in 1...3 {
+            features.transcript.append(.init(id: "remote-\(index)", participantID: "anna", participantName: "Anna",
+                text: "Remote line \(index)", sentAt: Date(), isOwn: false, receivedAt: Date()))
+            model.receiveFeaturesForTesting(features)
+            workspace.objectWillChange.send()
+            await settle()
+            XCTAssertTrue(hasPopoverWindow(), "Remote transcription popover must not auto-close on remote update \(index)")
+        }
+    }
 }
 
 private final class AssistantUIJudge: AttentionJudge, @unchecked Sendable {
@@ -413,6 +509,7 @@ private final class AssistantUIJudge: AttentionJudge, @unchecked Sendable {
     var onVideo: (([NativeDesktopExternalVideo]) -> Void)?
     var onLocalCamera: ((LKRTCVideoTrack?) -> Void)?
     var onTitle: ((String) -> Void)?
+    var supportsLocalTranscription: Bool { true }
     var factory: LKRTCPeerConnectionFactory? { nil }
     private(set) var snapshot = NativeDesktopExternalSnapshot()
     var incomingVideo: [NativeDesktopExternalVideo] { [] }

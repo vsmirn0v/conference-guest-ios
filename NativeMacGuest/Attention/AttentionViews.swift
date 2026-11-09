@@ -68,12 +68,17 @@ struct AttentionCardView: View {
                 HStack(spacing: 8) {
                     if !card.readOnly {
                         Button(L("Open meeting")) { attention.open(card) }.buttonStyle(.borderedProminent)
+                            .disabled(card.speaking)
                             .keyboardShortcut(card.draft == nil ? .defaultAction : nil)
                     }
                     Button(L("Why")) { attention.inspecting = card }
                     Spacer(minLength: 4)
-                    if !card.readOnly, card.verdict.level == .soon { Button(L("Dismiss")) { attention.dismiss(card) }.buttonStyle(.borderless) }
-                    if !card.readOnly { Button(L("Decline")) { declining = true }.buttonStyle(.borderless).foregroundStyle(.red) }
+                    if !card.readOnly, card.verdict.level == .soon {
+                        Button(L("Dismiss")) { attention.dismiss(card) }.buttonStyle(.borderless).disabled(card.speaking)
+                    }
+                    if !card.readOnly {
+                        Button(L("Decline")) { declining = true }.buttonStyle(.borderless).foregroundStyle(.red).disabled(card.speaking)
+                    }
                 }
             }
         }

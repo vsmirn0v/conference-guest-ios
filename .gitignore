@@ -13,3 +13,5 @@ RockServer/site-src/node_modules/
 /Dependencies/guest-sdk/VendorSources
 /Dependencies/SherpaOnnxKit/Artifacts/
 /Dependencies/SherpaOnnxKit/.build/
+/Diagnostics/
+/review/

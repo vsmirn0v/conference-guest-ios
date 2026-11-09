@@ -44,6 +44,11 @@ struct AttentionQuietChecks: Equatable, Sendable, Identifiable {
 struct AttentionMomentHistory: Equatable, Sendable {
     private(set) var momentsByID: [UUID: AttentionMoment] = [:]
     private(set) var quietByMeeting: [String: AttentionQuietChecks] = [:]
+    private var appliedRecordIDs: Set<UUID> = []
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.momentsByID == rhs.momentsByID && lhs.quietByMeeting == rhs.quietByMeeting
+    }
 
     var moments: [AttentionMoment] { Array(momentsByID.values) }
     var quietChecks: [AttentionQuietChecks] { Array(quietByMeeting.values) }
@@ -57,6 +62,7 @@ struct AttentionMomentHistory: Equatable, Sendable {
     }
 
     mutating func apply(_ record: AttentionDecisionRecord) {
+        guard appliedRecordIDs.insert(record.id).inserted else { return }
         let decisionID = record.decisionID ?? record.id
         switch record.outcome {
         case .shown, .crowdedOut:
@@ -100,9 +106,11 @@ struct AttentionMomentHistory: Equatable, Sendable {
             guard var moment = momentsByID[decisionID] else { return }
             moment.seen = true; momentsByID[decisionID] = moment
         case .drafted:
-            update(decisionID, record: record) { $0.draft = record.draft ?? $0.draft }
+            guard var moment = momentsByID[decisionID] else { return }
+            moment.draft = record.draft ?? moment.draft; momentsByID[decisionID] = moment
         case .reminded:
-            update(decisionID, record: record) { $0.reminderAt = record.reminderAt ?? record.at.addingTimeInterval(600) }
+            guard var moment = momentsByID[decisionID] else { return }
+            moment.reminderAt = record.reminderAt ?? record.at.addingTimeInterval(600); momentsByID[decisionID] = moment
         case .belowThreshold:
             let key = record.meetingID?.uuidString ?? record.invitation?.absoluteString ?? record.seriesID ?? record.meetingTitle.lowercased()
             var quiet = quietByMeeting[key] ?? AttentionQuietChecks(id: key, meetingID: record.meetingID, meetingTitle: record.meetingTitle)
@@ -127,10 +135,12 @@ struct AttentionMomentHistory: Equatable, Sendable {
         ids.compactMap { id in
             guard var moment = momentsByID[id], !moment.seen else { return nil }
             moment.seen = true; momentsByID[id] = moment
-            return AttentionDecisionRecord(id: UUID(), at: at, meetingTitle: moment.meetingTitle,
+            let record = AttentionDecisionRecord(id: UUID(), at: at, meetingTitle: moment.meetingTitle,
                 meetingID: moment.meetingID, invitation: moment.invitation, seriesID: moment.seriesID,
                 presetID: moment.presetID, provider: moment.provider, model: moment.model,
                 outcome: .seen, decisionID: id)
+            appliedRecordIDs.insert(record.id)
+            return record
         }
     }
 
@@ -149,7 +159,8 @@ enum AttentionDecisionJournal {
         let decoder = JSONDecoder.attention
         var records: [AttentionDecisionRecord] = []
         for url in files {
-            guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else { continue }
+            guard let data = try? Data(contentsOf: url) else { continue }
+            let text = String(decoding: data, as: UTF8.self)
             for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
                 if let record = try? decoder.decode(AttentionDecisionRecord.self, from: Data(line.utf8)) { records.append(record) }
             }
@@ -159,7 +170,10 @@ enum AttentionDecisionJournal {
 
     static func reduce(_ records: [AttentionDecisionRecord]) -> AttentionMomentHistory {
         var history = AttentionMomentHistory()
-        for record in records { history.apply(record) }
+        let ordered = records.enumerated().sorted {
+            $0.element.at == $1.element.at ? $0.offset < $1.offset : $0.element.at < $1.element.at
+        }
+        for (_, record) in ordered { history.apply(record) }
         history.settleHistoricalLive()
         return history
     }

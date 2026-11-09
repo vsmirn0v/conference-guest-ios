@@ -403,6 +403,9 @@ import UniformTypeIdentifiers
     private func finishVoiceReply(wasLive: Bool) async throws {
         if let choice = voiceReplyUserChoice {
             // You pressed the microphone button during the reply: keep that state.
+            if !choice && snapshot.microphoneOn {
+                setMicrophoneEnabled(false); await microphoneControl?.value
+            }
             if choice || !snapshot.microphoneOn { _ = await engine.setMicrophoneGate(open: true) }
             else { voiceReplyGateHeld = true }
             return
@@ -863,6 +866,13 @@ import UniformTypeIdentifiers
         }
         guard enabled, !ownsMicrophone else { setMicrophoneEnabled(enabled); return }
         claimTalkRole(microphone: true) { [weak self] in self?.setMicrophoneEnabled(true) }
+    }
+    /// Explicitly mutes this meeting's microphone without ever toggling it on during a voice reply.
+    @discardableResult func muteMicrophone() -> Bool {
+        let wasActive = (requestedMicrophone ?? snapshot.microphoneOn) || voiceReplyActive
+        if voiceReplyActive { voiceReplyUserChoice = false }
+        if requestedMicrophone == true || snapshot.microphoneOn { setMicrophoneEnabled(false) }
+        return wasActive
     }
     /// Call before connect() for a meeting joined while another meeting is live.
     func configureForConcurrentJoin(ownsMicrophone owns: Bool) {

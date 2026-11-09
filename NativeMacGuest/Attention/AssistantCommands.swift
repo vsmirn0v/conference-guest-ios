@@ -135,7 +135,10 @@ enum AssistantCommandPrompt {
             throw AssistantCommandError.malformed
         }
         guard raw.action != "none", let action = AssistantCommandAction(rawValue: raw.action) else { throw AssistantCommandError.unsupported }
-        let meetingID = try id(raw.meeting, valid: Set(context.meetings.map(\.id)), error: .unknownMeeting)
+        let explicitMeetingID = try id(raw.meeting, valid: Set(context.meetings.map(\.id)), error: .unknownMeeting)
+        let activeMeetings = context.meetings.filter(\.active)
+        let implicitMeetingID = activeMeetings.count == 1 ? activeMeetings[0].id : nil
+        let meetingID = explicitMeetingID ?? (raw.action == AssistantCommandAction.join.rawValue ? nil : implicitMeetingID)
         let momentID = try id(raw.moment, valid: Set(context.moments.map(\.id)), error: .unknownMoment)
         let text = String((raw.text ?? "").trimmed.prefix(1000))
         let fact = String((raw.fact ?? "").trimmed.prefix(500))

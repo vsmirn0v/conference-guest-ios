@@ -346,19 +346,40 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
 
     // MARK: Decisions
 
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+    private var lastPrunedDay: String?
+
     /// Appends one JSON line to today's file and removes files older than 30 days.
     func log(_ record: AttentionDecisionRecord) {
         if loadingMoments { momentBuffer.append(record) } else { momentHistory.apply(record) }
         do {
             try FileManager.default.createDirectory(at: decisionsFolder, withIntermediateDirectories: true)
-            let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"; day.locale = Locale(identifier: "en_US_POSIX")
-            let url = decisionsFolder.appendingPathComponent(day.string(from: record.at) + ".jsonl")
+            let dayString = Self.dayFormatter.string(from: record.at)
+            let url = decisionsFolder.appendingPathComponent(dayString + ".jsonl")
             var line = try JSONEncoder.attention.encode(record); line.append(0x0A)
             if let handle = try? FileHandle(forWritingTo: url) {
                 defer { try? handle.close() }
-                try handle.seekToEnd(); try handle.write(contentsOf: line)
+                let length = try handle.seekToEnd()
+                if length > 0 {
+                    try handle.seek(toOffset: length - 1)
+                    if (try? handle.read(upToCount: 1))?.first != 0x0A {
+                        try handle.seekToEnd()
+                        try handle.write(contentsOf: [0x0A])
+                    } else {
+                        try handle.seekToEnd()
+                    }
+                }
+                try handle.write(contentsOf: line)
             } else { try line.write(to: url, options: .atomic) }
-            pruneDecisions(now: record.at)
+            if lastPrunedDay != dayString {
+                lastPrunedDay = dayString
+                pruneDecisions(now: record.at)
+            }
         } catch { probeLog("attention-log-failed", [:]) }
     }
 
@@ -391,9 +412,8 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
             .filter { $0.pathExtension == "jsonl" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
     private func pruneDecisions(now: Date) {
-        let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"; day.locale = Locale(identifier: "en_US_POSIX")
         for url in decisionFiles() {
-            guard let date = day.date(from: url.deletingPathExtension().lastPathComponent),
+            guard let date = Self.dayFormatter.date(from: url.deletingPathExtension().lastPathComponent),
                   now.timeIntervalSince(date) > Self.decisionRetention else { continue }
             try? FileManager.default.removeItem(at: url)
         }

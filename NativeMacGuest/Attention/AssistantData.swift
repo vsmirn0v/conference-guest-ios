@@ -9,6 +9,20 @@ struct MeetingOutcomeTask: Codable, Identifiable, Equatable, Sendable {
     var dueAt: Date?
     var reminderAt: Date?
     var done = false
+
+    init(id: UUID = UUID(), text: String, owner: String = "", dueAt: Date? = nil, reminderAt: Date? = nil, done: Bool = false) {
+        self.id = id; self.text = text; self.owner = owner; self.dueAt = dueAt; self.reminderAt = reminderAt; self.done = done
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        text = try c.decode(String.self, forKey: .text)
+        owner = try c.decodeIfPresent(String.self, forKey: .owner) ?? ""
+        dueAt = try c.decodeIfPresent(Date.self, forKey: .dueAt)
+        reminderAt = try c.decodeIfPresent(Date.self, forKey: .reminderAt)
+        done = try c.decodeIfPresent(Bool.self, forKey: .done) ?? false
+    }
 }
 
 struct MeetingOutcome: Codable, Identifiable, Equatable, Sendable {
@@ -22,6 +36,27 @@ struct MeetingOutcome: Codable, Identifiable, Equatable, Sendable {
     var decisions: [String] = []
     var tasks: [MeetingOutcomeTask] = []
     var openQuestions: [String] = []
+
+    init(id: UUID = UUID(), meetingID: UUID? = nil, meetingTitle: String, invitation: URL? = nil, seriesID: String? = nil,
+         endedAt: Date, summary: String, decisions: [String] = [], tasks: [MeetingOutcomeTask] = [], openQuestions: [String] = []) {
+        self.id = id; self.meetingID = meetingID; self.meetingTitle = meetingTitle; self.invitation = invitation
+        self.seriesID = seriesID; self.endedAt = endedAt; self.summary = summary
+        self.decisions = decisions; self.tasks = tasks; self.openQuestions = openQuestions
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        meetingID = try c.decodeIfPresent(UUID.self, forKey: .meetingID)
+        meetingTitle = try c.decodeIfPresent(String.self, forKey: .meetingTitle) ?? ""
+        invitation = try c.decodeIfPresent(URL.self, forKey: .invitation)
+        seriesID = try c.decodeIfPresent(String.self, forKey: .seriesID)
+        endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt) ?? .distantPast
+        summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        decisions = try c.decodeIfPresent([String].self, forKey: .decisions) ?? []
+        tasks = try c.decodeIfPresent([MeetingOutcomeTask].self, forKey: .tasks) ?? []
+        openQuestions = try c.decodeIfPresent([String].self, forKey: .openQuestions) ?? []
+    }
 
     var shareText: String {
         var parts = [summary.trimmed]
@@ -50,6 +85,25 @@ struct AssistantMemoryItem: Codable, Identifiable, Equatable, Sendable {
     var invitation: URL?
     var seriesID: String?
     var people: [String] = []
+
+    init(id: UUID = UUID(), kind: AssistantMemoryKind, text: String, createdAt: Date, updatedAt: Date,
+         invitation: URL? = nil, seriesID: String? = nil, people: [String] = []) {
+        self.id = id; self.kind = kind; self.text = text; self.createdAt = createdAt
+        self.updatedAt = updatedAt; self.invitation = invitation; self.seriesID = seriesID; self.people = people
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        kind = try c.decodeIfPresent(AssistantMemoryKind.self, forKey: .kind) ?? .you
+        text = try c.decode(String.self, forKey: .text)
+        let now = Date()
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? now
+        updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        invitation = try c.decodeIfPresent(URL.self, forKey: .invitation)
+        seriesID = try c.decodeIfPresent(String.self, forKey: .seriesID)
+        people = try c.decodeIfPresent([String].self, forKey: .people) ?? []
+    }
 }
 
 struct AssistantMemoryExcerpt: Codable, Identifiable, Equatable, Sendable {
@@ -79,6 +133,41 @@ struct AssistantSuggestion: Codable, Identifiable, Equatable, Sendable {
     var invitation: URL?
     var seriesID: String?
     var mode: AttentionMode?
+
+    init(id: UUID = UUID(), createdAt: Date, text: String, kind: AssistantSuggestionKind, proposedText: String,
+         memoryKind: AssistantMemoryKind = .you, invitation: URL? = nil, seriesID: String? = nil, mode: AttentionMode? = nil) {
+        self.id = id; self.createdAt = createdAt; self.text = text; self.kind = kind
+        self.proposedText = proposedText; self.memoryKind = memoryKind
+        self.invitation = invitation; self.seriesID = seriesID; self.mode = mode
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        text = try c.decode(String.self, forKey: .text)
+        kind = try c.decodeIfPresent(AssistantSuggestionKind.self, forKey: .kind) ?? .memory
+        proposedText = try c.decodeIfPresent(String.self, forKey: .proposedText) ?? text
+        memoryKind = try c.decodeIfPresent(AssistantMemoryKind.self, forKey: .memoryKind) ?? .you
+        invitation = try c.decodeIfPresent(URL.self, forKey: .invitation)
+        seriesID = try c.decodeIfPresent(String.self, forKey: .seriesID)
+        mode = try c.decodeIfPresent(AttentionMode.self, forKey: .mode)
+    }
+}
+
+private struct LossyDecodableArray<Element: Decodable>: Decodable {
+    private struct AnyDecodable: Decodable {}
+    var elements: [Element] = []
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        while !container.isAtEnd {
+            if let element = try? container.decode(Element.self) {
+                elements.append(element)
+            } else {
+                _ = try? container.decode(AnyDecodable.self)
+            }
+        }
+    }
 }
 
 private struct AssistantDataDocument: Codable {
@@ -88,6 +177,22 @@ private struct AssistantDataDocument: Codable {
     var modeChanges: [AssistantModeChange] = []
     var variantPicks: [String: Int] = [:]
     var retentionDays = 90
+
+    init(outcomes: [MeetingOutcome] = [], memories: [AssistantMemoryItem] = [], suggestions: [AssistantSuggestion] = [],
+         modeChanges: [AssistantModeChange] = [], variantPicks: [String: Int] = [:], retentionDays: Int = 90) {
+        self.outcomes = outcomes; self.memories = memories; self.suggestions = suggestions
+        self.modeChanges = modeChanges; self.variantPicks = variantPicks; self.retentionDays = retentionDays
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        outcomes = (try? c.decodeIfPresent(LossyDecodableArray<MeetingOutcome>.self, forKey: .outcomes)?.elements) ?? []
+        memories = (try? c.decodeIfPresent(LossyDecodableArray<AssistantMemoryItem>.self, forKey: .memories)?.elements) ?? []
+        suggestions = (try? c.decodeIfPresent(LossyDecodableArray<AssistantSuggestion>.self, forKey: .suggestions)?.elements) ?? []
+        modeChanges = (try? c.decodeIfPresent(LossyDecodableArray<AssistantModeChange>.self, forKey: .modeChanges)?.elements) ?? []
+        variantPicks = (try? c.decodeIfPresent([String: Int].self, forKey: .variantPicks)) ?? [:]
+        retentionDays = (try? c.decodeIfPresent(Int.self, forKey: .retentionDays)) ?? 90
+    }
 }
 
 /// Outcomes, explicit memories and reviewable suggestions. Reads happen once on a
@@ -103,7 +208,14 @@ private struct AssistantDataDocument: Codable {
     @Published private(set) var suggestions: [AssistantSuggestion] = []
     @Published private(set) var loaded = false
     @Published private(set) var persistenceWarning: String?
-    @Published var retentionDays: Int { didSet { if !loading { prune(); persist() } } }
+    @Published var retentionDays: Int {
+        didSet {
+            if !loading {
+                if !loaded { retentionChangedDuringLoad = true }
+                prune(); persist()
+            }
+        }
+    }
 
     private let url: URL
     private let readData: @Sendable (URL) async throws -> Data
@@ -112,6 +224,11 @@ private struct AssistantDataDocument: Codable {
     private var loadTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
     private var saveGeneration = 0
+    private var clearedDuringLoad = false
+    private var retentionChangedDuringLoad = false
+    private var deletedOutcomeIDs: Set<UUID> = []
+    private var deletedMemoryIDs: Set<UUID> = []
+    private var deletedSuggestionIDs: Set<UUID> = []
 
     init(root: URL, readData: (@Sendable (URL) async throws -> Data)? = nil) {
         url = root.appendingPathComponent("assistant.json")
@@ -125,23 +242,52 @@ private struct AssistantDataDocument: Codable {
 
     private func load() async {
         let url = self.url, readData = self.readData
-        let restored = await Task.detached(priority: .utility) { () -> AssistantDataDocument? in
-            guard let data = try? await readData(url) else { return nil }
-            return try? JSONDecoder.attention.decode(AssistantDataDocument.self, from: data)
+        let (restored, corruptError) = await Task.detached(priority: .utility) { () -> (AssistantDataDocument?, String?) in
+            guard let data = try? await readData(url), !data.isEmpty else { return (nil, nil) }
+            do {
+                return (try JSONDecoder.attention.decode(AssistantDataDocument.self, from: data), nil)
+            } catch {
+                let backup = url.deletingLastPathComponent().appendingPathComponent("assistant.corrupt.json")
+                try? data.write(to: backup, options: .atomic)
+                return (nil, error.localizedDescription)
+            }
         }.value
         loading = true
-        // A user can edit or delete while the initial disk read is in flight. Every
-        // such mutation starts a snapshot save; never replace it with stale bytes.
+        if let corruptError {
+            persistenceWarning = L("Assistant memory could not be saved. %@", corruptError)
+            probeLog("assistant-data-corrupt", [:])
+        }
+        let mutatedDuringLoad = saveGeneration > 0
         if saveGeneration == 0 {
             if let restored { document = restored }
             outcomes = document.outcomes
             memories = document.memories
             suggestions = document.suggestions
             retentionDays = document.retentionDays
+        } else if let restored, !clearedDuringLoad {
+            let outcomeIDs = Set(outcomes.map(\.id)).union(deletedOutcomeIDs)
+            let outcomeMeetings = Set(outcomes.compactMap(\.meetingID))
+            for item in restored.outcomes where !outcomeIDs.contains(item.id) && !(item.meetingID.map(outcomeMeetings.contains) ?? false) {
+                outcomes.append(item)
+            }
+            let memoryIDs = Set(memories.map(\.id)).union(deletedMemoryIDs)
+            for item in restored.memories where !memoryIDs.contains(item.id) &&
+                !memories.contains(where: { $0.kind == item.kind && $0.text.caseInsensitiveCompare(item.text) == .orderedSame }) {
+                memories.append(item)
+            }
+            let suggestionIDs = Set(suggestions.map(\.id)).union(deletedSuggestionIDs)
+            for item in restored.suggestions where !suggestionIDs.contains(item.id) {
+                suggestions.append(item)
+            }
+            document.modeChanges = Array((restored.modeChanges + document.modeChanges).suffix(100))
+            for (stance, count) in restored.variantPicks { document.variantPicks[stance, default: 0] += count }
+            if !retentionChangedDuringLoad { retentionDays = restored.retentionDays }
         }
+        deletedOutcomeIDs.removeAll(); deletedMemoryIDs.removeAll(); deletedSuggestionIDs.removeAll()
         loading = false
         loaded = true
         prune()
+        if mutatedDuringLoad, restored != nil, !clearedDuringLoad { persist() }
     }
 
     private func persist() {
@@ -196,6 +342,7 @@ private struct AssistantDataDocument: Codable {
     }
 
     func removeOutcome(_ id: UUID) {
+        if !loaded { deletedOutcomeIDs.insert(id) }
         outcomes.removeAll { $0.id == id }; persist()
     }
 
@@ -232,7 +379,10 @@ private struct AssistantDataDocument: Codable {
         memories[index] = copy; persist()
     }
 
-    func deleteMemory(_ id: UUID) { memories.removeAll { $0.id == id }; persist() }
+    func deleteMemory(_ id: UUID) {
+        if !loaded { deletedMemoryIDs.insert(id) }
+        memories.removeAll { $0.id == id }; persist()
+    }
 
     /// Local deterministic retrieval: series/room and participant matches rank above
     /// token overlap and recency. At most five bounded excerpts reach any prompt.
@@ -304,6 +454,7 @@ private struct AssistantDataDocument: Codable {
     /// Removes a suggestion after the caller has applied its proposed change.
     func keepSuggestion(_ id: UUID, editedText: String? = nil) {
         guard let suggestion = suggestions.first(where: { $0.id == id }) else { return }
+        if !loaded { deletedSuggestionIDs.insert(id) }
         if suggestion.kind == .memory || suggestion.kind == .replyStyle {
             remember(editedText?.trimmed.isEmpty == false ? editedText! : suggestion.proposedText,
                 kind: suggestion.memoryKind, invitation: suggestion.invitation, series: suggestion.seriesID)
@@ -311,7 +462,10 @@ private struct AssistantDataDocument: Codable {
         suggestions.removeAll { $0.id == id }; persist()
     }
 
-    func dropSuggestion(_ id: UUID) { suggestions.removeAll { $0.id == id }; persist() }
+    func dropSuggestion(_ id: UUID) {
+        if !loaded { deletedSuggestionIDs.insert(id) }
+        suggestions.removeAll { $0.id == id }; persist()
+    }
 
     func exportData() throws -> Data {
         let encoder = JSONEncoder.attention; encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -320,6 +474,7 @@ private struct AssistantDataDocument: Codable {
     }
 
     func deleteAll() {
+        if !loaded { clearedDuringLoad = true }
         outcomes = []; memories = []; suggestions = []; document = .init(); document.retentionDays = retentionDays
         persist()
     }

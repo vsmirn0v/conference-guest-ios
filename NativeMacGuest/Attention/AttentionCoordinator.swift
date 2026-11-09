@@ -192,6 +192,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     private var loop: Task<Void, Never>?
     private var calls: [Date] = []
     private var outcomeCaptures: Set<UUID> = []
+    private var overflowMeetingByMomentID: [UUID: UUID] = [:]
+    private var remindingMoments: Set<UUID> = []
 
     init(store: AttentionStore = .shared) { self.store = store }
 
@@ -255,7 +257,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             store.setMeetingMode(mode, room: model.invitation, series: model.calendarSeriesID, title: model.title)
             states[id]?.override = nil
         }
-        if mode == .off { for card in cards where card.meetingID == id { miss(card) } }
+        if mode == .off {
+            for card in cards where card.meetingID == id { miss(card) }
+            clearOverflow(forMeeting: id)
+        }
         store.assistant.observeModeChange(mode, meetingTitle: model.title, invitation: model.invitation, series: model.calendarSeriesID, now: now())
         probeLog("attention-mode", ["mode": mode.rawValue, "scope": String(describing: scope)])
     }
@@ -265,7 +270,10 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         if series, store.preset(room: model.invitation, series: model.calendarSeriesID)?.mode != nil {
             store.setMeetingMode(nil, room: model.invitation, series: model.calendarSeriesID, title: model.title)
         }
-        if resolvedMode(model).mode == .off { for card in cards where card.meetingID == model.sessionID { miss(card) } }
+        if resolvedMode(model).mode == .off {
+            for card in cards where card.meetingID == model.sessionID { miss(card) }
+            clearOverflow(forMeeting: model.sessionID)
+        }
     }
     /// Off → Mentions → Watch → Off, for this meeting until you leave.
     func cycleMode(for model: NativeDesktopMeetingModel) {
@@ -374,11 +382,24 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         states = states.filter { ids.contains($0.key) }
         // A mode chosen for a while returns to the defaults when its time is up.
         for (id, state) in states where (state.override?.until ?? .distantFuture) <= current { states[id]?.override = nil }
+        let activeOpenIDs = Set(list.filter { !$0.isClosed && resolvedMode($0).mode != .off }.map(\.sessionID))
+        for (momentID, meetingID) in overflowMeetingByMomentID where !activeOpenIDs.contains(meetingID) {
+            removeOverflow(momentID)
+        }
         for card in cards {
             guard let model = list.first(where: { $0.sessionID == card.meetingID }),
                   !model.isClosed, resolvedMode(model).mode != .off else { miss(card); continue }
             if card.verdict.level == .now, let held = states[card.meetingID]?.heldUntil,
                held <= current, !card.engaged { miss(card) }
+        }
+        if let selected = selectedCard, !selected.readOnly,
+           !list.contains(where: { $0.sessionID == selected.meetingID && !$0.isClosed }) {
+            selectedCard?.channels = ReplyChannels()
+            selectedCard?.canDraft = false
+            selectedCard?.canSpeak = false
+            selectedCard?.readOnly = true
+            selectedCard?.drafting = false
+            selectedCard?.speaking = false
         }
         for model in list { observeParticipants(model, now: current) }
         guard judging == nil else { return }
@@ -529,7 +550,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         }
         // A card you are replying from stays until you send, dismiss or decline it.
         if existing?.engaged == true {
-            if qualifies { overflowMomentIDs.insert(card.id) }
+            if qualifies { insertOverflow(card.id, meetingID: card.meetingID) }
             return qualifies ? .crowdedOut : .belowThreshold
         }
         let held = existing?.verdict.level == .now && (state.heldUntil ?? .distantPast) > current
@@ -539,16 +560,16 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             return .belowThreshold
         }
         if held && verdict.level < .now {
-            overflowMomentIDs.insert(card.id)
+            insertOverflow(card.id, meetingID: card.meetingID)
             return .crowdedOut
         }
         var proposed = cards.filter { $0.meetingID != card.meetingID } + [card]
         proposed.sort { $0.verdict.level == $1.verdict.level ? $0.createdAt > $1.createdAt : $0.verdict.level > $1.verdict.level }
         guard proposed.prefix(Self.maxCards).contains(where: { $0.id == card.id }) else {
-            overflowMomentIDs.insert(card.id)
+            insertOverflow(card.id, meetingID: card.meetingID)
             return .crowdedOut
         }
-        overflowMomentIDs.remove(card.id)
+        removeOverflow(card.id)
         let retained = Array(proposed.prefix(Self.maxCards))
         for old in cards where !retained.contains(where: { $0.id == old.id }) { miss(old, overflow: true) }
         cards = retained
@@ -559,19 +580,32 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 
     // MARK: Your decisions
 
+    private func actionableCard(_ fallback: Card) -> Card? {
+        if let state = store.momentHistory.moment(fallback.id)?.state,
+           [.answered, .dismissed, .notForMe].contains(state) {
+            return nil
+        }
+        let card = currentCard(fallback.id) ?? fallback
+        guard !card.readOnly else { return nil }
+        return card
+    }
+
     func open(_ card: Card) {
-        feedback(card, decision: .approved, reason: nil, note: nil, outcome: .opened)
-        openMeeting(card.meetingID)
+        guard let current = actionableCard(card), !current.speaking else { return }
+        feedback(current, decision: .approved, reason: nil, note: nil, outcome: .opened)
+        openMeeting(current.meetingID)
     }
     func dismiss(_ card: Card) {
-        remove(card)
-        log(card, outcome: .dismissed, reason: nil)
+        guard let current = actionableCard(card), !current.speaking else { return }
+        remove(current)
+        log(current, outcome: .dismissed, reason: nil)
     }
     func decline(_ card: Card, reason: PresetExample.DeclineReason, note: String? = nil) {
-        feedback(card, decision: .declined, reason: reason, note: note, outcome: .declined)
+        guard let current = actionableCard(card), !current.speaking else { return }
+        feedback(current, decision: .declined, reason: reason, note: note, outcome: .declined)
         if reason == .alreadyKnown {
-            let topic = note?.trimmed.isEmpty == false ? note! : card.verdict.reason
-            store.assistant.suggestKnownTopic(topic, meetingTitle: card.meetingTitle, invitation: card.invitation, series: card.seriesID)
+            let topic = note?.trimmed.isEmpty == false ? note! : current.verdict.reason
+            store.assistant.suggestKnownTopic(topic, meetingTitle: current.meetingTitle, invitation: current.invitation, series: current.seriesID)
         }
     }
 
@@ -620,12 +654,34 @@ final class AttentionMemoryPressure: @unchecked Sendable {
         store.markMomentsSeen(moments.filter { [.live, .missed].contains($0.state) }.map(\.id), at: now())
     }
 
+    private func insertOverflow(_ id: UUID, meetingID: UUID) {
+        overflowMomentIDs.insert(id)
+        overflowMeetingByMomentID[id] = meetingID
+    }
+    private func removeOverflow(_ id: UUID) {
+        overflowMomentIDs.remove(id)
+        overflowMeetingByMomentID.removeValue(forKey: id)
+    }
+    private func clearOverflow(forMeeting meetingID: UUID) {
+        for (id, owner) in overflowMeetingByMomentID where owner == meetingID {
+            overflowMomentIDs.remove(id)
+            overflowMeetingByMomentID.removeValue(forKey: id)
+        }
+    }
+    private func clearAllOverflow() {
+        overflowMomentIDs.removeAll()
+        overflowMeetingByMomentID.removeAll()
+    }
+
     private func miss(_ card: Card, overflow: Bool = false) {
         guard cards.contains(where: { $0.id == card.id }) else { return }
         cards.removeAll { $0.id == card.id }
         states[card.meetingID]?.heldUntil = nil
-        if cards.isEmpty { overflowMomentIDs.removeAll() }
-        if overflow { overflowMomentIDs.insert(card.id) }
+        if overflow {
+            insertOverflow(card.id, meetingID: card.meetingID)
+        } else if cards.isEmpty {
+            clearAllOverflow()
+        }
         log(card, outcome: .missed, reason: nil)
     }
 
@@ -636,9 +692,13 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
 
     func remind(_ moment: AttentionMoment) {
+        guard !remindingMoments.contains(moment.id),
+              (store.momentHistory.moment(moment.id)?.reminderAt ?? moment.reminderAt) == nil else { return }
+        remindingMoments.insert(moment.id)
         reminderErrorByMoment[moment.id] = nil
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer { remindingMoments.remove(moment.id) }
             do { try await remind(moment, at: now().addingTimeInterval(600)) }
             catch { reminderErrorByMoment[moment.id] = error.localizedDescription }
         }
@@ -728,15 +788,15 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     /// Sends the text you approved into the meeting's chat and counts as an approval.
     @discardableResult func sendReply(_ card: Card, text: String) -> Bool {
         let clean = text.trimmed
-        guard !clean.isEmpty, card.channels.chat,
-              let model = meetings().first(where: { $0.sessionID == card.meetingID }), !model.isClosed, deliverChat(model, clean) else {
+        guard let current = actionableCard(card), !current.speaking, !clean.isEmpty, current.channels.chat,
+              let model = meetings().first(where: { $0.sessionID == current.meetingID }), !model.isClosed, deliverChat(model, clean) else {
             setDraftError(L("The meeting did not accept the message. Open the meeting to answer."), card: card); return false
         }
-        feedback(card, decision: .approved, reason: nil, note: nil, outcome: .replied,
-                 sent: clean, reaction: nil, edited: clean != card.draft?.chat.trimmed)
+        feedback(current, decision: .approved, reason: nil, note: nil, outcome: .replied,
+                 sent: clean, reaction: nil, edited: clean != current.draft?.chat.trimmed)
         // A rewritten draft teaches the writer how you put things.
-        if let draft = card.draft?.chat.trimmed, !draft.isEmpty, draft != clean,
-           let preset = card.presetID.flatMap(store.preset(id:)) ?? store.preset(room: card.invitation, series: card.seriesID) {
+        if let draft = current.draft?.chat.trimmed, !draft.isEmpty, draft != clean,
+           let preset = current.presetID.flatMap(store.preset(id:)) ?? store.preset(room: current.invitation, series: current.seriesID) {
             store.recordEdit(.init(at: now(), draft: draft, sent: clean), in: preset)
         }
         return true
@@ -744,13 +804,13 @@ final class AttentionMemoryPressure: @unchecked Sendable {
 
     /// Sends one reaction into the meeting and counts as an approval.
     @discardableResult func sendReaction(_ card: Card, _ reaction: MeetingReaction) -> Bool {
-        guard card.channels.reactions.contains(reaction),
-              let model = meetings().first(where: { $0.sessionID == card.meetingID }), !model.isClosed else {
+        guard let current = actionableCard(card), !current.speaking, current.channels.reactions.contains(reaction),
+              let model = meetings().first(where: { $0.sessionID == current.meetingID }), !model.isClosed else {
             setDraftError(L("The meeting did not accept the reaction. Open the meeting to answer."), card: card); return false
         }
         deliverReaction(model, reaction)
-        feedback(card, decision: .approved, reason: nil, note: nil, outcome: .reacted,
-                 sent: nil, reaction: reaction, edited: reaction != card.draft?.reaction)
+        feedback(current, decision: .approved, reason: nil, note: nil, outcome: .reacted,
+                 sent: nil, reaction: reaction, edited: reaction != current.draft?.reaction)
         return true
     }
 
@@ -758,8 +818,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     /// back while it plays; counts as an approval once it has played.
     func sayReply(_ card: Card, text: String) {
         let clean = text.trimmed
-        guard let current = currentCard(card.id), current.canSpeak, !clean.isEmpty, !current.speaking,
-              let model = meetings().first(where: { $0.sessionID == card.meetingID }), !model.isClosed else {
+        guard let current = actionableCard(card), current.canSpeak, !clean.isEmpty, !current.speaking,
+              let model = meetings().first(where: { $0.sessionID == current.meetingID }), !model.isClosed else {
             setDraftError(L("This meeting cannot play a spoken reply now. Open the meeting to answer."), card: card); return
         }
         updateCard(card.id) { $0.speaking = true; $0.draftError = nil }
@@ -772,8 +832,9 @@ final class AttentionMemoryPressure: @unchecked Sendable {
                 try await deliverVoice(model, buffer)
                 probeLog("attention-spoken", ["voice": store.voiceEngine.rawValue, "seconds": Double(buffer.frameLength) / buffer.format.sampleRate,
                     "synthesisMs": Int((synthesized - started) * 1000)])
-                feedback(current, decision: .approved, reason: nil, note: nil, outcome: .spoken,
-                         sent: clean, reaction: nil, edited: clean != current.draft?.chat.trimmed)
+                guard let finished = actionableCard(current) else { return }
+                feedback(finished, decision: .approved, reason: nil, note: nil, outcome: .spoken,
+                         sent: clean, reaction: nil, edited: clean != finished.draft?.chat.trimmed)
             } catch {
                 updateCard(card.id) {
                     $0.speaking = false
@@ -808,8 +869,8 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     }
     private func remove(_ card: Card) {
         cards.removeAll { $0.id == card.id }
-        overflowMomentIDs.remove(card.id)
-        if cards.isEmpty { overflowMomentIDs.removeAll() }
+        removeOverflow(card.id)
+        if cards.isEmpty { clearAllOverflow() }
         if selectedCard?.id == card.id {
             selectedCard?.channels = ReplyChannels()
             selectedCard?.canDraft = false

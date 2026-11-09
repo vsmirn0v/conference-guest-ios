@@ -1129,20 +1129,6 @@ private struct NativeDesktopMeetingRow: View {
     }
 }
 
-/// A toolbar item in its own glass group. The system glass is its only container:
-/// a capsule drawn inside toolbar glass is cut by the group's rounded edge.
-struct NativeDesktopStandaloneToolbarItem<Content: View>: ToolbarContent {
-    @ViewBuilder let content: () -> Content
-    var body: some ToolbarContent {
-        if #available(macOS 26.0, *) {
-            ToolbarItem(placement: .primaryAction) { content() }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-        } else {
-            ToolbarItem(placement: .primaryAction) { content() }
-        }
-    }
-}
-
 /// Transcription is a status people must notice and understand: a labelled
 /// pill that explains itself, instead of an unlabelled glyph.
 struct NativeDesktopTranscriptionPill: View {

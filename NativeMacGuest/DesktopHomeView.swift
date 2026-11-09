@@ -218,7 +218,7 @@ struct NativeDesktopHomeView: View {
     /// A meeting shown here puts its status and tools in the window toolbar, beside its title.
     @ToolbarContentBuilder private var mainToolbar: some ToolbarContent {
         if let meeting = embeddedMeeting, meeting.transcriptionIndicator != nil {
-            NativeDesktopStandaloneToolbarItem {
+            ToolbarItem(placement: .primaryAction) {
                 NativeDesktopTranscriptionPill(model: meeting, compact: true, announcesInline: detailWidth >= Self.inlineAnnouncementWidth)
             }
         }

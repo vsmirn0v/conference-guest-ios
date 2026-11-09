@@ -89,15 +89,18 @@ import XCTest
     }
 
     func testStoreRestoresAndBuffersEventsWrittenDuringLaunchLoad() async throws {
-        let root = folder(), first = store(root), id = UUID()
-        first.log(record(.shown, id: id))
+        let root = folder(), first = store(root), id = UUID(), meetingID = UUID()
+        first.log(record(.shown, id: id, meeting: meetingID))
         await first.waitForMoments()
         let second = store(root)
-        second.log(record(.replied, decision: id))
+        second.log(record(.replied, decision: id, meeting: meetingID))
+        second.log(record(.belowThreshold, meeting: meetingID))
         await second.waitForMoments()
         XCTAssertEqual(second.momentHistory.moment(id)?.state, .answered)
+        XCTAssertEqual(second.momentHistory.quietChecks.first?.count, 1, "Buffered quiet checks must not be counted twice when merged with disk")
         let third = store(root); await third.waitForMoments()
         XCTAssertEqual(third.momentHistory.moment(id)?.state, .answered)
+        XCTAssertEqual(third.momentHistory.quietChecks.first?.count, 1)
         XCTAssertEqual(third.decisionFiles().count, 1, "Restoration does not rewrite history")
     }
 

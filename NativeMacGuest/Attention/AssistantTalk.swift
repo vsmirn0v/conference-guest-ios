@@ -84,7 +84,7 @@ import SwiftUI
     private func prepare(_ command: AssistantCommand, context: AssistantCommandContext) throws {
         var command = command
         // Resolve an implicit target before a confirmation can outlive the current selection.
-        if command.meetingID == nil, [.leave, .mute, .readChat, .catchUp].contains(command.action) {
+        if command.meetingID == nil, [.setAttention, .leave, .mute, .sendChat, .say, .react, .readChat, .catchUp].contains(command.action) {
             guard let target = try meeting(nil, context: context) else { throw AssistantCommandError.missingField }
             command.meetingID = target.id
         }
@@ -136,8 +136,8 @@ import SwiftUI
             return L("Left “%@”.", target.title)
         case .mute:
             guard let target, let model = activeModel(target.id) else { throw AssistantCommandError.unknownMeeting }
-            if model.snapshot.microphoneOn || model.voiceReplyActive { model.toggleMicrophone() }
-            return model.snapshot.microphoneOn ? L("Muting “%@”.", target.title) : L("Your microphone is already muted in “%@”.", target.title)
+            let muted = model.muteMicrophone()
+            return muted ? L("Muting “%@”.", target.title) : L("Your microphone is already muted in “%@”.", target.title)
         case .sendChat:
             guard let target, let model = activeModel(target.id), model.chat.canSend,
                   attention.deliverChat(model, command.text) else { throw AssistantCommandError.unsupported }
@@ -257,22 +257,26 @@ import SwiftUI
 
     func installHotKey() {
         removeHotKey()
-        func handle(_ event: NSEvent) {
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                switch event.type {
-                case .keyDown where event.keyCode == 49 && event.modifierFlags.contains(.option) && !event.isARepeat:
-                    startPushToTalk()
-                case .keyUp where event.keyCode == 49: stopPushToTalk()
-                case .flagsChanged where listening && !event.modifierFlags.contains(.option): stopPushToTalk()
-                default: break
+        func handle(_ event: NSEvent) -> NSEvent? {
+            switch event.type {
+            case .keyDown where event.keyCode == 49 && event.modifierFlags.contains(.option) && !event.isARepeat:
+                guard NSApp.isActive, !(NSApp.keyWindow?.firstResponder is NSTextView) else { return event }
+                Task { @MainActor [weak self] in self?.startPushToTalk() }
+                return nil
+            case .keyUp where event.keyCode == 49:
+                Task { @MainActor [weak self] in self?.stopPushToTalk() }
+            case .flagsChanged where !event.modifierFlags.contains(.option):
+                Task { @MainActor [weak self] in
+                    guard let self, self.listening else { return }
+                    self.stopPushToTalk()
                 }
+            default: break
             }
+            return event
         }
-        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged], handler: { event in
-            handle(event); return event
-        }) { monitors.append(monitor) }
-        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged], handler: handle) { monitors.append(monitor) }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged], handler: handle) {
+            monitors.append(monitor)
+        }
         for name in [NSApplication.didResignActiveNotification, NSWindow.didResignKeyNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in self?.stopPushToTalk() }
@@ -369,11 +373,14 @@ import SwiftUI
 
 private final class AssistantCaptureBuffer: @unchecked Sendable {
     private let lock = NSLock(); private var storage: [Float] = []
+    private var reportedFull = false
     private let limit = 30 * 16_000
     func append(_ samples: UnsafePointer<Float>, count: Int) -> Bool {
         lock.lock(); defer { lock.unlock() }
         storage.append(contentsOf: UnsafeBufferPointer(start: samples, count: min(count, max(0, limit - storage.count))))
-        return storage.count >= limit
+        guard storage.count >= limit, !reportedFull else { return false }
+        reportedFull = true
+        return true
     }
     var values: [Float] { lock.lock(); defer { lock.unlock() }; return storage }
 }
