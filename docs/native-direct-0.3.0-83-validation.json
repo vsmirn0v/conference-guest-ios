@@ -1,0 +1,44 @@
+{
+  "version": "0.3.0",
+  "build": "83",
+  "channel": "beta",
+  "sourceCommit": "d7ad9da",
+  "changes": [
+    "Add the compact Assistant meeting selector: it changes only the meeting Assistant talks about, defaults to the microphone owner, preserves a valid explicit choice, repairs a stale target, and never opens a meeting or moves microphone or sound ownership",
+    "Suppress the automatic floating meeting preview while Assistant is selected so its composer stays unobstructed; Mini meeting remains available explicitly and meetings remain embedded",
+    "Assistant push-to-talk works without a live meeting",
+    "Keep the active transcription info popover open across local and remote meeting updates",
+    "Exclude the incomplete acoustic diagnostic harness from app targets so a clean pushed source tree builds reproducibly"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "executableSHA256": "b1427697b5ebcf55c210333c156c8fe02ead76c2451c2e49f59a330f38642ce1",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-83-arm64.dmg",
+    "sha256": "12b80d97d1dfc4ef61912bd3f6a8dba7170fe2287f491dc33b540bd137e378ff",
+    "length": 27170557,
+    "downloadURL": "https://rock.glowsoft.ru/mac/beta/latest.dmg"
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-83-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "Fixes commits a1ad5da, 2d105b1, b081660, db76552, and d7ad9da are on origin/main. The publisher verified the immutable DMG, beta alias, signed appcast and inventory over HTTPS byte-for-byte; an independent HTTPS download of latest.dmg matched the packaged SHA-256.",
+  "measured": {
+    "focusedAppTests": "NativeDesktopTests AttentionTests, AttentionMomentsTests, DesktopParityTests, and AssistantUIAcceptanceTests on source d7ad9da: 149 tests, 3 skipped, 0 failures",
+    "distributionTooling": "NativeMacGuest/distribution unittest suite passed (27 tests); py_compile passed",
+    "archive": "direct Release archive 0.3.0 (83) succeeded from clean worktree d7ad9da; 58 archive/app artifact hashes and 226 source hashes recorded; app-group IO and one-use ticket check passed",
+    "export": "Developer ID export with Xcode cloud-managed notarization; app stapled and Gatekeeper-accepted (Notarized Developer ID)",
+    "package": "DMG created and revalidated read-only from its mount; contained app accepted as Notarized Developer ID",
+    "publish": "read-only SSH preflight passed; atomic publication and HTTPS readback matched the immutable DMG, beta alias, signed appcast and inventory",
+    "appcastStateSHA256": "1d92cb2bf84b02ef920f0943708ca72a89beda496f6503f246bd368a6bb5fad8",
+    "inventoryStateSHA256": "0ec3e6de4914307f29b1d6e336e790cbbccf1e4450bd564d5beb545e820d92d8"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 83",
+    "physical-microphone push-to-talk acceptance and live-meeting behavior",
+    "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted"
+  ]
+}
