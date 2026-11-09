@@ -10,6 +10,13 @@ final class GuestPCMMeter: NSObject, LKRTCAudioRenderer, @unchecked Sendable {
     private var lastLevel: Float?
     private var lastSampleTime: TimeInterval = 0
     private var callback = GuestStartupAudioCallback()
+#if DEBUG
+    private var diagnosticPCMObserver: ((AVAudioPCMBuffer) -> Void)?
+    /// Sink on the existing renderer; never creates an additional audio consumer.
+    func setPCMObserverForTesting(_ observer: ((AVAudioPCMBuffer) -> Void)?) {
+        locked { diagnosticPCMObserver = observer }
+    }
+#endif
     var callbackSnapshot: GuestStartupAudioCallback { locked { callback } }
 #if DEBUG
     var callbackEvidence: [String: Any] { callbackSnapshot.evidence }
@@ -48,10 +55,14 @@ final class GuestPCMMeter: NSObject, LKRTCAudioRenderer, @unchecked Sendable {
         locked {
             callback = .init(count: UInt64(bufferCount + 1), frames: Int(pcmBuffer.frameLength),
                 format: deliveredFormat, uptime: receivedUptime)
-            measured.samples += samples; measured.energy += energy; bufferCount += 1
+            measured.record(samples: samples, energy: energy, at: receivedUptime); bufferCount += 1
             lastLevel = samples > 0 ? Float(sqrt(energy / Double(samples))) : nil
             lastSampleTime = ProcessInfo.processInfo.systemUptime
         }
+#if DEBUG
+        let observer = locked { diagnosticPCMObserver }
+        observer?(pcmBuffer)
+#endif
     }
 }
 
@@ -448,6 +459,10 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     var startupCallbackEvidence: [String: Any] {
         ["input": locked { inputCallback }.evidence, "output": playoutMeter.callbackEvidence]
     }
+    /// Passive stubs at this revision: the CoreAudio/private-input experiments these
+    /// counters describe are not in the tree. The harness reports "no data" for empty.
+    var microphoneStartupEvidenceForTesting: [String: Any] { [:] }
+    var privateInputGraphEvidenceForTesting: [String: Any] { [:] }
 #endif
     var startupAudioObservation: GuestStartupAudioObservation {
         let value = snapshot
@@ -458,6 +473,11 @@ final class GuestSystemAudio: NSObject, LKRTCAudioDeviceModuleDelegate, @uncheck
     private func meterEvidence(_ meter: GuestPCMMeter) -> [String: Any] {
         let value = meter.snapshot
         return ["buffers": meter.buffers, "samples": value.samples, "energy": value.energy, "rms": value.rms,
+                "callbacks": value.callbacks, "nonSilentCallbacks": value.nonSilentCallbacks,
+                "firstCallbackUptime": value.firstCallbackUptime as Any? ?? NSNull(),
+                "lastCallbackUptime": value.lastCallbackUptime as Any? ?? NSNull(),
+                "firstNonSilentUptime": value.firstNonSilentUptime as Any? ?? NSNull(),
+                "lastNonSilentUptime": value.lastNonSilentUptime as Any? ?? NSNull(),
                 "recentLevel": meter.level.map { $0 as Any } ?? NSNull()]
     }
     func setPrivateInputMeterEnabled(_ enabled: Bool) {

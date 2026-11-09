@@ -5,9 +5,35 @@ import LiveKitWebRTC
 struct GuestAudioSnapshot {
     var samples: Int = 0
     var energy: Double = 0
+    var callbacks: Int = 0
+    var nonSilentCallbacks: Int = 0
+    var firstCallbackUptime: TimeInterval?
+    var lastCallbackUptime: TimeInterval?
+    var firstNonSilentUptime: TimeInterval?
+    var lastNonSilentUptime: TimeInterval?
     var rms: Double { samples > 0 ? sqrt(energy / Double(samples)) : 0 }
+
+    /// Called under the owning meter's lock. Non-silent means finite energy > 0;
+    /// this measures PCM arrival, not speech or audibility. No samples are retained.
+    mutating func record(samples count: Int, energy value: Double, at now: TimeInterval) {
+        samples += count; energy += value
+        guard count > 0, now.isFinite else { return }
+        callbacks += 1
+        firstCallbackUptime = min(firstCallbackUptime ?? now, now)
+        lastCallbackUptime = max(lastCallbackUptime ?? now, now)
+        guard value.isFinite, value > 0 else { return }
+        nonSilentCallbacks += 1
+        firstNonSilentUptime = min(firstNonSilentUptime ?? now, now)
+        lastNonSilentUptime = max(lastNonSilentUptime ?? now, now)
+    }
+
     func since(_ before: Self) -> Self {
-        .init(samples: max(0, samples - before.samples), energy: max(0, energy - before.energy))
+        .init(samples: max(0, samples - before.samples), energy: max(0, energy - before.energy),
+            callbacks: max(0, callbacks - before.callbacks), nonSilentCallbacks: max(0, nonSilentCallbacks - before.nonSilentCallbacks),
+            firstCallbackUptime: before.callbacks == 0 ? firstCallbackUptime : nil,
+            lastCallbackUptime: callbacks > before.callbacks ? lastCallbackUptime : nil,
+            firstNonSilentUptime: before.nonSilentCallbacks == 0 ? firstNonSilentUptime : nil,
+            lastNonSilentUptime: nonSilentCallbacks > before.nonSilentCallbacks ? lastNonSilentUptime : nil)
     }
 }
 
@@ -23,6 +49,27 @@ final class GuestSyntheticAudio: NSObject, LKRTCAudioDevice, @unchecked Sendable
     private var worker: Thread?
     private var finished: DispatchSemaphore?
     private var measured = GuestAudioSnapshot()
+    #if DEBUG
+    private var testSpeech: [Int16]?
+    private var testSpeechPlaying = false, testSpeechOffset = 0
+    func configureSpeechForTesting(_ samples: [Int16]) -> Bool {
+        guard (480...5_760_000).contains(samples.count) else { return false }
+        locked { testSpeech = samples; testSpeechOffset = 0; testSpeechPlaying = false }
+        return true
+    }
+    func setSpeechPlayingForTesting(_ enabled: Bool) -> Bool {
+        locked {
+            guard testSpeech != nil else { return false }
+            testSpeechPlaying = enabled
+            if enabled { testSpeechOffset = 0 }
+            return true
+        }
+    }
+    var speechStateForTesting: [String: Any] {
+        locked { ["configured": testSpeech != nil, "playing": testSpeechPlaying, "nextSampleOffset": testSpeechOffset,
+                  "sampleRate": 48_000, "clock": "synthetic ADM input sample position"] }
+    }
+    #endif
     private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
     var isInitialized: Bool { locked { initialized } }
     var isPlayoutInitialized: Bool { locked { playoutReady } }
@@ -67,7 +114,21 @@ final class GuestSyntheticAudio: NSObject, LKRTCAudioDevice, @unchecked Sendable
             var flags = AudioUnitRenderActionFlags()
             var timestamp = AudioTimeStamp(); timestamp.mSampleTime = Double(index); timestamp.mFlags = .sampleTimeValid
             if state.2 {
+                #if DEBUG
+                let speechConfigured = locked { () -> Bool in
+                    guard let speech = testSpeech else { return false }
+                    for i in input.indices {
+                        input[i] = testSpeechPlaying ? speech[testSpeechOffset] : 0
+                        if testSpeechPlaying { testSpeechOffset = (testSpeechOffset + 1) % speech.count }
+                    }
+                    return true
+                }
+                if !speechConfigured {
+                    for i in input.indices { input[i] = Int16(3_000 * sin(Double(index + i) * 2 * .pi * 440 / 48_000)) }
+                }
+                #else
                 for i in input.indices { input[i] = Int16(3_000 * sin(Double(index + i) * 2 * .pi * 440 / 48_000)) }
+                #endif
                 input.withUnsafeMutableBytes { bytes in
                     var list = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(mNumberChannels: 1, mDataByteSize: 960, mData: bytes.baseAddress))
                     _ = delegate.deliverRecordedData(&flags, &timestamp, 0, 480, &list, nil, nil)
@@ -80,7 +141,8 @@ final class GuestSyntheticAudio: NSObject, LKRTCAudioDevice, @unchecked Sendable
                     _ = delegate.getPlayoutData(&flags, &timestamp, 0, 480, &list)
                 }
                 let energy = output.reduce(0.0) { let sample = Double($1) / 32768; return $0 + sample * sample }
-                locked { measured.samples += output.count; measured.energy += energy }
+                let now = ProcessInfo.processInfo.systemUptime
+                locked { measured.record(samples: output.count, energy: energy, at: now) }
             }
             index += 480; deadline += 0.01
             let now = ProcessInfo.processInfo.systemUptime

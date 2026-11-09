@@ -1523,6 +1523,10 @@ extension NativeGuestEngine {
 
 #if DEBUG
 extension NativeGuestEngine {
+    /// Observe the existing remote-track sink; no new decoder/NetEq consumer.
+    func setReceivedPCMObserverForTesting(_ observer: ((AVAudioPCMBuffer) -> Void)?) {
+        subscriber?.pcmMeter.setPCMObserverForTesting(observer)
+    }
     func processEventForTesting(_ event: [String: Any]) async throws { try await receive(event) }
     func preparePublicationForTesting(cid: String, video: Bool) { publicationKinds[cid] = video ? "video" : "audio" }
     var stateForTesting: (intent: [Bool: Bool], server: [String: Bool], version: Int, suppressed: Bool) {

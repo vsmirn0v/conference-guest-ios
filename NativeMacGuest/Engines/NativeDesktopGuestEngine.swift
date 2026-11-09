@@ -77,6 +77,9 @@ enum NativeDesktopGuestError: LocalizedError {
     private var systemAudio: (any GuestMeetingAudio)?
     /// R4: with one engine for all meetings, this meeting's attachment replaces the room.
     private let sharedAudio: SharedAudioEngine?
+    /// Diagnostic transport selection for bounded experiments; `.automatic` keeps
+    /// the production path (including the subscriber-relay recovery).
+    private let icePolicy: GuestICEPolicy
     private var sharedMeeting: SharedGuestMeetingAudio?
     private var meetingVolume = 1.0
     private var participantVolumes: [String: Double] = [:]
@@ -101,8 +104,9 @@ enum NativeDesktopGuestError: LocalizedError {
 
     init(media: NativeDesktopSharedMedia<GuestSystemAudio> = NativeDesktopMediaService.shared,
          sharedAudio: SharedAudioEngine? = SharedAudioEngine.enabledAtLaunch ? SharedAudioEngine.shared : nil,
-         microphoneAuthorized: (() -> Bool)? = nil) {
-        self.media = media; self.sharedAudio = sharedAudio
+         microphoneAuthorized: (() -> Bool)? = nil,
+         icePolicy: GuestICEPolicy = .automatic) {
+        self.media = media; self.sharedAudio = sharedAudio; self.icePolicy = icePolicy
         self.microphoneAuthorized = microphoneAuthorized ?? { AVCaptureDevice.authorizationStatus(for: .audio) == .authorized }
     }
 
@@ -168,7 +172,7 @@ enum NativeDesktopGuestError: LocalizedError {
                 _ = await release(false); throw NativeDesktopGuestError.cleanupFailed
             }
             // After the receive path stalled in this meeting, its subscriber uses the relay.
-            var icePolicy: GuestICEPolicy = subscriberRelayFallback ? .subscriberRelay : .automatic
+            var icePolicy: GuestICEPolicy = self.icePolicy != .automatic ? self.icePolicy : (subscriberRelayFallback ? .subscriberRelay : .automatic)
 #if DEBUG
             if diagnosticICEPolicyForTesting != .automatic { icePolicy = diagnosticICEPolicyForTesting }
 #endif
