@@ -49,6 +49,9 @@ import SwiftUI
     @Published var hotKeyWarning: String?
     /// Set when Carbon registration fails. Keystrokes must not retry until install or the app becomes active.
     private var lastHotKeyFailure: OSStatus?
+    /// Registration attempts are rate-limited: a busy event stream (repeated activations
+    /// or focus churn) must not hammer RegisterEventHotKey and flood the diagnostics.
+    private var lastHotKeyAttempt: Date?
     private var pushToTalkTicket: AnyCancellable?
     nonisolated(unsafe) private var carbonHotKey: EventHotKeyRef?
     nonisolated(unsafe) private var carbonHandler: EventHandlerRef?
@@ -350,8 +353,15 @@ import SwiftUI
     private func syncCarbonHotKey(enabled: Bool) {
         let want = enabled && !textFocusedCache
         // A failed registration stays failed until install or the app becomes active.
-        if want, carbonHotKey == nil, lastHotKeyFailure == nil { registerCarbonHotKey() }
+        if want, carbonHotKey == nil, lastHotKeyFailure == nil, hotKeyAttemptDue { registerCarbonHotKey() }
         if !want { unregisterCarbonHotKey() }
+    }
+
+    /// Re-arming on every activation is legitimate, but a burst of activations must collapse
+    /// into at most one registration attempt every couple of seconds.
+    private var hotKeyAttemptDue: Bool {
+        guard let lastHotKeyAttempt else { return true }
+        return Date().timeIntervalSince(lastHotKeyAttempt) >= 2
     }
 
     private static let carbonCallback: EventHandlerUPP = { _, event, user in
@@ -366,6 +376,7 @@ import SwiftUI
     }
 
     private func registerCarbonHotKey() {
+        lastHotKeyAttempt = Date()
         let specs = [
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
             EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
@@ -509,13 +520,19 @@ import SwiftUI
         Task { @MainActor [weak self] in
             defer { if acquired { LocalSpeechRecognizer.shared.release() } }
             if let meeting { await meeting.releaseMicrophoneForAssistant() }
-            probeLog("assistant-capture-stop", ["samples": samples.count])
+            let rms = AssistantCaptureBuffer.rms(samples)
+            probeLog("assistant-capture-stop", ["samples": samples.count, "rms": String(format: "%.5f", rms)])
             guard let self, samples.count >= 3200, let model = ListenModelStore.shared.recognizerModel() else { return }
             let text: String? = await withCheckedContinuation { continuation in
                 LocalSpeechRecognizer.shared.transcribe(samples, model: model) { text, _ in continuation.resume(returning: text) }
             }
             guard let clean = text?.trimmed, !clean.isEmpty else {
-                append(.assistant, L("No speech was recognized. Nothing was sent.")); return
+                // Empty text with a silent buffer means the tap captured nothing — another
+                // app (or app instance) is holding the microphone, not a recognition miss.
+                let message = rms < 0.001
+                    ? L("No microphone audio was captured — the microphone may be in use by another app.")
+                    : L("No speech was recognized. Nothing was sent.")
+                append(.assistant, message); return
             }
             await run(clean)
         }
@@ -563,6 +580,12 @@ private final class AssistantCaptureBuffer: @unchecked Sendable {
         return true
     }
     var values: [Float] { lock.lock(); defer { lock.unlock() }; return storage }
+    /// Root-mean-square level of a captured buffer. ~0.001 (-60 dBFS) is effectively silence.
+    static func rms(_ samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
+        let sum = samples.reduce(0.0) { $0 + Double($1) * Double($1) }
+        return Float((sum / Double(samples.count)).squareRoot())
+    }
 }
 
 enum AssistantCaptureError: LocalizedError {
