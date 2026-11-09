@@ -675,11 +675,14 @@ enum AssistantPushToTalkHotKey {
 struct AssistantTalkView: View {
     @ObservedObject var attention: AttentionCoordinator
     @ObservedObject private var talk: AssistantTalkController
+    // Observe the store so a push-to-talk toggle re-enables Listen immediately.
+    @ObservedObject private var store: AttentionStore
     @State private var input = ""
 
     init(attention: AttentionCoordinator) {
         self.attention = attention
         _talk = ObservedObject(wrappedValue: attention.talk)
+        _store = ObservedObject(wrappedValue: attention.store)
     }
 
     var body: some View {
@@ -746,7 +749,7 @@ struct AssistantTalkView: View {
                 Button(L("Ask")) { send() }.buttonStyle(.borderedProminent).disabled(input.trimmed.isEmpty || talk.working || talk.pending != nil)
                 Button(talk.listening ? L("Stop") : L("Listen")) {
                     talk.listening ? talk.stopPushToTalk() : talk.startPushToTalk()
-                }.disabled(!attention.store.pushToTalk && !talk.listening)
+                }.disabled(!store.pushToTalk && !talk.listening)
             }.padding(12)
         }
     }

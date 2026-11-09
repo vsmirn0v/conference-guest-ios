@@ -1568,7 +1568,7 @@ import XCTest
 
     func testReviewFixesForPrivacyDecodeJournalAndPushToTalk() async throws {
         let fresh = store()
-        XCTAssertFalse(fresh.pushToTalk, "A global hotkey stays off until the person turns it on")
+        XCTAssertTrue(fresh.pushToTalk, "An upgrade keeps the previous on default until the person turns it off")
         fresh.provider = AttentionProvider.defaults[.openAI]!
         XCTAssertTrue(fresh.setAPIKey("sk-test"))
         fresh.generateOutcomes = true

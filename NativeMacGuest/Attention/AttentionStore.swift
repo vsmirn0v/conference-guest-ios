@@ -351,10 +351,9 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         voiceBaseURL = defaults.string(forKey: Self.voiceBaseURLKey) ?? AttentionProvider.defaults[.rapidMLX]!.baseURL
         generateOutcomes = defaults.object(forKey: Self.outcomesKey) as? Bool ?? true
         remoteOutcomes = defaults.bool(forKey: Self.remoteOutcomesKey)
-        // Off until chosen. A stored on or off value is unchanged. Someone who used the old implicit
-        // default never wrote this key, and nothing else records that they held the shortcut, so an
-        // upgrade stays off. The release note says so.
-        pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? false
+        // On for an upgraded install: the previous implicit default was on and never wrote
+        // this key, so an absent value must keep working. An explicit off value is unchanged.
+        pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? true
         talkBack = defaults.bool(forKey: Self.talkBackKey)
         headphoneUIDs = Set(defaults.stringArray(forKey: Self.headphoneUIDsKey) ?? [])
         provider = defaults.data(forKey: Self.providerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
