@@ -1,0 +1,41 @@
+{
+  "version": "0.3.0",
+  "build": "81",
+  "channel": "beta",
+  "sourceCommit": "e57215a",
+  "changes": [
+    "Restore the Assistant push-to-talk default to on for an upgraded install: the previous implicit default never wrote the preference key, so an absent value now keeps working. An explicit off value is unchanged",
+    "Assistant Talk observes AttentionStore directly, so enabling or disabling push-to-talk updates the Listen button immediately instead of waiting for a later coordinator tick",
+    "Includes all beta 80 review fixes: degraded assistant data recovery, Moments reconnection and in-flight speech guards, scoped outcome status, journal dedup/pruning, approved-headphone routing, Neural Engine cache recovery, and the compile and test-fixture corrections from 2da1adb and 1a290ee"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "executableSHA256": "9afa37879255a2edf236095ef58c41c7535df7ab2b009322470889522747a3ed",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-81-arm64.dmg",
+    "sha256": "b624615d07ff4b04e0a07be1a1e529e81c9b0c166ecea4ef39a250ff955696c8",
+    "length": 27143777
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-81-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "Fixes commit e57215a is on origin/main. The publisher verified the immutable DMG, beta alias, signed appcast and inventory over HTTPS byte-for-byte.",
+  "measured": {
+    "focusedAppTests": "NativeDesktopTests AttentionTests and AttentionMomentsTests: 70 tests, 2 skipped, 0 failures",
+    "distributionTooling": "NativeMacGuest/distribution unittest suite passed; py_compile passed",
+    "archive": "direct Release archive 0.3.0 (81) succeeded; 58 archive artifact hashes recorded in build-evidence.json; app-group IO and one-use ticket check passed",
+    "export": "Developer ID export with Xcode cloud-managed notarization; app stapled and Gatekeeper-accepted (Notarized Developer ID)",
+    "package": "DMG created and revalidated read-only from its mount; contained app accepted as Notarized Developer ID",
+    "publish": "read-only SSH preflight passed; atomic publication and HTTPS readback matched the immutable DMG, beta alias, signed appcast and inventory",
+    "appcastStateSHA256": "1b69f1d3be16b28f530c3a81c2b56437513ad98a2cca110e169c6ebb0df28c02",
+    "inventoryStateSHA256": "e454bdbcdeb6668a2c92c733320a44122f0581d80865634297dc67f778aa1b89"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 81",
+    "live-meeting acceptance of the restored push-to-talk default and the Talk view update",
+    "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted"
+  ]
+}
