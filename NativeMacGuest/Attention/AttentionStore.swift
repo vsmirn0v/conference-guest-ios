@@ -340,6 +340,12 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         // idle. The cancelled task either never starts, or finishes its uncancellable
         // in-flight section and stops at the next cancellation check.
         await libraryTask?.value
+        // The assistant's dual-write callbacks also touch the store; drain them too.
+        // Both the callbacks and this teardown run on the main actor, so no new
+        // persist task can register between this drain and the close below.
+        for task in persistTasks.values { task.cancel() }
+        for task in persistTasks.values { await task.value }
+        persistTasks.removeAll()
         meetingLibrary.store.closeSync()
     }
 
@@ -361,6 +367,11 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// alive past a fixture's teardown block, and the library connection outlives the
     /// directory that was just deleted ("vnode unlinked while in use").
     private var libraryTask: Task<Void, Never>?
+    /// Dual-writes into the meeting library spawned by the assistant persist/remove
+    /// callbacks. Tracked so teardown can cancel and drain them before closing the
+    /// SQLite handle — a `closeSync` racing one of these in-flight writes corrupts
+    /// the connection exactly like a racing prepare did.
+    private var persistTasks: [UUID: Task<Void, Never>] = [:]
     /// Every journal append, from the main thread and from seen-marks, runs here in order.
     private let journalQueue = DispatchQueue(label: "attention.journal.append")
 
@@ -416,11 +427,11 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     private func installMeetingLibrary() {
         assistant.onPersistOutcome = { [weak self] outcome in
             guard let self else { return }
-            Task { await self.meetingLibrary.addOutcome(outcome, state: .ready) }
+            self.trackPersistTask { await self.meetingLibrary.addOutcome(outcome, state: .ready) }
         }
         assistant.onRemoveOutcome = { [weak self] id in
             guard let self else { return }
-            self.meetingLibrary.removeOutcome(id)
+            self.trackPersistTask { await self.meetingLibrary.removeOutcome(id) }
         }
         libraryTask = Task { @MainActor [weak self] in
             guard !Task.isCancelled else { return }
@@ -430,11 +441,23 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         }
     }
 
+    /// Runs `operation` as a tracked task: teardown cancels and drains tracked tasks
+    /// before closing the library, so no write is ever in flight across a close.
+    /// Completed tasks unregister themselves; everything runs on the main actor.
+    private func trackPersistTask(_ operation: @escaping @MainActor () async -> Void) {
+        let key = UUID()
+        persistTasks[key] = Task { @MainActor [weak self] in
+            await operation()
+            self?.persistTasks[key] = nil
+        }
+    }
+
     deinit {
         // Cancelling prevents a still-pending prepare from converting its weak
         // capture into a strong one after the store's owner has released it.
         libraryTask?.cancel()
         momentLoadTask?.cancel()
+        for task in persistTasks.values { task.cancel() }
     }
 
     private func migrateLegacyOutcomesIfNeeded() async {

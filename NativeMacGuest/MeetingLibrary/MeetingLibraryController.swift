@@ -132,8 +132,11 @@ enum MeetingNoteSaveStatus: Equatable {
         }
     }
 
-    func removeOutcome(_ outcomeID: UUID) {
-        Task { [store] in try? await store.removeOutcome(outcomeID); await refresh() }
+    /// Awaitable (no inner fire-and-forget task): AttentionStore tracks and drains
+    /// the calling task before closing the store at teardown.
+    func removeOutcome(_ outcomeID: UUID) async {
+        try? await store.removeOutcome(outcomeID)
+        await refresh()
     }
 
     func outcomeState(_ outcomeID: UUID) async -> MeetingOutcomePersistenceState? {
