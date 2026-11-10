@@ -95,20 +95,21 @@ extension AssistantTalkController {
             registry.register(externalTools: await AssistantExternalToolPolicy.exposedTools(
                 externalProvider, serverID: assistantMCPLoopbackServerID, trust: trust))
         }
-        let bypass = external ? Set<UUID>() : sendWithoutAsking
+        let globalDefault = attention.store.agentMeetingSendDefault
+        let overrides = sendPolicyOverrides
         return AssistantAgentEnvironment(
             registry: registry,
             model: provider.agentModel(key: attention.store.apiKey(for: provider)),
             context: AssistantNativeToolProvider.context(snapshot: snapshot),
             approvalPolicy: { _, action in
-                // Local private memory writes need no card; everything outward asks,
-                // except the explicit per-meeting bypass for chat/voice/reactions,
-                // which never applies to external (MCP) callers.
-                if action.kind == .remember { return .allow }
-                if [.sendChat, .say, .react].contains(action.kind), let id = action.meetingID, bypass.contains(id) {
-                    return .allow
-                }
-                return .ask
+                // The app owns this gate. External callers can never inherit any send
+                // privilege; direct chat/voice/reaction sends to the selected active
+                // meeting follow the persisted default and the per-meeting override
+                // captured when this environment was built.
+                AssistantMeetingSendGate.approval(
+                    external: external, action: action, selectedMeetingID: snapshot.contextMeetingID,
+                    override: action.meetingID.flatMap { overrides[$0] },
+                    globalDefault: globalDefault)
             },
             actionCoordinator: attention.actionCoordinator,
             approvalTitle: { call, action in Self.agentApprovalTitle(call, action) },
@@ -256,6 +257,83 @@ extension AssistantTalkController {
 }
 
 // MARK: - Conversation rendering
+
+/// One user turn in the agent timeline: the user message, one collapsed activity row for
+/// raw tool/source noise, visible errors, the final answer with its source chips, and any
+/// clarification. Raw `rocknroll_*` identifiers stay behind the Details disclosure.
+struct AssistantAgentTurnView: View {
+    let turn: AssistantAgentTurn
+    @State private var showsDetails = false
+
+    private var answer: AssistantConversationItem? { turn.activity.last(where: { $0.kind == .assistant }) }
+    private var clarifications: [AssistantConversationItem] { turn.activity.filter { $0.kind == .clarification } }
+    private var errors: [AssistantConversationItem] { turn.activity.filter { $0.isError } }
+    /// Raw steps collapse into the activity row; approvals render as their own prominent
+    /// card elsewhere, and the answer, clarifications and errors stay visible.
+    private var steps: [AssistantConversationItem] {
+        turn.activity.filter { $0.kind == .tool || $0.kind == .approval }
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            if !turn.userText.isEmpty {
+                Text(turn.userText).textSelection(.enabled).padding(10)
+                    .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                if !steps.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: errors.isEmpty ? "checkmark.circle" : "exclamationmark.triangle")
+                        Text(L("%ld steps", steps.count)).font(.caption)
+                        Spacer()
+                        Button { showsDetails.toggle() } label: {
+                            Label(L("Details"), systemImage: "chevron.right")
+                                .labelStyle(.titleOnly)
+                                .rotationEffect(.degrees(showsDetails ? 90 : 0))
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .accessibilityIdentifier("assistant.turn.details")
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 2)
+                    if showsDetails {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(steps.enumerated()), id: \.element.id) { index, item in
+                                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                    Text("\(index + 1).").foregroundStyle(.secondary)
+                                    Text(L("%@: %@", Self.friendlyToolName(item), item.text))
+                                }
+                                .font(.caption)
+                                .foregroundStyle(item.isError ? Color.red : Color.secondary)
+                                .textSelection(.enabled)
+                            }
+                        }
+                        .padding(.leading, 14)
+                        .transition(.opacity)
+                    }
+                }
+                ForEach(errors) { item in
+                    AssistantAgentItemView(item: item)
+                }
+                if let answer {
+                    AssistantAgentItemView(item: answer)
+                }
+                ForEach(clarifications) { item in
+                    AssistantAgentItemView(item: item)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Hide the internal `rocknroll_` prefix by default; the raw name stays in diagnostics.
+    static func friendlyToolName(_ item: AssistantConversationItem) -> String {
+        let raw = item.toolName ?? item.kind.rawValue
+        return raw.hasPrefix("rocknroll_") ? String(raw.dropFirst("rocknroll_".count)) : raw
+    }
+}
 
 /// One structured entry in the agent conversation: text, source chips and status.
 struct AssistantAgentItemView: View {

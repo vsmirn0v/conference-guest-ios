@@ -218,8 +218,9 @@ final class AssistantAgentTests: XCTestCase {
         guard case .success(.approvalRequired(let approval)) = result else { return XCTFail("got \(result)") }
         XCTAssertEqual(approval.action.text, "Hello colleagues")
         XCTAssertEqual(model.requests.count, 2)
-        XCTAssertTrue(model.requests[1].messages.contains {
-            $0["content"]?.contains("meeting_id must be string") == true
+        XCTAssertTrue(model.requests[1].messages.contains { message in
+            guard case .tool(let result) = message else { return false }
+            return result.summary.contains("meeting_id must be string")
         }, "The validation error must be visible to the next model step")
         XCTAssertEqual(runtime.conversation.filter(\.isError).count, 1)
         XCTAssertFalse(runtime.conversation.contains { $0.kind == .system && $0.isError })
@@ -242,8 +243,9 @@ final class AssistantAgentTests: XCTestCase {
         guard case .success(.approvalRequired(let approval)) = result else { return XCTFail("got \(result)") }
         XCTAssertEqual(approval.action.text, "Hello colleagues")
         XCTAssertEqual(approval.action.meetingID, snapshot.contextMeetingID)
-        XCTAssertTrue(model.requests[1].messages.contains {
-            $0["content"]?.contains("rocknroll_say needs text") == true
+        XCTAssertTrue(model.requests[1].messages.contains { message in
+            guard case .tool(let result) = message else { return false }
+            return result.summary.contains("rocknroll_say needs text")
         })
         XCTAssertEqual(runtime.conversation.filter(\.isError).count, 1)
         XCTAssertFalse(runtime.conversation.contains { $0.kind == .system && $0.isError })
@@ -520,6 +522,144 @@ final class AssistantAgentTests: XCTestCase {
         let none = await AssistantExternalToolPolicy.exposedTools(Provider(exposed: [readOnly]),
                                                                   serverID: "notes", trust: .init(disabled: true))
         XCTAssertTrue(none.isEmpty)
+    }
+
+    // MARK: Structured history, action-first sends, send gate
+
+    /// First-send scenario: the model calls sendChat directly with only the text — no
+    /// preliminary get_meeting and no UUID request — and the app binds the selected meeting.
+    func testSelectedMeetingSendIsActionFirst() async throws {
+        let snapshot = fixture()
+        let send = call("rocknroll_sendChat", .object(["text": .string("всем привет")]), id: "send-1")
+        let model = ScriptedModel(steps: [.toolCalls([send]), .response("Отправлено.", [])])
+        let runtime = AssistantRuntime()
+        let policy: @Sendable (AssistantAgentToolCall, AssistantCanonicalAction) -> AssistantApprovalDecision = { _, action in
+            AssistantMeetingSendGate.approval(external: false, action: action,
+                selectedMeetingID: snapshot.contextMeetingID, override: nil, globalDefault: .sendImmediately)
+        }
+        let result = await runtime.submit("напиши в чат всем привет",
+            environment: environment(snapshot: snapshot, model: model, policy: policy))
+        guard case .success(.completed(let text, _, _)) = result else { return XCTFail("got \(result)") }
+        XCTAssertEqual(text, "Отправлено.")
+        XCTAssertEqual(actions.count, 1)
+        XCTAssertEqual(actions[0].kind, .sendChat)
+        XCTAssertEqual(actions[0].text, "всем привет")
+        XCTAssertEqual(actions[0].meetingID, snapshot.contextMeetingID)
+        XCTAssertEqual(model.requests.count, 2, "One send call plus the final answer; no get_meeting")
+    }
+
+    /// Tool results keep their structured JSON, so the next model step sees the meeting
+    /// UUID instead of only a flat summary.
+    func testStructuredToolResultRetainsMeetingUUID() async throws {
+        let snapshot = fixture()
+        let get = call("rocknroll_get_meeting", .object(["meeting_id": .string("Daily sync")]), id: "g1")
+        let model = ScriptedModel(steps: [.toolCalls([get]), .response("Done", [])])
+        let runtime = AssistantRuntime()
+        let result = await runtime.submit("inspect this meeting", environment: environment(snapshot: snapshot, model: model))
+        guard case .success(.completed) = result else { return XCTFail("got \(result)") }
+        guard case .tool(let toolResult)? = model.requests.last?.messages.last else {
+            return XCTFail("The transcript must end with a typed tool result")
+        }
+        XCTAssertEqual(toolResult.callID, "g1")
+        XCTAssertEqual(toolResult.toolName, "rocknroll_get_meeting")
+        XCTAssertEqual(toolResult.json["id"]?.stringValue, snapshot.contextMeetingID?.uuidString)
+    }
+
+    /// Native tool calling requires assistant.tool_calls messages each followed by a
+    /// matching tool message with the same id.
+    func testNativeToolCallSerializationCorrelatesCallsAndResults() throws {
+        let call = self.call("rocknroll_get_meeting", .object(["meeting_id": .string("x")]), id: "c9")
+        let result = AssistantAgentToolResult(callID: "c9", toolName: "rocknroll_get_meeting",
+            json: .object(["id": .string("uuid-1")]), summary: "Daily sync")
+        let assistant = AssistantAgentModelPrompt.messageObject(.assistant(text: "", toolCalls: [call]))
+        let tool = AssistantAgentModelPrompt.messageObject(.tool(result))
+        XCTAssertEqual(assistant["role"] as? String, "assistant")
+        let calls = try XCTUnwrap(assistant["tool_calls"] as? [[String: Any]])
+        XCTAssertEqual(calls.first?["id"] as? String, "c9")
+        let function = try XCTUnwrap(calls.first?["function"] as? [String: Any])
+        XCTAssertEqual(function["name"] as? String, "rocknroll_get_meeting")
+        XCTAssertEqual(function["arguments"] as? String, #"{"meeting_id":"x"}"#)
+        XCTAssertEqual(tool["role"] as? String, "tool")
+        XCTAssertEqual(tool["tool_call_id"] as? String, "c9")
+        XCTAssertTrue((tool["content"] as? String)?.contains("uuid-1") == true)
+    }
+
+    /// History trimming drops whole user turns so a tool_call/tool pair never splits.
+    func testHistoryTrimKeepsToolPairsIntact() {
+        var store = AssistantConversationStore()
+        store.limit = 10
+        for turn in 0..<20 {
+            store.appendModel(.user("turn \(turn)"))
+            let call = AssistantAgentToolCall(id: "c\(turn)", name: "rocknroll_status", arguments: .object([:]))
+            store.appendModel(.assistant(text: "", toolCalls: [call]))
+            store.appendModel(.tool(.init(callID: "c\(turn)", toolName: "rocknroll_status",
+                                          json: .object(["ok": .bool(true)]), summary: "ok")))
+            store.appendModel(.assistant(text: "answer \(turn)", toolCalls: []))
+        }
+        let transcript = store.modelTranscript(limit: 40)
+        XCTAssertLessThanOrEqual(transcript.count, 40)
+        XCTAssertEqual(transcript.first.map { if case .user = $0 { return true } else { return false } }, true,
+                       "Trimming must start at a user turn")
+        var pending: [String] = []
+        for message in transcript {
+            switch message {
+            case .assistant(_, let calls): pending.append(contentsOf: calls.map(\.id))
+            case .tool(let result):
+                XCTAssertTrue(pending.contains(result.callID), "Every tool message follows its assistant tool call")
+                pending.removeAll { $0 == result.callID }
+            case .user: XCTAssertTrue(pending.isEmpty, "A new turn never splits a tool pair")
+            }
+        }
+        XCTAssertTrue(pending.isEmpty, "No dangling tool calls at the end")
+    }
+
+    /// Bounded projection stays valid JSON and respects the budget.
+    func testBoundedJSONProjectionStaysValid() throws {
+        let big: AssistantJSON = .object([
+            "meetings": .array((0..<50).map { .object([
+                "id": .string("meeting-\($0)"),
+                "title": .string(String(repeating: "Daily sync ", count: 20)),
+                "summary": .string(String(repeating: "Discussed the release. ", count: 20)),
+            ]) }),
+        ])
+        XCTAssertGreaterThan(big.compactDescription.count, 5000)
+        let bounded = big.bounded(to: 1500)
+        let data = try JSONSerialization.data(withJSONObject: bounded.foundationValue)
+        XCTAssertNotNil(try JSONSerialization.jsonObject(with: data),
+            "The bounded projection must remain valid JSON")
+        XCTAssertLessThan(bounded.compactDescription.count, 3000,
+            "The bounded projection must shrink well below the original")
+        // Keys survive the projection; only contents shrink.
+        guard case .object(let object) = bounded, case .array(let meetings)? = object["meetings"] else {
+            return XCTFail("Expected the meetings key and array to survive")
+        }
+        XCTAssertFalse(meetings.isEmpty)
+        XCTAssertNotNil(meetings.first?["title"])
+    }
+
+    /// The shared gate: the global default allows direct selected-meeting sends, a
+    /// per-meeting override wins, other meetings and external callers always ask.
+    func testMeetingSendGatePolicyMatrix() {
+        let selected = UUID(), other = UUID()
+        func action(_ kind: AssistantCanonicalActionKind, meeting: UUID?) -> AssistantCanonicalAction {
+            .init(kind: kind, meetingID: meeting, text: "hi")
+        }
+        XCTAssertEqual(AssistantMeetingSendGate.approval(external: false, action: action(.sendChat, meeting: selected),
+            selectedMeetingID: selected, override: nil, globalDefault: .sendImmediately), .allow)
+        XCTAssertEqual(AssistantMeetingSendGate.approval(external: false, action: action(.sendChat, meeting: selected),
+            selectedMeetingID: selected, override: nil, globalDefault: .askEveryTime), .ask)
+        XCTAssertEqual(AssistantMeetingSendGate.approval(external: false, action: action(.say, meeting: selected),
+            selectedMeetingID: selected, override: .sendImmediately, globalDefault: .askEveryTime), .allow)
+        XCTAssertEqual(AssistantMeetingSendGate.approval(external: false, action: action(.react, meeting: selected),
+            selectedMeetingID: selected, override: .ask, globalDefault: .sendImmediately), .ask)
+        XCTAssertEqual(AssistantMeetingSendGate.approval(external: false, action: action(.sendChat, meeting: other),
+            selectedMeetingID: selected, override: .sendImmediately, globalDefault: .sendImmediately), .ask)
+        XCTAssertEqual(AssistantMeetingSendGate.approval(external: false, action: action(.leave, meeting: selected),
+            selectedMeetingID: selected, override: .sendImmediately, globalDefault: .sendImmediately), .ask)
+        XCTAssertEqual(AssistantMeetingSendGate.approval(external: true, action: action(.sendChat, meeting: selected),
+            selectedMeetingID: selected, override: .sendImmediately, globalDefault: .sendImmediately), .ask)
+        XCTAssertEqual(AssistantMeetingSendGate.approval(external: true, action: action(.remember, meeting: nil),
+            selectedMeetingID: selected, override: nil, globalDefault: .askEveryTime), .allow)
     }
 
     // MARK: MCP loopback

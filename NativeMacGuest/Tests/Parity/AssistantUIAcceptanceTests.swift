@@ -639,6 +639,32 @@ import XCTest
             XCTAssertTrue(hasPopoverWindow(), "Remote transcription popover must not auto-close on remote update \(index)")
         }
     }
+
+    /// The agent timeline shows the user message, one collapsed activity row, and the
+    /// final answer; raw `rocknroll_*` names appear only behind Details.
+    func testAgentTimelineCompactsToolNoiseBehindDetails() async throws {
+        let items: [AssistantConversationItem] = [
+            .init(kind: .user, text: "what did I miss?"),
+            .init(kind: .tool, text: "Daily sync", toolName: "rocknroll_get_meeting"),
+            .init(kind: .tool, text: "3 lines", toolName: "rocknroll_read_chat"),
+            .init(kind: .assistant, text: "Anna asked about the build.",
+                  sources: [.init(id: "e1", kind: "chat", title: "Chat", at: nil)]),
+        ]
+        let turns = items.assistantTurns
+        XCTAssertEqual(turns.count, 1)
+        XCTAssertEqual(turns[0].activity.count, 3)
+
+        let view = ScrollView { AssistantAgentTurnView(turn: turns[0]) }.padding(16)
+        let rendered = await present(view, size: NSSize(width: 520, height: 300), name: "agent-turn-compact")
+        XCTAssertTrue(containsText(rendered, "what did I miss?"))
+        XCTAssertTrue(containsText(rendered, "Anna asked about the build."))
+        XCTAssertFalse(containsText(rendered, "rocknroll_"), "Raw tool identifiers stay hidden by default")
+        XCTAssertTrue(containsText(rendered, L("%ld steps", 2)))
+        try await press(rendered, L("Details"))
+        XCTAssertTrue(containsText(rendered, "get_meeting"), "Details reveals the friendly step names")
+        XCTAssertTrue(containsText(rendered, "read_chat"))
+        try capture(rendered)
+    }
 }
 
 private final class AssistantUIJudge: AttentionJudge, @unchecked Sendable {

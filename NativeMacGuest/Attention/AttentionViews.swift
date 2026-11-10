@@ -792,6 +792,13 @@ struct NativeDesktopIntelligenceSettings: View {
                 if store.agentAssistantEnabled {
                     Toggle(L("Also offer read-only MCP tools"), isOn: $store.agentExternalToolsEnabled)
                         .accessibilityIdentifier("assistant.agent.externalTools")
+                    Picker(L("Meeting sends"), selection: $store.agentMeetingSendDefault) {
+                        Text(L("Send immediately")).tag(AssistantMeetingSendDefault.sendImmediately)
+                        Text(L("Ask every time")).tag(AssistantMeetingSendDefault.askEveryTime)
+                    }
+                    .accessibilityIdentifier("assistant.agent.meetingSendDefault")
+                    Text(L("Applies to direct chat, spoken replies, and reactions in the selected active meeting. Joining, leaving, muting, reminders, automation, and external (MCP) requests always ask."))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     Text(L("Off by default. Exposes the app's MCP server tools to the agent as read-only sources. Outward actions still ask natively."))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }

@@ -9,6 +9,8 @@
 "%@ is sharing · View" = "%@ is sharing · View";
 "%ld min %ld sec" = "%ld min %ld sec";
 "%ld sec" = "%ld sec";
+"%ld steps" = "%ld steps";
+"%@: %@" = "%@: %@";
 "%@ · %@ unavailable · Pinned" = "%@ · %@ unavailable · Pinned";
 "%@ · Camera off · Pinned" = "%@ · Camera off · Pinned";
 "%@ · Live preview" = "%@ · Live preview";
@@ -61,6 +63,7 @@
 "Chat could not send: %@" = "Chat could not send: %@";
 "Chat isn't available right now." = "Chat isn't available right now.";
 "Chat message" = "Chat message";
+"Chat, voice, and reactions" = "Chat, voice, and reactions";
 "Checking transcript availability…" = "Checking transcript availability…";
 "Choose audio output" = "Choose audio output";
 "Choose the meeting website to open this link." = "Choose the meeting website to open this link.";
@@ -166,6 +169,7 @@
 "Local shared screen thumbnail" = "Local shared screen thumbnail";
 "Mark section reviewed" = "Mark section reviewed";
 "Meeting" = "Meeting";
+"Meeting sends" = "Meeting sends";
 "Meeting transcript is on" = "Meeting transcript is on";
 "Meeting website" = "Meeting website";
 "Message the group…" = "Message the group…";
@@ -265,6 +269,7 @@
 "Second device · audio off" = "Second device · audio off";
 "Selected content" = "Selected content";
 "Send chat message" = "Send chat message";
+"Send immediately" = "Send immediately";
 "Sending…" = "Sending…";
 "Share" = "Share";
 "Share screen" = "Share screen";
@@ -1413,6 +1418,7 @@
 "Transcription started." = "Transcription started.";
 "What people say, including you, is turned into text." = "What people say, including you, is turned into text.";
 "Dismiss" = "Dismiss";
+"Details" = "Details";
 "Transcription is on since %@" = "Transcription is on since %@";
 "Talk here" = "Talk here";
 "Moving microphone…" = "Moving microphone…";
@@ -1881,6 +1887,8 @@
 "Ask about %@ or choose another meeting below." = "Ask about %@ or choose another meeting below.";
 "Ask about %@ or request an action…" = "Ask about %@ or request an action…";
 "Ask for time" = "Ask for time";
+"Ask every time" = "Ask every time";
+"Applies to direct chat, spoken replies, and reactions in the selected active meeting. Joining, leaving, muting, reminders, automation, and external (MCP) requests always ask." = "Applies to direct chat, spoken replies, and reactions in the selected active meeting. Joining, leaving, muting, reminders, automation, and external (MCP) requests always ask.";
 "Assistant meeting context" = "Assistant meeting context";
 "Changes only the meeting Assistant talks about. It does not open the meeting or move microphone or sound." = "Changes only the meeting Assistant talks about. It does not open the meeting or move microphone or sound.";
 "For Assistant: %@" = "For Assistant: %@";
@@ -1950,6 +1958,7 @@
 "Nothing was said in the last %ld minutes." = "Nothing was said in the last %ld minutes.";
 "Off by default. Answers play only when the Mac's output is explicitly a headphone data source, never into a meeting." = "Off by default. Answers play only when the Mac's output is explicitly a headphone data source, never into a meeting.";
 "Only chat, spoken replies, and reactions in this active meeting. Leave always asks." = "Only chat, spoken replies, and reactions in this active meeting. Leave always asks.";
+"Only chat, spoken replies, and reactions in this active meeting. Leave always asks. “Use default” follows Settings → Assistant." = "Only chat, spoken replies, and reactions in this active meeting. Leave always asks. “Use default” follows Settings → Assistant.";
 "Open questions" = "Open questions";
 "Open tasks: %ld of %ld" = "Open tasks: %ld of %ld";
 "Opened “%@”." = "Opened “%@”.";

@@ -16,8 +16,11 @@ struct AssistantConversationItem: Identifiable, Codable, Equatable, Sendable {
     var at = Date()
 }
 
-struct AssistantConversationStore: Codable, Equatable, Sendable {
+struct AssistantConversationStore: Equatable, Sendable {
     var items: [AssistantConversationItem] = []
+    /// The model-facing transcript: typed messages with tool calls correlated to their
+    /// results. Presentation `items` stay flattened for the timeline; history never is.
+    private(set) var history: [AssistantAgentModelMessage] = []
     var limit = 80
 
     mutating func append(_ item: AssistantConversationItem) {
@@ -25,14 +28,54 @@ struct AssistantConversationStore: Codable, Equatable, Sendable {
         if items.count > limit { items.removeFirst(items.count - limit) }
     }
 
-    mutating func clear() { items.removeAll() }
+    mutating func appendModel(_ message: AssistantAgentModelMessage) {
+        history.append(message)
+        trimHistory()
+    }
 
-    func transcript(limit: Int = 40) -> [[String: String]] {
-        items.suffix(limit).map { item in
-            var text = item.text
-            if item.kind == .tool, let name = item.toolName { text = "[tool \(name)] " + text }
-            return ["role": item.kind == .user ? "user" : "assistant", "content": String(text.prefix(3000))]
+    mutating func clear() { items.removeAll(); history.removeAll() }
+
+    /// The bounded transcript for one model step. Whole user turns are dropped, never a
+    /// tool_call/tool pair, so the projection stays valid for native tool calling.
+    func modelTranscript(limit: Int = 40) -> [AssistantAgentModelMessage] {
+        Array(history.suffix(limit))
+    }
+
+    private mutating func trimHistory() {
+        guard history.count > limit else { return }
+        if let firstKeep = history.indices.first(where: { history[$0].isUser && $0 >= history.count - limit }) {
+            history.removeFirst(firstKeep)
+        } else {
+            history.removeFirst(history.count - limit)
         }
+    }
+}
+
+extension AssistantAgentModelMessage {
+    var isUser: Bool { if case .user = self { return true } else { return false } }
+}
+
+/// One user turn as the timeline shows it: the user message plus everything that followed
+/// until the next user message. Raw tool entries collapse into a single activity row.
+struct AssistantAgentTurn: Identifiable, Equatable {
+    var id: UUID
+    var userText: String
+    var activity: [AssistantConversationItem]
+}
+
+extension Array where Element == AssistantConversationItem {
+    var assistantTurns: [AssistantAgentTurn] {
+        var turns: [AssistantAgentTurn] = []
+        for item in self {
+            if item.kind == .user {
+                turns.append(.init(id: item.id, userText: item.text, activity: []))
+            } else if let index = turns.indices.last {
+                turns[index].activity.append(item)
+            } else {
+                turns.append(.init(id: item.id, userText: "", activity: [item]))
+            }
+        }
+        return turns
     }
 }
 
@@ -160,6 +203,7 @@ struct AssistantAgentEnvironment: Sendable {
     private var lastRuleProposal: AssistantAutomationRuleProposal?
 
     var conversation: [AssistantConversationItem] { items }
+    var turns: [AssistantAgentTurn] { items.assistantTurns }
     var canResumeApproval: Bool { pendingApproval != nil }
 
     /// Surface an out-of-run error (for example an environment build failure) in the
@@ -185,7 +229,7 @@ struct AssistantAgentEnvironment: Sendable {
             return .failure(AssistantAgentError.unsupported)
         }
         let generation = UUID(); runGeneration = generation
-        store.append(.init(kind: .user, text: clean)); syncItems()
+        store.append(.init(kind: .user, text: clean)); store.appendModel(.user(clean)); syncItems()
         state = .preparingContext
         do {
             let result = try await runLoop(generation: generation, environment: environment)
@@ -215,6 +259,7 @@ struct AssistantAgentEnvironment: Sendable {
             let result = AssistantAgentToolResult(callID: call.id, toolName: call.name,
                 json: .object(["denied": .bool(true)]), summary: L("Denied. Nothing was sent."), isError: false)
             store.append(.init(kind: .approval, text: result.summary)); syncItems()
+            store.appendModel(.tool(result))
             return await continueAfterToolResult(result, generation: generation, environment: environment)
         }
         state = .executingApprovedAction
@@ -241,7 +286,7 @@ struct AssistantAgentEnvironment: Sendable {
             try Task.checkCancellation()
             guard generation == runGeneration else { throw CancellationError() }
             state = .waitingForModel
-            let request = AssistantAgentModelRequest(messages: store.transcript(), tools: environment.registry.descriptors,
+            let request = AssistantAgentModelRequest(messages: store.modelTranscript(), tools: environment.registry.descriptors,
                                                      context: environment.context)
             let step = try await environment.model.next(request)
             guard generation == runGeneration else { throw CancellationError() }
@@ -250,12 +295,14 @@ struct AssistantAgentEnvironment: Sendable {
             switch step {
             case .response(let text, let sources):
                 let proposal = lastRuleProposal
-                store.append(.init(kind: .assistant, text: text, sources: sources)); syncItems()
+                store.append(.init(kind: .assistant, text: text, sources: sources))
+                store.appendModel(.assistant(text: text, toolCalls: [])); syncItems()
                 state = .completed
                 return .completed(text, sources: sources, ruleProposal: proposal)
 
             case .needsUserInput(let question):
-                store.append(.init(kind: .clarification, text: question)); syncItems()
+                store.append(.init(kind: .clarification, text: question))
+                store.appendModel(.assistant(text: question, toolCalls: [])); syncItems()
                 state = .waitingForUserInput
                 return .needsUserInput(question)
 
@@ -272,11 +319,15 @@ struct AssistantAgentEnvironment: Sendable {
                         // Validation failures are observable tool results. Stop this batch before
                         // any later action, then let the model correct the call within the run budget.
                         toolCalls += 1
+                        store.appendModel(.assistant(text: "", toolCalls: [raw]))
                         let result = AssistantAgentToolResult.error(raw, error.localizedDescription)
                         appendTool(result); lastResult = result
                         break
                     }
                     toolCalls += 1
+                    // The assistant tool-call message must precede its tool result so the
+                    // provider-side history stays a valid tool-calling sequence.
+                    store.appendModel(.assistant(text: "", toolCalls: [call]))
                     let tool = environment.registry.tool(named: call.name)
                     let requiresApproval = tool?.descriptor.requiresApproval == true
                     if requiresApproval, let actionTool = tool as? any AssistantAgentActionTool {
@@ -344,6 +395,7 @@ struct AssistantAgentEnvironment: Sendable {
 
     private func appendTool(_ result: AssistantAgentToolResult) {
         if let proposal = result.ruleProposal { lastRuleProposal = proposal }
+        store.appendModel(.tool(result))
         store.append(.init(kind: .tool, text: result.summary, toolName: result.toolName,
                            sources: result.evidence, isError: result.isError)); syncItems()
     }

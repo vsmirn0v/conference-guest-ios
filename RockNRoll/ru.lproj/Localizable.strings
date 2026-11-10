@@ -9,6 +9,8 @@
 "%@ is sharing · View" = "%@ транслирует экран · Показать";
 "%ld min %ld sec" = "%ld мин %ld с";
 "%ld sec" = "%ld с";
+"%ld steps" = "%ld шагов";
+"%@: %@" = "%@: %@";
 "%@ · %@ unavailable · Pinned" = "%@ · %@: нет потока · Закреплено";
 "%@ · Camera off · Pinned" = "%@ · Камера выключена · Закреплено";
 "%@ · Live preview" = "%@ · Живой предпросмотр";
@@ -61,6 +63,7 @@
 "Chat could not send: %@" = "Не удалось отправить сообщение: %@";
 "Chat isn't available right now." = "Чат сейчас недоступен.";
 "Chat message" = "Сообщение в чат";
+"Chat, voice, and reactions" = "Чат, голос и реакции";
 "Checking transcript availability…" = "Проверяем доступность расшифровки…";
 "Choose audio output" = "Выбрать аудиоустройство";
 "Choose the meeting website to open this link." = "Выберите сайт встречи, чтобы открыть ссылку.";
@@ -166,6 +169,7 @@
 "Local shared screen thumbnail" = "Миниатюра транслируемого экрана";
 "Mark section reviewed" = "Отметить как просмотренное";
 "Meeting" = "Встреча";
+"Meeting sends" = "Отправка во встречу";
 "Meeting transcript is on" = "Расшифровка встречи включена";
 "Meeting website" = "Сайт встречи";
 "Message the group…" = "Сообщение группе…";
@@ -265,6 +269,7 @@
 "Second device · audio off" = "Второе устройство · Без звука";
 "Selected content" = "Выбранное содержимое";
 "Send chat message" = "Отправить сообщение";
+"Send immediately" = "Отправлять сразу";
 "Sending…" = "Отправляем…";
 "Share" = "Экран";
 "Share screen" = "Транслировать экран";
@@ -1411,6 +1416,7 @@
 "Transcription started." = "Началась расшифровка.";
 "What people say, including you, is turned into text." = "Речь участников, включая вашу, превращается в текст.";
 "Dismiss" = "Закрыть";
+"Details" = "Подробности";
 "Transcription is on since %@" = "Расшифровка включена с %@";
 "Talk here" = "Говорить здесь";
 "Moving microphone…" = "Переключаем микрофон…";
@@ -1879,6 +1885,8 @@
 "Ask about %@ or choose another meeting below." = "Спросите о встрече «%@» или выберите другую встречу ниже.";
 "Ask about %@ or request an action…" = "Спросите о встрече «%@» или попросите выполнить действие…";
 "Ask for time" = "Попросить время";
+"Ask every time" = "Спрашивать каждый раз";
+"Applies to direct chat, spoken replies, and reactions in the selected active meeting. Joining, leaving, muting, reminders, automation, and external (MCP) requests always ask." = "Действует для прямых сообщений в чат, голосовых ответов и реакций в выбранной активной встрече. Подключение, выход, отключение микрофона, напоминания, автоматизация и внешние (MCP) запросы всегда требуют подтверждения.";
 "Assistant meeting context" = "Контекст встречи для Ассистента";
 "Changes only the meeting Assistant talks about. It does not open the meeting or move microphone or sound." = "Меняет только встречу, о которой идёт речь. Не открывает встречу и не переключает микрофон или звук.";
 "For Assistant: %@" = "Для Ассистента: %@";
@@ -1948,6 +1956,7 @@
 "Nothing was said in the last %ld minutes." = "За последние %ld минут ничего не сказали.";
 "Off by default. Answers play only when the Mac's output is explicitly a headphone data source, never into a meeting." = "По умолчанию выключено. Ответы воспроизводятся только при явно выбранном выходе на наушники и никогда не передаются во встречу.";
 "Only chat, spoken replies, and reactions in this active meeting. Leave always asks." = "Только чат, голосовые ответы и реакции в этой активной встрече. Выход всегда требует подтверждения.";
+"Only chat, spoken replies, and reactions in this active meeting. Leave always asks. “Use default” follows Settings → Assistant." = "Только чат, голосовые ответы и реакции в этой активной встрече. Выход всегда требует подтверждения. «По умолчанию» использует настройки Ассистента.";
 "Open questions" = "Открытые вопросы";
 "Open tasks: %ld of %ld" = "Открытые задачи: %ld из %ld";
 "Opened “%@”." = "Открыта встреча «%@».";

@@ -540,6 +540,10 @@ enum AssistantNativeToolProvider {
     private static func actionTools(snapshot: AssistantNativeSnapshot, hooks: Hooks) -> [any AssistantAgentTool] {
         let targetArgument = AssistantArgumentSpec(name: "meeting_id", type: .string, required: true,
                                                    description: "Typed active meeting ID; join may use a listed historical target ID.")
+        // Direct sends to the selected meeting are action-first: meeting_id may be omitted
+        // and the app binds the exact selected active meeting. Everything else stays strict.
+        let selectedSendArgument = AssistantArgumentSpec(name: "meeting_id", type: .string, required: false,
+                                                         description: "Optional typed active meeting ID; omit for the selected meeting.")
         let textArgument = AssistantArgumentSpec(name: "text", type: .string, required: true, description: "Exact outward text.")
         func descriptor(_ name: String, _ description: String, arguments: [AssistantArgumentSpec] = []) -> AssistantAgentToolDescriptor {
             .init(name: "rocknroll_" + name, description: description, arguments: arguments, requiresApproval: true)
@@ -555,12 +559,15 @@ enum AssistantNativeToolProvider {
                 arguments: [targetArgument]), snapshot: snapshot, executor: hooks.executeAction),
             AssistantNativeActionTool(descriptor: descriptor("mute", "Mute the microphone in the exact active meeting after approval.",
                 arguments: [targetArgument]), snapshot: snapshot, executor: hooks.executeAction),
-            AssistantNativeActionTool(descriptor: descriptor("sendChat", "Send the exact text to the meeting's chat after approval.",
-                arguments: [targetArgument, textArgument]), snapshot: snapshot, executor: hooks.executeAction),
-            AssistantNativeActionTool(descriptor: descriptor("say", "Speak the exact text into the meeting after approval.",
-                arguments: [targetArgument, textArgument]), snapshot: snapshot, executor: hooks.executeAction),
-            AssistantNativeActionTool(descriptor: descriptor("react", "Send the exact reaction after approval.",
-                arguments: [targetArgument, .init(name: "reaction", type: .string, required: true,
+            AssistantNativeActionTool(descriptor: descriptor("sendChat",
+                "Send the exact text to the selected meeting's chat. Omit meeting_id to use the selected active meeting; no preliminary read is needed.",
+                arguments: [selectedSendArgument, textArgument]), snapshot: snapshot, executor: hooks.executeAction),
+            AssistantNativeActionTool(descriptor: descriptor("say",
+                "Speak the exact text into the selected meeting. Omit meeting_id to use the selected active meeting; no preliminary read is needed.",
+                arguments: [selectedSendArgument, textArgument]), snapshot: snapshot, executor: hooks.executeAction),
+            AssistantNativeActionTool(descriptor: descriptor("react",
+                "Send the exact reaction in the selected meeting. Omit meeting_id to use the selected active meeting; no preliminary read is needed.",
+                arguments: [selectedSendArgument, .init(name: "reaction", type: .string, required: true,
                                                 allowedValues: MeetingReaction.allCases.map(\.rawValue))]),
                 snapshot: snapshot, executor: hooks.executeAction),
             AssistantNativeActionTool(descriptor: descriptor("remind", "Set a reminder for the exact Moment after approval.",

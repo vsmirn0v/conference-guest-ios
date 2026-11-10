@@ -1503,6 +1503,7 @@ import XCTest
 
     func testAssistantCommandsConfirmOutwardActionsAndScopeSendBypass() async throws {
         let store = store(); store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
+        store.agentMeetingSendDefault = .askEveryTime
         let (infra, _) = try await meeting("infra")
         infra.chat.canSend = true
         let coordinator = AttentionCoordinator(store: store); coordinator.meetings = { [infra] }
@@ -1536,6 +1537,61 @@ import XCTest
         talk.targetMeetingID = UUID()
         XCTAssertEqual(talk.pending?.command.meetingID, infra.sessionID, "Changing the picker cannot retarget a pending leave")
         talk.cancelPending()
+    }
+
+    func testAssistantCommandsGlobalSendDefaultAndPerMeetingOverride() async throws {
+        let store = store(); store.provider = .init(kind: .local, baseURL: "http://192.168.1.5:1/v1", model: "m")
+        // Fresh installs default to sending direct chat/voice/reaction sends immediately.
+        XCTAssertEqual(store.agentMeetingSendDefault, .sendImmediately)
+        let (infra, _) = try await meeting("infra-defaults")
+        infra.chat.canSend = true
+        let coordinator = AttentionCoordinator(store: store); coordinator.meetings = { [infra] }
+        var sent: [String] = []
+        coordinator.deliverChat = { _, text in sent.append(text); return true }
+        let talk = coordinator.talk
+        talk.interpretOverride = { _ in .init(action: .sendChat, meetingID: infra.sessionID, text: "I will check") }
+
+        // Global default: no per-meeting grant is needed for the selected meeting.
+        await talk.run("send that I will check")
+        try await spin { sent.count == 1 }
+        XCTAssertNil(talk.pending, "The global default sends direct selected-meeting chat without a card")
+
+        // A per-meeting ask override forces the confirmation card back on.
+        talk.setSendPolicy(.ask, for: infra.sessionID)
+        await talk.run("send that I will check")
+        XCTAssertEqual(talk.pending?.command.action, .sendChat)
+        XCTAssertTrue(sent.count == 1, "The ask override blocks the direct send")
+        talk.confirmPending()
+        try await spin { sent.count == 2 }
+
+        // The override is session-scoped state on the controller, not the store.
+        XCTAssertEqual(talk.sendPolicy(for: infra.sessionID), .ask)
+        talk.setSendPolicy(.inherit, for: infra.sessionID)
+        XCTAssertEqual(talk.sendPolicy(for: infra.sessionID), .inherit)
+        await talk.run("send that I will check")
+        try await spin { sent.count == 3 }
+        XCTAssertNil(talk.pending)
+    }
+
+    func testAssistantMeetingSendDefaultPersistsAcrossRelaunch() {
+        let suite = "assistant-send-default-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let keychain = AttentionKeychain(service: "assistant-send-default-\(UUID().uuidString)")
+        defer { keychain.deleteAll() }
+        func makeStore() -> AttentionStore {
+            let store = AttentionStore(root: folder(), defaults: defaults, keychain: keychain)
+            closeLibraryAtTeardown(store)
+            return store
+        }
+        let first = makeStore()
+        XCTAssertEqual(first.agentMeetingSendDefault, .sendImmediately, "Missing value defaults to sending immediately")
+        first.agentMeetingSendDefault = .askEveryTime
+        let second = makeStore()
+        XCTAssertEqual(second.agentMeetingSendDefault, .askEveryTime, "The global default persists across launches")
+        second.agentMeetingSendDefault = .sendImmediately
+        let third = makeStore()
+        XCTAssertEqual(third.agentMeetingSendDefault, .sendImmediately)
     }
 
     func testAssistantCommandsExecuteReadsMemoryModeMuteAndCustomReminder() async throws {

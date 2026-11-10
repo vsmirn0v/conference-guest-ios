@@ -274,6 +274,12 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     /// servers as they are added) to the agent runtime. Off by default.
     @Published var agentExternalToolsEnabled: Bool { didSet { defaults.set(agentExternalToolsEnabled, forKey: Self.agentExternalToolsKey) } }
     static let agentExternalToolsKey = "assistant.agent.externalTools"
+    /// Global default for direct, user-initiated chat/voice/reaction sends to the
+    /// selected active meeting. Persisted; missing value defaults to sending immediately.
+    @Published var agentMeetingSendDefault: AssistantMeetingSendDefault {
+        didSet { defaults.set(agentMeetingSendDefault.rawValue, forKey: Self.agentMeetingSendDefaultKey) }
+    }
+    static let agentMeetingSendDefaultKey = "assistant.agent.meetingSendDefault"
     /// Output-device UIDs the person marked with "This is a headphone".
     @Published private(set) var headphoneUIDs: Set<String>
     static let outcomesKey = "attention.outcomes.enabled", remoteOutcomesKey = "attention.outcomes.remote"
@@ -404,6 +410,10 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         talkBack = defaults.bool(forKey: Self.talkBackKey)
         agentAssistantEnabled = defaults.bool(forKey: Self.agentAssistantKey)
         agentExternalToolsEnabled = defaults.bool(forKey: Self.agentExternalToolsKey)
+        // An absent value keeps the previous implicit behavior for upgraded installs:
+        // direct sends to the selected meeting went through after one approval in a session.
+        agentMeetingSendDefault = AssistantMeetingSendDefault(rawValue: defaults.string(forKey: Self.agentMeetingSendDefaultKey) ?? "")
+            ?? .sendImmediately
         headphoneUIDs = Set(defaults.stringArray(forKey: Self.headphoneUIDsKey) ?? [])
         provider = defaults.data(forKey: Self.providerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
             ?? AttentionProvider.defaults[.openAI]!

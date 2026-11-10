@@ -485,6 +485,9 @@ import XCTest
     func testRunExternalNeverUsesSendBypassAndCancelsPending() {
         runAsyncTest { @MainActor in
             let store = self.store(); store.provider = .init(kind: .local, baseURL: "http://127.0.0.1:1/v1", model: "m")
+            // Even the strongest combination — global direct-send default plus a
+            // per-meeting send-immediately override — never applies to external callers.
+            store.agentMeetingSendDefault = .sendImmediately
             guard let infra = try? await self.meeting("mcp-infra") else {
                 XCTFail("the fixture meeting should connect"); return
             }

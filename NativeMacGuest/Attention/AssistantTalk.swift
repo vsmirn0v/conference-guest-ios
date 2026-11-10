@@ -27,7 +27,8 @@ import SwiftUI
     @Published private(set) var listening = false
     @Published var targetMeetingID: UUID?
     @Published private(set) var audioError: String?
-    @Published private(set) var sendWithoutAsking: Set<UUID> = []
+    /// Session-scoped per-meeting send overrides on top of the persisted global default.
+    @Published private(set) var sendPolicyOverrides: [UUID: AssistantMeetingSendPolicy] = [:]
     /// MCP requests are external callers: the native confirmation gate cannot be bypassed.
     private var externalMCPRequest = false
     // MARK: Agent runtime (typed tools, bounded loop; off unless the store flag is on)
@@ -172,7 +173,11 @@ import SwiftUI
         }
         if command.meetingID != nil { targetMeetingID = command.meetingID }
         if command.needsConfirmation {
-            let bypass = !external && command.sendBypassAllowed && command.meetingID.map { sendWithoutAsking.contains($0) } == true
+            let bypass = AssistantMeetingSendGate.bypass(
+                external: external, sendBypassAllowed: command.sendBypassAllowed,
+                meetingID: command.meetingID,
+                policy: command.meetingID.flatMap { sendPolicyOverrides[$0] },
+                globalDefault: attention?.store.agentMeetingSendDefault ?? .sendImmediately)
             if !bypass {
                 pending = .init(command: command, context: context, title: confirmationTitle(command, context: context),
                     detail: confirmationDetail(command))
@@ -214,7 +219,7 @@ import SwiftUI
         case .leave:
             guard let target, let model = activeModel(target.id) else { throw AssistantCommandError.unknownMeeting }
             guard await leaveMeeting(model) else { throw AssistantCommandError.unsupported }
-            sendWithoutAsking.remove(target.id)
+            sendPolicyOverrides.removeValue(forKey: target.id)
             return L("Left “%@”.", target.title)
         case .mute:
             guard let target, let model = activeModel(target.id) else { throw AssistantCommandError.unknownMeeting }
@@ -304,9 +309,21 @@ import SwiftUI
     private func activeModel(_ id: UUID) -> NativeDesktopMeetingModel? {
         attention?.meetings().first { $0.sessionID == id && !$0.isClosed }
     }
-    func allowsDirectSend(_ id: UUID) -> Bool { sendWithoutAsking.contains(id) }
+    func allowsDirectSend(_ id: UUID) -> Bool { (sendPolicyOverrides[id] ?? .inherit) == .sendImmediately }
     func setDirectSend(_ enabled: Bool, for id: UUID) {
-        if enabled { sendWithoutAsking.insert(id) } else { sendWithoutAsking.remove(id) }
+        setSendPolicy(enabled ? .sendImmediately : .inherit, for: id)
+    }
+    func sendPolicy(for id: UUID) -> AssistantMeetingSendPolicy { sendPolicyOverrides[id] ?? .inherit }
+    func setSendPolicy(_ policy: AssistantMeetingSendPolicy, for id: UUID) {
+        if policy == .inherit { sendPolicyOverrides.removeValue(forKey: id) }
+        else { sendPolicyOverrides[id] = policy }
+    }
+    /// One resolver for the legacy path, the agent policy, and tests.
+    func sendsWithoutAsking(_ id: UUID, globalDefault: AssistantMeetingSendDefault? = nil) -> Bool {
+        let resolved = globalDefault ?? attention?.store.agentMeetingSendDefault ?? .sendImmediately
+        return AssistantMeetingSendGate.bypass(external: false, sendBypassAllowed: true,
+                                               meetingID: id, policy: sendPolicyOverrides[id],
+                                               globalDefault: resolved)
     }
 
     private func append(_ role: Entry.Role, _ text: String) {
@@ -798,9 +815,14 @@ struct AssistantTalkView: View {
                         Button(L("Catch up for 10 minutes")) { talk.perform(.init(action: .catchUp, meetingID: id)) }
                         Button(L("Mute microphone")) { talk.perform(.init(action: .mute, meetingID: id)) }
                         Divider()
-                        Toggle(L("Send without asking in this meeting"), isOn: Binding(get: { talk.allowsDirectSend(id) },
-                            set: { talk.setDirectSend($0, for: id) }))
-                            .help(L("Only chat, spoken replies, and reactions in this active meeting. Leave always asks."))
+                        Picker(L("Chat, voice, and reactions"), selection: Binding(get: { talk.sendPolicy(for: id) },
+                            set: { talk.setSendPolicy($0, for: id) })) {
+                            Text(L("Use default")).tag(AssistantMeetingSendPolicy.inherit)
+                            Text(L("Send immediately")).tag(AssistantMeetingSendPolicy.sendImmediately)
+                            Text(L("Ask every time")).tag(AssistantMeetingSendPolicy.ask)
+                        }
+                        .pickerStyle(.inline)
+                        .help(L("Only chat, spoken replies, and reactions in this active meeting. Leave always asks. “Use default” follows Settings → Assistant."))
                     }
                 } label: { Label(L("Quick actions"), systemImage: "bolt") }
                     .disabled(talk.targetMeetingID == nil)
@@ -817,8 +839,8 @@ struct AssistantTalkView: View {
                                     .foregroundStyle(.secondary).multilineTextAlignment(.center)
                             }.frame(maxWidth: .infinity).padding(.vertical, 50)
                         }
-                        ForEach(agentRuntime.items) { item in
-                            AssistantAgentItemView(item: item)
+                        ForEach(agentRuntime.turns) { turn in
+                            AssistantAgentTurnView(turn: turn)
                         }
                     } else if talk.entries.isEmpty {
                         VStack(spacing: 8) {

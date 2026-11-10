@@ -162,7 +162,7 @@ struct AssistantAutomationRuleProposal: Codable, Equatable, Identifiable, Sendab
     var execution: Execution
 }
 
-struct AssistantAgentToolResult: Equatable, Sendable {
+struct AssistantAgentToolResult: Codable, Equatable, Sendable {
     var callID: String
     var toolName: String
     var json: AssistantJSON
@@ -214,10 +214,64 @@ enum AssistantAgentModelStep: Equatable, Sendable {
     case needsUserInput(String)
 }
 
+/// One turn's worth of history as typed model messages. Tool calls stay correlated with
+/// their results (`toolCallID`), so providers that support native tool calling receive a
+/// valid `assistant.tool_calls` + `tool` sequence instead of a flattened paraphrase.
+enum AssistantAgentModelMessage: Equatable, Sendable {
+    case user(String)
+    /// A model step: a plain answer, or tool calls awaiting their results.
+    case assistant(text: String, toolCalls: [AssistantAgentToolCall])
+    /// The observed result of one tool call, always matching a preceding assistant tool call.
+    case tool(AssistantAgentToolResult)
+}
+
 struct AssistantAgentModelRequest: Equatable, Sendable {
-    var messages: [[String: String]]
+    var messages: [AssistantAgentModelMessage]
     var tools: [AssistantAgentToolDescriptor]
     var context: [String: String]
+}
+
+/// Persisted global default for direct chat/voice/reaction sends to the selected meeting.
+enum AssistantMeetingSendDefault: String, Codable, CaseIterable, Sendable {
+    /// Direct, user-initiated sends to the selected active meeting go without a card.
+    case sendImmediately
+    /// Every outward send asks, unless a per-meeting override says otherwise.
+    case askEveryTime
+}
+
+/// Session-scoped per-meeting override. `inherit` follows the persisted global default.
+enum AssistantMeetingSendPolicy: String, Codable, CaseIterable, Sendable {
+    case inherit, ask, sendImmediately
+}
+
+/// One shared approval gate for the bounded agent and the legacy interpreter. External
+/// (MCP) callers can never inherit any send privilege, whatever the defaults say.
+enum AssistantMeetingSendGate {
+    static func approval(external: Bool, action: AssistantCanonicalAction, selectedMeetingID: UUID?,
+                         override policy: AssistantMeetingSendPolicy?,
+                         globalDefault: AssistantMeetingSendDefault) -> AssistantApprovalDecision {
+        // Local private memory writes need no card.
+        if action.kind == .remember { return .allow }
+        // Only direct chat/voice/reaction sends to the selected active meeting qualify;
+        // nothing else (join/leave/mute, reminders, other meetings) ever skips the card.
+        guard !external, [.sendChat, .say, .react].contains(action.kind),
+              let id = action.meetingID, id == selectedMeetingID else { return .ask }
+        let immediate: Bool
+        switch policy ?? .inherit {
+        case .inherit: immediate = globalDefault == .sendImmediately
+        case .ask: immediate = false
+        case .sendImmediately: immediate = true
+        }
+        return immediate ? .allow : .ask
+    }
+
+    /// Whether a legacy-typed command may bypass its confirmation card.
+    static func bypass(external: Bool, sendBypassAllowed: Bool, meetingID: UUID?,
+                       policy: AssistantMeetingSendPolicy?, globalDefault: AssistantMeetingSendDefault) -> Bool {
+        guard !external, sendBypassAllowed, let id = meetingID else { return false }
+        return approval(external: false, action: .init(kind: .sendChat, meetingID: id),
+                        selectedMeetingID: id, override: policy, globalDefault: globalDefault) == .allow
+    }
 }
 
 protocol AssistantAgentModel: Sendable {
