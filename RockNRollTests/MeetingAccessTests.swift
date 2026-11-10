@@ -35,7 +35,7 @@ final class MeetingAccessTests: XCTestCase {
             for display in ConferenceDisplayMode.allCases {
                 let state = MeetingViewState(layout: layout, display: display, manualFocus: true)
                 XCTAssertEqual(state.layout, layout)
-                XCTAssertEqual(state.permitsLayout, display != .audioOnly)
+                XCTAssertTrue(state.permitsLayout)
                 XCTAssertEqual(state.title, display == .audioOnly ? L("Audio only") : display == .screenShares ? L("Shares only") : layout.title)
             }
         }

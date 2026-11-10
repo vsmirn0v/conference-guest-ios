@@ -382,11 +382,15 @@ final class GuestGalleryTests: XCTestCase {
         XCTAssertTrue(items.allSatisfy { $0.renderer == nil })
         streams.displayMode = .screenShares
         let shares = await snapshot(streams)
-        XCTAssertEqual(shares.count, 1)
-        XCTAssertEqual(shares.first?.id.participant, "b")
+        XCTAssertEqual(shares.map(\.id.participant), ["a", "b", "b", "c"])
+        XCTAssertEqual(shares.map(\.id.isShare), [false, false, true, false])
+        XCTAssertEqual(shares.map(\.active), [false, false, true, false],
+                       "Only the share keeps live video; participant tiles stay listed without it")
         streams.displayMode = .audioOnly
         let audio = await snapshot(streams)
-        XCTAssertTrue(audio.isEmpty)
+        XCTAssertEqual(audio.map(\.id.participant), ["a", "b", "c"])
+        XCTAssertTrue(audio.allSatisfy { !$0.id.isShare && !$0.active && $0.renderer == nil },
+                      "Audio only keeps every participant tile without video or shares")
     }
 
     func testGalleryNeverReparentsProviderRendererAndKeepsTileIdentity() async {

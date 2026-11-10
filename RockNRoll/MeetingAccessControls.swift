@@ -20,7 +20,7 @@ struct MeetingViewState: Equatable {
         }
     }
     var symbol: String { display == .all ? selectedLayout.symbol : display.symbol }
-    var permitsLayout: Bool { display != .audioOnly }
+    var permitsLayout: Bool { true }
 }
 
 /// One owned transient panel per call. Deferred actions cannot reach a retired
@@ -240,8 +240,7 @@ struct MeetingViewContent: View {
                             .disabled(!state.permitsLayout || (mode == .grid && !state.galleryAvailable))
                     }
                 } header: { Text(L("Layout")) } footer: {
-                    if !state.permitsLayout { Text(L("Your layout is remembered while Audio only is selected.")) }
-                    else if !state.galleryAvailable { Text(L("Gallery is available when more participants or screens are present.")) }
+                    if !state.galleryAvailable { Text(L("Gallery is available when more participants or screens are present.")) }
                 }
                 Section {
                     ForEach(Array(ConferenceDisplayMode.allCases.enumerated()), id: \.offset) { _, mode in
