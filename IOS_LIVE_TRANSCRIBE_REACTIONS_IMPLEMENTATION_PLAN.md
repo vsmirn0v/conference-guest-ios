@@ -2,7 +2,7 @@
 
 ## Status
 
-- **Planning only — do not implement yet.**
+- **Implemented and shipped as build 116 (2026-11-10).** Reactions now render as rows in the Live text timeline, interleaved chronologically with transcript lines; commit `818dfad`.
 - Source: Antigravity / Gemini conversation `c5ba4666-5e2e-4b51-b55c-539f531a3928`, titled **iOS Live Transcribe Reactions Parity**.
 - Original feature request: reactions currently appear in iOS text chat, but are not duplicated in the Live text view as they are on Desktop.
 - The original Gemini plan is preserved below, followed by Gemini's critique and an independent review against the current repository.
