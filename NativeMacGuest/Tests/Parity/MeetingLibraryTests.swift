@@ -6,6 +6,7 @@ import XCTest
 /// outbox queueing/backoff and legacy-outcome migration idempotence.
 final class MeetingLibraryTests: XCTestCase {
     private var temp: URL!
+    private var stores: [MeetingLibraryStore] = []
 
     override func setUp() {
         super.setUp()
@@ -14,13 +15,18 @@ final class MeetingLibraryTests: XCTestCase {
         try? FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
+        // Close every connection before the temp directory is deleted: an open WAL
+        // handle outliving its directory is what "vnode unlinked while in use" reports.
+        for store in stores { await store.close() }
+        stores.removeAll()
         try? FileManager.default.removeItem(at: temp)
-        super.tearDown()
+        try await super.tearDown()
     }
 
     private func makePreparedStore() async throws -> MeetingLibraryStore {
         let store = MeetingLibraryStore(root: temp)
+        stores.append(store)
         try await store.prepare()
         return store
     }
@@ -145,10 +151,53 @@ final class MeetingLibraryTests: XCTestCase {
                                         state: .pending, generationOwner: "other-generation")
 
         let store2 = MeetingLibraryStore(root: temp)
+        stores.append(store2)
         try await store2.prepare()
         let interrupted = try await store2.failInterruptedGenerations()
         XCTAssertEqual(interrupted, 1)
         let state = try await store2.outcomeState(outcomeID)
         XCTAssertEqual(state, .failed)
+    }
+
+    /// Explicit close is the hygiene contract every fixture relies on: after close,
+    /// operations fail closed with `unavailable`, the WAL is fully checkpointed
+    /// (its sidecar is truncated to zero bytes — SQLite may leave the empty file),
+    /// and reopening preserves committed data.
+    func testExplicitCloseRejectsOperationsAndReopenPreservesData() async throws {
+        let store = try await makePreparedStore()
+        let session = MeetingSessionRecord(title: "Close Me", startedAt: Date())
+        try await store.upsertSession(session)
+        _ = try await store.saveNote(sessionID: session.id, markdown: "persisted across close")
+
+        await store.close()
+
+        do {
+            _ = try await store.note(session.id)
+            XCTFail("a closed store must reject reads")
+        } catch MeetingLibraryError.unavailable {
+            // expected
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+        do {
+            _ = try await store.saveNote(sessionID: session.id, markdown: "must not write")
+            XCTFail("a closed store must reject writes")
+        } catch MeetingLibraryError.unavailable {
+            // expected
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+
+        let walURL = store.storeRoot.appendingPathComponent("meetings.sqlite3-wal")
+        let walSize = (try? FileManager.default.attributesOfItem(atPath: walURL.path))?[.size] as? Int64
+        XCTAssertTrue(walSize == nil || walSize == 0,
+                      "clean close checkpoints everything out of the WAL (sidecar must be absent or empty), got \(walSize ?? -1)")
+
+        // Reopen on the same root: committed data survives the cycle.
+        try await store.prepare()
+        let note = try await store.note(session.id)
+        XCTAssertEqual(note?.markdown, "persisted across close")
+        let reloaded = try await store.session(session.id)
+        XCTAssertEqual(reloaded?.exportRevision, 1)
     }
 }

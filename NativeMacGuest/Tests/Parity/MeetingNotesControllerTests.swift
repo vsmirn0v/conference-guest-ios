@@ -19,9 +19,12 @@ import XCTest
         XCTAssertTrue(library.isReady)
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
+        await library?.close()
+        library = nil
+        notes = nil
         try? FileManager.default.removeItem(at: temp)
-        super.tearDown()
+        try await super.tearDown()
     }
 
     private func makeSession(_ id: UUID = UUID(), title: String = "Notes Test") async -> UUID {

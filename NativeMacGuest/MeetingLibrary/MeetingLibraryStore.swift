@@ -47,7 +47,16 @@ private final class MeetingSQLiteConnection: @unchecked Sendable {
         try execute("PRAGMA foreign_keys=ON")
     }
 
-    deinit { sqlite3_close(database) }
+    /// Idempotent close. `sqlite3_close_v2` (unlike `sqlite3_close`) tolerates
+    /// unfinalized statements and marks the handle dead immediately, so teardown
+    /// never leaves a live file descriptor behind in a directory a fixture is
+    /// about to delete ("vnode unlinked while in use").
+    func close() {
+        if let database { sqlite3_close_v2(database) }
+        database = nil
+    }
+
+    deinit { close() }
 
     var errorMessage: String {
         guard let database else { return "database closed" }
@@ -168,7 +177,11 @@ private extension MeetingSQLiteRow {
 
 actor MeetingLibraryStore: @unchecked Sendable {
     private let root: URL
-    private var connection: MeetingSQLiteConnection?
+    /// `nonisolated(unsafe)` so `deinit` can close the last connection when the
+    /// store is released without an explicit `close()`. The handle is opened with
+    /// `SQLITE_OPEN_FULLMUTEX`, so `sqlite3_close_v2` from the deallocating thread
+    /// is safe; every actor-isolated use still runs on this actor's executor.
+    nonisolated(unsafe) private var connection: MeetingSQLiteConnection?
     private(set) var persistenceError: String?
 
     init(root: URL) {
@@ -196,7 +209,14 @@ actor MeetingLibraryStore: @unchecked Sendable {
         connection = opened
     }
 
-    func closeForTesting() { connection = nil }
+    /// Deterministic teardown: closes the SQLite connection — checkpointing and
+    /// removing the WAL sidecar — before a test removes the containing directory.
+    /// Idempotent; `prepare()` reopens the database on demand.
+    func close() { connection = nil }
+
+    /// Last-resort hygiene when the store is released without `close()`: with
+    /// FULLMUTEX handles the close is safe from the deallocating thread.
+    deinit { connection?.close() }
 
     private func db() throws -> MeetingSQLiteConnection {
         guard let connection else { throw MeetingLibraryError.unavailable("database is closed") }

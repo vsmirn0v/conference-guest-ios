@@ -33,6 +33,10 @@ enum MeetingNoteSaveStatus: Equatable {
 
     var isReady: Bool { persistenceError == nil }
 
+    /// Deterministic teardown for tests and app shutdown; the underlying store
+    /// reopens on the next `prepare()` if the controller is used again.
+    func close() async { await store.close() }
+
     /// Sessions visible to Assistant/history. Failed joins with no content are excluded
     /// by the store's card query.
     func refresh() async {

@@ -8,6 +8,7 @@ final class ObsidianExportTests: XCTestCase {
     private var temp: URL!
     private var vault: URL!
     private var backups: URL!
+    private var stores: [MeetingLibraryStore] = []
 
     override func setUp() {
         super.setUp()
@@ -19,9 +20,11 @@ final class ObsidianExportTests: XCTestCase {
         try? FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
+        for store in stores { await store.close() }
+        stores.removeAll()
         try? FileManager.default.removeItem(at: temp)
-        super.tearDown()
+        try await super.tearDown()
     }
 
     // MARK: ObsidianFileWriter
@@ -94,6 +97,7 @@ final class ObsidianExportTests: XCTestCase {
 
     private func makeStoreWithDestination() async throws -> (MeetingLibraryStore, ObsidianDestinationRecord) {
         let store = MeetingLibraryStore(root: temp.appendingPathComponent("Library", isDirectory: true))
+        stores.append(store)
         try await store.prepare()
         let destination = ObsidianDestinationRecord(enabled: true, configRevision: 1, vaultBookmark: Data([1]))
         try await store.saveDestination(destination)

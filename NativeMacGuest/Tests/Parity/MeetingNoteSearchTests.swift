@@ -5,6 +5,7 @@ import XCTest
 /// Note chunking and case-insensitive search over committed notes.
 final class MeetingNoteSearchTests: XCTestCase {
     private var temp: URL!
+    private var stores: [MeetingLibraryStore] = []
 
     override func setUp() {
         super.setUp()
@@ -13,14 +14,22 @@ final class MeetingNoteSearchTests: XCTestCase {
         try? FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
+        for store in stores { await store.close() }
+        stores.removeAll()
         try? FileManager.default.removeItem(at: temp)
-        super.tearDown()
+        try await super.tearDown()
+    }
+
+    private func makePreparedStore() async throws -> MeetingLibraryStore {
+        let store = MeetingLibraryStore(root: temp)
+        stores.append(store)
+        try await store.prepare()
+        return store
     }
 
     func testSearchFindsCaseFoldedMatchesAcrossChunks() async throws {
-        let store = MeetingLibraryStore(root: temp)
-        try await store.prepare()
+        let store = try await makePreparedStore()
         let session = MeetingSessionRecord(title: "Launch Review", startedAt: Date())
         try await store.upsertSession(session)
         _ = try await store.saveNote(sessionID: session.id, markdown:
@@ -35,8 +44,7 @@ final class MeetingNoteSearchTests: XCTestCase {
     }
 
     func testSearchReturnsNothingForBlankOrMissingQuery() async throws {
-        let store = MeetingLibraryStore(root: temp)
-        try await store.prepare()
+        let store = try await makePreparedStore()
         let session = MeetingSessionRecord(title: "Empty", startedAt: Date())
         try await store.upsertSession(session)
         _ = try await store.saveNote(sessionID: session.id, markdown: "content")
@@ -47,8 +55,7 @@ final class MeetingNoteSearchTests: XCTestCase {
     }
 
     func testSearchFiltersByTimeRange() async throws {
-        let store = MeetingLibraryStore(root: temp)
-        try await store.prepare()
+        let store = try await makePreparedStore()
         let old = Date(timeIntervalSince1970: 1_700_000_000)
         let recent = Date(timeIntervalSince1970: 1_760_000_000)
         let oldSession = MeetingSessionRecord(title: "Old", startedAt: old)
@@ -63,8 +70,7 @@ final class MeetingNoteSearchTests: XCTestCase {
     }
 
     func testRecommittedNoteReplacesChunks() async throws {
-        let store = MeetingLibraryStore(root: temp)
-        try await store.prepare()
+        let store = try await makePreparedStore()
         let session = MeetingSessionRecord(title: "Rewrite", startedAt: Date())
         try await store.upsertSession(session)
         _ = try await store.saveNote(sessionID: session.id, markdown: "first banana draft")
