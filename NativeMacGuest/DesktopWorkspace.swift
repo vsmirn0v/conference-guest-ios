@@ -309,6 +309,10 @@ import UserNotifications
                 model.calendarSeriesID = eventID.flatMap { id in library.calendar.meetings.first { $0.id == id }?.seriesID }
                 model.meetingLibrary = attention.store.meetingLibrary
                 model.notes = attention.store.notes
+                model.synthesizeVoiceReply = { [weak attention] text in
+                    guard let attention else { throw CancellationError() }
+                    return try await attention.synthesize(text)
+                }
                 // The persisted session uses the model's own UUID: a reconnect in this
                 // model keeps the session; only an explicit Leave plus a new model starts a new one.
                 Task { @MainActor [weak self] in

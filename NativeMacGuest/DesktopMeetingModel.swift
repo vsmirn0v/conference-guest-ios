@@ -419,14 +419,15 @@ import UniformTypeIdentifiers
         }
         _ = await engine.setMicrophoneGate(open: true)
     }
-    /// Speaks a short sentence in the macOS system voice into this meeting.
+    /// The workspace installs the same configured synthesizer used by Assistant replies.
+    /// Standalone meeting fixtures retain the system voice as their default.
+    var synthesizeVoiceReply: (String) async throws -> AVAudioPCMBuffer = { try await VoiceSynthesis.system($0) }
+    /// Speaks a short sentence with the selected voice into this meeting.
     func playTestVoiceReply() {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                guard let buffer = await VoiceReplySample.make(text: L("This is a test voice reply from Rock'N'Roll for Mac.")) else {
-                    throw VoiceReplyError.sample
-                }
+                let buffer = try await synthesizeVoiceReply(L("This is a test voice reply from Rock'N'Roll for Mac."))
                 try await speak(buffer)
             } catch { self.error = error.localizedDescription }
         }

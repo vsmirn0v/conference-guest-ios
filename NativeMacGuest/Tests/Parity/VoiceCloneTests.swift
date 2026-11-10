@@ -213,6 +213,26 @@ import XCTest
         XCTAssertEqual(rebuilds, 0)
     }
     @available(macOS 27.0, *)
+    func testCoreAIModelErrorTriggersCacheRecovery() async throws {
+        // The beta-86 preview failure: Core AI's generic AIModelError must be
+        // treated like the MPSGraph cache errors — drop the persistent
+        // specialization and retry once instead of surfacing "error 1".
+        let failure = NSError(domain: "CoreAIDelegates.AIModelError", code: 1)
+        XCTAssertTrue(VoxCacheRecovery.isUnusableCacheError(failure))
+        var attempts = 0, rebuilds = 0
+        let result = try await VoxCoreAI.withCacheRecovery(rebuild: {
+            rebuilds += 1
+        }, operation: {
+            attempts += 1
+            if attempts == 1 { throw failure }
+            return "spoken"
+        })
+        XCTAssertEqual(result, "spoken")
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(rebuilds, 1)
+    }
+
+    @available(macOS 27.0, *)
     func testInstalledClonedVoiceOnNeuralEngine() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["TEST_RUNNER_REAL_VOICE"] == "1")
         let inputs = try VoiceCloneStore.shared.synthesisInputs()

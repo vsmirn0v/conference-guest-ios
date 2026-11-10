@@ -3,6 +3,10 @@ import Foundation
 /// Decides which inference failures mean the Neural Engine specialization cache cannot be reused.
 enum VoxCacheRecovery {
     static func isUnusableCacheError(_ error: Error) -> Bool {
+        // Core AI surfaces a failed Neural Engine specialization/load as a generic
+        // AIModelError (for example after a macOS update invalidates the persistent
+        // cache). Rebuild once from the verified asset, as for the MPSGraph errors.
+        if (error as NSError).domain == "CoreAIDelegates.AIModelError" { return true }
         let described = String(describing: type(of: error))
         let reflected = String(reflecting: error)
         // Match the MPSGraph overlay type even when the module name is prefixed.
@@ -108,13 +112,21 @@ enum VoxCoreAI {
     /// The caller must release its AIModel and InferenceFunction references before this call.
     static func rebuild(_ url: URL, bookmark: Data? = nil) async throws -> AIModel {
         let resolved = url.resolvingSymlinksInPath()
+        probeLog("vox-cache-rebuild-started", ["asset": resolved.lastPathComponent])
         // Core AI's bookmark is an opaque cache identifier, not a file-system bookmark.
         if let bookmark {
             try AIModelCache.deleteEntry(referencedBy: bookmark)
         } else {
             try AIModelCache.default.deleteEntries(for: resolved)
         }
-        return try await AIModel.specialize(contentsOf: resolved, options: options, cachePolicy: .persistent)
+        do {
+            let model = try await AIModel.specialize(contentsOf: resolved, options: options, cachePolicy: .persistent)
+            probeLog("vox-cache-rebuild-succeeded", ["asset": resolved.lastPathComponent])
+            return model
+        } catch {
+            probeLog("vox-cache-rebuild-failed", ["asset": resolved.lastPathComponent, "domain": (error as NSError).domain])
+            throw error
+        }
     }
 
     /// MPSGraph reports an unusable cached model through this otherwise unhelpful error.

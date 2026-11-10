@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import ConferenceCore
 import LiveKitWebRTC
 import SwiftUI
@@ -32,6 +33,11 @@ import XCTest
     var cameraDemands: [Bool] = []
     var screenOnlySupported = true
     var supportsScreenOnlyVideo: Bool { screenOnlySupported }
+    var voiceReply = false
+    var supportsVoiceReply: Bool { voiceReply }
+    var voiceReplies = 0
+    func setMicrophoneGate(open: Bool) async -> Bool { true }
+    func playVoiceReply(_ buffer: AVAudioPCMBuffer) async -> Bool { voiceReplies += 1; return true }
     var onConnect: (() async throws -> Void)?
     var onMicrophoneEnable: (() async throws -> Void)?
     var onMicrophoneDisable: (() async throws -> Void)?
@@ -1072,7 +1078,7 @@ private final class DesktopActivitySpy: NSUserActivity {
         XCTAssertEqual(model.participantVolume("b"), 0, "Engines without separate speakers ignore the control")
         _ = await model.leave()
     }
-    private func multiWorkspace(_ engines: [DesktopTestEngine]) -> NativeDesktopWorkspace {
+    private func multiWorkspace(_ engines: [DesktopTestEngine], attention: AttentionCoordinator? = nil) -> NativeDesktopWorkspace {
         let preferences = UserDefaults(suiteName: "native-multi-\(UUID())")!
         let library = NativeDesktopLibrary(preferences: preferences, history: RoomHistoryStore(storage: DesktopMemoryStorage()),
                                            syncStorage: DesktopMemoryStorage())
@@ -1086,7 +1092,7 @@ private final class DesktopActivitySpy: NSUserActivity {
                 let engine = engines[created]; created += 1
                 return NativeDesktopMeetingModel(destination: destination, name: name, title: title, quiet: quiet, engine: engine,
                     joinReadiness: .init(microphone: .off, camera: .off), power: joinTestPower(), sharedMedia: media)
-            }, multipleMeetings: { true }, attention: desktopTestAttention())
+            }, multipleMeetings: { true }, attention: attention ?? desktopTestAttention())
     }
     private func room(_ index: Int) -> URL { URL(string: "https://example.test/calls/multi-\(index)")! }
     private func join(_ workspace: NativeDesktopWorkspace, _ index: Int) async throws {
@@ -1508,6 +1514,28 @@ private final class DesktopActivitySpy: NSUserActivity {
             XCTAssertNotNil(zip.range(of: Data(name.utf8)), name)
         }
         log.stop()
+    }
+
+    /// More → Play test voice reply must use the voice selected in Assistant settings,
+    /// rather than the meeting model's former hard-coded macOS synthesizer.
+    func testMeetingVoiceReplySampleUsesConfiguredSynthesizer() async throws {
+        let attention = desktopTestAttention()
+        attention.store.voiceEngine = .rapidMLX
+        var synthesized: [String] = []
+        attention.synthesizeOverride = { text in
+            synthesized.append(text)
+            return MicrophoneMoveTests.tone(seconds: 0.1, frequency: 300, amplitude: 0.2)
+        }
+        let engine = DesktopTestEngine(); engine.voiceReply = true
+        let workspace = multiWorkspace([engine], attention: attention)
+        try await join(workspace, 1)
+        let model = try XCTUnwrap(workspace.meeting)
+        model.playTestVoiceReply()
+        try await spin { engine.voiceReplies == 1 && !model.voiceReplyActive }
+        XCTAssertEqual(synthesized, [L("This is a test voice reply from Rock'N'Roll for Mac.")])
+        XCTAssertNil(model.error)
+        XCTAssertFalse(model.voiceReplyActive)
+        _ = await workspace.leave()
     }
 
     func testDockReopenReturnsToTheMeetingOnlyWhenTheWindowIsAway() async throws {

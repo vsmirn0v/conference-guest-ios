@@ -1841,6 +1841,10 @@ import XCTest
         XCTAssertFalse(VoxCacheRecovery.isUnusableCacheError(NotTheCacheError()))
         enum CacheProbe: Error { case nilError }
         XCTAssertTrue(VoxCacheRecovery.isUnusableCacheError(CacheProbe.nilError))
+        // Core AI's generic model error (the beta-86 preview failure) is recoverable.
+        XCTAssertTrue(VoxCacheRecovery.isUnusableCacheError(NSError(domain: "CoreAIDelegates.AIModelError", code: 1)))
+        // An unrelated Cocoa error is not.
+        XCTAssertFalse(VoxCacheRecovery.isUnusableCacheError(NSError(domain: NSCocoaErrorDomain, code: 256)))
         let recovered = await VoxModelRecovery.recover { () async throws -> Int in throw NotTheCacheError() }
         XCTAssertNil(recovered)
 
