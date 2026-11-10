@@ -3,7 +3,7 @@
 Date: 10 November 2026  
 Source requirement: `ROCKNROLL_NOTES_OBSIDIAN_SPEC.md`  
 Target: `NativeMacGuest`, macOS 13+, Swift/AppKit/SwiftUI  
-Planning status: implementation-ready after Stage 0 contract review; no production code is changed by this document.
+Planning status: Stages 1–4 core and the MCP note tool implemented and shipped as native direct beta 0.3.0 (86) on 2026-11-10 (commits `101d15f`, merge `4f2033f`; validation record `docs/native-direct-0.3.0-86-validation.json`). Stages 5–7 (worklogs, Mode B/C, Runtime profile, UI polish, performance qualification) remain open.
 
 ## 1. Outcome and delivery strategy
 
