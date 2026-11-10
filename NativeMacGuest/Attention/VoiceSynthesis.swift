@@ -57,6 +57,53 @@ enum VoiceSynthesisError: LocalizedError, Equatable {
     }
 }
 
+/// Bounds only the caller's wait, not the shared synthesis task. Core AI specialization
+/// may ignore cancellation, so cancelling it and retrying could compile the same asset twice.
+/// The lock also makes a late task result and the timeout race harmless: exactly one wins.
+final class VoicePreviewWait<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Result<Value, Error>?, Never>?
+    private var result: Result<Value, Error>??
+    private var finished = false
+
+    static func result(of task: Task<Value, Error>, timeoutNanoseconds: UInt64) async -> Result<Value, Error>? {
+        let wait = VoicePreviewWait<Value>()
+        Task {
+            do { wait.finish(.success(try await task.value)) }
+            catch { wait.finish(.failure(error)) }
+        }
+        let timer = Task {
+            try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+            wait.finish(nil)
+        }
+        defer { timer.cancel() }
+        return await withCheckedContinuation { wait.start($0) }
+    }
+
+    private func start(_ continuation: CheckedContinuation<Result<Value, Error>?, Never>) {
+        lock.lock()
+        if finished {
+            let result = result ?? nil
+            lock.unlock()
+            continuation.resume(returning: result)
+        } else {
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    private func finish(_ result: Result<Value, Error>?) {
+        lock.lock()
+        guard !finished else { lock.unlock(); return }
+        finished = true
+        self.result = .some(result)
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: result)
+    }
+}
+
 enum VoiceSynthesis {
     /// The reply's language as a BCP-47 code, from the text itself.
     static func language(of text: String) -> String? {

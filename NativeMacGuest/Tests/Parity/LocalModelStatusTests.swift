@@ -228,6 +228,54 @@ import XCTest
         XCTAssertEqual(readyStore.overallSummary, L("Ready"))
     }
 
+    func testDeepVoiceCacheRebuildChangesReadinessAndPreparedMarker() throws {
+        let listen = listenStore(models: [])
+        let (_, voice) = try voiceFixtures()
+        let store = statusStore(listen: listen, voice: voice, attention: attentionStore())
+        let folder = try XCTUnwrap(voice.bundleFolder)
+        let marker = folder.appendingPathComponent(".prepared")
+        let encoder = folder.appendingPathComponent("encoder.h16g.aimodelc")
+        let residual = folder.appendingPathComponent("residual.h16g.aimodelc")
+        XCTAssertEqual(voice.preparation, .ready)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
+
+        voice.recoveryDidChange(.init(phase: .started, asset: encoder, error: nil))
+        voice.recoveryDidChange(.init(phase: .started, asset: residual, error: nil))
+        store.refreshForTesting()
+        XCTAssertEqual(voice.preparation, .preparing)
+        XCTAssertEqual(store.voiceStatus.readiness, .preparing)
+        XCTAssertEqual(store.overallSummary, L("Preparing"))
+        XCTAssertNotNil(voice.preparingSince)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path),
+                       "a relaunch must not inherit readiness from the unusable cache")
+
+        voice.recoveryDidChange(.init(phase: .succeeded, asset: encoder, error: nil))
+        store.refreshForTesting()
+        XCTAssertEqual(store.voiceStatus.readiness, .preparing, "another asset is still rebuilding")
+        voice.recoveryDidChange(.init(phase: .succeeded, asset: residual, error: nil))
+        store.refreshForTesting()
+        XCTAssertEqual(voice.preparation, .ready)
+        XCTAssertEqual(store.voiceStatus.readiness, .ready)
+        XCTAssertNil(voice.preparingSince)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
+
+        voice.recoveryDidChange(.init(phase: .started, asset: encoder, error: nil))
+        voice.recoveryDidChange(.init(phase: .failed, asset: encoder, error: "specialization failed"))
+        store.refreshForTesting()
+        XCTAssertEqual(voice.preparation, .failed("specialization failed"))
+        XCTAssertEqual(store.voiceStatus.readiness, .failed("specialization failed"))
+        XCTAssertEqual(store.overallSummary, L("Model issue"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    func testRecoveryEventsForAnotherBundleDoNotChangeReadiness() throws {
+        let listen = listenStore(models: [])
+        let (_, voice) = try voiceFixtures()
+        let other = folder.appendingPathComponent("other/encoder.h16g.aimodelc")
+        voice.recoveryDidChange(.init(phase: .started, asset: other, error: nil))
+        XCTAssertEqual(voice.preparation, .ready)
+    }
+
     func testVoiceLoadedResidencyAndMemory() throws {
         let listen = listenStore(models: [])
         let (voiceListen, voice) = try voiceFixtures()

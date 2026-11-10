@@ -143,6 +143,57 @@ import XCTest
         XCTAssertFalse(VoiceSynthesisError.clonePreparing.localizedDescription.isEmpty)
     }
 
+    func testPreviewWaitTimesOutWithoutCancellingAndDropsLateResult() async throws {
+        // Models an indefinitely stalled specialization. The timeout must not await
+        // this task in a task group, and must not cancel it into a duplicate rebuild.
+        var resume: CheckedContinuation<Void, Never>?
+        let task = Task<Int, Error> {
+            await withCheckedContinuation { resume = $0 }
+            return 7
+        }
+        await Task.yield()
+        let timedOut = await VoicePreviewWait.result(of: task, timeoutNanoseconds: 1_000_000)
+        XCTAssertNil(timedOut)
+        XCTAssertFalse(task.isCancelled)
+
+        resume?.resume()
+        let finished = try await task.value
+        XCTAssertEqual(finished, 7, "the single original synthesis still finishes")
+        let late = await VoicePreviewWait.result(of: task, timeoutNanoseconds: 1_000_000_000)
+        XCTAssertEqual(try late?.get(), 7, "a completed result remains consumable exactly once per waiter")
+    }
+
+    func testSharedCacheRebuildPublishesOneStartAndOneSuccess() async throws {
+        let asset = folder.appendingPathComponent("encoder.h16g.aimodelc")
+        var events: [VoxRecoveryEvent] = []
+        let session = VoxRecoverySession(asset: asset) { events.append($0) }
+        let failure = NSError(domain: "CoreAIDelegates.AIModelError", code: 1)
+        let rebuilding = expectation(description: "shared rebuild started")
+        var release: CheckedContinuation<Void, Never>?
+        var attempts = 0, rebuilds = 0
+        let operation: () async throws -> Int = {
+            attempts += 1
+            if attempts <= 2 { throw failure }
+            return attempts
+        }
+        let rebuild: () async throws -> Void = {
+            rebuilds += 1
+            rebuilding.fulfill()
+            await withCheckedContinuation { release = $0 }
+        }
+        let first = Task { try await session.perform(operation: operation, rebuild: rebuild) }
+        await fulfillment(of: [rebuilding], timeout: 1)
+        let second = Task { try await session.perform(operation: operation, rebuild: rebuild) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(rebuilds, 1, "concurrent inference failures share one compilation")
+        XCTAssertEqual(events.map(\.phase), [.started])
+        release?.resume()
+        _ = try await (first.value, second.value)
+        XCTAssertEqual(attempts, 4)
+        XCTAssertEqual(events.map(\.phase), [.started, .succeeded])
+        XCTAssertEqual(events.map(\.asset), [asset, asset])
+    }
+
 #if canImport(CoreAI)
     private enum _GenericObjCError: Error { case failed }
     private enum __GenericObjCError: Error { case error }

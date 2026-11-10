@@ -91,6 +91,9 @@ struct StoredClonedVoice: Codable, Equatable {
     private let voiceURL: URL
     private let build: String
     private var observation: AnyCancellable?
+    private var recoveryObservation: AnyCancellable?
+    private var recoveringAssets = Set<URL>()
+    private var recoveryFailure: String?
 
     init(model: ListenModelCatalog.Model? = VoiceCloneSupport.model, listen: ListenModelStore = .shared, folder: URL? = nil,
          build: String = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0") + " " + ProcessInfo.processInfo.operatingSystemVersionString) {
@@ -108,6 +111,9 @@ struct StoredClonedVoice: Codable, Equatable {
             guard let self, let model = self.model, states[model.id] == .installed, self.preparation == .idle else { return }
             self.prepareIfNeeded()
         }
+        recoveryObservation = VoxRecoveryEvents.publisher.receive(on: DispatchQueue.main).sink { [weak self] event in
+            self?.recoveryDidChange(event)
+        }
     }
 
     var available: Bool { model != nil }
@@ -119,6 +125,40 @@ struct StoredClonedVoice: Codable, Equatable {
 
     private var markerURL: URL? { bundleFolder?.appendingPathComponent(".prepared") }
     private var preparedMarker: String? { markerURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) } }
+
+    /// A cached model can fail only when inference first touches it. Keep readiness
+    /// honest throughout that later rebuild, including across an app relaunch.
+    func recoveryDidChange(_ event: VoxRecoveryEvent) {
+        guard let folder = bundleFolder,
+              event.asset.deletingLastPathComponent().standardizedFileURL == folder.standardizedFileURL else { return }
+        switch event.phase {
+        case .started:
+            recoveringAssets.insert(event.asset)
+            recoveryFailure = nil
+            preparation = .preparing
+            if preparingSince == nil { preparingSince = Date() }
+            if let markerURL { try? FileManager.default.removeItem(at: markerURL) }
+        case .succeeded:
+            recoveringAssets.remove(event.asset)
+            finishRecoveryIfNeeded(folder: folder)
+        case .failed:
+            recoveringAssets.remove(event.asset)
+            recoveryFailure = event.error ?? VoiceSynthesisError.clonePreparing.localizedDescription
+            preparation = .failed(recoveryFailure!)
+            preparingSince = recoveringAssets.isEmpty ? nil : preparingSince
+        }
+    }
+
+    private func finishRecoveryIfNeeded(folder: URL) {
+        guard recoveringAssets.isEmpty else { return }
+        preparingSince = nil
+        if let recoveryFailure {
+            preparation = .failed(recoveryFailure)
+        } else {
+            try? build.write(to: folder.appendingPathComponent(".prepared"), atomically: true, encoding: .utf8)
+            preparation = .ready
+        }
+    }
 
     func download() { if let model { listen.download(model) } }
     func cancelDownload() { if let model { listen.cancel(model) } }
@@ -142,19 +182,19 @@ struct StoredClonedVoice: Codable, Equatable {
         guard installed, preparation != .preparing, let folder = bundleFolder else { return }
         preparation = .preparing
         preparingSince = Date()
-        let started = ProcessInfo.processInfo.systemUptime, build = build
+        recoveryFailure = nil
+        let started = ProcessInfo.processInfo.systemUptime
         probeLog("voice-clone-prepare-started", ["architecture": VoiceCloneSupport.architecture ?? ""])
         Task { [weak self] in
             do {
                 try await ClonedVoiceEngine.shared.load(folder)
-                try? build.write(to: folder.appendingPathComponent(".prepared"), atomically: true, encoding: .utf8)
-                self?.preparation = .ready
+                self?.finishRecoveryIfNeeded(folder: folder)
                 probeLog("voice-clone-prepared", ["seconds": Int(ProcessInfo.processInfo.systemUptime - started)])
             } catch {
                 self?.preparation = .failed(error.localizedDescription)
                 probeLog("voice-clone-prepare-failed", ["error": String(describing: type(of: error))])
             }
-            self?.preparingSince = nil
+            if self?.recoveringAssets.isEmpty != false { self?.preparingSince = nil }
         }
     }
 

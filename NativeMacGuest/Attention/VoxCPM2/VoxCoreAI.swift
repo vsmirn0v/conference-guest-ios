@@ -1,4 +1,18 @@
+import Combine
 import Foundation
+
+/// A persistent Neural Engine cache rebuild, including rebuilds triggered by a
+/// lazy inference failure after the store's initial preparation has finished.
+struct VoxRecoveryEvent: Equatable, Sendable {
+    enum Phase: Equatable, Sendable { case started, succeeded, failed }
+    var phase: Phase
+    var asset: URL
+    var error: String?
+}
+
+enum VoxRecoveryEvents {
+    static let publisher = PassthroughSubject<VoxRecoveryEvent, Never>()
+}
 
 /// Decides which inference failures mean the Neural Engine specialization cache cannot be reused.
 enum VoxCacheRecovery {
@@ -43,6 +57,13 @@ final class VoxRecoverySession: @unchecked Sendable {
     }
     private let lock = NSLock()
     private var attempt: Attempt?
+    private let asset: URL
+    private let onEvent: (VoxRecoveryEvent) -> Void
+
+    init(asset: URL = URL(fileURLWithPath: "/"), onEvent: @escaping (VoxRecoveryEvent) -> Void = { VoxRecoveryEvents.publisher.send($0) }) {
+        self.asset = asset
+        self.onEvent = onEvent
+    }
 
     func perform<T>(operation: () async throws -> T, rebuild: @escaping () async throws -> Void) async throws -> T {
         do { return try await operation() }
@@ -57,7 +78,17 @@ final class VoxRecoverySession: @unchecked Sendable {
         let current: Attempt = {
             lock.lock(); defer { lock.unlock() }
             if let attempt { return attempt }
-            let created = Attempt(Task { try await rebuild() })
+            // Exactly one event per shared rebuild, not one per waiting inference.
+            let created = Attempt(Task {
+                onEvent(.init(phase: .started, asset: asset, error: nil))
+                do {
+                    try await rebuild()
+                    onEvent(.init(phase: .succeeded, asset: asset, error: nil))
+                } catch {
+                    onEvent(.init(phase: .failed, asset: asset, error: error.localizedDescription))
+                    throw error
+                }
+            })
             attempt = created
             return created
         }()
@@ -225,11 +256,12 @@ final class VoxAsset {
     let url: URL
     private var model: AIModel?
     private var functions: [String: InferenceFunction] = [:]
-    private let recovery = VoxRecoverySession()
+    private let recovery: VoxRecoverySession
     private(set) var seconds = 0.0
 
     init(url: URL) async throws {
         self.url = url
+        recovery = VoxRecoverySession(asset: url.resolvingSymlinksInPath())
         model = try await VoxCoreAI.load(url)
     }
 

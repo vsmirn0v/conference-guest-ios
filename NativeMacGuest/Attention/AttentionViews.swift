@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import ConferenceCore
 import SwiftUI
 
@@ -904,7 +905,20 @@ struct NativeDesktopIntelligenceSettings: View {
             defer { previewing = false }
             let started = ProcessInfo.processInfo.systemUptime
             do {
-                let buffer = try await attention.synthesize(L("I'm in another meeting right now, I'll answer in a couple of minutes."))
+                let text = L("I'm in another meeting right now, I'll answer in a couple of minutes.")
+                let buffer: AVAudioPCMBuffer
+                if store.voiceEngine == .cloned {
+                    // Do not cancel this task on timeout: it owns the one shared Core AI rebuild.
+                    // A late result is deliberately discarded rather than played after another preview.
+                    let synthesis = Task { try await attention.synthesize(text) }
+                    guard let result = await VoicePreviewWait.result(of: synthesis, timeoutNanoseconds: 30_000_000_000) else {
+                        probeLog("voice-preview-still-preparing", ["seconds": 30])
+                        throw VoiceSynthesisError.clonePreparing
+                    }
+                    buffer = try result.get()
+                } else {
+                    buffer = try await attention.synthesize(text)
+                }
                 try VoicePreviewPlayer.shared.play(buffer)
                 voiceFailed = false
                 voiceMessage = L("Ready in %.1f s.", ProcessInfo.processInfo.systemUptime - started)
