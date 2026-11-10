@@ -31,7 +31,9 @@ import XCTest
         let defaults = UserDefaults(suiteName: "assistant-ui-\(UUID().uuidString)")!
         let keys = AttentionKeychain(service: "assistant-ui-tests-\(UUID().uuidString)")
         addTeardownBlock { keys.deleteAll(); try? FileManager.default.removeItem(at: root) }
-        return AttentionStore(root: root, defaults: defaults, keychain: keys)
+        let store = AttentionStore(root: root, defaults: defaults, keychain: keys)
+        closeLibraryAtTeardown(store)
+        return store
     }
 
     private func window(_ title: String, at: Date) -> (AttentionWindow, AttentionVerdict) {

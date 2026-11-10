@@ -327,6 +327,22 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     @Published private(set) var journalWarning: String?
     let root: URL
     let assistant: AssistantDataStore
+    /// Test-teardown entry point: cancels pending library preparation, closes any
+    /// open handle, and drains the in-flight prepare. XCTest teardown blocks run
+    /// LIFO, so a fixture that calls this right after store creation wins every
+    /// race — the queued prepare, mid-flight DDL inside a `close_v2` zombie, and
+    /// Swift's scheduled isolated deinits — against directory removal
+    /// ("vnode unlinked while in use").
+    func closeLibrarySyncForTeardown() async {
+        libraryTask?.cancel()
+        // Drain BEFORE closing: `sqlite3_close_v2` racing an in-flight `sqlite3_exec`
+        // corrupts the connection's internal lock (crash), so the handle must be
+        // idle. The cancelled task either never starts, or finishes its uncancellable
+        // in-flight section and stops at the next cancellation check.
+        await libraryTask?.value
+        meetingLibrary.store.closeSync()
+    }
+
     /// Durable meeting library: sessions, notes and outcomes in SQLite. Shared root
     /// with the assistant data keeps tests isolated through the same injection point.
     let meetingLibrary: MeetingLibraryController
@@ -340,6 +356,11 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     private var loadingMoments = false
     private var momentBuffer: [AttentionDecisionRecord] = []
     private var momentLoadTask: Task<Void, Never>?
+    /// Eager meeting-library preparation (open + legacy migration). Held so teardown
+    /// can cancel it: without this, the pending task's strong capture keeps the store
+    /// alive past a fixture's teardown block, and the library connection outlives the
+    /// directory that was just deleted ("vnode unlinked while in use").
+    private var libraryTask: Task<Void, Never>?
     /// Every journal append, from the main thread and from seen-marks, runs here in order.
     private let journalQueue = DispatchQueue(label: "attention.journal.append")
 
@@ -401,11 +422,19 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
             guard let self else { return }
             self.meetingLibrary.removeOutcome(id)
         }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.meetingLibrary.prepare()
-            await self.migrateLegacyOutcomesIfNeeded()
+        libraryTask = Task { @MainActor [weak self] in
+            guard !Task.isCancelled else { return }
+            await self?.meetingLibrary.prepare()
+            guard !Task.isCancelled else { return }
+            await self?.migrateLegacyOutcomesIfNeeded()
         }
+    }
+
+    deinit {
+        // Cancelling prevents a still-pending prepare from converting its weak
+        // capture into a strong one after the store's owner has released it.
+        libraryTask?.cancel()
+        momentLoadTask?.cancel()
     }
 
     private func migrateLegacyOutcomesIfNeeded() async {

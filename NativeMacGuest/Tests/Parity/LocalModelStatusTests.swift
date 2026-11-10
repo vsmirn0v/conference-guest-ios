@@ -10,12 +10,13 @@ import XCTest
     override func setUpWithError() throws {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("local-model-status-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        LocalModelMemoryTracker.shared.resetForTesting()
-    }
-
-    override func tearDownWithError() throws {
-        LocalModelMemoryTracker.shared.resetForTesting()
-        try? FileManager.default.removeItem(at: folder)
+        let root = folder!
+        // Teardown block (not tearDown) so per-store library-close blocks, which
+        // fixtures register later, run first: XCTest executes these LIFO.
+        addTeardownBlock {
+            LocalModelMemoryTracker.shared.resetForTesting()
+            try? FileManager.default.removeItem(at: root)
+        }
     }
 
     // MARK: Fixtures
@@ -58,6 +59,7 @@ import XCTest
                                    defaults: UserDefaults(suiteName: "local-models-\(UUID().uuidString)")!)
         store.voiceEngine = voiceEngine
         store.pushToTalk = false
+        closeLibraryAtTeardown(store)
         return store
     }
 

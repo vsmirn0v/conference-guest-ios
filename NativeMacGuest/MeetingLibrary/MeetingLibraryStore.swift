@@ -28,9 +28,11 @@ private enum MeetingSQLiteError: LocalizedError {
 /// One connection is confined to `MeetingLibraryStore`. The application does not
 /// share a SQLite handle across actors and never claims success before `COMMIT`.
 private final class MeetingSQLiteConnection: @unchecked Sendable {
+    private let path: URL
     private var database: OpaquePointer?
 
     init(path: URL) throws {
+        self.path = path
         try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
         var opened: OpaquePointer?
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
@@ -175,13 +177,35 @@ private extension MeetingSQLiteRow {
     func bool(_ index: Int) -> Bool { integer(index) == 1 }
 }
 
+/// Thread-safe hand-off between the actor-isolated store and synchronous teardown
+/// paths (`closeSync`, owner `deinit`). An unsynchronized `nonisolated(unsafe)`
+/// read can miss a connection the actor just installed: the teardown block then
+/// sees `nil`, the directory is deleted, and the handle outlives it.
+private final class MeetingSQLiteConnectionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var connection: MeetingSQLiteConnection?
+
+    func install(_ connection: MeetingSQLiteConnection) {
+        lock.lock(); self.connection = connection; lock.unlock()
+    }
+
+    func current() -> MeetingSQLiteConnection? {
+        lock.lock(); defer { lock.unlock() }
+        return connection
+    }
+
+    /// Removes and returns the connection so it is closed exactly once.
+    func take() -> MeetingSQLiteConnection? {
+        lock.lock(); defer { lock.unlock() }
+        let connection = self.connection
+        self.connection = nil
+        return connection
+    }
+}
+
 actor MeetingLibraryStore: @unchecked Sendable {
     private let root: URL
-    /// `nonisolated(unsafe)` so `deinit` can close the last connection when the
-    /// store is released without an explicit `close()`. The handle is opened with
-    /// `SQLITE_OPEN_FULLMUTEX`, so `sqlite3_close_v2` from the deallocating thread
-    /// is safe; every actor-isolated use still runs on this actor's executor.
-    nonisolated(unsafe) private var connection: MeetingSQLiteConnection?
+    private let connectionBox = MeetingSQLiteConnectionBox()
     private(set) var persistenceError: String?
 
     init(root: URL) {
@@ -191,35 +215,63 @@ actor MeetingLibraryStore: @unchecked Sendable {
     var databaseURL: URL { root.appendingPathComponent("meetings.sqlite3", isDirectory: false) }
 
     func prepare() async throws {
-        if connection != nil { return }
+        if connectionBox.current() != nil { return }
+        // Teardown cancellation: the owner cancels its prepare task when a fixture
+        // closes the library; a job that starts after cancellation must not open
+        // a handle at all (closeSync may already have run and seen an empty box).
+        guard !Task.isCancelled else { throw CancellationError() }
         let opened = try MeetingSQLiteConnection(path: databaseURL)
-        try opened.transaction {
-            for statement in MeetingLibrarySchema.ddl { try opened.execute(statement) }
-            try opened.execute("CREATE TABLE IF NOT EXISTS meeting_library_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            let version = try opened.one("SELECT version FROM schema_migrations WHERE version = ?") {
-                try MeetingSQLiteConnection.bindInt($0, Int64(MeetingLibrarySchema.currentVersion), at: 1)
-            }
-            if version == nil {
-                try opened.run("INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)") {
+        // Register the handle before running DDL: a synchronous `closeSync()` from
+        // owner teardown (a fixture) can then take and close it even mid-prepare.
+        connectionBox.install(opened)
+        // The handle exists on disk now; if the owner cancelled us between the
+        // first guard and registration (teardown running concurrently), close it
+        // immediately — but only if it is still ours: a concurrent closeSync may
+        // already have taken and closed it, and a second close would corrupt.
+        guard !Task.isCancelled else {
+            if let taken = connectionBox.take() { taken.close() }
+            throw CancellationError()
+        }
+        do {
+            try opened.transaction {
+                for statement in MeetingLibrarySchema.ddl { try opened.execute(statement) }
+                try opened.execute("CREATE TABLE IF NOT EXISTS meeting_library_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                let version = try opened.one("SELECT version FROM schema_migrations WHERE version = ?") {
                     try MeetingSQLiteConnection.bindInt($0, Int64(MeetingLibrarySchema.currentVersion), at: 1)
-                    try MeetingSQLiteConnection.bindInt($0, Date().ms, at: 2)
+                }
+                if version == nil {
+                    try opened.run("INSERT INTO schema_migrations(version, applied_at) VALUES(?, ?)") {
+                        try MeetingSQLiteConnection.bindInt($0, Int64(MeetingLibrarySchema.currentVersion), at: 1)
+                        try MeetingSQLiteConnection.bindInt($0, Date().ms, at: 2)
+                    }
                 }
             }
+        } catch {
+            _ = connectionBox.take()
+            throw error
         }
-        connection = opened
     }
 
     /// Deterministic teardown: closes the SQLite connection — checkpointing and
     /// removing the WAL sidecar — before a test removes the containing directory.
     /// Idempotent; `prepare()` reopens the database on demand.
-    func close() { connection = nil }
+    func close() { connectionBox.take()?.close() }
+
+    /// Synchronous close for the drained teardown path only (`AttentionStore.
+    /// closeLibrarySyncForTeardown`): the caller must guarantee no statement is
+    /// in flight — `sqlite3_close_v2` racing `sqlite3_exec` corrupts the
+    /// connection. Idempotent; safe from any thread once drained (FULLMUTEX
+    /// handle, pointer consumed exactly once via the box).
+    nonisolated func closeSync() { connectionBox.take()?.close() }
 
     /// Last-resort hygiene when the store is released without `close()`: with
     /// FULLMUTEX handles the close is safe from the deallocating thread.
-    deinit { connection?.close() }
+    deinit { connectionBox.take()?.close() }
 
     private func db() throws -> MeetingSQLiteConnection {
-        guard let connection else { throw MeetingLibraryError.unavailable("database is closed") }
+        guard let connection = connectionBox.current() else {
+            throw MeetingLibraryError.unavailable("database is closed")
+        }
         return connection
     }
 

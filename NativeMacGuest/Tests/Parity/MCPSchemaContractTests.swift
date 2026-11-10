@@ -367,6 +367,7 @@ import XCTest
             let keychain = AttentionKeychain(service: "dev.vsmirn0v.conferenceguest.mcp.schema.\(UUID().uuidString)")
             self.addTeardownBlock { keychain.deleteAll(); try? FileManager.default.removeItem(at: folder) }
             let store = AttentionStore(root: folder, defaults: UserDefaults(suiteName: "mcp-schema-store-\(UUID().uuidString)")!, keychain: keychain)
+            self.closeLibraryAtTeardown(store)
             store.provider = .init(kind: .custom, baseURL: "https://judge.example/v1", model: "m")
             let coordinator = AttentionCoordinator(store: store)
             let backend = NativeDesktopMCPBackend(defaults: defaults,

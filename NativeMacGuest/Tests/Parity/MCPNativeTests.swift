@@ -74,7 +74,9 @@ import XCTest
         let defaults = UserDefaults(suiteName: "mcp-attention-\(UUID().uuidString)")!
         let keychain = AttentionKeychain(service: "dev.vsmirn0v.conferenceguest.mcp.tests.\(UUID().uuidString)")
         addTeardownBlock { keychain.deleteAll() }
-        return AttentionStore(root: folder(), defaults: defaults, keychain: keychain)
+        let store = AttentionStore(root: folder(), defaults: defaults, keychain: keychain)
+        closeLibraryAtTeardown(store)
+        return store
     }
 
     private func spin(_ predicate: () -> Bool) async throws {
