@@ -1,0 +1,49 @@
+{
+  "version": "0.3.0",
+  "build": "84",
+  "channel": "beta",
+  "sourceCommit": "f40c4ab",
+  "changes": [
+    "Local ASR/TTS readiness and memory status: a toolbar chip in Assistant and a Settings -> Assistant section show each on-device model's readiness (off, downloading, needs preparation, ready, setup needed, failed, managed), kept separate from residency so a warmed-but-unloaded model reads Ready - Not loaded, plus per-model memory estimated from the process footprint while loaded, compute-path text (Neural Engine vs CPU), and a system memory bar",
+    "MCP server for AI-agent meeting integration: twelve read-only and ask-first tools over a loopback endpoint with pairing tokens and revocable clients",
+    "Bounded assistant agent runtime over typed native tools, bound to the MCP backend via a read-only loopback",
+    "MCP Server settings tab: live status, endpoint copy, pairing instructions, paired clients with Remove, and the exact tool surface",
+    "Rate-limit hotkey registration and flag silent push-to-talk captures",
+    "Adaptive Attention settings layout fix",
+    "Judge a focused meeting whose sound is off",
+    "Hide quiet diagnostics from the Assistant inbox",
+    "Live Text copy acceptance test skips when the OS denies interactive selection in sandboxed environments"
+  ],
+  "frameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "executableSHA256": "8a4f1eb894fb70a248505390853009b57215f77b0f07caa197700f96c8af5051",
+  "notarizedStapled": true,
+  "gatekeeperAccepted": true,
+  "dmgMountRevalidated": true,
+  "outerDMGNotarized": false,
+  "artifact": {
+    "file": "RockNRoll-0.3.0-84-arm64.dmg",
+    "sha256": "ea79c60bc0e21c4dddd8078e4fd9f87d202f8f2d6d225decbcf10a82eab81c33",
+    "length": 27639053,
+    "downloadURL": "https://rock.glowsoft.ru/mac/releases/RockNRoll-0.3.0-84-arm64.dmg"
+  },
+  "stableTarget": "../releases/RockNRoll-0.3.0-53-arm64.dmg",
+  "betaTarget": "../releases/RockNRoll-0.3.0-84-arm64.dmg",
+  "httpsVerified": true,
+  "publicationNote": "Fixes commits 69317ea, d685fa8, ccbeb9b, 554ea45, 3237a0a, 37c25eb, efefe8b, d1be4f7, 68d8817, and f40c4ab are on main. The publisher verified the immutable DMG, beta alias, signed appcast and inventory over HTTPS byte-for-byte; an independent HTTPS download of the immutable DMG and the beta alias both matched the packaged SHA-256.",
+  "measured": {
+    "fullTestSuite": "NativeDesktopTests on source f40c4ab: 428 tests, 37 skipped, 0 failures; the Live Text copy acceptance test skipped cleanly because this environment denies VisionKit interactive selection",
+    "distributionTooling": "NativeMacGuest/distribution unittest suite passed (27 tests); py_compile passed",
+    "archive": "direct Release archive 0.3.0 (84) succeeded from clean worktree f40c4ab; app-group IO and one-use ticket check passed; TeamIdentifier gate passed",
+    "export": "Developer ID export with Xcode cloud-managed notarization; app stapled and Gatekeeper-accepted (Notarized Developer ID)",
+    "package": "DMG created and revalidated read-only from its mount; contained app accepted as Notarized Developer ID",
+    "publish": "read-only SSH preflight passed; atomic publication and HTTPS readback matched the immutable DMG, beta alias, signed appcast and inventory",
+    "appcastStateSHA256": "92348bf124e58a5de0428ed54f9ee84718c2436a53cec797e6c2b14cec81f55d",
+    "inventoryStateSHA256": "7a4e773dbb71806e2a1291c319ac23fbc61cd2bad73ca58a1ae4b99aa6b13681"
+  },
+  "notVerified": [
+    "Sparkle update of an installed app to 84",
+    "physical-microphone push-to-talk acceptance and live-meeting behavior",
+    "on-device ASR/TTS load timing and memory figures on Macs other than this build host",
+    "the outer DMG is not separately signed or notarized; the contained app is notarized, stapled and Gatekeeper-accepted"
+  ]
+}
