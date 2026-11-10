@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 import LiveKit
 import LiveKitWebRTC
@@ -75,17 +76,35 @@ enum ListenRecognizerModel: Equatable, Sendable {
     case coreMLGigaAM(CoreMLGigaAMModel)
 }
 
+enum LocalSpeechRecognizerPhase: Equatable, Sendable {
+    case unloaded, loading, loaded, unloading, failed
+}
+
+/// The recognizer's public lifecycle. `preparedModel` remains after a successful
+/// warm-up even when residency is released, so Ready and Loaded stay distinct.
+struct LocalSpeechRecognizerRuntimeSnapshot: Equatable, Sendable {
+    var model: ListenRecognizerModel?
+    var phase: LocalSpeechRecognizerPhase = .unloaded
+    var preparedModel: ListenRecognizerModel?
+    var users = 0
+    var activeDecodes = 0
+    var lastLoadSeconds: TimeInterval = 0
+    var error: String?
+}
+
 /// One recognizer for every meeting. Utterances run one at a time on a utility
 /// queue; when more than `maxPendingSeconds` of speech waits, new speech is
 /// dropped and counted instead of falling ever further behind.
 final class LocalSpeechRecognizer: @unchecked Sendable {
     static let shared = LocalSpeechRecognizer()
     static let maxPendingSeconds = 90.0
+    let runtime = CurrentValueSubject<LocalSpeechRecognizerRuntimeSnapshot, Never>(.init())
     private let queue = DispatchQueue(label: "attention.listen.recognizer", qos: .utility)
     private let lock = NSLock()
     private var pending = 0.0
     private var recognizer: (([Float]) throws -> String)?
     private var loaded: ListenRecognizerModel?
+    private var runtimeState = LocalSpeechRecognizerRuntimeSnapshot()
 
     /// Calls `completion` on the recognizer queue: text, or nil when dropped or failed.
     func transcribe(_ samples: [Float], model: ListenRecognizerModel, completion: @escaping (String?, TimeInterval) -> Void) {
@@ -96,12 +115,20 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
         guard admitted else { completion(nil, 0); return }
         queue.async { [self] in
             defer { lock.lock(); pending -= seconds; lock.unlock() }
-            guard load(model) else { completion(nil, 0); return }
+            let token = measurementTokenIfLoadNeeded(model)
+            guard load(model, measurementToken: token) else { completion(nil, 0); return }
+            runtimeState.activeDecodes += 1
+            publishRuntime()
+            defer {
+                runtimeState.activeDecodes = max(0, runtimeState.activeDecodes - 1)
+                publishRuntime()
+            }
             let started = ProcessInfo.processInfo.systemUptime
             let text: String?
             do { text = try recognizer?(samples) } catch {
                 probeLog("local-transcription-decode-failed", ["error": String(describing: error)]); text = nil
             }
+            LocalModelMemoryTracker.shared.refine(.speech)
             completion(text, ProcessInfo.processInfo.systemUptime - started)
         }
     }
@@ -113,7 +140,9 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
 
     /// Loads the model ahead of the first utterance (the Neural Engine model takes
     /// seconds to load; the first launch also compiles it).
-    func prepare(_ model: ListenRecognizerModel) { queue.async { [self] in _ = load(model) } }
+    func prepare(_ model: ListenRecognizerModel) {
+        queue.async { [self] in _ = load(model, measurementToken: measurementTokenIfLoadNeeded(model)) }
+    }
 
     /// Loads the model once, off every meeting's path, then frees it unless a meeting
     /// started transcribing meanwhile. The first Neural Engine load after launch takes
@@ -122,22 +151,24 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
     func warmUp(_ model: ListenRecognizerModel) {
         queue.async { [self] in
             let started = ProcessInfo.processInfo.systemUptime
-            guard load(model) else { return }
+            guard load(model, measurementToken: measurementTokenIfLoadNeeded(model)) else { return }
             lock.lock(); let idle = users == 0; lock.unlock()
             probeLog("local-transcription-warmed", ["seconds": ProcessInfo.processInfo.systemUptime - started, "kept": !idle])
-            if idle { recognizer = nil; loaded = nil }
+            if idle { unloadIfIdle() }
         }
     }
 
     /// A meeting starts transcribing: the model loads ahead of its first utterance.
     func acquire(_ model: ListenRecognizerModel) {
-        lock.lock(); users += 1; lock.unlock()
+        lock.lock(); users += 1; runtimeState.users = users; lock.unlock()
+        publishRuntime()
         prepare(model)
     }
     /// A meeting stopped. When none transcribes, the model's memory is freed (the Core ML
     /// encoder otherwise stays resident for the app's life, beside the judge's models).
     func release() {
-        lock.lock(); users = max(0, users - 1); let idle = users == 0; lock.unlock()
+        lock.lock(); users = max(0, users - 1); runtimeState.users = users; let idle = users == 0; lock.unlock()
+        publishRuntime()
         if idle { unload() }
     }
     var userCount: Int { lock.lock(); defer { lock.unlock() }; return users }
@@ -147,16 +178,44 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
         queue.async { [self] in
             lock.lock(); let stillIdle = users == 0; lock.unlock()
             guard stillIdle else { return }
-            if loaded != nil { probeLog("local-transcription-unloaded", [:]) }
-            recognizer = nil; loaded = nil
-            lock.lock(); unloadCounter += 1; lock.unlock()
+            unloadIfIdle()
         }
     }
     var isLoaded: Bool { queue.sync { loaded != nil } }
+    var runtimeSnapshot: LocalSpeechRecognizerRuntimeSnapshot { queue.sync { runtimeState } }
+
+    private func measurementTokenIfLoadNeeded(_ model: ListenRecognizerModel) -> UUID? {
+        if runtimeState.phase == .loaded, runtimeState.model == model, recognizer != nil { return nil }
+        return LocalModelMemoryTracker.shared.begin(.speech)
+    }
+
+    private func unloadIfIdle() {
+        let hadModel = loaded != nil
+        if hadModel { probeLog("local-transcription-unloaded", [:]) }
+        lock.lock(); unloadCounter += 1; lock.unlock()
+        runtimeState.phase = .unloading
+        publishRuntime()
+        recognizer = nil; loaded = nil
+        LocalModelMemoryTracker.shared.clear(.speech)
+        runtimeState.model = nil
+        runtimeState.phase = .unloaded
+        runtimeState.lastLoadSeconds = 0
+        runtimeState.error = nil
+        publishRuntime()
+    }
+
+    private func publishRuntime() { runtime.send(runtimeState) }
 
     /// On the queue. True when `model` is the loaded one.
-    private func load(_ model: ListenRecognizerModel) -> Bool {
-        if loaded == model, recognizer != nil { return true }
+    private func load(_ model: ListenRecognizerModel, measurementToken: UUID?) -> Bool {
+        if loaded == model, recognizer != nil {
+            runtimeState.model = model
+            runtimeState.phase = .loaded
+            runtimeState.lastLoadSeconds = 0
+            runtimeState.error = nil
+            publishRuntime()
+            return true
+        }
         recognizer = nil; loaded = nil
         let started = ProcessInfo.processInfo.systemUptime
         do {
@@ -169,11 +228,29 @@ final class LocalSpeechRecognizer: @unchecked Sendable {
                 recognizer = { try engine.transcribe($0) }
             }
             loaded = model
-            probeLog("local-transcription-loaded", ["engine": model.engineName,
-                "seconds": ProcessInfo.processInfo.systemUptime - started])
+            let seconds = ProcessInfo.processInfo.systemUptime - started
+            runtimeState.model = model
+            runtimeState.phase = .loaded
+            runtimeState.preparedModel = model
+            runtimeState.lastLoadSeconds = seconds
+            runtimeState.error = nil
+            publishRuntime()
+            if let measurementToken {
+                LocalModelMemoryTracker.shared.complete(.speech, token: measurementToken, success: true)
+            }
+            probeLog("local-transcription-loaded", ["engine": model.engineName, "seconds": seconds])
             return true
         } catch {
-            probeLog("local-transcription-load-failed", ["engine": model.engineName, "error": String(describing: error)])
+            let message = String(describing: error)
+            runtimeState.model = model
+            runtimeState.phase = .failed
+            runtimeState.lastLoadSeconds = 0
+            runtimeState.error = message
+            publishRuntime()
+            if let measurementToken {
+                LocalModelMemoryTracker.shared.complete(.speech, token: measurementToken, success: false)
+            }
+            probeLog("local-transcription-load-failed", ["engine": model.engineName, "error": message])
             return false
         }
     }

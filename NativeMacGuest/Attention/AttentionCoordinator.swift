@@ -189,6 +189,9 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     var now: () -> Date = Date.init
     var language: String = Bundle.main.preferredLocalizations.first ?? "en"
     lazy var talk = AssistantTalkController(attention: self)
+    /// Readiness and residency of the local speech and voice models, for the
+    /// toolbar indicator and Settings. Owns no model resources itself.
+    lazy var localModels = LocalModelStatusStore(store: store)
     /// Standing automation rules (proposals, enabled/paused state, pending outward
     /// actions, audit). Persisted beside the other Attention state.
     let ruleStore: AssistantRuleStore

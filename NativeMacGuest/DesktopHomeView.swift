@@ -230,6 +230,11 @@ struct NativeDesktopHomeView: View {
                 Button { workspace.toggleWindow(meeting) } label: { Label(L("Open in New Window"), systemImage: "macwindow.on.rectangle") }
                     .help(L("Open in New Window"))
             } else if workspace.selectedMeeting == nil {
+                if workspace.selection == .assistant {
+                    LocalModelStatusIndicator(models: workspace.attention.localModels,
+                        onOpenTranscription: { workspace.settingsTab = 5; workspace.selection = .settings },
+                        onOpenVoice: { workspace.settingsTab = 6; workspace.selection = .settings })
+                }
                 Button { addingFavorite = true } label: { Label(L("Add favorite"), systemImage: "plus") }
                     .help(L("Save a meeting invitation"))
             }

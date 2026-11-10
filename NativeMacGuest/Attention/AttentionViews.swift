@@ -675,6 +675,11 @@ struct NativeDesktopIntelligenceSettings: View {
                     .fixedSize(horizontal: false, vertical: true)
             } header: { Text(L("Attention by situation")) }
                 .disabled(!store.enabled)
+            Section(L("On-device models")) {
+                LocalModelStatusIndicator(models: attention.localModels)
+                Text(L("Readiness and memory of the speech and voice models that run on this Mac. A model can be ready while not loaded; it loads when a meeting needs it."))
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             Section(L("Roles")) {
                 roleRow(L("Listen"), listen.enabled ? (listen.selected?.title ?? L("Off")) : L("Off"), local: true,
                         detail: L("%@ of speech models on this Mac", ByteCountFormatter.string(fromByteCount: listen.installedSize, countStyle: .file)))
