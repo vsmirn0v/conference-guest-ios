@@ -867,6 +867,10 @@ import UniformTypeIdentifiers
         guard enabled, !ownsMicrophone else { setMicrophoneEnabled(enabled); return }
         claimTalkRole(microphone: true) { [weak self] in self?.setMicrophoneEnabled(true) }
     }
+    /// Effective microphone output state for Assistant read tools: the requested
+    /// state when a toggle is in flight, otherwise the engine's state.
+    var assistantMicrophoneOn: Bool { requestedMicrophone ?? snapshot.microphoneOn }
+
     /// Explicitly mutes this meeting's microphone without ever toggling it on during a voice reply.
     @discardableResult func muteMicrophone() -> Bool {
         let wasActive = (requestedMicrophone ?? snapshot.microphoneOn) || voiceReplyActive

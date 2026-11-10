@@ -189,6 +189,13 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     var now: () -> Date = Date.init
     var language: String = Bundle.main.preferredLocalizations.first ?? "en"
     lazy var talk = AssistantTalkController(attention: self)
+    /// Standing automation rules (proposals, enabled/paused state, pending outward
+    /// actions, audit). Persisted beside the other Attention state.
+    let ruleStore: AssistantRuleStore
+    /// Shared action identity/dedupe for every outward action, from agent runs and rules.
+    let actionCoordinator = AssistantActionCoordinator()
+    /// Future native calendar occurrences for the agent's read-only calendar tools.
+    var calendarOccurrences: () -> [CalendarMeeting] = { [] }
 
     private var loop: Task<Void, Never>?
     private var calls: [Date] = []
@@ -196,7 +203,48 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     private var overflowMeetingByMomentID: [UUID: UUID] = [:]
     private var remindingMoments: Set<UUID> = []
 
-    init(store: AttentionStore = .shared) { self.store = store }
+    init(store: AttentionStore = .shared) {
+        self.store = store
+        ruleStore = AssistantRuleStore(root: store.root)
+    }
+
+    /// Feed a deterministic mention event to the rule evaluator. Mentioning never
+    /// speaks by itself: a matched enabled rule only queues an outward action for
+    /// the native approval path, subject to cooldown and event dedupe.
+    private func handleRuleMention(model: NativeDesktopMeetingModel, fresh: [AttentionWindow.Line], at: Date) {
+        guard let line = fresh.first(where: { $0.mentionsYou && !$0.isYou }) else { return }
+        let event = AssistantRuleMentionEvent(id: model.sessionID.uuidString + "|" + line.id,
+                                              meetingID: model.sessionID, meetingTitle: model.title, at: at,
+                                              supportsVoiceReply: voiceAvailable(model),
+                                              canSendChat: model.chat.canSend)
+        ruleStore.handleMention(event, now: at)
+    }
+
+    /// Execute one rule-pending outward action after native approval. Expiry,
+    /// double-apply and capability failures are observed states, never fallbacks.
+    func executeRuleAction(_ pending: AssistantRulePendingAction) async -> String {
+        guard pending.expiresAt > now() else {
+            ruleStore.expirePendingActions()
+            return AssistantAgentError.approvalExpired.localizedDescription ?? "Expired"
+        }
+        guard let model = meetings().first(where: { $0.sessionID == pending.meetingID && !$0.isClosed }),
+              voiceAvailable(model) else {
+            ruleStore.actionDenied(pending.id)
+            return AssistantAgentError.unsupported.localizedDescription ?? "Unsupported"
+        }
+        do {
+            try actionCoordinator.approved(pending.action)
+            let buffer = try await synthesize(pending.ruleText)
+            try await deliverVoice(model, buffer)
+            actionCoordinator.applied(pending.action)
+            ruleStore.actionExecuted(pending.id)
+            return L("Spoken into “%@”.", pending.meetingTitle)
+        } catch {
+            actionCoordinator.failed(pending.action)
+            ruleStore.actionDenied(pending.id)
+            return error.localizedDescription
+        }
+    }
 
     func start() {
         guard loop == nil else { return }
@@ -402,6 +450,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
     /// Observes every meeting, drops stale cards, and judges at most one meeting.
     func tick() async {
         let current = now(), list = meetings()
+        ruleStore.expirePendingActions(now: current)
         let ids = Set(list.map(\.sessionID))
         states = states.filter { ids.contains($0.key) }
         // A mode chosen for a while returns to the defaults when its time is up.
@@ -440,6 +489,7 @@ final class AttentionMemoryPressure: @unchecked Sendable {
             // Named, or asked where the question can only be for you (just you and one other).
             let mentioned = fresh.contains { $0.mentionsYou && !$0.isYou } ||
                 question.map { $0.mentionsYou || window.participantCount <= 2 } == true
+            if mentioned { handleRuleMention(model: model, fresh: fresh, at: current) }
             let trigger: Bool, cadence: TimeInterval
             switch mode {
             case .off: continue

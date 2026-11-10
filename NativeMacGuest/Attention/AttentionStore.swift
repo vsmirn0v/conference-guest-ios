@@ -266,6 +266,10 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
     @Published var remoteOutcomes: Bool { didSet { defaults.set(remoteOutcomes, forKey: Self.remoteOutcomesKey) } }
     @Published var pushToTalk: Bool { didSet { defaults.set(pushToTalk, forKey: Self.pushToTalkKey) } }
     @Published var talkBack: Bool { didSet { defaults.set(talkBack, forKey: Self.talkBackKey) } }
+    /// The bounded agent runtime over typed tools. Off by default; the existing
+    /// single-command interpreter remains the fallback while this is off.
+    @Published var agentAssistantEnabled: Bool { didSet { defaults.set(agentAssistantEnabled, forKey: Self.agentAssistantKey) } }
+    static let agentAssistantKey = "assistant.agent.enabled"
     /// Output-device UIDs the person marked with "This is a headphone".
     @Published private(set) var headphoneUIDs: Set<String>
     static let outcomesKey = "attention.outcomes.enabled", remoteOutcomesKey = "attention.outcomes.remote"
@@ -355,6 +359,7 @@ struct AttentionDecisionRecord: Codable, Equatable, Sendable {
         // this key, so an absent value must keep working. An explicit off value is unchanged.
         pushToTalk = defaults.object(forKey: Self.pushToTalkKey) as? Bool ?? true
         talkBack = defaults.bool(forKey: Self.talkBackKey)
+        agentAssistantEnabled = defaults.bool(forKey: Self.agentAssistantKey)
         headphoneUIDs = Set(defaults.stringArray(forKey: Self.headphoneUIDsKey) ?? [])
         provider = defaults.data(forKey: Self.providerKey).flatMap { try? JSONDecoder().decode(AttentionProvider.self, from: $0) }
             ?? AttentionProvider.defaults[.openAI]!

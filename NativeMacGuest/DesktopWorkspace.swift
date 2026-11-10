@@ -86,6 +86,10 @@ import UserNotifications
          attention: AttentionCoordinator? = nil) {
         let library = library ?? NativeDesktopLibrary()
         self.attention = attention ?? AttentionCoordinator()
+        // The agent's read-only calendar tools see future occurrences; they never join or edit.
+        self.attention.calendarOccurrences = { [weak library] in
+            (library?.calendar.meetings ?? []).filter { $0.start > Date() }
+        }
         self.multipleMeetings = multipleMeetings
         self.library = library; self.detect = detect; self.makeHandoffActivity = makeHandoffActivity
         self.makeMeeting = makeMeeting ?? { NativeDesktopMeetingModel(destination: $0, name: $1, title: $2, quiet: $3) }

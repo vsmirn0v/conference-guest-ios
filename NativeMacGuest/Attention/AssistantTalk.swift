@@ -27,11 +27,16 @@ import SwiftUI
     @Published private(set) var listening = false
     @Published var targetMeetingID: UUID?
     @Published private(set) var audioError: String?
-    @Published private var sendWithoutAsking: Set<UUID> = []
+    @Published private(set) var sendWithoutAsking: Set<UUID> = []
     /// MCP requests are external callers: the native confirmation gate cannot be bypassed.
     private var externalMCPRequest = false
+    // MARK: Agent runtime (typed tools, bounded loop; off unless the store flag is on)
+    let agentRuntime = AssistantRuntime()
+    @Published var agentPending: AssistantAgentApproval?
+    @Published var ruleProposalReview: AssistantAutomationRuleProposal?
+    var agentEnvironment: AssistantAgentEnvironment?
 
-    private weak var attention: AttentionCoordinator?
+    weak var attention: AttentionCoordinator?
     private var captureTask: Task<Void, Never>?
     private var captureEngine: AVAudioEngine?
     private var captureMeeting: NativeDesktopMeetingModel?
@@ -92,6 +97,15 @@ import SwiftUI
         let clean = String(input.trimmed.prefix(2000))
         guard !clean.isEmpty else { return }
         guard pending == nil else { append(.assistant, L("Confirm or cancel the pending action first.")); return }
+        if attention.store.agentAssistantEnabled {
+            // The bounded agent runtime owns the conversation state; its items render instead of `entries`.
+            guard agentPending == nil, ruleProposalReview == nil else {
+                append(.assistant, L("Confirm or cancel the pending action first.")); return
+            }
+            working = true; defer { working = false }
+            await runAgent(clean)
+            return
+        }
         entries.append(.init(role: .user, text: clean)); trimEntries()
         working = true; defer { working = false }
         let context = makeContext()
@@ -172,8 +186,8 @@ import SwiftUI
         } catch { append(.assistant, error.localizedDescription) }
     }
 
-    private func execute(_ command: AssistantCommand, context: AssistantCommandContext,
-                         attention: AttentionCoordinator) async throws -> String {
+    func execute(_ command: AssistantCommand, context: AssistantCommandContext,
+                 attention: AttentionCoordinator) async throws -> String {
         let target = try meeting(command.meetingID, context: context)
         switch command.action {
         case .setAttention:
@@ -245,7 +259,7 @@ import SwiftUI
         return targetMeetingID
     }
 
-    private func makeContext() -> AssistantCommandContext {
+    func makeContext() -> AssistantCommandContext {
         guard let attention else { return .init(meetings: [], moments: [], now: Date()) }
         let active = attention.meetings().filter { !$0.isClosed }.map {
             AssistantMeetingReference(id: $0.sessionID, title: $0.title, invitation: $0.invitation, active: true)
@@ -741,12 +755,16 @@ struct AssistantTalkView: View {
     @ObservedObject private var talk: AssistantTalkController
     // Observe the store so a push-to-talk toggle re-enables Listen immediately.
     @ObservedObject private var store: AttentionStore
+    @ObservedObject private var agentRuntime: AssistantRuntime
+    @ObservedObject private var ruleStore: AssistantRuleStore
     @State private var input = ""
 
     init(attention: AttentionCoordinator) {
         self.attention = attention
         _talk = ObservedObject(wrappedValue: attention.talk)
         _store = ObservedObject(wrappedValue: attention.store)
+        _agentRuntime = ObservedObject(wrappedValue: attention.talk.agentRuntime)
+        _ruleStore = ObservedObject(wrappedValue: attention.ruleStore)
     }
 
     private var liveMeetings: [NativeDesktopMeetingModel] { attention.meetings().filter { !$0.isClosed } }
@@ -778,7 +796,19 @@ struct AssistantTalkView: View {
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    if talk.entries.isEmpty {
+                    if store.agentAssistantEnabled {
+                        if agentRuntime.items.isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: "waveform").font(.largeTitle).foregroundStyle(.secondary)
+                                Text(L("Talk to Assistant")).font(.title3)
+                                Text(L("Ask about your meetings, outcomes, calendar, or request an action."))
+                                    .foregroundStyle(.secondary).multilineTextAlignment(.center)
+                            }.frame(maxWidth: .infinity).padding(.vertical, 50)
+                        }
+                        ForEach(agentRuntime.items) { item in
+                            AssistantAgentItemView(item: item)
+                        }
+                    } else if talk.entries.isEmpty {
                         VStack(spacing: 8) {
                             Image(systemName: "waveform").font(.largeTitle).foregroundStyle(.secondary)
                             Text(L("Talk to Assistant")).font(.title3)
@@ -790,11 +820,13 @@ struct AssistantTalkView: View {
                                 .foregroundStyle(.secondary).multilineTextAlignment(.center)
                         }.frame(maxWidth: .infinity).padding(.vertical, 50)
                     }
-                    ForEach(talk.entries) { entry in
-                        Text(entry.text).textSelection(.enabled).padding(10)
-                            .background(entry.role == .user ? Color.accentColor.opacity(0.1) : Color(nsColor: .controlBackgroundColor),
-                                in: RoundedRectangle(cornerRadius: 8))
-                            .frame(maxWidth: .infinity, alignment: entry.role == .user ? .trailing : .leading)
+                    if !store.agentAssistantEnabled {
+                        ForEach(talk.entries) { entry in
+                            Text(entry.text).textSelection(.enabled).padding(10)
+                                .background(entry.role == .user ? Color.accentColor.opacity(0.1) : Color(nsColor: .controlBackgroundColor),
+                                    in: RoundedRectangle(cornerRadius: 8))
+                                .frame(maxWidth: .infinity, alignment: entry.role == .user ? .trailing : .leading)
+                        }
                     }
                 }.padding(16)
             }
@@ -811,7 +843,60 @@ struct AssistantTalkView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.padding(.horizontal, 12)
             }
+            if let approval = talk.agentPending {
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(approval.title).font(.headline)
+                        if !approval.detail.isEmpty { Text(approval.detail).textSelection(.enabled) }
+                        Text(L("Expires at %@", approval.expiresAt.formatted(date: .omitted, time: .shortened)))
+                            .font(.caption).foregroundStyle(.secondary)
+                        HStack {
+                            Button(L("Confirm")) { talk.confirmAgentPending() }.buttonStyle(.borderedProminent)
+                                .accessibilityIdentifier("assistant.agent.confirm")
+                            Button(L("Cancel"), role: .cancel) { talk.cancelAgentPending() }
+                                .accessibilityIdentifier("assistant.agent.cancel")
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(.horizontal, 12)
+            }
+            if let proposal = talk.ruleProposalReview {
+                AssistantRuleReviewCard(proposal: proposal,
+                    onEnable: { unattended in talk.enableReviewedRule(unattended: unattended) },
+                    onDiscard: { talk.discardReviewedRule() })
+                    .padding(.horizontal, 12)
+            }
+            ForEach(ruleStore.pendingActions) { pending in
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(L("Automation rule: mention reply")).font(.headline)
+                        Text(L("“%@” in “%@”", pending.ruleText, pending.meetingTitle)).textSelection(.enabled)
+                        Text(L("Expires at %@", pending.expiresAt.formatted(date: .omitted, time: .shortened)))
+                            .font(.caption).foregroundStyle(.secondary)
+                        HStack {
+                            Button(L("Say it")) {
+                                Task { @MainActor in
+                                    let result = await attention.executeRuleAction(pending)
+                                    if !result.isEmpty { talk.agentRuntime.appendSystemForUI(result) }
+                                }
+                            }.buttonStyle(.borderedProminent)
+                            Button(L("Skip"), role: .cancel) { ruleStore.actionDenied(pending.id) }
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.padding(.horizontal, 12)
+            }
             if talk.working { ProgressView(L("Interpreting…")).controlSize(.small).padding(6) }
+            if store.agentAssistantEnabled {
+                HStack(spacing: 8) {
+                    if talk.working {
+                        Button(L("Cancel")) { talk.agentRuntime.cancel() }
+                            .accessibilityIdentifier("assistant.agent.stop")
+                    }
+                    Spacer()
+                    Button(L("New chat")) { talk.agentNewConversation() }
+                        .disabled(talk.working)
+                        .accessibilityIdentifier("assistant.agent.new")
+                }.padding(.horizontal, 12)
+            }
             if talk.listening { Label(L("Listening on this Mac… release ⌥Space to interpret"), systemImage: "mic.fill").foregroundStyle(.teal).padding(6) }
             if let error = talk.audioError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 12) }
             if !liveMeetings.isEmpty {
@@ -845,9 +930,11 @@ struct AssistantTalkView: View {
             }
             HStack(spacing: 8) {
                 TextField(inputPrompt, text: $input)
-                    .textFieldStyle(.roundedBorder).onSubmit { send() }.disabled(talk.working || talk.pending != nil)
+                    .textFieldStyle(.roundedBorder).onSubmit { send() }
+                    .disabled(talk.working || talk.pending != nil || talk.agentPending != nil || talk.ruleProposalReview != nil)
                     .accessibilityIdentifier("assistant.input")
-                Button(L("Ask")) { send() }.buttonStyle(.borderedProminent).disabled(input.trimmed.isEmpty || talk.working || talk.pending != nil)
+                Button(L("Ask")) { send() }.buttonStyle(.borderedProminent)
+                    .disabled(input.trimmed.isEmpty || talk.working || talk.pending != nil || talk.agentPending != nil || talk.ruleProposalReview != nil)
                     .accessibilityIdentifier("assistant.ask")
                 Button(talk.listening ? L("Stop") : L("Listen")) {
                     talk.listening ? talk.stopPushToTalk() : talk.startPushToTalk()
