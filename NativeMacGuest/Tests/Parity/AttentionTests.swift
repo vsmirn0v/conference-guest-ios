@@ -86,6 +86,37 @@ import XCTest
                        "Blank and one-letter names are not mentions")
     }
 
+    /// The user's own speech — including calling their own name — must never ground a
+    /// notification. The verdict parser fails closed even when a model ignores the prompt.
+    func testVerdictGroundedOnlyInOwnLinesIsNotANotification() throws {
+        let now = Date()
+        let window = AttentionWindowBuilder.build(.init(title: "infra", transcript: [
+            message("me1", "Vitalii", "Виталий, проверь DNS до пятницы.", now.addingTimeInterval(-20), own: true),
+            message("me2", "Vitalii", "I will handle the release myself.", now.addingTimeInterval(-10), own: true),
+        ], chat: [], reactions: [], participantCount: 3, yourNames: ["Виталий", "Vitalii"],
+            microphoneOn: true, soundOn: true, now: now))
+        let selfOnly = #"{"attention":"now","probability":0.95,"reason":"Vitalii was asked to check DNS.","evidence":["L1","L2"],"action":"chat"}"#
+        let verdict = try AttentionPrompt.verdict(from: selfOnly, window: window)
+        XCTAssertEqual(verdict.level, .no, "A decision resting only on the user's own lines is not a notification")
+        XCTAssertTrue(verdict.evidence.isEmpty)
+        XCTAssertEqual(verdict.action, .none)
+
+        // Another participant's line grounds a real notification, also in mixed evidence.
+        let others = AttentionWindowBuilder.build(.init(title: "infra", transcript: [
+            message("me1", "Vitalii", "I will handle the release.", now.addingTimeInterval(-20), own: true),
+            message("a1", "Anna", "Vitalii, when is DNS ready?", now.addingTimeInterval(-10)),
+        ], chat: [], reactions: [], participantCount: 3, yourNames: ["Vitalii"],
+            microphoneOn: true, soundOn: true, now: now))
+        let named = #"{"attention":"now","probability":0.9,"reason":"Anna is waiting for the DNS answer.","evidence":["L2"],"action":"chat"}"#
+        let namedVerdict = try AttentionPrompt.verdict(from: named, window: others)
+        XCTAssertEqual(namedVerdict.level, .now)
+        XCTAssertEqual(namedVerdict.evidence, ["a1"])
+        let mixed = #"{"attention":"soon","probability":0.8,"reason":"Release follow-up.","evidence":["L1","L2"],"action":"open"}"#
+        let mixedVerdict = try AttentionPrompt.verdict(from: mixed, window: others)
+        XCTAssertEqual(mixedVerdict.level, .soon, "Mixed own/other evidence stays a valid decision")
+        XCTAssertEqual(mixedVerdict.evidence, ["me1", "a1"])
+    }
+
     // MARK: Prompt and verdict
 
     private func sampleWindow(now: Date = Date()) -> AttentionWindow {

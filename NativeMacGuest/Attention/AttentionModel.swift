@@ -526,7 +526,10 @@ enum AttentionPrompt {
     or something the user's instructions mark as important is happening now.
     - "soon" when a topic the user cares about is being discussed and the user will likely be asked.
     - "no" for greetings, small talk, topics outside the user's instructions, or questions the user already answered.
-    - Lines marked (you) were said or written by the user. If the user already answered, the need is gone.
+    - Lines marked (you) were said or written by the user. If the user already answered, the need is gone. \
+    The user's own lines are context only, never a reason to notify: do not raise "now" or "soon" because \
+    the user spoke, promised something, asked a question, or mentioned their own name. A notification must \
+    rest on something another participant said or did; if only the user's own lines are notable, answer "no".
     - Mentions of the user's name in passing, without a question or request, are not enough for "now".
     - Follow the meeting instructions and learn from the user's past approvals and declines.
     - Cite the refs of the lines your decision rests on. For "no", evidence may be empty.
@@ -646,6 +649,15 @@ enum AttentionPrompt {
             if !evidence.contains(line.id) { evidence.append(line.id) }
         }
         if raw.attention != .no && evidence.isEmpty { throw AttentionVerdictError.noEvidence }
+        if raw.attention != .no {
+            let grounded = evidence.compactMap { window.line(id: $0) }
+            // Fail closed: the user's own speech is context, never a notification reason.
+            // A model that grounded its decision only in the user's own lines produced
+            // no signal, whatever its prompt compliance was. Mixed evidence stays valid.
+            if !grounded.isEmpty, grounded.allSatisfy(\.isYou) {
+                return .init(level: .no, probability: raw.probability, reason: reason, evidence: [], action: .none)
+            }
+        }
         return .init(level: raw.attention, probability: raw.probability, reason: reason, evidence: evidence, action: raw.action)
     }
 }
