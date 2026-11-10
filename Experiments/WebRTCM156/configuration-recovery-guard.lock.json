@@ -1,0 +1,17 @@
+{
+  "baseFrameworkBinarySHA256": "a6b628d01e3c16c0a7e9a5a48045ead283bcf75e2e732ceace0f75c9f3a53845",
+  "baseSourceManifestSHA256": "c721741efe93373c953cc4bacc78438104862e8a8050b73a04313a36ac274adb",
+  "capabilities": {
+    "configurationRecoveryRaceGuard": true
+  },
+  "formatVersion": 1,
+  "patchSHA256": "8d1a6567315f1ffc2b2c41b7c247c7631beb3e4f5e1e5b05775951330d77c9c9",
+  "sourceOverrides": {
+    "modules/audio_device/BUILD.gn": "0897edb8f34e390b5490022ebd06de229953d3ea6363cd1c46e3e03bb6d4d6db",
+    "modules/audio_device/audio_engine_configuration_recovery_gate.h": "7c4f4109f4521aeed8d8f1c4d1eec876a435a0146497055a8285cdb0d70ce132",
+    "modules/audio_device/audio_engine_configuration_recovery_gate_unittest.cc": "ed5af2ee971a8008121cffb6dabcbdd37befe80a61079665409bbec5459b64f5",
+    "modules/audio_device/audio_engine_device.h": "40ae44145bf89539a82bcbec2581eb1cf70a4a7cc406e7284d3409daaa136296",
+    "modules/audio_device/audio_engine_device.mm": "d38bc4f4843d95679d3b41e3096acf86228639e7d436060361aab08dee84234a"
+  },
+  "upstreamRevision": "19576e37870bfe5a0a910a32f98ff411f722f43a"
+}
