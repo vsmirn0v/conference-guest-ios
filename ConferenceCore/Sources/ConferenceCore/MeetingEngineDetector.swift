@@ -54,12 +54,20 @@ public actor MeetingEngineDetector {
         if let cached = cache[key], cached.expires > now() { return cached.evidence }
 
         let session = self.session, timeout = self.timeout, serviceName = self.serviceName
-        async let guestEvidence: MeetingEngineEvidence? = Self.probeGuest(guest, serviceName: serviceName,
-                                                                          session: session, timeout: timeout)
-        async let communityEvidence: MeetingEngineEvidence? = Self.probeCommunity(community,
-                                                                    session: session, timeout: timeout)
-        async let trueconfEvidence: MeetingEngineEvidence? = Self.probeTrueConf(trueconf, session: session, timeout: timeout)
-        let proofs = await [guestEvidence, communityEvidence, trueconfEvidence].compactMap { $0 }
+        // A task group rather than several `async let`s: multiple concurrent async let's
+        // crash the Swift 6.3/6.4 runtime on macOS 26/27 ("freed pointer was not the
+        // last allocation", swiftlang/swift#87481). The probes still run concurrently.
+        let probes = await withTaskGroup(of: MeetingEngineEvidence?.self) { group in
+            group.addTask { await Self.probeGuest(guest, serviceName: serviceName,
+                                                  session: session, timeout: timeout) }
+            group.addTask { await Self.probeCommunity(community,
+                                                      session: session, timeout: timeout) }
+            group.addTask { await Self.probeTrueConf(trueconf, session: session, timeout: timeout) }
+            var results: [MeetingEngineEvidence?] = []
+            for await result in group { results.append(result) }
+            return results
+        }
+        let proofs = probes.compactMap { $0 }
         try Task.checkCancellation()
         let result: MeetingEngineDetection
         switch proofs.count {

@@ -60,6 +60,7 @@ struct NativeGuestApplication {
 @MainActor final class CompanionAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let mode: NativeGuestLaunchMode
     private var workspace: NativeDesktopWorkspace?
+    private var mcpService: NativeDesktopMCPService?
     private var controller: CompanionMeetingController?
     private var terminating = false
     private var admittingCompanion = false
@@ -118,6 +119,8 @@ struct NativeGuestApplication {
         helpItem.submenu = helpMenu; menu.addItem(helpItem); NSApp.helpMenu = helpMenu; NSApp.mainMenu = menu
         let settings = NSMenuItem(title: L("Settings…"), action: #selector(openSettings), keyEquivalent: ",")
         settings.target = self; appMenu.insertItem(settings, at: 0)
+        let pairMCP = NSMenuItem(title: L("Pair MCP Client…"), action: #selector(pairMCPClient), keyEquivalent: "")
+        pairMCP.target = self; appMenu.insertItem(pairMCP, at: 1)
         #if NATIVE_DIRECT_UPDATES
         let check = NSMenuItem(title: L("Check for Updates…"), action: #selector(checkForUpdates), keyEquivalent: "")
         check.target = self; appMenu.insertItem(check, at: 1)
@@ -171,9 +174,27 @@ struct NativeGuestApplication {
     }
     private func showJoin(completion: NativeGuestMeetingCompletion? = nil) {
         guard launched, !terminating else { return }
-        if workspace == nil { workspace = makeWorkspace() }
+        if workspace == nil {
+            workspace = makeWorkspace()
+            if let workspace {
+                mcpService = NativeDesktopMCPService(workspace: workspace)
+                Task { await mcpService?.start() }
+            }
+        }
         workspace?.show()
         if let completion, completion != .left { workspace?.error = completion.message }
+    }
+    @objc private func pairMCPClient() {
+        showJoin()
+        guard let mcpService else { return }
+        Task { @MainActor in
+            await mcpService.start()
+            let instruction = mcpService.makePairingInstruction()
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(instruction, forType: .string)
+            let alert = NSAlert(); alert.messageText = L("Pair an AI client")
+            alert.informativeText = L("The MCP endpoint and a fresh pairing token were copied to the clipboard. Start rocknroll-native to exchange the token for a scoped client token.")
+            alert.addButton(withTitle: L("OK")); alert.runModal()
+        }
     }
     private func accept() {
         if mode == .standalone { showJoin(); return }
@@ -227,6 +248,7 @@ struct NativeGuestApplication {
         return .terminateLater
     }
     func applicationWillTerminate(_ notification: Notification) {
+        mcpService?.stop()
         workspace?.attention.store.assistant.flushOutcomeEditsSynchronously()
         #if NATIVE_DIRECT_UPDATES
         updates?.willTerminate()

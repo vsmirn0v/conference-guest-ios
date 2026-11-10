@@ -28,6 +28,8 @@ import SwiftUI
     @Published var targetMeetingID: UUID?
     @Published private(set) var audioError: String?
     @Published private var sendWithoutAsking: Set<UUID> = []
+    /// MCP requests are external callers: the native confirmation gate cannot be bypassed.
+    private var externalMCPRequest = false
 
     private weak var attention: AttentionCoordinator?
     private var captureTask: Task<Void, Never>?
@@ -100,9 +102,29 @@ import SwiftUI
             } else {
                 try await provider.commandInterpreter(key: attention.store.apiKey(for: provider)).interpret(.init(input: clean, context: context))
             }
-            try prepare(command, context: context)
+            try prepare(command, context: context, external: externalMCPRequest)
         } catch is CancellationError { return }
         catch { append(.assistant, error.localizedDescription) }
+    }
+
+    /// MCP callers use the same interpreter and confirmation state machine, but can never
+    /// inherit a meeting's "send without asking" privilege. A command that would need a
+    /// native confirmation is reported and cancelled instead of being executed.
+    func runExternal(_ input: String) async -> (answer: String?, needsNativeConfirmation: Bool) {
+        let previousCount = entries.count
+        externalMCPRequest = true
+        await run(input)
+        externalMCPRequest = false
+        if pending != nil {
+            cancelPending()
+            return (nil, true)
+        }
+        // Execution is scheduled concurrently; wait for its assistant answer entry.
+        for _ in 0..<200 where !(entries.count > previousCount && entries.last?.role == .assistant) {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        guard entries.count > previousCount, let last = entries.last, last.role == .assistant else { return (nil, false) }
+        return (last.text, false)
     }
 
     /// Button equivalents use the same validation and confirmation path without an LLM call.
@@ -110,12 +132,12 @@ import SwiftUI
         Task { @MainActor [weak self] in
             guard let self else { return }
             let context = makeContext()
-            do { try prepare(command, context: context) }
+            do { try prepare(command, context: context, external: false) }
             catch { append(.assistant, error.localizedDescription) }
         }
     }
 
-    private func prepare(_ command: AssistantCommand, context: AssistantCommandContext) throws {
+    private func prepare(_ command: AssistantCommand, context: AssistantCommandContext, external: Bool) throws {
         var command = command
         // Resolve an implicit target before a confirmation can outlive the current selection.
         if command.meetingID == nil, [.setAttention, .leave, .mute, .sendChat, .say, .react, .readChat, .catchUp].contains(command.action) {
@@ -124,7 +146,7 @@ import SwiftUI
         }
         if command.meetingID != nil { targetMeetingID = command.meetingID }
         if command.needsConfirmation {
-            let bypass = command.sendBypassAllowed && command.meetingID.map { sendWithoutAsking.contains($0) } == true
+            let bypass = !external && command.sendBypassAllowed && command.meetingID.map { sendWithoutAsking.contains($0) } == true
             if !bypass {
                 pending = .init(command: command, context: context, title: confirmationTitle(command, context: context),
                     detail: confirmationDetail(command))

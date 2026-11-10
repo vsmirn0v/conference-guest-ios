@@ -25,7 +25,8 @@ targets:
         # types that have not landed. Exclude them until their dependencies are tracked;
         # no production code references either harness.
         excludes: ['*.yml', '*.py', '*.md', '*.sh', Tests, __pycache__, NativeGuest.entitlements, Info.plist',
-                   MicrophoneActivationExperiment.swift, AcousticValidationExperiment.swift]
+                   MicrophoneActivationExperiment.swift, AcousticValidationExperiment.swift,
+                   StartupCaptureReceiver.swift]
       - path: ../Experiments/NativeGuest
         excludes: [Main.swift, GuestCompanionPeer.swift, '*.py', '*.md', '*.sh', '*.patch', __pycache__]
       - path: ../Shared/NativeGuestCompanionProtocol.swift

@@ -1,0 +1,32 @@
+{
+  "schema": 2,
+  "occurrences": [
+    {
+      "id": "calendar-1",
+      "eventID": "event-1",
+      "calendarID": "work",
+      "title": "Design Sync",
+      "start": "2026-11-09T11:00:00+03:00",
+      "end": "2026-11-09T12:00:00+03:00",
+      "reference": "opaque-reference-1",
+      "invitation": "https://meetings.example.test/calls/design?psw=secret-calendar",
+      "engine": "guest",
+      "eligible": true,
+      "tentative": false
+    },
+    {
+      "id": "calendar-2",
+      "eventID": "event-2",
+      "calendarID": "work",
+      "title": "Weekly Planning",
+      "start": "2026-11-10T09:00:00+03:00",
+      "end": "2026-11-10T10:00:00+03:00",
+      "reference": "opaque-reference-2",
+      "invitation": "https://meetings.example.test/calls/planning?psw=secret-planning",
+      "engine": "guest",
+      "eligible": true,
+      "tentative": true
+    }
+  ],
+  "scheduled": []
+}
